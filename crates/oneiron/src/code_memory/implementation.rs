@@ -1,3 +1,7 @@
+//! Symbol-anchored memory keeps five include fragments in one privacy scope.
+//! The read entry is `pull_code_memory`; the fragments define the implementation items.
+//! Keep fragments: types/storage alone share 31 private names plus an inferred private type.
+//!
 //! ARCH-0050 R6 L2 memory-over-code attachment mechanics (ONE-1608).
 //!
 //! Five cohesive sections, in this order:

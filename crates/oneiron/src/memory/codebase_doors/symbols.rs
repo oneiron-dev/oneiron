@@ -1,3 +1,7 @@
+//! The codebase snapshot definitions read.
+//! `Memory::code_snapshot_definitions_as` is its call surface.
+//! `memory::codebase_doors::types` defines the records it takes and returns.
+
 use super::*;
 
 impl Memory<'_> {

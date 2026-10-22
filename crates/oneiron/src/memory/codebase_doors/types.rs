@@ -1,3 +1,7 @@
+//! Codebase snapshot request, file, view and definition records.
+//! `CodeRepoPointer` is the first of its records.
+//! Local definitions, plus projection kinds re-exported from `crate::origin::secret_projection`.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
@@ -47,6 +51,11 @@ pub struct CodeSnapshotReadRequest {
     pub snapshot: String,
     /// The normalized repository-relative path.
     pub path: String,
+    /// Why the caller needs this marked file's real bytes (FIX 7608,
+    /// CALL 3): absent reads the masked copy as before; a why from a proven
+    /// agent asks the owner for this file's stored bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 /// Rust symbol definitions by exact name within one pinned code snapshot.

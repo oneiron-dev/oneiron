@@ -434,6 +434,44 @@ pub(crate) async fn self_browser_library_draft(
     .await
 }
 
+pub(crate) async fn self_browser_demonstration_start(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserDemonstrationStartInput>,
+) -> Listed<sdk::BrowserDemonstrationStartOutput> {
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserDemonstrationStart,
+        input,
+    )
+    .await
+}
+
+pub(crate) async fn self_browser_demonstration_stop(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserDemonstrationStopInput>,
+) -> Listed<sdk::BrowserDemonstrationStopOutput> {
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserDemonstrationStop,
+        input,
+    )
+    .await
+}
+
 pub(crate) async fn self_browser_library_retire(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
