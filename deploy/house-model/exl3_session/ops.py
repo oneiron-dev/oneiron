@@ -272,6 +272,17 @@ def drop(layer, body, _conversation_):
     return _with_stats(layer, {"released": True})
 
 
+def claim(layer, field):
+    """`session.generate`'s `session` field: `{handle, binding, branch,
+    op_id}`; the branch it names, claimed."""
+    if not isinstance(field, dict):
+        raise Refused(INVALID_REQUEST, "session must be an object")
+    handle, binding = _target(field)
+    branch = _hex(field, "branch", 16)
+    _u64(field, "op_id")
+    return layer.claim(handle, binding, branch)
+
+
 HANDLERS = {
     "session.create": create,
     "session.fork": fork,

@@ -297,7 +297,8 @@ def load(args):
     # Sessions run on the stock Generator over the session page table; where
     # the layer cannot serve them, the Generator is the stock one.
     generator_class = Generator
-    if args.no_sessions:
+    # The bench (exl3_executor_bench.py) builds its own args, without the flag.
+    if getattr(args, "no_sessions", False):
         print("SESSIONS_OFF reason=--no-sessions", flush=True)
     elif exl3_session is not None:
         refused = exl3_session.unsupported(target, draft)

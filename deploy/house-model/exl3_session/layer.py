@@ -26,7 +26,7 @@ import time
 
 from exllamav3.constants import PAGE_SIZE
 
-from . import state
+from . import ops, state
 from .anchor import Anchor
 from .jobs import CommitJob, Plan
 from .pages import Owner
@@ -39,6 +39,11 @@ OPS = ("session.create", "session.fork", "session.generate", "session.append", "
 
 
 class SessionLayer(Registry):
+
+    # What the native channel (exl3_ipc.py) reads off the layer, so it
+    # imports nothing of it.
+    Refused = Refused
+    WITH_INPUT = ops.WITH_INPUT
 
     def __init__(self, generator, render, encode):
         super().__init__()
@@ -54,6 +59,16 @@ class SessionLayer(Registry):
 
     def capability(self):
         return {"minor": SCHEMA_MINOR, "ops": list(OPS)}
+
+    def answer(self, op, body, conversation):
+        """The answer body of session op `op` (not `session.generate`);
+        Refused when it is refused."""
+        return ops.answer(self, op, body, conversation)
+
+    def claim_call(self, field):
+        """The working branch a `session.generate`'s `session` field names,
+        claimed for that call."""
+        return ops.claim(self, field)
 
     # Any thread: metadata only.
 
