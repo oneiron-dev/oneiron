@@ -14,13 +14,52 @@ use wasmtime::component::Linker;
 type Reply<T> = std::result::Result<T, String>;
 const IMPORTS: &[(&str, &str)] = include!("../../../wit/generated/imports.rs");
 
-impl State {
-    fn begin_call(&mut self) -> wasmtime::Result<()> {
-        if self.remaining_calls == 0 {
-            return Err(wasmtime::Error::msg("host call budget exceeded"));
+/// A step's host calls, counted for observation only (FIX 8676): the
+/// budget's `host_calls` is an advisory threshold, and no count refuses a
+/// call. One tracing event reports the count when the step's store is
+/// dropped, after a finished step or a trap alike, marked when the count
+/// passed a threshold that is not zero.
+pub(super) struct ComponentCallObservation {
+    host_calls: u64,
+    advisory_threshold: u32,
+}
+
+impl ComponentCallObservation {
+    pub(super) const fn new(advisory_threshold: u32) -> Self {
+        Self {
+            host_calls: 0,
+            advisory_threshold,
         }
-        self.remaining_calls -= 1;
-        Ok(())
+    }
+}
+
+impl Drop for ComponentCallObservation {
+    fn drop(&mut self) {
+        let over_advisory_threshold =
+            self.advisory_threshold != 0 && self.host_calls > u64::from(self.advisory_threshold);
+        if over_advisory_threshold {
+            tracing::info!(
+                host_calls = self.host_calls,
+                advisory_threshold = self.advisory_threshold,
+                over_advisory_threshold,
+                "a first-party code step passed its advisory host-call threshold"
+            );
+        } else {
+            tracing::debug!(
+                host_calls = self.host_calls,
+                advisory_threshold = self.advisory_threshold,
+                over_advisory_threshold,
+                "a first-party code step's host calls"
+            );
+        }
+    }
+}
+
+impl State {
+    /// Counts one host call. It never refuses: past the advisory threshold
+    /// the call runs as any other does (FIX 8676).
+    fn begin_call(&mut self) {
+        self.calls.host_calls = self.calls.host_calls.saturating_add(1);
     }
 
     fn call(&mut self, name: &'static str, input: Value) -> Reply<Value> {
@@ -47,9 +86,9 @@ impl State {
     }
 
     /// Sends one frame of the step's streamed result to the host thread. A
-    /// frame is not a host call: the step's fuel and deadline bound frames,
-    /// never the call budget, so a result's size never ends its step. A
-    /// refused frame traps the guest.
+    /// frame is not a counted host call: the step's fuel and deadline bound
+    /// frames, so a result's size never ends its step. A refused frame traps
+    /// the guest.
     fn output(&mut self, target: StreamTarget, frame: Vec<u8>) -> wasmtime::Result<Reply<u64>> {
         let (reply, response) = mpsc::sync_channel(1);
         self.events
@@ -129,7 +168,7 @@ pub(super) fn link_imports(
             "sandbox.fs.read_file" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (path,): (String,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<Vec<u8>> = cx
                         .data_mut()
                         .call("sandbox.fs.read_file", json!({"path":path}))
@@ -140,7 +179,7 @@ pub(super) fn link_imports(
             "sandbox.credential.call" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (CredentialInput,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<String> = (|| {
                         if input.args.len() > cx.data().message_bytes {
                             return Err("credential_arguments_over_budget".into());
@@ -161,7 +200,7 @@ pub(super) fn link_imports(
             // The verb table is the host's own generated catalog: no bridge row.
             "self.verbs.names" => {
                 root.func_wrap(wit, |mut cx: StoreContextMut<'_, State>, (): ()| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let names: Reply<Vec<String>> =
                         Ok(crate::task_verb::sdk::code_mode_verb_names()
                             .map(str::to_owned)
@@ -172,24 +211,32 @@ pub(super) fn link_imports(
             "self.verbs.call" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (verb, input): (String, String)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<String> = (|| {
                         if input.len() > cx.data().message_bytes {
                             return Err("verb_input_over_budget".into());
                         }
                         let input: Value =
                             serde_json::from_str(&input).map_err(|_| "invalid_verb_input")?;
-                        cx.data_mut()
-                            .call("self.verbs.call", json!({"verb":verb,"input":input}))
-                            .and_then(|value| field::<Value>(&value, "output"))
-                            .map(|output| output.to_string())
+                        let value = cx
+                            .data_mut()
+                            .call("self.verbs.call", json!({"verb":verb,"input":input}))?;
+                        // The host's own refusal envelope, a wrong root's
+                        // `WRONG_ROOT` correction among them, reaches the
+                        // guest whole: its code, attempted, replacement and
+                        // schemaRef (FIX 8677). The wrong call never ran. A
+                        // verb's own output is never read for one.
+                        if value.get("output").is_none() && value.get("error").is_some() {
+                            return Ok(value.to_string());
+                        }
+                        field::<Value>(&value, "output").map(|output| output.to_string())
                     })();
                     Ok((reply,))
                 },
             ),
             "oneiron.clock.now_unix_ms" => {
                 root.func_wrap(wit, |mut cx: StoreContextMut<'_, State>, (): ()| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let value = cx
                         .data_mut()
                         .call("oneiron.clock.now_unix_ms", json!({}))
@@ -220,7 +267,7 @@ pub(super) fn link_imports(
             "oneiron.random.bytes" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (length,): (u32,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<Vec<u8>> = cx
                         .data_mut()
                         .call("oneiron.random.bytes", json!({"length":length}))
@@ -231,7 +278,7 @@ pub(super) fn link_imports(
             "vault.agents.put" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (input,): (AgentPutInput,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<AgentPutOutput> = (|| {
                         if input.definition.len() > cx.data().message_bytes {
                             return Err("agent_definition_over_budget".into());
@@ -253,7 +300,7 @@ pub(super) fn link_imports(
             "self.json.validate" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (schema, value): (String, String)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<bool> = (|| {
                         let schema: Value =
                             serde_json::from_str(&schema).map_err(|_| "invalid_schema")?;
@@ -269,7 +316,7 @@ pub(super) fn link_imports(
             "self.report_blocked" => root.func_wrap(
                 wit,
                 |mut cx: StoreContextMut<'_, State>, (category, detail): (String, String)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<BlockedOutput> = cx
                         .data_mut()
                         .call(
@@ -284,7 +331,7 @@ pub(super) fn link_imports(
             "ask" => root.func_wrap(
                 wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (PromptInput,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<WaitOutput> = cx
                         .data_mut()
                         .call(public, json!({"prompt":input.prompt}))
@@ -296,7 +343,7 @@ pub(super) fn link_imports(
             "self.speak" | "self.think" | "self.express" => root.func_wrap(
                 wit,
                 move |mut cx: StoreContextMut<'_, State>, (input,): (TextInput,)| {
-                    cx.data_mut().begin_call()?;
+                    cx.data_mut().begin_call();
                     let reply: Reply<SpeechOutput> = cx
                         .data_mut()
                         .call(public, json!({"text":input.text}))
