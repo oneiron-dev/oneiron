@@ -37,12 +37,12 @@ use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteA
 use tokio::sync::{broadcast, watch};
 
 use super::payer_funding::room_launch_funding;
-use super::resident_craft::{join_craft, snapshot_craft_scoped};
+use super::resident_craft::{place_craft, snapshot_craft_scoped};
 use super::{AiHandle, CHAT_ROLE};
 use crate::api::ai::chat::{
-    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, TurnCredential, after_turn,
-    begin_answer, chat_request, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint,
-    text_message, turn_generate_pre, witness_turn,
+    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, ReplyAssertionCollector,
+    TurnCredential, after_turn, begin_answer, chat_request, keepalive_every, live_fork_unavailable,
+    reuse_chat_breakpoint, text_message, turn_generate_pre, witness_turn,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
@@ -181,30 +181,28 @@ async fn act(
         .into_iter()
         .map(|text| text_message(LlmMessageRole::System, text))
         .collect();
-    // OF-490: the answering agent is shown its own craft after its
-    // instructions, read on one snapshot, and its action's attempt names what
-    // it was shown. Only the notes the requester's own read admits are shown
-    // (SCAN C009, FIX 6102), read as the action's context is: a queued
-    // action carries no credential, so it reads as its actor. A call that
-    // runs as it always did is stamped with today's craft before it is
-    // shown, and shows none whose stamp fails. Beside a reused prefix, which
-    // shows and stamps the craft it captured, today's call is stamped only
-    // if it answers.
+    // OF-490: the answering agent is shown its own craft, read on one
+    // snapshot, and its action's attempt names what it was shown. Only the
+    // notes the requester's own read admits are shown (SCAN C009, FIX 6102),
+    // read as the action's context is: a queued action carries no
+    // credential, so it reads as its actor. A call that runs as it always
+    // did is stamped with today's craft before it is shown, and shows none
+    // whose stamp fails. Beside a reused prefix, which shows and stamps the
+    // craft it captured, today's call is stamped only if it answers.
+    let lead = messages.len();
     let at = vault.now_recorded_at();
     let craft =
         blocking(|| snapshot_craft_scoped(vault, &vault.memory(actor, class), &context.agent, at));
-    let today_craft = if matches!(reuse, ChatReuse::Reused(_)) {
-        craft.map(|craft| {
-            join_craft(&mut messages, craft.message);
-            craft.entries
-        })
+    let (shown, today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
+        craft.map(|craft| (craft.message, craft.entries)).unzip()
     } else {
+        let mut shown = None;
         if let Some(craft) = craft
             && stamp_craft(vault, attempt, context.agent, &craft.entries)
         {
-            join_craft(&mut messages, craft.message);
+            shown = Some(craft.message);
         }
-        None
+        (shown, None)
     };
     for line in context.history {
         let role = if line.author == WitnessAuthor::User {
@@ -235,6 +233,13 @@ async fn act(
     };
     let answers = messages.len();
     messages.push(text_message(LlmMessageRole::User, context.user_text));
+    // FIX 6676: the craft joins once the restored history and the user's
+    // turn are in, where the session layout places it, and before any saved
+    // reply or continuation ask below: that ask is never the latest real
+    // user turn. A reused prefix is sent exactly as it was captured.
+    if let Some(craft) = shown {
+        place_craft(&mut messages, lead, craft);
+    }
     let admit = |messages| {
         ai.admit_role(vault, CHAT_ROLE, chat_request(&seat, messages))
             .map_err(|refusal| refusal.to_string())
@@ -366,6 +371,9 @@ async fn act(
             breakpoint,
             today,
             craft: None,
+            // Continue and Retry gather evidence of their own, never the
+            // earlier reply's (FIX 3416).
+            assertions: ReplyAssertionCollector::default(),
         },
     )
     .map_err(|refusal| match refusal {

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1149 facade rows, 4048 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1101.
+// UniFFI census: 1154 facade rows, 4069 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1106.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -21145,6 +21145,294 @@ pub struct SupportGrantRevokeAnswer {
     pub decision_ref: Option<String>,
     #[serde(rename = "delivered_recallable")]
     pub delivered_recallable: bool,
+}
+
+/// `oneiron::verbs::files::FilesSourceAttachRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceAttachRequest {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "include", default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    #[serde(rename = "exclude", default, skip_serializing_if = "Option::is_none")]
+    pub exclude: Option<Vec<String>>,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+}
+
+/// `oneiron::verbs::files::FilesWorldView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesWorldView {
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "machine")]
+    pub machine: String,
+}
+
+/// `oneiron::verbs::files::FilesSourceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "folder")]
+    pub folder: String,
+    #[serde(rename = "world")]
+    pub world: String,
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "include", default, skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
+    #[serde(rename = "exclude")]
+    pub exclude: Vec<String>,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "attached_at")]
+    pub attached_at: u64,
+    #[serde(
+        rename = "last_rescan_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_rescan_at: Option<u64>,
+    #[serde(rename = "files")]
+    pub files: u64,
+    #[serde(rename = "name_only")]
+    pub name_only: u64,
+    #[serde(rename = "retracted")]
+    pub retracted: u64,
+    #[serde(rename = "proposed")]
+    pub proposed: u64,
+}
+
+/// `oneiron::verbs::files::FilesRescanCounts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesRescanCounts {
+    #[serde(rename = "landed")]
+    pub landed: u64,
+    #[serde(rename = "links")]
+    pub links: u64,
+    #[serde(rename = "unchanged")]
+    pub unchanged: u64,
+    #[serde(rename = "superseded")]
+    pub superseded: u64,
+    #[serde(rename = "proposed")]
+    pub proposed: u64,
+    #[serde(rename = "retracted")]
+    pub retracted: u64,
+    #[serde(rename = "restored")]
+    pub restored: u64,
+    #[serde(rename = "removed")]
+    pub removed: u64,
+    #[serde(rename = "name_only")]
+    pub name_only: u64,
+    #[serde(rename = "failed")]
+    pub failed: u64,
+    #[serde(
+        rename = "first_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub first_error: Option<String>,
+}
+
+/// `oneiron::verbs::files::FilesLimitCrossed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesLimitCrossed {
+    #[serde(rename = "row")]
+    pub row: String,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "observed")]
+    pub observed: u64,
+}
+
+/// `oneiron::verbs::files::FilesRescanView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesRescanView {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "folder")]
+    pub folder: String,
+    #[serde(rename = "counts", default, skip_serializing_if = "Option::is_none")]
+    pub counts: Option<FilesRescanCounts>,
+    #[serde(rename = "error", default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(
+        rename = "limits_crossed",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub limits_crossed: Option<Vec<FilesLimitCrossed>>,
+}
+
+/// `oneiron::verbs::files::FilesSourceAttachAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceAttachAnswer {
+    #[serde(rename = "world")]
+    pub world: FilesWorldView,
+    #[serde(rename = "source")]
+    pub source: FilesSourceView,
+    #[serde(rename = "rescan")]
+    pub rescan: FilesRescanView,
+}
+
+/// `oneiron::verbs::files::FilesSourceRescanRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceRescanRequest {
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+/// `oneiron::verbs::files::FilesRescanAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesRescanAnswer {
+    #[serde(rename = "rescans")]
+    pub rescans: Vec<FilesRescanView>,
+}
+
+/// `oneiron::verbs::files::FilesSourceDetachRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceDetachRequest {
+    #[serde(rename = "source")]
+    pub source: String,
+}
+
+/// `oneiron::verbs::files::FilesSourceDetachAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceDetachAnswer {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "folder", default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+    #[serde(rename = "detached")]
+    pub detached: bool,
+}
+
+/// `oneiron::verbs::files::FilesSourceList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceList {
+    #[serde(rename = "world", default, skip_serializing_if = "Option::is_none")]
+    pub world: Option<FilesWorldView>,
+    #[serde(rename = "sources")]
+    pub sources: Vec<FilesSourceView>,
+}
+
+/// `oneiron::verbs::files::FilesSourceFilesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceFilesRequest {
+    #[serde(rename = "source")]
+    pub source: String,
+}
+
+/// `oneiron::note::files::source::FileHandle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FileHandle {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::verbs::files::FilesFileState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FilesFileState {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "retracted")]
+    Retracted,
+    #[serde(rename = "name_only")]
+    NameOnly,
+}
+
+/// `oneiron::note::files::metadata::NameOnlyReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NameOnlyReason {
+    #[serde(rename = "unsupported")]
+    Unsupported,
+    #[serde(rename = "not_text")]
+    NotText,
+    #[serde(rename = "unreadable")]
+    Unreadable,
+    #[serde(rename = "empty")]
+    Empty,
+    #[serde(rename = "linked")]
+    Linked,
+}
+
+/// `oneiron::note::files::metadata::FileReadiness`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FileReadiness {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "name_only")]
+    NameOnly {
+        #[serde(rename = "why")]
+        why: NameOnlyReason,
+    },
+}
+
+/// `oneiron::verbs::files::FilesFileView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesFileView {
+    #[serde(rename = "handle")]
+    pub handle: FileHandle,
+    #[serde(rename = "state")]
+    pub state: FilesFileState,
+    #[serde(rename = "readiness")]
+    pub readiness: FileReadiness,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(rename = "fork", default, skip_serializing_if = "Option::is_none")]
+    pub fork: Option<String>,
+    #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(rename = "bytes", default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
+    #[serde(
+        rename = "modified_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub modified_at: Option<u64>,
+    #[serde(
+        rename = "first_seen_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub first_seen_at: Option<u64>,
+    #[serde(
+        rename = "indexed_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub indexed_at: Option<u64>,
+}
+
+/// `oneiron::verbs::files::FilesSourceFiles`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSourceFiles {
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "files")]
+    pub files: Vec<FilesFileView>,
 }
 
 /// `oneiron::verbs::residence::ResidenceModeName`.
@@ -45294,6 +45582,26 @@ pub struct ModelRoleInvoke {
     pub input: ModelRoleInput,
 }
 
+/// `oneiron_model::llm::reply_assertions::ReplyAssertionRecord`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyAssertionRecord {
+    #[serde(rename = "entity_type")]
+    pub entity_type: u8,
+    #[serde(rename = "id")]
+    pub id: String,
+}
+
+/// `oneiron_model::llm::reply_assertions::ReplyAssertions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyAssertions {
+    #[serde(rename = "cited", default, skip_serializing_if = "Option::is_none")]
+    pub cited: Option<Vec<ReplyAssertionRecord>>,
+    #[serde(rename = "created", default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<Vec<ReplyAssertionRecord>>,
+}
+
 /// `oneiron_model::llm::protocol::LlmResponse`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LlmResponse {
@@ -45303,6 +45611,12 @@ pub struct LlmResponse {
     pub usage: LlmUsage,
     #[serde(rename = "finish_reason")]
     pub finish_reason: FinishReason,
+    #[serde(
+        rename = "reply_assertions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reply_assertions: Option<ReplyAssertions>,
 }
 
 /// `oneiron::memory::extraction::types::NerSpan`.
@@ -46444,6 +46758,12 @@ pub enum LlmStreamEvent {
         usage: LlmUsage,
         #[serde(rename = "finish_reason")]
         finish_reason: FinishReason,
+        #[serde(
+            rename = "reply_assertions",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        reply_assertions: Option<ReplyAssertions>,
     },
 }
 
@@ -49213,6 +49533,8 @@ pub enum ArtifactAskStanding {
     },
     #[serde(rename = "closed")]
     Closed,
+    #[serde(rename = "failed")]
+    Failed,
 }
 
 /// `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord`.
@@ -49239,6 +49561,12 @@ pub struct ArtifactAskRecord {
     pub ask_id: Option<String>,
     #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
+    #[serde(
+        rename = "parent_proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_proposal_ref: Option<String>,
 }
 
 /// `oneiron::receipt::questions::QuestionAnswer`.
@@ -53754,6 +54082,10 @@ pub struct ChartSeries {
     pub family: Option<ChartKind>,
     #[serde(rename = "x", default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<f64>>>,
+    #[serde(rename = "x_labels", default, skip_serializing_if = "Option::is_none")]
+    pub x_labels: Option<Vec<Option<String>>>,
+    #[serde(rename = "plot", default, skip_serializing_if = "Option::is_none")]
+    pub plot: Option<u32>,
     #[serde(
         rename = "categories",
         default,

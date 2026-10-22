@@ -7,7 +7,9 @@ use super::*;
 /// The pointer of the first record `assertions` names that `lane` does not
 /// read in `txn`, cited before created: a malformed id, a missing row and an
 /// unreadable one are one answer. Every id is judged in the one snapshot.
-fn unread_assertion_in(
+/// A model stream's continuation terminal judges its own through it too
+/// (FIX 3416).
+pub(in crate::memory::witness) fn unread_assertion_in(
     lane: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     assertions: &WitnessAssertions,

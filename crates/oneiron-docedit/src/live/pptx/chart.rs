@@ -108,9 +108,10 @@ pub enum ChartSource {
 }
 
 /// One series: its identity, its name, one value per category (or, in a
-/// scatter or bubble plot, per x value), its plot family in a combo chart,
-/// a scatter or bubble series' x values, a bubble series' sizes, and the
-/// categories it draws when they are its own.
+/// scatter or bubble plot, per x value), its plot family in a combo chart
+/// and which plot of that family draws it, a scatter or bubble series' x
+/// values (numbers, or text it draws by index), a bubble series' sizes, and
+/// the categories it draws when they are its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChartSeries {
     /// Its identity within its chart. A series written with none, as a new
@@ -127,6 +128,18 @@ pub struct ChartSeries {
     /// A scatter or bubble series' x values, one per value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<serde_json::Number>>>,
+    /// A scatter or bubble series' x values when they are text (a
+    /// `c:strRef` or `c:strLit` x slot), one label per value: it draws its
+    /// points by index, 1 to n, as PowerPoint does, and a rewrite writes
+    /// the labels back (FIX 9277). It holds no numeric `x` then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_labels: Option<Vec<Option<String>>>,
+    /// In a chart holding more than one plot of its family, the nth of them
+    /// (0 the first) that draws it: each plot keeps its own series
+    /// (FIX 9377, 9278). The reader and settlement set it; `None` in a
+    /// chart with one plot of its family.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plot: Option<u32>,
     /// The categories it draws instead of the chart's: `None` draws the
     /// chart's, an empty set draws its points by index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -379,12 +392,17 @@ pub(super) fn check(payload: &NodePayload) -> Result<(), LiveError> {
     for line in series {
         let set = effective_categories(categories, line);
         if !draws_categories(*family, line) {
-            if line.x.as_ref().is_some_and(|x| x.len() < line.values.len()) {
+            if line.x.as_ref().is_some_and(|x| x.len() < line.values.len())
+                || line
+                    .x_labels
+                    .as_ref()
+                    .is_some_and(|x| x.len() < line.values.len())
+            {
                 return Err(LiveError::Invalid(
                     "a scatter series holds more values than x values",
                 ));
             }
-        } else if line.x.is_some() {
+        } else if line.x.is_some() || line.x_labels.is_some() {
             return Err(LiveError::Invalid("only a scatter series has x values"));
         } else if !set.is_empty() && line.values.len() > set.len() {
             return Err(LiveError::Invalid(
@@ -523,7 +541,14 @@ pub(crate) fn conflicts(
                         SeriesField::Family,
                         competing(&was.family, &head.family, &proposal.family),
                     ),
-                    (SeriesField::X, competing(&was.x, &head.x, &proposal.x)),
+                    (
+                        SeriesField::X,
+                        competing(
+                            &(&was.x, &was.x_labels),
+                            &(&head.x, &head.x_labels),
+                            &(&proposal.x, &proposal.x_labels),
+                        ),
+                    ),
                     (
                         SeriesField::BubbleSize,
                         competing(&was.bubble_size, &head.bubble_size, &proposal.bubble_size),
