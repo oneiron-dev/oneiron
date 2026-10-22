@@ -22,9 +22,9 @@ use serde::Serialize;
 
 use super::ResponseStamps;
 use crate::entity_id::EntityId;
-use crate::store::{ResponseCarriage, ResponseScan};
 use crate::llm::media::{MediaJobState, MediaPart, MediaRequest};
 use crate::llm::{FatalLlmError, LlmError};
+use crate::store::{ResponseCarriage, ResponseScan};
 
 const REQUEST: &str = "request";
 const ENDED: &str = "ended";
@@ -203,12 +203,9 @@ pub(crate) fn media_job_put_fenced_in_txn(
             "a media job put outside its rows",
         ));
     }
-    let fenced = dbs
-        .side_sync_state()?
-        .get(wtxn, key)?
-        .is_some_and(|kept| {
-            crate::store::is_opaque_erased(&kept) || job_map(&kept).is_some_and(|e| erased(&e))
-        });
+    let fenced = dbs.side_sync_state()?.get(wtxn, key)?.is_some_and(|kept| {
+        crate::store::is_opaque_erased(&kept) || job_map(&kept).is_some_and(|e| erased(&e))
+    });
     if fenced {
         return Ok(false);
     }

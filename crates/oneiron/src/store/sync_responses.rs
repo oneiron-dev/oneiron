@@ -32,11 +32,11 @@ mod media;
 
 use serde::{Deserialize, Serialize};
 
+use self::media::media_job_carriage;
 pub use self::media::media_job_erased_state;
 #[cfg(feature = "sync")]
 pub(crate) use self::media::media_job_put_fenced_in_txn;
 pub(crate) use self::media::{media_job_owners, media_job_scan};
-use self::media::media_job_carriage;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDbs};

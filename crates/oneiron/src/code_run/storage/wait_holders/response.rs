@@ -49,7 +49,10 @@ pub(crate) fn wait_reply_scan(value: &[u8]) -> ResponseScan {
     if reply.erased {
         return ResponseScan::NotResponse;
     }
-    match reply.into_erased().and_then(|erased| DELIVERIES.encode_value(&erased)) {
+    match reply
+        .into_erased()
+        .and_then(|erased| DELIVERIES.encode_value(&erased))
+    {
         Ok(stub) => ResponseScan::Decoded(ResponseCarriage::whole(stub)),
         Err(_) => ResponseScan::opaque_row(),
     }
@@ -148,8 +151,6 @@ pub(crate) fn settled_reply_held_in_txn(
         .get_bytes(dbs, txn, &(SETTLED_TAG, wait))?
         .is_some_and(|bytes| {
             !is_opaque_erased(&bytes)
-                && !SETTLED
-                    .decode_value(&bytes)
-                    .is_ok_and(|reply| reply.erased)
+                && !SETTLED.decode_value(&bytes).is_ok_and(|reply| reply.erased)
         }))
 }
