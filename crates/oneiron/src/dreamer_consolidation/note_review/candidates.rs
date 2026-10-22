@@ -152,11 +152,12 @@ pub(super) fn note_candidate(
         // The Dreamer's reading of a NOTE is its own inference, whoever
         // wrote the NOTE.
         evidence_meet: ClaimSource::Generated,
+        // A claim's times are Unix seconds (FIX 8695).
         occurred: TimeRange {
-            start: run.now_ms,
-            end: run.now_ms,
+            start: run.now_ms / 1_000,
+            end: run.now_ms / 1_000,
         },
-        learned_at: run.now_ms,
+        learned_at: run.now_ms / 1_000,
         decisions: Vec::new(),
     };
     Ok((promotion, cited_ranges))

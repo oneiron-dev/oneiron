@@ -4,6 +4,7 @@
 //! verdicts read through `ConsolidationExecutor::decide`, its adapter; a sieve rung reads
 //! its span's own evidence, never a branch's write rights.
 
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use super::{VERDICT_CEILING, holds, went_up};
@@ -17,7 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::decision::{
     AskTo, DecisionQuestion, DecisionRung, DecisionWireLabels, EvidenceVersion, GeneratedDecisions,
-    GeneratedRung, GeneratedStep, HumanAskReason, ProviderPin, Reversibility,
+    GeneratedRung, GeneratedStep, HumanAskReason, ProviderPin, Reversibility, TypedDecision,
 };
 use crate::llm::{BudgetGuard, DurableStepContext, DurableStepResult, LlmRequest, LlmUsage};
 use crate::retrieval_depth::RetrievalDeadline;
@@ -161,8 +162,22 @@ impl Decider<'_> {
                 );
             }
         };
-        let mut kept = Vec::with_capacity(decisions.len());
-        for ((question, mut decision), asked) in questions.iter().zip(decisions).zip(asked) {
+        // Each decision goes to the question its receipt names, never to a
+        // place in the pack (FIX 9416): the read takes each answer under its
+        // question's own label, and this keeps it with that question.
+        let mut by_question: BTreeMap<EntityId, TypedDecision> = BTreeMap::new();
+        for decision in decisions {
+            by_question
+                .entry(decision.receipt.question)
+                .or_insert(decision);
+        }
+        let mut kept = Vec::with_capacity(questions.len());
+        for (question, asked) in questions.iter().zip(asked) {
+            let Some(mut decision) = by_question.remove(&question.id) else {
+                return Err(
+                    invalid_consolidation("a decision read left a question unanswered").into(),
+                );
+            };
             decision
                 .receipt
                 .evidence_versions
