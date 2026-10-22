@@ -1748,6 +1748,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/follower_attempt/output.rs` | src | s | 4 crate-vis | — | The follower's reply and receipts (FIX 7510): a suffix's batch readings read back through its call's labels… |
 | `src/dreamer_consolidation/follower_attempt/request.rs` | src | s | 5 crate-vis | — | The follower's requests (FIX 7510): a suffix's call over the retained prefix, and a keyframe's fold call |
 | `src/dreamer_consolidation/gap.rs` | src | m | 2 struct · 2 enum · 4 fn · 7 crate-vis | GapQueueDelta, ReflectionGap, ReflectionGapKind, ReflectionGapScan | — |
+| `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 4 struct · 2 fn | KeptAnswer, KeptAsk, KeptRole, KeptRoute | The ask a kept decision went up as, kept actor-free (FIX 4591) |
 | `src/dreamer_consolidation/mod.rs` | src | s | 4 mod · 24 re-export · 26 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
@@ -1818,6 +1819,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/strength.rs` | src | m | 2 struct · 3 fn · 3 crate-vis | ConsolidationStrengthPolicy, ConsolidationStrengthSnapshot | Consolidation strength observations and an archive-only lifecycle (OF-216) |
 | `src/dreamer_consolidation/support.rs` | src | s | 12 const · 30 crate-vis | — | — |
 | `src/dreamer_consolidation/task_realize.rs` | src | m | 1 struct · 1 fn · 1 const · 2 crate-vis | TaskRealizeModel | A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer |
+| `src/dreamer_consolidation/task_realize/landing.rs` | src | s | 2 crate-vis | — | A realization's answer and its row's result in one write (FIX 1334) |
 | `src/dreamer_consolidation/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/dreamer_consolidation/tests/failure_rules.rs` | test | m | — | — | A resident-authored policy changes what the real executor can publish on fatal fallback |
 | `src/dreamer_consolidation/tests/imported_review.rs` | test | m | — | — | Claims from imported words wait in the owner's import review (ARCH-0027) |
@@ -2040,6 +2042,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/program.rs` | src | m | 3 struct · 2 trait · 1 fn | TurnProgramExecutor, TurnProgramHost, TurnProgramReactor, TurnProgramRequest, TurnProgramRuntime | The Dreamer's turn program runtime (DOOR-141 PR2 and PR3b, FIX 4382) |
 | `src/dreamer_wake/projector.rs` | src | m | 1 struct · 2 fn · 8 crate-vis | ProjectorPolicy | The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the… |
 | `src/dreamer_wake/recipe.rs` | src | m | 2 struct · 1 trait | WeaveRecipeDraft, WeaveRecipeExecutor, WeaveRecipeRuntime | Host-interpreted workflow skill at the Dreamer wake boundary |
+| `src/dreamer_wake/recipe/landing.rs` | src | s | 2 crate-vis | — | Where a recipe's output lands (FIX 8725, FIX 8726) |
 | `src/dreamer_wake/recipe/tests.rs` | test | m | — | — | Recipe read, trust and commit-to-settlement recovery regressions |
 | `src/dreamer_wake/recipe_wake.rs` | src | s | 1 crate-vis | — | The wake policy's recipe lane (ARCH-0026 #wake) |
 | `src/dreamer_wake/recipes.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | WakeRecipePolicy | Row-backed spending for the three wake recipes |
@@ -3314,7 +3317,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/note/title_index.rs` | src | s | 7 crate-vis | — | Atomic title-reservation replacement for authoritative NOTE document sets |
 | `src/note/title_index/checkpoint.rs` | src | s | 4 crate-vis | — | The NOTE title rows (KS7-2, FIX 6075), under the NOTE each names |
 | `src/note/tombstone_review.rs` | src | s | 1 struct · 5 crate-vis | NoteTombstoneProposal | The NOTE tombstone review (ARCH-0032 stage 3, OF-073; CALLS "FIX 2419 NOTE tombstone review") |
-| `src/note/verbs.rs` | src | m | 6 fn · 2 crate-vis | — | Actor-bound NOTE creation, edit and source-entity bridge |
+| `src/note/verbs.rs` | src | m | 6 fn · 3 crate-vis | — | Actor-bound NOTE creation, edit and source-entity bridge |
 | `src/note/write_gate.rs` | src | s | 4 crate-vis | — | Stage 1 of the NOTE write gate (ARCH-0032 #write-gate): the cheap checks a NOTE write meets before it lands… |
 | `src/off_record/anonymous_chat.rs` | src | s | 2 struct · 3 enum · 1 trait · 4 fn | AnonymousChatBlockReason, AnonymousChatResponder, AnonymousChatSession, AnonymousChatSkippedCheck, AnonymousChatTarget, AnonymousChatTurn | Stateless, memory-free chat beside (not inside) agent chat and off-record promote |
 | `src/off_record/lifecycle/creator.rs` | src | s | 1 struct · 6 fn | OffRecordCreator | Who manages a stretch entered alone (WILL-PLAN L13 row 03, Engine ruling 2026-10-19): the person or agent… |
