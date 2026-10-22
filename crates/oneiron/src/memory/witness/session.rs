@@ -433,6 +433,7 @@ impl Memory<'_> {
             learned_at: plan.learned_at,
             occurred: plan.occurred,
             op,
+            source_run: None,
         };
         let put = |id: &EntityId, entity_type: u8, data: &[u8]| BatchOp::Put {
             id: *id,
