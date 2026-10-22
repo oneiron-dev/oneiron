@@ -160,19 +160,44 @@ impl NoteWorlds {
     }
 
     /// Whether a read under every world ceiling in `ceilings` reads it at
-    /// all: a NOTE in base reality alone always, as before it held any edge;
-    /// one in other worlds where the ceilings leave worlds whole or hold one
+    /// all: a NOTE in base reality, alone or among others, always, as a base
+    /// NOTE is read today, so gaining a world never loses it a reader; one
+    /// only in other worlds where the ceilings leave worlds whole or hold one
     /// of them (`NOTE_MULTI_WORLD_POSITION`); one in no single world only
     /// where they leave worlds whole (`NOTE_WORLD_LOOKUP_FAULT`).
     pub(crate) fn readable_at(&self, ceilings: &[&ScopeAxis<ScopeId>]) -> bool {
         let base = ScopeId(crate::claim::base_world_id());
         let ceiling = met(ceilings);
         match self {
-            Self::In(worlds) if worlds.len() == 1 && worlds.contains(&base) => true,
+            Self::In(worlds) if worlds.contains(&base) => true,
             _ if matches!(ceiling, ScopeAxis::All) => true,
             _ => self.held(&ceiling).is_some(),
         }
     }
+}
+
+/// The worlds a run's read ledger notes for the stored row `id` of `kind`,
+/// with body `data`, base reality by its own id: a NOTE in base reality as
+/// base, as before FIX-LIST 9433; one only in other worlds as every world it
+/// is in; any other row where [`super::record_world_in`] places it. `None`
+/// where the row proves no world, a NOTE whose edges did not read among them.
+pub(crate) fn served_worlds_in(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    data: &[u8],
+) -> Result<Option<BTreeSet<EntityId>>> {
+    let base = ScopeId(crate::claim::base_world_id());
+    if kind != ENTITY_TYPE_NOTE {
+        return Ok(super::record_world_in(store, txn, id, kind, data)?
+            .map(|world| BTreeSet::from([world.unwrap_or(base.0)])));
+    }
+    Ok(match note_worlds_in(store, txn, id) {
+        NoteWorlds::In(worlds) if worlds.contains(&base) => Some(BTreeSet::from([base.0])),
+        NoteWorlds::In(worlds) => Some(worlds.into_iter().map(|world| world.0).collect()),
+        NoteWorlds::NoSingleWorld => None,
+    })
 }
 
 /// `world` as a world read reports it: base reality is `None`.
