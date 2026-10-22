@@ -377,6 +377,8 @@ impl Vault {
         self.finish_body_custody_retirements_after_commit();
         self.finish_known_history_retirements_after_commit();
         self.finish_world_pad_retirements_after_commit();
+        // KS-6 part 2: an erased credential's discovery and keys.
+        self.finish_credential_retirements_after_commit();
     }
 
     /// Post-commit door for an erase that staged a world's pad retirements
