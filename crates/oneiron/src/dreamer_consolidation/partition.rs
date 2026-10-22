@@ -1,3 +1,7 @@
+//! Partition planning: cuts dirty turns into consolidation partitions.
+//! Entry: `ConsolidationPartitionPlan`, with `plan_partitions`.
+//! Definitions are local; the payload codec lives in the payload child.
+
 use std::collections::BTreeMap;
 
 use rmpv::Value;

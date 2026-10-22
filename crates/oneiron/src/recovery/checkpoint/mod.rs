@@ -38,6 +38,7 @@ mod side_pads;
 mod snapshot;
 mod tiers;
 mod watermark;
+mod window_pad_refs;
 mod write_budget;
 mod write_estimate;
 use crate::side_table::{self, Named, SideTable};

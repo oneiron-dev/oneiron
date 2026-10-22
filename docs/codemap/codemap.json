@@ -19552,7 +19552,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/memory_pins.rs",
@@ -19570,7 +19570,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -19888,7 +19888,7 @@
      "path": "src/context_board/room.rs",
      "purpose": "Stateless ROOM projection and the one roster-to-Scope function",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 2,
       "fn": 3,
       "struct": 3,
@@ -19911,7 +19911,8 @@
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
       "crate-vis": 16,
-      "fn": 5
+      "fn": 3,
+      "re-export": 1
      }
     },
     {
@@ -19935,13 +19936,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RoomSectionPage"
+     ],
+     "path": "src/context_board/room_verbs/projection.rs",
+     "purpose": "ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster by actor id, then the rules the…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/context_board/room_verbs/thread_readers.rs",
      "purpose": "A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -19973,10 +19987,10 @@
       "ScratchpadRecallLine"
      ],
      "path": "src/context_board/scratchpad.rs",
-     "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next…",
+     "purpose": "The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends…",
      "surface": {
       "const": 2,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 5,
       "struct": 4
@@ -45427,7 +45441,7 @@
      "path": "src/office_body/resources.rs",
      "purpose": "The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3,
       "trait": 1
      }
@@ -52187,7 +52201,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CredentialRestoreNote"
@@ -52753,6 +52767,16 @@
       "re-export": 1,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/window_pad_refs.rs",
+     "purpose": "A window's persisted snapshot in a physical image (KS-5, FIX 7107): a `sync_state` `d:w:` row goes with its…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -55086,7 +55110,7 @@
      "path": "src/secret_custody/control/input.rs",
      "purpose": "The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 25
      }
     },
     {
@@ -55107,6 +55131,16 @@
      "purpose": "An input whose body passes one envelope's plaintext bound (FIX 5521; Rule 5: split, never refuse)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/control/input/witness.rs",
+     "purpose": "A relayed custody input's witness in numbered parts (FIX 8088)",
+     "surface": {
+      "crate-vis": 21
      }
     },
     {
@@ -55447,7 +55481,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -60729,7 +60763,27 @@
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/credential_custody/erase.rs",
+     "purpose": "An erased credential stays erased (KS-6 part 2, FIX-LIST 7403, 5687): one terminal fence per credential id…",
+     "surface": {
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/credential_custody/fences.rs",
+     "purpose": "What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -60781,7 +60835,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -63246,9 +63300,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/custody/checkpoint.rs",
-     "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition and a protected input are secret custody's…",
+     "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition, a protected input and a witness part (FIX…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/custody/witness.rs",
+     "purpose": "A custody input's witness parts on the window plane (FIX 8088): a witness past one row rides beside its…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -65136,7 +65200,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "fn": 6,
       "mod": 1,
       "re-export": 9,
@@ -65148,14 +65212,17 @@
      "kind": "src",
      "notable": [
       "PreparedWindowPads",
-      "WindowPadPartRepair"
+      "WindowPadPartRepair",
+      "WindowPadReceiptWitness"
      ],
      "path": "src/sync/window/pad_custody.rs",
      "purpose": "A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'…",
      "surface": {
-      "const": 1,
-      "enum": 1,
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 2,
       "fn": 8,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -65167,6 +65234,17 @@
      "purpose": "A window blob's pad references as today's carriers again (KS-5, FIX 7107, KEEP TODAY): what a send that may…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/window/pad_custody/persist.rs",
+     "purpose": "A window blob as it persists here (KS-5, FIX 7107): its pad rows as their bare references, the form a `u:`…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -75399,7 +75477,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76092,7 +76170,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 92,
+     "files": 93,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -76183,7 +76261,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76337,7 +76415,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 146,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76365,7 +76443,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 256,
+     "files": 258,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76570,7 +76648,7 @@
    },
    "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4999,
+   "source_files": 5006,
    "test_files": 902
   },
   "oneiron-android": {
@@ -82661,6 +82739,7 @@
       "Done",
       "Editability",
       "ErrorCode",
+      "GraphicSettings",
       "InputInfo",
       "KeptBriefArgs",
       "Op",
@@ -82689,8 +82768,8 @@
      "surface": {
       "const": 6,
       "enum": 7,
-      "fn": 12,
-      "struct": 39,
+      "fn": 14,
+      "struct": 40,
       "trait": 1
      }
     },
@@ -83479,8 +83558,9 @@
      "path": "src/lib.rs",
      "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
-      "fn": 11,
+      "fn": 15,
       "mod": 16,
       "re-export": 5,
       "struct": 1
@@ -84451,6 +84531,8 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CapacityHit",
+      "Dimension",
       "Hold",
       "MeasuringPort",
       "ResourcePort",
@@ -84461,9 +84543,9 @@
      "purpose": "The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX…",
      "surface": {
       "const": 1,
-      "enum": 1,
-      "fn": 16,
-      "struct": 3,
+      "enum": 2,
+      "fn": 22,
+      "struct": 4,
       "trait": 1
      }
     },
@@ -84476,9 +84558,9 @@
      "path": "src/retained_opc/mod.rs",
      "purpose": "Bounded, retained OPC archives",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "re-export": 2,
       "type": 1
      }
@@ -84524,6 +84606,16 @@
       "crate-vis": 7,
       "fn": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/retained_opc/package/zip32.rs",
+     "purpose": "Classic ZIP's little-endian record fields, and the compressed length a part takes, for the package's reader…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -84917,7 +85009,7 @@
      "purpose": "The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX…"
     },
     "retained_opc": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -84961,7 +85053,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 156,
+   "source_files": 157,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -92645,7 +92737,7 @@
      "path": "src/api/context_board/board.rs",
      "purpose": "The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {

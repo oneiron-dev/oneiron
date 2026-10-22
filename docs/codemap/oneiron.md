@@ -1536,8 +1536,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/memories.rs` | src | s | 5 struct · 3 enum · 8 fn · 1 const | CompanionAssembly, MemoriesBudget, MemoriesCursor, MemoriesSection, MemoryRow, MemorySlot, MemorySource, MemoryTier | MEMORIES section — what retrieval pulled: typed rows, the slot budget, the companion echo, and the… |
 | `src/context_board/memories_frame.rs` | src | s | 2 fn · 2 crate-vis | — | Connects typed MEMORIES projections to the shared board frame and shed ladder |
 | `src/context_board/memories_projection.rs` | src | m | 2 fn · 5 crate-vis | — | MEMORIES projection with source labels, world fences, and one shared render budget |
-| `src/context_board/memory_pins.rs` | src | s | 3 fn · 2 crate-vis | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
-| `src/context_board/mod.rs` | src | s | 24 re-export · 9 crate-vis | — | Typed Context Board render projections |
+| `src/context_board/memory_pins.rs` | src | m | 3 fn · 2 crate-vis | — | Explicit memory pins bypass query relevance and render shedding, never read authority |
+| `src/context_board/mod.rs` | src | s | 25 re-export · 9 crate-vis | — | Typed Context Board render projections |
 | `src/context_board/notifications.rs` | src | s | 3 fn · 2 crate-vis | — | Who a pending notification is delivered to: the recipient markers its stored body carries, read one way… |
 | `src/context_board/observations.rs` | src | s | 4 fn | — | Read-time lifecycle observations over the same scoped bytes served to a session |
 | `src/context_board/observations_tests.rs` | test | s | — | — | Real ledger lifecycle and skill-body observations for the session board |
@@ -1559,15 +1559,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/context_board/plugin/validate.rs` | src | s | 2 fn · 1 const · 3 crate-vis | — | Bounded-shape checks and the two-phase validation gate |
 | `src/context_board/read_set.rs` | src | m | 6 struct · 4 enum · 16 fn · 8 crate-vis | ChangedDelivery, ChangedEvent, ChangedLine, ConnectorChange, ConnectorMount, ProposalChange, ProposalReason, ServedLifecycle +2 | Session read-set tracking, separate from the stateless board renderer |
 | `src/context_board/readers.rs` | src | s | 1 fn · 1 crate-vis | — | The READERS board block (ARCH-0067 #inbox-section, ARCH-0032 #private-reads): an agent sees who may read its… |
-| `src/context_board/room.rs` | src | m | 3 struct · 2 enum · 1 trait · 3 fn · 3 crate-vis | RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty | Stateless ROOM projection and the one roster-to-Scope function |
+| `src/context_board/room.rs` | src | m | 3 struct · 2 enum · 1 trait · 3 fn · 4 crate-vis | RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty | Stateless ROOM projection and the one roster-to-Scope function |
 | `src/context_board/room/tests.rs` | test | L | — | — | ARCH-0067 §8 acceptance: one roster-to-Scope function, and every read a room turn makes runs inside the… |
-| `src/context_board/room_verbs.rs` | src | m | 5 fn · 16 crate-vis | — | The rooms.* facade family delegates to existing reads, witness and claim gates |
+| `src/context_board/room_verbs.rs` | src | m | 3 fn · 1 re-export · 16 crate-vis | — | The rooms.* facade family delegates to existing reads, witness and claim gates |
 | `src/context_board/room_verbs/ceiling.rs` | src | s | 2 crate-vis | — | The one ceiling construction a room and each of its threads share (ARCH-0067 §8, OF-529, FIX 1599), run… |
 | `src/context_board/room_verbs/live_audience.rs` | src | s | 2 crate-vis | — | What a room's live speakers add to its ceiling (FIX 1388/1389): their entry refs as audience terms beside… |
-| `src/context_board/room_verbs/thread_readers.rs` | src | s | 3 crate-vis | — | A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that… |
+| `src/context_board/room_verbs/projection.rs` | src | m | 1 struct · 4 fn | RoomSectionPage | ROOM as one ordered stream of rows (FIX 9746, 9747): the room's roster by actor id, then the rules the… |
+| `src/context_board/room_verbs/thread_readers.rs` | src | s | 4 crate-vis | — | A thread's own reader and ceiling (OF-529, FIX 2951): who reads one thread of a room, and the ceiling that… |
 | `src/context_board/room_verbs/upkeep_posture.rs` | src | s | 1 crate-vis | — | The posture a room host's upkeep voice speaks under (ARCH-0067 §8, OF-417): the mode… |
 | `src/context_board/room_verbs_tests.rs` | test | s | — | — | Room render reads: the caller's scoped read and every present peer's |
-| `src/context_board/scratchpad.rs` | src | m | 4 struct · 1 enum · 5 fn · 2 const · 7 crate-vis | ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine | The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed at its end and rotated on the next… |
+| `src/context_board/scratchpad.rs` | src | m | 4 struct · 1 enum · 5 fn · 2 const · 8 crate-vis | ScratchpadAppendReceipt, ScratchpadBoard, ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine | The one session scratchpad (OF-548): a `scratchpad` NOTE per run, sealed when its own session ends… |
 | `src/context_board/self_brief.rs` | src | m | 8 struct · 2 enum · 12 fn | BriefPlacement, BriefSkillRow, ClassLimit, ClassVerdict, CommunicationLimits, PlacedSelfBrief, SelfBrief, SelfBriefInput +2 | Typed turn-one self projection shared by the prefix and mid-run describe call |
 | `src/context_board/stream/events.rs` | src | s | 3 struct · 4 enum · 3 fn · 1 const | BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError, SubscriptionReceipt, SubscriptionScope | Board events and their subscription/delivery classification |
 | `src/context_board/stream/frames.rs` | src | s | 6 struct · 5 enum · 6 fn | AppliedStreamState, BoardRenderMode, BoardSnapshot, BoardStreamFrame, CarrierCoalesceBuffer, CoalesceOutcome, DeltaRow, FrameApplyOutcome +3 | Board stream frames, snapshots and carrier coalescing |
@@ -3524,7 +3525,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/office_body/pptx/preview.rs` | src | m | 3 struct · 1 fn | DeckPreview, DeckPreviewRequest, DeckPreviewSlide | `vault.artifacts.body.deck.preview`: the asked slides of a deck's head, or of an open fork's merge candidate… |
 | `src/office_body/pptx/verbs.rs` | src | m | 9 struct · 5 fn | DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest, DeckGateView, DeckNodeView, DeckOracleRequest +1 | `vault.artifacts.body.deck.*`: the deck doors the generic body verbs do not cover, as agent verbs (FIX 2284) |
 | `src/office_body/records.rs` | src | s | 8 struct · 2 enum · 1 fn · 6 crate-vis | ForkState, OfficeBodyEdit, OfficeBodyExport, OfficeBodyExportRecord, OfficeBodyExportRequest, OfficeBodyFork, OfficeBodyHead, OfficeBodyKind +2 | Office body records and side-table bindings |
-| `src/office_body/resources.rs` | src | s | 1 trait · 3 fn · 2 crate-vis | DocumentMemory | The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
+| `src/office_body/resources.rs` | src | s | 1 trait · 3 fn · 3 crate-vis | DocumentMemory | The host's document memory (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `src/office_body/support.rs` | src | s | 18 crate-vis | — | Shared office body storage, validation and projection helpers |
 | `src/office_body/verbs.rs` | src | m | 21 struct · 3 enum · 14 fn · 5 crate-vis | DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap, OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest +16 | `vault.artifacts.body.*`: the live office body doors as agent verbs (ARCH-0075, "An agent authors through… |
 | `src/office_body/xlsx.rs` | src | s | 5 struct · 1 enum · 4 crate-vis | BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp | Live XLSX body model and module seam |
@@ -4087,7 +4088,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/body_bind.rs` | src | s | 1 crate-vis | — | The binding pass a checkpoint runs before its snapshot (KS-2A, FIX 5683 part A): every body its rows will… |
 | `src/recovery/checkpoint/carried_bodies.rs` | src | m | 17 crate-vis | — | The bodies a checkpoint carries beside its rows (OF-597, FIX 3677, FIX 5348; KS-2A, FIX 5683 part A) |
 | `src/recovery/checkpoint/commitment.rs` | src | m | 1 fn · 1 re-export · 19 crate-vis | — | Hash-signed checkpoints (OF-570 (e)) |
-| `src/recovery/checkpoint/credential_custody.rs` | src | s | 1 enum · 4 crate-vis | CredentialRestoreNote | A restore's credential values (KS-6 part 2, FIX-LIST 5687, 7403; CALLS `KS-6 required restore set`, `KS-6… |
+| `src/recovery/checkpoint/credential_custody.rs` | src | m | 1 enum · 4 crate-vis | CredentialRestoreNote | A restore's credential values (KS-6 part 2, FIX-LIST 5687, 7403; CALLS `KS-6 required restore set`, `KS-6… |
 | `src/recovery/checkpoint/custody_head.rs` | src | m | 3 struct · 18 fn · 1 const · 1 re-export · 6 crate-vis | CustodyAnchorRoot, CustodyOutbox, CustodyRecovery | Custody heads at the vault's surface (KS-4A1/KS-4A2, FIX 5685): publishing a vault's exterior key custody to… |
 | `src/recovery/checkpoint/custody_head/pad_worlds.rs` | src | s | 1 crate-vis | — | Each world's pad recipients for a custody head (FIX 9178): the world compartments a head seals are wrapped… |
 | `src/recovery/checkpoint/custody_head/status.rs` | src | m | 5 struct · 2 fn · 7 const · 4 crate-vis | CustodyPendingStep, CustodyRetirement, CustodyStatus, CustodyTargetState, DeclaredTarget | The status names of a vault's custody (KS-4A1/KS-4A2, FIX 5685), on the owner's status read (`doctor`, `GET… |
@@ -4139,6 +4140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/tests.rs` | test | XL | — | — | — |
 | `src/recovery/checkpoint/tiers.rs` | src | s | 1 enum · 1 fn · 1 crate-vis | StorageTier | Snapshot classification |
 | `src/recovery/checkpoint/watermark.rs` | src | m | 3 struct · 13 fn · 1 type · 1 const · 1 re-export · 7 crate-vis | BackupMarker, BackupSnapshotReceipt, BackupWatermark | The backup watermark: where a vault stood when a backup was taken, and where it stands now, so a host backs… |
+| `src/recovery/checkpoint/window_pad_refs.rs` | src | s | 3 crate-vis | — | A window's persisted snapshot in a physical image (KS-5, FIX 7107): a `sync_state` `d:w:` row goes with its… |
 | `src/recovery/checkpoint/write_budget.rs` | src | s | 1 struct · 1 trait · 1 fn · 10 crate-vis | AtWriteFloor, RecoveryWriteBudget | The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX… |
 | `src/recovery/checkpoint/write_estimate.rs` | src | s | 4 crate-vis | — | The bound a restore's copy claims ahead for what it writes past its bodies and rows (FIX 5613), worked out… |
 | `src/recovery/document.rs` | src | m | 3 struct · 1 fn · 15 crate-vis | CanonicalDocument, CanonicalHead, CanonicalHeadMove | Canonical entity-local documents and their bound workflows |
@@ -4320,9 +4322,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/control.rs` | src | m | 4 struct · 2 enum · 4 fn · 2 re-export · 13 crate-vis | CustodyDelivery, CustodyKeptHere, CustodyPlan, SecretCustodyWork, SecretRevoked, SecretRotated | Custody control on the shared owner-work request (WILL L04 row 04): every change to a portable secret's… |
 | `src/secret_custody/control/doors.rs` | src | m | 3 struct · 3 fn | CustodyCandidate, SealedCustodyChange, SecretCustodyView | The owner's custody doors beside register, rotate and revoke (WILL L04 row 04): a rewrap, a register or… |
 | `src/secret_custody/control/execute.rs` | src | m | 4 crate-vis | — | The holder's arm for an active custody change (WILL L04 row 04): the install a register, rotate or rewrap… |
-| `src/secret_custody/control/input.rs` | src | m | 23 crate-vis | — | The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its… |
+| `src/secret_custody/control/input.rs` | src | m | 25 crate-vis | — | The protected input of an active custody change (WILL L04 row 04): what a register, rotate or bind hands its… |
 | `src/secret_custody/control/input/attached.rs` | src | s | 7 crate-vis | — | What a sealed register's recorder attaches beside the envelope its owner's surface sealed, under the digest… |
 | `src/secret_custody/control/input/envelopes.rs` | src | s | 4 crate-vis | — | An input whose body passes one envelope's plaintext bound (FIX 5521; Rule 5: split, never refuse) |
+| `src/secret_custody/control/input/witness.rs` | src | m | 21 crate-vis | — | A relayed custody input's witness in numbered parts (FIX 8088) |
 | `src/secret_custody/control/manifest.rs` | src | m | 1 enum · 2 fn · 4 crate-vis | CustodyManifestCheck | A sealed register whose surface stated no `manifest_ref` (CALLS CUSTODY_MANIFEST_UNSTATED… |
 | `src/secret_custody/control/pending_revoke.rs` | src | s | 6 crate-vis | — | A revoke this install could not carry for the owner when he made it (FIX 4851) |
 | `src/secret_custody/control/permits.rs` | src | s | 6 crate-vis | — | Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each… |
@@ -4350,7 +4353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/sighted_file.rs` | src | s | 2 crate-vis | — | An ASSET body kept in its file, read as a serving door's reader reads it (FIX 5507) |
 | `src/secret_custody/storage_seal.rs` | src | m | 20 crate-vis | — | A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential… |
 | `src/secret_custody/storage_seal/connector_resume.rs` | src | s | 3 crate-vis | — | A connector call's durable resume state at rest (FIX 9157): sealed under the call's own erasable custody… |
-| `src/secret_custody/storage_seal/image.rs` | src | m | 12 crate-vis | — | A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the… |
+| `src/secret_custody/storage_seal/image.rs` | src | m | 15 crate-vis | — | A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the… |
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
 | `src/secret_custody/transition.rs` | src | m | 1 fn · 20 crate-vis | — | OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody… |
 | `src/secret_custody/transition/kit_request.rs` | src | s | 2 crate-vis | — | The owner's kit push records the custody request it enacts (FIX 6053, ARCH-0069 #custody-seal-planned; CALLS… |
@@ -4765,11 +4768,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/checkpoint_payload/rows/restore.rs` | src | s | 7 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
 | `src/store/checkpoint_payload/rows/typed.rs` | src | s | 11 crate-vis | — | Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's… |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
-| `src/store/credential_custody.rs` | src | m | 15 crate-vis | — | The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and… |
+| `src/store/credential_custody.rs` | src | m | 17 crate-vis | — | The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and… |
+| `src/store/credential_custody/erase.rs` | src | m | 19 crate-vis | — | An erased credential stays erased (KS-6 part 2, FIX-LIST 7403, 5687): one terminal fence per credential id… |
+| `src/store/credential_custody/fences.rs` | src | s | 10 crate-vis | — | What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence… |
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | GateAttributionErase | An erased actor out of the Gate decision ledger (FIX 4230, 4231) |
-| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 31 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
+| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 32 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
 | `src/store/gate_decision/checkpoint_custody/activation.rs` | src | m | 1 crate-vis | — | An owner's activation of an archived vault as a side vault of the vault that replaced it (moved out of the… |
 | `src/store/gate_decision/checkpoint_custody/destination.rs` | src | s | 7 crate-vis | — | The directory a restore makes for its copy, held under the copy's writer lease until the restore commits… |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 8 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
@@ -4990,7 +4995,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/topology.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | HomeNodeTopology | Host-authorized home-node candidate updates, independent of socket liveness |
 | `src/sync/convergence_props_internal.rs` | src | m | — | — | ONE-1136 (M4-14) — store-internal halves of the convergence property suite |
 | `src/sync/custody.rs` | src | m | 11 crate-vis | — | OF-422: custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`), each enacting an… |
-| `src/sync/custody/checkpoint.rs` | src | s | 2 crate-vis | — | A custody carrier in a checkpoint (KS7-3a): a custody transition and a protected input are secret custody's… |
+| `src/sync/custody/checkpoint.rs` | src | s | 2 crate-vis | — | A custody carrier in a checkpoint (KS7-3a): a custody transition, a protected input and a witness part (FIX… |
+| `src/sync/custody/witness.rs` | src | s | 6 crate-vis | — | A custody input's witness parts on the window plane (FIX 8088): a witness past one row rides beside its… |
 | `src/sync/document_pins.rs` | src | m | 10 crate-vis | — | FIX 853 (OF-460): document quote pins on the window plane |
 | `src/sync/document_pins/checkpoint.rs` | src | s | 3 crate-vis | — | A document pin in a checkpoint (KS7-3a, KS7-3b), read with the pin codec and filed under its own key: a… |
 | `src/sync/documents/destination.rs` | src | s | 3 fn · 2 crate-vis | — | Destination policy for text-plane admission and release |
@@ -5149,9 +5155,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/window/forward/tombstone_pass.rs` | src | m | 3 crate-vis | — | Tombstone pass of forward rematerialization: reason-aware replay of window tombstones |
 | `src/sync/window/history_free.rs` | src | m | 1 enum · 9 fn · 7 crate-vis | WindowExport | History-free window transport: what a window pinned history-free, or already shallow, ships to a peer that… |
 | `src/sync/window/history_free_tests.rs` | test | XL | — | — | The stall ticket's invariants over the code's own list of pin causes and replacement steps |
-| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 9 re-export · 24 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
-| `src/sync/window/pad_custody.rs` | src | m | 1 struct · 1 enum · 8 fn · 1 const | PreparedWindowPads, WindowPadPartRepair | A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'… |
+| `src/sync/window/mod.rs` | src | m | 1 struct · 6 fn · 1 mod · 9 re-export · 25 crate-vis | LoadedWindow | Window lifecycle management for the CRDT sync layer |
+| `src/sync/window/pad_custody.rs` | src | m | 1 struct · 2 enum · 8 fn · 2 const · 1 re-export · 2 crate-vis | PreparedWindowPads, WindowPadPartRepair, WindowPadReceiptWitness | A window pad envelope's two engine doors (KS-5, FIX 7107), one for each side of the wire and both crates'… |
 | `src/sync/window/pad_custody/inflate.rs` | src | s | 1 crate-vis | — | A window blob's pad references as today's carriers again (KS-5, FIX 7107, KEEP TODAY): what a send that may… |
+| `src/sync/window/pad_custody/persist.rs` | src | s | 1 fn · 3 crate-vis | — | A window blob as it persists here (KS-5, FIX 7107): its pad rows as their bare references, the form a `u:`… |
 | `src/sync/window/project_history.rs` | src | s | 1 crate-vis | — | Project history beside the PROJECT carriers a window document holds (PR 3 decision 9) |
 | `src/sync/window/rebootstrap.rs` | src | s | 4 crate-vis | — | Re-bootstrap of a window from its canonical rebuild (OF-005, ARCH-0038 `#recover-window-built`): the rebuilt… |
 | `src/sync/window/replacement.rs` | src | m | 2 struct · 1 fn · 2 crate-vis | PreparedReplacement, ReplacementConflict | Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and… |
