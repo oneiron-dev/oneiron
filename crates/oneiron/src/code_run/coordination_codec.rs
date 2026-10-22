@@ -11,6 +11,12 @@ use crate::task_verb::{
 };
 use rmpv::Value;
 
+/// FIX 7447 (CALLS): the request keys of the project and the objectives a
+/// spawn asks for, as live dispatch hashes both into its intent. A spawn that
+/// differs from its row only in these is the same spawn asked for another
+/// project or objectives: a replay miss ([`super::spawn_replay`]).
+pub(super) const SPAWN_INTENT_KEYS: [&str; 2] = ["project", "objectives"];
+
 pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
     let (kind, target) = match call.target {
         Some(AgentDispatchTarget::Custom(id)) => (Value::from("agent_def"), entity_id_value(id)),
@@ -45,6 +51,25 @@ pub(super) fn spawn_request(call: &SelfAgentSpawnCall) -> Result<Value> {
         (
             "depth_remaining",
             call.context.depth_remaining.map_or(Value::Nil, Value::from),
+        ),
+        // FIX 7447: the project and objectives asked for; another of either
+        // is another request. The objectives stay verbatim and in order, and
+        // none asked for is not an empty list.
+        (
+            SPAWN_INTENT_KEYS[0],
+            call.context.project_ref.map_or(Value::Nil, entity_id_value),
+        ),
+        (
+            SPAWN_INTENT_KEYS[1],
+            match &call.context.objectives {
+                Some(objectives) => Value::Array(
+                    objectives
+                        .iter()
+                        .map(|objective| Value::from(objective.as_str()))
+                        .collect(),
+                ),
+                None => Value::Nil,
+            },
         ),
         // OF-532: the budget the host pinned; another pin is another request.
         (

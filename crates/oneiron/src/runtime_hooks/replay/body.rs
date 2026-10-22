@@ -33,17 +33,21 @@ impl Replay<'_> {
         let mut verdicts = PinnedVerdicts::new(&memo.verdicts);
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
-            Ok(body) => self.runtime.run_fact_hook(
-                body,
-                input,
-                &mut context,
-                &mut |request: &str| reads.answer(lane, self.grant, request),
-                &mut |request: &str| {
-                    let (reply, evidence) = verdicts.answer(request);
-                    self.heard(evidence);
-                    reply
-                },
-            ),
+            Ok(body) => {
+                // Unavailable until the runtime reports it (FIX 9332).
+                context.body_starts();
+                self.runtime.run_fact_hook(
+                    body,
+                    input,
+                    &mut context,
+                    &mut |request: &str| reads.answer(lane, self.grant, request),
+                    &mut |request: &str| {
+                        let (reply, evidence) = verdicts.answer(request);
+                        self.heard(evidence);
+                        reply
+                    },
+                )
+            }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
         let overrun = self.overrun(&context);
@@ -53,7 +57,7 @@ impl Replay<'_> {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, context.usage()),
             Some(memo.outcome.as_str()),
             memo.outcome_json.as_deref(),
             true,
@@ -75,11 +79,13 @@ impl Replay<'_> {
         let mut reads = PinnedReads::new(&saved.reads);
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
-            Ok(body) => self
-                .runtime
-                .run_hook(body, input, &mut context, &mut |request: &str| {
-                    reads.answer(lane, self.grant, request)
-                }),
+            Ok(body) => {
+                context.body_starts();
+                self.runtime
+                    .run_hook(body, input, &mut context, &mut |request: &str| {
+                        reads.answer(lane, self.grant, request)
+                    })
+            }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
         let overrun = self.overrun(&context);
@@ -89,7 +95,7 @@ impl Replay<'_> {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, context.usage()),
             Some(saved.outcome.as_str()),
             saved.outcome_json.as_deref(),
             true,
@@ -152,6 +158,7 @@ impl Replay<'_> {
                     self.heard(evidence.as_deref());
                     reply
                 };
+                context.body_starts();
                 self.runtime
                     .run_fact_hook(body, &input, &mut context, &mut answer, &mut verdict)
             }
@@ -160,7 +167,7 @@ impl Replay<'_> {
         let overrun = self.overrun(&context);
         self.served(&pins);
         Ok(Some(ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, context.usage()),
             None,
             None,
             false,

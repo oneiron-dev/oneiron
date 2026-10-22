@@ -13,9 +13,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::secret_scan::admitted_from;
 use crate::code_run::payload::{decode_self_dispatch_outcome, self_call_request_value};
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunReplayRecord};
+use crate::code_run::spawn_replay::{ReplayRequestMatch, replay_request_match};
 use crate::code_run::types::{SelfCall, SelfDispatchOutcome, SelfDurableWait};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -255,9 +255,11 @@ fn put_resume_in_txn(
     let applied = count(commit.calls.len())?;
     let pages = applied.div_ceil(PROGRAM_RESUME_PAGE_CALLS);
     // The calls an earlier head listed are the entry's own first calls, each
-    // matched before it was answered: their whole pages stay as written.
+    // matched before it was answered, up to the first one that missed its
+    // row (FIX 7447) and ran live: only whole pages of the `injected` calls
+    // the entry answered stay as written, and the rest are written anew.
     let kept = previous.as_ref().map_or(0, |head| {
-        head.applied.min(applied) / PROGRAM_RESUME_PAGE_CALLS
+        head.applied.min(applied).min(commit.injected) / PROGRAM_RESUME_PAGE_CALLS
     });
     for page in kept..pages {
         let start = usize::try_from(page * PROGRAM_RESUME_PAGE_CALLS)
@@ -302,28 +304,43 @@ fn put_resume_in_txn(
     RESUME.put(vault, txn, &(run, HEAD, 0), &ResumeRow::Head(head))
 }
 
+/// What a settled row answers for the call a resumed entry makes in its
+/// place.
+pub(crate) enum ProgramRowAnswer {
+    /// The very call it recorded: what it answered.
+    Settled(Box<SelfDispatchOutcome>),
+    /// The same spawn asked for another project or other objectives (FIX
+    /// 7447): a replay miss, which the entry issues live.
+    Missed,
+    /// Another call.
+    Drifted,
+}
+
 impl CodeRunBridgeCall {
-    /// What this settled row answered, when `call` is the very call it
-    /// recorded: the same effect and canonical request under the row's own
-    /// bridge stamp (a request the side-row wall masked still matches the
-    /// secrets it holds). `None` for any other call.
+    /// What this settled row answers for `call`: its outcome when `call` is
+    /// the very call it recorded, the same effect and canonical request
+    /// under the row's own bridge stamp (a request the side-row wall masked
+    /// still matches the secrets it holds); a miss for the same spawn asked
+    /// for another project or objectives; drift for any other call.
     ///
     /// # Errors
     ///
     /// A request or an outcome that does not encode or decode.
-    pub(crate) fn program_answer_for(
-        &self,
-        call: &SelfCall,
-    ) -> Result<Option<SelfDispatchOutcome>> {
+    pub(crate) fn program_answer_for(&self, call: &SelfCall) -> Result<ProgramRowAnswer> {
         if self.effect != call.effect() {
-            return Ok(None);
+            return Ok(ProgramRowAnswer::Drifted);
         }
         let stamped = call.clone().with_bridge_stamp(self.seq, self.started_at_ms);
         let request = self_call_request_value(&stamped)?;
-        if self.request != request && !admitted_from(&self.request, &request)? {
-            return Ok(None);
-        }
-        decode_self_dispatch_outcome(&self.outcome).map(Some)
+        Ok(
+            match replay_request_match(self.effect, &self.request, &request)? {
+                ReplayRequestMatch::Hit => ProgramRowAnswer::Settled(Box::new(
+                    decode_self_dispatch_outcome(&self.outcome)?,
+                )),
+                ReplayRequestMatch::SpawnMiss => ProgramRowAnswer::Missed,
+                ReplayRequestMatch::Drift => ProgramRowAnswer::Drifted,
+            },
+        )
     }
 
     /// The wait this row's call parked on, when its outcome is one.

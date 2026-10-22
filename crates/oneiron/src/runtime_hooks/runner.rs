@@ -469,6 +469,9 @@ impl Pass<'_> {
                     verdicts.push(request, &reply, evidence);
                     reply
                 };
+                // What a runtime's body uses is unavailable until the
+                // runtime reports it (FIX 9332).
+                context.body_starts();
                 self.runtime
                     .run_fact_hook(&body, &input, &mut context, &mut answer, &mut verdict)
             }
@@ -478,7 +481,7 @@ impl Pass<'_> {
         // ends here, and an overrun goes beside its outcome (FIX 8842).
         let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let verdict = judge(run.binding, result, overrun);
+        let verdict = judge(run.binding, result, overrun, context.usage());
         let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
         let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);

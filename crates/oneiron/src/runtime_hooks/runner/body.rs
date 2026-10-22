@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::runtime_hooks::body::{HookBodyRun, HookBudgetOverrun, HookVerdict};
+use crate::runtime_hooks::body::{HookBodyRun, HookBodyUsage, HookBudgetOverrun, HookVerdict};
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::grant::HookGrant;
 use crate::runtime_hooks::lineage::HookCheckReason;
@@ -97,21 +97,24 @@ pub(in crate::runtime_hooks) struct Verdict {
     /// The outcome kind, or `refused` / `failed`.
     pub(in crate::runtime_hooks) token: String,
     pub(in crate::runtime_hooks) reason: Option<String>,
-    pub(in crate::runtime_hooks) fuel_used: u64,
-    pub(in crate::runtime_hooks) host_calls: u32,
+    /// What the body used: a failed run's as its runtime measured it, or
+    /// unavailable, never a zero standing in (FIX 9332).
+    pub(in crate::runtime_hooks) usage: HookBodyUsage,
     /// The run ended past its `budget_ms`: a measured fact beside the
     /// outcome, never part of the judgement (FIX 8842).
     pub(in crate::runtime_hooks) budget_overrun: Option<HookBudgetOverrun>,
 }
 
-/// A body that failed or trapped is `failed`. An outcome that does not
-/// parse, is not a kind of the binding's phase, is not one the binding
-/// allows, or has the wrong shape is `refused`. Time is not judged: a run
-/// past its budget keeps whichever of these it is, with `overrun` beside it.
+/// A body that failed or trapped is `failed`, with what it used as its run's
+/// context holds it (`usage`, FIX 9332). An outcome that does not parse, is
+/// not a kind of the binding's phase, is not one the binding allows, or has
+/// the wrong shape is `refused`. Time is not judged: a run past its budget
+/// keeps whichever of these it is, with `overrun` beside it.
 pub(in crate::runtime_hooks) fn judge(
     binding: &PackHookBinding,
     result: Result<HookBodyRun>,
     overrun: Option<HookBudgetOverrun>,
+    usage: HookBodyUsage,
 ) -> Verdict {
     let run = match result {
         Ok(run) => run,
@@ -122,11 +125,14 @@ pub(in crate::runtime_hooks) fn judge(
                 outcome_json: None,
                 token: "failed".to_owned(),
                 reason: Some(bounded(&error.to_string())),
-                fuel_used: 0,
-                host_calls: 0,
+                usage,
                 budget_overrun: overrun,
             };
         }
+    };
+    let usage = HookBodyUsage {
+        fuel_used: Some(run.fuel_used),
+        host_calls: Some(run.host_calls),
     };
     match accept(binding, &run.outcome_json) {
         Ok(outcome) => Verdict {
@@ -135,8 +141,7 @@ pub(in crate::runtime_hooks) fn judge(
             outcome: Some(outcome),
             outcome_json: Some(run.outcome_json),
             reason: None,
-            fuel_used: run.fuel_used,
-            host_calls: run.host_calls,
+            usage,
             budget_overrun: overrun,
         },
         Err(reason) => Verdict {
@@ -145,8 +150,7 @@ pub(in crate::runtime_hooks) fn judge(
             outcome: None,
             outcome_json: (run.outcome_json.len() <= MAX_OUTCOME_BYTES).then_some(run.outcome_json),
             reason: Some(reason),
-            fuel_used: run.fuel_used,
-            host_calls: run.host_calls,
+            usage,
             budget_overrun: overrun,
         },
     }
@@ -238,10 +242,9 @@ pub(super) fn receipt(
         ("now", now.to_string()),
         ("rows_read", rows_read.to_string()),
         ("run_key", hex_lower(&run.key)),
-        ("fuel_used", verdict.fuel_used.to_string()),
-        ("host_calls", verdict.host_calls.to_string()),
     ]
     .into_iter()
+    .chain(verdict.usage.receipt_fields())
     .map(|(name, value)| (name.to_owned(), value))
     .collect();
     if let Some(check) = check {

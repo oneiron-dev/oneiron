@@ -3,7 +3,6 @@ use std::cell::Cell;
 
 use rmpv::Value;
 
-use crate::batch::secret_scan::admitted_from;
 use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Error, Result};
 
@@ -15,6 +14,7 @@ use super::payload::{
     decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
     self_call_request_value, self_dispatch_outcome_value,
 };
+use super::spawn_replay::replay_request_match;
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
     expect_map, invalid_code_run_replay, map_get, str_value, validate_label, validate_text,
@@ -933,8 +933,9 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
         // A stored request keeps the handles the side-row wall placed where
-        // the live call still holds the secrets (OF-067).
-        if stored.request != request && !admitted_from(&stored.request, &request)? {
+        // the live call still holds the secrets (OF-067). This cursor issues
+        // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
+        if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A cursor can be built from an in-memory record that never passed the

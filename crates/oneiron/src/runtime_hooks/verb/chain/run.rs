@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::runtime_hooks::outcome::HookOutcome;
 use crate::runtime_hooks::runner::{MAX_OUTCOME_BYTES, Verdict, bounded, judge};
 use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
-use crate::runtime_hooks::{HookBudgetOverrun, HookRunContext, apply, grant, read};
+use crate::runtime_hooks::{HookBodyUsage, HookBudgetOverrun, HookRunContext, apply, grant, read};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
@@ -35,8 +35,9 @@ pub(super) struct RunRecord<'c> {
     /// never a failure and never its hook's fail-safe (FIX 8842).
     pub(super) budget_overrun: Option<HookBudgetOverrun>,
     pub(super) rows_read: usize,
-    pub(super) fuel_used: u64,
-    pub(super) host_calls: u32,
+    /// What the body used; a count its runtime did not measure stays
+    /// unavailable (FIX 9332).
+    pub(super) usage: HookBodyUsage,
     /// The exact input the body saw.
     pub(super) input: String,
     pub(super) reads: Vec<HookReadPin>,
@@ -85,6 +86,9 @@ impl<'c> Chain<'c> {
                         }
                         _ => Err("this call has no read lane".to_owned()),
                     };
+                    // What a runtime's body uses is unavailable until the
+                    // runtime reports it (FIX 9332).
+                    context.body_starts();
                     runtime.run_hook(&body, &input, &mut context, &mut answer)
                 }
             },
@@ -93,7 +97,7 @@ impl<'c> Chain<'c> {
         // ends here. Time judges nothing (FIX 8842).
         let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut verdict = judge(binding, ran, overrun);
+        let mut verdict = judge(binding, ran, overrun, context.usage());
         if let Some(reason) = verdict
             .outcome
             .as_ref()
@@ -120,8 +124,7 @@ impl<'c> Chain<'c> {
             duration_ms,
             budget_overrun: verdict.budget_overrun,
             rows_read,
-            fuel_used: verdict.fuel_used,
-            host_calls: verdict.host_calls,
+            usage: verdict.usage,
             input,
             reads: pins,
             outcome_json: verdict
