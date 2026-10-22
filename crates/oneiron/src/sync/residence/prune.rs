@@ -117,7 +117,7 @@ pub(crate) fn prune_thin_items_in_txn(
             Err(error) => return Err(error),
         }
         if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{id}"))?
-            && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, raw)?
+            && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
         {
             continue;
         }
