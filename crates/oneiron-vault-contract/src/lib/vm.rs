@@ -32,7 +32,8 @@
 //! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]), and the guests' container
 //! runtime bindings, which the root bootstrap checks against the image's
 //! guest runtime descriptor (FIX 7671, [`VM_GUEST_RUNTIME_REVISION`],
-//! [`VmGuestRuntimeDescriptor`]).
+//! [`VmGuestRuntimeDescriptor`]), and the operator's trusted organ builds
+//! (FIX 7889, [`VM_TRUSTED_ORGAN_BUILDS_REVISION`]).
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
@@ -130,6 +131,19 @@ pub const VM_GUEST_FAST_DIMS_FILE: &str = "/config/fast-dims";
 /// bootstrap reads the five files and passes the engine their flags names it
 /// as its manifest's `vm_managed_profile_revision`.
 pub const VM_MANAGED_PROFILE_REVISION: u32 = 1;
+/// The operator's trusted organ builds on the config drive (FIX 7889): one
+/// organ build's blake3 per line. The image's init passes each line, as
+/// written, to the engine as its own `--trusted-organ-build`, the flag a
+/// node's serve takes, so the engine's parser judges every entry and one it
+/// refuses refuses the boot. Blank lines pass nothing; a drive without the
+/// file, or with an empty one, lists none, and every pack organ build runs
+/// as third party. It is a transport for that flag, not another source.
+pub const VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE: &str = "/config/trusted-organ-builds";
+/// The trusted organ builds file's revision (FIX 7889): an image whose init
+/// passes [`VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE`]'s lines on names 1 as its
+/// manifest's `vm_trusted_organ_builds_revision`. It says the image reads the
+/// file, never that a list was staged or an organ started.
+pub const VM_TRUSTED_ORGAN_BUILDS_REVISION: u32 = 1;
 /// The guest runtime's revision (FIX 7671): an image that stages the whole
 /// guest runtime its descriptor ([`VM_GUEST_RUNTIME_DESCRIPTOR`]) names,
 /// whose root bootstrap prepares it for the vault's UID and binds it to the

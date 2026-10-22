@@ -327,7 +327,9 @@ pub struct ServeArgs {
     /// statement that the build is reviewed first-party code. A pack organ
     /// build not listed runs as third party, which the organ host refuses to
     /// start until filesystem confinement for organs lands. Plain or managed
-    /// serve; no config file, settings file or environment sets it.
+    /// serve; no config file, settings file or environment sets it. A vault
+    /// VM's init passes one per line of its config drive's
+    /// `trusted-organ-builds` (FIX 7889), argv as on a node.
     #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
     pub trusted_organ_builds: Vec<String>,
 
