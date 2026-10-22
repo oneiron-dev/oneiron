@@ -1013,7 +1013,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 2,
       "re-export": 24
      }
@@ -15063,6 +15063,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/records/bodies/host_occurrence.rs",
+     "purpose": "A host parent run's record and whose it is (FIX 9019)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/records/bodies/reader.rs",
      "purpose": "A result body read as it streams (FIX 3677 step 7, FIX 5392): what the whole read checks, read a frame at a…",
      "surface": {
@@ -17803,8 +17813,18 @@
      "purpose": "—",
      "surface": {
       "const": 5,
-      "crate-vis": 23,
+      "crate-vis": 24,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/meter/rate_window.rs",
+     "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -22462,7 +22482,7 @@
      "path": "src/dreamer_consolidation/extracted_people/bindings.rs",
      "purpose": "The engine's person mint (FIX 7506, ARCH-0026 row 1): a reply declares a person it names as `new:P<n>`…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -23554,7 +23574,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/thing_agent/input.rs",
-     "purpose": "The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's extraction slices, its…",
+     "purpose": "The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's clean extraction slices…",
      "surface": {
       "crate-vis": 7
      }
@@ -23566,7 +23586,7 @@
      "path": "src/dreamer_consolidation/thing_agent/proposals.rs",
      "purpose": "The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -23637,6 +23657,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_consolidation/wake_plan/chunk_identity.rs",
+     "purpose": "A sibling chunk's identity (FIX 7488): the exact lineage it is owed under (its source attempt's parent and…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_consolidation/wake_plan/chunks.rs",
      "purpose": "Rule 5 for a selection retry's source budget (L02-38): `max_sources` is a work size, never a total",
      "surface": {
@@ -23660,7 +23690,7 @@
      "path": "src/dreamer_consolidation/wake_plan/sources.rs",
      "purpose": "A multi-part branch's parts at the wake's one pin (FIX 7524, Engine ruling B)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -26184,13 +26214,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/nightly/things.rs",
      "purpose": "One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly)",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/nightly/things/slices.rs",
+     "purpose": "A nightly thing's children: one per project (FIX 8724)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36224,15 +36264,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LinearBody",
+      "LinearBodyRole",
+      "LinearFreeze"
+     ],
+     "path": "src/linear_sync/custody.rs",
+     "purpose": "The frozen bodies of one Linear mirror operation, kept as body occurrences of the TASK it mirrors (FIX 8609…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "LinearEffectKind",
       "LinearEffectRequest"
      ],
      "path": "src/linear_sync/effect.rs",
      "purpose": "External-effect admission for Linear mirror mutations",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -36277,7 +36333,7 @@
      "path": "src/linear_sync/facade_types.rs",
      "purpose": "The wire shapes of the TASK ↔ issue mirror doors (OF-427 C6, C7): `vault.tasks.linear.mapping`…",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 1,
       "fn": 1,
       "struct": 8
@@ -36305,7 +36361,7 @@
      "purpose": "Issue-tracker mirror adapter: one TASK ↔ one Linear issue, bidirectional, conflict-surfacing (ONE-1905…",
      "surface": {
       "crate-vis": 3,
-      "re-export": 10
+      "re-export": 12
      }
     },
     {
@@ -36325,6 +36381,7 @@
       "LinearSyncError",
       "LinearSyncRegistration",
       "LinearTaskStore",
+      "LinearWait",
       "LinearWriteActor",
       "MirroredTaskFields",
       "TaskIssueLink",
@@ -36335,11 +36392,26 @@
      "surface": {
       "const": 11,
       "crate-vis": 7,
-      "enum": 3,
+      "enum": 4,
       "fn": 5,
       "struct": 11,
       "trait": 3,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LinearRateTurn"
+     ],
+     "path": "src/linear_sync/rate_wait.rs",
+     "purpose": "A Linear mutation's wait for a full Rate window (FIX 8788)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -45925,6 +45997,16 @@
      "purpose": "New-effect admission path: actor/booking/calendar checks, gate eval, one-shot budget debit, Pending insert",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_chokepoint/budget.rs",
+     "purpose": "The new-effect admission's budget steps, moved out of `admission.rs` whole: the co-actor's preflight and the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -72678,7 +72760,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 138,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72776,7 +72858,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72916,7 +72998,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 129,
+     "files": 130,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -72958,7 +73040,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 56,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73231,7 +73313,7 @@
      "purpose": "Traversal safety caps, defined in `oneiron-contracts`"
     },
     "linear_sync": {
-     "files": 13,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -73336,7 +73418,7 @@
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327"
     },
     "outbound_chokepoint": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73968,7 +74050,7 @@
    },
    "over_bar": 151,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4775,
+   "source_files": 4782,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83319,7 +83401,7 @@
   "oneiron-linear": {
    "files": [
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "VaultLinearOutboundDoor"
@@ -83327,7 +83409,7 @@
      "path": "src/dispatch.rs",
      "purpose": "Linear mutations through the vault's replay-first outbound dispatch door",
      "surface": {
-      "fn": 5,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -83352,30 +83434,32 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "GraphQlBody",
       "GraphQlCall",
       "GraphQlExecutor",
       "GraphQlTransportError",
-      "HttpLinearClient"
+      "HttpLinearClient",
+      "LinearBodyLine"
      ],
      "path": "src/http.rs",
-     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine",
+     "purpose": "Host-owned GraphQL transport; credentials never enter the engine",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
-      "enum": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 4,
       "struct": 2,
-      "trait": 1
+      "trait": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/journal.rs",
-     "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate",
+     "purpose": "Host delivery state beneath the engine outbound dispatch, not a second gate",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -83426,7 +83510,7 @@
     "dispatch": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Linear mutations through the vault's replay-first outbound dispatch door"
     },
@@ -83442,14 +83526,14 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Bounded host-owned GraphQL transport; credentials never enter the engine"
+     "purpose": "Host-owned GraphQL transport; credentials never enter the engine"
     },
     "journal": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
-     "purpose": "Host response custody beneath the engine outbound dispatch, not a second gate"
+     "purpose": "Host delivery state beneath the engine outbound dispatch, not a second gate"
     },
     "source": {
      "files": 1,
@@ -96725,6 +96809,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/linear_host/body_line.rs",
+     "purpose": "The direct Linear mirror's decode memory on the server's retained-memory line (FIX 8610): the narrow host…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
@@ -101952,7 +102046,7 @@
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
     "linear_host": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -102143,7 +102237,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1119,
+   "source_files": 1120,
    "test_files": 182
   },
   "oneiron-spawn": {
