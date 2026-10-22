@@ -614,7 +614,10 @@ fn transition_record_with_outcome_and(
     also(&mut wtxn, &record);
 
     wtxn.commit().map_err(Error::from)?;
-    force_sync(vault)?;
+    let synced = force_sync(vault);
+    // The terminal row is committed: the owner's waiting shed looks again (FIX 10157).
+    vault.wake_owner_shed();
+    synced?;
     Ok(record)
 }
 

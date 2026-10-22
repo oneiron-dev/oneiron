@@ -168,6 +168,8 @@ pub(crate) struct LiveCustody {
     /// The key of each of its body erase receipts: the erasing owner, then
     /// the instance its erase retired (FIX 9066).
     erased_by: BTreeSet<Vec<u8>>,
+    /// Its credential erase evidence (KS-6 part 2), read apart from the rest.
+    fences: crate::store::CredentialFences,
 }
 
 impl LiveCustody {
@@ -211,6 +213,7 @@ impl LiveCustody {
             rows: intents,
             host_holds,
             erased_by,
+            fences: crate::store::CredentialFences::default(),
         })
     }
 
@@ -225,6 +228,12 @@ impl LiveCustody {
         let mut key = owner.as_bytes().to_vec();
         key.extend_from_slice(instance);
         self.erased_by.contains(&key)
+    }
+
+    /// The credentials its erases fenced or staged (KS-6 part 2): a copy, a
+    /// fork or an activation never brings one back.
+    pub(crate) fn credential_fences(&self) -> crate::store::CredentialFences {
+        self.fences.clone()
     }
 
     /// Where its custody is: its binding's root, or beside its own root
@@ -302,7 +311,9 @@ pub(crate) fn read_live_custody(
     let read = crate::world_keys::read_sealed(vault_dir, page_seal, || {
         read_existing_vault_meta(vault_dir, &live_custody_prefixes())
     })?;
-    LiveCustody::from_rows(&read.root, read.rows)
+    let mut live = LiveCustody::from_rows(&read.root, read.rows)?;
+    live.fences = crate::store::CredentialFences::at_vault(&read.root, page_seal);
+    Ok(live)
 }
 
 /// The rows under `prefixes` of an open vault's `vault_meta`.
@@ -559,7 +570,9 @@ impl Store {
         }
         let txn = self.env.read_txn()?;
         let rows = vault_meta_rows(&self.env, &txn, &live_custody_prefixes())?;
-        LiveCustody::from_rows(self.env.path(), rows)
+        let mut live = LiveCustody::from_rows(self.env.path(), rows)?;
+        live.fences = self.credential_fences_in_txn(&txn);
+        Ok(live)
     }
 
     /// Forks the custody `custody` binds to into this restored copy's own,

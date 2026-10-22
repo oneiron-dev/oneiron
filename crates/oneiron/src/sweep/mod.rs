@@ -118,6 +118,8 @@ mod compact;
 mod corrupt;
 mod finalize;
 #[cfg(feature = "sync")]
+mod holds;
+#[cfg(feature = "sync")]
 pub(crate) mod owed;
 mod run;
 

@@ -75,7 +75,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(refused(NEEDS_LEASE));
         };
         let task = call.task_ref;
-        let view = match dispatch_workflow_bound_as(vault, self.actor, &lease, call) {
+        let view = match dispatch_workflow_bound_as(vault, self.actor, &lease, &reader, call) {
             Ok(view) => view,
             Err(error) => return Ok(refused(&error.message)),
         };

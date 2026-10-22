@@ -384,6 +384,16 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// after the floor, both reap pulls and the push consumer included. No
 /// migration, missing-field default, shim or reader of a whole-list push or
 /// pull is kept, and this version stays 3.
+///
+/// Owner shed admission (FIX 10157): the facade's `vault.slim.drop_heavy`
+/// answer (the engine's `slim::public::SlimDropOutcome`) gains the status
+/// `nothing_pending`, with no other key: the owner's request waited while
+/// more than one outbound step was pending, then found none pending on a
+/// FULL vault, so no shed was owed and none ran. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a client that
+/// reads the status runs against an engine at or after the floor, and no
+/// reader of an answer without it is kept. The supervisor's `Shed` ctl
+/// request and its answers are unchanged, and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

@@ -1,3 +1,7 @@
+//! Dirty-TURN progress: the consolidation watermark and its working set.
+//! Entry: `ConsolidationWatermark`, with `read_watermark` and `advance_watermark`.
+//! Definitions are local; the wire codec lives in the codec child.
+
 use crate::ports::EntityStoreRead;
 use std::io::Cursor;
 
