@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1147 facade rows, 4046 declarations.
+Census: 1147 facade rows, 4052 declarations.
 Inputs: 1082 of 1147 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1033 of 1147 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -182,6 +182,15 @@ class ReportRoutePublisher(TypedDict):
     publisher_ref: str
 ReportRoute = ReportRouteOwnerInbox | ReportRoutePublisher
 ReportDisclosure = Literal["local", "content_free", "needs_approval", "approved", "denied"]
+class ReportDisclosureBasisIssueOnce(TypedDict):
+    basis: Literal["issue_once"]
+    publisher_ref: str
+    request_digest: str
+    decided_at: int
+class ReportDisclosureBasisStandingGrant(TypedDict):
+    basis: Literal["standing_grant"]
+    grant_ref: str
+ReportDisclosureBasis = ReportDisclosureBasisIssueOnce | ReportDisclosureBasisStandingGrant
 class ReportReceipt(TypedDict):
     issue_ref: str
     already_submitted: bool
@@ -190,6 +199,7 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+    disclosure_basis: NotRequired[ReportDisclosureBasis | None]
 FeedbackCategory = Literal["bug", "papercut", "confusion", "feature-wish"]
 class FeedbackPreviewRequest(TypedDict):
     issue_ref: str
@@ -240,6 +250,7 @@ class ReportIssue(TypedDict):
     route: ReportRoute
     review: ReportReview
     disclosure: ReportDisclosure
+    disclosure_basis: NotRequired[ReportDisclosureBasis | None]
 class ReportRouteRequest(TypedDict):
     subject_ref: str
     route: ReportRoute
@@ -11579,6 +11590,7 @@ class CodeViewRequest(TypedDict):
 class CodeViewReadRequest(TypedDict):
     view: CodeViewRequest
     path: str
+    why: NotRequired[str | None]
 class CodeViewFileBytes(TypedDict):
     path: str
     bytes: list[int]
@@ -11645,6 +11657,7 @@ class CodeSnapshotReadRequest(TypedDict):
     repo: EntityId
     snapshot: str
     path: str
+    why: NotRequired[str | None]
 class CodeSnapshotPinnedFile(TypedDict):
     repo: EntityId
     snapshot: str
@@ -12008,6 +12021,7 @@ class RepoSnapshotsReadInput(TypedDict):
     ref: str
     snapshot: str
     path: str
+    why: NotRequired[str | None]
 class RepoSnapshotsReadOutput(TypedDict):
     repo: EntityId
     ref: str
@@ -12042,6 +12056,7 @@ RepoViewsGetOutput = RepoWorkView
 class RepoViewsReadInput(TypedDict):
     work: EntityId
     path: str
+    why: NotRequired[str | None]
 class RepoViewsReadOutput(TypedDict):
     work: EntityId
     path: str
@@ -15175,7 +15190,7 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
 class ConnectorCallReplyAwaitingInput(TypedDict):
     outcome: Literal["awaiting_input"]
     handle: str
-    call_ref: NotRequired[str | None]
+    call_ref: str
     source: str
     foreign: bool
     questions: list[ConnectorQuestion]
@@ -17306,7 +17321,7 @@ class TableBody(TypedDict):
     columns: list[NodeId]
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
-ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar", "bar_3d", "line_3d", "pie_3d", "area_3d", "bubble"]
+ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar", "bar_3d", "line_3d", "pie_3d", "area_3d", "bubble", "stock", "surface", "surface_3d", "of_pie"]
 class ChartCategory(TypedDict):
     id: NotRequired[NodeId | None]
     levels: NotRequired[list[str | None]]
@@ -17327,6 +17342,18 @@ BarDirection = Literal["bar", "col"]
 PlotGrouping = Literal["standard", "clustered", "stacked", "percent_stacked"]
 BarShape = Literal["box", "cone", "cone_to_max", "cylinder", "pyramid", "pyramid_to_max"]
 SizeRepresents = Literal["area", "width"]
+StockOrder = Literal["hlc", "ohlc"]
+class StockRoles(TypedDict):
+    order: StockOrder
+    open: NotRequired[NodeId | None]
+    high: NotRequired[NodeId | None]
+    low: NotRequired[NodeId | None]
+    close: NotRequired[NodeId | None]
+class SurfaceBand(TypedDict):
+    index: int
+    fill: NotRequired[str | None]
+OfPieType = Literal["pie", "bar"]
+SplitType = Literal["auto", "cust", "percent", "pos", "val"]
 class ChartPlot(TypedDict):
     family: ChartKind
     nth: NotRequired[int]
@@ -17338,6 +17365,21 @@ class ChartPlot(TypedDict):
     bubble_scale: NotRequired[int | None]
     show_neg_bubbles: NotRequired[bool | None]
     size_represents: NotRequired[SizeRepresents | None]
+    stock: NotRequired[StockRoles | None]
+    hi_low_lines: NotRequired[bool | None]
+    up_down_bars: NotRequired[bool | None]
+    up_down_gap_width: NotRequired[int | None]
+    up_fill: NotRequired[str | None]
+    down_fill: NotRequired[str | None]
+    wireframe: NotRequired[bool | None]
+    bands: NotRequired[list[SurfaceBand] | None]
+    of_pie_type: NotRequired[OfPieType | None]
+    split_type: NotRequired[SplitType | None]
+    split_pos: NotRequired[float | None]
+    custom_split: NotRequired[list[NodeId] | None]
+    second_pie_size: NotRequired[int | None]
+    gap_width: NotRequired[int | None]
+    ser_lines: NotRequired[bool | None]
 class ChartView(TypedDict):
     rot_x: NotRequired[int | None]
     h_percent: NotRequired[int | None]
@@ -18920,6 +18962,7 @@ class WakeRecipePolicy(TypedDict):
     thing_child_code_mode: bool
     thing_child_instruction: str
     thing_child_input_window_divisor: int
+    thing_child_fallback_window_tokens: int
 class SieveRecipePolicySetRequest(TypedDict):
     policy: WakeRecipePolicy
 class SieveLeaseRequest(TypedDict):

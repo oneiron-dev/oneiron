@@ -18,9 +18,7 @@
 //! named; its continuation stays, and a later sweep resumes there.
 use serde::{Deserialize, Serialize};
 
-use super::source::{
-    FeedbackTriageSourceError, FeedbackTriageSourceFault, source_row_in_txn, update_source_row,
-};
+use super::source::{FeedbackTriageSourceError, FeedbackTriageSourceFault, source_row_in_txn};
 use super::{
     COACH_FEEDBACK_SWEEP_FACET, FeedbackTriageContinuation, FeedbackTriageHandoff,
     FeedbackTriageSourceRef, Revision, SOURCES, attempt_ref, binding_in_txn,
@@ -192,9 +190,11 @@ impl Vault {
     /// revision through the write an inbox note takes, then the source's
     /// continuation. It moves to the page's next link or, on the last page,
     /// back to the first under a new generation, and the page clears the
-    /// source's error. Answers the row as written, or `None`, writing
-    /// nothing, when another walk moved the continuation since the page was
-    /// read, or no skill is bound now.
+    /// source's error. The sweep's lease is renewed in this same write, and
+    /// fenced there on the lease the walk was admitted under (FIX 7628).
+    /// Answers the row as written, or `None`, writing nothing, when another
+    /// walk moved the continuation since the page was read, when another
+    /// walker holds the sweep now, or when no skill is bound now.
     ///
     /// # Errors
     ///
@@ -222,6 +222,11 @@ impl Vault {
         let sweep_ref = attempt_ref(sweep)?;
         self.with_write_txn_grouped(|txn| {
             if binding_in_txn(self, txn)?.skill.is_none() {
+                return Ok(None);
+            }
+            // A stale walker lands no page: only the lease it was admitted
+            // under, still held and renewed here, writes one.
+            if !self.renew_feedback_sweep_in_txn(txn, attempt)? {
                 return Ok(None);
             }
             let mut row = source_row_in_txn(self, txn, &page.source, sweep_ref, now)?;
@@ -259,8 +264,11 @@ impl Vault {
     }
 
     /// Records what a GitHub source answered in place of a page, with the
-    /// retry time it named, if any. Its continuation stays, and the sweep
-    /// resumes it there once that time has passed.
+    /// retry time it named, if any, or the engine's own failure while it
+    /// walked the source. Its continuation stays, and the sweep resumes it
+    /// there once that time has passed. Like a page, it is written only
+    /// under the lease the walk was admitted under, renewed in this write: a
+    /// stale walker writes nothing over the current walker's row (FIX 7628).
     ///
     /// # Errors
     ///
@@ -278,7 +286,11 @@ impl Vault {
             return Err(not_github());
         }
         let sweep = attempt_ref(attempt.status.attempt.id)?;
-        update_source_row(self, source, sweep, now, |row| {
+        self.with_write_txn_grouped(|txn| {
+            if !self.renew_feedback_sweep_in_txn(txn, attempt)? {
+                return Ok(());
+            }
+            let mut row = source_row_in_txn(self, txn, source, sweep, now)?;
             row.error = Some(FeedbackTriageSourceError {
                 kind: fault.kind,
                 status: fault.status,
@@ -286,6 +298,7 @@ impl Vault {
                 at: now,
             });
             row.retry_after = fault.retry_after;
+            SOURCES.put(&self.store, txn, &row.source, &row)
         })
     }
 }

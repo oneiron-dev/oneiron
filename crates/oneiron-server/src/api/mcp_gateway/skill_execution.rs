@@ -27,10 +27,6 @@ pub(crate) fn mcp_call_in_scope() -> bool {
 /// that is not a registered agent, so the owner's own identity is never
 /// offered as an agent's. A call with `None` still reads masked
 /// ([`mcp_call_in_scope`]).
-#[allow(
-    dead_code,
-    reason = "FIX 7608 2b-ii-A: the repo doors bind it in 2b-ii-B"
-)]
 pub(crate) fn mcp_call_recipient() -> Option<oneiron::memory::RepoRevealRecipient> {
     CALLER
         .try_with(|caller| {
