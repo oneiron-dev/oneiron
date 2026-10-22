@@ -14,8 +14,8 @@
 //! With no runtime attached the gate closes, the reservations in flight
 //! drop and the key goes at once: this crate keeps no plaintext snapshot
 //! buffer past a call, and a read whose admission a lock closed returns
-//! none. An unlock opens a new generation; it makes nothing
-//! ready, and the sealed catalog stays through both.
+//! none. An unlock opens a new generation; it makes nothing ready, and the
+//! sealed catalog stays through both.
 //!
 //! The port is a boxed future: this crate names no server, and no executor
 //! beyond the timer that bounds the wait.
@@ -81,7 +81,8 @@ pub struct SnapshotWorkerAbort {
     pub worker_id: String,
     /// The incarnation's epoch, as the worker named it.
     pub epoch: String,
-    /// Whether its process was reaped before the lock went on.
+    /// Whether the abort found it running and reaped it before the lock
+    /// went on; `false` when that epoch had already ended on its own.
     pub reaped: bool,
 }
 
