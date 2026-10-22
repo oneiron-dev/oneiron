@@ -50,7 +50,8 @@ pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
 mod connector_subscription_routes;
 mod conversation_learning_routes;
-pub(super) mod cooperative_deletion_routes;
+pub(super) mod courtesy_delete_routes;
+pub(super) use self::courtesy_delete_routes as cooperative_deletion_routes;
 mod craft_candidate_routes;
 mod decision_ask_routes;
 mod desktop_takeover_routes;
@@ -173,7 +174,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(pack_preview_routes::routes())
-        .merge(cooperative_deletion_routes::routes())
+        .merge(courtesy_delete_routes::routes())
         .merge(federation_connect_routes::routes())
         .merge(feedback_triage_routes::routes())
         .merge(decision_ask_routes::routes())

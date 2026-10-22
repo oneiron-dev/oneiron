@@ -5,8 +5,10 @@ mod browser_seats;
 mod connector_events;
 mod connector_sends;
 mod consult_settle;
-mod cooperative_deletion;
 mod core;
+mod courtesy_delete;
+#[allow(unused_imports, reason = "the old module name, for branches cut before the rename")]
+use self::courtesy_delete as cooperative_deletion;
 mod desktop_seats;
 mod embedding;
 mod housekeeping;

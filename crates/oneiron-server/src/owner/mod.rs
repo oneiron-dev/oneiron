@@ -8,7 +8,9 @@
 
 pub(crate) mod backup;
 pub(crate) mod cleanup;
-pub(crate) mod cooperative_deletion;
+pub(crate) mod courtesy_delete;
+#[allow(unused_imports, reason = "the old module name, for branches cut before the rename")]
+pub(crate) use self::courtesy_delete as cooperative_deletion;
 pub(crate) mod embedder;
 pub(crate) mod federation_connect;
 pub(crate) mod feedback;

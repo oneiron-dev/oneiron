@@ -86,8 +86,9 @@ mod conversation_dag;
 mod conversation_members;
 mod conversation_transcript;
 mod conversations;
-mod cooperative_deletion;
 mod core;
+mod courtesy_delete;
+use self::courtesy_delete as cooperative_deletion;
 mod discover;
 mod entity;
 mod error_map;
@@ -526,7 +527,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .merge(self::feedback_inbox::routes(&server))
         // OF-273: a former peer's signed courtesy deletion ask and answer.
         // Keyless; the signed body authenticates against the pinned pact key.
-        .merge(self::cooperative_deletion::routes())
+        .merge(self::courtesy_delete::routes())
         // FIX 922: a kit-only restore's read of the sealed cloud bundle.
         // Keyless; each request is signed with the kit's owner anchor.
         .merge(self::recovery_bundle::routes())
