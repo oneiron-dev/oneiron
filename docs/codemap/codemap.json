@@ -14494,13 +14494,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/coordination_codec.rs",
      "purpose": "Replay encoding for the typed coordination calls",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -15445,6 +15445,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/spawn_replay.rs",
+     "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -15520,7 +15530,7 @@
      "path": "src/code_run/storage/program_resume.rs",
      "purpose": "A turn program's resume checkpoint (DOOR-141 PR3b, FIX 4382): the compact head and keyed pages its pinned…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -30075,7 +30085,17 @@
      "path": "src/engine_executor/program_entry.rs",
      "purpose": "A turn program's pinned entry (DOOR-141 PR3b, FIX 4382)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/program_entry/injection.rs",
+     "purpose": "The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -54434,6 +54454,7 @@
      "notable": [
       "HookBodyRun",
       "HookBodyRuntime",
+      "HookBodyUsage",
       "HookBudgetOverrun",
       "HookRunContext",
       "HookVerdict"
@@ -54441,9 +54462,10 @@
      "path": "src/runtime_hooks/body.rs",
      "purpose": "The seam between the runner and the hook sandbox (ARCH-0080 §6)",
      "surface": {
-      "crate-vis": 1,
-      "fn": 6,
-      "struct": 3,
+      "const": 2,
+      "crate-vis": 2,
+      "fn": 9,
+      "struct": 4,
       "trait": 2,
       "type": 1
      }
@@ -75929,7 +75951,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76251,7 +76273,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77226,7 +77248,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5061,
+   "source_files": 5063,
    "test_files": 902
   },
   "oneiron-android": {
