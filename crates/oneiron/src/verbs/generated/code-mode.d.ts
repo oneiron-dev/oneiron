@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4187 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4194 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -222,7 +222,9 @@ declare namespace Sdk {
   type ShapeApprovalDependencies = { digest: string };
   type ShapeApplyItem = { item: ShapePlanItem; state: ShapeItemState; approval?: ShapeApprovalDependencies | null };
   type ShapeApplyRun = { run_id: string; root: string; items: string[] };
-  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun };
+  type ShapeLearningSetting = { on: boolean; revision: string; act?: string | null };
+  type ShapeLearningOutcome = { requested: boolean; written: boolean; ignored: boolean; resulting?: ShapeLearningSetting | null; reason?: string | null };
+  type ShapeApplyReceipt = { frontier: string; seed_id: string; author: string; started_at: number; items: ShapeApplyItem[]; done: boolean; run: ShapeApplyRun; conversation_learning?: ShapeLearningOutcome | null };
   type ShapeRead = { seed?: StoredShapeSeed | null; live: ShapeSeed; applies: ShapeApplyReceipt[] };
   type ShapePresetMember = { member: string; role?: ShapeMemberRole | null };
   type ShapePresetPick = { preset: ShapePreset; vault_id: string; members?: ShapePresetMember[] };
@@ -233,7 +235,7 @@ declare namespace Sdk {
   type ShapeReach = { facts: ShapeReachFact[] };
   type ShapePlanReach = { before: ShapeReach; after: ShapeReach; unresolved: string[]; line: string };
   type ShapePlan = { seed_id?: string | null; seed: ShapeSeed; frontier: string; items: ShapePlanItem[]; undeclared: ShapeRow[]; summary: ShapePlanSummary; reach?: ShapePlanReach };
-  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[] };
+  type ShapeApplyRequest = { plan: ShapePlan; approve?: number[]; conversation_learning?: boolean | null };
   type MessagePersonRequest = { pr: string; text: string; mention?: MentionProvenance | null; from_project?: string | null; to_project?: string | null };
   type WitnessReceipt = { turn_short_id: string; message_short_ids: string[]; receipt_ref: string; turn?: RecordRef | null; messages?: RecordRef[] };
   type MessagePersonReceipt = { room: string; receipt: WitnessReceipt };
@@ -353,7 +355,7 @@ declare namespace Sdk {
   type BriefContext = { pack?: PinnedPack | null; read_first?: PinnedRef[]; workflow?: WorkflowBinding | null };
   type Criterion = { text: string; evidence_ref?: EntityId | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean };
-  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] };
+  type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[]; strict_verified_reuse?: boolean };
   type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested";
   type Reversibility = "reversible_read" | "outbound_effect";
   type EscalationRule = { to: TaskAskTarget; triggers?: EscalationTrigger[]; default?: TaskAskDefault; until?: number | null; reversibility: Reversibility; question_ref?: ConsultPayloadRef | null };
@@ -479,7 +481,9 @@ declare namespace Sdk {
   type StreamFinalityReason = "explicit_finalize" | "idle_timeout30s" | { idle_timeout: { timeout_ms: number } } | "process_crash_recovery" | "user_interrupted" | "agent_aborted" | "external_signal" | { custom: string };
   type IncompleteReason = "terminal_disagreement";
   type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } } | { incomplete: { reason: IncompleteReason } };
-  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string };
+  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
+  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
+  type MessageStreamReceipt = { message_id: EntityId; actor: EntityId; generation: EntityId; finality: StreamFinality; finality_reason: StreamFinalityReason; finish_reason?: FinishReason | null; bytes: number; recovered: boolean; ephemeral_text_lost: boolean; receipt_ref: string; reply_assertions?: ReplyAssertions };
   type MessageCancelKind = "user_interrupted" | "agent_aborted" | "external_signal";
   type MessageCustomCancelKind = "custom";
   type MessageCustomCancel = { kind: MessageCustomCancelKind; description: string };
@@ -490,7 +494,8 @@ declare namespace Sdk {
   type MessageDurabilityRequest = { message_id: string; after_generation?: string | null; limit?: number | null };
   type MessageCompletion = { incomplete: boolean; generating: boolean; finish_reason?: FinishReason | null };
   type MessageDocumentState = { frontier: number[]; content: string };
-  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[] };
+  type MessageReplyAssertions = { message: EntityId; conversation: EntityId; turn: EntityId; writer: EntityId; writer_class: number; assertions: ReplyAssertions };
+  type MessageDurability = { message_id: string; completion: MessageCompletion; latest_receipt?: MessageStreamReceipt | null; receipts: MessageStreamReceipt[]; next_after_generation?: string | null; document_exists: boolean; document_history: MessageDocumentState[]; birth_assertions?: MessageReplyAssertions | null };
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
@@ -2676,7 +2681,7 @@ declare namespace Sdk {
   type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } };
   type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction };
   type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null };
-  type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage";
+  type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline";
   type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
@@ -2712,16 +2717,20 @@ declare namespace Sdk {
   type OutlineAsset = { id: string; kind: OutlineAssetKind; content: string };
   type DeckOutline = { communication: OutlineCommunication; language: string; accessibility?: string[]; pages: OutlinePage[]; datasets?: OutlineDataset[]; assets?: OutlineAsset[] };
   type DeckOutlineProposeRequest = { outline: DeckOutline };
-  type KeptOutline = { note: EntityId; frontier: number[]; version: string; bytes: number[]; content_hash: number[]; kept_by: EntityId; kept_at: number };
+  type CitedClaimLifecycle = "active" | "superseded" | "retracted";
+  type EvidenceObservation = { pin: number; source_frontier?: number[] | null; lifecycle?: CitedClaimLifecycle | null; mapped: boolean };
+  type KeptOutline = { note: EntityId; frontier: number[]; version: string; bytes: number[]; content_hash: number[]; kept_by: EntityId; kept_at: number; evidence?: EvidenceObservation[] };
   type OutlineFreshness = "fresh" | "not_kept" | "edited" | { evidence_moved: { pins: number[] } };
-  type KeptOutlineOmissionReason = "sources_unreadable" | "invalid_frozen_outline";
-  type DeckOutlineView = { outline_ref: string; frontier: number[]; outline: DeckOutline; kept?: KeptOutline | null; freshness: OutlineFreshness; kept_omission?: KeptOutlineOmissionReason | null };
-  type DeckOutlineRefRequest = { outline_ref: string };
+  type KeptOutlineOmissionReason = "sources_unreadable" | "invalid_frozen_outline" | "keys_unknown";
+  type EvidenceChange = { kept: EvidenceObservation; now: EvidenceObservation };
+  type DeckPresentation = "whole" | "masked";
+  type DeckOutlineView = { outline_ref: string; frontier: number[]; outline: DeckOutline; kept?: KeptOutline | null; freshness: OutlineFreshness; kept_omission?: KeptOutlineOmissionReason | null; evidence_changed?: EvidenceChange[]; presentation?: DeckPresentation };
+  type DeckOutlineRefRequest = { outline_ref: string; why?: string | null };
   type DeckOutlineSettleRequest = { outline_ref: string; expected_frontier: number[] };
   type DeckOutlineDeclined = { outline_ref: string; declined: boolean };
   type DeckKeepBinding = { version: string; content_hash: number[] };
   type ArtifactVersionRef = { artifact: EntityId; version: number };
-  type DeckDesignRequest = { outline_ref: string; kept: DeckKeepBinding; templates: ArtifactVersionRef[]; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[] };
+  type DeckDesignRequest = { outline_ref: string; kept: DeckKeepBinding; templates: ArtifactVersionRef[]; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; why?: string | null };
   type DirectionSlide = { page: string; layout: string; fallback?: string | null };
   type DirectionOutcome = { plan: { slides: DirectionSlide[]; omitted: string[]; measured: number; estimated: number } } | { ask: { pages: string[] } };
   type DesignDirection = { template: ArtifactVersionRef; template_hash: number[]; outcome: DirectionOutcome };
@@ -2748,7 +2757,7 @@ declare namespace Sdk {
   type DeckShortfallReason = "no_suitable_slot" | "overflow" | "crowded";
   type DeckDesignShortfall = { block: string; reason: DeckShortfallReason };
   type DeckDesignDecision = { page: string; options: DeckDesignOption[]; shortfalls: DeckDesignShortfall[] };
-  type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][] };
+  type DeckDesignView = { spec: DesignSpec; plans: (DeckPlanView | null)[]; decisions: DeckDesignDecision[][]; presentation?: DeckPresentation };
   type DeckEmissionNames = { text: string; table: string; chart: string; picture: string; figure: string; sheet: string };
   type DeckEmissionRequest = { outline_ref: string; kept: DeckKeepBinding; template: ArtifactVersionRef; assets?: Record<string, ArtifactVersionRef>; fonts?: ArtifactVersionRef[]; names: DeckEmissionNames; name: string; run_ref: string; trigger?: MadeByTrigger | null };
   type CreatedSlide = { part: string; sld_id: number; page: string; layout: string };
@@ -2973,8 +2982,6 @@ declare namespace Sdk {
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
   type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
   type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
-  type ReplyAssertionRecord = { entity_type: number; id: EntityId };
-  type ReplyAssertions = { cited?: ReplyAssertionRecord[]; created?: ReplyAssertionRecord[] };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason; reply_assertions?: ReplyAssertions };
   type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
   type CorefLink = { span: number; antecedent: number; confidence?: number | null };
@@ -3200,8 +3207,8 @@ declare namespace Sdk {
   type ScheduledBackfill = { question: string; version: number; due_at: number };
   type QuestionReadRequest = { id: EntityId; version?: number | null };
   type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; page_size?: number | null };
-  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" };
-  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null };
+  type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" };
+  type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionAnswersPage = { answers: QuestionAnswer[]; next_cursor?: string | null };
   type QuestionAnswersReply = QuestionAnswer[] | QuestionAnswersPage;
@@ -3639,7 +3646,7 @@ declare namespace Sdk {
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type BodyActor = string;
   type ForkState = { state: "open" } | { state: "merged"; by: BodyActor; at: number; head: number[] } | { state: "discarded"; by: BodyActor; at: number };
-  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: BodyActor; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
+  type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: BodyActor; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null; origin?: AttemptId | null };
   type OfficeBodyForkEditRequest = { artifact_ref: string; fork_ref: string; ops: OfficeBodyOps; made_by?: unknown | null };
   type OfficeBodyForkRequest = { artifact_ref: string; fork_ref: string };
   type ChangeKind = "added" | "deleted" | "moved" | "text" | "cells";
@@ -3653,7 +3660,7 @@ declare namespace Sdk {
   type MemberVerdict = "waiting" | "landed" | "rejected" | "let_go";
   type AnsweringAuthority = { kind: "word"; person: BodyActor } | { kind: "grant"; grant_ref: string; decision: string };
   type MemberAnswer = { by: AnsweringAuthority; caller: BodyActor; head: number[]; fork_head: number[]; landed?: number[] | null; at: number };
-  type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
+  type ProposalMember = { fork: EntityId; opener: BodyActor; run_root?: EntityId | null; origin?: AttemptId | null; verdict: MemberVerdict; answer?: MemberAnswer | null };
   type BundleVerdict = "landed" | "rejected" | "mixed" | "let_go";
   type ProposalSettlement = { verdict: BundleVerdict; at: number; reason?: string | null };
   type ProposalAsk = { ask: EntityId; forks: EntityId[]; at: number };

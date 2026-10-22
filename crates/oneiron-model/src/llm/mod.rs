@@ -23,6 +23,7 @@ mod call;
 mod defaults;
 mod inference;
 mod inference_observation;
+mod inference_publisher;
 pub use defaults::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -90,6 +91,7 @@ pub use self::inference::{
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
 pub use self::inference_observation::{InferenceCallObservation, InferenceObservationId};
+pub use self::inference_publisher::InferencePublisher;
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
