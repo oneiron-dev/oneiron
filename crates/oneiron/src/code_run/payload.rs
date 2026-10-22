@@ -1,3 +1,7 @@
+//! Code-run request and outcome replay values.
+//! Entry: `self_call_request_value`.
+//! The request child owns request encoding; `code_run::types` owns call and outcome types.
+
 mod request;
 mod session_hooks;
 

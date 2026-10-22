@@ -1,4 +1,6 @@
-//! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
+//! The recording JS host, its state and its runtime adapter.
+//! Entry type: `RecordingJsHost`.
+//! Child modules implement behavior; sandbox and call types belong to code_sandbox and code_run.
 
 mod boundary;
 mod dispatch;

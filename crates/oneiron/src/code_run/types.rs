@@ -1,3 +1,7 @@
+//! Call vocabulary from guest requests to host admission and recorded answers.
+//! Entry type: `SelfCall`.
+//! The call, effect, request, host_door and outcome children own the forwarded definitions.
+
 mod call;
 mod effect;
 mod host_door;

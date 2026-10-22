@@ -1,3 +1,7 @@
+//! State and export seam for the host-bound first-party dispatcher.
+//! Entry type: `HostSelfDispatcher`.
+//! Child modules own behavior; call definitions are forwarded from `code_run::types`.
+
 mod admission;
 mod agent_verb;
 mod binding;

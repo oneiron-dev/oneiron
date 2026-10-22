@@ -1,4 +1,6 @@
-//! Durable REPL loop: run(), persistence helpers, and LLM request building.
+//! The durable code-mode REPL orchestrator.
+//! Entry: `EngineNativeExecutor::run`.
+//! `EngineNativeExecutor` is defined by `driver`; children own persistence, speech and requests.
 
 mod persistence;
 mod request;

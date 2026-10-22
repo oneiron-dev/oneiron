@@ -1,4 +1,7 @@
 //! One named verb registry for validated UI events and agent calls.
+//! Entry type: `ActionRegistry`.
+//! This root owns action values; the execution and build children use code_run calls.
+//!
 //! Host factories build existing SelfCalls; only GatedActorWrite executes them.
 //!
 //! One action layer, two callers (OF-181): the app's buttons and an agent's
