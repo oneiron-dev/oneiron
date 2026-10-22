@@ -130,6 +130,7 @@ pub(super) fn compact_all_windows(
     vault: &Vault,
     erased: &BTreeSet<EntityId>,
     withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
     run: &mut HardEraseSweepRun,
     _now: u64,
 ) -> Result<WindowSweepState> {
@@ -141,8 +142,9 @@ pub(super) fn compact_all_windows(
     let (mut labels, malformed) = persisted_window_labels(vault)?;
     // OF-013: a window that holds queued sends and no persisted state has
     // nothing to compact, but while a withdrawn generation is due its sends
-    // go as a compacted window's do.
-    if !withdrawn.due.is_empty() {
+    // go as a compacted window's do, and so on a due capture failure's
+    // full-carrier pass (FIX 7800).
+    if !withdrawn.due.is_empty() || full_carriers {
         let rtxn = vault.store.env.read_txn()?;
         labels.extend(crate::sync::queue::queued_window_labels_in_txn(
             vault, &rtxn,
@@ -197,9 +199,8 @@ pub(super) fn compact_all_windows(
         // deregistration removed the manager registry entry. A closed window
         // stays closed while it compacts: an open waits, then reads the
         // compacted window, rather than registering the history dropped here.
-        let Some(compacted) =
-            vault.while_window_closed(&key, || compact_window_with(vault, &key, erased, withdrawn))
-        else {
+        let compact = || compact_window_with(vault, &key, erased, withdrawn, full_carriers);
+        let Some(compacted) = vault.while_window_closed(&key, compact) else {
             tracing::warn!("sweep: window live or retained — deferred");
             run.windows_deferred_live += 1;
             if matches!(state, WindowSweepState::AllCompacted) {
@@ -263,6 +264,7 @@ pub(super) fn compact_all_windows(
     vault: &Vault,
     _erased: &BTreeSet<EntityId>,
     _withdrawn: &mut WithdrawnSweep,
+    _full_carriers: bool,
     _run: &mut HardEraseSweepRun,
     _now: u64,
 ) -> Result<WindowSweepState> {
@@ -301,14 +303,16 @@ fn compact_window(
 /// live-map residue for erased ids, rewrite withdrawn generations' carriers
 /// to their keyframes, export a shallow snapshot at the latest frontiers,
 /// and atomically replace the persistence triple, prune the subsumed `u:w:`
-/// rows, re-assert `fr:w:` and, while a withdrawn generation is due, drop
-/// the window's queued sends. Returns whether any persisted state existed.
+/// rows, re-assert `fr:w:` and, while a withdrawn generation is due or on a
+/// `full_carriers` pass (FIX 7800), drop the window's queued sends. Returns
+/// whether any persisted state existed.
 #[cfg(feature = "sync")]
 pub(super) fn compact_window_with(
     vault: &Vault,
     key: &crate::sync::types::WindowKey,
     erased: &BTreeSet<EntityId>,
     withdrawn: &mut WithdrawnSweep,
+    full_carriers: bool,
 ) -> Result<CompactOutcome> {
     use crate::ports::WindowAddress;
     use crate::sync::loro_support::{doc_from_snapshot, import_doc};
@@ -331,7 +335,7 @@ pub(super) fn compact_window_with(
         (snapshot, rows)
     };
     if snapshot_bytes.is_none() && update_rows.is_empty() {
-        if !withdrawn.due.is_empty() {
+        if !withdrawn.due.is_empty() || full_carriers {
             return scrub_stateless_window_sends(vault, &window);
         }
         return Ok(CompactOutcome::Empty);
@@ -383,7 +387,7 @@ pub(super) fn compact_window_with(
     // in for it stays too, and holds its artifact's obligation.
     let found = crate::sync::window::replace_withdrawn_carriers(vault, &doc, &withdrawn.cutoffs)?;
     withdrawn.held.extend(found.held);
-    let scrub_sends = !withdrawn.due.is_empty();
+    let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
 
     // Strict shallow cut at the latest frontiers (FIX 6520): live state
     // byte-exact, op history (the payload carrier) dropped, identity kept, VV

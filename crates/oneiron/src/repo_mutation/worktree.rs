@@ -1,3 +1,7 @@
+//! Queue-owned worktree creation, cleanup and checked file writes.
+//! The creation entry is `create_queue_worktree`.
+//! `queue` owns `PreparedCommitFile`; this module forwards no definitions.
+
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};

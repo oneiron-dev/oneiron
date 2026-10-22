@@ -1,3 +1,7 @@
+// Deletion of code-memory rows that name a removed entity.
+// The entry is `delete_code_memory_rows_for_entity_in_txn`.
+// This fragment defines items in `code_memory::implementation`, not a child module.
+
 // ---------------------------------------------------------------------------
 // Deletion lifecycle — no code-memory row outlives the entity it names
 // ---------------------------------------------------------------------------
