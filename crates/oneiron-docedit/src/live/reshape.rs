@@ -368,15 +368,11 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
                     _ => false,
                 }
                 && match (&a.x_labels, &b.x_labels) {
-                    (Some(a), Some(b)) => {
-                        let label = |labels: &[Option<String>], at: usize| {
-                            labels
-                                .get(at)
-                                .and_then(Option::as_deref)
-                                .filter(|label| !label.is_empty())
-                        };
-                        (0..a.len().max(b.len())).all(|at| label(a, at) == label(b, at))
-                    }
+                    (Some(a), Some(b)) => (0..a.len().max(b.len())).all(|at| {
+                        let read = a.get(at).and_then(Option::as_deref).unwrap_or_default();
+                        let want = b.get(at).and_then(Option::as_deref).unwrap_or_default();
+                        read == want
+                    }),
                     (None, None) => true,
                     _ => false,
                 }
