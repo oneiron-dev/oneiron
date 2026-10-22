@@ -3,8 +3,7 @@
 //! meter refuses goes on the receipt, with the inference receipts the call
 //! reported or its lease observed (FIX 9065).
 use super::super::{
-    BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage,
-    answered_units_wide,
+    BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage, answered_units_wide,
 };
 use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;

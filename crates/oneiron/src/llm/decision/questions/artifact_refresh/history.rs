@@ -101,7 +101,9 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         ask_id: Some(event.ask_id),
     };
     let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
-    record.parent_proposal_ref.clone_from(&event.parent_proposal_ref);
+    record
+        .parent_proposal_ref
+        .clone_from(&event.parent_proposal_ref);
     Ok(record)
 }
 
@@ -144,17 +146,19 @@ fn settled_standing(
     stamp: &ArtifactAsked,
     asked: u64,
 ) -> Result<ArtifactAskStanding> {
-    Ok(match (&stamp.proposal_ref, baseline(vault, artifact, stamp)?) {
-        (None, _) => ArtifactAskStanding::Unanswered,
-        (Some(_), None) => ArtifactAskStanding::Waiting,
-        (Some(_), Some(versions)) => versions
-            .iter()
-            .find(|(id, _)| *id == artifact)
-            .filter(|(_, kept)| *kept > asked)
-            .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
-                ArtifactAskStanding::Kept { version: *kept }
-            }),
-    })
+    Ok(
+        match (&stamp.proposal_ref, baseline(vault, artifact, stamp)?) {
+            (None, _) => ArtifactAskStanding::Unanswered,
+            (Some(_), None) => ArtifactAskStanding::Waiting,
+            (Some(_), Some(versions)) => versions
+                .iter()
+                .find(|(id, _)| *id == artifact)
+                .filter(|(_, kept)| *kept > asked)
+                .map_or(ArtifactAskStanding::Closed, |(_, kept)| {
+                    ArtifactAskStanding::Kept { version: *kept }
+                }),
+        },
+    )
 }
 
 /// Every ask the caller's standing question has made of its artifacts, across its

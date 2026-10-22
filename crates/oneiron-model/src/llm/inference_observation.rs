@@ -94,7 +94,9 @@ impl InferenceObservations {
         let Some(slot) = calls.get_mut(id.index) else {
             return;
         };
-        if slot.as_ref().is_some_and(InferenceCallObservation::is_final)
+        if slot
+            .as_ref()
+            .is_some_and(InferenceCallObservation::is_final)
             && !observation.is_final()
         {
             return;

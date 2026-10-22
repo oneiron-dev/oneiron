@@ -525,8 +525,8 @@ impl BoundedAutoChecker {
         store: &crate::store::Store,
         caller: EntityId,
     ) -> Result<impl Future<Output = Self> + Send + 'static> {
-        let admitted = (self.turn.is_none() && names_checker(store)?)
-            .then(|| self.admit_in_line(caller));
+        let admitted =
+            (self.turn.is_none() && names_checker(store)?).then(|| self.admit_in_line(caller));
         let handle = self.clone();
         Ok(async move {
             match admitted {

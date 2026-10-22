@@ -974,7 +974,11 @@ impl Vault {
                     answer.woken_at = Some(now);
                 }
             }
-            if !row.reask_refs.iter().any(|known| known.as_str() == reask_ref) {
+            if !row
+                .reask_refs
+                .iter()
+                .any(|known| known.as_str() == reask_ref)
+            {
                 row.reask_refs.push(reask_ref.to_owned());
             }
             row.retry_at = None;
