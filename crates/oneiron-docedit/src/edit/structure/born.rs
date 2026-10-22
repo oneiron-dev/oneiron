@@ -57,7 +57,8 @@ pub(super) fn add_picture(
 ) -> Result<(Plan, Vec<Effect>), EditRefusal> {
     frame(new.name, new.offset, new.extent)?;
     let ((x, y), (cx, cy)) = (new.offset, new.extent);
-    let (extension, content_type, placed) = admit(&new.picture, Rect { x, y, cx, cy })?;
+    let (extension, content_type, placed) =
+        admit(&new.picture, Rect { x, y, cx, cy }, next.resources())?;
     let placed = if new.fit {
         placed
     } else {

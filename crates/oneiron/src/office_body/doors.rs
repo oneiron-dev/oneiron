@@ -57,8 +57,14 @@ impl Vault {
                 })?;
             }
             OfficeBodyKind::Xlsx => {
-                let book = read_xlsx_cells(&bytes, self.docedit_package_limits()?)
-                    .map_err(|_| invalid("the XLSX package could not be read"))?;
+                let book = read_xlsx_cells(
+                    &bytes,
+                    self.docedit_package_limits()?,
+                    &crate::office_body::document_resources(),
+                )
+                .map_err(|error| {
+                    super::document_error(error.resource(), "the XLSX package could not be read")
+                })?;
                 // Past the row it asks; the workbook is imported whole.
                 let cells: usize = book.sheets.iter().map(|sheet| sheet.cells.len()).sum();
                 self.measure_limit(
@@ -570,8 +576,10 @@ impl Vault {
             Some((bytes, _, recalc, _)) => (bytes, recalc),
             None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
         };
-        let book = read_xlsx_cells(&bytes, limits)
-            .map_err(|_| invalid("the projected workbook could not be read"))?;
+        let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
+            .map_err(|error| {
+                super::document_error(error.resource(), "the projected workbook could not be read")
+            })?;
         Ok(XlsxPreview {
             frontier: head.frontier,
             book,
@@ -652,8 +660,18 @@ impl Vault {
             return Ok(None);
         }
         let limits = self.docedit_package_limits()?;
-        let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
-            .map_err(|_| invalid("the body could not be projected onto its package"))?;
+        let projected = project_xlsx(
+            &self.body_source(artifact, head)?,
+            &changes,
+            limits,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(|error| {
+            super::document_error(
+                error.resource(),
+                "the body could not be projected onto its package",
+            )
+        })?;
         let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
         Ok(Some((bytes, changes.len(), recalc, projected.effects)))
     }

@@ -22,6 +22,7 @@ use crate::live::{
     ApproveScope, Conflict, DeckFork, DeckNode, DeckOp, Landing, LiveDeck, LiveError, NodeId,
     NodeKind, PreflightReport, land, preflight,
 };
+use crate::resource::Resources;
 use crate::retained_opc::{Limits, Package};
 use std::collections::BTreeSet;
 
@@ -100,10 +101,12 @@ fn merged_case(
     match result {
         Ok(Some(bytes)) => {
             run.record(CONCURRENCY, id, StepOutcome::Passed);
-            let slides = DeckView::read(&Package::open(&bytes, run.limits).map_err(text)?)
-                .map_err(text)?
-                .slides
-                .len();
+            let slides = DeckView::read(
+                &Package::open(&bytes, run.limits, &Resources::measuring()).map_err(text)?,
+            )
+            .map_err(text)?
+            .slides
+            .len();
             run.candidate(Emit {
                 id,
                 bytes: &bytes,
@@ -144,7 +147,8 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
     );
     head.rebind(&outcome)
         .map_err(|error| format!("it does not rebind: {error}"))?;
-    let package = Package::open(&outcome.bytes, run.limits).map_err(text)?;
+    let package =
+        Package::open(&outcome.bytes, run.limits, &Resources::measuring()).map_err(text)?;
     let defects = checks::defects(&outcome.bytes, run.limits);
     let text_checks = [(1, "Free shape"), (1, "Group child"), (2, "Second slide")]
         .into_iter()
@@ -583,7 +587,7 @@ fn theme_inherited_style(p: &Prepared, limits: Limits) -> Res<Option<Vec<u8>>> {
 
 /// The resolved Latin font of each run of one shape.
 fn fonts(bytes: &[u8], limits: Limits, part: &str, native: u32) -> Res<Vec<String>> {
-    let package = Package::open(bytes, limits).map_err(text)?;
+    let package = Package::open(bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let shape = view
         .slides
@@ -770,7 +774,7 @@ pub(super) fn built_ranges(
     let native = bound
         .native_id
         .ok_or("the animated shape has no native id")?;
-    let package = Package::open(&outcome.bytes, limits).map_err(text)?;
+    let package = Package::open(&outcome.bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let slide = view
         .slides

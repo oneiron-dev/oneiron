@@ -261,7 +261,7 @@ pub(in super::super) fn delete(
         .ok_or(EditRefusal::Invalid("a slide id entry"))?;
     let hidden = input
         .part(slide)?
-        .and_then(|bytes| XmlTree::parse(&bytes, input.limits().xml).ok())
+        .and_then(|bytes| XmlTree::parse(&bytes, input.resources()).ok())
         .is_some_and(|tree| matches!(tree.nodes[0].attr("show"), Some("0" | "false")));
     let notes = related(&input, slide, "notesSlide").is_ok_and(|notes| notes.is_some());
     let mut edits = vec![(lists.tree.nodes[entry].span.clone(), Vec::new())];

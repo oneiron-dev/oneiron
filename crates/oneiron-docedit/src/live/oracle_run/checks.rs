@@ -38,7 +38,7 @@ pub(super) fn corruption(bytes: &[u8], limits: Limits, baseline: &[String]) -> S
 /// Every closure, content-type, id-scope and cross-reference defect in a
 /// package. Schema validity is not enough (ARCH-0077 step 5).
 pub(super) fn defects(bytes: &[u8], limits: Limits) -> Vec<String> {
-    let package = match Package::open(bytes, limits) {
+    let package = match Package::open(bytes, limits, &crate::resource::Resources::measuring()) {
         Ok(package) => package,
         Err(error) => return vec![format!("the package does not open: {error}")],
     };
@@ -423,7 +423,11 @@ pub(super) fn fixed_point(
     if let Err(error) = bound.rebind(outcome) {
         return failed(format!("the export does not rebind: {error}"));
     }
-    let package = match Package::open(&outcome.bytes, limits) {
+    let package = match Package::open(
+        &outcome.bytes,
+        limits,
+        &crate::resource::Resources::measuring(),
+    ) {
         Ok(package) => package,
         Err(error) => return failed(format!("the export does not reopen: {error}")),
     };

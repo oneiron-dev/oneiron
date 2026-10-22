@@ -135,8 +135,9 @@ pub struct PptxExport {
 
 /// The imported deck a body is born with.
 pub(super) fn import_deck(bytes: &[u8], limits: Limits) -> Result<LiveDeck> {
-    let package =
-        Package::open(bytes, limits).map_err(|_| invalid("the PPTX package could not be read"))?;
+    let package = Package::open(bytes, limits, &crate::office_body::document_resources()).map_err(
+        |error| super::document_error(error.resource(), "the PPTX package could not be read"),
+    )?;
     LiveDeck::import(&package).map_err(live)
 }
 
@@ -304,8 +305,11 @@ impl Vault {
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
             self.docedit_package_limits()?,
+            &crate::office_body::document_resources(),
         )
-        .map_err(|_| invalid("the PPTX package could not be read"))?;
+        .map_err(|error| {
+            super::document_error(error.resource(), "the PPTX package could not be read")
+        })?;
         let evidence_refusal = attach_evidence(
             &mut report,
             &body.deck,
