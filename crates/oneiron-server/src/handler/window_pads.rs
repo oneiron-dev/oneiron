@@ -150,17 +150,21 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
 }
 
 /// Sends `frame` as it leaves this socket ([`release`]); false once a send
-/// fails.
-pub(super) async fn send_released(
+/// fails. The frames are made before the send, so the send holds neither
+/// the server nor the socket's state.
+pub(super) fn send_released<'t>(
     server: &SyncServer,
     conn_state: &ConnState,
-    transport: &mut StoppingTransport,
+    transport: &'t mut StoppingTransport,
     frame: Vec<u8>,
-) -> bool {
-    for frame in release(server, conn_state, frame) {
-        if !transport.send_binary(frame).await {
-            return false;
+) -> impl Future<Output = bool> + use<'t> {
+    let frames = release(server, conn_state, frame);
+    async move {
+        for frame in frames {
+            if !transport.send_binary(frame).await {
+                return false;
+            }
         }
+        true
     }
-    true
 }
