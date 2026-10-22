@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
+use oneiron::EdgeActorClass;
 use oneiron::ingest::{EntityMentionRequest, EntityResolutionWaterfallDecision};
 use oneiron::memory::{MemoryError, MemoryResult};
-use oneiron::vault_cleanup::CleanupKind;
 use oneiron::vault_cleanup::surface::{CleanupRunRequest, CleanupRunView};
+use oneiron::vault_cleanup::{
+    CleanupDecideRequest, CleanupDecideView, CleanupKind, CleanupReviewRequest, CleanupReviewView,
+};
 
 use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
@@ -37,6 +40,75 @@ pub(crate) async fn vault_cleanup_run(
                 .iter()
                 .filter(|candidate| candidate.kind != CleanupKind::CompletedAttempt)
                 .map(|candidate| candidate.entity)
+                .collect()
+        },
+    );
+    (answer, rows)
+}
+
+/// One open proposal reviewed slot by slot (FIX 1758), under the owner's
+/// proof; each slot's content comes through the owner's own reads.
+pub(crate) async fn vault_cleanup_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CleanupReviewRequest,
+) -> Listed<CleanupReviewView> {
+    const VERB: &str = "vault.cleanup.review";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let locality = auth.locality();
+    let server = Arc::clone(server);
+    let answer: MemoryResult<CleanupReviewView> = tokio::task::spawn_blocking(move || {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault).map_err(MemoryError::from)?;
+        let memory = vault.memory(actor, EdgeActorClass::Human).at(locality);
+        oneiron::vault_cleanup::review_cleanup_proposal_as(&memory, &owner, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))
+    .and_then(|answer| answer);
+    // The records the review discloses; an attempt names no record.
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |view| {
+            view.items
+                .iter()
+                .filter(|item| item.kind != Some(CleanupKind::CompletedAttempt))
+                .filter_map(|item| item.entity)
+                .collect()
+        },
+    );
+    (answer, rows)
+}
+
+/// One open proposal decided slot by slot in one complete verdict (FIX
+/// 1758), under the owner's proof.
+pub(crate) async fn vault_cleanup_decide(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CleanupDecideRequest,
+) -> Listed<CleanupDecideView> {
+    const VERB: &str = "vault.cleanup.decide";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let server = Arc::clone(server);
+    let answer: MemoryResult<CleanupDecideView> = tokio::task::spawn_blocking(move || {
+        server.vault().decide_cleanup_proposal_as(&owner, &input)
+    })
+    .await
+    .map_err(|_| internal(VERB))
+    .and_then(|answer| answer);
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |view| {
+            view.items
+                .iter()
+                .filter(|item| item.kind != Some(CleanupKind::CompletedAttempt))
+                .filter_map(|item| item.entity)
                 .collect()
         },
     );

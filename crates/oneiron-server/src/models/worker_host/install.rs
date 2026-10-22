@@ -264,7 +264,12 @@ pub(super) async fn bundle(root: &Path) -> Result<(PathBuf, String), LaunchFailu
         let written = (|| {
             std::fs::create_dir_all(&staging)?;
             for (name, bytes) in WORKER_FILES {
-                std::fs::write(staging.join(name), bytes)?;
+                // A package's files (`exl3_session/`) go in their folder.
+                let path = staging.join(name);
+                if let Some(folder) = path.parent() {
+                    std::fs::create_dir_all(folder)?;
+                }
+                std::fs::write(path, bytes)?;
             }
             std::fs::rename(&staging, &dir)
         })();
