@@ -3,7 +3,7 @@
 //! sections and subjects a reader may see in one scoped-read snapshot.
 use super::{ScopedRead, ScopedReadResult};
 use crate::claim::{ClaimBody, ClaimSubject, decode_claim_body};
-use crate::dreamer_runner::maintenance::agent_health::{AgentHealthCard, AgentHealthPadRead};
+use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
@@ -17,6 +17,8 @@ pub(super) mod admissions;
 pub(super) mod sieve_score;
 // The live projection core, a due Owner schedule's binding too (FIX 1259).
 mod projection;
+// The moves an agent-health card keeps, served past the reader's floor (FIX 8536).
+mod card_moves;
 
 /// Reader role is a constraint on the projection, never a claim of new read authority.
 #[derive(Clone, Copy)]
@@ -178,8 +180,9 @@ impl WeaveReport {
 /// The rows an agent-health card is built from, as the card keeps them:
 /// its agent, TASK, attempts (the newest and every one it witnessed),
 /// diagnostics and evidence, and the Coach's ask on it (the diagnostic it was
-/// asked on, the attempt that answers and, for a pad read that was granted,
-/// its read-log row and the pads it returned). A pad count is never an id.
+/// asked on, the attempt that answers, the rows its answer froze (FIX 9220)
+/// and, for a pad read that was granted, its read-log row and the pads it
+/// returned). A pad count is never an id.
 fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
     let mut rows = vec![card.subject];
     rows.extend(
@@ -190,14 +193,13 @@ fn card_rows(card: &AgentHealthCard) -> Vec<EntityId> {
     );
     rows.extend(card.witnessed_attempts.iter().copied());
     rows.extend(card.diagnostics.iter().chain(&card.evidence).copied());
+    // Every row each move it keeps names (FIX 8536).
+    rows.extend(card.moves_taken.iter().flat_map(card_moves::move_rows));
     if let Some(ask) = &card.coach {
         rows.extend(ask.diagnostic);
         rows.extend(EntityId::from_hex(&ask.attempt).ok());
-        if let Some(answer) = &ask.answer
-            && let AgentHealthPadRead::Read { read, pad_ids, .. } = &answer.pads
-        {
-            rows.extend(*read);
-            rows.extend(pad_ids.iter().copied());
+        if let Some(answer) = &ask.answer {
+            rows.extend(answer.known_sources());
         }
     }
     rows
@@ -218,6 +220,7 @@ impl ScopedRead<'_> {
         let mut report = self.weave_report_in_txn(&txn, reader, recipe)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
+        self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
         Ok(report)
     }
 

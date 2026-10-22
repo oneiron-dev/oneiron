@@ -69,6 +69,7 @@ fn destination_refusal_policy(error: &BrowserError) -> bool {
         error,
         BrowserError::Navigation(_)
             | BrowserError::Timeout(_)
+            | BrowserError::CallTimeout(_)
             | BrowserError::DestinationRefused(_)
     )
 }

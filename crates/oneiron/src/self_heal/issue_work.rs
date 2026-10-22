@@ -34,6 +34,9 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Error, Result, Vault};
 
+mod recurrence_index;
+pub(super) use recurrence_index::same_key_in_txn;
+
 /// Every model finding's issue, kept after the Coach files it. Key: the issue.
 pub(super) const ISSUES: SideTable<EntityId, DiagnosticIssue, Named> =
     SideTable::new(&side_table::COACH_DIAGNOSTIC_ISSUE);
@@ -563,6 +566,7 @@ impl Vault {
                 ..issue
             };
             ISSUES.put(&self.store, txn, &issue_id, &issue)?;
+            recurrence_index::insert_in_txn(self, txn, &issue.recurrence_key, &issue_id)?;
             if let Some(previous) = recurrence_of {
                 let fact = IssueFact::Recurrence {
                     previous,

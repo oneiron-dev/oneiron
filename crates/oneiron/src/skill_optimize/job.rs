@@ -319,6 +319,8 @@ pub(crate) struct SkillRepairStamp<'a> {
 /// Lands one validated draft of `brief`'s target as a gated proposal in the
 /// caller's write transaction: `candidate` + `proposed`, continuing the
 /// target's `skillId` and dependency contract, carrying its resolved tier.
+/// One drafting attempt lands one proposal, except that one `coach.issues`
+/// run lands one per target its reports name (FIX 7222).
 ///
 /// # Errors
 ///
@@ -370,6 +372,7 @@ pub(crate) fn propose_skill_repair_in_txn(
         if matches!(&other.provenance, Value::Map(fields) if
             fields.iter().any(|(key, value)| key.as_str() == Some(PROVENANCE_OPTIMIZE_ATTEMPT_KEY)
                 && value.as_str() == Some(bytes_to_hex_lower(stamp.attempt.as_bytes()).as_str())))
+            && !issues_draft_of_other_target(stamp, &other.provenance, &brief.skill)
         {
             return Err(invalid(
                 "this drafting attempt already landed an optimizer proposal",
@@ -427,6 +430,41 @@ pub(crate) fn propose_skill_repair_in_txn(
         vault.persist_hub_package_in_txn(wtxn, proposal_id, &package)?;
     }
     Ok(())
+}
+
+/// Whether `provenance`, of a proposal the same attempt landed, proves a
+/// `coach.issues` draft of a target other than `target` (FIX 7222): one
+/// Issues run drafts a heal for each skill its reports name. Both drafts'
+/// facet must be `coach.issues` and the prior's one `optimizeOfEntity`
+/// another entity; any other facet, or a prior that proves neither, keeps
+/// the attempt to one proposal.
+fn issues_draft_of_other_target(
+    stamp: &SkillRepairStamp<'_>,
+    provenance: &Value,
+    target: &EntityId,
+) -> bool {
+    use crate::dreamer_runner::maintenance::coach::COACH_ISSUES_FACET;
+    let Value::Map(fields) = provenance else {
+        return false;
+    };
+    stamp.facet == COACH_ISSUES_FACET
+        && unique_str(fields, "facet") == Some(COACH_ISSUES_FACET)
+        && unique_str(fields, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY)
+            .and_then(|hex| EntityId::from_hex(hex).ok())
+            .is_some_and(|prior| prior != *target)
+}
+
+/// The one string value `fields` holds under `name`; `None` for none, a
+/// non-string or more than one.
+fn unique_str<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a str> {
+    let mut values = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value.as_str());
+    match (values.next(), values.next()) {
+        (Some(value), None) => value,
+        _ => None,
+    }
 }
 
 /// An explicit candidate submitted by the owner against one fixed baseline.
