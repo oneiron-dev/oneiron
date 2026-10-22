@@ -410,6 +410,19 @@ impl ReceiptRecord {
             .transpose()
     }
 
+    /// Re-keys a frozen project stamp naming erased `project` to the opaque
+    /// `erased` scope (FIX 6038): the run stays apart from the vault's and no
+    /// longer names the project. `true` when the stamp named it.
+    pub(crate) fn rescope_task_project(&mut self, project: EntityId, erased: EntityId) -> bool {
+        match self.fields.get_mut(FIELD_TYPE_REF_PROJECT) {
+            Some(stamp) if *stamp == project.to_hex() => {
+                *stamp = erased.to_hex();
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// The spawn/task receipt law: a missing `typeRef` is invalid, never
     /// untyped. Returns the stamp, or refuses the receipt.
     pub fn require_task_type_ref(&self) -> Result<crate::task_type::TaskTypeRef> {

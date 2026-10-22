@@ -35,6 +35,7 @@ pub mod project;
 pub(crate) mod ranking;
 pub mod read;
 pub mod retest;
+mod scope_carriers;
 mod scope_erase;
 
 pub use cell::{LearningCell, LearningPredicate, ROOT_TYPE_NODE, TypeRef};
@@ -63,6 +64,9 @@ pub use retest::{Retest, RetestScore, record_retest};
 pub(crate) use evidence::record_evidence_in_txn;
 pub(crate) use pack_erase::{erase_learning_pack_context_in_txn, pack_attribution_names};
 pub(crate) use project::validate_learning_claim_structure;
+pub(crate) use scope_carriers::{
+    erase_receipt_scope_in_txn, erase_review_scope_in_txn, erase_team_receipt_scope_in_txn,
+};
 pub(crate) use scope_erase::erase_learning_scope_in_txn;
 
 /// How often a thing worked.
