@@ -4,13 +4,11 @@
 
 use super::*;
 
-/// The encoder, preview and settlement share the same row-validity bound.
+/// The encoder, preview and settlement share the same row validity; every
+/// row a review writes is kept, whatever their number (FIX 9819).
 /// Uniqueness is checked independently of PPTX replay so discard cannot
 /// persist a row the selected writer (or the ledger decoder) would reject.
 pub(crate) fn validate_judgment_rows(rows: &[SlideJudgment]) -> Result<()> {
-    if rows.len() > MAX_JUDGMENTS {
-        return Err(invalid("too many persisted slide judgments"));
-    }
     let mut threads = HashSet::new();
     let mut units = HashSet::new();
     for row in rows {
@@ -123,6 +121,7 @@ pub(super) fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> 
             })
             || row.presence.as_ref().is_some_and(|presence| {
                 presence.answer != DecisionAnswer::Noul(true)
+                    || !pins_climb(&presence.receipt.providers)
                     || presence.in_band
                     || presence.human_ask.is_some()
                     || presence.receipt.principal != receipt.principal
@@ -142,9 +141,13 @@ pub(super) fn verify_rows(proposal: &EditProposal, carried: bool) -> Result<()> 
     Ok(())
 }
 
-/// Whether the receipt is one the shared ladder writes for an answered unit below
-/// the person: on the decision clock, either the first read standing (clear, or
-/// taken at the cut outside its band) or one read a rung up for its cause.
+/// Whether the receipt is one the shared ladder writes for an answered unit
+/// below the person, on the decision clock (FIX 9821). Each completed read
+/// is pinned, rung over rung, and the last answered: rungs that abstained
+/// before it passed the question on. Then the first answer stands (clear,
+/// or taken at the cut outside its band), or a stronger rung read it again
+/// for its cause, past any rung that abstained on the way. Which earlier
+/// pin abstained is not on the receipt, so none is assumed.
 pub(super) fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
     let decision = &row.decision;
     let receipt = &decision.receipt;
@@ -152,36 +155,48 @@ pub(super) fn ladder_route(row: &SlideJudgment, probability: f64) -> bool {
         return false;
     };
     let enforced_margin = decision.in_band && row.band_mode == BandMode::Enforce;
-    if receipt.providers.iter().any(|pin| {
-        pin.model.trim().is_empty()
-            || pin.version.trim().is_empty()
-            || pin.rung == DecisionRung::Human
-    }) || time.answered != receipt.providers.last().map(|pin| pin.rung)
-    {
+    let Some((last, earlier)) = receipt.providers.split_last() else {
+        return false;
+    };
+    if !pins_climb(&receipt.providers) || time.answered != Some(last.rung) {
         return false;
     }
-    match (receipt.providers.as_slice(), time.reasoning) {
-        ([_], Reasoning::NotNeeded) => {
+    match time.reasoning {
+        Reasoning::NotNeeded => {
             time.stop == StopCause::Done
                 && decision.in_band == receipt.band.contains(probability)
                 && !enforced_margin
         }
-        ([_], Reasoning::Skipped(_) | Reasoning::Cut(_)) => {
+        Reasoning::Skipped(_) | Reasoning::Cut(_) => {
             time.stop == StopCause::Deadline
                 && !decision.in_band
                 && !receipt.band.contains(probability)
         }
-        ([first, second], Reasoning::Ran(cause)) => {
-            second.rung > first.rung
+        Reasoning::Ran(cause) => {
+            !earlier.is_empty()
                 && time.stop == StopCause::Done
                 && match cause {
                     ReasoningCause::SmallMargin => enforced_margin,
+                    // The reading that asked for the step is an earlier read's.
                     ReasoningCause::PairedHigh => {
-                        !enforced_margin && receipt.paired.iter().any(|row| row.provider == *first)
+                        !enforced_margin
+                            && receipt
+                                .paired
+                                .iter()
+                                .any(|reading| earlier.contains(&reading.provider))
                     }
                     ReasoningCause::SecondMeasurement => false,
                 }
         }
-        _ => false,
     }
+}
+
+/// Whether `pins` are a ladder's completed reads: each a named provider
+/// below the person, each rung above the one before it.
+pub(super) fn pins_climb(pins: &[crate::llm::decision::ProviderPin]) -> bool {
+    pins.iter().all(|pin| {
+        !pin.model.trim().is_empty()
+            && !pin.version.trim().is_empty()
+            && pin.rung != DecisionRung::Human
+    }) && pins.windows(2).all(|pair| pair[1].rung > pair[0].rung)
 }

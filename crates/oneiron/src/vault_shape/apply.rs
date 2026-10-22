@@ -17,9 +17,10 @@ use super::approval::{
 use super::live::{ShapeSources, facet_name, world_name};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
+use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
-use crate::authority::{HostSlipIssuer, VerifiedSlip};
+use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
 use crate::channel_identity::{decode_channel_identity_body, resolve_quarantine_floor_in_txn};
 use crate::channel_identity_lifecycle::{
     ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
@@ -29,7 +30,6 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::federation::InitialSharedMember;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
 use crate::side_table::{self, Named, SideTable};
@@ -62,6 +62,11 @@ pub struct ShapeApplyRequest {
     /// the owner's apply reads it.
     #[serde(default)]
     pub approve: Vec<u32>,
+    /// The creator's answer to the conversation-learning question, for a
+    /// shared vault this apply creates (FIX 5603). Only the owner's own
+    /// apply reads it; absent leaves the setting as it stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_learning: Option<bool>,
 }
 
 /// Where one item stands.
@@ -118,16 +123,21 @@ pub struct ShapeApplyReceipt {
     pub done: bool,
     /// The apply's run tree: one root, one child row per item.
     pub run: ShapeApplyRun,
+    /// What became of the apply's conversation-learning answer (FIX 5603).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_learning: Option<ShapeLearningOutcome>,
 }
 
 /// Who applies: the vault's owner, with the host's slip issuer when the
-/// host has one (a member a change lowers or removes loses their slips), or
-/// another actor with the credential it presented, if any.
+/// host has one (a member a change lowers or removes loses their slips) and
+/// where his request reached this install, or another actor with the
+/// credential it presented, if any.
 #[derive(Clone, Copy)]
 pub enum ShapeApplier<'a> {
     Owner {
         owner: &'a AuthenticatedOwner,
         slips: Option<&'a HostSlipIssuer>,
+        surface: ActSurface,
     },
     Actor {
         actor: EntityId,
@@ -152,48 +162,6 @@ fn held(item: &ShapePlanItem) -> ShapeItemState {
     } else {
         ShapeItemState::Proposed
     }
-}
-
-/// The member rows a first sharing invites in its own writer: each new
-/// member the same apply approves. Under a preset the creator is its Owner
-/// already, so their own row is left to read as landed.
-fn founding_members(
-    items: &[ShapeApplyItem],
-    shared: &ShapePlanItem,
-    approve: &[u32],
-    creator: EntityId,
-) -> Vec<(usize, InitialSharedMember)> {
-    let preset = matches!(
-        shared.after,
-        Some(ShapeRow::Shared {
-            preset: Some(_),
-            ..
-        })
-    );
-    items
-        .iter()
-        .enumerate()
-        .filter_map(|(at, entry)| {
-            let (ShapeChange::Create, Some(ShapeRow::Member { member, role })) =
-                (entry.item.change, &entry.item.after)
-            else {
-                return None;
-            };
-            if !open(&entry.state) || !approve.contains(&entry.item.seq) {
-                return None;
-            }
-            let member = EntityId::from_hex(member).ok()?;
-            (!(preset && member == creator)).then(|| {
-                (
-                    at,
-                    InitialSharedMember {
-                        member_ref: member,
-                        role: Some((*role).into()),
-                    },
-                )
-            })
-        })
-        .collect()
 }
 
 /// The next version of a definition the shape updates: the next integer,
@@ -349,6 +317,7 @@ impl Vault {
                         })
                         .collect(),
                     done: false,
+                    conversation_learning: None,
                 };
                 JOURNAL.put(&self.store, txn, &journal.frontier, &journal)?;
                 Ok(journal)
@@ -357,7 +326,7 @@ impl Vault {
         self.reconcile_shape_filings(&mut journal, now)?;
 
         let (owner, slips) = match applier {
-            ShapeApplier::Owner { owner, slips } => (owner, slips),
+            ShapeApplier::Owner { owner, slips, .. } => (owner, slips),
             ShapeApplier::Actor { credential, .. } => {
                 // An actor holds none of the owner's doors, so its apply
                 // lands nothing: each item waits for the owner (DEC-0006 is
@@ -370,10 +339,14 @@ impl Vault {
                 }
                 journal.done = !journal.items.iter().any(|entry| open(&entry.state));
                 self.put_shape_apply(&journal, now)?;
+                report_unread(&mut journal, &applier, request.conversation_learning);
                 return Ok(journal);
             }
         };
-        self.land_shape_journal_into(owner, slips, &mut journal, &request.approve, now, sources)?;
+        let answer = creator_answer(&applier, request.conversation_learning);
+        let approve = &request.approve;
+        self.land_shape_journal_into(owner, slips, &mut journal, approve, answer, now, sources)?;
+        report_unread(&mut journal, &applier, request.conversation_learning);
         Ok(journal)
     }
 
@@ -419,7 +392,7 @@ impl Vault {
     /// its door, waits for the owner's word unless `approve` carries its
     /// `seq`, or is refused, and the journal and its run rows are written
     /// after each. An owner's apply and the owner's answer to an apply's
-    /// inbox group both land through it.
+    /// inbox group both land through it; only the former carries `answer`.
     ///
     /// # Errors
     ///
@@ -430,26 +403,23 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         journal: &mut ShapeApplyReceipt,
         approve: &[u32],
+        answer: Option<CreatorAnswer>,
         now: u64,
     ) -> Result<()> {
-        self.land_shape_journal_into(
-            owner,
-            slips,
-            journal,
-            approve,
-            now,
-            &mut ShapeSources::off(),
-        )
+        let sources = &mut ShapeSources::off();
+        self.land_shape_journal_into(owner, slips, journal, approve, answer, now, sources)
     }
 
     /// [`Self::land_shape_journal`], listing in `sources` every live read it
     /// makes and what each landing wrote.
+    #[allow(clippy::too_many_arguments)]
     fn land_shape_journal_into(
         &self,
         owner: &AuthenticatedOwner,
         slips: Option<&HostSlipIssuer>,
         journal: &mut ShapeApplyReceipt,
         approve: &[u32],
+        answer: Option<CreatorAnswer>,
         now: u64,
         sources: &mut ShapeSources,
     ) -> Result<()> {
@@ -495,23 +465,13 @@ impl Vault {
                 // Sharing the vault invites, in its own writer, each new
                 // member this apply approves: the founding members.
                 ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
-                    let founding = founding_members(&journal.items, &item, approve, author);
-                    match self.share_vault(owner, &item, &founding, now) {
-                        Ok(receipt) => {
-                            for (at, _) in &founding {
-                                journal.items[*at].state = ShapeItemState::Landed {
-                                    at: now,
-                                    receipt: "founding member".to_owned(),
-                                };
-                            }
-                            // The members after it read the vault shared.
-                            live = self.live_by_target(sources)?;
-                            ShapeItemState::Landed { at: now, receipt }
-                        }
-                        Err(error) => ShapeItemState::Refused {
-                            reason: error.to_string(),
-                        },
+                    let shared =
+                        self.land_shared_vault(owner, journal, &item, approve, author, answer, now);
+                    if matches!(shared, ShapeItemState::Landed { .. }) {
+                        // The members after it read the vault shared.
+                        live = self.live_by_target(sources)?;
                     }
+                    shared
                 }
                 ShapeItemState::Proposed => {
                     match self.land_shape_item(owner, slips, &item, &live, now, sources) {
@@ -598,34 +558,6 @@ impl Vault {
             .into_iter()
             .map(|(row, entity)| (row.target(), (row, entity)))
             .collect())
-    }
-
-    /// Shares the vault as `item` declares, inviting `founding` in the
-    /// same writer.
-    fn share_vault(
-        &self,
-        owner: &AuthenticatedOwner,
-        item: &ShapePlanItem,
-        founding: &[(usize, InitialSharedMember)],
-        now: u64,
-    ) -> Result<String> {
-        let (ShapeChange::Create, Some(ShapeRow::Shared { vault_id, preset })) =
-            (item.change, &item.after)
-        else {
-            return Err(invalid(
-                "a shared vault is shared once; no seed reshares it",
-            ));
-        };
-        let members: Vec<InitialSharedMember> =
-            founding.iter().map(|(_, member)| member.clone()).collect();
-        let creation = self.initialize_shared_vault(
-            owner,
-            *vault_id,
-            (*preset).map(Into::into),
-            &members,
-            now,
-        )?;
-        Ok(creation.vault_id.to_string())
     }
 
     /// The entities `live` holds were listed when it was read; `sources`
