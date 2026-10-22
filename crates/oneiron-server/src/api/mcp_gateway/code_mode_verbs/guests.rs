@@ -137,6 +137,46 @@ fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
     policy
 }
 
+/// A batch's or library run's answer with its row hooks' decisions among
+/// its own (FIX 8042): a library run's `model_free` then reads them too, so
+/// a hook that asked a model leaves it false.
+fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
+    if hooks.is_empty() {
+        return;
+    }
+    // A batch with no decisions of its own answers none: the hooks' start
+    // its list.
+    let batch = match verb {
+        "self.browser.batch" => output.as_object_mut(),
+        "self.browser.library.run" => output.get_mut("batch").and_then(Value::as_object_mut),
+        _ => None,
+    };
+    let Some(batch) = batch else {
+        return;
+    };
+    let decisions = batch
+        .entry("decisions")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Value::Array(decisions) = decisions else {
+        return;
+    };
+    decisions.extend(hooks);
+    let read = oneiron_browser::model_free(decisions);
+    if verb == "self.browser.library.run"
+        && let Some(run) = output.as_object_mut()
+    {
+        let (free, unproven) = match read {
+            Ok(free) => (free, None),
+            Err(index) => (false, Some(index)),
+        };
+        run.insert("model_free".to_owned(), Value::Bool(free));
+        match unproven {
+            Some(index) => run.insert("model_free_unproven".to_owned(), Value::from(index)),
+            None => run.remove("model_free_unproven"),
+        };
+    }
+}
+
 /// A receipt as the host's log shows it (FIX 9267): its act projected to
 /// its verb and locator, never the literal a type typed, the option a
 /// select picked, or a Fill's texts. The answer keeps the receipt whole.
@@ -475,11 +515,16 @@ impl RunGuests {
         if let Err(refusal) = self.admits(call.verb, server) {
             return Ok(Err(refusal));
         }
-        let hooks = match oneiron::task_verb::verb_hook_boundary::browser_row_pre(
-            memory,
-            call.verb.as_str(),
-            call.input.clone(),
-        ) {
+        // The row's hooks' own decisions count in the run's evidence (FIX
+        // 8042): they run on this thread, and are recorded, never capped.
+        let (pre, mut decided) = crate::hook_verdict::collect_hook_decisions(|| {
+            oneiron::task_verb::verb_hook_boundary::browser_row_pre(
+                memory,
+                call.verb.as_str(),
+                call.input.clone(),
+            )
+        });
+        let hooks = match pre {
             Ok(hooks) => hooks,
             Err(error) => return refused(super::mcp_facade_error(error)),
         };
@@ -495,12 +540,18 @@ impl RunGuests {
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
-        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
-        {
-            Ok(output) => Ok(Ok(AgentVerbAnswer {
-                output,
-                rows: answer.rows,
-            })),
+        let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
+            oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
+        });
+        decided.append(&mut after);
+        match post {
+            Ok(mut output) => {
+                count_hook_decisions(call.verb.as_str(), &mut output, decided);
+                Ok(Ok(AgentVerbAnswer {
+                    output,
+                    rows: answer.rows,
+                }))
+            }
             Err(error) => refused(super::mcp_facade_error(error)),
         }
     }
