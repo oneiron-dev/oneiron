@@ -4,6 +4,9 @@
 //!
 //! DTDs, unbound prefixes, duplicate expanded attributes, XML-invalid
 //! characters and text outside the single root are refused, never skipped.
+//! A part's node count and depth are observations, not refusals: the parse
+//! reserves the tree's memory through the operation's [`Resources`] before
+//! it grows, and stops only at the machine's floor or a deadline (FIX 8569).
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -13,7 +16,7 @@ use quick_xml::{
     name::ResolveResult,
 };
 
-use crate::retained_opc::XmlLimits;
+use crate::resource::{Hold, ResourceRefusal, Resources, bytes_of, wide};
 
 /// SpreadsheetML main namespace.
 pub const SPREADSHEET_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -26,10 +29,36 @@ pub const DOCUMENT_RELATIONSHIPS: &str =
 /// `[Content_Types].xml`.
 pub const CONTENT_TYPES: &str = "http://schemas.openxmlformats.org/package/2006/content-types";
 
-/// Why an XML part cannot be read safely. The reason is a stable phrase.
+/// Why an XML part cannot be read: malformed, under a stable phrase, or
+/// the memory its tree needs was refused, typed as the refusal itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("invalid XML: {0}")]
-pub struct XmlError(pub &'static str);
+pub enum XmlError {
+    #[error("invalid XML: {0}")]
+    Invalid(&'static str),
+    #[error(transparent)]
+    Resource(#[from] ResourceRefusal),
+}
+
+impl XmlError {
+    /// The refusal, when memory or a deadline stopped the read.
+    #[must_use]
+    pub const fn resource(&self) -> Option<ResourceRefusal> {
+        match self {
+            Self::Resource(refusal) => Some(*refusal),
+            Self::Invalid(_) => None,
+        }
+    }
+
+    /// The stable phrase of the reason.
+    #[must_use]
+    pub const fn reason(&self) -> &'static str {
+        match self {
+            Self::Invalid(reason) => reason,
+            Self::Resource(ResourceRefusal::MemoryFloor { .. }) => "memory floor",
+            Self::Resource(ResourceRefusal::Deadline) => "resource deadline",
+        }
+    }
+}
 
 type Result<T> = std::result::Result<T, XmlError>;
 
@@ -86,8 +115,9 @@ pub struct XmlTree {
     pub nodes: Vec<Node>,
 }
 impl XmlTree {
-    /// Parse one UTF-8 part under node and depth ceilings.
-    pub fn parse(bytes: &[u8], limits: XmlLimits) -> Result<Self> {
+    /// Parse one UTF-8 part, reserving the tree's memory from `resources`
+    /// before each node, attribute and text grows it.
+    pub fn parse(bytes: &[u8], resources: &Resources) -> Result<Self> {
         let source = std::str::from_utf8(bytes).map_err(|_| invalid("XML must be UTF-8"))?;
         if !source.chars().all(xml_character) {
             return Err(invalid("XML-invalid character"));
@@ -95,6 +125,7 @@ impl XmlTree {
         let mut reader = NsReader::from_str(source);
         let mut nodes: Vec<Node> = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
+        let mut hold = resources.hold();
         let mut declaration_seen = false;
         loop {
             let start = reader.buffer_position() as usize;
@@ -109,11 +140,10 @@ impl XmlTree {
             let end = reader.buffer_position() as usize;
             match event {
                 Event::Start(tag) | Event::Empty(tag) => {
-                    if nodes.len() >= limits.max_nodes || stack.len() >= limits.max_depth {
-                        return Err(invalid("XML node or depth limit"));
-                    }
-                    let node =
-                        make_node(bytes, &reader, &tag, ns, start..end, stack.last().copied())?;
+                    resources.checkpoint()?;
+                    hold.take(node_bytes(&ns, end - start))?;
+                    let parent = stack.last().copied();
+                    let node = make_node(bytes, &reader, &tag, ns, start..end, parent, &mut hold)?;
                     let empty = node.empty;
                     let index = nodes.len();
                     if let Some(&parent) = stack.last() {
@@ -132,7 +162,7 @@ impl XmlTree {
                 Event::Text(text) => {
                     let decoded = text.xml_content(quick_xml::XmlVersion::Implicit1_0);
                     // quick-xml emits references as separate GeneralRef events.
-                    append_text(&mut nodes, &stack, &decoded, true)?;
+                    append_text(&mut nodes, &stack, &decoded, true, &mut hold)?;
                 }
                 Event::GeneralRef(reference) => {
                     let value = match reference
@@ -144,11 +174,11 @@ impl XmlTree {
                             .ok_or_else(|| invalid("unknown XML entity"))?
                             .to_owned(),
                     };
-                    append_text(&mut nodes, &stack, &value, false)?;
+                    append_text(&mut nodes, &stack, &value, false, &mut hold)?;
                 }
                 Event::CData(data) => {
                     let text = data.xml_content(quick_xml::XmlVersion::Implicit1_0);
-                    append_text(&mut nodes, &stack, &text, false)?;
+                    append_text(&mut nodes, &stack, &text, false, &mut hold)?;
                 }
                 Event::Decl(declaration) => {
                     if declaration_seen
@@ -197,6 +227,24 @@ impl XmlTree {
     }
 }
 
+/// One node's own memory, before its attributes and text: the node twice
+/// (the arena grows by doubling), its child index and stack slot, its
+/// namespace and its names, which the open tag's bytes bound.
+fn node_bytes(namespace: &str, tag_bytes: usize) -> u64 {
+    bytes_of::<Node>(2)
+        .saturating_add(bytes_of::<usize>(2))
+        .saturating_add(wide(namespace.len()))
+        .saturating_add(wide(tag_bytes))
+}
+
+/// One attribute's memory in a node's three maps: its qualified name in two
+/// of them, its value in two, its expanded name, and the maps' entries.
+fn attribute_bytes(key: &str, value: &str, namespace: &str, local: &str) -> u64 {
+    wide(2 * key.len() + 2 * value.len() + namespace.len() + local.len())
+        .saturating_add(bytes_of::<((String, String), String)>(2))
+        .saturating_add(bytes_of::<(String, Range<usize>)>(1))
+}
+
 fn make_node(
     bytes: &[u8],
     reader: &NsReader<&[u8]>,
@@ -204,6 +252,7 @@ fn make_node(
     namespace: String,
     span: Range<usize>,
     parent: Option<usize>,
+    hold: &mut Hold,
 ) -> Result<Node> {
     let empty = bytes.get(span.end.saturating_sub(2)) == Some(&b'/');
     let qualified = tag.name().as_ref().to_owned();
@@ -227,6 +276,7 @@ fn make_node(
             ResolveResult::Unknown(_) => return Err(invalid("unbound attribute namespace")),
         };
         let local = local.as_ref().to_owned();
+        hold.take(attribute_bytes(&key, &value, &namespace, &local))?;
         if attrs_ns.insert((namespace, local), value.clone()).is_some() {
             return Err(invalid("duplicate expanded attribute"));
         }
@@ -257,11 +307,13 @@ fn append_text(
     stack: &[usize],
     text: &str,
     allow_outside_whitespace: bool,
+    hold: &mut Hold,
 ) -> Result<()> {
     if !text.chars().all(xml_character) {
         return Err(invalid("XML-invalid text character"));
     }
     if let Some(&index) = stack.last() {
+        hold.take(wide(text.len()))?;
         nodes[index].text.push_str(text);
     } else if !allow_outside_whitespace || !text.trim().is_empty() {
         return Err(invalid("text outside XML root"));
@@ -319,7 +371,7 @@ fn attribute_spans(
 }
 
 fn invalid(reason: &'static str) -> XmlError {
-    XmlError(reason)
+    XmlError::Invalid(reason)
 }
 
 /// Escape text for an element body; a carriage return is kept as `&#13;`.

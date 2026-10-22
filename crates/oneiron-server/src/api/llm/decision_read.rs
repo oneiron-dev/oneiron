@@ -121,6 +121,11 @@ pub(super) async fn decision_read(
     let Some((door, meter)) = server.decision_read.clone() else {
         return refusal(StatusCode::SERVICE_UNAVAILABLE, "decision_read_unavailable");
     };
+    // A reader whose rung `local_reasoner` does not permit is unavailable
+    // (FIX 9481), before its state is priced or admitted.
+    if !door.permitted() {
+        return refusal(StatusCode::SERVICE_UNAVAILABLE, "decision_read_unavailable");
+    }
     let Some(probe) = door.probe().cloned() else {
         return refusal(StatusCode::SERVICE_UNAVAILABLE, "decision_read_unavailable");
     };

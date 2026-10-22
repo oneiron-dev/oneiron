@@ -5,8 +5,12 @@
 use super::*;
 
 /// Read every worksheet's cells, the defined names and the cell formats.
-pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
-    let book = Book::open(bytes, limits)?;
+pub fn read_xlsx_cells(
+    bytes: &[u8],
+    limits: Limits,
+    resources: &crate::resource::Resources,
+) -> Result<XlsxBook> {
+    let book = Book::open(bytes, limits, resources)?;
     let mut sheets = Vec::with_capacity(book.worksheets.len());
     for name in &book.order {
         if let Some(part) = book.worksheets.get(name) {
