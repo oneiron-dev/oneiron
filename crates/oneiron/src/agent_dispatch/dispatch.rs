@@ -57,6 +57,9 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
 pub struct AgentDispatcher<'a> {
     pub(super) vault: &'a Vault,
     pub(super) runner: DreamerRunnerStore<'a>,
+    /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
+    /// when a code run's spawn binds one: told, never asked.
+    seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -66,6 +69,25 @@ impl<'a> AgentDispatcher<'a> {
         Self {
             vault,
             runner: DreamerRunnerStore::new(vault),
+            seats: None,
+        }
+    }
+
+    /// This dispatcher with `observer` told each AGENT_DEF its dispatch
+    /// resolves as a seat (FIX 9180): a plan's, each planned member's, a
+    /// workflow's leaves, a dispatch's source and the attenuated fork in its
+    /// place, each before the next step that can fail. Observation only: it
+    /// returns nothing, so it neither vetoes nor changes a dispatch.
+    #[must_use]
+    pub(crate) fn observing_seats(mut self, observer: &'a (dyn Fn(EntityId) + Sync)) -> Self {
+        self.seats = Some(observer);
+        self
+    }
+
+    /// Tells the bound observer, if any, of `seat`.
+    pub(super) fn observe_seat(&self, seat: EntityId) {
+        if let Some(observe) = self.seats {
+            observe(seat);
         }
     }
 
@@ -378,6 +400,7 @@ impl<'a> AgentDispatcher<'a> {
         let requested_parent = input.parent_attempt;
         let spawn_intent = spawn_intent_digest(&input, &spawn)?;
         let requested_target = input.target.agent_definition_ref()?;
+        self.observe_seat(requested_target);
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -441,6 +464,9 @@ impl<'a> AgentDispatcher<'a> {
                 (attenuated.target, definition)
             }
         };
+        if let AgentDispatchTarget::Custom(seat) = &target {
+            self.observe_seat(*seat);
+        }
 
         // OF-543/OF-541: placed once, here at spawn, against the tree in
         // force for the spawn's project (the team-shape skill's data). A
