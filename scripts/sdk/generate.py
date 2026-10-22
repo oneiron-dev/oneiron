@@ -282,6 +282,9 @@ HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
 # surface and then the home step, which lists the home's references.
 CALL_HOME_DOORS = {'vault.search.bm25': ('super::search_home_doors::vault_search_bm25',
                                          'crate::api::search::complete_bm25_with_home')}
+# FIX 10425: the facade host-door rows whose answer counts its hooks' verdict
+# decisions among its own (`model_free`), as their code-mode door does.
+HOOK_DECISION_ROWS = {'self.browser.batch', 'self.browser.library.run'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -1437,15 +1440,23 @@ def facade_dispatch(facade_rows):
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
             failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            # FIX 10425: a browser batch's or library run's answer counts the
+            # decisions its hooks' verdicts answered among its own, as its
+            # code-mode door does, so `model_free` reads them. Record only.
+            counted = name in HOOK_DECISION_ROWS
+            pre_hooks = (f'let (mut hooks, decided) = facade_hooks_pre_counted(server, call, {json.dumps(name)}, value).await?;' if counted
+                         else f'let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;')
+            post_hooks = (f'facade_hooks_post_counted(server, hooks, {json.dumps(name)}, output, decided)' if counted
+                          else 'facade_hooks_post(server, hooks, output)')
             answer = (f'''let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
-                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
+                Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
                            # FIX 6867: a lane door judges its records in its engine door.
@@ -1457,7 +1468,7 @@ def facade_dispatch(facade_rows):
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
-                let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
+                {pre_hooks}
                 {answer}
             }}\n'''
             continue

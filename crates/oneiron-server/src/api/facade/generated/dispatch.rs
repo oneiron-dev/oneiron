@@ -35431,7 +35431,8 @@ async fn self_browser_batch(
     let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.browser.batch", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "self.browser.batch", value).await?;
+    let (mut hooks, decided) =
+        facade_hooks_pre_counted(server, call, "self.browser.batch", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::self_browser_batch(
             server,
@@ -35456,7 +35457,8 @@ async fn self_browser_batch(
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post_counted(server, hooks, "self.browser.batch", output, decided)
+            .await?,
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
@@ -35761,7 +35763,8 @@ async fn self_browser_library_run(
     let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.browser.library.run", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "self.browser.library.run", value).await?;
+    let (mut hooks, decided) =
+        facade_hooks_pre_counted(server, call, "self.browser.library.run", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::self_browser_library_run(
             server,
@@ -35786,7 +35789,14 @@ async fn self_browser_library_run(
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post_counted(
+            server,
+            hooks,
+            "self.browser.library.run",
+            output,
+            decided,
+        )
+        .await?,
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }

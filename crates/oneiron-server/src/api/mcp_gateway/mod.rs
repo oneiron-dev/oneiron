@@ -40,7 +40,9 @@ use self::board_setup::{
     mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
     mcp_resolve_page,
 };
-pub(crate) use self::code_mode_verbs::{ReaderChildDoor, RunGuests, VerdictAsker};
+pub(crate) use self::code_mode_verbs::{
+    ReaderChildDoor, RunGuests, VerdictAsker, count_hook_decisions,
+};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
 #[cfg(test)]
