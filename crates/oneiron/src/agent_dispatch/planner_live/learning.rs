@@ -108,18 +108,8 @@ impl Donor {
                     candidate.rates.insert(model.clone(), rate);
                 }
             }
-            for ((skill, width), (wins, losses)) in outcomes.folded(None, &self.type_ref, card) {
-                if let Some(candidate) = admitted(&mut patterns, skill) {
-                    let lent = candidate
-                        .borrowed_widths
-                        .entry(width)
-                        .or_default()
-                        .entry(model.clone())
-                        .or_insert((0.0, 0.0));
-                    lent.0 += self.weight * wins;
-                    lent.1 += self.weight * losses;
-                }
-            }
+            let lent = outcomes.folded(None, &self.type_ref, card);
+            lend_widths(&mut patterns, model, lent, self.weight);
         }
         Ok((rates, patterns))
     }
@@ -158,6 +148,29 @@ impl Donor {
             own_runs: if read.own { read.estimate.runs } else { 0.0 },
             weight_runs: read.estimate.runs + read.estimate.prior.weight_runs + wins + losses,
         }))
+    }
+}
+
+/// Adds `mass`, borrowed `(wins, losses)` per `(skill, width)`, at `weight`
+/// to each admitted candidate's borrowed widths on `model`: mass that never
+/// counts as own runs.
+pub(super) fn lend_widths(
+    patterns: &mut [PatternCandidate],
+    model: &ModelId,
+    mass: BTreeMap<(EntityId, u32), (f64, f64)>,
+    weight: f64,
+) {
+    for ((skill, width), (wins, losses)) in mass {
+        if let Some(candidate) = admitted(patterns, skill) {
+            let lent = candidate
+                .borrowed_widths
+                .entry(width)
+                .or_default()
+                .entry(model.clone())
+                .or_insert((0.0, 0.0));
+            lent.0 += weight * wins;
+            lent.1 += weight * losses;
+        }
     }
 }
 

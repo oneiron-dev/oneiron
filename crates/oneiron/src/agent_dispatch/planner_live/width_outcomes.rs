@@ -13,6 +13,12 @@ use crate::error::Result;
 use crate::learning::{TypeRef, Window};
 use crate::team::{PlannerCard, TeamReceipt, model_mix, team_receipts};
 
+/// The weight of the vault's outcomes a project's skill with none of its
+/// own borrows (FIX 6038, own scope then the vault): their faded mass as
+/// it is, as the project read them before the scopes parted, now never own
+/// runs. Canon names the order, not a weight (CALL).
+pub(super) const VAULT_BACKOFF_WIDTH_WEIGHT: f64 = 1.0;
+
 /// Every team receipt as one snapshot read it, and the time it is folded at.
 pub(super) struct WidthOutcomes {
     receipts: Vec<TeamReceipt>,
@@ -80,6 +86,25 @@ impl WidthOutcomes {
             }
         }
         mass
+    }
+
+    /// The vault scope's faded mass at `type_ref` on `card`, for each skill
+    /// `own` (a project's own fold) holds no outcome of: the vault step of
+    /// the width backoff (FIX 6038). Nothing for a vault run, whose own
+    /// fold is the vault's.
+    pub(super) fn vault_backoff(
+        &self,
+        project: Option<EntityId>,
+        type_ref: &TypeRef,
+        card: &PlannerCard,
+        own: &BTreeMap<(EntityId, u32), (f64, f64)>,
+    ) -> BTreeMap<(EntityId, u32), (f64, f64)> {
+        if project.is_none() {
+            return BTreeMap::new();
+        }
+        let mut vault = self.folded(None, type_ref, card);
+        vault.retain(|(skill, _), _| !own.keys().any(|(mine, _)| mine == skill));
+        vault
     }
 }
 

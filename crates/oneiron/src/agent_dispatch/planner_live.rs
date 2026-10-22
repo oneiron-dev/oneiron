@@ -41,8 +41,8 @@ use crate::task_type::{PlacementDecisions, TaskTypeRef, TypeTree};
 use crate::team::payoff::planner_card_in_txn;
 use crate::team::{PAYOFF_AXIS, PatternSkill, PatternSkillRef, pattern_skills};
 
-use self::learning::{Donor, admitted, measured};
-use self::width_outcomes::WidthOutcomes;
+use self::learning::{Donor, admitted, lend_widths, measured};
+use self::width_outcomes::{VAULT_BACKOFF_WIDTH_WEIGHT, WidthOutcomes};
 use super::planner::{
     AvailableModel, PatternCandidate, PlanBudget, PlannerDecisions, PlannerEvidence,
     PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote, SkillRevisionRef,
@@ -501,7 +501,19 @@ impl AgentDispatcher<'_> {
                             .insert(model.model.clone(), measured(&entry.read));
                     }
                 }
-                for ((skill, width), (wins, losses)) in outcomes.folded(project, &type_ref, &card) {
+                let own = outcomes.folded(project, &type_ref, &card);
+                // A project skill with no width outcomes of its own borrows
+                // the vault's, never as own runs; a donor lends instead.
+                if donor.is_none() {
+                    let vault = outcomes.vault_backoff(project, &type_ref, &card, &own);
+                    lend_widths(
+                        &mut patterns,
+                        &model.model,
+                        vault,
+                        VAULT_BACKOFF_WIDTH_WEIGHT,
+                    );
+                }
+                for ((skill, width), (wins, losses)) in own {
                     if let Some(candidate) = admitted(&mut patterns, skill) {
                         let cell = candidate
                             .widths
