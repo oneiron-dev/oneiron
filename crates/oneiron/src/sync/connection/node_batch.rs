@@ -4,7 +4,7 @@
 use futures_util::SinkExt;
 use tokio_tungstenite::tungstenite::Message;
 
-use super::session::{WsSink, residence_update_frame};
+use super::session::WsSink;
 use super::{LocalUpdate, SyncConnection};
 use crate::artifact_hosting::ArtifactPublicationPart;
 use crate::side_table::HexId;
@@ -63,34 +63,64 @@ impl SyncConnection {
                     updates.remove(0);
                     continue;
                 }
-                // Check room before reserving a durable sequence. Excess work
-                // stays in the buffer for the next tick, never a per-op send.
-                let candidate = if opened {
-                    residence_update_frame(1, &update.window_key, &update.update_bytes)
+                // The write goes in its window pad envelope for the home,
+                // projected and sealed once (FIX 7107). Check room before
+                // reserving a durable sequence. Excess work stays in the
+                // buffer for the next tick, never a per-op send; a write no
+                // batch holds waits queued for the replay, which sends it
+                // frame by frame.
+                let sub_tag = if opened {
+                    window_sub_tags::RESIDENCE_UPDATE
                 } else {
-                    transport::encode_window_sync(
+                    window_sub_tags::UPDATE
+                };
+                let context = client.window(&update.window_key);
+                let ready = client
+                    .prepare_window_send(
                         &update.window_key,
-                        window_sub_tags::UPDATE,
                         &update.update_bytes,
+                        context.as_ref().map(|window| &window.doc),
                     )
-                    .into_result()
-                }
-                .map_err(|error| error.to_string())?;
-                if !fits(&frames, size, &candidate).map_err(|error| error.to_string())? {
-                    break;
-                }
-                let frame = if opened {
-                    let seq = self
-                        .queue
+                    .map_err(|error| error.to_string())?;
+                let (candidate, _) = ready
+                    .frames(&update.window_key, sub_tag, opened.then_some(1))
+                    .map_err(|error| error.to_string())?;
+                if !candidate
+                    .iter()
+                    .all(|frame| super::session::fits_alone(frame))
+                    || (frames.is_empty() && !super::session::fits_all(&frames, size, &candidate))
+                {
+                    self.queue
                         .push(&update.window_key, &update.update_bytes)
                         .map_err(|error| error.to_string())?;
-                    residence_update_frame(seq, &update.window_key, &update.update_bytes)
-                        .map_err(|error| error.to_string())?
+                    updates.remove(0);
+                    continue;
+                }
+                if !super::session::fits_all(&frames, size, &candidate) {
+                    break;
+                }
+                let seq = if opened {
+                    Some(
+                        self.queue
+                            .push(&update.window_key, &update.update_bytes)
+                            .map_err(|error| error.to_string())?,
+                    )
                 } else {
-                    candidate
+                    None
                 };
-                size += 4 + frame.len();
-                frames.push(frame);
+                let members = client
+                    .window_send_frames(
+                        &ready,
+                        &update.window_key,
+                        sub_tag,
+                        seq,
+                        &update.update_bytes,
+                    )
+                    .map_err(|error| error.to_string())?;
+                for frame in members {
+                    size += 4 + frame.len();
+                    frames.push(frame);
+                }
                 let update = updates.remove(0);
                 if !opened {
                     full_updates.push(update);

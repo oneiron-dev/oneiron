@@ -4102,7 +4102,7 @@
     },
     {
       "name": "vault.packs.sections.list",
-      "description": "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.",
+      "description": "Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project.",
       "input": "crate::memory::PluginSectionListRequest",
       "output": "crate::memory::PluginSectionsView",
       "call": "memory.plugin_sections_list(&input)?",
@@ -4112,6 +4112,10 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
+      },
+      "page": {
+        "rows": "pending",
+        "cursor": "next_cursor"
       },
       "section": false,
       "openapi": true
@@ -6986,6 +6990,36 @@
       "openapi": true
     },
     {
+      "name": "vault.cleanup.review",
+      "description": "The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts.",
+      "input": "crate::vault_cleanup::CleanupReviewRequest",
+      "output": "crate::vault_cleanup::CleanupReviewView",
+      "call": "crate::vault_cleanup::review_cleanup_proposal_as(memory, &memory.embedded_owner(\"vault.cleanup.review\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.cleanup.decide",
+      "description": "The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected.",
+      "input": "crate::vault_cleanup::CleanupDecideRequest",
+      "output": "crate::vault_cleanup::CleanupDecideView",
+      "call": "memory.vault().decide_cleanup_proposal_as(&memory.embedded_owner(\"vault.cleanup.decide\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.archive.delete.preview",
       "description": "Previews explicit archived records under the caller's delete authority.",
       "input": "crate::memory::ArchiveDeletePreviewRequest",
@@ -7124,7 +7158,7 @@
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
-      "description": "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.",
+      "description": "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records.",
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
@@ -12979,7 +13013,7 @@
     },
     {
       "name": "ai.steps.submit",
-      "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
+      "description": "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result.",
       "input": "crate::llm::model_step::ModelStepSubmit",
       "output": "crate::llm::model_step::ModelStepReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.submit\", &input)?",
@@ -12994,7 +13028,7 @@
     },
     {
       "name": "ai.steps.receipt",
-      "description": "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease.",
+      "description": "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain.",
       "input": "crate::llm::model_step::ModelStepReceiptRequest",
       "output": "crate::llm::model_step::ModelStepReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.receipt\", &input)?",
@@ -13376,7 +13410,7 @@
     },
     {
       "name": "vault.models.trials.get",
-      "description": "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.",
+      "description": "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown.",
       "input": "crate::llm::catalog_doors::ModelTrialRef",
       "output": "crate::llm::catalog_doors::ModelTrialView",
       "call": "memory.vault().model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
@@ -13406,7 +13440,7 @@
     },
     {
       "name": "vault.models.trials.run",
-      "description": "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.",
+      "description": "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome.",
       "input": "crate::llm::catalog_doors::ModelTrialRef",
       "output": "crate::llm::catalog_doors::ModelTrialView",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.trials.run\", &input)?",
@@ -13436,7 +13470,7 @@
     },
     {
       "name": "vault.models.bindings.propose",
-      "description": "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.",
+      "description": "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it.",
       "input": "crate::llm::catalog_doors::ModelBindingPropose",
       "output": "crate::llm::catalog_doors::ModelBindingProposal",
       "call": "memory.vault().propose_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.propose\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
@@ -16613,7 +16647,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.review",
-      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.",
+      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
@@ -16646,7 +16680,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.merge",
-      "description": "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.",
+      "description": "A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"

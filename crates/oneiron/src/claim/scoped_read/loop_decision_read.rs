@@ -101,6 +101,19 @@ const LOOP_DECISION_ERROR_POLICY: Withhold = Withhold::Item;
 /// The outcome a held decision is stored with.
 const PENDING_OUTCOME: &str = "pending";
 
+/// What an Admin read does with an event that names no entity (CALLS
+/// "OF-499 A3 unpositioned loop event"): it skips it. A gate decision
+/// carries no full read position, so nothing proves such an event lies
+/// within the Admin's Scope until a trusted event position lands
+/// (FIX-LIST).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnpositionedLoopEvent {
+    /// The event is withheld from the Admin's read.
+    Skip,
+}
+
+const WEAVE_ADMIN_UNPOSITIONED_LOOP_EVENT: UnpositionedLoopEvent = UnpositionedLoopEvent::Skip;
+
 /// What one rule above withholds when it does not admit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Withhold {
@@ -163,12 +176,13 @@ enum LoopReader {
     /// A person or an agent bound to the scoped actor: its own events and
     /// those about it or its projects, each with its scope proven.
     Subject(EntityId),
+    Admin(EntityId),
 }
 
 impl LoopReader {
     const fn id(self) -> EntityId {
         match self {
-            Self::Owner(id) | Self::Subject(id) => id,
+            Self::Owner(id) | Self::Subject(id) | Self::Admin(id) => id,
         }
     }
 }
@@ -320,6 +334,16 @@ impl ScopedRead<'_> {
                     None
                 }
             },
+            WeaveReader::Admin(admin) => {
+                let scope = admin.read_scope_in_txn(self.vault, txn).ok()?;
+                (self.actor_key.actor_ref() == admin.actor().to_hex()
+                    && !self.actor_key.reads_as_vault_owner()
+                    && self.actor_key.owner_exemption.is_none()
+                    && self.actor_key.authority_scope().is_some_and(|held| {
+                        held.is_narrowing_of(&super::ScopedReadActorKey::read_authority(&scope))
+                    }))
+                .then_some(LoopReader::Admin(admin.actor()))
+            }
         }?;
         self.loop_read_bound_in(txn, bound)
     }
@@ -407,6 +431,11 @@ impl ScopedRead<'_> {
             .as_deref()
             .and_then(|text| EntityId::from_hex(text).ok());
         let mut dependencies = BTreeSet::new();
+        if matches!(read.reader, LoopReader::Admin(_)) && named.is_none() {
+            match (claim_id, WEAVE_ADMIN_UNPOSITIONED_LOOP_EVENT) {
+                (Some(_), _) | (None, UnpositionedLoopEvent::Skip) => return None,
+            }
+        }
         if let LoopReader::Subject(subject) = read.reader {
             dependencies.extend(self.loop_subject_admits_in(
                 txn,

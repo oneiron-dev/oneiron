@@ -305,6 +305,16 @@ pub enum SafeDeleteReason {
     PolicyDelete,
 }
 
+/// Where one named deletion stands (FIX 1465).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum DeleteRequestState {
+    /// The local delete rail applied it.
+    Applied,
+    /// The owner's delete was accepted and waits: erase confirmed,
+    /// completion pending.
+    CompletionPending,
+}
+
 /// Receipt for one named deletion.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct DeleteReceipt {
@@ -314,6 +324,8 @@ pub struct DeleteReceipt {
     pub reason: String,
     /// Redaction audit ref, when the reason produces one.
     pub receipt_ref: Option<String>,
+    /// Whether it was applied or waits.
+    pub state: DeleteRequestState,
 }
 
 /// One gated write parked for consent.

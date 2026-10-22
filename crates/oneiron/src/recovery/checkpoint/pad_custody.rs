@@ -13,22 +13,27 @@
 //! world's sealed copies keep its pads off a custody head: its row waits as
 //! a reference, pending, for the pad from one of the owner's machines over
 //! its live routes. One a restore over a live vault carried from that vault
-//! stays Pending as it is there. Any other missing or unreadable pad refuses
-//! the restore before it is kept, `custody_key_missing`: pending until it
-//! runs where the vault's custody is, beside its custody head, or once a
-//! machine of the vault's holds the pad; never a falsely complete restore,
-//! and never a pad from the historical image. A row that brings its own pad
-//! (a carrier an image kept where custody could not take it, or a live row
-//! a restore over a vault carried) lands as before unless its custody
-//! retired it. Beside a source, one the forked custody lacks or cannot read
+//! stays Pending as it is there. One a custody head this restore opened did
+//! not give it (its world's compartment opens only with the kit or a machine
+//! that world admits, FIX 9178) leaves its world Locked: its rows wait as
+//! references, named, never readable and never dropped, for the kit or an
+//! admitted machine (Engine 10-22 15:1x). Any other missing or unreadable
+//! pad refuses the restore before it is kept, `custody_key_missing`: pending
+//! until it runs where the vault's custody is, beside its custody head, or
+//! once a machine of the vault's holds the pad; never a falsely complete
+//! restore, and never a pad from the historical image. A row that brings its
+//! own pad (a carrier an image kept where custody could not take it, or a
+//! live row a restore over a vault carried) lands as before unless its
+//! custody retired it. Beside a source, one the forked custody lacks or cannot read
 //! lands with the pad the source's live row keeps (`side_pads`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use heed::types::Bytes;
 use zeroize::Zeroizing;
 
 use super::{CheckpointImage, Custody, Rejected, RestoreAdmissionReason as R, codec_error};
+use crate::entity_id::EntityId;
 use crate::store::{CustodyPlan, PlannedPad, plan_world_pad};
 use crate::world_keys::WorldKeyId;
 use crate::{Error, Vault};
@@ -47,6 +52,12 @@ pub enum PadRestoreNote {
     /// The live vault the restore carried this row from holds it only as a
     /// reference, its pad not there yet: it stays so here, pending.
     Pending { world: String, generation: u64 },
+    /// The custody head this restore opened did not give it the world's
+    /// pads: their compartment opens only with the recovery kit or a machine
+    /// the world admits (FIX 9178). The world's rows wait as references,
+    /// locked, never readable and never dropped, until one opens them or a
+    /// machine of the owner's hydrates them. One note per world.
+    Locked { world: String },
 }
 
 impl PadRestoreNote {
@@ -70,6 +81,12 @@ impl PadRestoreNote {
             generation: key.generation,
         }
     }
+
+    fn locked(world: EntityId) -> Self {
+        Self::Locked {
+            world: world.to_hex(),
+        }
+    }
 }
 
 impl std::fmt::Display for PadRestoreNote {
@@ -89,29 +106,67 @@ impl std::fmt::Display for PadRestoreNote {
                 "world {world} key generation {generation}: pad pending, as in the vault restored \
                  over"
             ),
+            Self::Locked { world } => write!(
+                f,
+                "world {world}: pads locked, pending: opens with the kit or an admitted machine"
+            ),
         }
     }
 }
 
 /// What a restore does with a pad its rows name by reference that no
-/// custody it took holds (CALLS: KS-5 pad restore withheld).
+/// custody it took holds (CALLS: KS-5 pad restore withheld; Engine 10-22
+/// 15:1x for a landed head).
 enum MissingPad {
     /// Pending as it is there, for a row a restore over a live vault carried
     /// from it; else Withheld, its row kept as a reference pending the pad
     /// from one of the owner's machines, when the world's sealed copies keep
     /// its pads off a custody head (`Vault::pad_worlds_kept_local`, hosted);
-    /// else refused, `custody_key_missing`, before the vault is kept.
-    PendingIfCarriedElseWithheldByPolicyElseRefused,
+    /// else Locked, its row kept as a reference and its world named, when
+    /// the restore landed a custody head it opened (with the data key alone,
+    /// or a kit or machine that world does not admit); else refused,
+    /// `custody_key_missing`, before the vault is kept: no head was opened.
+    PendingIfCarriedElseWithheldByPolicyElseLockedIfLandedElseRefused,
 }
 
-const MISSING_PAD: MissingPad = MissingPad::PendingIfCarriedElseWithheldByPolicyElseRefused;
+const MISSING_PAD: MissingPad =
+    MissingPad::PendingIfCarriedElseWithheldByPolicyElseLockedIfLandedElseRefused;
+
+/// What one missing pad comes to ([`missing_pad_outcome`]).
+enum PadOutcome {
+    Pending,
+    Withheld,
+    Locked,
+    Refused,
+}
+
+/// The one place a missing pad's outcome is decided ([`MISSING_PAD`]): from
+/// where the restore takes its pads' custody, and whether the world's
+/// sealed copies keep its pads off a custody head (`withheld`). The same on
+/// every entry point: a managed restore, an owner's restore with the data
+/// key alone, and one with a kit or machine a world does not admit.
+fn missing_pad_outcome(source: PadSource, withheld: bool) -> PadOutcome {
+    match MISSING_PAD {
+        MissingPad::PendingIfCarriedElseWithheldByPolicyElseLockedIfLandedElseRefused => {
+            match source {
+                PadSource::Carried => PadOutcome::Pending,
+                _ if withheld => PadOutcome::Withheld,
+                PadSource::Landed => PadOutcome::Locked,
+                PadSource::Kept | PadSource::Absent | PadSource::Forked => PadOutcome::Refused,
+            }
+        }
+    }
+}
 
 /// Where a restore takes its pads' custody from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PadSource {
-    /// The image's own custody, on this host or landed from its head: a pad
-    /// the world's sealed copies keep off a head may be absent by choice.
+    /// The image's own custody, on this host: a pad the world's sealed
+    /// copies keep off a head may be absent by choice.
     Kept,
+    /// As `Kept`, landed from a custody head this restore opened: a world
+    /// whose compartment it did not open is absent too (FIX 9178).
+    Landed,
     /// None on this host and no head found: every pad is absent.
     Absent,
     /// A live source's, forked for a copy of the image's rows.
@@ -124,7 +179,8 @@ enum PadSource {
 impl PadSource {
     fn of(custody: Custody<'_>) -> Self {
         match custody {
-            Custody::Keep | Custody::Landed => Self::Kept,
+            Custody::Keep => Self::Kept,
+            Custody::Landed => Self::Landed,
             Custody::NewHost => Self::Absent,
             Custody::Fork(Some(_)) => Self::Forked,
             Custody::Replace(..) | Custody::Fork(None) => Self::Carried,
@@ -174,7 +230,7 @@ pub(super) fn require(
         let carrier = side.and_then(|side| side.carrier(row_key)).cloned();
         let planned = match source {
             PadSource::Absent => PlannedPad::Missing,
-            PadSource::Kept | PadSource::Forked | PadSource::Carried => {
+            PadSource::Kept | PadSource::Landed | PadSource::Forked | PadSource::Carried => {
                 match plan_world_pad(plan, &row.item) {
                     Ok(planned) => planned,
                     Err(_) if row.held || carrier.is_some() => PlannedPad::Missing,
@@ -241,33 +297,33 @@ pub(super) fn land(
     }
     let mut missing = 0_usize;
     if !unheld.is_empty() {
-        match MISSING_PAD {
-            MissingPad::PendingIfCarriedElseWithheldByPolicyElseRefused
-                if source == PadSource::Carried =>
-            {
-                notes.extend(unheld.into_iter().map(PadRestoreNote::pending));
-            }
-            MissingPad::PendingIfCarriedElseWithheldByPolicyElseRefused => {
-                // The worlds whose sealed copies keep their pads off a
-                // custody head.
-                let withheld = vault.pad_worlds_kept_local(true)?;
-                for key in unheld {
-                    if withheld.contains(key.world.as_bytes()) {
-                        notes.push(PadRestoreNote::withheld(key));
-                    } else {
-                        missing += 1;
-                    }
+        // The worlds whose sealed copies keep their pads off a custody head;
+        // a carried row never asks.
+        let withheld = match source {
+            PadSource::Carried => BTreeSet::new(),
+            _ => vault.pad_worlds_kept_local(true)?,
+        };
+        let mut locked = BTreeMap::new();
+        for key in unheld {
+            match missing_pad_outcome(source, withheld.contains(key.world.as_bytes())) {
+                PadOutcome::Pending => notes.push(PadRestoreNote::pending(key)),
+                PadOutcome::Withheld => notes.push(PadRestoreNote::withheld(key)),
+                PadOutcome::Locked => {
+                    locked.insert(key.world, PadRestoreNote::locked(key.world));
                 }
+                PadOutcome::Refused => missing += 1,
             }
         }
+        notes.extend(locked.into_values());
     }
     if missing > 0 {
         return Err(Rejected::new(
             R::CustodyKeyMissing,
             Error::InvalidConfig(format!(
                 "{missing} world key pad(s) this image names are in no custody this restore can \
-                 read: restore where the vault's custody is, beside its custody head, or once a \
-                 machine of the vault's holds them"
+                 read: restore where the vault's custody is; beside its custody head, whose \
+                 world pads open with the recovery kit (--unlock kit) or the key of a machine \
+                 their world admits; or once a machine of the vault's holds them"
             )),
         ));
     }

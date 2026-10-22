@@ -55,6 +55,21 @@ pub(super) enum Recipe {
     MoveShape,
     MoveCrossSlide,
     RemoveShape,
+    /// The text shape's outline redrawn as a freeform (Edit Points).
+    EditPoints,
+    /// A live-born table from rows of unequal length, padded to its widest.
+    RaggedTable,
+    /// A live-born SmartArt outline.
+    SmartArtBirth,
+    /// A node of a SmartArt the deck holds moved to the front, in a deck
+    /// that first took a live-born one.
+    SmartArtRestructure,
+    /// A live-born picture showing an image part the deck holds.
+    HeldPictureBirth,
+    /// A live-born chart over two-level categories.
+    MultiLevelCategories,
+    /// A live-born chart one of whose series draws its own categories.
+    PerSeriesCategories,
 }
 
 impl Recipe {
@@ -74,6 +89,13 @@ impl Recipe {
             Self::MoveShape => "move_shape",
             Self::MoveCrossSlide => "move_cross_slide",
             Self::RemoveShape => "remove_shape",
+            Self::EditPoints => "edit_points",
+            Self::RaggedTable => "ragged_table",
+            Self::SmartArtBirth => "smartart_birth",
+            Self::SmartArtRestructure => "smartart_restructure",
+            Self::HeldPictureBirth => "held_picture_birth",
+            Self::MultiLevelCategories => "multi_level_categories",
+            Self::PerSeriesCategories => "per_series_categories",
         }
     }
 }
@@ -91,6 +113,9 @@ pub(super) enum MergeCase {
     ThemeInheritedStyle,
     BothReplaceOpaque,
     BothAddShape,
+    /// Two Loro peers of one body merged in both import orders by the
+    /// engine (FIX 3773): step 4's convergence case.
+    LoroPeers,
 }
 
 impl MergeCase {
@@ -104,6 +129,7 @@ impl MergeCase {
             Self::ThemeInheritedStyle => "theme_inherited_style",
             Self::BothReplaceOpaque => "both_replace_opaque",
             Self::BothAddShape => "both_add_shape",
+            Self::LoroPeers => "loro_peers",
         }
     }
 }
