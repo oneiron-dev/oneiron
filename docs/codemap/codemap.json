@@ -81582,7 +81582,7 @@
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -81888,7 +81888,7 @@
      "path": "src/live/pptx/chart/families.rs",
      "purpose": "A live chart's families and their settings (OF-510, FIX 3493 D9b): which families draw x values (scatter and…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 4,
       "fn": 3,
       "struct": 2
@@ -82049,7 +82049,17 @@
      "path": "src/live/reshape/retained.rs",
      "purpose": "A surviving series written over its own retained XML (OF-510, FIX 8594), in its own plot or moved to…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/retype.rs",
+     "purpose": "Data labels and point formatting retyped to a new family (OF-510, FIX 9276, 9275): a data label position…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -82069,7 +82079,7 @@
      "path": "src/live/reshape/special.rs",
      "purpose": "A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -82133,7 +82143,7 @@
      "path": "src/native_patch/chart.rs",
      "purpose": "Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1,
       "struct": 3
      }
@@ -82156,6 +82166,16 @@
      "purpose": "Multi-level categories (`c:multiLvlStrRef`, FIX 3493): a hierarchy's cache read level by level, leaf first…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/native_patch/chart/placeholder.rs",
+     "purpose": "A stock plot's placeholder series (OF-510, FIX 9374): a `c:ser` of a `c:stockChart` holding neither…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -82758,14 +82778,14 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 55,
+     "files": 56,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain"
     },
     "native_patch": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -82830,7 +82850,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 148,
+   "source_files": 150,
    "test_files": 14
   },
   "oneiron-driver": {
