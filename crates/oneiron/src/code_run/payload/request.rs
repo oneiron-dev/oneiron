@@ -72,16 +72,7 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
             ),
         )]),
         // The run repo row and its closed input; the binding is the host's.
-        SelfCall::Repo(call) => request_map(vec![
-            ("row", Value::from(call.effect().as_str())),
-            (
-                "call",
-                Value::from(
-                    serde_json::to_string(call)
-                        .map_err(|_| invalid_code_run_replay("run repo call does not encode"))?,
-                ),
-            ),
-        ]),
+        SelfCall::Repo(call) => repo_request_value(call)?,
         SelfCall::MemorySearch(call) => request_map(vec![
             ("query", Value::from(call.query.as_str())),
             ("limit", Value::from(call.limit as u64)),
@@ -188,18 +179,7 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
         )]),
         // The guest's call: the members the host bound to it are not the
         // guest's, and a replay resolves them again.
-        SelfCall::Summarize(call) => request_map(vec![(
-            "call",
-            Value::from(
-                serde_json::json!({
-                    "ref": call.reference,
-                    "effort": call.effort.map(super::SummarizeEffort::as_str),
-                    "group": call.group,
-                    "defer": call.defer,
-                })
-                .to_string(),
-            ),
-        )]),
+        SelfCall::Summarize(call) => summarize_request_value(call),
         SelfCall::Leader(super::SelfLeaderCall::Advice { top }) => request_map(vec![
             ("verb", Value::from("advice")),
             ("top", top.map_or(Value::Nil, Value::from)),
@@ -208,21 +188,61 @@ pub(in crate::code_run) fn self_call_request_value(call: &SelfCall) -> Result<Va
             ("verb", Value::from("pattern")),
             ("skill", entity_id_value(*skill)),
         ]),
-        SelfCall::Leader(super::SelfLeaderCall::Split { leader, slice }) => request_map(vec![
-            ("verb", Value::from("split")),
-            ("leader", leader.map_or(Value::Nil, entity_id_value)),
-            (
-                "slice",
-                match slice {
-                    Some(slice) => Value::from(
-                        serde_json::to_string(slice)
-                            .map_err(|_| invalid_code_run_replay("split slice does not encode"))?,
-                    ),
-                    None => Value::Nil,
-                },
-            ),
-        ]),
+        SelfCall::Leader(super::SelfLeaderCall::Split { leader, slice }) => {
+            leader_split_request_value(leader, slice)?
+        }
     })
+}
+
+/// The request value of a run repo call: its row and its closed input.
+fn repo_request_value(call: &crate::code_run::RepoRunCall) -> Result<Value> {
+    Ok(request_map(vec![
+        ("row", Value::from(call.effect().as_str())),
+        (
+            "call",
+            Value::from(
+                serde_json::to_string(call)
+                    .map_err(|_| invalid_code_run_replay("run repo call does not encode"))?,
+            ),
+        ),
+    ]))
+}
+
+/// The request value of a summarize call: the guest call alone.
+fn summarize_request_value(call: &crate::code_run::SelfSummarizeCall) -> Value {
+    request_map(vec![(
+        "call",
+        Value::from(
+            serde_json::json!({
+                "ref": call.reference,
+                "effort": call.effort.map(super::SummarizeEffort::as_str),
+                "group": call.group,
+                "defer": call.defer,
+            })
+            .to_string(),
+        ),
+    )])
+}
+
+/// The request value of a leader split call: its leader and its slice.
+fn leader_split_request_value(
+    leader: &Option<EntityId>,
+    slice: &Option<crate::llm::Scope>,
+) -> Result<Value> {
+    Ok(request_map(vec![
+        ("verb", Value::from("split")),
+        ("leader", leader.map_or(Value::Nil, entity_id_value)),
+        (
+            "slice",
+            match slice {
+                Some(slice) => Value::from(
+                    serde_json::to_string(slice)
+                        .map_err(|_| invalid_code_run_replay("split slice does not encode"))?,
+                ),
+                None => Value::Nil,
+            },
+        ),
+    ]))
 }
 
 pub(super) fn claim_candidate_request_value(candidate: &ClaimCandidate) -> Result<Value> {

@@ -60,41 +60,7 @@ impl EngineNativeExecutor<'_> {
         // The entry's capture epoch of the run's read-world ledger (FIX 6130).
         let gated = self.gated_write;
         let _read_worlds = gated.enter_read_worlds(config.run_id);
-        if let Some(seat) = self.seat {
-            if &config.model != seat.model()
-                || config.model_locality != seat.locality()
-                || config.seat_effort != Some(seat.effort())
-            {
-                return Err(
-                    Error::InvalidConfig("executor seat and run config disagree".into()).into(),
-                );
-            }
-            // The seat's receipt is read where the run's rows are: base for a
-            // canonical run, its room's route for a session-bound one.
-            let recorded = self.storage.model_seat_receipt(config.run_id)?;
-            if !recorded.is_some_and(|receipt| {
-                receipt.model == *seat.model()
-                    && receipt.effort == seat.effort()
-                    && receipt.why == seat.receipt().why
-            }) {
-                return Err(Error::InvalidConfig(
-                    "executor seat is not durably bound to run".into(),
-                )
-                .into());
-            }
-        } else {
-            if config.seat_effort.is_some() {
-                return Err(Error::InvalidConfig("executor seat pin missing".into()).into());
-            }
-            if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage
-                && vault.model_manifest()?.is_some()
-            {
-                return Err(Error::InvalidConfig(
-                    "manifest-backed executor requires a seat".into(),
-                )
-                .into());
-            }
-        }
+        self.validate_run_seat(config)?;
         // Resolve exactly once per run attempt. Both teaching sites use these
         // bytes, and the fingerprint joins the durable replay identity below.
         let wire_prompt = resolve_engine_executor_wire_prompt(&config.prompt_package_root)
@@ -109,16 +75,7 @@ impl EngineNativeExecutor<'_> {
         )?;
         // A terminal replay still owes typed restore even when no new model
         // request is assembled during this attempt.
-        if self.output_run != Some(config.run_id) {
-            self.output_context = OutputWorkingContext::default();
-            self.output_run = Some(config.run_id);
-        }
-        if let Some(seat) = self.compaction.as_deref_mut() {
-            seat.begin_turn(matches!(
-                self.storage,
-                crate::code_run::ExecutorStorage::Canonical(_)
-            ));
-        }
+        self.prepare_run_context(config);
         let LoadedReplayRecord {
             mut record,
             generation: mut expected_generation,
@@ -583,6 +540,61 @@ impl EngineNativeExecutor<'_> {
                 return Ok(self.outcome(status, steps_run, record));
             }
             expected_generation = Some(next_generation);
+        }
+    }
+
+    /// A seat run: its config and its durable seat receipt agree with the
+    /// seat. A run with no seat: no seat pin, and no model manifest.
+    fn validate_run_seat(&self, config: &EngineExecutorConfig) -> EngineExecutorResult<()> {
+        if let Some(seat) = self.seat {
+            if &config.model != seat.model()
+                || config.model_locality != seat.locality()
+                || config.seat_effort != Some(seat.effort())
+            {
+                return Err(
+                    Error::InvalidConfig("executor seat and run config disagree".into()).into(),
+                );
+            }
+            // The seat's receipt is read where the run's rows are: base for a
+            // canonical run, its room's route for a session-bound one.
+            let recorded = self.storage.model_seat_receipt(config.run_id)?;
+            if !recorded.is_some_and(|receipt| {
+                receipt.model == *seat.model()
+                    && receipt.effort == seat.effort()
+                    && receipt.why == seat.receipt().why
+            }) {
+                return Err(Error::InvalidConfig(
+                    "executor seat is not durably bound to run".into(),
+                )
+                .into());
+            }
+        } else {
+            if config.seat_effort.is_some() {
+                return Err(Error::InvalidConfig("executor seat pin missing".into()).into());
+            }
+            if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage
+                && vault.model_manifest()?.is_some()
+            {
+                return Err(Error::InvalidConfig(
+                    "manifest-backed executor requires a seat".into(),
+                )
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// The output context of a new run, and the compaction seat turn begun.
+    fn prepare_run_context(&mut self, config: &EngineExecutorConfig) {
+        if self.output_run != Some(config.run_id) {
+            self.output_context = OutputWorkingContext::default();
+            self.output_run = Some(config.run_id);
+        }
+        if let Some(seat) = self.compaction.as_deref_mut() {
+            seat.begin_turn(matches!(
+                self.storage,
+                crate::code_run::ExecutorStorage::Canonical(_)
+            ));
         }
     }
 }

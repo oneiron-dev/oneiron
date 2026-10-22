@@ -123,16 +123,7 @@ impl ActionRegistry {
             .as_ref()
             .map(|run| run.leased_record(vault))
             .transpose()?;
-        let expected_kind = match actor.actor_class() {
-            EdgeActorClass::Agent => LensActingPrincipalKind::AgentTask,
-            EdgeActorClass::System => LensActingPrincipalKind::SystemJob,
-            EdgeActorClass::Human => LensActingPrincipalKind::HumanView,
-        };
-        if principal.principal_ref() != actor.entity_ref().to_hex()
-            || principal.kind() != expected_kind
-        {
-            return Err(invalid("action principal does not match host actor"));
-        }
+        validate_action_principal(actor, principal)?;
         if request.idempotency_key.trim().is_empty()
             || request.idempotency_key.len() > 256
             || registered.definition.args_schema.len() != request.args.len()
@@ -144,50 +135,9 @@ impl ActionRegistry {
         {
             return Err(invalid("action arguments do not match declared schema"));
         }
-        let targets: Vec<_> = request
-            .args
-            .iter()
-            .filter_map(|arg| match arg {
-                ActionArgument::Entity { id } => Some(PointRead::id(*id)),
-                _ => None,
-            })
-            .collect();
-        let targets = vault
-            .scoped_read(principal.selected_read_key().clone())
-            .read(&targets, None)?;
-        if targets.value.iter().any(Option::is_none) {
-            return Err(invalid("action target is outside principal read scope"));
-        }
-        let read_receipt = targets.receipt;
+        let read_receipt = action_read_receipt(vault, principal, request)?;
         check_ceiling(vault, actor, registered.definition.required_ceiling)?;
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"oneiron:shared-action:v1");
-        for part in [
-            actor.entity_ref().as_bytes().as_slice(),
-            request.verb_id.as_str().as_bytes(),
-            request.idempotency_key.as_bytes(),
-        ] {
-            hash.update(&(part.len() as u64).to_be_bytes());
-            hash.update(part);
-        }
-        // A live run's action is that try's own: another try, or another
-        // lease of it, never replays its answer.
-        if let Some(record) = &leased {
-            hash.update(b"live-run");
-            hash.update(record.id.as_bytes());
-            hash.update(&record.attempt_count.to_be_bytes());
-        }
-        let digest = hash.finalize();
-        let run_id = EntityId::from_bytes(
-            digest.as_bytes()[..16]
-                .try_into()
-                .map_err(|_| invalid("action identity"))?,
-        )?;
-        let seed = *blake3::hash(
-            &serde_json::to_vec(&(&registered.definition, &request.args))
-                .map_err(|_| invalid("action encoding"))?,
-        )
-        .as_bytes();
+        let (run_id, seed) = action_identity(actor, request, registered, &leased)?;
         // A live run's lease, read live again before a replayed answer
         // returns and before any effect: one that moved on meanwhile does
         // neither.
@@ -324,4 +274,82 @@ impl ActionRegistry {
             refusal,
         })
     }
+}
+
+/// The action principal is the host actor, of the kind its class acts as.
+fn validate_action_principal(actor: WriteActor, principal: &LensPrincipalBinding) -> Result<()> {
+    let expected_kind = match actor.actor_class() {
+        EdgeActorClass::Agent => LensActingPrincipalKind::AgentTask,
+        EdgeActorClass::System => LensActingPrincipalKind::SystemJob,
+        EdgeActorClass::Human => LensActingPrincipalKind::HumanView,
+    };
+    if principal.principal_ref() != actor.entity_ref().to_hex() || principal.kind() != expected_kind
+    {
+        return Err(invalid("action principal does not match host actor"));
+    }
+    Ok(())
+}
+
+/// The receipt of the principal read of every entity the action names; a
+/// target outside its read scope refuses the action.
+fn action_read_receipt(
+    vault: &Vault,
+    principal: &LensPrincipalBinding,
+    request: &AgentActionCall,
+) -> Result<ScopedReadReceipt> {
+    let targets: Vec<_> = request
+        .args
+        .iter()
+        .filter_map(|arg| match arg {
+            ActionArgument::Entity { id } => Some(PointRead::id(*id)),
+            _ => None,
+        })
+        .collect();
+    let targets = vault
+        .scoped_read(principal.selected_read_key().clone())
+        .read(&targets, None)?;
+    if targets.value.iter().any(Option::is_none) {
+        return Err(invalid("action target is outside principal read scope"));
+    }
+    let read_receipt = targets.receipt;
+    Ok(read_receipt)
+}
+
+/// The run id and seed of the action: its actor, verb and idempotency key,
+/// and the try of a live run, hashed; the definition and arguments seeded.
+fn action_identity(
+    actor: WriteActor,
+    request: &AgentActionCall,
+    registered: &RegisteredVerb,
+    leased: &Option<crate::attempt_queue::AttemptRecord>,
+) -> Result<(EntityId, [u8; 32])> {
+    let mut hash = blake3::Hasher::new();
+    hash.update(b"oneiron:shared-action:v1");
+    for part in [
+        actor.entity_ref().as_bytes().as_slice(),
+        request.verb_id.as_str().as_bytes(),
+        request.idempotency_key.as_bytes(),
+    ] {
+        hash.update(&(part.len() as u64).to_be_bytes());
+        hash.update(part);
+    }
+    // A live run's action is that try's own: another try, or another
+    // lease of it, never replays its answer.
+    if let Some(record) = &leased {
+        hash.update(b"live-run");
+        hash.update(record.id.as_bytes());
+        hash.update(&record.attempt_count.to_be_bytes());
+    }
+    let digest = hash.finalize();
+    let run_id = EntityId::from_bytes(
+        digest.as_bytes()[..16]
+            .try_into()
+            .map_err(|_| invalid("action identity"))?,
+    )?;
+    let seed = *blake3::hash(
+        &serde_json::to_vec(&(&registered.definition, &request.args))
+            .map_err(|_| invalid("action encoding"))?,
+    )
+    .as_bytes();
+    Ok((run_id, seed))
 }
