@@ -65,8 +65,10 @@ if [ -s "$plan" ]; then
 
   cd "$src/engine"
   for package in "${order[@]}"; do
+    # Without mkosi's DESTDIR: a build script's install step (CMake honours
+    # $DESTDIR) would put its output in the image, not where Cargo links it.
     # shellcheck disable=SC2086
-    cargo build --release --locked --offline -p "$package" ${bins[$package]}
+    env -u DESTDIR cargo build --release --locked --offline -p "$package" ${bins[$package]}
   done
 
   # The SBOM's Cargo side, with the features this build resolved: the crates

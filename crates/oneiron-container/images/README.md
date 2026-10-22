@@ -46,8 +46,8 @@ What the phase-3 variants install, all from pins checked in the fetch:
 What the vault (phase 4) installs, with no guest plumbing:
 - the engine's `oneiron-server`, `oneiron-broker`, `oneiron-vm-init` and
   `oneiron-vm-outbox` in `/usr/bin`, built in release in the image's build
-  overlay (build-essential, pkg-config, and cmake for expat-sys's bundled
-  Expat);
+  overlay (build-essential, pkg-config, and libexpat1-dev, so expat-sys
+  links Debian's Expat; `libexpat1` is in the image);
 - the pinned `deploy/firecracker/oneiron-vault-init`, unmodified, at
   `/usr/sbin/oneiron-vault-init` (the kernel's `init=/sbin/oneiron-vault-init`
   in the merged /usr);

@@ -130,6 +130,9 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       C and C++ that build scripts compile (cc, cmake) get the same maps as
       `CFLAGS`/`CXXFLAGS` `-ffile-prefix-map`: the Rust remap never reaches a
       C compiler, and tree-sitter's C keeps its assertions' `__FILE__`.
+      Cargo runs without mkosi's `DESTDIR`: a build script's CMake install
+      step honours it, and would put its output in the image instead of
+      where Cargo links it.
       An external source build runs after it, in `env -i` with only the
       variables it names: its own Rust and store, `--remap-path-prefix` and
       C `-ffile-prefix-map` for its source, store, toolchain and target dir,
@@ -598,8 +601,9 @@ The vault variant builds like the others, with these differences:
 - **The engine binaries.** `oneiron-server`, `oneiron-broker`,
   `oneiron-vm-init` and `oneiron-vm-outbox` (one Cargo invocation, default
   features) compile in release in the image's build overlay:
-  build-essential, pkg-config, and cmake, which expat-sys needs to build its
-  bundled Expat when the overlay has no system Expat. @@VAULT_NEEDED@@
+  build-essential, pkg-config and libexpat1-dev. expat-sys finds Debian's
+  Expat through pkg-config and links `libexpat.so.1` (libexpat1, in the
+  image), not the Expat 2.1.0 its crate bundles. @@VAULT_NEEDED@@
 - **Memory.** A release build of oneiron-server ran out of memory above
   22 GiB at one Cargo job, so book the vault build at 48G on a host that
   allows it (nelly); kel, bel and mel cap a guest at 16G.
