@@ -12830,7 +12830,7 @@
      "purpose": "The Coach's changes to an owner's digest settings (FIX 5495; DEC-0005 policy residence)",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -19123,7 +19123,7 @@
       "const": 7,
       "crate-vis": 1,
       "enum": 4,
-      "fn": 15,
+      "fn": 16,
       "struct": 12
      }
     },
@@ -19876,6 +19876,7 @@
      "kind": "src",
      "notable": [
       "CancelRejectionPathology",
+      "ConsultWidening",
       "JobPresence",
       "TaskBoardStatus",
       "TaskIntentPresence",
@@ -19890,8 +19891,8 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 13,
-      "struct": 7
+      "fn": 16,
+      "struct": 8
      }
     },
     {
@@ -19901,7 +19902,7 @@
      "path": "src/context_board/tasks/render.rs",
      "purpose": "Pure TASKS row rendering: intent rows, folded jobs, cause tokens, expansion detail",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 3
      }
     },
@@ -34867,6 +34868,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NotificationAction"
+     ],
+     "path": "src/inbox/actions.rs",
+     "purpose": "FIX 5629, 6505: the taps a delivered notification offers, read when its row is read, from the refs its…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -34891,7 +34905,7 @@
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue",
      "surface": {
       "crate-vis": 1,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -65154,7 +65168,7 @@
      "path": "src/task_verb/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -74707,7 +74721,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…"
     },
     "inbox": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75514,7 +75528,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4912,
+   "source_files": 4913,
    "test_files": 902
   },
   "oneiron-android": {
@@ -105983,6 +105997,7 @@
       "ConsultReadRequest",
       "ConsultSummaryView",
       "ConsultTerminalView",
+      "ConsultWidening",
       "ContentPart",
       "ContextDefault",
       "ContextEmitReceipt",
@@ -107287,6 +107302,7 @@
       "NoteVerdict",
       "NoteVersion",
       "NoteVersionTree",
+      "NotificationAction",
       "NotificationKind",
       "NotificationMark",
       "NotificationPage",
@@ -109133,7 +109149,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1002,
-      "struct": 3087
+      "struct": 3089
      }
     },
     {
