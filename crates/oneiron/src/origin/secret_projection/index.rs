@@ -200,6 +200,40 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
+    /// Every marked blob's snapshot ASSET id with its whole BLAKE3 (FIX
+    /// 7608 slice 4: the sync copy is made once per marked blob per pass).
+    pub(crate) fn marked_sources(&self) -> Vec<(EntityId, [u8; 32])> {
+        self.sources.iter().map(|(id, hash)| (*id, *hash)).collect()
+    }
+
+    /// The spans the masked copy of the marked blob `source` overwrites,
+    /// unioned as the whole-byte projector unions them; `None` when its copy
+    /// is the placeholder. An incoming edit of the copy is translated over
+    /// exactly these.
+    ///
+    /// # Errors
+    /// A store failure reading the blob's mask row.
+    pub(crate) fn copy_places_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        source: &[u8; 32],
+    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+        let marks = self.facts.for_hash(source);
+        if marks.is_empty() || marks.opaque() {
+            return Ok(None);
+        }
+        let mut places = marks.places();
+        if let Some(row) = crate::secret_custody::masked_file_in_txn(&vault.store, txn, source)? {
+            for (member, spans) in row.places() {
+                for span in spans {
+                    crate::origin::secret_marks::add_place(&mut places, &member, span);
+                }
+            }
+        }
+        Ok(Some(places))
+    }
+
     /// Whether any of record `entity`'s index inputs is a copy: it is a
     /// marked blob's snapshot ASSET, or its body or a field is a marked
     /// blob's whole bytes.

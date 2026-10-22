@@ -92,6 +92,12 @@ impl SyncClient {
         context: Option<&LoroDoc>,
     ) -> Result<PreparedWindowPads, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // FIX 7608 slice 4: the home gets a marked repo item's masked copy,
+        // made before any pad is; one that cannot be masked fails this send
+        // and stays in the window, owed to the next exchange.
+        let masked = crate::sync::selector::prepare_repo_sync_frame(&self.vault, payload, context)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let payload = masked.as_deref().unwrap_or(payload);
         if self.window_pad_ledger().carrier.contains(window_key) {
             return Ok(carrier_window_pads(&self.vault, &key, payload, context));
         }
@@ -268,10 +274,11 @@ impl SyncClient {
         };
         let receipt = admit_window_pads(&self.vault, key, &envelope);
         if receipt.readiness != WindowPadReadiness::NotReady {
-            return Ok(ControlFlow::Continue((
-                sub_tag,
-                Cow::Owned(envelope.payload),
-            )));
+            // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
+            return Ok(match self.admitted_window_payload(key, envelope.payload)? {
+                Some(payload) => ControlFlow::Continue((sub_tag, Cow::Owned(payload))),
+                None => ControlFlow::Break(Vec::new()),
+            });
         }
         // Nothing of it imports. The home is told, sends this window as the
         // carrier from now on, and is asked for it again.
@@ -320,7 +327,8 @@ impl SyncClient {
                 "bulk window pads not installed".into(),
             ));
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(key, envelope.payload)
     }
 
     /// A promotion reply's snapshot of `window`, its envelope in base64, the
@@ -344,7 +352,8 @@ impl SyncClient {
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(window, envelope.payload)
     }
 
     /// Whether a window frame of `key` about to leave carries what a

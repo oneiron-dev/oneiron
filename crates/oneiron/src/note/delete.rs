@@ -22,6 +22,9 @@ pub(crate) fn delete_document_in_txn(
 
     let own = DocumentSlot::of(*id);
     store.port_document_rows_delete(txn, own, &DocumentRow::ALL)?;
+    // FIX 7608 slice 4 (erase reach): a marked repo item's copy lineage goes too.
+    #[cfg(feature = "sync")]
+    crate::sync::selector::secret_projection::erase_copy_lineage_in_txn(store, txn, id)?;
     SYNC_DS_E.delete(store, txn, &HexId(*id))?;
     let heads = NOTE_HEAD_DOC.scan_keys(store, txn, id.as_bytes())?;
     for (note, head) in heads {

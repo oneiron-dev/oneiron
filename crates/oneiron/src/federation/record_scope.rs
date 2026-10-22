@@ -21,6 +21,8 @@ mod asset_body;
 pub(crate) mod asset_text;
 mod export;
 pub(crate) mod note_world;
+// FIX 7608 slice 4: the masked copy a scoped export carries of a marked repo row.
+mod secret_projection;
 #[cfg(test)]
 mod tests;
 

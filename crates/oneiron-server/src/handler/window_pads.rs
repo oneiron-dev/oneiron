@@ -125,6 +125,18 @@ pub(super) fn release(server: &SyncServer, conn_state: &ConnState, frame: Vec<u8
     };
     let window = server.reassert_manager.window(&key);
     let context = window.as_ref().map(|window| &window.doc);
+    // FIX 7608 slice 4: a peer gets a marked repo item's masked copy, made
+    // before any pad is. One that cannot be masked is withheld, never sent
+    // raw; nothing retires it, so the window's next exchange owes it again.
+    let masked =
+        match oneiron::sync::selector::prepare_repo_sync_frame(server.vault(), payload, context) {
+            Ok(masked) => masked,
+            Err(error) => {
+                tracing::warn!(window = window_key, %error, "window blob withheld: no masked copy");
+                return Vec::new();
+            }
+        };
+    let payload = masked.as_deref().unwrap_or(payload);
     let prepared = if conn_state.window_pad_carrier.contains(&key) {
         carrier_window_pads(server.vault(), &key, payload, context)
     } else {

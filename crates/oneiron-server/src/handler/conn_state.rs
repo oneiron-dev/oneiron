@@ -50,6 +50,10 @@ pub(super) struct ConnState {
     /// Windows the peer could not install sealed pads for: they go to it as
     /// today's carrier.
     pub(super) window_pad_carrier: std::collections::HashSet<WindowKey>,
+    /// Each window's masked repo copy generation this socket was last sent
+    /// (FIX 7608 slice 4): another one is replaced at an equal vector.
+    pub(super) repo_copy_generations:
+        std::sync::Mutex<std::collections::HashMap<WindowKey, [u8; 32]>>,
 }
 
 impl ConnState {
@@ -72,6 +76,7 @@ impl ConnState {
             proven_machine: oneiron::authority::PeerMachine::Unknown,
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
             window_pad_carrier: std::collections::HashSet::new(),
+            repo_copy_generations: std::sync::Mutex::default(),
         }
     }
 

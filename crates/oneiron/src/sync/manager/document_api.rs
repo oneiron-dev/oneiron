@@ -81,6 +81,8 @@ impl WindowManager {
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
+        // FIX 7608 slice 4: a copy id reads its marked source's document.
+        let id = selector::repo_document_source(&self.vault, id)?;
         let source = self.open_window(window)?;
         self.documents.export_selected(
             id,
@@ -141,6 +143,8 @@ impl WindowManager {
         remote_vv: &[u8],
     ) -> Result<Vec<u8>> {
         selector::authorize_sync_selector(&self.vault, scope, selector)?;
+        // FIX 7608 slice 4: a copy id reads its marked source's document.
+        let id = selector::repo_document_source(&self.vault, id)?;
         let raw = self.vault.get_raw(&id)?.ok_or_else(|| {
             Error::sync_protocol(crate::error::SyncProtocolValidation::DocumentAdmissionDenied)
         })?;

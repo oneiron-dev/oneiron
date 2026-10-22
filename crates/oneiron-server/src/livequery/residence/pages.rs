@@ -134,8 +134,12 @@ pub(super) fn search_pages(
     let mut page = Vec::new();
     let mut rows = Vec::new();
     let mut bytes = 0usize;
+    // FIX 7608 slice 4: a marked repo item is shown by its copy id.
+    let aliases = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+        .map_err(|_| AppError::internal_server_error("search aliases unavailable"))?;
     for (id, score, key) in hits.iter().skip(offset).take(budgets.search_limit) {
-        let hit = json!({"entityId": id.to_hex(), "score": score, "window": key.as_str()});
+        let shown = aliases.shown(id).to_hex();
+        let hit = json!({"entityId": shown, "score": score, "window": key.as_str()});
         let size = hit.to_string().len();
         if !page.is_empty() && bytes.saturating_add(size) > RESIDENCE_PAGE_REPLY_BYTES {
             break;
