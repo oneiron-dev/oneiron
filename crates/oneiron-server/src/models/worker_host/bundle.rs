@@ -18,8 +18,20 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/cache_usage.py"),
     ),
     (
+        "exl3_ipc.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_ipc.py"),
+    ),
+    (
         "exl3_server.py",
         include_bytes!("../../../../../deploy/house-model/exl3_server.py"),
+    ),
+    (
+        "exl3_stats.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_stats.py"),
+    ),
+    (
+        "exl3_tools.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_tools.py"),
     ),
     (
         "llama_identity.py",

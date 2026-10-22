@@ -52,6 +52,7 @@
 
 mod gate;
 mod import_relay;
+mod projection;
 mod routes;
 mod serve;
 mod status_codec;

@@ -43,6 +43,7 @@ pub(super) struct Shape {
     pub(super) reasoning: bool,
     /// Whether each measured call asks to run alone (`--solo`).
     pub(super) solo: bool,
+    pub(super) seed: Option<u64>,
 }
 
 /// What one request carried, as the row records it.
@@ -137,6 +138,9 @@ impl Shape {
         solo: bool,
     ) -> (LlmRequest, Sent) {
         let mut params = sampling_params(self.sampling);
+        if let Some(seed) = self.seed {
+            params.insert("seed".into(), seed.into());
+        }
         let (effort, knob) = thinking_knob(thinking, self.reasoning, &mut params);
         params.insert("max_tokens".into(), max_tokens.into());
         if self.cache_bust {

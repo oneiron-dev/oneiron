@@ -52,6 +52,11 @@ pub struct McpConnectorActorRegistry {
     /// A connection with none hears no such event. Dropped with the
     /// connection.
     stream_readers: BTreeMap<StreamConnectionId, McpResolvedActor>,
+    /// Each pumped run's own board connection's reader (FIX 4888): the key
+    /// the run's agent reads under on this device, by its own grants, never
+    /// a credential's or a vault-wide one. The board publisher admits an
+    /// own-task event under it at each delivery. Dropped with the connection.
+    run_readers: BTreeMap<StreamConnectionId, oneiron::claim::ScopedReadActorKey>,
     /// Host wake instances belong to a credential connection and die with it.
     wake_owners: BTreeMap<StreamConnectionId, StreamConnectionId>,
 }
@@ -76,6 +81,7 @@ impl McpConnectorActorRegistry {
             page_continuations: BTreeMap::new(),
             page_continuation_seq: 0,
             stream_readers: BTreeMap::new(),
+            run_readers: BTreeMap::new(),
             wake_owners: BTreeMap::new(),
         }
     }
@@ -603,10 +609,54 @@ impl McpConnectorActorRegistry {
         }
     }
 
-    /// A run's board connection and snapshot go when the run's door does.
+    /// A run's board connection, snapshot and reader go when the run's door
+    /// does.
     pub(crate) fn drop_run_board(&mut self, connection: &StreamConnectionId) {
         self.streams.detach(connection);
         self.board_epochs.remove(connection);
+        self.run_readers.remove(connection);
+    }
+
+    /// Binds a pumped run's attached board connection to `reader`, the key
+    /// its run reads under now, replacing the one before (FIX 4888); `None`
+    /// unbinds it, so the connection hears no published event. A connection
+    /// not attached binds nothing.
+    pub(crate) fn bind_run_reader(
+        &mut self,
+        connection: &StreamConnectionId,
+        reader: Option<oneiron::claim::ScopedReadActorKey>,
+    ) {
+        match reader {
+            Some(reader) if self.streams.connection_state(connection).is_some() => {
+                self.run_readers.insert(connection.clone(), reader);
+            }
+            _ => {
+                self.run_readers.remove(connection);
+            }
+        }
+    }
+
+    /// The run reader `connection` is bound to, if any.
+    #[must_use]
+    pub(crate) fn run_reader(
+        &self,
+        connection: &StreamConnectionId,
+    ) -> Option<oneiron::claim::ScopedReadActorKey> {
+        self.run_readers.get(connection).cloned()
+    }
+
+    /// The bound run readers of every run connection whose agent is one of
+    /// `actors`.
+    #[must_use]
+    pub(crate) fn run_readers_for(
+        &self,
+        actors: &[&str],
+    ) -> Vec<(StreamConnectionId, oneiron::claim::ScopedReadActorKey)> {
+        self.run_readers
+            .iter()
+            .filter(|(_, reader)| actors.contains(&reader.actor_ref()))
+            .map(|(connection, reader)| (connection.clone(), reader.clone()))
+            .collect()
     }
 
     /// Records the reader a connection's call resolved, replacing the one

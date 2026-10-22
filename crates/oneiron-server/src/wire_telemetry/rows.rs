@@ -57,13 +57,18 @@ pub enum LimitRow {
     /// Deck and slide renders the host runs at once (FIX 7653); past it,
     /// each caller's render waits its fair turn.
     RendererWork,
+    /// Bytes the media replies providers send this server hold at once,
+    /// from the first byte read until the decoded answer leaves its adapter
+    /// (FIX 8615): past it a reply waits its turn, and one larger than the
+    /// whole line runs alone. Never a size refusal.
+    MediaReplyBytes,
     /// An engine row on this server's vault (`oneiron::limit_ask`), measured
     /// where the engine serves the work, which carries on past it.
     Engine(EngineLimit),
 }
 impl LimitRow {
     /// Every row, the list every permit site and byte check is built from.
-    pub const ALL: [Self; 23 + EngineLimit::ALL.len()] = [
+    pub const ALL: [Self; 24 + EngineLimit::ALL.len()] = [
         Self::Connections,
         Self::GitExchanges,
         Self::LfsTransfers,
@@ -87,6 +92,7 @@ impl LimitRow {
         Self::TaskWork,
         Self::BookingWindows,
         Self::RendererWork,
+        Self::MediaReplyBytes,
         Self::Engine(EngineLimit::KeyedFilterJsonBytes),
         Self::Engine(EngineLimit::CodeResultInlineBytes),
         Self::Engine(EngineLimit::CodeResultDiskFloorBytes),
@@ -235,6 +241,7 @@ impl LimitRow {
             Self::TaskWork => "limits.task_work",
             Self::BookingWindows => "booking.anti_abuse:per_minute",
             Self::RendererWork => "limits.renderer_work",
+            Self::MediaReplyBytes => "limits.media_reply_bytes",
             Self::Engine(row) => row.key(),
         }
     }

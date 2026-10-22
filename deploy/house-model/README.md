@@ -215,7 +215,30 @@ and the answer gets the rest of `max_tokens`. A `response_format` schema
 constrains the answer only. A prompt that fills the context is refused with
 `400` and `code = "context_length_exceeded"`. By default up to four
 requests run at once; one that sets `"oneiron_solo": true` runs alone (see
-"Solo admission").
+"Solo admission"). A request's `tools` reach the chat template, and a tool
+call the model writes (the template's `<tool_call>` block, JSON or
+`<function=...>` form) comes back as OpenAI `tool_calls`, with
+`finish_reason` `tool_calls`; a replayed tool round's string `arguments` are
+read back into the object the template iterates (FIX 8328). A reply with no
+tool call, or one its cap cut, is unchanged.
+
+## The EXL3 native channel
+
+With `--native-socket PATH` (the managed launch passes
+`<runtime root>/sock/<worker id>-<launch>.sock`) the server also answers on
+a Unix socket, beside its HTTP routes and into the same scheduler
+(`exl3_ipc.py`, DESIGN-V2 R1). Its folder is made 0700 and the socket 0600,
+and only a peer running as the server's own user is answered. Each frame is
+a u64 big-endian length and a UTF-8 JSON envelope `{v: 1, op, request_id,
+epoch?, seq?, body}`; a call's conversation (`{messages, tools?}`,
+encoding `chat_json`) rides in one sealed shared-memory descriptor passed
+with SCM_RIGHTS, and its other fields as the HTTP route takes them. Ops:
+`hello`; `generate` -> `accepted` or `refused`, then `first_token`, `token`
+events when streamed, and one `final` with the HTTP reply's fields and the
+same `usage`; `cancel` -> `cancel_ack`, then `released` once the Job's
+pages and recurrent slot are freed; `stats` (`exl3_stats.py`: allocator
+reservations, pages, queue; `detail: "cheap"` skips the tensor walk);
+`drain` -> `drained`, with no deadline; `shutdown`.
 
 ## The EXL3 scheduler
 
@@ -320,8 +343,18 @@ request read from the prompt cache (FIX 6567; `cache_usage.py` builds it):
   `reported_version`), `logical_prompt_tokens`, `passes` and `queue_wait`.
   - `queue_wait` has `worker_us`, submission to admission, and `engine_us`,
     each Job's enqueue-to-start with the answer pass's wait for pages, in
-    whole microseconds. First-token time, end, output count and drafts are
-    left out; the engine stamps the receipt's `model`.
+    whole microseconds; `engine_us` is left out when any Job's final left
+    its wait out (FIX 8896). The engine stamps the receipt's `model`.
+  - The R3 counters (FIX 8317): `ttft_us`, the request's acceptance (before
+    it is rendered) to the first token the Generator samples for it,
+    reasoning or answer, measured at the worker and kept across a requeue;
+    `end_reason` from the last Job's `eos_reason` (`stop_token`,
+    `stop_string` and `end_filter` are `stop`, `max_new_tokens` is
+    `length`, any other is `other`; the server's own cancel or failure is
+    `cancelled` or `error`); `output_tokens`, the Jobs' native
+    `new_tokens`; and `drafts_proposed` (accepted plus rejected) and
+    `drafts_accepted`, totals only when every Job reported both. A count any
+    Job left out is absent, never zero.
   - `passes` has one entry per Job, in order: `reasoning`, `answer` (the
     re-encode of prompt, thought and close) or `prompt`. Each has the Job's
     own `input_tokens`, `cache_read_tokens` (exllamav3's `cached_tokens`,
