@@ -11,15 +11,14 @@
 //! The line is the vault's own ([`ModelHostBudgets`]): a media call reads on
 //! the line of the runtime that runs it, and holds its replies' bytes until
 //! its answer leaves the adapter ([`holding_replies`]): across the encoded
-//! reply and its decode. A read no media call scopes keeps its bytes on the
-//! reply it returns, on the rows' default line, as a host that installed
-//! none read before. These lines book the encoded bytes a reply holds: a
-//! decode's copies and a parsed JSON tree are the call's, and not booked
-//! here.
+//! reply and its decode. A read no media call scopes (a health probe) keeps
+//! its bytes on the reply it returns, on a line of the row's default of its
+//! own: no process-wide line paces it. These lines book the encoded bytes a
+//! reply holds: a decode's copies and a parsed JSON tree are the call's, and
+//! not booked here.
 
 use std::cell::RefCell;
 use std::future::Future;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::byte_line::HeldBytes;
@@ -42,11 +41,12 @@ tokio::task_local! {
     static CALL: MediaCall;
 }
 
-/// The budgets a read no media call scopes books on: the rows' defaults,
-/// their crossings logged and not kept.
-fn unscoped() -> &'static ModelHostBudgets {
-    static UNSCOPED: OnceLock<ModelHostBudgets> = OnceLock::new();
-    UNSCOPED.get_or_init(ModelHostBudgets::unhosted)
+/// The budgets of the media call this task runs; for a read no call
+/// scopes, budgets of its own at the rows' defaults, their crossings logged
+/// and not kept.
+fn call_budgets() -> ModelHostBudgets {
+    CALL.try_with(|call| call.budgets.clone())
+        .unwrap_or_else(|_| ModelHostBudgets::unhosted())
 }
 
 /// Runs `call`, one media rung's call on the runtime whose budgets are
@@ -75,9 +75,7 @@ pub(in crate::models) struct ReplyBytes {
 pub(in crate::models) async fn read_booked(
     mut response: reqwest::Response,
 ) -> Result<(Vec<u8>, ReplyBytes), HttpFailure> {
-    let budgets = CALL
-        .try_with(|call| call.budgets.clone())
-        .unwrap_or_else(|_| unscoped().clone());
+    let budgets = call_budgets();
     let MediaReplyLine { line, questions } = budgets.media_line();
     let first = response
         .content_length()
@@ -136,9 +134,7 @@ pub(in crate::models) async fn read_whole(
 /// (the credential broker's), on the line of the call that reads it: kept
 /// as a read reply's are.
 pub(in crate::models) fn charge_read(bytes: usize) -> ReplyBytes {
-    let budgets = CALL
-        .try_with(|call| call.budgets.clone())
-        .unwrap_or_else(|_| unscoped().clone());
+    let budgets = call_budgets();
     let MediaReplyLine { line, questions } = budgets.media_line();
     let mut held = line.empty();
     line.charge(&mut held, bytes, questions);
