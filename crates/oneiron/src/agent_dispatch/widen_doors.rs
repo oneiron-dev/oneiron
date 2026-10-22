@@ -184,11 +184,11 @@ pub(crate) fn widen_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>
             item_id: format!("widen:{proposal_id}"),
             kind: AgentInboxItemKind::ApprovalRequired,
             thread_ref: None,
-            identity_ref: agent,
+            identity_ref: Some(agent),
             actor_ref: agent,
             facet_ref: None,
             participants: vec![AgentInboxParticipant {
-                identity_ref: owner,
+                identity_ref: Some(owner),
                 actor_ref: owner,
             }],
             impact: InboxImpact(WIDEN_INBOX_IMPACT),
@@ -197,6 +197,8 @@ pub(crate) fn widen_inbox_items(vault: &Vault) -> Result<Vec<AgentInboxLensItem>
             payload_ref: Some(proposal_id),
             concern: None,
             diary_review: None,
+            sender: None,
+            widening: None,
         });
     }
     Ok(items)
