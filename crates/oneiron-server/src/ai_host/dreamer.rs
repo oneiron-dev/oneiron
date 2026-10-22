@@ -1379,7 +1379,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         {
             // FIX 4465 B: judged on the weaver's route; never rewrites.
             match self.check {
-                Some(lend) => lend.check(attempt, ctx).await,
+                Some(lend) => lend.check(attempt, ctx, self.decisions).await,
                 None => Ok(oneiron::dreamer_runner::maintenance::compaction_check::unlent()),
             }
         } else if attempt.status.payload.attempt_type
