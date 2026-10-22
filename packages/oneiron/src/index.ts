@@ -3081,6 +3081,8 @@ export class Oneiron {
       library: {
         /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
+        /** Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+        draft: (input: Facade.LiveRunRequest<Facade.DraftInput>): Facade.BrowserLibraryDraftOutput => this.#call(() => this.#client.selfBrowserLibraryDraft(input) as Facade.BrowserLibraryDraftOutput),
         /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */

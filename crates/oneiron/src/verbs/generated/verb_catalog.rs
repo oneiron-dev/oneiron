@@ -1145,6 +1145,7 @@ pub enum AgentVerb {
     SelfBrowserZoom,
     SelfBrowserBatch,
     SelfBrowserLibraryFind,
+    SelfBrowserLibraryDraft,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
     SelfBrowserLibraryRetired,
@@ -2308,6 +2309,7 @@ impl AgentVerb {
         Self::SelfBrowserZoom,
         Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
+        Self::SelfBrowserLibraryDraft,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRetired,
@@ -3502,6 +3504,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => "self.browser.zoom",
             Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
+            Self::SelfBrowserLibraryDraft => "self.browser.library.draft",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
@@ -4645,6 +4648,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -4701,6 +4705,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -5834,6 +5839,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -7107,6 +7113,7 @@ impl AgentVerb {
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryDraft
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
@@ -9003,6 +9010,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryDraft => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -10167,6 +10175,7 @@ impl AgentVerb {
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryDraft => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
@@ -13515,6 +13524,9 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."
+            }
+            Self::SelfBrowserLibraryDraft => {
+                "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."
             }
             Self::SelfBrowserLibraryPropose => {
                 "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."
