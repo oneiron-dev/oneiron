@@ -35003,6 +35003,30 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/inference_snapshot/mod.rs",
+     "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SealedSnapshot",
+      "WrappedSnapshotKey"
+     ],
+     "path": "src/inference_snapshot/seal.rs",
+     "purpose": "Sealing and opening one inference snapshot: a fresh random data key per snapshot, wrapped under the vault's…",
+     "surface": {
+      "fn": 7,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36858,7 +36882,7 @@
      "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
      "surface": {
       "crate-vis": 20,
-      "mod": 198,
+      "mod": 199,
       "re-export": 76
      }
     },
@@ -51547,9 +51571,19 @@
      "surface": {
       "const": 1,
       "crate-vis": 6,
-      "fn": 17,
+      "fn": 18,
       "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/recovery/checkpoint/custody_head/pad_worlds.rs",
+     "purpose": "Each world's pad recipients for a custody head (FIX 9178): the world compartments a head seals are wrapped…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51857,7 +51891,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PadRestoreNote"
@@ -60287,7 +60321,7 @@
      "path": "src/store/key_custody/head/scope.rs",
      "purpose": "Who reads each compartment of a custody head, who its keys are wrapped to, and what a restore opens it with",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -60478,6 +60512,16 @@
      "purpose": "Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image…",
      "surface": {
       "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/recovery/unopened.rs",
+     "purpose": "What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -61113,6 +61157,16 @@
      "purpose": "The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's…",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_pad_custody/census.rs",
+     "purpose": "Which worlds a custody head's pad compartments are sealed for (FIX 9178): a world whose pads custody holds…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -72698,7 +72752,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 3,
       "re-export": 21,
       "struct": 2
@@ -72805,7 +72859,7 @@
      "path": "src/world_keys/pad_custody.rs",
      "purpose": "A world key's pad at rest and on the move (KS-5, FIX 5686)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -74755,6 +74809,13 @@
      "layout": "dir",
      "purpose": "OF-234 / ONE-1545: Dreamer-run inbox grouping + auto-approve exception queue"
     },
+    "inference_snapshot": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
+    },
     "ingest": {
      "files": 57,
      "impl_vault": true,
@@ -75078,7 +75139,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 91,
+     "files": 92,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -75323,7 +75384,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 142,
+     "files": 144,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75556,7 +75617,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4916,
+   "source_files": 4921,
    "test_files": 902
   },
   "oneiron-android": {
@@ -81291,7 +81352,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 2,
+      "fn": 4,
       "struct": 2
      }
     },
