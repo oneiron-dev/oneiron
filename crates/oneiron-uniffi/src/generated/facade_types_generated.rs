@@ -57627,6 +57627,8 @@ pub struct ProgramRunView {
     pub run: Option<ProgramRunStateView>,
     #[serde(rename = "steps")]
     pub steps: Vec<ProgramStepView>,
+    #[serde(rename = "erased_steps")]
+    pub erased_steps: Vec<String>,
     #[serde(rename = "undecodable_steps")]
     pub undecodable_steps: u64,
     #[serde(

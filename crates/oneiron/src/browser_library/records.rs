@@ -7,6 +7,7 @@ use oneiron_browser::{
     RunOutcome, SupersedeOutcome, SupersedeRefusal, WorkflowProgram, WorkflowProof,
 };
 
+use super::admission::{ProgramAdmissionFiling, note_filed_in_txn};
 use super::index::{index_failure_in_txn, index_filing_in_txn, index_retire_in_txn};
 #[cfg(doc)]
 use super::type_filter;
@@ -138,7 +139,9 @@ pub fn supersedes_refusal(
 ///
 /// `filed_scope` is the solved group the filing's caller files it in (CUA
 /// E8a); the same write moves the group's coverage, from the group a refile
-/// held it in before, read in that write.
+/// held it in before, read in that write. A filing in an admission job's run
+/// (`admission`, CUA E8b) keeps the program it filed against that job in
+/// the same write.
 ///
 /// A new program that `supersedes` one of `site`'s, live or retired, is
 /// filed as its successor, with its lineage's recent outcomes and one
@@ -165,6 +168,7 @@ pub fn file_workflow(
     decisions: Option<&PlacementDecisions<'_>>,
     supersedes: Option<EntityId>,
     filed_scope: Option<FiledScope>,
+    admission: Option<&ProgramAdmissionFiling>,
 ) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
@@ -217,6 +221,9 @@ pub fn file_workflow(
             WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
             WORKFLOWS.put(vault, wtxn, &key, &record)?;
             index_filing_in_txn(vault, wtxn, prior.as_ref(), &record)?;
+            if let Some(filing) = admission {
+                note_filed_in_txn(vault, wtxn, filing, record.id)?;
+            }
             let superseded = predecessor.map(|_| SupersedeOutcome::Dropped);
             return Ok(Filing::Filed {
                 id: record.id,
@@ -260,6 +267,9 @@ pub fn file_workflow(
         WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
         WORKFLOWS.put(vault, wtxn, &key, &record)?;
         index_filing_in_txn(vault, wtxn, None, &record)?;
+        if let Some(filing) = admission {
+            note_filed_in_txn(vault, wtxn, filing, id)?;
+        }
         if let Some(old) = retire {
             let reason = superseded_reason(id);
             retire_in_txn(vault, wtxn, old, by, Some(reason.as_str()), at)?;

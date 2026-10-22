@@ -91,7 +91,7 @@ impl Vault {
         let body_custody = gate_custody.plan_mut().source().cloned();
         // The responses that never decoded and land as they rested (FIX
         // 6227): a claim among them is never decoded, indexed or embedded.
-        let (opaque_responses, opaque_claims) = carried_bodies::opaque_landing(&image, &retired)?;
+        let opaque = carried_bodies::opaque_landing(&image, &retired)?;
         let checkpoint_sequence = image.checkpoint_sequence;
         if fork {
             crate::store::refuse_custody_beside(destination)?;
@@ -241,7 +241,7 @@ impl Vault {
         let credential_notes = super::credential_custody::land(&vault, credentials);
         room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
-            rebuild::rebuild(&vault, &opaque_claims)?;
+            rebuild::rebuild(&vault, &opaque.claims, &opaque.attempts)?;
         room.admit_derived(destination)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
         room.admit_derived(destination)?;
@@ -278,7 +278,7 @@ impl Vault {
             home_table_notes: Vec::new(),
             pad_notes,
             checkpoint_sequence,
-            opaque_responses,
+            opaque_responses: opaque.landed,
             credential_notes,
         };
         Ok((made, forked, vault, report))
