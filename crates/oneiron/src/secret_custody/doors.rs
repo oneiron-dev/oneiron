@@ -510,6 +510,13 @@ impl Vault {
     pub fn register_secret(&self, mut rec: SecretCustodyRecord) -> Result<EntityId> {
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
+        // FIX 7592: the embedded handle's live owner binds an import-fetch
+        // binding that names no actor; a fault reading it binds none.
+        if let Ok(owner) = crate::vault::embedded_owner_actor_id()
+            && let Ok(true) = crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &owner)
+        {
+            super::owner_door::default_import_fetch_actor(&mut rec.bindings, &owner);
+        }
         register_secret_in_txn(self, &mut wtxn, &id, &mut rec)?;
         wtxn.commit()?;
         Ok(id)
