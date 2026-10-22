@@ -1,13 +1,18 @@
 //! One authoritative parse. Expat validates XML 1.0 and Namespaces, and its
 //! source indices refer to exactly the bytes retained by this part (BOM too).
+//! Events, nodes and depth are observations (FIX 8574): the arena, its text
+//! and the parse stack reserve their memory through the operation's port
+//! before they grow, and a refusal stops Expat with its typed reason.
 use super::ffi::{self, OwnedParser};
+use crate::resource::{Hold, Resources, bytes_of, wide};
 use crate::retained_opc::{Error, Result};
 use std::{
     ffi::{CStr, c_char, c_int, c_void},
     ops::Range,
 };
 
-/// Caller-resolved XML limits. No parser-owned or hardcoded fallback budget.
+/// Caller-resolved XML counts a package carries as policy data. Both are
+/// observations: no reader refuses a part for its depth or node count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct XmlLimits {
     pub max_depth: usize,
@@ -31,23 +36,28 @@ pub(in crate::retained_opc) struct ValidatedXmlPart<'a> {
     pub(super) source: &'a [u8],
     pub(super) nodes: Vec<Node<'a>>,
     pub(super) signature: bool,
-    pub(super) limits: XmlLimits,
+    /// The operation's port; a patched candidate is parsed again through it.
+    pub(super) resources: Resources,
 }
 
 struct State<'a> {
     source: &'a [u8],
-    limits: XmlLimits,
     parser: ffi::Parser,
     nodes: Vec<Node<'a>>,
-    events: usize,
     stack: Vec<usize>,
     signature: bool,
-    error: Option<&'static str>,
+    /// The arena's, text's and stack's reservation while the parse runs.
+    hold: Hold,
+    error: Option<Error>,
 }
 
 impl State<'_> {
     fn reject(&mut self, why: &'static str) {
-        self.error = Some(why);
+        self.refuse(Error::Edit(why));
+    }
+    /// Records `error` and stops Expat: a callback never unwinds across C.
+    fn refuse(&mut self, error: Error) {
+        self.error = Some(error);
         // SAFETY: parser remains live throughout XML_Parse and this callback.
         unsafe { ffi::XML_StopParser(self.parser, 0) };
     }
@@ -58,24 +68,14 @@ impl State<'_> {
             .ok()
             .filter(|&at| at <= self.source.len())
     }
-    fn consume_node(&mut self) -> Result<()> {
-        self.events = self
-            .events
-            .checked_add(1)
-            .ok_or(Error::Edit("XML node limit"))?;
-        if self.events > self.limits.max_nodes {
-            return Err(Error::Edit("XML node limit"));
-        }
-        Ok(())
-    }
     fn open(&mut self, at: usize, attrs: *const *const c_char) -> Result<()> {
-        self.consume_node()?;
-        if self.stack.len() >= self.limits.max_depth {
-            return Err(Error::Edit("XML depth limit"));
-        }
-        if self.nodes.len() >= self.limits.max_nodes {
-            return Err(Error::Edit("XML node limit"));
-        }
+        // The node twice (the arena grows by doubling) and its stack slot;
+        // the one node and slot pushed are the measured part.
+        let one = bytes_of::<Node<'_>>(1).saturating_add(bytes_of::<usize>(1));
+        self.hold.take_estimate(
+            bytes_of::<Node<'_>>(2).saturating_add(bytes_of::<usize>(1)),
+            one,
+        )?;
         let (name, inner, empty) = source_start(self.source, at)?;
         let parent = self.stack.last().copied();
         if let Some(id) = parent {
@@ -141,7 +141,6 @@ impl State<'_> {
         Ok(())
     }
     fn characters(&mut self, data: *const c_char, count: c_int) -> Result<()> {
-        self.consume_node()?;
         let count = usize::try_from(count).map_err(|_| Error::Edit("invalid XML text"))?;
         if count == 0 {
             return Ok(());
@@ -158,15 +157,12 @@ impl State<'_> {
         // callback; no pointer is retained after returning.
         let bytes = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), count) };
         let text = std::str::from_utf8(bytes).map_err(|_| Error::Edit("invalid XML text"))?;
+        self.hold.take(wide(count))?;
         self.nodes[id].value.push_str(text);
         Ok(())
     }
     fn mark_nontext(&mut self) {
         if self.error.is_some() {
-            return;
-        }
-        if let Err(Error::Edit(why)) = self.consume_node() {
-            self.reject(why);
             return;
         }
         if let Some(&id) = self.stack.last() {
@@ -224,7 +220,7 @@ unsafe extern "C" fn start(user: *mut c_void, _: *const c_char, attrs: *const *c
         .and_then(|at| state.open(at, attrs))
     {
         Ok(()) => {}
-        Err(Error::Edit(why) | Error::Invalid(why)) => state.reject(why),
+        Err(error) => state.refuse(error),
     }
 }
 unsafe extern "C" fn end(user: *mut c_void, _: *const c_char) {
@@ -239,7 +235,7 @@ unsafe extern "C" fn end(user: *mut c_void, _: *const c_char) {
         .and_then(|at| state.close(at))
     {
         Ok(()) => {}
-        Err(Error::Edit(why) | Error::Invalid(why)) => state.reject(why),
+        Err(error) => state.refuse(error),
     }
 }
 unsafe extern "C" fn characters(user: *mut c_void, data: *const c_char, count: c_int) {
@@ -248,8 +244,8 @@ unsafe extern "C" fn characters(user: *mut c_void, data: *const c_char, count: c
     if state.error.is_some() {
         return;
     }
-    if let Err(Error::Edit(why) | Error::Invalid(why)) = state.characters(data, count) {
-        state.reject(why);
+    if let Err(error) = state.characters(data, count) {
+        state.refuse(error);
     }
 }
 unsafe extern "C" fn nontext(user: *mut c_void, _: *const c_char) {
@@ -309,13 +305,18 @@ unsafe extern "C" fn doctype(
 }
 
 impl<'a> ValidatedXmlPart<'a> {
-    pub(in crate::retained_opc) fn parse(source: &'a [u8], limits: XmlLimits) -> Result<Self> {
-        if limits.max_depth == 0 || limits.max_nodes == 0 {
-            return Err(Error::Edit("XML limits must be positive"));
-        }
+    /// Parse `source` through the operation's port: Expat's own buffers,
+    /// sized by the source, then the arena as it grows, are reserved before
+    /// they are allocated.
+    pub(in crate::retained_opc) fn parse(source: &'a [u8], resources: &Resources) -> Result<Self> {
         std::str::from_utf8(source).map_err(|_| Error::Edit("non-UTF8 XML"))?;
         let size =
             c_int::try_from(source.len()).map_err(|_| Error::Edit("XML input size limit"))?;
+        resources.checkpoint()?;
+        let mut hold = resources.hold();
+        // Expat's own buffers, as long as the source: an estimate, nothing of
+        // it measured before the parser runs.
+        hold.take_estimate(wide(source.len()), 0)?;
         // A non-null native parser lives through XML_Parse and is freed by
         // OwnedParser even if validation refuses the part.
         // SAFETY: constant is a NUL-terminated encoding label for Expat.
@@ -326,12 +327,11 @@ impl<'a> ValidatedXmlPart<'a> {
         let parser = OwnedParser(ptr);
         let mut state = State {
             source,
-            limits,
             parser: parser.0,
             nodes: Vec::new(),
-            events: 0,
             stack: Vec::new(),
             signature: false,
+            hold,
             error: None,
         };
         // SAFETY: callbacks borrow `state` only while this synchronous parse
@@ -349,8 +349,8 @@ impl<'a> ValidatedXmlPart<'a> {
             ffi::XML_SetParamEntityParsing(parser.0, 0);
             ffi::XML_Parse(parser.0, source.as_ptr().cast(), size, 1)
         };
-        if let Some(why) = state.error {
-            return Err(Error::Edit(why));
+        if let Some(error) = state.error {
+            return Err(error);
         }
         if result != 1 || !state.stack.is_empty() || state.nodes.is_empty() {
             return Err(Error::Edit("malformed or unsupported XML"));
@@ -359,7 +359,7 @@ impl<'a> ValidatedXmlPart<'a> {
             source,
             nodes: state.nodes,
             signature: state.signature,
-            limits,
+            resources: resources.clone(),
         })
     }
     pub(in crate::retained_opc) fn signature(&self) -> bool {

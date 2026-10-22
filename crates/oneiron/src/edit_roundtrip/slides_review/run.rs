@@ -62,8 +62,12 @@ pub fn review_slides(
     if !inspection.signature_parts.is_empty() {
         return Err(PptxError::SignedPackage.into());
     }
-    let package = Package::open(base.bytes, base.package_limits)
-        .map_err(|_| invalid("slide review package"))?;
+    let package = Package::open(
+        base.bytes,
+        base.package_limits,
+        &crate::office_body::document_resources(),
+    )
+    .map_err(|_| invalid("slide review package"))?;
     let view = DeckView::read(&package).map_err(|_| invalid("slide review deck view"))?;
     // A located answer is kept in slide EMU when the deck gives its size.
     let slide_size = if question.contract.locates() {

@@ -131,7 +131,9 @@ pub struct RunnerWorkBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staged_input: Option<StagedInputPin>,
     /// The first checkout custody a CLI seat of the work pinned (FIX 6867),
-    /// which a successor of any shape claims a fresh checkout from.
+    /// at dispatch or, for a checkout made live after it, at that seat's
+    /// first execution (FIX 9792), which a successor of any shape claims a
+    /// fresh checkout from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_binding: Option<ByoaRepoBinding>,
 }

@@ -3,6 +3,13 @@
 //! Package and its private state remain in the parent module.
 
 use super::*;
+use crate::resource::{Dimension, Hold, bytes_of};
+
+/// The most entries classic ZIP records: 65,535 is its ZIP64 sentinel.
+const ZIP32_ENTRIES: usize = u16::MAX as usize - 1;
+/// The most bytes classic ZIP records in a size or offset: 0xFFFFFFFF is its
+/// ZIP64 sentinel.
+const ZIP32_BYTES: usize = u32::MAX as usize - 1;
 
 impl Package {
     /// Open a single-disk, non-ZIP64 OPC package under explicit limits.
@@ -10,10 +17,20 @@ impl Package {
     /// checked; duplicate, unsafe or ambiguous names are rejected. An empty
     /// entry whose name ends in `/` is a ZIP directory entry: its folder path
     /// passes the same checks, and the archive keeps it, but it is no part.
-    pub fn open(source: &[u8], limits: Limits) -> Result<Self> {
+    ///
+    /// The entry count is an observation (FIX 8574): the source copy, the
+    /// entry index, the names and each part's inflate buffer are reserved
+    /// through `resources` before they are allocated, and the package keeps
+    /// `resources` for its later reads, edits and copies. Only the ZIP32
+    /// codec bounds the count: 65,535 is its ZIP64 sentinel.
+    pub fn open(source: &[u8], limits: Limits, resources: &Resources) -> Result<Self> {
         check_limits(limits)?;
         if source.len() > limits.archive_bytes {
-            return Err(Error::Invalid("archive size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::ArchiveBytes,
+                source.len(),
+                limits.archive_bytes,
+            ));
         }
         let floor = source.len().saturating_sub(22 + u16::MAX as usize);
         let eocd = (floor..source.len().saturating_sub(21))
@@ -33,22 +50,42 @@ impl Package {
             return Err(Error::Invalid("multi-disk ZIP"));
         }
         let count = usize::from(get16(source, eocd + 10)?);
-        if count == usize::from(u16::MAX) || count > limits.entries {
-            return Err(Error::Invalid("entry limit or ZIP64"));
+        // Past classic ZIP's widths (a ZIP64 sentinel) is that format's
+        // limit, not a malformed package (FIX 5354).
+        if count > ZIP32_ENTRIES {
+            return Err(Error::capacity_hit(
+                Dimension::ZipEntries,
+                count,
+                ZIP32_ENTRIES,
+            ));
         }
         let cd_offset = get32(source, eocd + 16)? as usize;
         let cd_size = get32(source, eocd + 12)? as usize;
-        if cd_offset == u32::MAX as usize
-            || cd_size == u32::MAX as usize
-            || cd_offset.checked_add(cd_size) != Some(eocd)
-        {
-            return Err(Error::Invalid("central directory bounds or ZIP64"));
+        if cd_offset > ZIP32_BYTES || cd_size > ZIP32_BYTES {
+            return Err(Error::capacity_hit(
+                Dimension::ZipBytes,
+                cd_offset.max(cd_size),
+                ZIP32_BYTES,
+            ));
         }
+        if cd_offset.checked_add(cd_size) != Some(eocd) {
+            return Err(Error::Invalid("central directory bounds"));
+        }
+        // The retained source and the entry index, reserved before either is
+        // allocated; the hold lasts until the package exists.
+        let mut hold = resources.hold();
+        hold.take(wide(source.len()))?;
+        // The central directory's count, before its records are walked: an
+        // estimate, never a measured need (Engine 10-22 20:0x).
+        hold.take_estimate(bytes_of::<Entry>(count), 0)?;
+        // One part's inflate buffer at a time, covered at its largest.
+        let mut scratch = Inflate::new(resources);
         let mut seen = HashSet::new();
         let mut entries = Vec::with_capacity(count);
         let mut cursor = cd_offset;
         let mut total = 0usize;
         for _ in 0..count {
+            resources.checkpoint()?;
             if get32(source, cursor)? != CENTRAL || cursor + 46 > eocd {
                 return Err(Error::Invalid("central header"));
             }
@@ -66,13 +103,17 @@ impl Package {
                 .and_then(|v| v.checked_add(x))
                 .and_then(|v| v.checked_add(c))
                 .ok_or(Error::Invalid("central entry overflow"))?;
-            if end > eocd
-                || get16(source, cursor + 34)? != 0
-                || compressed == u32::MAX as usize
-                || uncompressed == u32::MAX as usize
-                || get32(source, cursor + 42)? == u32::MAX
+            let local_offset = get32(source, cursor + 42)? as usize;
+            if compressed > ZIP32_BYTES || uncompressed > ZIP32_BYTES || local_offset > ZIP32_BYTES
             {
-                return Err(Error::Invalid("central entry bounds or ZIP64"));
+                return Err(Error::capacity_hit(
+                    Dimension::ZipBytes,
+                    compressed.max(uncompressed).max(local_offset),
+                    ZIP32_BYTES,
+                ));
+            }
+            if end > eocd || get16(source, cursor + 34)? != 0 {
+                return Err(Error::Invalid("central entry bounds"));
             }
             // Bits 1-2 encode the compressor's DEFLATE level in real Office
             // archives (including PPTArena), not encryption. Bit 0 encrypts.
@@ -88,6 +129,9 @@ impl Package {
                 .ok_or(Error::Invalid("name bounds"))?;
             let name = std::str::from_utf8(name_bytes)
                 .map_err(|_| Error::Invalid("non-UTF8 entry name"))?;
+            // The entry's name and its lowercase key in the duplicate set; the
+            // retained name's bytes are the measured part.
+            hold.take_estimate(wide(2 * n).saturating_add(bytes_of::<String>(2)), wide(n))?;
             // A directory entry (`xl/`) is empty, and its folder path takes the
             // part-name checks, so it also collides with a part of that name.
             let path = match name.strip_suffix('/') {
@@ -111,8 +155,19 @@ impl Package {
             total = total
                 .checked_add(uncompressed)
                 .ok_or(Error::Invalid("expanded size overflow"))?;
-            if uncompressed > limits.part_bytes || total > limits.expanded_bytes {
-                return Err(Error::Invalid("expanded size limit"));
+            if uncompressed > limits.part_bytes {
+                return Err(Error::capacity_hit(
+                    Dimension::PartBytes,
+                    uncompressed,
+                    limits.part_bytes,
+                ));
+            }
+            if total > limits.expanded_bytes {
+                return Err(Error::capacity_hit(
+                    Dimension::ExpandedBytes,
+                    total,
+                    limits.expanded_bytes,
+                ));
             }
             let local_start = get32(source, cursor + 42)? as usize;
             // Excel writes some local headers whose DEFLATE option hints (bits
@@ -170,6 +225,7 @@ impl Package {
                 return Err(Error::Invalid("local descriptor or ZIP64 extra"));
             }
             let raw = &source[data_start..data_end];
+            scratch.cover(uncompressed)?;
             let mut data = Vec::new();
             if method == 0 {
                 data.extend_from_slice(raw);
@@ -225,8 +281,11 @@ impl Package {
             limits,
             editability: Editability::Unsigned,
             added: Vec::new(),
+            resources: resources.clone(),
         };
-        package.editability = package.signature_or_unsafe_metadata();
+        drop(scratch);
+        package.editability = package.signature_or_unsafe_metadata()?;
+        drop(hold);
         Ok(package)
     }
 
@@ -234,13 +293,14 @@ impl Package {
     /// not only their conventional path. Invalid metadata leaves the package
     /// open for byte-exact no-op export but makes every edit read-only. Only
     /// parts count on that path: an empty `_xmlsignatures/` folder entry
-    /// holds no signature.
-    pub(super) fn signature_or_unsafe_metadata(&self) -> Editability {
+    /// holds no signature. A part whose memory was refused is not
+    /// uninspectable markup: the refusal is the open's own error.
+    pub(super) fn signature_or_unsafe_metadata(&self) -> Result<Editability> {
         if self
             .names()
             .any(|name| name.to_ascii_lowercase().starts_with("_xmlsignatures/"))
         {
-            return Editability::Signed;
+            return Ok(Editability::Signed);
         }
         let mut editability = Editability::Unsigned;
         for entry in self.entries.iter().filter(|entry| {
@@ -251,21 +311,26 @@ impl Package {
             }
         }) {
             match self.expanded(entry).and_then(|data| {
-                xml::ValidatedXmlPart::parse(&data, self.limits.xml).map(|part| part.signature())
+                xml::ValidatedXmlPart::parse(&data, &self.resources).map(|part| part.signature())
             }) {
-                Ok(true) => return Editability::Signed,
+                Ok(true) => return Ok(Editability::Signed),
                 Ok(false) => {}
+                Err(Error::Resource(refusal)) => return Err(Error::Resource(refusal)),
                 Err(_) => editability = Editability::MetadataUnsupported,
             }
         }
-        editability
+        Ok(editability)
     }
 
+    /// One part's expanded bytes, reserved through the package's port
+    /// before they are allocated.
     pub(super) fn expanded(&self, entry: &Entry) -> Result<Vec<u8>> {
         if let Some(ref replacement) = entry.replacement {
+            let _hold = self.resources.reserve(wide(replacement.len()))?;
             return Ok(replacement.clone());
         }
         let raw = &self.source[entry.data.clone()];
+        let _hold = self.resources.reserve(wide(entry.uncompressed))?;
         if entry.method == 0 {
             return Ok(raw.to_vec());
         }
@@ -278,6 +343,33 @@ impl Package {
             return Err(Error::Invalid("entry size or CRC mismatch"));
         }
         Ok(out)
+    }
+}
+
+/// The inflate scratch of an open: one part's buffer lives at a time, so one
+/// hold covers the largest part read so far.
+struct Inflate {
+    hold: Hold,
+    covered: usize,
+}
+
+impl Inflate {
+    fn new(resources: &Resources) -> Self {
+        Self {
+            hold: resources.hold(),
+            covered: 0,
+        }
+    }
+
+    /// Covers a buffer of `bytes`, reserving only what the largest so far
+    /// did not. The size is the entry header's word before the part is
+    /// inflated: an estimate, of which nothing is measured yet.
+    fn cover(&mut self, bytes: usize) -> Result<()> {
+        if bytes > self.covered {
+            self.hold.take_estimate(wide(bytes - self.covered), 0)?;
+            self.covered = bytes;
+        }
+        Ok(())
     }
 }
 

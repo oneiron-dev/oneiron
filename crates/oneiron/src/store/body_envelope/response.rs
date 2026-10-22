@@ -212,6 +212,10 @@ pub(crate) enum ResponseFamily {
     /// A public model-step submission: its request and its result, kept
     /// beside the receipt's metadata (FIX 9929).
     ModelStepSubmission,
+    /// A saved query's verdict memo: its judge's explanation, owned by the
+    /// query, the candidate and every row its evidence came from; a retired
+    /// memo leaves nothing (FIX 10089).
+    SavedQueryMemo,
     /// A row of the voice reference bank (FIX 8972): a pack, an identity,
     /// its incarnation, a target pointer, the current render decision, a
     /// recorded render event or an owner index entry, carried whole and
@@ -234,6 +238,7 @@ impl ResponseFamily {
                     &side_table::MODEL_STEP_SUBMISSION,
                     Self::ModelStepSubmission,
                 ),
+                (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -272,6 +277,7 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission
+            | Self::SavedQueryMemo
             | Self::VoiceBank => ResponseDb::VaultMeta,
         }
     }
@@ -312,6 +318,7 @@ impl ResponseFamily {
             Self::WaitDelivery | Self::WaitSettled => crate::code_run::wait_reply_scan(value),
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
+            Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
     }
@@ -397,6 +404,7 @@ impl ResponseFamily {
             Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
+            Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
@@ -450,6 +458,11 @@ impl ResponseFamily {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
+            // A retired memo's row goes; the next evaluation derives anew.
+            Self::SavedQueryMemo => {
+                drop_row(databases, ResponseDb::VaultMeta, key);
+                Ok(())
+            }
             Self::ProgramStep
             | Self::StepState
             | Self::Replay
@@ -495,6 +508,10 @@ impl ResponseFamily {
             | Self::WaitSettled
             | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
             Self::BlockedCapture | Self::VoiceBank => {
+                store.side_vault_meta().delete(wtxn, key)?;
+                Ok(())
+            }
+            Self::SavedQueryMemo => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

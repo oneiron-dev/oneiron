@@ -279,6 +279,10 @@ pub struct SelfSpawnAsk {
         Option<crate::agent_dispatch::SpawnOverride<crate::agent_dispatch::CoordinationPattern>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget_cap_units: Option<crate::agent_dispatch::SpawnOverride<u64>>,
+    /// Leave the balance out of the cost envelope a planned team's pattern
+    /// run reads (FIX 9536); off by default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub balance_free_prompt: bool,
 }
 
 impl SelfSpawnAsk {
@@ -297,6 +301,7 @@ impl SelfSpawnAsk {
             width: self.width,
             pattern: self.pattern,
             budget_cap_units: self.budget_cap_units,
+            balance_free_prompt: self.balance_free_prompt,
         }
     }
 }

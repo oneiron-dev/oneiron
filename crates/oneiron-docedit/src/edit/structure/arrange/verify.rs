@@ -14,7 +14,7 @@ pub(in crate::edit::structure) fn verify(
     op: &StructureEdit<'_>,
     effects: &[Effect],
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let removed = match *op {
         StructureEdit::DeleteSlide { slide, .. } => released(input, &candidate, slide)?,
         _ => Vec::new(),
