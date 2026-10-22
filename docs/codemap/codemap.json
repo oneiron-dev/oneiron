@@ -66178,7 +66178,7 @@
      "purpose": "Browser wire shapes, shared by code mode and the credential-bound host doors",
      "surface": {
       "re-export": 1,
-      "type": 14
+      "type": 15
      }
     },
     {
@@ -66580,7 +66580,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1169
+      "fn": 1170
      }
     },
     {
@@ -76292,7 +76292,7 @@
       "const": 10,
       "enum": 9,
       "fn": 12,
-      "re-export": 19,
+      "re-export": 20,
       "struct": 40,
       "trait": 2
      }
@@ -76324,7 +76324,7 @@
       "crate-vis": 7,
       "enum": 1,
       "fn": 3,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 14,
       "trait": 1
      }
@@ -76347,6 +76347,29 @@
       "enum": 4,
       "fn": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DraftGap",
+      "DraftGapKind",
+      "DraftInput",
+      "DraftOutcome",
+      "DraftOutput",
+      "DraftPage",
+      "DraftStep",
+      "PressedThrough",
+      "SlotCandidate",
+      "SlotField"
+     ],
+     "path": "src/library/draft.rs",
+     "purpose": "A draft of a proposal from a run's own steps (CUA E7; DESIGN-2 §3 \"The agent\"), at the Rule tier: no model…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -76375,7 +76398,7 @@
      "path": "src/library/secret_slots.rs",
      "purpose": "A program's secret slots (FIX 8028, OF-560; ARCH-0069 secret custody): a program never holds a secret, nor…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 12,
       "struct": 1
      }
     },
@@ -76435,7 +76458,7 @@
      "purpose": "A batch's no-progress monitor (CUA E3): steps that act and leave the page as it was, [`NO_PROGRESS_STEPS`]…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -76451,6 +76474,23 @@
      "surface": {
       "enum": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OperandGap",
+      "ReplayAction",
+      "StepStop",
+      "TypeOperand"
+     ],
+     "path": "src/replay.rs",
+     "purpose": "What an effect's receipt keeps for a replay program (CUA E7): the act's own operands as its verb took them…",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -76545,6 +76585,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/session/draft.rs",
+     "purpose": "`library.draft` on a browser session (CUA E7): the session's own history (`trail`) as draft steps, its open…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "FreshGuest"
      ],
@@ -76603,6 +76653,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/session/trail.rs",
+     "purpose": "The session's one history (CUA E7): each effect's receipt and each step that stopped, in order, on the…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -76618,7 +76678,7 @@
      "purpose": "Why a batch stopped (CUA E2): one typed cause per stop, beside the stable refusal code a program already…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 3,
       "struct": 3
@@ -76705,7 +76765,7 @@
      "purpose": "A Fill step's text (CUA E6, DESIGN-2 §4 \"Field text = A\"): what one field takes, resolved in code before any…"
     },
     "library": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -76746,6 +76806,13 @@
      "layout": "file",
      "purpose": "An effect receipt's screenshot kept past its session (FIX 2150)"
     },
+    "replay": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "What an effect's receipt keeps for a replay program (CUA E7): the act's own operands as its verb took them…"
+    },
     "request": {
      "files": 1,
      "impl_vault": false,
@@ -76782,7 +76849,7 @@
      "purpose": "One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card…"
     },
     "session": {
-     "files": 6,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -76805,7 +76872,7 @@
    },
    "over_bar": 4,
    "purpose": "Browser verbs for code mode (`self.browser.*`), and the CDP driver behind them (feature `driver`)",
-   "source_files": 47,
+   "source_files": 51,
    "test_files": 0
   },
   "oneiron-code-check": {
@@ -84051,7 +84118,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1138
+      "fn": 1139
      }
     },
     {
@@ -85339,7 +85406,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1139
+      "fn": 1140
      }
     },
     {
@@ -88938,7 +89005,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -101324,6 +101391,7 @@
       "BriefKindStamp",
       "BriefStamp",
       "BrowserAnswerBatchOutput",
+      "BrowserAnswerDraftOutput",
       "BrowserAnswerExpectOutput",
       "BrowserAnswerFindOutput",
       "BrowserAnswerHandoverOutput",
@@ -102174,6 +102242,10 @@
       "DoneMeans",
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
+      "DraftGap",
+      "DraftGapKind",
+      "DraftInput",
+      "DraftOutput",
       "DreamerAttemptRef",
       "DreamerAttemptView",
       "DreamerParkCauseView",
@@ -102888,6 +102960,7 @@
       "LiveRunRequestBoardWakeRequest",
       "LiveRunRequestClickInput",
       "LiveRunRequestCropInput",
+      "LiveRunRequestDraftInput",
       "LiveRunRequestExpectInput",
       "LiveRunRequestFanoutBatchInput",
       "LiveRunRequestFindInput",
@@ -103309,6 +103382,7 @@
       "OpaqueChange",
       "OpenInput",
       "OpenSpendLeaseRequest",
+      "OperandGap",
       "OpsSummaryView",
       "OracleReceipt",
       "OrgAdminConfigureRequest",
@@ -103546,6 +103620,7 @@
       "PrepSection",
       "PrepSectionKind",
       "Preset",
+      "PressedThrough",
       "PricedModelBackend",
       "PriorOrigin",
       "PriorRung",
@@ -103746,6 +103821,7 @@
       "RenderPair",
       "RenderSide",
       "RendererKind",
+      "ReplayAction",
       "ReplayGuest",
       "ReplyCode",
       "ReplyDisposition",
@@ -104451,6 +104527,8 @@
       "SlimResumeStepRequest",
       "SlimStateSnapshot",
       "SlimStateView",
+      "SlotCandidate",
+      "SlotField",
       "SmartArtNode",
       "SourceConflict",
       "SourceFamily",
@@ -104763,6 +104841,7 @@
       "TwoClocksAtom",
       "TypeByteFamily",
       "TypeInput",
+      "TypeOperand",
       "TypeRef",
       "TypeStamp",
       "TypedDecision",
@@ -104974,8 +105053,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 966,
-      "struct": 3001
+      "enum": 971,
+      "struct": 3008
      }
     },
     {
