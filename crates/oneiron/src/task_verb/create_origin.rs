@@ -163,6 +163,33 @@ pub(crate) fn task_create_origin_in_txn(
     Ok(Some(origin))
 }
 
+/// The refusal words one door's bound-run proof speaks in, each a message
+/// and its suggestion.
+pub(super) struct BoundRunWords {
+    /// The bound row is gone or is not an agent dispatch.
+    pub(super) gone: (&'static str, &'static str),
+    /// The bound row is not running, or its lease moved to another owner or
+    /// generation.
+    pub(super) lapsed: (&'static str, &'static str),
+    /// This surface's actor is not the agent the bound run is.
+    pub(super) foreign: (&'static str, &'static str),
+}
+
+const MESSAGE_WORDS: BoundRunWords = BoundRunWords {
+    gone: (
+        "the sending run is no longer a live agent run",
+        "Send the message from the agent run the host bound.",
+    ),
+    lapsed: (
+        "the sending run's lease is no longer current",
+        "Send the message while the agent's try is leased.",
+    ),
+    foreign: (
+        "a bound message is sent as its run's agent",
+        "Send the message from the agent run the host bound.",
+    ),
+};
+
 /// FIX 1380: the live dispatch a `self.message` speaks from, read in `txn`:
 /// the run a host bound, with the proofs a bound create takes (an agent
 /// dispatch, running, leased by the binding's owner at its generation, and
@@ -172,6 +199,18 @@ pub(crate) fn message_dispatch_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
 ) -> MemoryResult<Option<(AttemptRecord, AgentDispatchInput)>> {
+    bound_dispatch_in_txn(memory, txn, &MESSAGE_WORDS)
+}
+
+/// The live dispatch a host bound to this surface, read only through `txn`:
+/// an agent dispatch, running, leased by the binding's owner at its
+/// generation, and run by this surface's actor. No binding is `None`; a
+/// stale or foreign binding refuses in `words`, and never reads as unbound.
+pub(super) fn bound_dispatch_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    words: &BoundRunWords,
+) -> MemoryResult<Option<(AttemptRecord, AgentDispatchInput)>> {
     let Some(binding) = memory.task_host() else {
         return Ok(None);
     };
@@ -179,25 +218,16 @@ pub(crate) fn message_dispatch_in_txn(
     let Some((record, input)) =
         record.and_then(|record| record_dispatch_input(&record).map(|input| (record, input)))
     else {
-        return Err(invalid_state(
-            "the sending run is no longer a live agent run",
-            "Send the message from the agent run the host bound.",
-        ));
+        return Err(invalid_state(words.gone.0, words.gone.1));
     };
     if !record.state.is_running()
         || record.lease_owner.as_deref() != Some(binding.lease_owner())
         || record.attempt_count != binding.attempt_count()
     {
-        return Err(invalid_state(
-            "the sending run's lease is no longer current",
-            "Send the message while the agent's try is leased.",
-        ));
+        return Err(invalid_state(words.lapsed.0, words.lapsed.1));
     }
     if agent_dispatch_actor(&input)? != WriteActor::new(memory.actor(), memory.actor_class()) {
-        return Err(forbidden(
-            "a bound message is sent as its run's agent",
-            "Send the message from the agent run the host bound.",
-        ));
+        return Err(forbidden(words.foreign.0, words.foreign.1));
     }
     Ok(Some((record, input)))
 }

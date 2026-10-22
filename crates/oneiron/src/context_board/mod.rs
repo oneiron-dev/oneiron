@@ -68,6 +68,8 @@ mod plugin;
 mod readers;
 mod scratchpad;
 mod stream;
+mod unprocessed;
+pub use unprocessed::unprocessed_items;
 
 pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, SCRATCHPAD_RECALL_LINES, ScratchpadAppendReceipt, ScratchpadBoard,

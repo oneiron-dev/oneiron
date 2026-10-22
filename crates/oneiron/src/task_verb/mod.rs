@@ -72,6 +72,12 @@ pub(crate) use lifecycle_receipt::{
 };
 mod linear_store;
 mod mirror_edit;
+mod office_origin;
+#[expect(
+    unused_imports,
+    reason = "L12-A's office fork transaction consumes it (FIX 3551)"
+)]
+pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
 mod presence_diagnostics;

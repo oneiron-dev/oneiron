@@ -119,8 +119,8 @@ struct ForkAt {
     record: ForkRecord,
     base: Option<usize>,
     output: Option<(String, BTreeMap<String, Vec<u8>>)>,
-    index: u16,
-    len: u16,
+    index: u64,
+    len: u64,
     settled: bool,
 }
 
@@ -217,8 +217,8 @@ fn history(
             record,
             base,
             output,
-            index: u16::try_from(index).map_err(|_| invalid("entity document proposal size"))?,
-            len: u16::try_from(bundle.forks.len())
+            index: u64::try_from(index).map_err(|_| invalid("entity document proposal size"))?,
+            len: u64::try_from(bundle.forks.len())
                 .map_err(|_| invalid("entity document proposal size"))?,
             settled: bundle.settled,
         });
@@ -800,7 +800,7 @@ pub(crate) fn restore_proposals(
     rows: &[CanonicalEntityDocument],
 ) -> Result<()> {
     let store = &vault.store;
-    let mut bundles: BTreeMap<[u8; 16], (bool, Vec<(u16, [u8; 16])>)> = BTreeMap::new();
+    let mut bundles: BTreeMap<[u8; 16], (bool, Vec<(u64, [u8; 16])>)> = BTreeMap::new();
     for fork in rows
         .iter()
         .filter_map(|row| row.history.as_ref())
