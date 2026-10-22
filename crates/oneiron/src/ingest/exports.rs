@@ -244,7 +244,7 @@ impl ExportSource {
     fn parse_knowledge_layout(
         &self,
         out: &mut ParsedImport,
-        recorded_at: u64,
+        _recorded_at: u64,
         doc: &Value,
     ) -> IngestResult<()> {
         let concepts = doc
