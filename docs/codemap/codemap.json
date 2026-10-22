@@ -22563,7 +22563,7 @@
      "path": "src/dreamer_consolidation/call_labels.rs",
      "purpose": "Call-local labels (FIX 7506, ARCH-0026 row 1): what one model call shows in place of every id",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -22572,6 +22572,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/call_labels/decision_rungs.rs",
      "purpose": "The host ladder's model rungs through one call's labels (FIX 7506 P2)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/call_labels/relationships.rs",
+     "purpose": "The relationships an extraction call lists (FIX 7575)",
      "surface": {
       "crate-vis": 3
      }
@@ -22868,10 +22878,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/dreamer_consolidation/neighbourhood/render.rs",
-     "purpose": "The listing as a call shows it (FIX 7506): each entity and claim by its call-local label, never its id",
+     "path": "src/dreamer_consolidation/neighbourhood/pages.rs",
+     "purpose": "A child's listing in stable pages (Rule 5, FIX 7580)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/neighbourhood/render.rs",
+     "purpose": "The listing as a call shows it (FIX 7506): each entity, claim and relationship by its call-local label…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -22912,6 +22932,16 @@
      "purpose": "Which unlisted siblings a nightly merge fans in beside its listed children (FIX 7495, FIX 7524): a retry of…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/nightly_merge/narrative_labels.rs",
+     "purpose": "A nightly narrative stored in durable names (FIX 7576)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -24169,6 +24199,7 @@
      "path": "src/dreamer_promotion/attempt_sink.rs",
      "purpose": "An owned promotion sink for a long-lived host",
      "surface": {
+      "crate-vis": 1,
       "fn": 2,
       "struct": 1
      }
@@ -26814,15 +26845,28 @@
       "SieveAuditExpectation",
       "SieveAuditFinding",
       "SieveAuditWindow",
+      "SieveUnlocatedCause",
+      "SieveUnlocatedDiscovery",
       "SieveWindowAudit"
      ],
      "path": "src/dreamer_wake/sieve/audit_windows.rs",
      "purpose": "The sieve audit's second population (OF-498f, FIX 486): source windows the cheap rules left unflagged, so…",
      "surface": {
-      "crate-vis": 8,
-      "enum": 1,
-      "fn": 1,
-      "struct": 4
+      "crate-vis": 9,
+      "enum": 2,
+      "fn": 2,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_wake/sieve/audit_windows/finding_identity.rs",
+     "purpose": "A window audit's discovery identity (FIX 7903)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
      }
     },
     {
@@ -74231,7 +74275,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 130,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74273,7 +74317,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75283,7 +75327,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4892,
+   "source_files": 4896,
    "test_files": 902
   },
   "oneiron-android": {
