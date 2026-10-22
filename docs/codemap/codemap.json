@@ -22867,7 +22867,7 @@
      "path": "src/dispatch_byoa/host_claim.rs",
      "purpose": "A run host's own claim of a CLI attempt (FIX 4552): a host that runs the official CLIs on the person's own…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -42002,9 +42002,9 @@
      "path": "src/memory/mod.rs",
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 27,
-      "re-export": 57
+      "re-export": 58
      }
     },
     {
@@ -43681,8 +43681,8 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 8,
-      "re-export": 2
+      "crate-vis": 9,
+      "re-export": 3
      }
     },
     {
@@ -43723,6 +43723,19 @@
      "purpose": "Witness provenance checks and the overlay landing's receipt",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MessageReplyAssertions"
+     ],
+     "path": "src/memory/witness/reply_assertions.rs",
+     "purpose": "The canonical reply assertions a MESSAGE generation keeps (FIX 10258, FIX 10259, FIX 10260): the typed…",
+     "surface": {
+      "crate-vis": 7,
+      "struct": 1
      }
     },
     {
@@ -43884,7 +43897,7 @@
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 2
      }
     },
@@ -51224,7 +51237,19 @@
       "const": 6,
       "enum": 1,
       "fn": 13,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/prompt/layout.rs",
+     "purpose": "Where one fresh turn's context goes, by the layout resolved once for that turn (FIX 9442, FIX 9443)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -76671,7 +76696,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 274,
+     "files": 275,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76832,10 +76857,10 @@
      "purpose": "Deterministic community projection, cache, and bounded retrieval prior"
     },
     "prompt": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "—"
     },
     "provenance": {
@@ -77359,7 +77384,7 @@
    },
    "over_bar": 127,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5073,
+   "source_files": 5075,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88597,6 +88622,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "InferencePublisher"
+     ],
+     "path": "src/llm/inference_publisher.rs",
+     "purpose": "One physical request's observation, published by the adapter that sends it while the request is alive (FIX…",
+     "surface": {
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LabelReadModel",
       "LabelReadRequest",
       "LabelReadResponse",
@@ -88727,7 +88765,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -88929,7 +88967,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 47,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88938,7 +88976,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 46,
+   "source_files": 47,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -93023,7 +93061,7 @@
      "path": "src/api/ai/voices.rs",
      "purpose": "The voice bank's provisioning door, the owner's alone: `POST /v1/ai/voices/{voice_id}/packs` banks a…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -103594,6 +103632,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/host_budgets.rs",
+     "purpose": "The bytes one served vault's model host holds at once (FIX 9321, FIX 9323): one set per vault's runtime…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -103614,7 +103662,7 @@
      "path": "src/models/http.rs",
      "purpose": "The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 22
      }
     },
     {
@@ -103622,7 +103670,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/http/reply_line.rs",
-     "purpose": "The media-reply line (FIX 8615): the bytes the media replies providers send this server (an image, a clip…",
+     "purpose": "The media-reply line (FIX 8615, FIX 9321): the bytes the media replies providers send this server (an image…",
      "surface": {
       "crate-vis": 5
      }
@@ -103743,7 +103791,7 @@
      "purpose": "Media voice bindings, clone queries and retry hints",
      "surface": {
       "crate-vis": 9,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -103828,7 +103876,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "re-export": 14,
       "struct": 2
@@ -104025,7 +104073,7 @@
      "path": "src/models/runtime.rs",
      "purpose": "Model runtime construction and accessors",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 19
      }
     },
@@ -105172,7 +105220,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RuntimeConfig"
@@ -105295,6 +105343,36 @@
      "notable": [],
      "path": "src/runtime/seat_host.rs",
      "purpose": "The served seat host (FIX 4552, DOOR-124): the run host that runs the official signed-in CLIs (`claude`…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_host/child_run.rs",
+     "purpose": "The one identity a claimed seat run holds everything under (FIX 9319, FIX 9320): its claimed fence",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_host/lease.rs",
+     "purpose": "The claim fence a seat run holds, watched while its CLI runs (FIX 9320)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_host/terminal.rs",
+     "purpose": "How the seat host settles a claimed run's end (FIX 9320)",
      "surface": {
       "crate-vis": 1
      }
@@ -107247,7 +107325,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 79,
+     "files": 80,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -107303,7 +107381,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 15,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107389,7 +107467,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1249,
+   "source_files": 1253,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -109728,6 +109806,7 @@
       "MessageReactionExternal",
       "MessageReactionReceipt",
       "MessageReactionRequest",
+      "MessageReplyAssertions",
       "MessageResultAttachment",
       "MessageResultSource",
       "MessageStreamHandle",
@@ -111714,7 +111793,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3109
+      "struct": 3110
      }
     },
     {
