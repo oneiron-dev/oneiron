@@ -80,6 +80,8 @@ pub use library::{
     WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
     site_of, validate_replay_args,
 };
+#[cfg(feature = "driver")]
+pub use library::{filled_checks, program_origin};
 pub use observation::{
     HandleInfo, ObservationBase, Rebound, RowSplice, StepRebound, is_live_handle,
 };
@@ -98,7 +100,8 @@ pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{
-    BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, PressGrants, StartedGuest,
+    BrowserGuest, BrowserGuestStarter, BrowserSession, CapturedSolvedSpan, FreshGuest, PressGrants,
+    SOLVED_PAST_PRESS, SolvedSnapshotGap, StartedGuest,
 };
 pub use stop::{
     AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, STRICT_DENIED,
