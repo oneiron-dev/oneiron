@@ -26,7 +26,9 @@ use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
+use super::decision_role_asks::decision_ask_refs;
 use super::host_doors::support::{Listed, internal, naming};
+use crate::api::scoped_auth::lane_reads_each;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -113,13 +115,8 @@ async fn self_decisions_asks_answer(
         let asks = server.vault().decision_asks_held_by(holder)?;
         // FIX 8174: the asks the caller's own lane reads whole, as
         // `GET /v1/core/decisions/asks` lists them.
-        crate::api::scoped_auth::lane_reads_each(
-            server.vault(),
-            &auth,
-            asks,
-            super::decision_role_asks::decision_ask_refs,
-        )
-        .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
+        lane_reads_each(server.vault(), &auth, asks, decision_ask_refs)
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
     })
     .await
     .map_err(|_| internal(VERB))?

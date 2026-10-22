@@ -86,16 +86,11 @@ pub fn mcp_effective_scope_value(scope: &McpConnectorScope) -> Value {
 /// land in (`facet=`), so a several-facet reader is never shown as one.
 #[must_use]
 pub fn mcp_effective_scope_label(scope: &McpConnectorScope) -> String {
-    let reads = read_facet_refs(scope).map_or_else(
-        || "*".to_owned(),
-        |facets| {
-            if facets.is_empty() {
-                "none".to_owned()
-            } else {
-                facets.join("+")
-            }
-        },
-    );
+    let reads = match read_facet_refs(scope) {
+        None => "*".to_owned(),
+        Some(facets) if facets.is_empty() => "none".to_owned(),
+        Some(facets) => facets.join("+"),
+    };
     match (scope.world_ref, scope.facet_ref) {
         (None, None) if reads == "*" => "VaultWide".to_owned(),
         (world, facet) => format!(

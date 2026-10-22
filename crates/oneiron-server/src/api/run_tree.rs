@@ -440,9 +440,10 @@ pub(crate) async fn core_run_tree_intervene(
     let run_id = outcome.record.run_id.clone();
     // FIX 8220: the effect stands whatever the caller reads; the tree goes
     // with it only as the caller's current read authority admits it.
-    let tree = run_id
-        .as_deref()
-        .and_then(|run_id| scoped::intervention_tree(&server, &auth, run_id, &response_attempt_id));
+    let tree = match run_id.as_deref() {
+        Some(run_id) => scoped::intervention_tree(&server, &auth, run_id, &response_attempt_id),
+        None => None,
+    };
 
     Ok(Json(CoreRunTreeInterventionResponse {
         attempt_id: response_attempt_id,

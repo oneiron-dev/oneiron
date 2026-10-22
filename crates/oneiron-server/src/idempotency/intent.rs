@@ -75,7 +75,7 @@ impl IdempotencyStore {
 /// first request's effect may or may not have landed, so it is not run again.
 pub(super) fn outcome_unknown() -> ApiError {
     ApiError::new(
-        "the first request with this Idempotency-Key did not finish, so whether its effect landed is unknown; it is not run again",
+        "the first request with this key did not finish: its effect may have landed",
         ApiErrorDetails::InvalidState {
             state: Some("idempotent_outcome_unknown".to_owned()),
         },

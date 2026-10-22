@@ -51,9 +51,10 @@ impl Vault {
         }
         let raw = entry.encode()?;
         self.with_write_txn_grouped(|wtxn| {
-            let standing = self
-                .sync_state_get_in_write_txn(wtxn, key)?
-                .is_some_and(|row| IdempotencyEntry::decode(&row).is_ok_and(|kept| !kept.erased));
+            let standing = match self.sync_state_get_in_write_txn(wtxn, key)? {
+                Some(row) => IdempotencyEntry::decode(&row).is_ok_and(|kept| !kept.erased),
+                None => false,
+            };
             if !standing {
                 return Ok(false);
             }

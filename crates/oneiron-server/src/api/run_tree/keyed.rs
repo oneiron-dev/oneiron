@@ -21,6 +21,8 @@ use axum::middleware::Next;
 use axum::response::Response;
 use serde_json::Value;
 
+use super::scoped::intervention_tree;
+use crate::api::host_action::require_host_owner_act;
 use crate::auth::CoreAuth;
 use crate::idempotency::{
     IDEMPOTENCY_KEY_HEADER, IdempotencyLayerState, Replay, idempotency_for_mutating_form,
@@ -38,7 +40,7 @@ pub(crate) async fn intervene_idempotency(
     }
     let (parts, body) = request.into_parts();
     let unkeyed = match CoreAuth::for_request(&parts, state.server()).await {
-        Ok(auth) => crate::api::host_action::require_host_owner_act(state.server(), &auth).is_err(),
+        Ok(auth) => require_host_owner_act(state.server(), &auth).is_err(),
         Err(_) => false,
     };
     let request = Request::from_parts(parts, body);
@@ -64,7 +66,7 @@ fn reproject_tree(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let tree = auth.and_then(|auth| super::scoped::intervention_tree(server, auth, &run_id, &attempt_id));
+    let tree = auth.and_then(|auth| intervention_tree(server, auth, &run_id, &attempt_id));
     reply["tree"] = serde_json::to_value(tree).ok()?;
     let bytes = serde_json::to_vec(&reply).ok()?;
     let mut response = Response::new(Body::from(bytes));

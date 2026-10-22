@@ -44,36 +44,45 @@ impl ScopedRead<'_> {
                 }
             })
         };
+        let mut kept = |receipt: &ConcernMoveReceipt| {
+            link_rows(&receipt.link).is_some_and(|rows| rows.into_iter().all(&mut admits))
+        };
         for item in report
             .sections
             .iter_mut()
             .flat_map(|section| &mut section.items)
         {
             if let WeaveItem::AgentHealth { card, .. } = item {
-                card.moves_taken.retain(|receipt| {
-                    link_rows(&receipt.link).is_some_and(|rows| rows.into_iter().all(&mut admits))
-                });
+                card.moves_taken.retain(|receipt| kept(receipt));
             }
         }
     }
 }
 
-/// The rows a move's own door answered with: a note's room, TURN and
-/// MESSAGEs, a steer's TASK. `None` when one of them is no id: such a move is
-/// read as one whose rows the reader does not read.
-fn link_rows(link: &ConcernMoveLink) -> Option<Vec<EntityId>> {
-    let refs: Vec<&str> = match link {
+/// The ids a move's own door answered with, as its receipt keeps them: a
+/// note's room, TURN and MESSAGEs, a steer's TASK.
+fn link_refs(link: &ConcernMoveLink) -> Vec<&str> {
+    match link {
         ConcernMoveLink::Note {
             room,
             turn,
             messages,
-        } => std::iter::once(room.as_str())
-            .chain(turn.as_deref())
-            .chain(messages.iter().map(String::as_str))
-            .collect(),
+        } => {
+            let mut refs = vec![room.as_str()];
+            refs.extend(turn.as_deref());
+            refs.extend(messages.iter().map(String::as_str));
+            refs
+        }
         ConcernMoveLink::Steer { task_ref, .. } => vec![task_ref.as_str()],
-    };
-    refs.into_iter()
+    }
+}
+
+/// The rows a move's own door answered with ([`link_refs`]). `None` when one
+/// of them is no id: such a move is read as one whose rows the reader does
+/// not read.
+fn link_rows(link: &ConcernMoveLink) -> Option<Vec<EntityId>> {
+    link_refs(link)
+        .into_iter()
         .map(|id| EntityId::from_hex(id).ok())
         .collect()
 }
@@ -84,24 +93,10 @@ fn link_rows(link: &ConcernMoveLink) -> Option<Vec<EntityId>> {
 pub(super) fn move_rows(receipt: &ConcernMoveReceipt) -> Vec<EntityId> {
     let mut rows = vec![receipt.actor, receipt.subject];
     rows.extend(receipt.task.into_iter().chain(receipt.attempt));
-    match &receipt.link {
-        ConcernMoveLink::Note {
-            room,
-            turn,
-            messages,
-        } => rows.extend(
-            std::iter::once(room.as_str())
-                .chain(turn.as_deref())
-                .chain(messages.iter().map(String::as_str))
-                .filter_map(|id| EntityId::from_hex(id).ok()),
-        ),
-        ConcernMoveLink::Steer {
-            task_ref, branch, ..
-        } => rows.extend(
-            [task_ref.as_str(), branch.as_str()]
-                .into_iter()
-                .filter_map(|id| EntityId::from_hex(id).ok()),
-        ),
+    let mut refs = link_refs(&receipt.link);
+    if let ConcernMoveLink::Steer { branch, .. } = &receipt.link {
+        refs.push(branch);
     }
+    rows.extend(refs.iter().filter_map(|id| EntityId::from_hex(id).ok()));
     rows
 }

@@ -7,6 +7,7 @@ use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::Listed;
 use super::hub_doors::owner_call;
+use crate::api::scoped_auth::lane_reads_each;
 use crate::auth::CoreAuth;
 use crate::replay_judge::{self, ServeAxisBandit};
 use crate::server::SyncServer;
@@ -293,15 +294,8 @@ pub(crate) async fn vault_skills_optimize_tradeoff_asks(
             };
             // FIX 8162: the asks the caller's own lane reads whole, as
             // `GET /v1/core/skills/tradeoff-asks` lists them.
-            let answer = crate::api::scoped_auth::lane_reads_each(
-                server.vault(),
-                &lane,
-                answer,
-                |view: &SkillOptimizeTradeoffAskView| {
-                    super::role_picks::tradeoff_ask_refs(&view.ask)
-                },
-            )
-            .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
+            let answer = lane_reads_each(server.vault(), &lane, answer, tradeoff_view_refs)
+                .map_err(|error| super::FacadeApiError::from(error).into_memory_error())?;
             let rows = answer
                 .iter()
                 .map(|view| view.ask.question.proposal)
@@ -310,6 +304,11 @@ pub(crate) async fn vault_skills_optimize_tradeoff_asks(
         },
     )
     .await
+}
+
+/// The rows a listed tradeoff ask names (FIX 8162).
+fn tradeoff_view_refs(view: &SkillOptimizeTradeoffAskView) -> Vec<EntityId> {
+    super::role_picks::tradeoff_ask_refs(&view.ask)
 }
 
 pub(crate) async fn vault_skills_optimize_tradeoff_asks_pick(

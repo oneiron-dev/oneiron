@@ -18,6 +18,7 @@ use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND};
 use serde::Deserialize;
 
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
+use crate::api::scoped_auth::lane_reads_each;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
@@ -47,12 +48,7 @@ async fn asks(
         let asks = server.vault.decision_asks_held_by(actor).map_err(engine)?;
         // FIX 8174: of the asks at a role the principal holds, the ones the
         // credential's own lane reads whole, at its destination.
-        Ok(crate::api::scoped_auth::lane_reads_each(
-            &server.vault,
-            &auth,
-            asks,
-            decision_ask_refs,
-        )?)
+        Ok(lane_reads_each(&server.vault, &auth, asks, decision_ask_refs)?)
     })
     .await
     .map_err(|_| internal())??;
