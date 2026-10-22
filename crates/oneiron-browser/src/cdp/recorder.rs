@@ -147,7 +147,7 @@ impl Cue {
     fn scrub(&mut self) {
         if let Some(d) = self.d.as_mut() {
             for text in [&mut d.n, &mut d.ds] {
-                if value_secret(text).is_some() {
+                if value_secret(text.as_str()).is_some() {
                     SECRET_MARK.clone_into(text);
                 }
             }

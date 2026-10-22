@@ -355,7 +355,7 @@ impl CdpDriver {
         now: &mut Option<Result<(String, Vec<Row>), LocatorGap>>,
     ) -> Result<Mapped, LocatorGap> {
         let descriptor = descriptor.ok_or(LocatorGap::NoTarget)?;
-        let held = place.url.and_then(|url| self.pages.held_rows(url));
+        let held = place.url.and_then(|url| self.pages.held_rows_at(url));
         if let Some(Ok(row)) = held.map(|rows| pick(rows.iter(), descriptor)) {
             return Ok(mapped(row));
         }

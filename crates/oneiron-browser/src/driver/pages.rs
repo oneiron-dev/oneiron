@@ -219,7 +219,7 @@ impl Observations {
     /// The rows of the newest whole observation read at `url`, as the
     /// session holds them (CUA E9): what a recorder matches an act's target
     /// against before it reads the page again.
-    pub(crate) fn held_rows(&self, url: &str) -> Option<&[Row]> {
+    pub(crate) fn held_rows_at(&self, url: &str) -> Option<&[Row]> {
         self.history
             .iter()
             .rev()
