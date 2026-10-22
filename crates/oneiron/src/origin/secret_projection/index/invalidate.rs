@@ -78,7 +78,7 @@ fn refresh(vault: &Vault, wtxn: &mut RwTxn<'_>, sources: &[[u8; 32]]) -> Result<
         if !crate::vault::entity_revision::refresh_repo_revision_projection_in_txn(
             vault, wtxn, &marks, entity,
         )? {
-            crate::entity_doc::reindex_repo_document_in_txn(vault, wtxn, &marks, entity)?;
+            crate::entity_doc::reindex_repo_document_in_txn(vault, wtxn, entity)?;
         }
         crate::embed::requeue_repo_embedding_in_txn(vault, wtxn, entity)?;
     }
@@ -88,8 +88,5 @@ fn refresh(vault: &Vault, wtxn: &mut RwTxn<'_>, sources: &[[u8; 32]]) -> Result<
 /// Whether `error` is the transaction's own storage failure, the one kind an
 /// invalidation passes on.
 fn is_storage_error(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Storage(_) | Error::Io(_) | Error::MapFull | Error::Store(_)
-    )
+    matches!(error, Error::Storage(_) | Error::Io(_) | Error::MapFull)
 }
