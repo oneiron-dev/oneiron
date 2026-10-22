@@ -49820,7 +49820,7 @@
      "surface": {
       "const": 6,
       "enum": 1,
-      "fn": 10,
+      "fn": 13,
       "struct": 6
      }
     },
@@ -89783,7 +89783,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 36,
+      "crate-vis": 37,
       "fn": 22,
       "mod": 3,
       "re-export": 1,
