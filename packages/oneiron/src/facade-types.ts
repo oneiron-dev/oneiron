@@ -3899,7 +3899,7 @@ export type UsedProvenanceEdge = { derived: EntityId; source: EntityId; check?: 
 /** `oneiron::receipt::pack_attribution::CreditOptions` */
 export type CreditOptions = { enabled: boolean; depth_cap?: number | null; check_every_hop: boolean }
 /** `oneiron::receipt::pack_attribution::PackAttributionFields` */
-export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge: string; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
+export type PackAttributionFields = { typeRef: CellTypeRef; executor: string; judge?: string | null; pattern: EntityId; team_shape: string[]; decider: EntityId; project?: EntityId | null; output?: EntityId | null; contributions: SkillContribution[]; used_edges: UsedProvenanceEdge[]; credit: CreditOptions }
 /** `oneiron::receipt::pack_attribution::PackLearningContext` */
 export type PackLearningContext = { attempt_receipt: string; outcome_receipt: string; attribution: PackAttributionFields }
 /** `oneiron::learning::evidence::EvidenceRow` */
@@ -3915,9 +3915,9 @@ export type LearningCellView = { cell: LearningCellKey; view: MeasuredLearningVi
 /** `oneiron::learning::doors::LearningProjectionRequest` */
 export type LearningProjectionRequest = { attempt_receipt: string; outcome_receipt: string; axis: string }
 /** `oneiron::skill_attribution::late_credit::LateCreditShare` */
-export type LateCreditShare = { subject: EntityId; origin_skill?: EntityId | null; chain: UsedProvenanceEdge[]; decay: number; weight: number }
+export type LateCreditShare = { subject?: EntityId | null; origin_skill?: EntityId | null; chain?: UsedProvenanceEdge[] | null; decay: number; weight: number }
 /** `oneiron::skill_attribution::late_credit::LateCreditReceipt` */
-export type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution: PackAttributionFields; direct_subjects: EntityId[]; shares: LateCreditShare[] }
+export type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; outcome_receipt: string; anchor: Anchor; succeeded: boolean; axis: string; at: number; goal_revision?: string | null; attribution?: PackAttributionFields | null; direct_subjects: (EntityId | null)[]; shares: LateCreditShare[] }
 /** `oneiron::learning::doors::LearningProjectionView` */
 export type LearningProjectionView = { receipt?: LateCreditReceipt | null }
 /** `oneiron::self_heal::audit::ObjectiveConfession` */
@@ -3937,7 +3937,7 @@ export type SealCheckOutcome = { judge_revision: string; checked_at: number; fin
 /** `oneiron::self_heal::audit::SealCheckReceipt` */
 export type SealCheckReceipt = { request: SealCheckRequest; outcome?: SealCheckOutcome | null; last_asked_at?: number | null }
 /** `oneiron::self_heal::audit::SealedAttemptReceipt` */
-export type SealedAttemptReceipt = { confession: AttemptConfession; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] }
+export type SealedAttemptReceipt = { confession: AttemptConfession; project?: EntityId | null; executor: string; result_ref: string; sealed_at: number; passing: boolean; draw?: AuditDraw | null; checks: SealCheckReceipt[] }
 /** `oneiron::learning::honesty::SealAssessment` */
 export type SealAssessment = { weighted_flaws: number; weighted_hidden_flaws: number; confirmed_confessions: number; false_confessions: number }
 /** `oneiron::self_heal::audit::doors::SealReceiptView` */
@@ -5975,7 +5975,7 @@ export type AttributionEvidenceReceipt = { sequence: number }
 /** `oneiron::verbs::skill_attribution::AttributionProjectRequest` */
 export type AttributionProjectRequest = { since_cursor?: number | null }
 /** `oneiron::verbs::skill_attribution::AttemptJudgmentView` */
-export type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject: EntityId; evidence_receipts: string[]; at: number }
+export type AttemptJudgmentView = { sequence: number; verdict: AttributionLabel; subject?: EntityId | null; evidence_receipts: string[]; at: number }
 /** `oneiron::verbs::skill_attribution::PositiveProposalView` */
 export type PositiveProposalView = { evidence_sequence: number; skill: EntityId; actor: EntityId; finding: string; reason?: string | null; evidence_receipts: string[]; at: number }
 /** `oneiron::verbs::skill_attribution::SkillEditProposalView` */

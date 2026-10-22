@@ -419,7 +419,7 @@ fn settle_edit_proposal_in_txn(
         &AttributionJudgment {
             sequence,
             verdict: AmendmentClass::Discovery,
-            subject: skill,
+            subject: Some(skill),
             evidence_receipts: judgment.evidence_receipts.clone(),
             at: judgment.at,
         },

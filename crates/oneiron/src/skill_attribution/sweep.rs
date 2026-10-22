@@ -159,6 +159,7 @@ pub fn run_task_attribution_sweep_with_decisions(
                     .direct_subjects
                     .iter()
                     .chain(credit.shares.iter().map(|share| &share.subject))
+                    .flatten()
                 {
                     if vault.get_raw(subject)?.and_then(|raw| {
                         crate::batch::EntityMetadataHeader::parse(&raw)

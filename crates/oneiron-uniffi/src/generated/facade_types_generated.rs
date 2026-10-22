@@ -29769,8 +29769,8 @@ pub struct PackAttributionFields {
     pub type_ref: CellTypeRef,
     #[serde(rename = "executor")]
     pub executor: String,
-    #[serde(rename = "judge")]
-    pub judge: String,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
     #[serde(rename = "pattern")]
     pub pattern: String,
     #[serde(rename = "team_shape")]
@@ -29908,16 +29908,16 @@ pub struct LearningProjectionRequest {
 /// `oneiron::skill_attribution::late_credit::LateCreditShare`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LateCreditShare {
-    #[serde(rename = "subject")]
-    pub subject: String,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(
         rename = "origin_skill",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub origin_skill: Option<String>,
-    #[serde(rename = "chain")]
-    pub chain: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "chain", default, skip_serializing_if = "Option::is_none")]
+    pub chain: Option<Vec<UsedProvenanceEdge>>,
     #[serde(rename = "decay")]
     pub decay: f64,
     #[serde(rename = "weight")]
@@ -29947,10 +29947,14 @@ pub struct LateCreditReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
-    #[serde(rename = "attribution")]
-    pub attribution: PackAttributionFields,
+    #[serde(
+        rename = "attribution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub attribution: Option<PackAttributionFields>,
     #[serde(rename = "direct_subjects")]
-    pub direct_subjects: Vec<String>,
+    pub direct_subjects: Vec<Option<String>>,
     #[serde(rename = "shares")]
     pub shares: Vec<LateCreditShare>,
 }
@@ -30081,6 +30085,8 @@ pub struct SealCheckReceipt {
 pub struct SealedAttemptReceipt {
     #[serde(rename = "confession")]
     pub confession: AttemptConfession,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
     #[serde(rename = "executor")]
     pub executor: String,
     #[serde(rename = "result_ref")]
@@ -46857,8 +46863,8 @@ pub struct AttemptJudgmentView {
     pub sequence: u64,
     #[serde(rename = "verdict")]
     pub verdict: AttributionLabel,
-    #[serde(rename = "subject")]
-    pub subject: String,
+    #[serde(rename = "subject", default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
     #[serde(rename = "evidence_receipts")]
     pub evidence_receipts: Vec<String>,
     #[serde(rename = "at")]

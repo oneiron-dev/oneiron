@@ -56,8 +56,12 @@ pub use contribution::{
     ContributionCandidate, ContributionCheckRecord, ContributionFork, ContributionPair,
     contributed, contribution_check_candidates_after, record_contribution_pair,
 };
+mod contribution_admission;
+pub(crate) use contribution_admission::erase_contribution_checks_in_txn;
+pub use contribution_admission::{ContributionRecord, UnmatchedReason};
 mod late_credit;
 mod pack_learning;
+pub(crate) use late_credit::erase_late_credit_in_txn;
 pub use late_credit::{
     LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
 };
@@ -65,6 +69,7 @@ pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };
 mod positive;
+pub(crate) use self::positive::erase_positive_proposals_in_txn;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,
     retire_positive_proposal, run_positive_attribution_pass,
@@ -77,6 +82,7 @@ pub(crate) use self::projector::{
 mod skill_erase;
 pub(crate) use self::skill_erase::{
     erase_attribution_evidence_skill_in_txn, erase_attribution_judgment_skill_in_txn,
+    erase_scan_in_txn,
 };
 mod split;
 pub(crate) use self::split::{

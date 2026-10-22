@@ -152,8 +152,10 @@ fn project(
                 }
                 // A skill's effectiveness is its executor-qualified cell, not
                 // a second actor score for the same skill-bearing run.
-                if row.skill.is_none() {
-                    direct.insert(row.actor, true);
+                if row.skill.is_none()
+                    && let Some(actor) = row.actor
+                {
+                    direct.insert(actor, true);
                 }
                 let followed = matches!(row.followed_state, Some(FollowedState::Followed))
                     || row.followed_state.is_none() && row.followed_skill == Some(true);
@@ -174,13 +176,14 @@ fn project(
                 if judgment_displaced_in_txn(vault, txn, *sequence)? {
                     continue;
                 }
-                match judgment.verdict {
-                    AttributionVerdict::SkillDefect => {
-                        require_loaded_skill(vault, txn, &receipt, judgment.subject)?;
-                        direct.insert(judgment.subject, false);
+                // An erased subject charges no one (FIX 8988).
+                match (judgment.verdict, judgment.subject) {
+                    (AttributionVerdict::SkillDefect, Some(subject)) => {
+                        require_loaded_skill(vault, txn, &receipt, subject)?;
+                        direct.insert(subject, false);
                     }
-                    AttributionVerdict::ExecutionLapse => {
-                        direct.insert(judgment.subject, false);
+                    (AttributionVerdict::ExecutionLapse, Some(subject)) => {
+                        direct.insert(subject, false);
                     }
                     _ => {} // discovery, environment and unclear are not failures of a cell
                 }
@@ -215,8 +218,8 @@ fn project(
             axis: outcome.axis.clone(),
             at: outcome.at,
             goal_revision: outcome.goal_revision.clone(),
-            attribution: fields.clone(),
-            direct_subjects: direct.keys().copied().collect(),
+            attribution: Some(fields.clone()),
+            direct_subjects: direct.keys().copied().map(Some).collect(),
             shares,
         };
         let mut observations: BTreeMap<EntityId, (bool, f64)> = direct
@@ -224,9 +227,9 @@ fn project(
             .map(|(subject, success)| (subject, (success, 1.0)))
             .collect();
         for share in &credit.shares {
-            observations
-                .entry(share.subject)
-                .or_insert((true, share.weight));
+            if let Some(subject) = share.subject {
+                observations.entry(subject).or_insert((true, share.weight));
+            }
         }
         for (subject, (success, weight)) in observations {
             let cell = LearningCell::new(LearningPredicate::Reliability, subject)

@@ -9646,7 +9646,7 @@ class CreditOptions(TypedDict):
 class PackAttributionFields(TypedDict):
     typeRef: CellTypeRef
     executor: str
-    judge: str
+    judge: NotRequired[str | None]
     pattern: EntityId
     team_shape: list[str]
     decider: EntityId
@@ -9691,9 +9691,9 @@ class LearningProjectionRequest(TypedDict):
     outcome_receipt: str
     axis: str
 class LateCreditShare(TypedDict):
-    subject: EntityId
+    subject: NotRequired[EntityId | None]
     origin_skill: NotRequired[EntityId | None]
-    chain: list[UsedProvenanceEdge]
+    chain: NotRequired[list[UsedProvenanceEdge] | None]
     decay: float
     weight: float
 class LateCreditReceipt(TypedDict):
@@ -9705,8 +9705,8 @@ class LateCreditReceipt(TypedDict):
     axis: str
     at: int
     goal_revision: NotRequired[str | None]
-    attribution: PackAttributionFields
-    direct_subjects: list[EntityId]
+    attribution: NotRequired[PackAttributionFields | None]
+    direct_subjects: list[EntityId | None]
     shares: list[LateCreditShare]
 class LearningProjectionView(TypedDict):
     receipt: NotRequired[LateCreditReceipt | None]
@@ -9747,6 +9747,7 @@ class SealCheckReceipt(TypedDict):
     last_asked_at: NotRequired[int | None]
 class SealedAttemptReceipt(TypedDict):
     confession: AttemptConfession
+    project: NotRequired[EntityId | None]
     executor: str
     result_ref: str
     sealed_at: int
@@ -15001,7 +15002,7 @@ class AttributionProjectRequest(TypedDict):
 class AttemptJudgmentView(TypedDict):
     sequence: int
     verdict: AttributionLabel
-    subject: EntityId
+    subject: NotRequired[EntityId | None]
     evidence_receipts: list[str]
     at: int
 class PositiveProposalView(TypedDict):
