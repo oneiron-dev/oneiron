@@ -81,14 +81,15 @@ impl ReplyAssertionCollector {
 /// entity type and id, labelled with its kind alone. The id is what the
 /// finalize admits; the label is display only.
 pub(super) fn witness_assertions(carrier: &ReplyAssertions) -> WitnessAssertions {
-    let refs = |records: &[ReplyAssertionRecord]| -> Vec<RecordRef> {
-        records
-            .iter()
-            .map(|record| RecordRef::from_id(record.entity_type, &record.id, None))
-            .collect()
-    };
     WitnessAssertions {
-        cited: refs(&carrier.cited),
-        created: refs(&carrier.created),
+        cited: record_refs(&carrier.cited),
+        created: record_refs(&carrier.created),
     }
+}
+
+fn record_refs(records: &[ReplyAssertionRecord]) -> Vec<RecordRef> {
+    records
+        .iter()
+        .map(|record| RecordRef::from_id(record.entity_type, &record.id, None))
+        .collect()
 }

@@ -5,7 +5,7 @@
 //! terminal witnesses them with its text: the witness program reads each
 //! through the writer's own lane, opened before the writer, and one the
 //! writer cannot read refuses the whole reply. The set it admits lands in
-//! the MESSAGE's metadata under [`REPLY_ASSERTIONS_KEY`], in that same
+//! the MESSAGE's metadata under `reply_assertions`, in that same
 //! transaction. A continuation's terminal judges its set through the same
 //! check, its lane opened before its writer; its MESSAGE's envelope was
 //! fixed at birth, so nothing more of it is written. A Retry's reply never
