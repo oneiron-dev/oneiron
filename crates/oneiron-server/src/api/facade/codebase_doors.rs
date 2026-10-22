@@ -36,7 +36,15 @@ async fn as_owner<T: Send + 'static>(
         Ok(admitted) => admitted,
         Err(error) => return (Err(error), Vec::new()),
     };
+    // The agent an MCP call's verified credential registered, read here on
+    // the async side: the blocking closure cannot see the call's task-local
+    // (FIX 8960). Its per-file reads that say why may ask for real bytes.
+    let recipient = crate::api::mcp_gateway::skill_execution::mcp_call_recipient();
     credential_listing(server, auth, caller, verb, move |_, _, memory| {
+        let memory = match recipient {
+            Some(recipient) => memory.for_repo_reveal_recipient(recipient),
+            None => memory,
+        };
         act(&memory, &owner)
     })
     .await
