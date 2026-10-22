@@ -6,10 +6,10 @@
 //! supervisor's restricted broker socket, and never runs the unlink it is
 //! handed: the engine claims, unlinks and syncs the object itself, inside
 //! its backup-hold writer exclusion. A confirmed `deleted` or `absent` is
-//! [`RelayDeleteHoldOutcome::Deleted`]; a standing hold defers it
-//! `held_until_release`; everything else, the engine unknown, unproven or
-//! unreachable, or an answer that does not read, defers it
-//! `hold_state_unknown`, its intent kept. An engine's storage failure is a
+//! [`RelayDeleteHoldOutcome::Deleted`]; a standing hold defers it, with the
+//! coarse visibility the engine read (FIX 9500); everything else, the engine
+//! unknown, unproven or unreachable, or an answer that does not read, defers
+//! it `hold_state_unknown`, its intent kept. An engine's storage failure is a
 //! storage failure, never one that reads as a missing object.
 //!
 //! The guard asks only an engine boot it has proven: a rechecks task polls
@@ -176,14 +176,15 @@ impl RelayDeleteHoldGuard for CtlRelayHoldGuard {
             engine_instance: instance,
             request_id: hex(&request_id),
             object: target.object_id.clone(),
+            generation: target.generation.clone(),
             ciphertext_blake3: hex(&target.ciphertext_blake3),
         };
         match room.client.execute(&request) {
             Ok(RelayDeleteState::Deleted | RelayDeleteState::Absent) => {
                 Ok(RelayDeleteHoldOutcome::Deleted)
             }
-            Ok(RelayDeleteState::Held) => Ok(RelayDeleteHoldOutcome::Deferred(
-                RelayDeleteDeferral::HeldUntilRelease,
+            Ok(RelayDeleteState::Held { visibility }) => Ok(RelayDeleteHoldOutcome::Deferred(
+                RelayDeleteDeferral::Held { visibility },
             )),
             Ok(RelayDeleteState::StorageIo { stage, kind }) => {
                 let kind = match kind {

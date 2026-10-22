@@ -228,7 +228,7 @@ side_tables! {
     /// string "attempt".
     VAULT_CLEANUP_SCAN_CURSOR: VaultMeta b"vault_cleanup.scan.v1:" Raw;
     /// Index of archived attempts under one TASK, used to restore them together when the task is
-    /// touched. Key: string (task hex) "/" id16 (AttemptId).
+    /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw;
     /// Owner-adjustable retention period for completed TASK queue records before archival
     /// eligibility. Key: ().

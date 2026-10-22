@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1155 facade rows, 4113 declarations.
-Inputs: 1090 of 1155 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1039 of 1155 fully typed, 116 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 102; unread shapes: 0.
+Census: 1157 facade rows, 4128 declarations.
+Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -5530,6 +5530,7 @@ class PluginSectionProposal(TypedDict):
     manifest: SectionManifestEnvelope
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class PluginSectionPendingRow(TypedDict):
     claim_ref: str
     pack_id: str
@@ -5549,6 +5550,10 @@ class PluginSectionPackRow(TypedDict):
     section: PackSection
 class PluginSectionsView(TypedDict):
     pending: list[PluginSectionPendingRow]
+    pending_total: int
+    pending_remaining: int
+    next_cursor: NotRequired[str | None]
+    end: bool
     admitted: list[PluginSectionAdmittedRow]
     pack_sections: list[PluginSectionPackRow]
     rendered_pack_sections: list[str]
@@ -8602,6 +8607,67 @@ class CleanupRunView(TypedDict):
     candidates: list[CleanupCandidate]
     proposal: NotRequired[EntityId | None]
     archived: list[EntityId]
+    digest: NotRequired[EntityId | None]
+class CleanupReviewRequest(TypedDict):
+    proposal: EntityId
+class CleanupReviewCounts(TypedDict):
+    total: int
+    claimless_extraction_persons: int
+    empty_summaries: int
+    completed_tasks: int
+    completed_attempts: int
+    retained_notes: int
+    erased: int
+CleanupItemState = Literal["erased", "eligible", "changed", "gone", "unreadable"]
+class CleanupReviewEvidence(TypedDict):
+    rule: str
+    holds_now: bool
+    live_claims: NotRequired[int | None]
+    linked_edges: list[str]
+    extraction_minted: NotRequired[bool | None]
+    since: NotRequired[int | None]
+    keep_days: NotRequired[int | None]
+class CleanupReviewContent(TypedDict):
+    record: NotRequired[ScopedReadResult[EntityView | None] | None]
+    note: NotRequired[ScopedReadResult[NoteReadView | None] | None]
+    attempt: NotRequired[Any | None]
+    refused: list[str]
+CleanupAcceptEffect = Literal["archive", "skip", "nothing", "fails"]
+class CleanupReviewItem(TypedDict):
+    slot: int
+    state: CleanupItemState
+    entity: NotRequired[EntityId | None]
+    kind: NotRequired[CleanupKind | None]
+    revision: NotRequired[str | None]
+    evidence: NotRequired[CleanupReviewEvidence | None]
+    content: NotRequired[CleanupReviewContent | None]
+    accept: CleanupAcceptEffect
+class CleanupReviewView(TypedDict):
+    proposal: EntityId
+    attempt: str
+    created_at: int
+    read_at: int
+    revision: str
+    task_retention_days: int
+    counts: CleanupReviewCounts
+    items: list[CleanupReviewItem]
+CleanupItemDecision = Literal["accept", "reject"]
+class CleanupItemChoice(TypedDict):
+    slot: int
+    decision: CleanupItemDecision
+class CleanupDecideRequest(TypedDict):
+    proposal: EntityId
+    choices: list[CleanupItemChoice]
+    expected_revision: NotRequired[str | None]
+CleanupItemResult = Literal["archived", "skipped", "rejected", "erased"]
+class CleanupItemOutcome(TypedDict):
+    slot: int
+    entity: NotRequired[EntityId | None]
+    kind: NotRequired[CleanupKind | None]
+    outcome: CleanupItemResult
+class CleanupDecideView(TypedDict):
+    proposal: EntityId
+    items: list[CleanupItemOutcome]
     digest: NotRequired[EntityId | None]
 class ArchiveDeletePreviewRequest(TypedDict):
     targets: list[str]
@@ -15029,7 +15095,9 @@ class ModelStepResultFailed(TypedDict):
 class ModelStepResultBudgetDenied(TypedDict):
     status: Literal["budget_denied"]
     trap_ref: str
-ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied
+class ModelStepResultErased(TypedDict):
+    status: Literal["erased"]
+ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied | ModelStepResultErased
 class ModelStepReceipt(TypedDict):
     step_ref: str
     step_hash: str
@@ -15554,6 +15622,7 @@ class FrozenTrialCase(TypedDict):
     noise_weight: float
     derived_from: list[EntityId]
 TrialAdmission = Literal["ready", "ask_exploration"]
+ModelTrialExecutionState = Literal["not_started", "running", "interrupted", "measured"]
 class ModelTrialEvidence(TypedDict):
     measurements_hash: list[int]
     incumbent_loss: NotRequired[float | None]
@@ -15562,6 +15631,7 @@ class ModelTrialEvidence(TypedDict):
     incumbent_cost_per_thousand: float
     candidate_cost_per_thousand: float
     trial_cost: float
+    unknown_arms: int
 class PairedQualityInterval(TypedDict):
     low: float
     high: float
@@ -15598,6 +15668,10 @@ class ModelTrialView(TypedDict):
     admission: TrialAdmission
     prepared_at: int
     execution_started: bool
+    execution: ModelTrialExecutionState
+    arms_completed: int
+    arms_unknown: int
+    arms_total: int
     evidence: NotRequired[ModelTrialEvidence | None]
     receipt: NotRequired[ModelTrialReceipt | None]
 class ModelTrialRef(TypedDict):

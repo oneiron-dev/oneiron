@@ -1,9 +1,10 @@
 //! Versioned section-manifest schema, verb allowlist, and install traits.
 use super::super::frame::BudgetPolicyRef;
-use super::errors::PluginResult;
+use super::claim::PluginInstallClaimPayload;
+use super::errors::{PluginResult, PluginSectionError};
 use super::install::PluginInstallTarget;
 use crate::entity_id::EntityId;
-use crate::skill::SkillRecord;
+use crate::skill::{SkillContentHash, SkillRecord};
 use crate::skill_hub::{HubPackage, HubRef};
 use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
@@ -77,6 +78,78 @@ pub struct SectionManifestProvenance {
     pub content_hash_hex: String,
 }
 
+/// The exact package an owner reviewed: the skill id, version and canonical
+/// content hash the approved install payload names. The install fetches,
+/// imports and admits these bytes and no others; a re-fetched tag or semver
+/// alias that now resolves elsewhere is drift, never a refreshed approval.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApprovedPluginIdentity {
+    pub skill_id: String,
+    pub version: String,
+    pub content_hash: SkillContentHash,
+}
+
+impl ApprovedPluginIdentity {
+    /// Derives the identity from a reviewed install payload and the manifest
+    /// its consented bytes decode to. Both must name the same package.
+    ///
+    /// # Errors
+    ///
+    /// [`PluginSectionError::ProvenanceMismatch`] when the payload and its
+    /// manifest name different packages or the hash is not canonical hex.
+    pub fn from_reviewed(
+        payload: &PluginInstallClaimPayload,
+        envelope: &SectionManifestEnvelope,
+    ) -> PluginResult<Self> {
+        let provenance = &envelope.manifest.provenance;
+        if provenance.skill_id != payload.skill_id
+            || provenance.skill_version != payload.skill_version
+            || provenance.content_hash_hex != payload.content_hash_hex
+        {
+            return Err(PluginSectionError::ProvenanceMismatch);
+        }
+        let content_hash = SkillContentHash::parse_hex(&payload.content_hash_hex)
+            .map_err(|_| PluginSectionError::ProvenanceMismatch)?;
+        Ok(Self {
+            skill_id: payload.skill_id.clone(),
+            version: payload.skill_version.clone(),
+            content_hash,
+        })
+    }
+
+    /// Refuses a stored skill record that is not exactly this identity.
+    ///
+    /// # Errors
+    ///
+    /// [`PluginSectionError::ProvenanceMismatch`] on any id, version or
+    /// content-hash difference, or a record with no canonical hash.
+    pub fn check_record(&self, record: &SkillRecord) -> PluginResult<()> {
+        if record.skill_id != self.skill_id
+            || record.version != self.version
+            || record.content_hash != Some(self.content_hash)
+        {
+            return Err(PluginSectionError::ProvenanceMismatch);
+        }
+        Ok(())
+    }
+
+    /// Refuses fetched package bytes that are not exactly this identity.
+    ///
+    /// # Errors
+    ///
+    /// [`PluginSectionError::ProvenanceMismatch`] on any id, version or
+    /// recomputed content-hash difference.
+    pub fn check_package(&self, package: &HubPackage) -> PluginResult<()> {
+        if package.record.skill_id != self.skill_id
+            || package.record.version != self.version
+            || package.content_hash()? != self.content_hash
+        {
+            return Err(PluginSectionError::ProvenanceMismatch);
+        }
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // §2 — the closed verb chokepoint
 // ---------------------------------------------------------------------------
@@ -137,10 +210,13 @@ pub trait PluginInstallSource {
 /// skill-admission doors. ONE-1706 consumes those doors; it does not
 /// reimplement the lifecycle table or mint a second import path.
 pub trait PluginInstallExecutor: PluginInstallSource {
+    /// Imports exactly the `approved` package bytes: fetched under the
+    /// approved content hash, never under the mutable ref the proposal named.
     fn import_candidate_under_claim(
         &self,
         vault: &Vault,
         target: &PluginInstallTarget,
+        approved: &ApprovedPluginIdentity,
         approved_claim_id: &EntityId,
         now: u64,
     ) -> PluginResult<EntityId>;
