@@ -1,3 +1,7 @@
+//! Secret detection and custody filtering at batch and release boundaries.
+//! The entry point is `scan_batch_ops`.
+//! Child modules own masking, container handling, lift history and read-release rules.
+
 mod container;
 mod lift_history;
 mod mask;

@@ -79,6 +79,13 @@ pub(crate) fn trusted_soft_addressing_edge(
 }
 
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
+    validate_manifest_and_order(snapshot)?;
+    validate_window_rows(snapshot)?;
+    validate_documents(snapshot)?;
+    validate_entity_documents(snapshot)
+}
+
+fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
     if crate::deletion::parse_window_label(&snapshot.window).is_none() {
         return Err(invalid("window key"));
     }
@@ -155,6 +162,10 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     if snapshot.container_manifests != snapshot.expected_containers() {
         return Err(invalid("container manifest coverage"));
     }
+    Ok(())
+}
+
+fn validate_window_rows(snapshot: &CanonicalSnapshot) -> Result<()> {
     let world = snapshot
         .window
         .split_once('@')
@@ -316,8 +327,7 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             return Err(invalid("tombstone timestamp or encoding"));
         }
     }
-    validate_documents(snapshot)?;
-    validate_entity_documents(snapshot)
+    Ok(())
 }
 
 pub(super) fn validate_documents(snapshot: &CanonicalSnapshot) -> Result<()> {

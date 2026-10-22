@@ -9744,7 +9744,7 @@ LiftCause = Literal["unplaceable", "immutable", "held", "file", "no_door", "hist
 class LiftCauseCount(TypedDict):
     cause: LiftCause
     open: int
-class SecretLiftProposal(TypedDict):
+class SnapshotSecretLiftProposal(TypedDict):
     path: str
     detector_reason: str
     suggested_secret_name: str
@@ -9753,7 +9753,7 @@ class SecretLiftHistoryProposal(TypedDict):
     id: NotRequired[str]
     family: LiftFamily
     cause: LiftCause
-    proposal: SecretLiftProposal
+    proposal: SnapshotSecretLiftProposal
     run_id: str
     filed_at: int
     closed_at: NotRequired[int | None]
