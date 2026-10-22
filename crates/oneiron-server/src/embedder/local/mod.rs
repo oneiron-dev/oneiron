@@ -199,8 +199,13 @@ impl Drop for Turn<'_> {
 /// describe it, read only from metadata that is complete and verified by the
 /// loader's own rules ([`model_manager::verified_metadata_dir`]). `None` when
 /// it is not, or does not read: the worker checks the loaded model's once the
-/// files have been fetched and verified.
+/// files have been fetched and verified. `None` too for a revision that is a
+/// ref, which only the hub resolves to its commit (FIX 9489): nothing here
+/// asks the network.
 pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
+    if config.local.model_dir.is_none() && !model_manager::is_commit(&config.local.revision) {
+        return None;
+    }
     let dir = model_manager::verified_metadata_dir(&config.local)?;
     LocalModelSpec::read(&dir, config)
         .ok()
@@ -209,9 +214,13 @@ pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
 
 /// The transform descriptor of the local model, fetching and verifying its
 /// metadata files when they are not on this host. No weights are fetched.
+/// A ref is resolved to its commit first, and the descriptor bound to it, as
+/// a load binds its own (FIX 9489).
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<String> {
-    let dir = model_manager::ModelManager::default().ensure_metadata(&config.local)?;
-    Ok(LocalModelSpec::read(&dir, config)?.transform())
+    let models = model_manager::ModelManager::default();
+    let resolved = models.resolve_local_revision(&config.local)?;
+    let dir = models.ensure_metadata(resolved.config())?;
+    Ok(resolved.bind_transform(LocalModelSpec::read(&dir, config)?.transform()))
 }
 
 pub(crate) fn prepare(config: &EmbedderConfig) -> oneiron::Result<&'static str> {
@@ -225,7 +234,8 @@ fn prepare_with_manager(
     // A named device must fail before an expensive first-use download, not
     // after fetching the entire checkpoint and discovering no GPU is usable.
     let device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
-    models.ensure_all(&config.local)?;
+    let resolved = models.resolve_local_revision(&config.local)?;
+    models.ensure_all(resolved.config())?;
     Ok(device::device_label(&device))
 }
 
@@ -258,7 +268,10 @@ impl LocalEmbedder {
         kernel: Q8Kernel,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
-        let dir = models.ensure_all(&config.local)?;
+        // One commit for every file, the cache path, the record and the
+        // transform (FIX 9489).
+        let resolved = models.resolve_local_revision(&config.local)?;
+        let dir = models.ensure_all(resolved.config())?;
         let spec = LocalModelSpec::read(&dir, config)?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
             oneiron::Error::InvalidConfig(format!("embedder model tokenizer.json: {e}"))
@@ -272,7 +285,7 @@ impl LocalEmbedder {
         };
         let query_prompt_tokens = prompt_tokens(&spec.prompts.query)?;
         let document_prompt_tokens = prompt_tokens(&spec.prompts.document)?;
-        let transform = spec.transform();
+        let transform = resolved.bind_transform(spec.transform());
         let started = Instant::now();
         let context = LoadContext {
             quant: config.local.quant,
@@ -297,13 +310,13 @@ impl LocalEmbedder {
         );
         let loaded = LoadedModel {
             repo: config.local.repo.clone(),
-            revision: config.local.revision.clone(),
+            revision: resolved.commit().to_owned(),
             dimensions: modules.chain().dimensions(),
             device: device::device_label(&run_device),
             quant: config.local.quant.as_str(),
             artifacts: if config.local.model_dir.is_some() {
                 "model_dir"
-            } else if model_manager::pinned_files(&config.local).is_some() {
+            } else if model_manager::pinned_files(resolved.config()).is_some() {
                 "pinned_digests"
             } else {
                 "unpinned"

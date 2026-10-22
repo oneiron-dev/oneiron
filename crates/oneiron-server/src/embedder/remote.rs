@@ -75,6 +75,19 @@ impl EgressPredicate for ConfiguredEgress {
     }
 }
 
+/// The per-row egress list `primary`'s remote rung configures, if it
+/// configures one: the one host verdict on which rows may leave for a model
+/// off this device, which the GPU pool's batches are judged by too
+/// (FIX 9486). `None` sends no row off this device.
+pub(crate) fn configured_egress(
+    primary: &EmbedderConfig,
+) -> oneiron::Result<Option<Arc<dyn EgressPredicate>>> {
+    let Some(policy) = primary.remote.as_ref().and_then(|remote| remote.egress.as_ref()) else {
+        return Ok(None);
+    };
+    Ok(Some(Arc::new(ConfiguredEgress::new(policy)?)))
+}
+
 /// The remote rung `primary` configures, if any. Its answers are held to the
 /// vault's model and to `hold`, the space the vault admits from the primary
 /// provider ([`HttpEmbedder::hold_as_rung`]). Each embedding request it sends

@@ -342,7 +342,7 @@ pub(crate) async fn build_server(
 /// them through [`build_server`]; managed serve builds them here too. A
 /// `key_secret` endpoint, rung or pool sends through `broker`.
 pub(crate) async fn build_embedder(
-    vault: &oneiron::Vault,
+    vault: &Arc<oneiron::Vault>,
     config: &ServeConfig,
     broker: Option<&crate::models::BrokerContext>,
 ) -> anyhow::Result<(
@@ -363,7 +363,11 @@ pub(crate) async fn build_embedder(
     let gpu_poller = gpu
         .as_ref()
         .map(crate::runtime::GpuPool::spawn_health_poller);
-    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok()));
+    // Each pod batch's rows are judged by the vault's world release, held
+    // weakly (FIX 9486).
+    let release: Arc<dyn crate::embedder::PodRelease> =
+        Arc::new(crate::embedder::VaultRelease::new(vault));
+    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok(), release));
     let embedder_config = config.embedder.clone();
     let broker = broker.cloned();
     let embedder = crate::logging::off_runtime("embedder slot task", move || {
@@ -374,8 +378,8 @@ pub(crate) async fn build_embedder(
             receipts,
             broker.as_ref(),
         )?;
-        if let (Some(slot), Some((pool, scope))) = (&slot, gpu_route) {
-            crate::embedder::route_batches_through(slot, pool, scope)?;
+        if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
+            crate::embedder::route_batches_through(slot, pool, scope, release)?;
         }
         anyhow::Ok(slot)
     })

@@ -14,6 +14,7 @@ mod admitted;
 mod brokered;
 mod endpoint;
 pub(crate) use endpoint::reported_mark;
+pub(crate) use endpoint::{PodRelease, VaultRelease};
 mod remote;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
@@ -602,18 +603,23 @@ pub(crate) fn build_slot_with_broker(
 
 /// Sends the endpoint provider's document batches through leases on the
 /// serve host's GPU pool; queries stay on the configured endpoint. Any other
-/// provider computes on this host and takes none.
+/// provider computes on this host and takes none. A row goes to a pod only
+/// when the section's configured egress list allows it and `release`, the
+/// vault's world release, lets it leave this device (FIX 9486); every other
+/// row embeds on the endpoint.
 pub(crate) fn route_batches_through(
     slot: &EmbedderSlot,
     pool: crate::runtime::GpuPool,
     scope: Option<oneiron::federation::derivation::DerivationScope>,
+    release: Arc<dyn PodRelease>,
 ) -> anyhow::Result<()> {
     let Some(http) = slot.ready().and_then(|ready| ready.as_endpoint()) else {
         tracing::warn!("[gpu] is set, but only an endpoint embedder routes batches through it");
         return Ok(());
     };
     let timeout = std::time::Duration::from_millis(slot.config().endpoint.timeout_ms);
-    http.route_batches_through(pool, scope, timeout)?;
+    let egress = remote::configured_egress(slot.config())?;
+    http.route_batches_through(pool, scope, timeout, egress, release)?;
     Ok(())
 }
 
