@@ -160,13 +160,11 @@ pub(super) fn compact_all_windows(
         if let Some(hex) = label.strip_prefix("e:") {
             let id = EntityId::from_hex(hex)?;
             let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
-            // A held document keeps its bytes (OF-470): it waits, as a live
-            // one does. Its erase checks the hold again in its own txn.
-            if erase && document_held(vault, id)? {
-                run.windows_deferred_held += 1;
-                if matches!(state, WindowSweepState::AllCompacted) {
-                    state = WindowSweepState::Deferred;
-                }
+            // A held document keeps its bytes and its history, erased or not
+            // (OF-470, FIX 10160): it waits, as a live one does. Its writer
+            // checks the hold again, and a hold placed since defers it too.
+            if super::holds::document_held(vault, id, erase)? {
+                super::holds::defer_held(run, &mut state);
                 continue;
             }
             match vault.compact_document_for_sweep(id, erase) {
@@ -175,6 +173,9 @@ pub(super) fn compact_all_windows(
                     if matches!(state, WindowSweepState::AllCompacted) {
                         state = WindowSweepState::Deferred;
                     }
+                }
+                Err(err) if super::holds::refused_by_hold(&err) => {
+                    super::holds::defer_held(run, &mut state);
                 }
                 Err(err) => state = WindowSweepState::Failed(format!("{:?}", err.kind())),
                 Ok(true) => run.windows_compacted += 1,
@@ -352,10 +353,12 @@ pub(super) fn compact_window_with(
     }
 
     // A shallow snapshot drops every row's history, and the erased and
-    // withdrawn rows' bytes with it: each row the window carries, live or
-    // tombstoned, is one this compaction destroys. A legal hold on any of
-    // them keeps the whole window (OF-470), judged in the write txn below.
-    let destroyed = carried_ids(&doc);
+    // withdrawn rows' bytes with it: each row the window carries or carried,
+    // live or tombstoned, and each pad among its values, is one this
+    // compaction destroys. A legal hold on any of them, or on such a pad's
+    // world, keeps the whole window (OF-470, FIX 3061), judged in the write
+    // txn below. Read from the merged window before any scrub.
+    let destroyed = crate::sync::carrier_holds::CarrierInventory::of_window(&doc);
 
     // §8c.2 live-map residue scrub: a concurrent re-put that won LWW over
     // the tombstone commit's key-delete leaves erased payload LIVE in the
@@ -474,12 +477,12 @@ pub(super) fn compact_window_with(
 
         // A legal hold keeps every row it names (OF-470): one this
         // compaction would destroy keeps the window as it is.
-        if let Err(refused) = vault.store.reject_legal_holds_in_txn(
+        if let Err(refused) = destroyed.reject_held_in_txn(
+            &vault.store,
             wtxn,
-            &destroyed,
             &crate::store::legal_hold::HoldActor::TIMER,
         ) {
-            held.set(true);
+            held.set(super::holds::refused_by_hold(&refused));
             return Err(refused);
         }
 
@@ -559,27 +562,6 @@ fn scrub_stateless_window_sends(vault: &Vault, window: &str) -> Result<CompactOu
         Err(_) if raced.get() => Ok(CompactOutcome::RacedDefer),
         Err(err) => Err(err),
     }
-}
-
-/// Every row id window `doc` carries, live or tombstoned.
-#[cfg(feature = "sync")]
-fn carried_ids(doc: &loro::LoroDoc) -> Vec<EntityId> {
-    let mut ids = BTreeSet::new();
-    for map in ["entities", "tombstones"] {
-        doc.get_map(map).for_each(|key, _| {
-            if let Ok(id) = EntityId::from_hex(key) {
-                ids.insert(id);
-            }
-        });
-    }
-    ids.into_iter().collect()
-}
-
-/// Whether a standing legal hold names entity document `id`.
-#[cfg(feature = "sync")]
-fn document_held(vault: &Vault, id: EntityId) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
-    crate::store::legal_hold::held_in_txn(&vault.store, &rtxn, id.as_bytes())
 }
 
 /// Whether entity document `id` goes with a due withdrawn generation: its

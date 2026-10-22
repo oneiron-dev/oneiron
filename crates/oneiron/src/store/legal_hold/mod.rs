@@ -15,6 +15,7 @@
 mod events;
 mod notice;
 mod pending;
+mod settlement;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -29,6 +30,9 @@ pub(crate) use pending::{
     pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
     use_limit_pending_privacy_in_txn,
 };
+pub(crate) use settlement::RefusalBatch;
+#[cfg(feature = "sync")]
+pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
@@ -151,9 +155,9 @@ impl RefusalNote {
     }
 }
 
-/// Refusals not yet in a hold log. The refusing transaction rolls back, so
-/// the door that owns it logs them in a short write of its own once that
-/// writer has ended, before it returns
+/// Refusals not yet in a hold log, outside any door's own attempt
+/// (`settlement`). The refusing transaction rolls back, so the door that owns
+/// it logs them once that writer has ended, before it returns
 /// ([`Store::flush_legal_hold_refusals_settled`]). A note a failed log write
 /// put back waits here for the next flush. Never persisted.
 #[derive(Debug, Default)]
@@ -376,14 +380,14 @@ impl Store {
                     actor: actor.clone(),
                     at: now,
                 };
-                self.legal_hold_refusals.note(note);
+                settlement::note(self, note);
             }
         }
         Err(notice::held_refusal(&rows, now))
     }
 
     /// Writes the queued refusals to their hold logs in one raw write of its
-    /// own, never through the group commit (whose return flushes here). Only
+    /// own, never through the group commit (whose writer logs its own). Only
     /// on a thread that holds no writer. A failed write puts them back.
     /// Returns how many were written.
     pub(crate) fn flush_legal_hold_refusals_now(&self) -> Result<u64> {
