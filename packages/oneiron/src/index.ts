@@ -543,6 +543,14 @@ export class Oneiron {
         }),
       }),
     },
+    runners: {
+      seats: {
+        /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
+        quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
+        /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
+        top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+      },
+    },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
     commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
     /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
@@ -1133,6 +1141,12 @@ export class Oneiron {
         /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
         revoke_write: (input: Facade.ProxyConnectorRevokeWriteRequest): Facade.ProxyConnectorRegistration => this.#call(() => this.#client.vaultConnectorsProxyRevokeWrite(input) as Facade.ProxyConnectorRegistration),
       },
+      slates: {
+        /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+        redraft: (input: Facade.ConnectorSlateRedraftRequest): Facade.ConnectorSlateRedraftReply => this.#call(() => this.#client.vaultConnectorsSlatesRedraft(input) as Facade.ConnectorSlateRedraftReply),
+        /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+        narrow: (input: Facade.ConnectorSlateNarrowRequest): Facade.ConnectorSlateNarrowView => this.#call(() => this.#client.vaultConnectorsSlatesNarrow(input) as Facade.ConnectorSlateNarrowView),
+      },
       subscriptions: {
         /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
         put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
@@ -1140,6 +1154,10 @@ export class Oneiron {
         list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
         /** The owner stops one connector event subscription; the agent's key for the channel stays. */
         revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
+      },
+      calls: {
+        /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+        approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
       },
     },
     authority: {
@@ -3073,6 +3091,8 @@ export class Oneiron {
       library: {
         /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
+        /** Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+        draft: (input: Facade.LiveRunRequest<Facade.DraftInput>): Facade.BrowserLibraryDraftOutput => this.#call(() => this.#client.selfBrowserLibraryDraft(input) as Facade.BrowserLibraryDraftOutput),
         /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */

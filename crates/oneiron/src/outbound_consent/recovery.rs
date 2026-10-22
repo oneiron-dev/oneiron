@@ -63,6 +63,10 @@ pub struct AuthorizedRecoveryReport {
     pub ledger: IntentRecoveryReport,
     /// Typed stale-manifest refusals from pending recovery, not transport failures.
     pub stale_manifest_refusals: Vec<StaleConnectorManifestRefusal>,
+    /// FIX 990: pending intents whose tool is set to `always ask` and that
+    /// wait for the owner's press on exactly that call. A held-call row that
+    /// holds one keeps its ask current and asks the owner once.
+    pub slate_asks: Vec<crate::outbound_intent_ledger::IntentId>,
     pub effectful_sends: usize,
     pub authorization_rejections: usize,
     pub scrubbable_result_fields: usize,
@@ -105,6 +109,7 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
     }
 
     let mut transport = ScopedResultTransport::new(sender);
+    let mut slate_asks = Vec::new();
     let recovered =
         (|| -> std::result::Result<_, AuthorizedRecoveryError> {
             let entries = crate::outbound_intent_ledger::intent_recovery_entries(vault)?;
@@ -189,6 +194,22 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
                             }
                             Some(IntentState::Pending) => {
                                 report.pending = report.pending.saturating_add(1);
+                                if result
+                                    .gate_receipt_reasons
+                                    .iter()
+                                    .any(|reason| reason == super::SLATE_ALWAYS_ASK_REASON)
+                                {
+                                    slate_asks.push(record.id);
+                                    let digest = result.approval_digest.clone();
+                                    if let Err(error) =
+                                        vault.hold_swept_connector_call(&record, digest)
+                                    {
+                                        tracing::warn!(
+                                            %error,
+                                            "always-ask connector call's held row not updated"
+                                        );
+                                    }
+                                }
                                 if !sent && result.dispatch.send_outcome.is_none() {
                                     authorization_rejections =
                                         authorization_rejections.saturating_add(1);
@@ -229,6 +250,7 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
     Ok(AuthorizedRecoveryReport {
         ledger,
         stale_manifest_refusals,
+        slate_asks,
         effectful_sends: transport.effectful_sends,
         authorization_rejections,
         scrubbable_result_fields: transport.scrubbable_result_fields,

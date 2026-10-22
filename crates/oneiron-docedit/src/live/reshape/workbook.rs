@@ -5,7 +5,11 @@
 //! name and values in the first free cells beside its template's, the
 //! chart's categories shared. A cell that already reads as the live data
 //! is not written; a written cell keeps its format, and a new one takes
-//! its neighbour's. A literal or absent sequence stays literal. Other
+//! its neighbour's. A literal or absent sequence (a held series' name,
+//! values, x values or bubble sizes, or a new series' whose template's slot
+//! is literal) takes the first free cells beside the chart's, as
+//! PowerPoint's Edit Data gives it cells (FIX 6400); its points stay what
+//! they were, and every survivor keeps its references. Other
 //! sheets, formulas, formats, defined names and tables keep their bytes: a
 //! formula that may read a written cell keeps its expression and stale
 //! result, and the workbook asks the opening application to recalculate.
@@ -14,6 +18,7 @@
 //! its reason named.
 
 mod range;
+mod slots;
 
 use super::dataset::Refs;
 use super::layout::{Layout, Resolved};
@@ -22,7 +27,7 @@ use crate::edit::xml::{self, R};
 use crate::live::LiveError;
 use crate::live::conversion::{Conversion, RebuildReason};
 use crate::live::held::{self, C};
-use crate::live::pptx::{ChartKind, ChartSource, NodePayload};
+use crate::live::pptx::{ChartSource, NodePayload};
 use crate::native_patch::{NativeRefusal, chart_data, number};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
@@ -123,7 +128,7 @@ pub(super) fn in_place(
         .zip(&wanted.resolved)
         .map(|(line, kind)| Want {
             name: &line.name,
-            first: match (&line.x, *kind == ChartKind::Scatter, line.set) {
+            first: match (&line.x, kind.draws_x(), line.set) {
                 (Some(x), true, _) => Some(First {
                     levels: std::slice::from_ref(x),
                     numeric: true,
@@ -137,6 +142,7 @@ pub(super) fn in_place(
                 _ => None,
             },
             values: &line.values,
+            size: line.size.as_deref(),
         })
         .collect();
     let mut refs = vec![Refs::default(); wants.len()];
@@ -151,12 +157,13 @@ pub(super) fn in_place(
             placed.entry(set).or_insert(lines);
         }
     }
-    // Then a held series' categories it had no cells for, and each new
-    // series beside its template.
+    // Then a held series' categories it had no cells for, the cells of its
+    // literal or absent slots, and each new series beside its template.
+    let anchor = plan.anchor();
     for ((want, seat), refs) in wants.iter().zip(seats).zip(&mut refs) {
         let set = want.first.as_ref().and_then(|first| first.set);
         match (seat.cells, seat.template) {
-            (Some(_), _) => {
+            (Some(ser), _) => {
                 if refs.first.is_none()
                     && let (Some(first), Some(lines)) =
                         (&want.first, set.and_then(|set| placed.get(&set)))
@@ -164,11 +171,16 @@ pub(super) fn in_place(
                     plan.fill(lines, first)?;
                     refs.first = Line::around(lines).map(|line| line.formula());
                 }
+                let held = held_refs(tree, ser)?;
+                if let Some((set, lines)) = plan.gaps(&held, want, refs, anchor.as_ref())? {
+                    placed.entry(set).or_insert(lines);
+                }
             }
             (None, Some(template)) => {
                 let shared = set.and_then(|set| placed.get(&set)).cloned();
+                let held = held_refs(tree, template)?;
                 if let Some((set, lines)) =
-                    plan.added(&held_refs(tree, template)?, want, shared.as_deref(), refs)?
+                    plan.added(&held, want, shared.as_deref(), refs, anchor.as_ref())?
                 {
                     placed.entry(set).or_insert(lines);
                 }
@@ -237,12 +249,13 @@ impl Held {
 }
 
 /// A held series' references: its name, its categories or x values, its
-/// values; `None` for a literal or absent slot.
+/// values, its bubble sizes; `None` for a literal or absent slot.
 #[derive(Debug, Default)]
 struct HeldRefs {
     name: Option<Held>,
     first: Option<Held>,
     values: Option<Held>,
+    size: Option<Held>,
 }
 
 /// A held series' references, read without expanding any cache's points.
@@ -274,15 +287,17 @@ fn held_refs(tree: &XmlTree, ser: usize) -> Result<HeldRefs, RebuildReason> {
         name: slot(&["tx"])?,
         first: slot(&["cat", "xVal"])?,
         values: slot(&["val", "yVal"])?,
+        size: slot(&["bubbleSize"])?,
     })
 }
 
 /// What one live series writes: its name, its categories or x values when
-/// it draws them, and its values.
+/// it draws them, its values, and a bubble series' sizes.
 struct Want<'a> {
     name: &'a str,
     first: Option<First<'a>>,
     values: &'a [Cell],
+    size: Option<&'a [Cell]>,
 }
 
 /// A series' categories (one category set, `set`, level by level, leaf
@@ -382,6 +397,17 @@ impl<'b> Plan<'b> {
             planned: BTreeMap::new(),
             owners: BTreeMap::new(),
             names: BTreeSet::new(),
+        })
+    }
+
+    /// The first cell any reference of the chart names: where cells for a
+    /// slot with none start looking for room.
+    fn anchor(&self) -> Option<Line> {
+        let (sheet, col, row) = self.named.first()?;
+        Some(Line {
+            sheet: sheet.clone(),
+            first: (*col, *row),
+            last: (*col, *row),
         })
     }
 
@@ -509,53 +535,6 @@ impl<'b> Plan<'b> {
         }
     }
 
-    /// A held series' sequences at its held references, grown or shrunk:
-    /// its name in the first cell of its name's, its values, its categories
-    /// (each level's line) or x values. The category set it planned and its
-    /// lines, if it drew one.
-    fn held(
-        &mut self,
-        held: &HeldRefs,
-        want: &Want<'_>,
-        refs: &mut Refs,
-    ) -> Result<Option<(usize, Vec<Line>)>, RebuildReason> {
-        if let Some(name) = &held.name {
-            let line = name.line.head();
-            self.take(
-                &line,
-                &[Cell::Text(want.name.to_owned())],
-                false,
-                &name.line,
-            )?;
-            self.names.extend(line.keys());
-            refs.name = Some(name.to(&line));
-        }
-        if let Some(values) = &held.values {
-            let down = self.down_of(&values.line, held.name.as_ref().map(|name| &name.line));
-            if let Some(line) = self.grown(&values.line, want.values.len(), down)? {
-                self.take(&line, want.values, true, &values.line)?;
-                refs.values = Some(values.to(&line));
-            }
-        }
-        let (Some(at), Some(first)) = (&held.first, &want.first) else {
-            return Ok(None);
-        };
-        if at.levels.len() != first.levels.len() {
-            return Err(RebuildReason::LevelsChanged);
-        }
-        let down = at.down.unwrap_or_else(|| self.down_of(&at.line, None));
-        let mut grown = Vec::with_capacity(at.levels.len());
-        for line in &at.levels {
-            match self.grown(line, first.count(), down)? {
-                Some(line) => grown.push(line),
-                None => return Ok(None),
-            }
-        }
-        let lines = self.place(first, grown, &at.levels, down)?;
-        refs.first = at.to_block(&lines);
-        Ok(first.set.map(|set| (set, lines)))
-    }
-
     /// Plan `first`'s levels into `lines` (leaf first), each formatted
     /// after its line of `like`: a category set whose cells another set
     /// holds moves to the first free cells beside them, so changing one
@@ -595,82 +574,6 @@ impl<'b> Plan<'b> {
             self.take(line, cells, first.numeric, line)?;
         }
         Ok(())
-    }
-
-    /// A new series' sequences: its categories the cells its set already
-    /// took (else its template's, moved where another set holds them), its
-    /// x values the template's where those cells already hold them, and
-    /// its values, name and other x values shifted from the template's into
-    /// the first free cells beside them. The category set it planned and
-    /// its lines, when it planned one.
-    fn added(
-        &mut self,
-        template: &HeldRefs,
-        want: &Want<'_>,
-        shared: Option<&[Line]>,
-        refs: &mut Refs,
-    ) -> Result<Option<(usize, Vec<Line>)>, RebuildReason> {
-        let mut x = None;
-        let mut planned = None;
-        match (&want.first, shared, &template.first) {
-            (Some(first), Some(lines), _) if first.set.is_some() => {
-                self.fill(lines, first)?;
-                refs.first = Line::around(lines).map(|line| line.formula());
-            }
-            (Some(first), _, Some(at)) if first.set.is_some() => {
-                if at.levels.len() != first.levels.len() {
-                    return Err(RebuildReason::LevelsChanged);
-                }
-                let down = at.down.unwrap_or_else(|| self.down_of(&at.line, None));
-                let mut grown = Vec::with_capacity(at.levels.len());
-                for line in &at.levels {
-                    grown.extend(self.grown(line, first.count(), down)?);
-                }
-                if grown.len() == at.levels.len() {
-                    let lines = self.place(first, grown, &at.levels, down)?;
-                    refs.first = Line::around(&lines).map(|line| line.formula());
-                    planned = first.set.map(|set| (set, lines));
-                }
-            }
-            (Some(first), _, Some(at)) => {
-                let down = self.down_of(&at.line, None);
-                let cells = first.levels.first().map_or(&[][..], Vec::as_slice);
-                match at.line.fit(cells.len(), down)? {
-                    Some(line) if self.holds(&line, cells) => {
-                        self.take(&line, cells, first.numeric, &at.line)?;
-                        refs.first = Some(line.formula());
-                    }
-                    Some(line) => x = Some((line, at.line.clone(), cells)),
-                    None => {}
-                }
-            }
-            _ => {}
-        }
-        let Some(values) = &template.values else {
-            return Ok(planned);
-        };
-        let name = template.name.as_ref().map(|name| name.line.head());
-        let down = self.down_of(&values.line, name.as_ref());
-        let Some(line) = values.line.fit(want.values.len(), down)? else {
-            return Ok(planned);
-        };
-        let mut lines = vec![line];
-        lines.extend(name.clone());
-        lines.extend(x.as_ref().map(|(line, _, _)| line.clone()));
-        let mut moved = self.room(&lines, down)?.into_iter();
-        if let Some(line) = moved.next() {
-            self.take(&line, want.values, true, &values.line)?;
-            refs.values = Some(line.formula());
-        }
-        if let (Some(like), Some(line)) = (&name, name.as_ref().and_then(|_| moved.next())) {
-            self.take(&line, &[Cell::Text(want.name.to_owned())], false, like)?;
-            refs.name = Some(line.formula());
-        }
-        if let (Some((_, like, cells)), Some(line)) = (&x, moved.next()) {
-            self.take(&line, cells, true, like)?;
-            refs.first = Some(line.formula());
-        }
-        Ok(planned)
     }
 
     /// The cell writes: each planned cell that does not already read as
