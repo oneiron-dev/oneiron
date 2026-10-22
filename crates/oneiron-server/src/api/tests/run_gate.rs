@@ -105,6 +105,7 @@ fn raw(verb: &str, config: &ModelsConfig) -> Request<Body> {
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     };
     let body = serde_json::to_value(&request).unwrap();
     core_request_with_authz(

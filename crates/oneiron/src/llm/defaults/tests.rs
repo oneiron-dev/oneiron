@@ -91,6 +91,7 @@ fn resident_rows_roundtrip_and_change_resolution() {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     bind(
         &vault,
@@ -214,6 +215,7 @@ fn nonlocal_extraction_without_stored_table_still_requires_host_egress() {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     let prior = request.clone();
     let allow = |_: &LlmRequest| true;
@@ -260,6 +262,7 @@ fn nonlocal_extraction_requires_host_egress_verdict_before_binding() {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     let prior = request.clone();
     assert!(matches!(
@@ -326,6 +329,7 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
         tools: vec![],
         params: Default::default(),
         provider_options: Default::default(),
+        host_segments: None,
     };
     let original = request.clone();
     assert!(matches!(
