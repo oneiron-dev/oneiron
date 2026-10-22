@@ -12313,7 +12313,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 40,
+      "crate-vis": 41,
       "enum": 1,
       "fn": 10,
       "struct": 1
@@ -12409,7 +12409,8 @@
      "path": "src/claim/scoped_read/facet_gate.rs",
      "purpose": "A credential narrowed to some facets, and a room with a facet set, limit what this lane reads, by the one…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 4,
+      "fn": 1
      }
     },
     {
@@ -19191,8 +19192,18 @@
      "path": "src/context_board/room_verbs.rs",
      "purpose": "The rooms.* facade family delegates to existing reads, witness and claim gates",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/room_verbs/ceiling.rs",
+     "purpose": "The one ceiling construction a room and each of its threads share (ARCH-0067 §8, OF-529, FIX 1599), run…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -21646,7 +21657,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -24455,7 +24466,7 @@
      "purpose": "Dreamer maintenance that applies at once (OF-023, owner ruling 10-18: \"autoapply + revert rather than…",
      "surface": {
       "const": 3,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -24506,8 +24517,18 @@
      "surface": {
       "const": 31,
       "crate-vis": 9,
-      "fn": 12,
+      "fn": 11,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/coach/person_threshold.rs",
+     "purpose": "Q3 tuning as the Coach (ARCH-0076 #ask, FIX 8708): every requested override record is read, a page at a…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -24686,6 +24707,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -24697,6 +24719,19 @@
      "purpose": "The Dreamer's check of a conversation's self-written summary (FIX 4465 D), on the same maintenance queue and…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompactionCheckDecisions"
+     ],
+     "path": "src/dreamer_runner/maintenance/compaction_check/support.rs",
+     "purpose": "The support verdict of a compaction check (FIX 8713)",
+     "surface": {
+      "crate-vis": 9,
+      "struct": 1
      }
     },
     {
@@ -24770,9 +24805,9 @@
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
       "const": 7,
-      "crate-vis": 4,
-      "fn": 14,
-      "re-export": 4,
+      "crate-vis": 3,
+      "fn": 11,
+      "re-export": 5,
       "struct": 9
      }
     },
@@ -24788,6 +24823,21 @@
      "surface": {
       "const": 2,
       "crate-vis": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProactivityPolicyBasis",
+      "ProactivityPolicyFiling"
+     ],
+     "path": "src/dreamer_runner/maintenance/digest/policy.rs",
+     "purpose": "The policy request for the digest's shared cadence and presentation rows (FIX 8712, the ruled Grant)",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -24910,6 +24960,16 @@
      "purpose": "Project tree upkeep (ARCH-0079 #task-type, OF-420): a project on a tree of its own keeps reshaping it from…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/fork_promote/project_upkeep/admission.rs",
+     "purpose": "The owner's goal on a project tree revision (FIX 8706, CALL R3)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -25046,7 +25106,7 @@
      "path": "src/dreamer_runner/maintenance/proposals.rs",
      "purpose": "The shared Generated writer for deterministic maintenance findings",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -36502,7 +36562,7 @@
      "path": "src/llm/decision/catalogue.rs",
      "purpose": "The engine's registered typed-question families, in one place",
      "surface": {
-      "const": 46,
+      "const": 47,
       "fn": 1,
       "struct": 1
      }
@@ -46416,7 +46476,7 @@
      "purpose": "Named (agent, world) standing blocks compiled from gated persona claims",
      "surface": {
       "enum": 1,
-      "fn": 12,
+      "fn": 13,
       "struct": 4
      }
     },
@@ -57347,7 +57407,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "mod": 2,
       "re-export": 18
      }
@@ -72225,7 +72285,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 62,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -72365,7 +72425,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 129,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73389,7 +73449,7 @@
    },
    "over_bar": 161,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4727,
+   "source_files": 4732,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88691,7 +88751,7 @@
      "path": "src/api/context_board/cursor.rs",
      "purpose": "Server-owned MEMORIES cursors and session read sets, keyed by principal and session",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -88781,7 +88841,7 @@
      "path": "src/api/context_board/session.rs",
      "purpose": "Actor-bound session observations shared by core reads and board rendering",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -88811,7 +88871,7 @@
      "path": "src/api/context_pack/audience.rs",
      "purpose": "The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -97439,7 +97499,7 @@
      "path": "src/mcp/registry.rs",
      "purpose": "MCP connector actor registry: cursors, board epochs, and stream proxy",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 22,
       "struct": 1
      }
@@ -99599,7 +99659,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 36
      }
     },
     {
