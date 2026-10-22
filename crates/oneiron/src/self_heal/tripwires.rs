@@ -554,7 +554,7 @@ impl Vault {
         )?;
         // Drift counts only writes whose manifest criticality rose from the recorded baseline.
         let txn = self.store.env.read_txn()?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
+        let manifest = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
         let mut actors = std::collections::BTreeMap::<EntityId, Vec<DiagnosticObservation>>::new();
         for receipt in receipts {
             let Some(actor) = receipt
@@ -573,7 +573,7 @@ impl Vault {
                     "allow" | "auto" | "proposed" | "pending"
                 )
                 || receipt.fields.get("criticality").map(String::as_str) != Some("normal")
-                || policy.criticality_for_predicate(predicate)
+                || manifest.criticality_for_predicate(predicate)
                     != crate::gate::PolicyCriticality::Critical
             {
                 continue;
