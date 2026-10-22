@@ -1077,8 +1077,8 @@ export class Oneiron {
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
       remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       sections: {
-        /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
-        propose: (input: Facade.PluginSectionProposeRequest): Facade.PluginSectionProposal => this.#call(() => this.#client.vaultPacksSectionsPropose(input) as Facade.PluginSectionProposal),
+        /** The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim. */
+        propose: (input: Facade.PluginSectionProposeRequest): Facade.PluginSectionInstallOutcome => this.#call(() => this.#client.vaultPacksSectionsPropose(input) as Facade.PluginSectionInstallOutcome),
         /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
         list: (input: Facade.PluginSectionListRequest): Facade.PluginSectionsView => this.#call(() => this.#client.vaultPacksSectionsList(input) as Facade.PluginSectionsView),
         /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */

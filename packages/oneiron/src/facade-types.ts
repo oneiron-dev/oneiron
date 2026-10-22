@@ -2194,8 +2194,8 @@ export type SectionManifestEnvelope = { schema_version: number; manifest: Sectio
 export type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId }
 /** `oneiron::memory::plugin_sections::PluginSectionProposeRequest` */
 export type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string }
-/** `oneiron::memory::plugin_sections::PluginSectionProposal` */
-export type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope }
+/** `oneiron::memory::plugin_sections::install::PluginSectionInstallOutcome` */
+export type PluginSectionInstallOutcome = { outcome: "installed"; claim_ref: string; section_id: string; skill_ref: string; manifest_digest: string; permissions: string[]; undo_verb: string; manifest: SectionManifestEnvelope } | { outcome: "permission_ask"; claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; analysis: string; permissions: string[]; manifest: SectionManifestEnvelope }
 /** `oneiron::memory::plugin_sections::PluginSectionListRequest` */
 export type PluginSectionListRequest = { limit?: number | null; cursor?: string | null }
 /** `oneiron::memory::plugin_sections::PluginSectionPendingRow` */
