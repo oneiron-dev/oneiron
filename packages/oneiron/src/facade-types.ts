@@ -1391,7 +1391,7 @@ export type PulledImage = { asset_ref: string; pull: string; mime_type: string; 
 /** `oneiron::receipt::call::CallReceiptRequest` */
 export type CallReceiptRequest = { receipt_ref: string }
 /** `oneiron::receipt::call::CallTransport` */
-export type CallTransport = "http_facade" | "mcp" | "ws"
+export type CallTransport = "http_facade" | "mcp" | "ws" | "open_ai_proxy"
 /** `oneiron::receipt::call::CallOutcome` */
 export type CallOutcome = "ok" | { refused: { code: string } }
 /** `oneiron::receipt::call::CallAttemptRef` */

@@ -3551,7 +3551,7 @@ class PulledImage(TypedDict):
     height: NotRequired[int | None]
 class CallReceiptRequest(TypedDict):
     receipt_ref: str
-CallTransport = Literal["http_facade", "mcp", "ws"]
+CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
 class CallOutcomeRefusedBody(TypedDict):
     code: str
 class CallOutcomeRefused(TypedDict):
