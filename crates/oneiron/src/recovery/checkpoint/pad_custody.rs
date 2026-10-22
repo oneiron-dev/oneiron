@@ -124,7 +124,7 @@ enum PadSource {
 impl PadSource {
     fn of(custody: Custody<'_>) -> Self {
         match custody {
-            Custody::Keep => Self::Kept,
+            Custody::Keep | Custody::Landed => Self::Kept,
             Custody::NewHost => Self::Absent,
             Custody::Fork(Some(_)) => Self::Forked,
             Custody::Replace(..) | Custody::Fork(None) => Self::Carried,

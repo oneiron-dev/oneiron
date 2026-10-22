@@ -99,6 +99,13 @@ pub struct RestoreReportWire {
     /// sealed copies setting, or pending. Absent when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pad_notes: Vec<String>,
+    /// The credential values the restore did not land readable, each as the
+    /// engine words it, by handle and generation with its remedy: erased
+    /// since the image, kept on the machine that held it, withheld by the
+    /// head's owner-only compartment, relayed only, or pending. Absent when
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub credential_notes: Vec<String>,
 }
 
 /// Everything the restore verified, beside what the plan expected.

@@ -210,7 +210,10 @@ pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
 // KS-6: credential values and carriers in typed custody.
-pub(crate) use credential_custody::{CredentialLeaf, credential_kind, plan_credential_values};
+pub(crate) use credential_custody::{
+    CredentialLeaf, PlannedCredential, credential_kind, credential_value_leaf_in,
+    plan_credential_value,
+};
 pub(crate) use deadline_jobs::DeadlineJobs;
 pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;

@@ -119,6 +119,11 @@ pub(super) fn receipt(
             custody_note: report.custody_note.clone(),
             training_note: report.training_note.clone(),
             pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
+            credential_notes: report
+                .credential_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
         },
         admission: admission_wire(admission),
         evidence: context.plan.evidence.clone(),

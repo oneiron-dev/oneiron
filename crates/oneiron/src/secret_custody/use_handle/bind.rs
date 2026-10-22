@@ -151,11 +151,18 @@ impl Vault {
         if rec.status != SecretCustodyStatus::Active {
             return Err(not_active(&handle));
         }
-        let binding = SecretBinding {
+        let mut binding = SecretBinding {
             effector: effector.to_owned(),
             tier_ceiling: request.tier_ceiling,
             scopes: request.scopes.clone(),
         };
+        // An import-fetch binding names its binder unless it names an actor
+        // (FIX 7592); the receipt logs the scopes the binding holds.
+        super::super::owner_door::default_import_fetch_actor(
+            std::slice::from_mut(&mut binding),
+            &actor,
+        );
+        let scopes = binding.scopes.join(",");
         match rec.bindings.iter_mut().find(|b| b.effector == effector) {
             Some(slot) => *slot = binding,
             None => rec.bindings.push(binding),
@@ -205,7 +212,7 @@ impl Vault {
                     format!("handle:{handle}"),
                     format!("effector:{effector}"),
                     format!("rung:{}", request.tier_ceiling.as_u8()),
-                    format!("scopes:{}", request.scopes.join(",")),
+                    format!("scopes:{scopes}"),
                 ],
             ),
             actor_class: "human".into(),

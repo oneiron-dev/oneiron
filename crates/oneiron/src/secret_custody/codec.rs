@@ -201,8 +201,8 @@ fn binding_from_value(value: &Value) -> Result<SecretBinding> {
 
 /// What a custody body holds in its value slot (KS-6): the plaintext value
 /// under `value_bytes` (the owner archive's, a protected input's and a
-/// transition's body DTO, and a checkpoint image's carrier form, stamped
-/// with the record's own schema version as before), or the value sealed
+/// transition's body DTO, stamped with the record's own schema version as
+/// before; never a row at rest, nor an image's, KS-6 part 2), or the value sealed
 /// under its credential custody key under `sealed_value` (the stored form,
 /// stamped [`SECRET_CUSTODY_STORED_SCHEMA_VERSION`], CALLS `KS-6 credential
 /// schema 2`).

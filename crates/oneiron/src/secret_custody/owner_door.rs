@@ -220,7 +220,7 @@ impl Vault {
             .as_ref()
             .map(|manifest| declared_entry(manifest, request.name))
             .transpose()?;
-        let bindings = bindings_at_rung(request, entry)?;
+        let mut bindings = bindings_at_rung(request, entry)?;
         if let Some(entry) = entry {
             refuse_wider_than_entry(entry, request.class, &bindings)?;
         }
@@ -236,6 +236,7 @@ impl Vault {
                 "only the vault owner registers a secret",
             )));
         }
+        default_import_fetch_actor(&mut bindings, &actor);
         let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
         if let Some(manifest) = &manifest {
             validate_secret_manifest(&manifest.manifest, &floor)?;
@@ -353,6 +354,7 @@ pub(super) fn recheck_manifest_snapshot_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &SecretCustodyRecord,
     snapshot: Option<&str>,
+    binder: &EntityId,
 ) -> Result<Option<OwnerWorkRefusal>> {
     match CUSTODY_MANIFEST_RECHECK {
         CustodyManifestRecheck::OwnerApprovedSnapshot => {}
@@ -374,7 +376,12 @@ pub(super) fn recheck_manifest_snapshot_in_txn(
         && manifest.secrets.iter().any(|entry| {
             entry.name == record.name
                 && entry.declared_paths == record.declared_paths
-                && refuse_wider_than_entry(entry, record.class, &record.bindings).is_ok()
+                && refuse_wider_than_entry(
+                    entry,
+                    record.class,
+                    &manifest_scoped(&record.bindings, binder),
+                )
+                .is_ok()
         });
     Ok((!agrees).then_some(OwnerWorkRefusal::InvalidInput))
 }
@@ -431,6 +438,60 @@ fn bindings_at_rung(
         });
     }
     Ok(bindings)
+}
+
+/// The scope prefix naming the one actor an import-fetch binding serves
+/// (CALLS `G7 PR1 actor-bound source binding`).
+const ACTOR_SCOPE_PREFIX: &str = "actor:";
+
+/// FIX 7592 (source-credential isolation): each binding for the import
+/// helper's fetch effector that names no actor gets its binder's,
+/// `actor:<id hex>`: `actor`, the owner proof's revalidated PERSON, never
+/// the credential, the signing install, the holder or the surface. A
+/// binding that names an actor, and every other binding, is unchanged.
+/// Pure, with no lookup: the register and bind doors run it once the proof
+/// is revalidated, before anything is stored, sealed or logged.
+pub(super) fn default_import_fetch_actor(bindings: &mut [SecretBinding], actor: &EntityId) {
+    let fetch = crate::repo_mutation::external_import::EXTERNAL_IMPORT_FETCH_EFFECTOR;
+    for binding in bindings
+        .iter_mut()
+        .filter(|binding| binding.effector == fetch)
+    {
+        if !binding
+            .scopes
+            .iter()
+            .any(|scope| scope.starts_with(ACTOR_SCOPE_PREFIX))
+        {
+            binding
+                .scopes
+                .push(format!("{ACTOR_SCOPE_PREFIX}{}", actor.to_hex()));
+        }
+    }
+}
+
+/// `bindings` as a holder's manifest recheck reads them: the one actor
+/// scope [`default_import_fetch_actor`] fills, `actor:<binder hex>` alone on
+/// an import-fetch binding, is its binder's, never a scope the manifest
+/// grants, so it never fails that recheck (FIX 7592). Any other actor scope,
+/// a stated one included, is checked as before.
+fn manifest_scoped(bindings: &[SecretBinding], binder: &EntityId) -> Vec<SecretBinding> {
+    let fetch = crate::repo_mutation::external_import::EXTERNAL_IMPORT_FETCH_EFFECTOR;
+    let filled = format!("{ACTOR_SCOPE_PREFIX}{}", binder.to_hex());
+    bindings
+        .iter()
+        .map(|binding| {
+            let mut binding = binding.clone();
+            let actors = binding
+                .scopes
+                .iter()
+                .filter(|scope| scope.starts_with(ACTOR_SCOPE_PREFIX))
+                .collect::<Vec<_>>();
+            if binding.effector == fetch && actors == [&filled] {
+                binding.scopes.retain(|scope| *scope != filled);
+            }
+            binding
+        })
+        .collect()
 }
 
 /// How far a class lets the value travel: a cross-vault value never

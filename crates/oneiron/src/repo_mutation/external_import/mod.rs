@@ -539,9 +539,10 @@ impl Vault {
     /// (CALL T, the actor-bound source credential): a binding for
     /// [`EXTERNAL_IMPORT_FETCH_EFFECTOR`] whose scopes name the source's
     /// https `origin` and ONE actor's principal id (`actor:<id hex>`), that
-    /// the door would release now. A binding that names no actor is its
-    /// binding owner's own (the bind default, read here because the custody
-    /// bind door does not fill the scope): it carries a live owner's import.
+    /// the door would release now. The custody register and bind doors fill
+    /// the binder's actor on a binding that names none (FIX 7592), so a
+    /// binding that still names no actor serves no one: `binding_actor_missing`
+    /// (source-credential isolation; its owner binds it again, as themselves).
     /// The importer is admitted when it is the bound actor, or an agent
     /// acting under a Grant FROM the bound actor that lists
     /// [`EXTERNAL_IMPORT_CREATE_VERB`] and stands now (the delegated path,
@@ -590,9 +591,14 @@ impl Vault {
                 .filter_map(|scope| scope.strip_prefix("actor:"))
                 .collect();
             let bound = match actors.as_slice() {
-                [] => None,
+                [] => {
+                    return Ok(Err((
+                        "binding_actor_missing",
+                        format!("a source credential names the actor it serves: {fix}"),
+                    )));
+                }
                 [one] => match EntityId::from_hex(one) {
-                    Ok(actor) => Some(actor),
+                    Ok(actor) => actor,
                     Err(_) => return Ok(Err(("binding_actor_malformed", fix))),
                 },
                 _ => {
@@ -603,8 +609,7 @@ impl Vault {
                 }
             };
             let owners = crate::policy_model::owners_in_txn(self, &txn)?;
-            let own = bound.map_or_else(|| owners.contains(&importer), |actor| actor == importer);
-            if !own {
+            if bound != importer {
                 match self.delegated_import_binding_in_txn(&txn, &owners, bound, importer)? {
                     DelegatedBinding::Stands => {}
                     DelegatedBinding::Lapsed => {
@@ -618,10 +623,7 @@ impl Vault {
                         )));
                     }
                     DelegatedBinding::Absent => {
-                        let kind = match bound {
-                            Some(actor) => self.bound_actor_kind_in_txn(&txn, &owners, actor)?,
-                            None => "vault owner",
-                        };
+                        let kind = self.bound_actor_kind_in_txn(&txn, &owners, bound)?;
                         return Ok(Err((
                             "binding_bound_to_another_actor",
                             format!(
@@ -644,7 +646,7 @@ impl Vault {
     }
 
     /// The delegated path: an agent `importer` acting under a Grant FROM
-    /// the binding's actor (`bound`; `None`, a live owner) that lists
+    /// the binding's actor `bound` that lists
     /// [`EXTERNAL_IMPORT_CREATE_VERB`], stands by the Grant rule now, and
     /// on a shared vault keeps its pact membership. A Grant that fails on
     /// its pact membership alone is the lapse.
@@ -652,17 +654,13 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         owners: &[EntityId],
-        bound: Option<EntityId>,
+        bound: EntityId,
         importer: EntityId,
     ) -> Result<DelegatedBinding> {
         let now = self.instant_in_txn(txn)?.secs();
         let mut lapsed = false;
         for standing in self.agent_grants_in_txn(txn)? {
-            let from_bound = bound.map_or_else(
-                || owners.contains(&standing.delegated_by),
-                |actor| standing.delegated_by == actor,
-            );
-            if !from_bound
+            if standing.delegated_by != bound
                 || !standing.stands_for(importer, EXTERNAL_IMPORT_CREATE_VERB, now, owners)
             {
                 continue;
