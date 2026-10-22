@@ -29,46 +29,7 @@ impl Vault {
         metadata: Option<&CodeFileMetadataEdit>,
         actor: WriteActor,
     ) -> Result<CodeEditReceipt> {
-        validate_path(&session.repo, &edit.path)?;
-        session.provenance.validate()?;
-        let provenance = session.provenance.clone();
-        let before = session.frontier()?;
-        // A removed document's path is free; recreation births a new one.
-        if before.path != edit.path || before.file_presence.is_some_and(|state| !state.present) {
-            return Err(invalid());
-        }
-        if let Some(metadata) = metadata {
-            metadata.validate(&session.repo)?;
-            if metadata.path != edit.path || metadata.new_path != edit.new_path {
-                return Err(invalid());
-            }
-        }
-        let text = session.text();
-        if edit.start > edit.end
-            || edit.end > text.chars().count()
-            || text
-                .chars()
-                .skip(edit.start)
-                .take(edit.end - edit.start)
-                .collect::<String>()
-                != edit.expected
-            || edit.replacement.len() > MAX_FILE_BYTES
-        {
-            return Err(invalid());
-        }
-        if let Some(path) = &edit.new_path {
-            validate_path(&session.repo, path)?;
-            if path == &edit.path
-                || edit.start != 0
-                || edit.end != 0
-                || !edit.expected.is_empty()
-                || !edit.replacement.is_empty()
-            {
-                return Err(invalid());
-            }
-        } else if edit.expected == edit.replacement && metadata.is_none() {
-            return Err(invalid());
-        }
+        let (provenance, before, text) = Self::validate_code_file_edit(session, edit, metadata)?;
         let candidate = doc_from_snapshot(
             &session
                 .doc
@@ -111,40 +72,8 @@ impl Vault {
         if counter_end <= counter_start {
             return Err(invalid());
         }
-        let head = load_head(&self.store, &*wtxn, &session.document_id)?;
-        let (merged, mut receipts) = if let Some(row) = head {
-            if row.initial_hash != session.initial_hash
-                || row.state.frontier.repo != session.repo
-                || row.state.frontier.path != edit.path
-            {
-                return Err(invalid());
-            }
-            let persisted = checked_snapshot(&row.state)?;
-            if row.state.frontier == before {
-                // The session already contains the complete durable head. It
-                // needs no merge: importing its own history makes Loro rebuild
-                // a rich-text diff tracker, quadratic for large insert runs.
-                (candidate, row.receipts)
-            } else {
-                let merged = persisted;
-                let update = candidate
-                    .export(ExportMode::all_updates())
-                    .map_err(|_| invalid())?;
-                merged.import(&update).map_err(|_| invalid())?;
-                (merged, row.receipts)
-            }
-        } else {
-            // A rename may have claimed this path since the session opened.
-            if let Some(id) = CODE_DOCUMENT_PATH.get(
-                &self.store,
-                &*wtxn,
-                &path_hash(&session.repo, &edit.path),
-            )? && id != session.document_id
-            {
-                return Err(invalid());
-            }
-            (candidate, Vec::new())
-        };
+        let (merged, mut receipts) =
+            self.merge_code_file_candidate_in_txn(wtxn, session, edit, &before, candidate)?;
         let merged_text = merged.get_text("body").to_string();
         if merged_text.len() > MAX_FILE_BYTES {
             return Err(invalid());
@@ -213,6 +142,124 @@ impl Vault {
             receipts,
         };
         CODE_DOCUMENT_HEAD.put(&self.store, wtxn, &session.document_id, &row)?;
+        self.update_code_file_path_rows_in_txn(wtxn, session, edit, metadata, &after)?;
+        merged.set_peer_id(peer_id).map_err(|_| invalid())?;
+        session.doc = merged;
+        Ok(result)
+    }
+
+    /// The edit checked against its session before any write: its paths,
+    /// provenance, span, metadata and rename; the provenance, the frontier
+    /// before it and the text it edits, as they stood.
+    fn validate_code_file_edit(
+        session: &CodeDocumentSession,
+        edit: &CodeFileEdit,
+        metadata: Option<&CodeFileMetadataEdit>,
+    ) -> Result<(
+        super::super::CodeOpProvenance,
+        super::super::CodeDocumentFrontier,
+        String,
+    )> {
+        validate_path(&session.repo, &edit.path)?;
+        session.provenance.validate()?;
+        let provenance = session.provenance.clone();
+        let before = session.frontier()?;
+        // A removed document's path is free; recreation births a new one.
+        if before.path != edit.path || before.file_presence.is_some_and(|state| !state.present) {
+            return Err(invalid());
+        }
+        if let Some(metadata) = metadata {
+            metadata.validate(&session.repo)?;
+            if metadata.path != edit.path || metadata.new_path != edit.new_path {
+                return Err(invalid());
+            }
+        }
+        let text = session.text();
+        if edit.start > edit.end
+            || edit.end > text.chars().count()
+            || text
+                .chars()
+                .skip(edit.start)
+                .take(edit.end - edit.start)
+                .collect::<String>()
+                != edit.expected
+            || edit.replacement.len() > MAX_FILE_BYTES
+        {
+            return Err(invalid());
+        }
+        if let Some(path) = &edit.new_path {
+            validate_path(&session.repo, path)?;
+            if path == &edit.path
+                || edit.start != 0
+                || edit.end != 0
+                || !edit.expected.is_empty()
+                || !edit.replacement.is_empty()
+            {
+                return Err(invalid());
+            }
+        } else if edit.expected == edit.replacement && metadata.is_none() {
+            return Err(invalid());
+        }
+        Ok((provenance, before, text))
+    }
+
+    /// The edited candidate merged over the durable head in the writer, with
+    /// the head receipts; with no head, the path still free for it.
+    fn merge_code_file_candidate_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        session: &CodeDocumentSession,
+        edit: &CodeFileEdit,
+        before: &super::super::CodeDocumentFrontier,
+        candidate: loro::LoroDoc,
+    ) -> Result<(loro::LoroDoc, Vec<ReceiptRow>)> {
+        let head = load_head(&self.store, &*wtxn, &session.document_id)?;
+        let (merged, receipts) = if let Some(row) = head {
+            if row.initial_hash != session.initial_hash
+                || row.state.frontier.repo != session.repo
+                || row.state.frontier.path != edit.path
+            {
+                return Err(invalid());
+            }
+            let persisted = checked_snapshot(&row.state)?;
+            if row.state.frontier == *before {
+                // The session already contains the complete durable head. It
+                // needs no merge: importing its own history makes Loro rebuild
+                // a rich-text diff tracker, quadratic for large insert runs.
+                (candidate, row.receipts)
+            } else {
+                let merged = persisted;
+                let update = candidate
+                    .export(ExportMode::all_updates())
+                    .map_err(|_| invalid())?;
+                merged.import(&update).map_err(|_| invalid())?;
+                (merged, row.receipts)
+            }
+        } else {
+            // A rename may have claimed this path since the session opened.
+            if let Some(id) = CODE_DOCUMENT_PATH.get(
+                &self.store,
+                &*wtxn,
+                &path_hash(&session.repo, &edit.path),
+            )? && id != session.document_id
+            {
+                return Err(invalid());
+            }
+            (candidate, Vec::new())
+        };
+        Ok((merged, receipts))
+    }
+
+    /// The path rows after the head is written: a rename or removal frees the
+    /// old path, and a document that is not removed claims its path.
+    fn update_code_file_path_rows_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        session: &CodeDocumentSession,
+        edit: &CodeFileEdit,
+        metadata: Option<&CodeFileMetadataEdit>,
+        after: &super::super::CodeDocumentFrontier,
+    ) -> Result<()> {
         // A removal frees its path as a rename does, and claims none.
         let removed = metadata.is_some_and(CodeFileMetadataEdit::removes);
         if edit.new_path.is_some() || removed {
@@ -235,8 +282,6 @@ impl Vault {
                 &session.document_id,
             )?;
         }
-        merged.set_peer_id(peer_id).map_err(|_| invalid())?;
-        session.doc = merged;
-        Ok(result)
+        Ok(())
     }
 }

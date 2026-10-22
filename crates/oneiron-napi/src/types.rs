@@ -1,3 +1,7 @@
+//! Legacy `NapiVault` DTOs: edges, scored entities, subtrees, batches, codebase snapshots, email.
+//! `NapiEdgeInfo` is the first of the records the legacy binding returns.
+//! These are local definitions; `oneiron` defines the engine types they convert from.
+
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 

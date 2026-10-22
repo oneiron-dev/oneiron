@@ -52,13 +52,50 @@ pub(super) struct CapturedProvenanceDelete {
     body_snapshot_ref: Option<[u8; 16]>,
 }
 
+/// What a delete's pre-scrub capture found (ARCH-0038).
+pub(super) enum ProvenanceCapture {
+    /// No bodied CLAIM, or a CLAIM that is no `edge.provenance` one.
+    NotApplicable,
+    /// A healthy `edge.provenance` Claim's subject and sweep refs.
+    Captured(CapturedProvenanceDelete),
+    /// A hard erase of a classified corrupt CLAIM: the audited exception
+    /// (FIX 7800).
+    CaptureFailed(corrupt::CorruptCapture),
+}
+
+impl ProvenanceCapture {
+    /// The healthy provenance capture, when there is one.
+    pub(super) fn refs(&self) -> Option<&CapturedProvenanceDelete> {
+        match self {
+            Self::Captured(captured) => Some(captured),
+            _ => None,
+        }
+    }
+
+    /// The audited corrupt-CLAIM exception, when this capture took it.
+    pub(super) fn corrupt(&self) -> Option<&corrupt::CorruptCapture> {
+        match self {
+            Self::CaptureFailed(corrupt) => Some(corrupt),
+            _ => None,
+        }
+    }
+}
+
 /// Builds the queued sweep row's delete-interplay extras from a pre-purge
-/// provenance capture: opaque lowercase-hex identifiers only — never content
-/// or predicate strings. Empty for non-provenance deletes, so their queued
-/// row shape gains nothing.
-pub(super) fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardEraseSweepExtras {
-    let Some(captured) = captured else {
-        return HardEraseSweepExtras::default();
+/// capture: opaque lowercase-hex identifiers only — never content or
+/// predicate strings. A healthy provenance capture gives its refs, the
+/// audited corrupt-CLAIM exception its capture failure (FIX 7800). Empty for
+/// every other delete, so its queued row shape gains nothing.
+pub(super) fn sweep_extras(capture: &ProvenanceCapture) -> HardEraseSweepExtras {
+    let captured = match capture {
+        ProvenanceCapture::NotApplicable => return HardEraseSweepExtras::default(),
+        ProvenanceCapture::Captured(captured) => captured,
+        ProvenanceCapture::CaptureFailed(corrupt) => {
+            return HardEraseSweepExtras {
+                capture_failures: vec![corrupt.failure()],
+                ..HardEraseSweepExtras::default()
+            };
+        }
     };
     HardEraseSweepExtras {
         revision_ids: captured
@@ -71,6 +108,7 @@ pub(super) fn sweep_extras(captured: Option<&CapturedProvenanceDelete>) -> HardE
             .iter()
             .map(|reference| bytes_to_hex_lower(reference))
             .collect(),
+        capture_failures: Vec::new(),
     }
 }
 
@@ -147,10 +185,13 @@ pub(super) fn take_staged_sweep_refs_in_txn(
 }
 
 mod active_store;
+mod corrupt;
 mod markers;
 mod provenance;
 mod redirect_shells;
 mod replay;
 mod scope_probes;
 
+pub use corrupt::CorruptClaimRepair;
+pub(super) use corrupt::take_corrupt_capture_in_txn;
 pub(crate) use scope_probes::TombstoneScopeProbes;
