@@ -1491,7 +1491,7 @@ export type CampaignMemberChannelSpec = { channel: string; basis_evidence: strin
 /** `oneiron::campaign::surface::actions::CampaignEnrollRequest` */
 export type CampaignEnrollRequest = { campaign_ref: string; person_ref: string; channels: CampaignMemberChannelSpec[]; evidence_refs: string[] }
 /** `oneiron::campaign::surface::actions::CampaignEnrollmentState` */
-export type CampaignEnrollmentState = "enrolled"
+export type CampaignEnrollmentState = "enrolled" | "paused" | "exited" | "suppressed"
 /** `oneiron::campaign::surface::actions::CampaignActionProvenance` */
 export type CampaignActionProvenance = { actor_ref: string; evidence_refs: string[]; recorded_at: number }
 /** `oneiron::campaign::surface::actions::CampaignEnrollmentReceipt` */

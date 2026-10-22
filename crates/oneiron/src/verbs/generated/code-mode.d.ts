@@ -763,7 +763,7 @@ declare namespace Sdk {
   type ComplianceResult = { active: CompliancePack; pending?: CompliancePendingProposal | null; notices: string[]; receipts: ComplianceReceipt[] };
   type CampaignMemberChannelSpec = { channel: string; basis_evidence: string; sender_ref: string };
   type CampaignEnrollRequest = { campaign_ref: string; person_ref: string; channels: CampaignMemberChannelSpec[]; evidence_refs: string[] };
-  type CampaignEnrollmentState = "enrolled";
+  type CampaignEnrollmentState = "enrolled" | "paused" | "exited" | "suppressed";
   type CampaignActionProvenance = { actor_ref: string; evidence_refs: string[]; recorded_at: number };
   type CampaignEnrollmentReceipt = { membership_claim_ref: string; person_ref: string; campaign_ref: string; state: CampaignEnrollmentState; channels: CampaignMemberChannelSpec[]; approval: string; provenance: CampaignActionProvenance; receipt_ref: string };
   type StageKey = string;
