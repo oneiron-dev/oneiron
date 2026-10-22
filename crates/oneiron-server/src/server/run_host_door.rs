@@ -53,6 +53,7 @@ use oneiron::receipt::{
     QuestionReadRequest,
 };
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::skill_attribution::{RunWriteToken, with_run_write_token};
 use oneiron::task_verb::sdk::{
     self, AgentVerb, AiOptions, AiOptionsRequest, AiVerdictRequest, BoardRefreshRequest,
     BoardSubscriptionRequest, ConnectorAnswerRequest, DescribeRequest, TaskWaveRequest,
@@ -218,8 +219,10 @@ impl AgentVerbDoor for RunHostDoor {
         let origin = origin.clone();
         let verb = call.verb;
         let input = call.input.clone();
+        // FIX 3103: the row writes for the run whose lease the origin seals.
+        let run_writes = RunWriteToken::of_origin(&origin);
         self.runtime.spawn_blocking(move || {
-            let _ = sender.send(match board {
+            let _ = sender.send(with_run_write_token(run_writes.as_ref(), || match board {
                 Some(board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                         .map(|(output, rows)| (output, Some(rows)))
@@ -246,7 +249,7 @@ impl AgentVerbDoor for RunHostDoor {
                     held,
                     line.as_ref(),
                 ),
-            });
+            }));
         });
         let Ok(answered) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {

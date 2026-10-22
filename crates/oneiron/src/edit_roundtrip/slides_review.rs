@@ -50,9 +50,6 @@ pub(crate) use carry::{SlideNow, carry_slide_judgments, deck_slides_now};
 pub use run::review_slides;
 pub(crate) use verify::{validate_judgment_rows, verify_carried_judgments, verify_judgments};
 
-/// Persisted-row structural ceiling; a decoder must accept every row we write.
-pub(crate) const MAX_JUDGMENTS: usize = 4096;
-
 /// The name a unit's image goes by in its `state.media` and its call.
 pub const REVIEW_IMAGE: &str = "review_image";
 
@@ -349,6 +346,9 @@ pub enum SlideUnitRefusalReason {
     EvidenceBudget,
     /// The rendered image is not PNG or JPEG whose header gives its size.
     UnreadableImage,
+    /// The run's deadline came before the unit's batch started: nothing was
+    /// asked about it (FIX 9819).
+    RunDeadline,
 }
 
 /// The exact deck a review reads.
