@@ -1,3 +1,7 @@
+//! Claim lifecycle doors: commit, upsert, propose, retract and the deletion gates.
+//! `Memory::evaluate_deletion_gate` and `Memory::commit` are its call surface.
+//! `memory::claims` defines the claim inputs and receipts these write.
+
 use super::commit::claim_envelope_actor;
 use super::*;
 
