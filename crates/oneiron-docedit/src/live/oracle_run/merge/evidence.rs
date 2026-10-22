@@ -39,10 +39,13 @@ impl Evidence {
         package: &Package,
     ) -> Res<[ExportOutcome; 2]> {
         let [a, b] = [0, 1].map(|at| export_over(&orders[at].deck, package, ORDERS[at]));
-        for (order, outcome) in ORDERS.iter().zip([&a, &b]) {
+        for (order, outcome) in ORDERS.into_iter().zip([&a, &b]) {
             self.keep(
                 order,
-                outcome.as_ref().map(|out| out.bytes.clone()).map_err(Clone::clone),
+                outcome
+                    .as_ref()
+                    .map(|out| out.bytes.clone())
+                    .map_err(Clone::clone),
             );
         }
         Ok([a?, b?])
@@ -83,21 +86,24 @@ impl Evidence {
     /// Journal the evidence in `run` under case `id`: each kept export a
     /// candidate the Office half opens, each missing one and each comparison
     /// a note. `baseline` and `origin` are the deck it came from.
-    pub(super) fn flush(self, run: &mut Run, id: &str, baseline: &[String], origin: &[u8]) -> Res<()> {
+    pub(super) fn flush(
+        self,
+        run: &mut Run,
+        id: &str,
+        baseline: &[String],
+        origin: &[u8],
+    ) -> Res<()> {
         for (order, export) in self.exports {
             let at = format!("{id}.{}", order.replace(' ', "_"));
             match export {
                 Ok(bytes) => {
-                    let slides = slides(&bytes, run.limits)?;
+                    let count = slides(&bytes, run.limits)?;
                     run.candidate(Emit {
                         id: &at,
                         bytes: &bytes,
                         steps: &[ORACLE],
                         lane: Lane::Core,
-                        checks: vec![
-                            OfficeCheck::Slides { count: slides },
-                            OfficeCheck::Pages { count: slides },
-                        ],
+                        checks: vec![OfficeCheck::Slides { count }, OfficeCheck::Pages { count }],
                         baseline,
                         origin,
                     })?;

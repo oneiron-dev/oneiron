@@ -37,11 +37,13 @@ mod doc;
 mod export;
 mod log;
 mod merge;
+mod peers;
 mod preview;
 mod verbs;
 
 pub(crate) use doc::deck_log_ops;
 pub(super) use doc::{birth, validate};
+pub use peers::merge_deck_peers;
 pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,

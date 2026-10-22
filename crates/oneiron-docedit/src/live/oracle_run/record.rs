@@ -2,8 +2,8 @@
 //! each step's engine cases, and the run manifest the Office half reads.
 
 use super::checks;
-use super::schema::{SchemaEvidence, Validator};
 use super::journal::{self, CaseLine, Header, JOURNAL_SCHEMA, Journal, Line, write_atomic};
+use super::schema::{SchemaEvidence, Validator};
 use super::spec::CaseManifest;
 use crate::live::deck_export::{PROJECTOR_VERSION, StepOutcome};
 use crate::retained_opc::{Limits, XmlLimits};

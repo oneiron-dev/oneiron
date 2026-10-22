@@ -217,7 +217,11 @@ pub(super) fn switch_losses(base: &LiveDeck, head: &LiveDeck, result: &LiveDeck)
                 (None, Some(_), Some(_)) => unit_changed(head, result, *id),
                 (Some(b), Some(h), Some(r)) => {
                     fields_lost(b, h, r)
-                        || lost(&base.texts.get(id), &head.texts.get(id), &result.texts.get(id))
+                        || lost(
+                            &base.texts.get(id),
+                            &head.texts.get(id),
+                            &result.texts.get(id),
+                        )
                         || order_lost([base, head, result], *id)
                 }
                 _ => false,
@@ -331,11 +335,13 @@ fn payload_lost(b: &Option<NodePayload>, h: &Option<NodePayload>, r: &Option<Nod
             let ids = |series: &[chart::ChartSeries]| -> Vec<Option<NodeId>> {
                 series.iter().map(|one| one.id).collect()
             };
-            let by_id = |series: &[chart::ChartSeries]| -> BTreeMap<Option<NodeId>, chart::ChartSeries> {
-                series.iter().map(|one| (one.id, one.clone())).collect()
-            };
+            let by_id =
+                |series: &[chart::ChartSeries]| -> BTreeMap<Option<NodeId>, chart::ChartSeries> {
+                    series.iter().map(|one| (one.id, one.clone())).collect()
+                };
             let (mb, mh, mr) = (by_id(sb), by_id(sh), by_id(sr));
-            let keys: BTreeSet<&Option<NodeId>> = mb.keys().chain(mh.keys()).chain(mr.keys()).collect();
+            let keys: BTreeSet<&Option<NodeId>> =
+                mb.keys().chain(mh.keys()).chain(mr.keys()).collect();
             lost(fb, fh, fr)
                 || lost(cb, ch, cr)
                 || lost(ob, oh, or)
@@ -372,11 +378,16 @@ fn table_lost(b: &TableBody, h: &TableBody, r: &TableBody) -> bool {
                 m.iter().copied().collect()
             };
             let (sb, sh, sr) = (sets(&mb), sets(&mh), sets(&mr));
-            sh.difference(&sb).any(|m| !sr.contains(m)) || sb.difference(&sh).any(|m| sr.contains(m))
+            sh.difference(&sb).any(|m| !sr.contains(m))
+                || sb.difference(&sh).any(|m| sr.contains(m))
         }
-        || cells
-            .into_iter()
-            .any(|(row, column)| lost(&b.cell(row, column), &h.cell(row, column), &r.cell(row, column)))
+        || cells.into_iter().any(|(row, column)| {
+            lost(
+                &b.cell(row, column),
+                &h.cell(row, column),
+                &r.cell(row, column),
+            )
+        })
 }
 
 /// The scratch-candidate check before any merge: the fork's actual

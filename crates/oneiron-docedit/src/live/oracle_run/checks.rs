@@ -44,7 +44,11 @@ pub(super) fn corruption(
             diagnostics,
             ..
         } if bound == sha256 => {
-            found.extend(diagnostics.iter().map(|diagnostic| format!("schema: {diagnostic}")));
+            found.extend(
+                diagnostics
+                    .iter()
+                    .map(|diagnostic| format!("schema: {diagnostic}")),
+            );
             None
         }
         SchemaEvidence::Validated { sha256: bound, .. } => Some(format!(
