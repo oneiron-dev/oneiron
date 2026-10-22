@@ -53,7 +53,11 @@ const ANSWER_CHECK_QUEUE: &str = "outbound.connector_elicitation_answer_check";
 const ANSWER_CHECK_QUEUE_VERSION: &str = "v1";
 
 /// The version of the check's question; bump it with its wording.
-const ANSWER_CHECK_VERSION: u32 = 1;
+const ANSWER_CHECK_VERSION: u32 = 2;
+
+/// The release check's generic class: what an answer reads as when only its
+/// field names, not one of its values' shapes, matched.
+const GENERIC_SECRET_SHAPE: &str = "gate.secret_scan.sensitive_env";
 
 /// The derivation domain of the check's correlation.
 const ANSWER_CHECK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-answer-check:v1";
@@ -165,16 +169,63 @@ fn part_text(
 }
 
 /// The wording of an answer's secret-shape check (FIX 3841): the one place
-/// it lives. It quotes no answer and asks for nothing to be done.
-fn answer_check_text(binding: &ConnectorElicitationBinding, digest: &[u8; 32]) -> String {
+/// it lives. It names the shapes matched (FIX 9102), quotes no answer and
+/// asks for nothing to be done.
+fn answer_check_text(
+    binding: &ConnectorElicitationBinding,
+    digest: &[u8; 32],
+    shapes: &[&str],
+) -> String {
+    let matched = if shapes.is_empty() {
+        String::new()
+    } else {
+        format!(" (matched: {})", shapes.join(", "))
+    };
     format!(
         "An answer to connector \"{name}\" (tool \"{tool}\") matched the shape of a \
-         credential or secret in the release check. It went to the connector as given; \
-         nothing held it. Its digest begins {digest}. Is everything okay?",
+         credential or secret in the release check{matched}. It went to the connector as \
+         given; nothing held it. Its digest begins {digest}. Is everything okay?",
         name = clip(&binding.name),
         tool = clip(&binding.tool),
         digest = crate::entity_id::bytes_to_hex_lower(&digest[..4]),
     )
+}
+
+/// The release check's names for the secret shapes `answer` matched, sorted
+/// and each once, never a value (FIX 9102): each key and string read as its
+/// own text, then the whole answer's. A match only its field names make
+/// names the generic class.
+fn secret_shapes(answer: &serde_json::Value) -> Vec<&'static str> {
+    let whole = answer.to_string();
+    let mut texts = vec![whole.as_str()];
+    answer_texts(answer, &mut texts);
+    let mut shapes: std::collections::BTreeSet<&'static str> = texts
+        .into_iter()
+        .filter_map(|text| crate::batch::secret_scan::scan_file_content("", text.as_bytes()))
+        .collect();
+    if shapes.is_empty() && crate::batch::export::redact_credentials(&mut answer.clone()) {
+        shapes.insert(GENERIC_SECRET_SHAPE);
+    }
+    shapes.into_iter().collect()
+}
+
+/// Every key and string in `value`, in order.
+fn answer_texts<'a>(value: &'a serde_json::Value, texts: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(text) => texts.push(text),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                answer_texts(item, texts);
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (key, item) in fields {
+                texts.push(key);
+                answer_texts(item, texts);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `text` in order, in pieces of at most `bytes` bytes on character
@@ -293,7 +344,8 @@ impl Vault {
     /// round `generation` of the live question `handle` whose final bytes
     /// (`digest`) the release check's secret shapes matched (FIX 3841), and
     /// returns its arrival number; the same answer to the same round is the
-    /// same check. It decides nothing: the answer goes whatever the owner
+    /// same check. Its text names the shapes `answer` matched, never a value
+    /// (FIX 9102). It decides nothing: the answer goes whatever the owner
     /// says. Never call it inside a write transaction, nor on the answer's
     /// own path: the ask queue opens its own.
     ///
@@ -306,8 +358,10 @@ impl Vault {
         handle: &str,
         generation: u64,
         digest: [u8; 32],
+        answer: &serde_json::Value,
     ) -> crate::Result<u64> {
         let principal = EntityId::from_hex(&binding.principal_ref)?;
+        let shapes = secret_shapes(answer);
         let correlation = EntityId::derive(
             ANSWER_CHECK_DOMAIN,
             &[handle.as_bytes(), &generation.to_le_bytes(), &digest],
@@ -316,7 +370,7 @@ impl Vault {
             question: DecisionQuestion {
                 id: correlation,
                 version: ANSWER_CHECK_VERSION,
-                text: answer_check_text(binding, &digest),
+                text: answer_check_text(binding, &digest, &shapes),
                 class: DecisionClass::Triage,
                 contract: AnswerContract::Noul,
                 accept_type: false,

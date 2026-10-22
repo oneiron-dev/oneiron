@@ -66,7 +66,7 @@ No path is absolute on the host.
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
 | `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. |
-| `sbom` | `null`: no SBOM is produced yet. |
+| `sbom` | The build's SPDX 2.3 JSON SBOM: `{media_type: "application/spdx+json", path: "sbom.spdx.json", sha256}`, measured again from the file and checked against the receipt; `null` for a build without one. The in-toto provenance statement (`provenance.json`) is named by the receipt. |
 | `provenance` | The build receipt: `{media_type, path: "receipt.json", sha256}`. |
 | `host` | `kvm` (true when every launch form needs `/dev/kvm`; only the vault), `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). |
 | `snapshot` | `qualified` (false), plus the image half of a snapshot's compatibility tuple: the rootfs and kernel BLAKE3, the guest protocol and the storage ABI. A snapshot restores only onto exact values; anything else cold-boots. |

@@ -24,7 +24,7 @@ use crate::engine_executor::holds_reply_content;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::side_table::{ErasedForm, SideTableDbs};
-use crate::store::ResponseCarriage;
+use crate::store::{ResponseCarriage, ResponseScan};
 use crate::task_verb::TaskAskStatus;
 
 /// The error a call whose outcome an erase took replays with.
@@ -46,12 +46,15 @@ pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
 /// previews, the record with each outcome failed and each preview withheld
 /// as the stub its erased disposition keeps whole, a verb's answer keeping
 /// the rows it was served from as the live erased form does (FIX 6535).
-/// `None` for a record with no call and no output, and for one that does not
-/// decode.
-pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
-    let mut record = REPLAY_RECORDS.decode_value(value).ok()?;
+/// No response for a record with no call and no output; a record that does
+/// not decode, or whose stub does not encode, is carried whole as an opaque
+/// response (FIX 6227).
+pub(crate) fn replay_carriage(value: &[u8]) -> ResponseScan {
+    let Ok(mut record) = REPLAY_RECORDS.decode_value(value) else {
+        return ResponseScan::opaque_row();
+    };
     if record.bridge_calls.is_empty() && record.outputs.is_empty() {
-        return None;
+        return ResponseScan::NotResponse;
     }
     for call in &mut record.bridge_calls {
         let rows = match decode_self_dispatch_outcome(&call.outcome) {
@@ -59,12 +62,15 @@ pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
             Ok(_) => None,
             Err(_) => Some(None),
         };
-        call.outcome =
+        let Ok(outcome) =
             self_dispatch_outcome_value(&SelfDispatchOutcome::Failed(SelfFailedResult {
                 effect: call.effect,
                 error: RESPONSE_ERASED.to_owned(),
             }))
-            .ok()?;
+        else {
+            return ResponseScan::opaque_row();
+        };
+        call.outcome = outcome;
         if let Some(rows) = rows {
             keep_erased_answer_rows(&mut call.outcome, rows.as_deref());
         }
@@ -72,8 +78,10 @@ pub(crate) fn replay_carriage(value: &[u8]) -> Option<ResponseCarriage> {
     for output in &mut record.outputs {
         output.preview.text = CODE_RUN_OUTPUT_PREVIEW_ERASED.to_owned();
     }
-    let stub = REPLAY_RECORDS.encode_value(&record).ok()?;
-    Some(ResponseCarriage {
+    let Ok(stub) = REPLAY_RECORDS.encode_value(&record) else {
+        return ResponseScan::opaque_row();
+    };
+    ResponseScan::Decoded(ResponseCarriage {
         keep: 0,
         retired: stub.len(),
         stub,

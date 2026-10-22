@@ -13,7 +13,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::feedback::{
     FeedbackBundle, FeedbackCategory, FeedbackHealerDiagnosis, FeedbackPlatform, IssueCategory,
     ReportDisclosure, ReportDisclosureChoice, ReportIssue, ReportKind, ReportRequest, ReportRoute,
-    ReportStatus,
+    ReportStatus, ReportTextSendBinding,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
@@ -286,12 +286,15 @@ pub fn subject_feedback_bundle(
 /// denied, sends nothing. A metadata bundle carries no vault text, so it
 /// may leave while the issue's text still waits on disclosure; a text
 /// bundle may leave only while the engine's own routed payload discloses
-/// that text to this publisher (approved once, or standing).
+/// that text to this publisher (approved once, or standing). A text bundle's
+/// send carries the binding this answers, so the owner's disclosure is
+/// checked live once more just before its bytes reach the transport (FIX
+/// 8747); a metadata bundle answers none.
 pub fn subject_feedback_send_allowed(
     vault: &Vault,
     issue: &ReportIssue,
     include_text: bool,
-) -> MemoryResult<()> {
+) -> MemoryResult<Option<ReportTextSendBinding>> {
     if matches!(
         issue.review.status,
         ReportStatus::Duplicate | ReportStatus::Rejected
@@ -311,6 +314,7 @@ pub fn subject_feedback_send_allowed(
                 "the quoted report text is not approved for this publisher; decide its disclosure first",
             ));
         }
+        return Ok(ReportTextSendBinding::for_issue(issue)?);
     }
-    Ok(())
+    Ok(None)
 }

@@ -107,6 +107,10 @@ pub struct CheckpointKey {
     /// What a cold managed restore's plan expects of the artifact, for the
     /// key [`CheckpointKey::from_delivered`] made; `None` for every other.
     expected: Option<Box<SourceExpectation>>,
+    /// The least checkpoint sequence a wake or migrate takes (OF-570 (e)):
+    /// set only by [`CheckpointKey::with_wake_sequence_floor`]; `None` for a
+    /// historical restore and a local open, which compare nothing.
+    wake_floor: Option<u64>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -161,6 +165,7 @@ impl CheckpointKey {
             trust: Trust::Nobody,
             opened: Some(opened),
             expected: None,
+            wake_floor: None,
         })
     }
 
@@ -197,7 +202,21 @@ impl CheckpointKey {
             trust: Trust::Pinned(expected.signer_pins.clone()),
             opened: Some(opened),
             expected: Some(Box::new(expected.clone())),
+            wake_floor: None,
         })
+    }
+
+    /// This key, refusing an artifact whose signed checkpoint sequence is
+    /// below `floor` (OF-570 (e)): the explicit floor a wake or migrate
+    /// supervisor gives from the copy it verified, so an older copy of the
+    /// same vault is never woken in its place. The comparison runs once the
+    /// signature and every binding checked, before the manifest opens; a
+    /// copy below it is refused as [`CheckpointSequenceBelowFloor`]. Nothing
+    /// else sets one: a historical restore and a local open compare nothing.
+    #[must_use]
+    pub fn with_wake_sequence_floor(mut self, floor: u64) -> Self {
+        self.wake_floor = Some(floor);
+        self
     }
 
     /// The plan's expectation, for a key [`Self::from_delivered`] made.
@@ -270,6 +289,7 @@ impl Vault {
             trust: Trust::Device(self.device_keystore()?),
             opened: None,
             expected: None,
+            wake_floor: None,
         })
     }
 
@@ -289,10 +309,51 @@ impl Vault {
                 trust: Trust::Nobody,
                 opened: None,
                 expected: None,
+                wake_floor: None,
             },
         ))
     }
 }
+
+/// Why a wake or migrate refused an artifact (OF-570 (e)): its signed
+/// checkpoint sequence is below the explicit floor its key carries
+/// ([`CheckpointKey::with_wake_sequence_floor`]). It comes as an
+/// [`std::io::ErrorKind::InvalidData`] error; [`Self::of`] reads it back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CheckpointSequenceBelowFloor {
+    /// The least sequence the wake or migrate takes.
+    pub floor: u64,
+    /// The sequence the artifact's verified commitment signs.
+    pub observed: u64,
+}
+
+impl CheckpointSequenceBelowFloor {
+    /// This refusal, if `error` is one.
+    #[must_use]
+    pub fn of(error: &Error) -> Option<&Self> {
+        let Error::Io(io) = error else {
+            return None;
+        };
+        io.get_ref()?.downcast_ref::<Self>()
+    }
+
+    fn into_error(self) -> Error {
+        Error::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, self))
+    }
+}
+
+impl std::fmt::Display for CheckpointSequenceBelowFloor {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "the checkpoint's signed sequence {} is below the floor {} this wake or migrate \
+             takes: an older copy of the vault",
+            self.observed, self.floor
+        )
+    }
+}
+
+impl std::error::Error for CheckpointSequenceBelowFloor {}
 
 /// One stream's line in the manifest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,6 +442,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) bodies: SealedBodies<'k>,
     /// The manifest's custody requirement (KS-4).
     pub(super) custody: Option<crate::store::CustodyRequirement>,
+    /// The checkpoint sequence its verified commitment signs (OF-570 (e)).
+    pub(super) sequence: u64,
     /// The payload compartments it carries, apart from its bodies (KS-7).
     #[allow(dead_code, reason = "KS7-5 opens the compartments")]
     pub(super) payload: Option<SealedPayload<'k>>,
@@ -464,6 +527,18 @@ pub(super) fn open_artifact_file(
     // artifact restores to.
     if commitment.registry_binding != prelude.registry_binding {
         return Err(binding_mismatch());
+    }
+    // An explicit wake or migrate floor (OF-570 (e)) is compared with the
+    // signed sequence once every check above passed, before the manifest
+    // opens.
+    if let Some(floor) = key.wake_floor
+        && commitment.sequence < floor
+    {
+        return Err(CheckpointSequenceBelowFloor {
+            floor,
+            observed: commitment.sequence,
+        }
+        .into_error());
     }
     let manifest: Manifest =
         rmp_serde::from_slice(&sealer.open(MANIFEST_STREAM, 0, &manifest_bytes)?)
@@ -554,6 +629,7 @@ pub(super) fn open_artifact_file(
             streams,
         },
         custody: manifest.custody,
+        sequence: commitment.sequence,
         payload,
     })
 }

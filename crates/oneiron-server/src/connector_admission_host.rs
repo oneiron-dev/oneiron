@@ -312,26 +312,10 @@ pub(crate) fn slate_manifest(
     SlateManifest::new(rows, resolved.declares_elicitation())
 }
 
-/// The parameters an `x-mcp-header` annotation sends as headers.
+/// The parameters an `x-mcp-header` annotation sends as headers, in the root
+/// `properties` or any branch a call may meet (FIX 8810).
 fn header_parameters(schema: &Value) -> Vec<String> {
-    let mut names: Vec<String> = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .map(|properties| {
-            properties
-                .iter()
-                .filter(|(_, property)| {
-                    matches!(
-                        property.get("x-mcp-header"),
-                        Some(Value::Bool(true) | Value::String(_))
-                    )
-                })
-                .map(|(name, _)| name.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    names.sort();
-    names
+    oneiron::outbound_consent::tool_call::header_parameters(schema)
 }
 
 pub(crate) use oneiron::connector_key::qualification::ConnectorQualificationKit as QualificationKit;

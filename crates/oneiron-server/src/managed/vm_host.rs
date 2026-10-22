@@ -120,10 +120,13 @@ pub struct VaultVmConfig {
     /// `--settings-file`, and under `seal/` `key.pem`, `chain.pem`,
     /// `trust.pem` and `organ` as the matching `--seal-*-file` and
     /// `--seal-organ` flags, the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`, and the one-line
+    /// `--seal-tsa-url` and `--seal-signing-url`, the one-line
     /// `oauth-resource-indicator` and `kit-bundle-public-urls` (the host's
     /// public https origin, and the comma-separated URLs a kit dials) as the
-    /// flags of those names. Files a settings path names may sit beside it.
+    /// flags of those names, and each line of `trusted-organ-builds`, an organ
+    /// build's blake3, as its own `--trusted-organ-build` (FIX 7889, an image
+    /// whose manifest names `vm_trusted_organ_builds_revision`). Files a
+    /// settings path names may sit beside it.
     /// The guest's bootstrap reads its typed files itself: `network.json`
     /// (below), and the managed profile's five files (FIX 6809), which give
     /// the engine its `--organization-owner`, `--member-vault`,

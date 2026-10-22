@@ -26,8 +26,8 @@ use crate::error::Error;
 use crate::outbound_intent_ledger::IntentLedgerError;
 
 use super::connector_call::{
-    ConnectorAwaitingInput, ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall,
-    SettledConnectorCall,
+    ACKNOWLEDGED_CALLS, AcknowledgedConnectorCall, ConnectorAwaitingInput, ConnectorCallOutcome,
+    PENDING_CALLS, PendingConnectorCall, SettledConnectorCall,
 };
 
 /// The round of questions one call's connector asked, on the call's row:
@@ -165,6 +165,30 @@ impl Vault {
         })
     }
 
+    /// Settles the call `call_ref` whose questions `handle` names as
+    /// refused for `reason`: the answer's re-send of the original call never
+    /// went, because the call's grant no longer admits it (FIX 8226). `true`
+    /// when it settled it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn refuse_connector_input(
+        &self,
+        call_ref: &EntityId,
+        handle: &str,
+        reason: &str,
+    ) -> Result<bool, IntentLedgerError> {
+        self.update_connector_input(call_ref, handle, |input, settled| {
+            *settled = Some(SettledConnectorCall::Refused {
+                decision_ref: None,
+                reasons: vec![reason.to_owned()],
+            });
+            input.uncertain = false;
+            true
+        })
+    }
+
     /// Marks the questions `handle` names on the call `call_ref` uncertain:
     /// their live exchange ended unanswered. `true` when it marked them.
     ///
@@ -181,6 +205,38 @@ impl Vault {
             input.uncertain = true;
             marked
         })
+    }
+
+    /// Drops the row of the call `call_ref` whose connector asked for input
+    /// once its settled status has been read (FIX 9158): who called it, its
+    /// receipt-only outcome and the rows it picked stay on its acknowledged
+    /// caller, which its status reads from then on. An unanswered round
+    /// stays. `true` when it dropped the row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn consume_settled_connector_input(
+        &self,
+        call_ref: &EntityId,
+    ) -> Result<bool, IntentLedgerError> {
+        Ok(self.with_write_txn(|txn| {
+            let Some(row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
+                return Ok(false);
+            };
+            if row.input.is_none() || row.settled.is_none() {
+                return Ok(false);
+            }
+            let kept = AcknowledgedConnectorCall {
+                principal_ref: row.principal_ref,
+                name: row.name,
+                tool: row.tool,
+                settled: row.settled,
+                source_rows: row.source_rows,
+            };
+            ACKNOWLEDGED_CALLS.put(&self.store, txn, call_ref, &kept)?;
+            PENDING_CALLS.delete(&self.store, txn, call_ref)
+        })?)
     }
 
     /// Marks every unanswered call's questions uncertain, and returns how

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{EvalSeat, OfferModelPin};
 use crate::consent::AuthenticatedOwner;
+use crate::deletion::names_no_actor;
 use crate::llm::LlmCapability;
 use crate::llm::manifest::{MODEL_ROLES, ModelBinding, ModelRole, read_manifest};
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -250,10 +251,6 @@ pub fn training_offer_switch(
     let txn = vault.store.env.read_txn()?;
     SWITCH.get(&vault.store, &txn, offer)
 }
-
-/// Whether `id`'s entity is no actor, so its erase has no one to take out of
-/// the switches.
-use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the switches (FIX 3520): each switch it approved or
 /// undid keeps its bindings, asset, times and undo state and names no one.
