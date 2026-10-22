@@ -10,7 +10,7 @@ use oneiron::code_run::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::LiveRunRequest;
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::{FacadeApiError, facade_actor};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer, seated_planner};
@@ -127,13 +127,13 @@ pub(crate) async fn vault_fanout_spawn(
     auth: &CoreAuth,
     session: Option<oneiron::EntityId>,
     input: LiveRunRequest<oneiron::task_verb::sdk::FanoutBatchInput>,
-) -> super::host_doors::Listed<oneiron::task_verb::sdk::FanoutBatchView> {
+) -> super::host_doors::support::Listed<oneiron::task_verb::sdk::FanoutBatchView> {
     let decisions_server = Arc::clone(server);
     let locality = auth.locality();
     let proof = match auth.verified_slip() {
         Some(proof) => proof.clone(),
         None => {
-            return super::host_doors::refused(MemoryError::new(
+            return super::host_doors::support::refused(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "a batch requires the attached run's own verified credential",
                 &[],
@@ -142,7 +142,7 @@ pub(crate) async fn vault_fanout_spawn(
     };
     let principal = match facade_actor(server, auth) {
         Ok((actor, _)) => actor,
-        Err(error) => return super::host_doors::refused(error.into_memory_error()),
+        Err(error) => return super::host_doors::support::refused(error.into_memory_error()),
     };
     let answer = on_live_run(
         server,
@@ -160,7 +160,7 @@ pub(crate) async fn vault_fanout_spawn(
         },
     )
     .await;
-    super::host_doors::naming(answer, oneiron::task_verb::sdk::fanout_batch_rows)
+    super::host_doors::support::naming(answer, oneiron::task_verb::sdk::fanout_batch_rows)
 }
 
 /// Resolves exactly the attachment the caller presents, never a caller-named

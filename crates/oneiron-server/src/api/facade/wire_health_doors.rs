@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use oneiron::task_verb::sdk::{EmptyRequest, WireThresholds, WireThresholdsReceipt};
 
-use super::host_doors::{Listed, off_runtime_listing, owner_proof, refused};
+use super::host_doors::support::{Listed, off_runtime_listing, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

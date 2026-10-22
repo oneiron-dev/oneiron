@@ -85,7 +85,7 @@ pub(crate) fn call_verb<'a>(
                 AdmissionTracker::start(vault, actor, class, invocation, &name, digest, fingerprint)
             })
             .await
-            .map_err(|_| super::host_doors::internal(&verb))??;
+            .map_err(|_| super::host_doors::support::internal(&verb))??;
             let mut flight = Flight {
                 tracker,
                 settled: false,
@@ -107,6 +107,6 @@ pub(crate) fn call_verb<'a>(
             result
         })
         .await
-        .map_err(|_| super::host_doors::internal("admission"))?
+        .map_err(|_| super::host_doors::support::internal("admission"))?
     })
 }
