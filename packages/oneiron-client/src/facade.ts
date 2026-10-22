@@ -2800,7 +2800,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.legal_holds.widen": { description: "Adds targets to one of the owner's standing customer legal holds.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.legal_holds.list": { description: "Every legal hold the owner may see.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.legal_holds.log": { description: "The owner-visible legal hold log, oldest first.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.legal_holds.lift_and_erase": { description: "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.legal_holds.lift_and_erase": { description: "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.send": { description: "The owner asks a former peer to drop what an ended pact delivered, and queues the signed ask for delivery.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.sent": { description: "Every courtesy delete ask this vault sent, with its delivery status, for the owner.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.courtesy_delete.incoming": { description: "Every courtesy delete ask a former peer sent, with each named world's stale stamp and the owner's answer.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -4777,7 +4777,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         list: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.list">[K] => invoke("vault.legal_holds.list", input, options, newInvocation()),
         /** The owner-visible legal hold log, oldest first. */
         log: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.legal_holds.log">[K] => invoke("vault.legal_holds.log", input, options, newInvocation()),
-        /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
+        /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
         lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest, options?: O): FacadeReturns<"vault.legal_holds.lift_and_erase">[K] => invoke("vault.legal_holds.lift_and_erase", input, options, newInvocation()),
       },
       courtesy_delete: {
