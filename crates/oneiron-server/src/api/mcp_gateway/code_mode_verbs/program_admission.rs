@@ -426,11 +426,11 @@ fn connector(
     let mut actor = resolved.map_err(registration_unavailable)?;
     if !crate::code_consent_host::ceiling_holds(
         ceiling,
-        &super::verb_hooks::mcp_adapter_ceiling(&actor),
+        &crate::api::mcp_gateway::verb_hooks::mcp_adapter_ceiling(&actor),
     ) {
         return Err(CallerUnavailable::ScopeRefused);
     }
-    super::actor_dispatch::mcp_proof_admits(server, &actor, &auth)
+    crate::api::mcp_gateway::actor_dispatch::mcp_proof_admits(server, &actor, &auth)
         .map_err(|_| CallerUnavailable::CredentialChanged)?;
     actor.auth = Some(auth);
     let landing = crate::api::write_facet::landing_facet(
