@@ -14540,9 +14540,9 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 29,
       "mod": 7,
-      "re-export": 24
+      "re-export": 25
      }
     },
     {
@@ -15109,7 +15109,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "re-export": 4
      }
     },
@@ -15341,6 +15341,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/type_diagnostics.rs",
+     "purpose": "The late-result store of code-mode type feedback (FIX 8277): one row per program step, keyed by its run…",
+     "surface": {
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "WaitDeliveries",
       "WaitDelivery",
@@ -15423,6 +15433,29 @@
      "path": "src/code_run/tests_room_saving.rs",
      "purpose": "ARCH-0052 D4, D5: saving the talk of a room off record while a run keeps speaking into one turn",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DiagnosticCollection",
+      "DiagnosticMeasures",
+      "ProgramPreparationNote",
+      "ProgramStepFeedback",
+      "ProgramStepIdentity",
+      "TypeCheckFacts",
+      "TypeDiagnostic",
+      "TypeDiagnostics"
+     ],
+     "path": "src/code_run/type_diagnostics.rs",
+     "purpose": "A code-mode program step's type feedback (FIX 8277, owner ruling CODE-MODE-TS rule 4): the host's typed…",
+     "surface": {
+      "const": 6,
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 2,
+      "struct": 6
+     }
     },
     {
      "bucket": "s",
@@ -29010,13 +29043,17 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "TypeFeedback"
+     ],
      "path": "src/engine_executor/code_check.rs",
-     "purpose": "Shadow mode: before a generated program runs, it is type-checked against the declarations its prompt teaches",
+     "purpose": "Feedback mode (FIX 8277, owner ruling CODE-MODE-TS rule 4): each generated program is type-checked as its…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 11,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -29204,7 +29241,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 3,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -29385,6 +29422,16 @@
      "purpose": "`host.turn.generate` (ARCH-0080 §5) around the executor's model call",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/type_feedback.rs",
+     "purpose": "A step's type feedback on the executor (FIX 8277): its check started beside its program, its feedback kept…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -39953,7 +40000,7 @@
      "path": "src/memory/code_run_doors/mod.rs",
      "purpose": "The typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "re-export": 1
      }
     },
@@ -39962,12 +40009,13 @@
      "kind": "src",
      "notable": [
       "CodeRunModelHealCountRequest",
-      "CodeRunModelHealCountView"
+      "CodeRunModelHealCountView",
+      "CodeRunTypeDiagnosticsRequest"
      ],
      "path": "src/memory/code_run_doors/types.rs",
      "purpose": "The code run model-heal count request and view records",
      "surface": {
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -68666,7 +68714,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1185
+      "fn": 1186
      }
     },
     {
@@ -74037,7 +74085,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 152,
+     "files": 154,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74359,7 +74407,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75327,7 +75375,7 @@
    },
    "over_bar": 144,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4896,
+   "source_files": 4899,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79230,13 +79278,16 @@
       "Declaration",
       "Diagnostic",
       "Fallback",
-      "ShadowCheck"
+      "FeedbackCheck",
+      "ProgramLanguage"
      ],
      "path": "src/lib.rs",
-     "purpose": "An optional type check of code-mode programs, run beside them",
+     "purpose": "A type check of code-mode programs, run beside them as feedback",
      "surface": {
-      "enum": 4,
-      "fn": 6,
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 8,
       "mod": 1,
       "re-export": 4,
       "struct": 7,
@@ -79253,7 +79304,7 @@
       "StepThen"
      ],
      "path": "src/metrics.rs",
-     "purpose": "Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step…",
+     "purpose": "Feedback-mode counts: how often agent programs fail a check, which diagnostics they carry, how many and how…",
      "surface": {
       "enum": 1,
       "fn": 3,
@@ -79270,7 +79321,7 @@
      "purpose": "Microsoft's TypeScript 7 as an external process: the correctness oracle, and the fallback when the…",
      "surface": {
       "const": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -79281,7 +79332,7 @@
      "path": "src/output.rs",
      "purpose": "Reads `tsc --pretty false` output",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -79338,7 +79389,7 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Shadow-mode counts: how often agent programs fail a check, which diagnostics they carry, and what their step…"
+     "purpose": "Feedback-mode counts: how often agent programs fail a check, which diagnostics they carry, how many and how…"
     },
     "microsoft": {
      "files": 1,
@@ -79377,7 +79428,7 @@
     }
    },
    "over_bar": 0,
-   "purpose": "An optional type check of code-mode programs, run beside them",
+   "purpose": "A type check of code-mode programs, run beside them as feedback",
    "source_files": 9,
    "test_files": 1
   },
@@ -86741,7 +86792,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1154
+      "fn": 1155
      }
     },
     {
@@ -88029,7 +88080,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1155
+      "fn": 1156
      }
     },
     {
@@ -91828,7 +91879,7 @@
      "path": "src/api/facade/code_run_doors.rs",
      "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -105377,6 +105428,7 @@
       "CodeRepoView",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeRunTypeDiagnosticsRequest",
       "CodeRunWorkFile",
       "CodeRunWorkLink",
       "CodeSecretTaintRef",
@@ -105859,7 +105911,9 @@
       "DesignSpec",
       "DetailsOnDevice",
       "DeterministicFallback",
+      "DiagnosticCollection",
       "DiagnosticEventView",
+      "DiagnosticMeasures",
       "DiagnosticsGetRequest",
       "DiagnosticsListRequest",
       "DiaryEntryReceipt",
@@ -107333,6 +107387,7 @@
       "ProgramHeldView",
       "ProgramHoldReleaseAction",
       "ProgramHoldReleaseView",
+      "ProgramPreparationNote",
       "ProgramQueueView",
       "ProgramRecipePin",
       "ProgramResultAvailability",
@@ -107340,6 +107395,8 @@
       "ProgramRunRequest",
       "ProgramRunStateView",
       "ProgramRunView",
+      "ProgramStepFeedback",
+      "ProgramStepIdentity",
       "ProgramStepIssueView",
       "ProgramStepState",
       "ProgramStepView",
@@ -108548,6 +108605,9 @@
       "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
+      "TypeCheckFacts",
+      "TypeDiagnostic",
+      "TypeDiagnostics",
       "TypeInput",
       "TypeOperand",
       "TypeRef",
@@ -108761,8 +108821,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 998,
-      "struct": 3074
+      "enum": 1000,
+      "struct": 3081
      }
     },
     {
