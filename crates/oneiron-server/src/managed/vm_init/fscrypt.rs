@@ -12,17 +12,20 @@ use zeroize::Zeroize;
 
 /// An fscrypt v2 master key identifier: 16 bytes the kernel derives from the
 /// key itself, so a directory and a key cannot pair by mistake.
-pub(super) type KeyIdentifier = [u8; 16];
+pub(in crate::managed) type KeyIdentifier = [u8; 16];
 
 // The request numbers, fixed ABI: _IOR('f', 19, policy_v1) (the kernel reads
 // a v2 policy's version byte first), _IOWR('f', 22, __u8[9]),
-// _IOWR('f', 23, add_key_arg) and _IOWR('f', 24, remove_key_arg).
+// _IOWR('f', 23, add_key_arg), _IOWR('f', 24, remove_key_arg) and
+// _IOWR('f', 26, get_key_status_arg).
 const FS_IOC_SET_ENCRYPTION_POLICY: libc::c_ulong = 0x800c_6613;
 const FS_IOC_GET_ENCRYPTION_POLICY_EX: libc::c_ulong = 0xc009_6616;
 const FS_IOC_ADD_ENCRYPTION_KEY: libc::c_ulong = 0xc050_6617;
 const FS_IOC_REMOVE_ENCRYPTION_KEY: libc::c_ulong = 0xc040_6618;
+const FS_IOC_GET_ENCRYPTION_KEY_STATUS: libc::c_ulong = 0xc080_661a;
 
 const KEY_SPEC_TYPE_IDENTIFIER: u32 = 2;
+const KEY_STATUS_PRESENT: u32 = 2;
 const KEY_REMOVAL_STATUS_FLAG_FILES_BUSY: u32 = 0x1;
 const POLICY_V2: u8 = 2;
 const MODE_AES_256_XTS: u8 = 1;
@@ -81,6 +84,16 @@ struct RemoveKeyArg {
     key_spec: KeySpecifier,
     removal_status_flags: u32,
     reserved: [u32; 5],
+}
+
+#[repr(C)]
+struct KeyStatusArg {
+    key_spec: KeySpecifier,
+    reserved: [u32; 6],
+    status: u32,
+    status_flags: u32,
+    user_count: u32,
+    out_reserved: [u32; 13],
 }
 
 #[repr(C)]
@@ -243,4 +256,44 @@ pub(super) fn set_policy(dir: &File, identifier: &KeyIdentifier) -> io::Result<(
     // SAFETY: `PolicyV2` is `struct fscrypt_policy_v2`, which
     // FS_IOC_SET_ENCRYPTION_POLICY reads after its version byte.
     unsafe { ioctl(dir, FS_IOC_SET_ENCRYPTION_POLICY, &mut arg) }
+}
+
+/// The master key identifier of the fscrypt v2 policy on the directory `dir`
+/// holds, whatever its modes: `None` for a plaintext directory, a v1 policy,
+/// or a filesystem without fscrypt. The host's snapshot protection check
+/// reads it (FIX 9497). Reading it needs no key.
+pub(in crate::managed) fn v2_key(dir: &File) -> io::Result<Option<KeyIdentifier>> {
+    let mut arg = GetPolicyExArg {
+        size: POLICY_V2_SIZE,
+        policy: PolicyV2::ours(&KeyIdentifier::default()),
+    };
+    // SAFETY: as in `policy`: `GetPolicyExArg` is `struct
+    // fscrypt_get_policy_ex_arg` with its union sized for a v2 policy.
+    match unsafe { ioctl(dir, FS_IOC_GET_ENCRYPTION_POLICY_EX, &mut arg) } {
+        Ok(()) if arg.size == POLICY_V2_SIZE && arg.policy.version == POLICY_V2 => {
+            Ok(Some(arg.policy.master_key_identifier))
+        }
+        Ok(()) => Ok(None),
+        Err(error) if error.raw_os_error() == Some(libc::ENODATA) || unsupported(&error) => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether the key `identifier` names is in the keyring of the filesystem
+/// `file` lies on now, so its encrypted files read (FIX 9497).
+pub(in crate::managed) fn key_present(file: &File, identifier: &KeyIdentifier) -> io::Result<bool> {
+    let mut arg = KeyStatusArg {
+        key_spec: KeySpecifier::of(Some(identifier)),
+        reserved: [0; 6],
+        status: 0,
+        status_flags: 0,
+        user_count: 0,
+        out_reserved: [0; 13],
+    };
+    // SAFETY: `KeyStatusArg` is `struct fscrypt_get_key_status_arg`, as
+    // FS_IOC_GET_ENCRYPTION_KEY_STATUS takes.
+    unsafe { ioctl(file, FS_IOC_GET_ENCRYPTION_KEY_STATUS, &mut arg) }?;
+    Ok(arg.status == KEY_STATUS_PRESENT)
 }

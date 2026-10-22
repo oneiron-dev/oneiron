@@ -11,6 +11,9 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
+use super::approval::{
+    ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
+};
 use super::live::{ShapeSources, facet_name, world_name};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
@@ -93,6 +96,11 @@ pub enum ShapeItemState {
 pub struct ShapeApplyItem {
     pub item: ShapePlanItem,
     pub state: ShapeItemState,
+    /// What the item's previewed reach stood on, pinned when the journal
+    /// opened and re-pinned after its own landings (FIX 10200): an approval
+    /// lands only while it still holds. None on a journal from before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval: Option<ShapeApprovalDependencies>,
 }
 
 /// One apply: its journal row, and `vault.shape.apply`'s answer.
@@ -310,13 +318,15 @@ impl Vault {
             sources.unknown();
             journal
         } else {
-            let plan = self.plan_shape_into(Some(&request.plan.seed), visible, sources)?;
+            let (plan, pin) = self.plan_shape_into(Some(&request.plan.seed), visible, sources)?;
             if plan.frontier != request.plan.frontier {
                 return Err(invalid(
                     "the vault has moved since this plan was read; plan again",
                 ));
             }
-            let stored = self.put_shape_seed(author, &plan.seed, now)?;
+            // A row withheld from this caller stays declared (FIX 10199).
+            let seed = self.seed_keeping_withheld(&plan.seed, visible)?;
+            let stored = self.put_shape_seed(author, &seed, now)?;
             // The receipt names the seed revision stored first.
             match EntityId::from_hex(&stored.id) {
                 Ok(seed) => sources.list(seed),
@@ -335,6 +345,7 @@ impl Vault {
                         .map(|item| ShapeApplyItem {
                             item,
                             state: ShapeItemState::Pending,
+                            approval: Some(pin.clone()),
                         })
                         .collect(),
                     done: false,
@@ -444,11 +455,33 @@ impl Vault {
     ) -> Result<()> {
         let author = owner.revalidate(self)?;
         let mut live = self.live_by_target(sources)?;
+        let mut pin = self.shape_approval_now()?;
         for index in 0..journal.items.len() {
             if !open(&journal.items[index].state) {
                 continue;
             }
             let item = journal.items[index].item.clone();
+            // The released re-preview (FIX 10200): an approved widening whose
+            // previewed reach moved under it lands only once planned again.
+            let approved = item.class == ShapeItemClass::Widening
+                && item.door.is_some()
+                && approve.contains(&item.seq);
+            if approved
+                && let Some(state) = check_waiting_shape_approval(
+                    &journal.items[index],
+                    &pin,
+                    live.get(&item.target),
+                    now,
+                )
+            {
+                if matches!(state, ShapeItemState::Landed { .. }) {
+                    let before = std::mem::replace(&mut pin, self.shape_approval_now()?);
+                    repin_waiting(&mut journal.items, index, &before, &pin, true);
+                }
+                journal.items[index].state = state;
+                self.put_shape_apply(journal, now)?;
+                continue;
+            }
             let state = match held(&item) {
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
@@ -500,6 +533,15 @@ impl Vault {
                 }
                 rest => rest,
             };
+            // The journal's own landing moves what the waiting items stand
+            // on: they follow it, and only it.
+            if let ShapeItemState::Landed { receipt, .. } = &state {
+                let own = receipt.starts_with("already");
+                if own || moves_reach(&item.target) {
+                    let before = std::mem::replace(&mut pin, self.shape_approval_now()?);
+                    repin_waiting(&mut journal.items, index, &before, &pin, own);
+                }
+            }
             journal.items[index].state = state;
             self.put_shape_apply(journal, now)?;
         }
