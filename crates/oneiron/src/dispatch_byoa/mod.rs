@@ -75,6 +75,7 @@ mod connector;
 mod dispatcher;
 mod error;
 mod exhaust;
+mod host_claim;
 pub mod official_seats;
 mod record;
 mod repo_binding;

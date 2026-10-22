@@ -1,4 +1,5 @@
 //! Resolved runtime config including the 163-line resolution impl.
+use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 
@@ -36,6 +37,14 @@ pub struct RuntimeConfig {
     #[serde(skip)]
     #[schema(ignore)]
     role_default_explicit_fields: RuntimeRoleDefaultExplicitFields,
+    /// `[runtime.host_destinations]`: the operator's own bindings for the
+    /// processes this host starts for a run (FIX 4552, DOOR-124), each an
+    /// environment variable and the effector the owner's secret binding
+    /// names for its consumer, such as `GH_TOKEN = "cli:gh"`. Empty by
+    /// default, so no run is offered a T1 destination.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub host_destinations: BTreeMap<String, String>,
 }
 
 impl PartialEq for RuntimeConfig {
@@ -44,6 +53,7 @@ impl PartialEq for RuntimeConfig {
             && self.byo_key_env == other.byo_key_env
             && self.byo_key_secret == other.byo_key_secret
             && self.role_defaults == other.role_defaults
+            && self.host_destinations == other.host_destinations
     }
 }
 
@@ -56,6 +66,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("byo_key_env", &self.byo_key_env)
             .field("byo_key_secret", &self.byo_key_secret)
             .field("role_defaults", &self.role_defaults)
+            .field("host_destinations", &self.host_destinations)
             .finish()
     }
 }
@@ -78,10 +89,14 @@ impl RuntimeConfig {
             byo_key_secret: None,
             role_defaults: RuntimeRoleDefaults::for_mode(mode),
             role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
+            host_destinations: BTreeMap::new(),
         }
     }
 
     pub fn apply_override(&mut self, value: RuntimeConfigOverride) {
+        if let Some(host_destinations) = value.host_destinations {
+            self.host_destinations = host_destinations;
+        }
         // The BYO key's source is one choice: a layer that names one replaces
         // both, before a BYO mode looks for one.
         if value.byo_key_env.is_some() || value.byo_key_secret.is_some() {
