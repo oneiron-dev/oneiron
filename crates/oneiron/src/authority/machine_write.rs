@@ -55,8 +55,7 @@ impl Vault {
             .store
             .machine_history_issuer
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(issuer.duplicate()?);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(issuer.duplicate()?);
         Ok(())
     }
 

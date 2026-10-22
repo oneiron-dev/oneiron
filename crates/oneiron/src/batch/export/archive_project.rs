@@ -43,7 +43,11 @@ pub(crate) fn project_stored_archive(
         member.read_to_end(&mut bytes).map_err(|_| invalid())?;
         serde_json::from_slice(&bytes).map_err(|_| invalid())?
     };
-    let listed: BTreeSet<String> = manifest.files.iter().map(|file| file.blake3.clone()).collect();
+    let listed: BTreeSet<String> = manifest
+        .files
+        .iter()
+        .map(|file| file.blake3.clone())
+        .collect();
     let mut referenced = BTreeSet::new();
     let mut members = Vec::with_capacity(manifest.records.len());
     for record in &manifest.records {
@@ -95,9 +99,12 @@ pub(crate) fn project_stored_archive(
         record.blake3 = blake3::hash(&body).to_hex().to_string();
         bodies.push(body);
     }
-    manifest.files.retain(|file| referenced.contains(&file.blake3));
+    manifest
+        .files
+        .retain(|file| referenced.contains(&file.blake3));
     manifest.import_omissions.retain(|omission| {
-        EntityId::from_hex(&omission.entity_id).is_ok_and(|id| !archived.contains(&id) || kept.contains(&id))
+        EntityId::from_hex(&omission.entity_id)
+            .is_ok_and(|id| !archived.contains(&id) || kept.contains(&id))
     });
     let head = serde_json::to_vec_pretty(&manifest).map_err(|_| invalid())?;
     out.start_file(VAULT_ARCHIVE_MANIFEST_PATH, options)

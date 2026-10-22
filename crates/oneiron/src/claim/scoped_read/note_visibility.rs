@@ -64,12 +64,8 @@ impl ScopedRead<'_> {
                 .actor_key
                 .facets_owner_exempt_in(self.vault, txn)
                 .unwrap_or(false)
-            && crate::gate::scoped_read_note_world_witness(
-                policy,
-                &self.actor_key,
-                &worlds,
-                &held,
-            ) == Some(false)
+            && crate::gate::scoped_read_note_world_witness(policy, &self.actor_key, &worlds, &held)
+                == Some(false)
         {
             return Ok(false);
         }

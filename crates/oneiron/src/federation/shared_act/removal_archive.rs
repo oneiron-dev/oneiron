@@ -60,7 +60,10 @@ impl StoredRemovalExport {
     /// frozen positions: the stored copy when it admits every record, none
     /// when it admits none, else the stored archive projected onto those it
     /// admits. A projection that fails is an error, never the whole archive.
-    fn projected(self, admits: &dyn Fn(EntityId, Option<&Scope>) -> bool) -> Result<Option<RemovalExportCopy>> {
+    fn projected(
+        self,
+        admits: &dyn Fn(EntityId, Option<&Scope>) -> bool,
+    ) -> Result<Option<RemovalExportCopy>> {
         let archived: BTreeSet<EntityId> = self.positions.iter().map(|record| record.id).collect();
         let kept: BTreeSet<EntityId> = self
             .positions

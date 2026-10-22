@@ -123,7 +123,8 @@ impl Vault {
     /// id it holds; none before it holds one.
     fn host_issuer_slot(&self) -> Result<KeystoreSlot> {
         let txn = self.store.env.read_txn()?;
-        let install = crate::identity::read_machine_id_in_txn(self, &txn)?.ok_or_else(seed_absent)?;
+        let install =
+            crate::identity::read_machine_id_in_txn(self, &txn)?.ok_or_else(seed_absent)?;
         Ok(self.issuer_slot_for(install))
     }
 
@@ -140,10 +141,8 @@ impl HostSlipIssuer {
     /// The independent seed this issuer was made from, for the slot a
     /// failed re-root puts back.
     fn retained_seed(&self) -> Result<zeroize::Zeroizing<[u8; HOST_ISSUER_SEED_BYTES]>> {
-        let seed: [u8; HOST_ISSUER_SEED_BYTES] = self
-            .secret()
-            .try_into()
-            .map_err(|_| invalid_authority())?;
+        let seed: [u8; HOST_ISSUER_SEED_BYTES] =
+            self.secret().try_into().map_err(|_| invalid_authority())?;
         Ok(zeroize::Zeroizing::new(seed))
     }
 }

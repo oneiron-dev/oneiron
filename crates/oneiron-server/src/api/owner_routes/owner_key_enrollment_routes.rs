@@ -31,8 +31,8 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActAuthority, EnrolledOwnerKey, OWNER_KEY_POSSESSION_PROOF_LEN,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    ActAuthority, EnrolledOwnerKey, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
