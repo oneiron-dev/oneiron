@@ -22602,7 +22602,7 @@
      "purpose": "The unknown-attendee ask (OF-365, ILDF2 P4): a speaker the vault cannot place raises \"who is this?\" to the…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 6,
       "struct": 2
@@ -35368,7 +35368,7 @@
      "purpose": "C9 wait binding, identity-checked response signalling and release",
      "surface": {
       "crate-vis": 1,
-      "fn": 4
+      "fn": 6
      }
     },
     {
@@ -66309,6 +66309,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_authority/consult_executor.rs",
+     "purpose": "The executor standing of a consult, read from its immutable ConsultAssignee fact (FIX 10182), never from its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -66540,7 +66550,7 @@
      "path": "src/task_verb/ask_record/attendee_entry.rs",
      "purpose": "The protected first-entry fact of one attendee in one container (OF-365, ILDF2 P5)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -66648,7 +66658,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AskAuthorityScope",
@@ -66693,10 +66703,20 @@
      "path": "src/task_verb/ask_types.rs",
      "purpose": "Typed asks: response coverage, decision reducers, and policy-bound revisions",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 2,
       "enum": 16,
       "fn": 7,
       "struct": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_types/effective.rs",
+     "purpose": "An ask spec as its class and the engine admit it: `TaskAskSpec::effective`",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -66913,6 +66933,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/consult_ladder_facade/finish.rs",
+     "purpose": "A consult ladder's Finish of a consent-required interruption, checked against the case that interruption…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/consult_party_backfill.rs",
      "purpose": "One-time open migration for consults minted before ConsultAssignee facts existed",
      "surface": {
@@ -67012,7 +67042,7 @@
      "path": "src/task_verb/decision_port.rs",
      "purpose": "The task highway's three surface questions, asked through the shared decision ladder (OF-220)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "struct": 1
      }
     },
@@ -67090,9 +67120,19 @@
      "path": "src/task_verb/fanout_launch.rs",
      "purpose": "Durable fan-out launches: a wave cut held for the owner's launch approval under the vault's approval mode…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/fanout_launch/ask_auto.rs",
+     "purpose": "A multi-recipient ask's Auto launch ruling (FIX 10181)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -67112,7 +67152,7 @@
      "path": "src/task_verb/fanout_launch/hold.rs",
      "purpose": "Held fan-out ask admission and release records",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -67165,7 +67205,7 @@
      "path": "src/task_verb/highway_block.rs",
      "purpose": "Exits from Blocked an owner can drive (OF-220)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12
      }
     },
     {
@@ -67195,7 +67235,7 @@
      "path": "src/task_verb/highway_post/parking.rs",
      "purpose": "Parked posts and agent takes",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -67309,7 +67349,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/task_verb/highway_status.rs",
@@ -67370,7 +67410,7 @@
      "path": "src/task_verb/lifecycle_receipt.rs",
      "purpose": "The durable `TaskLifecycle` receipt (OF-220, ARCH-0079): what one mutating highway call did, what it asked…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -77128,7 +77168,7 @@
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…"
     },
     "task_authority": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77142,7 +77182,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 145,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77317,9 +77357,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 128,
+   "over_bar": 127,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5069,
+   "source_files": 5073,
    "test_files": 902
   },
   "oneiron-android": {
