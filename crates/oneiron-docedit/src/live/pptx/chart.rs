@@ -9,9 +9,11 @@
 //! ([`SeriesBinding`]).
 
 mod categories;
+mod families;
 
 pub(crate) use categories::draws_categories;
 pub use categories::{CategoryField, ChartCategories, ChartCategory, effective_categories};
+pub use families::{BarDirection, BarShape, ChartPlot, ChartView, PlotGrouping, SizeRepresents};
 
 use super::{Conflict, DeckNode, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -20,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// The classic chart families the live deck reads and writes, live-born
-/// charts included.
+/// charts included: the 2D families, their 3D forms, and bubble charts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ChartKind {
@@ -31,6 +33,16 @@ pub enum ChartKind {
     Scatter,
     Doughnut,
     Radar,
+    #[serde(rename = "bar_3d")]
+    Bar3D,
+    #[serde(rename = "line_3d")]
+    Line3D,
+    #[serde(rename = "pie_3d")]
+    Pie3D,
+    #[serde(rename = "area_3d")]
+    Area3D,
+    /// Scatter-like: x values, values and a bubble size per point.
+    Bubble,
 }
 
 impl ChartKind {
@@ -44,12 +56,18 @@ impl ChartKind {
             Self::Scatter => "scatterChart",
             Self::Doughnut => "doughnutChart",
             Self::Radar => "radarChart",
+            Self::Bar3D => "bar3DChart",
+            Self::Line3D => "line3DChart",
+            Self::Pie3D => "pie3DChart",
+            Self::Area3D => "area3DChart",
+            Self::Bubble => "bubbleChart",
         }
     }
 
-    /// Whether the family plots against axes (a pie or doughnut does not).
+    /// Whether the family plots against axes (a pie, 3D pie or doughnut
+    /// does not).
     pub fn has_axes(self) -> bool {
-        !matches!(self, Self::Pie | Self::Doughnut)
+        !matches!(self, Self::Pie | Self::Pie3D | Self::Doughnut)
     }
 }
 
@@ -73,8 +91,9 @@ pub enum ChartSource {
 }
 
 /// One series: its identity, its name, one value per category (or, in a
-/// scatter plot, per x value), its plot family in a combo chart, a scatter
-/// series' x values, and the categories it draws when they are its own.
+/// scatter or bubble plot, per x value), its plot family in a combo chart,
+/// a scatter or bubble series' x values, a bubble series' sizes, and the
+/// categories it draws when they are its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChartSeries {
     /// Its identity within its chart. A series written with none, as a new
@@ -88,13 +107,20 @@ pub struct ChartSeries {
     /// draws this series.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<ChartKind>,
-    /// A scatter series' x values, one per value.
+    /// A scatter or bubble series' x values, one per value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub x: Option<Vec<Option<serde_json::Number>>>,
     /// The categories it draws instead of the chart's: `None` draws the
     /// chart's, an empty set draws its points by index.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub categories: Option<ChartCategories>,
+    /// A bubble series' sizes, one per value; a missing or negative size
+    /// is data, never zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_size: Option<Vec<Option<serde_json::Number>>>,
+    /// Whether a bubble series' bubbles are drawn in 3D.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_3d: Option<bool>,
 }
 
 /// Which series identity each `c:ser` of a bound chart's retained part
@@ -142,6 +168,11 @@ pub enum ChartEdit {
         /// Its own categories; none draws the chart's.
         #[serde(default)]
         categories: Option<ChartCategories>,
+        /// A bubble series' sizes.
+        #[serde(default)]
+        bubble_size: Option<Vec<Option<serde_json::Number>>>,
+        #[serde(default)]
+        bubble_3d: Option<bool>,
     },
     /// A series goes; its identity is never used again in its chart.
     DeleteSeries {
@@ -168,11 +199,34 @@ pub enum ChartEdit {
         #[serde(default)]
         family: Option<ChartKind>,
     },
-    /// A scatter series' x values.
+    /// A scatter or bubble series' x values.
     SetSeriesX {
         series: NodeId,
         #[serde(default)]
         x: Option<Vec<Option<serde_json::Number>>>,
+    },
+    /// A bubble series' sizes, one per value.
+    SetSeriesBubbleSize {
+        series: NodeId,
+        #[serde(default)]
+        bubble_size: Option<Vec<Option<serde_json::Number>>>,
+    },
+    /// Whether a bubble series' bubbles are drawn in 3D.
+    #[serde(rename = "set_series_bubble_3d")]
+    SetSeriesBubble3D {
+        series: NodeId,
+        #[serde(default)]
+        bubble_3d: Option<bool>,
+    },
+    /// One plot's settings, the `nth` plot of its family, written over the
+    /// settings the chart holds for it.
+    SetPlot {
+        plot: ChartPlot,
+    },
+    /// The chart's 3D view.
+    SetView {
+        #[serde(default)]
+        view: Option<ChartView>,
     },
     /// The chart's family, as Change Chart Type sets it.
     SetFamily {
@@ -241,6 +295,9 @@ pub enum SeriesField {
     Values,
     Family,
     X,
+    BubbleSize,
+    #[serde(rename = "bubble_3d")]
+    Bubble3D,
     /// Its own categories or the chart's, or the depth of its own.
     Categories,
     /// Both sides moved it, to different places.
@@ -267,6 +324,7 @@ impl NodePayload {
         } = &mut out
         {
             categories::drawn(*family, categories, series);
+            families::drawn(*family, series);
         }
         out
     }
@@ -331,18 +389,24 @@ pub(crate) fn conflicts(
             categories: base_categories,
             series: base_series,
             source: base_source,
+            plots: base_plots,
+            view: base_view,
         }),
         Some(NodePayload::Chart {
             family: head_family,
             categories: head_categories,
             series: head_series,
             source: head_source,
+            plots: head_plots,
+            view: head_view,
         }),
         Some(NodePayload::Chart {
             family: proposal_family,
             categories: proposal_categories,
             series: proposal_series,
             source: proposal_source,
+            plots: proposal_plots,
+            view: proposal_view,
         }),
     ) = (&base.payload, &head.payload, &proposal.payload)
     else {
@@ -352,8 +416,28 @@ pub(crate) fn conflicts(
         return None;
     }
     let mut out = Vec::new();
+    // One plot's settings compete as a whole, plot by plot.
+    let plot = |plots: &[ChartPlot], at: &ChartPlot| -> Option<ChartPlot> {
+        plots
+            .iter()
+            .find(|held| held.is(at.family, at.nth))
+            .cloned()
+    };
+    let plots_compete = base_plots
+        .iter()
+        .chain(head_plots)
+        .chain(proposal_plots)
+        .any(|at| {
+            competing(
+                &plot(base_plots, at),
+                &plot(head_plots, at),
+                &plot(proposal_plots, at),
+            )
+        });
     if competing(base_family, head_family, proposal_family)
         || competing(base_source, head_source, proposal_source)
+        || competing(base_view, head_view, proposal_view)
+        || plots_compete
     {
         out.push(Conflict::PayloadVsPayload { node });
     }
@@ -408,6 +492,14 @@ pub(crate) fn conflicts(
                         competing(&was.family, &head.family, &proposal.family),
                     ),
                     (SeriesField::X, competing(&was.x, &head.x, &proposal.x)),
+                    (
+                        SeriesField::BubbleSize,
+                        competing(&was.bubble_size, &head.bubble_size, &proposal.bubble_size),
+                    ),
+                    (
+                        SeriesField::Bubble3D,
+                        competing(&was.bubble_3d, &head.bubble_3d, &proposal.bubble_3d),
+                    ),
                 ] {
                     if both {
                         out.push(series(field));

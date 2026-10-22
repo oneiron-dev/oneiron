@@ -2,23 +2,26 @@
 //! FIX 3493): its plots, axes and series, and its own embedded workbook
 //! edited in place or rebuilt.
 
+use super::axes::{PlotAxes, plot_axes};
 use super::dataset::{self, Refs, workbook_dataset};
+use super::families::{self, bit};
 use super::layout::{self, Layout, Resolved, Wanted, first_category, wanted};
+use super::retained::{Slots, retained};
 use super::{
-    Points, READ_BACK, SHEET, Writer, axes, close, format_code, fresh_plot, int, is_axis,
-    kept_plot, kept_ser, own_workbook, piece, remap, retyped_axis, same_data, series, workbook,
+    Points, READ_BACK, SHEET, Writer, close, format_code, fresh_plot, int, is_axis, kept_plot,
+    own_workbook, piece, remap, retyped_axis, same_data, series, workbook,
 };
 use crate::edit::xml;
 use crate::live::LiveError;
 use crate::live::conversion::{Conversion, RebuildReason};
 use crate::live::convert;
-use crate::live::held::{self, C, children};
+use crate::live::held::{self, C};
 use crate::live::pptx::{
     ChartKind, ChartSource, NodeId, NodePayload, SeriesBinding, WRITTEN_FRAME,
 };
 use crate::native_patch::{chart_data, chart_workbook};
 use crate::retained_opc::Package;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 /// Rewrite a written chart's part to `payload`: its plots as [`plot_plan`]
 /// lays them out (a kept plot's series in place with their formatting, a
@@ -159,6 +162,8 @@ fn rewrite(
         categories,
         series,
         source,
+        plots: settings,
+        view,
     } = payload
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
@@ -241,67 +246,26 @@ fn rewrite(
         .filter_map(|(at, _)| int(&tree, at, "idx").max(int(&tree, at, "order")))
         .max()
         .map_or(0, |top| top.saturating_add(1));
-    // The axes each plot plots on: a held plot's own, another plot's of the
-    // same kind, or a new pair, each id above every id the chart holds. A
-    // held x axis turns between a category and a value axis with its plot.
-    let held_axes: Vec<(u32, usize)> = tree.nodes[area]
-        .children
+    // Each target's place among the targets of its family: the settings
+    // it takes are that plot's ([`ChartPlot`]).
+    let nths: Vec<u32> = targets
         .iter()
-        .copied()
-        .filter(|&at| is_axis(&tree.nodes[at]))
-        .filter_map(|at| Some((int(&tree, at, "axId")?, at)))
+        .enumerate()
+        .map(|(at, target)| {
+            let count = targets[..at]
+                .iter()
+                .filter(|other| other.kind == target.kind)
+                .count();
+            u32::try_from(count).unwrap_or(u32::MAX)
+        })
         .collect();
-    let mut fresh = tree
-        .nodes
-        .iter()
-        .filter(|node| node.is(C, "axId"))
-        .filter_map(|node| node.attr("val")?.trim().parse::<u32>().ok())
-        .max()
-        .map_or(1, |top| top.saturating_add(1));
-    let mut value_x: BTreeMap<u32, bool> = held_axes
-        .iter()
-        .map(|&(id, at)| (id, tree.nodes[at].name == "valAx"))
-        .collect();
-    let mut retyped: BTreeMap<u32, bool> = BTreeMap::new();
-    let mut new_axes = String::new();
-    let mut ids_of: Vec<Vec<u32>> = Vec::with_capacity(targets.len());
-    for target in &targets {
-        let wants_value = target.kind == ChartKind::Scatter;
-        let kept: Vec<u32> = target
-            .held
-            .filter(|&at| plots[at].0.has_axes())
-            .map(|at| {
-                children(&tree, plots[at].1, C, "axId")
-                    .filter_map(|id| tree.nodes[id].attr("val")?.trim().parse().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let shared = ids_of
-            .iter()
-            .find(|ids| {
-                ids.len() >= 2 && value_x.get(&ids[0]).copied().unwrap_or(false) == wants_value
-            })
-            .cloned();
-        let ids = if !target.kind.has_axes() {
-            Vec::new()
-        } else if let Some(&x) = kept.first() {
-            if value_x.get(&x).copied().unwrap_or(false) != wants_value {
-                retyped.insert(x, wants_value);
-                value_x.insert(x, wants_value);
-            }
-            kept
-        } else if let Some(ids) = shared {
-            ids
-        } else {
-            let secondary = ids_of.iter().any(|ids| !ids.is_empty());
-            new_axes.push_str(&axes(&writer, fresh, wants_value, secondary));
-            value_x.insert(fresh, wants_value);
-            let ids = vec![fresh, fresh.saturating_add(1)];
-            fresh = fresh.saturating_add(2);
-            ids
-        };
-        ids_of.push(ids);
-    }
+    let PlotAxes {
+        held: held_axes,
+        ids: ids_of,
+        kept: held_ids,
+        retyped,
+        new: new_axes,
+    } = plot_axes(&tree, area, (&plots, &targets), (&nths, settings), &writer);
     // The display order follows the live order. Each survivor keeps its own
     // `c:order` while the survivors keep the order the part holds them in
     // (no series moved) and every new series follows them; else each series
@@ -358,7 +322,7 @@ fn rewrite(
                     &rebuilt
                 }
             };
-            let scatter = kind == ChartKind::Scatter;
+            let scatter = kind.draws_x();
             let (cat_name, val_name) = if scatter {
                 ("xVal", "yVal")
             } else {
@@ -401,40 +365,91 @@ fn rewrite(
                 &format_code(&bytes, &tree, val_slot),
             );
             let tx = writer.tx(&line.name, refs.name.as_deref());
+            // A bubble series' sizes, as its values are written; and its 3D
+            // bubbles, as the model sets them.
+            let bubble = kind == ChartKind::Bubble;
+            let size_xml = match line.size.as_ref().filter(|_| bubble) {
+                Some(size) => writer.slot(
+                    "bubbleSize",
+                    true,
+                    refs.size.as_deref(),
+                    size,
+                    &format_code(
+                        &bytes,
+                        &tree,
+                        seat.template
+                            .and_then(|ser| xml::child(&tree, ser, C, "bubbleSize")),
+                    ),
+                ),
+                None => String::new(),
+            };
+            let bubble_3d = series[index].bubble_3d.filter(|_| bubble);
             // A survivor's point formatting and labels follow its category
             // points by identity; without that evidence, its points by place.
             let points = Points {
                 count: line.values.len(),
                 remap: remap(bound, series[index].id, set),
             };
-            // A survivor keeps its own series' bytes in the plot that held
-            // it; drawn in another plot, it is formatted after its own.
+            // A survivor is written over its own series' bytes, in the plot
+            // that held it or moved to another (FIX 8594); a new series is
+            // formatted after its template.
             let own_plot = seat.held.and_then(|ser| tree.nodes[ser].parent);
             let in_kept = kept.is_some_and(|at| own_plot == Some(plots[at].1));
-            sers.extend(match seat.held.filter(|_| in_kept) {
-                Some(ser) => kept_ser(
+            let from = own_plot
+                .and_then(|plot| held::plot_family(&tree.nodes[plot].name))
+                .unwrap_or(kind);
+            sers.extend(match seat.held {
+                Some(ser) => retained(
                     &bytes,
                     &tree,
                     ser,
                     (idx, order),
                     &writer,
-                    [&tx, &cat_xml, &val_xml],
+                    (from, kind, !in_kept),
+                    &Slots {
+                        tx: &tx,
+                        cat: &cat_xml,
+                        val: &val_xml,
+                        size: &size_xml,
+                        bubble_3d,
+                    },
                     &points,
                 )?,
-                None => series::fresh(
-                    &bytes,
-                    &tree,
-                    seat.template,
-                    kind,
-                    &writer,
-                    (idx, order),
-                    [&tx, &cat_xml, &val_xml],
-                ),
+                None => {
+                    let tail = match bubble_3d {
+                        Some(on) => format!(
+                            r#"{size_xml}<{} val="{}"/>"#,
+                            writer.el("bubble3D"),
+                            bit(on)
+                        ),
+                        None => size_xml,
+                    };
+                    series::fresh(
+                        &bytes,
+                        &tree,
+                        seat.template,
+                        kind,
+                        &writer,
+                        (idx, order),
+                        [&tx, &cat_xml, &val_xml, &tail],
+                    )
+                }
             });
         }
+        let place = (kind, nths[at_target]);
+        let ids = &ids_of[at_target];
         plot_xml.push(match kept {
-            Some(at) => kept_plot(&bytes, &tree, plots[at].1, &sers),
-            None => fresh_plot(kind, &writer, &sers, &ids_of[at_target]),
+            Some(at) => kept_plot(
+                &bytes,
+                &tree,
+                plots[at].1,
+                place,
+                &sers,
+                settings,
+                (held_ids[at_target] != *ids).then_some(ids.as_slice()),
+                &writer,
+            )?,
+            None => fresh_plot(place, &writer, &sers, ids, settings),
         });
     }
     // The axes: each held axis a plot still plots on (turned where its plot
@@ -446,7 +461,7 @@ fn rewrite(
             continue;
         }
         match retyped.get(&id) {
-            Some(&value) => axes_xml.extend(retyped_axis(&bytes, &tree, at, value, &writer)),
+            Some(&value) => axes_xml.extend(retyped_axis(&bytes, &tree, at, value, &writer)?),
             None => axes_xml.extend_from_slice(piece(&bytes, &tree, at)),
         }
     }
@@ -481,7 +496,9 @@ fn rewrite(
         out.extend(xml);
     }
     out.extend(close(&tree.nodes[area]));
-    let next = xml::splice(&bytes, vec![(tree.nodes[area].span.clone(), out)])?;
+    let mut splices = vec![(tree.nodes[area].span.clone(), out)];
+    splices.extend(families::view(&bytes, &tree, view.as_ref(), &writer)?);
+    let next = xml::splice(&bytes, splices)?;
     package.replace_xml_part(chart, next)?;
     if let Some(book) = &book {
         let (workbook, notes) = match edit {
@@ -511,7 +528,14 @@ fn rewrite(
         let agree = read
             .series
             .iter()
-            .flat_map(|line| [&line.name, &line.categories, &line.values])
+            .flat_map(|line| {
+                [
+                    &line.name,
+                    &line.categories,
+                    &line.values,
+                    &line.bubble_size,
+                ]
+            })
             .flatten()
             .all(|sequence| {
                 sequence
@@ -531,6 +555,8 @@ fn rewrite(
         categories: categories.clone(),
         series: emitted.iter().map(|&index| series[index].clone()).collect(),
         source: *source,
+        plots: settings.clone(),
+        view: *view,
     };
     let read = held::chart(package, chart)?.ok_or(LiveError::Invalid(READ_BACK))?;
     if !same_data(&read, &written) {

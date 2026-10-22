@@ -125,7 +125,11 @@ pub(super) fn project(
     // Data that lived outside the chart's own workbook moves into a
     // new one, as PowerPoint's Edit Data embeds it.
     let moved = matches!(&have, NodePayload::Chart { source: from, .. } if from != source);
-    if moved || !same_ids || !reshape::same_data(&have, payload) {
+    if moved
+        || !same_ids
+        || !reshape::same_data(&have, payload)
+        || !reshape::same_settings(&have, payload)
+    {
         // Same-length writes through the checked chart writer where
         // they suffice; a shape, order or type change, moved data, a literal
         // sequence or a refused write rewrites the chart whole.
@@ -204,7 +208,12 @@ pub(super) fn born(
     };
     let points = series
         .iter()
-        .map(|line| line.values.len().max(line.x.as_ref().map_or(0, Vec::len)))
+        .map(|line| {
+            line.values
+                .len()
+                .max(line.x.as_ref().map_or(0, Vec::len))
+                .max(line.bubble_size.as_ref().map_or(0, Vec::len))
+        })
         .max()
         .unwrap_or(0)
         .max(1);
@@ -268,7 +277,9 @@ pub(super) fn born(
     work.changed.extend(report.changed_parts);
     // The seed holds one series per live series, in the live order.
     let mut written: Vec<NodeId> = series.iter().filter_map(|line| line.id).collect();
-    if held::chart(&work.package, &chart)?.is_none_or(|read| !reshape::same_data(&read, payload)) {
+    if held::chart(&work.package, &chart)?.is_none_or(|read| {
+        !reshape::same_data(&read, payload) || !reshape::same_settings(&read, payload)
+    }) {
         let (changed, reseeded) = reshape::reseed(work.next_mut(), &chart, payload)?;
         work.changed.extend(changed);
         written = reseeded;

@@ -28,8 +28,9 @@ mod table_ops;
 
 pub(crate) use chart::draws_categories;
 pub use chart::{
-    CategoryField, ChartCategories, ChartCategory, ChartEdit, ChartKind, ChartSeries, ChartSource,
-    SeriesBinding, SeriesField, effective_categories,
+    BarDirection, BarShape, CategoryField, ChartCategories, ChartCategory, ChartEdit, ChartKind,
+    ChartPlot, ChartSeries, ChartSource, ChartView, PlotGrouping, SeriesBinding, SeriesField,
+    SizeRepresents, effective_categories,
 };
 pub use merge::{diff, preflight, preflight_merged};
 pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
@@ -158,7 +159,9 @@ pub enum NodePayload {
     Table(TableBody),
     /// A classic chart: its categories, by identity, each series one value
     /// per category of the set it draws (the chart's, or its own; `None` is
-    /// a missing point), or a scatter series one value per x value.
+    /// a missing point), or a scatter or bubble series one value per x
+    /// value; each plot's own settings, by its family and place; and its 3D
+    /// view.
     Chart {
         family: ChartKind,
         categories: ChartCategories,
@@ -166,6 +169,13 @@ pub enum NodePayload {
         /// Where the data lives; a live-born chart's is its own workbook.
         #[serde(default)]
         source: ChartSource,
+        /// Each plot's settings the model holds, the nth plot of a family
+        /// by itself ([`ChartPlot`]); a plot none names keeps its own.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        plots: Vec<ChartPlot>,
+        /// The chart's 3D view; `None` keeps the one it holds.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        view: Option<ChartView>,
     },
     /// A connector, each end glued to a node on its slide or free. `None`
     /// is a preset outside the written set (or custom geometry), kept as

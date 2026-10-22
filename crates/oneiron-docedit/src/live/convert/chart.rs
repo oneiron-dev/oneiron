@@ -7,8 +7,8 @@ use crate::live::LiveError;
 use crate::live::conversion::Conversion;
 use crate::live::held;
 use crate::live::pptx::{
-    ChartCategories, ChartCategory, ChartKind, ChartSeries, ChartSource, NodeId, NodePayload,
-    WRITTEN_FRAME, effective_categories,
+    ChartCategories, ChartCategory, ChartKind, ChartPlot, ChartSeries, ChartSource, ChartView,
+    NodeId, NodePayload, WRITTEN_FRAME, effective_categories,
 };
 use crate::live::reshape;
 use std::collections::BTreeMap;
@@ -109,7 +109,7 @@ fn settle_categories(
     // Scatter to category.
     let mut shared: Option<Vec<Option<serde_json::Number>>> = None;
     for (line, kind) in lines.iter_mut().zip(kinds) {
-        if *kind == ChartKind::Scatter {
+        if kind.draws_x() {
             continue;
         }
         let empty = match &line.categories {
@@ -139,7 +139,7 @@ fn settle_categories(
     let mut numbered: Option<bool> = None;
     let mut dropped = Vec::new();
     for (line, kind) in lines.iter_mut().zip(kinds) {
-        if *kind == ChartKind::Scatter {
+        if kind.draws_x() {
             if line.x.is_none() {
                 let set = effective_categories(categories, line);
                 if !set.is_empty() {
@@ -175,7 +175,7 @@ fn settle_categories(
         let longest = lines
             .iter()
             .zip(kinds)
-            .filter(|(line, kind)| **kind != ChartKind::Scatter && line.categories.is_none())
+            .filter(|(line, kind)| !kind.draws_x() && line.categories.is_none())
             .map(|(line, _)| line.values.len())
             .max()
             .unwrap_or(0);
@@ -183,7 +183,7 @@ fn settle_categories(
             done.push(Conversion::CategoriesPadded { count: longest });
         }
         for (line, kind) in lines.iter_mut().zip(kinds) {
-            if *kind == ChartKind::Scatter {
+            if kind.draws_x() {
                 continue;
             }
             let count = line.values.len();
@@ -215,6 +215,113 @@ fn settle_categories(
     }
 }
 
+/// Bubble sizes settled with the plots that draw them: a series turned
+/// bubble (or new to a bubble plot) with no sizes takes size 1 for each
+/// point (Engine ruling 10-22); a bubble series' sizes are padded with
+/// missing ones to its values, never with 0 or 1; a series no bubble plot
+/// draws holds none, and the sizes it held are named as dropped.
+fn settle_sizes(
+    was: Option<&NodePayload>,
+    lines: &mut [ChartSeries],
+    kinds: &[ChartKind],
+    done: &mut Vec<Conversion>,
+) {
+    let held_kind = |id: Option<NodeId>| -> Option<ChartKind> {
+        let Some(NodePayload::Chart { family, series, .. }) = was else {
+            return None;
+        };
+        let line = series.iter().find(|line| id.is_some() && line.id == id)?;
+        Some(line.family.unwrap_or(*family))
+    };
+    let mut dropped = Vec::new();
+    for (line, kind) in lines.iter_mut().zip(kinds) {
+        if *kind != ChartKind::Bubble {
+            if line.bubble_size.take().is_some() {
+                dropped.push(line.name.clone());
+            }
+            line.bubble_3d = None;
+            continue;
+        }
+        let count = line.values.len();
+        match &mut line.bubble_size {
+            Some(size) => {
+                if size.len() < count {
+                    size.resize(count, None);
+                }
+            }
+            None if held_kind(line.id) != Some(ChartKind::Bubble) => {
+                line.bubble_size = Some(vec![Some(serde_json::Number::from(1_u8)); count]);
+                done.push(Conversion::BubbleSizesDefaulted {
+                    series: line.name.clone(),
+                    count,
+                });
+            }
+            None => {}
+        }
+    }
+    if !dropped.is_empty() {
+        done.push(Conversion::BubbleSizesDropped { series: dropped });
+    }
+}
+
+/// Each plot's settings as the plots [`reshape::plot_plan`] lays out take
+/// them: a plot keeps its own (the nth plot of its family); a held plot
+/// turned to another family carries its settings over, unless the new
+/// family's plot has its own; each setting a family does not hold is
+/// dropped and named; the settings of a family no plot draws go with it.
+fn settle_plots(
+    held: &[(ChartKind, usize)],
+    targets: &[reshape::PlotTarget],
+    wanted: &[ChartPlot],
+    done: &mut Vec<Conversion>,
+) -> Vec<ChartPlot> {
+    fn nth(kinds: &[ChartKind], at: usize) -> u32 {
+        let count = kinds[..at]
+            .iter()
+            .filter(|kind| **kind == kinds[at])
+            .count();
+        u32::try_from(count).unwrap_or(u32::MAX)
+    }
+    let held_kinds: Vec<ChartKind> = held.iter().map(|&(kind, _)| kind).collect();
+    let kinds: Vec<ChartKind> = targets.iter().map(|target| target.kind).collect();
+    let mut out: Vec<ChartPlot> = wanted
+        .iter()
+        .filter(|plot| kinds.contains(&plot.family))
+        .cloned()
+        .collect();
+    for (at, target) in targets.iter().enumerate() {
+        let Some(from) = target.held.filter(|&from| held_kinds[from] != target.kind) else {
+            continue;
+        };
+        let place = nth(&kinds, at);
+        if out.iter().any(|plot| plot.is(target.kind, place)) {
+            continue;
+        }
+        let was = nth(&held_kinds, from);
+        if let Some(plot) = wanted.iter().find(|plot| plot.is(held_kinds[from], was)) {
+            out.push(ChartPlot {
+                family: target.kind,
+                nth: place,
+                ..plot.clone()
+            });
+        }
+    }
+    let mut settled = Vec::with_capacity(out.len());
+    for plot in out {
+        let (fit, dropped) = plot.fit(plot.family, plot.nth);
+        if !dropped.is_empty() {
+            done.push(Conversion::PlotSettingsDropped {
+                family: plot.family,
+                settings: dropped,
+            });
+        }
+        if !fit.is_empty() {
+            settled.push(fit);
+        }
+    }
+    settled
+}
+
 /// A chart payload written to a node, settled into the form its export
 /// writes and reads back, with what it converted: the plots
 /// [`reshape::plot_plan`] lays out (the series listed plot by plot, each
@@ -234,6 +341,8 @@ pub(in crate::live) fn settle_chart(
         categories,
         series,
         source,
+        plots: settings,
+        view,
     } = wanted
     else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
@@ -299,17 +408,32 @@ pub(in crate::live) fn settle_chart(
         })
         .collect();
     let any_category = if kinds.is_empty() {
-        first != ChartKind::Scatter
+        !first.draws_x()
     } else {
-        kinds.iter().any(|kind| *kind != ChartKind::Scatter)
+        kinds.iter().any(|kind| !kind.draws_x())
     };
     let mut categories = categories.clone();
     settle_categories(&mut categories, &mut lines, &kinds, any_category, &mut done);
+    settle_sizes(was, &mut lines, &kinds, &mut done);
+    let settings = settle_plots(&plots, &targets, settings, &mut done);
+    // A chart turned 3D with no view takes its first 3D plot's default.
+    let turned = was.is_none() || !plots.iter().any(|(kind, _)| kind.is_3d());
+    let view = match targets.iter().find(|target| target.kind.is_3d()) {
+        Some(target) if view.is_none() && turned => {
+            done.push(Conversion::ViewAdded {
+                family: target.kind,
+            });
+            Some(ChartView::fresh(target.kind))
+        }
+        _ => *view,
+    };
     let mut settled = NodePayload::Chart {
         family: first,
         categories,
         series: lines,
         source: *source,
+        plots: settings,
+        view,
     };
     let source = match was {
         None => {

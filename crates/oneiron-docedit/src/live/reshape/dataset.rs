@@ -43,12 +43,14 @@ fn formula(sheet: &str, col: u32, first: usize, last: usize) -> String {
 }
 
 /// The references one rewritten series writes: its name, its categories
-/// or x values, its values. `None` writes a literal.
+/// or x values, its values, a bubble series' sizes. `None` writes a
+/// literal.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Refs {
     pub(super) name: Option<String>,
     pub(super) first: Option<String>,
     pub(super) values: Option<String>,
+    pub(super) size: Option<String>,
 }
 
 impl Refs {
@@ -78,13 +80,19 @@ impl Refs {
             name: Some(formula(sheet, line.y_col, 1, 1)),
             first,
             values: Some(formula(sheet, line.y_col, 2, line.values.len() + 1)),
+            size: line
+                .size
+                .as_ref()
+                .zip(line.size_col)
+                .map(|(size, col)| formula(sheet, col, 2, size.len() + 1)),
         }
     }
 }
 
 /// The rebuilt workbook's data sheet: each category set's levels (the
-/// outermost first), then each series' x column (a scatter series') and
-/// values column, under a header row.
+/// outermost first), then each series' x column (a scatter or bubble
+/// series'), values column and size column (a bubble series'), under a
+/// header row.
 pub(super) fn workbook_dataset(wanted: &Wanted) -> Dataset {
     let Wanted { sets, data, .. } = wanted;
     let mut columns = Vec::new();
@@ -113,6 +121,10 @@ pub(super) fn workbook_dataset(wanted: &Wanted) -> Dataset {
         }
         columns.push(column(line.name.clone(), ColumnKind::Number));
         cells.push(line.values.clone());
+        if let Some(size) = &line.size {
+            columns.push(column(format!("{} (size)", line.name), ColumnKind::Number));
+            cells.push(size.clone());
+        }
     }
     let height = cells.iter().map(Vec::len).max().unwrap_or(0);
     let rows: Vec<Vec<Cell>> = (0..height)

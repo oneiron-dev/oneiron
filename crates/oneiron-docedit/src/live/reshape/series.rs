@@ -22,8 +22,8 @@ const ACCENTS: u8 = 6;
 /// A series written new in a `kind` plot: its own `idx` and `order`, `tx`,
 /// then `template`'s shape properties, marker (in a family that draws one)
 /// and data label settings, its accents stepped on, then the category and
-/// value slots and the family's `smooth`. Without a template, the family's
-/// defaults.
+/// value slots, a bubble series' size slot and 3D setting (`tail`), and the
+/// family's `smooth`. Without a template, the family's defaults.
 pub(super) fn fresh(
     bytes: &[u8],
     tree: &XmlTree,
@@ -31,7 +31,7 @@ pub(super) fn fresh(
     kind: ChartKind,
     writer: &Writer,
     (idx, order): (u32, u32),
-    [tx, cat, val]: [&str; 3],
+    [tx, cat, val, tail]: [&str; 4],
 ) -> Vec<u8> {
     let mut style = Vec::new();
     if let Some(ser) = template {
@@ -69,7 +69,7 @@ pub(super) fn fresh(
     )
     .into_bytes();
     out.extend(style);
-    out.extend(format!("{cat}{val}{smooth}</{ser}>").into_bytes());
+    out.extend(format!("{cat}{val}{tail}{smooth}</{ser}>").into_bytes());
     out
 }
 
@@ -110,7 +110,7 @@ fn labels(bytes: &[u8], tree: &XmlTree, at: usize, same: bool) -> Vec<u8> {
 /// as attributes to declare on a copy of it: the nearest ancestor's where
 /// two declare one prefix. The root's are in scope wherever the copy goes
 /// in this part.
-fn bindings(bytes: &[u8], tree: &XmlTree, at: usize) -> String {
+pub(super) fn bindings(bytes: &[u8], tree: &XmlTree, at: usize) -> String {
     let node = &tree.nodes[at];
     let own = &bytes[node.span.clone()];
     let uses = |prefix: &str| {

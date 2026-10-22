@@ -209,9 +209,9 @@ pub fn effective_categories<'a>(
 }
 
 /// Whether `series`, in a chart of `family`, draws categories: every series
-/// but a scatter series, which draws x values.
+/// but a scatter or bubble series, which draws x values.
 pub(crate) fn draws_categories(family: ChartKind, series: &ChartSeries) -> bool {
-    series.family.unwrap_or(family) != ChartKind::Scatter
+    !series.family.unwrap_or(family).draws_x()
 }
 
 /// The chart as its export draws it after concurrent writers joined: each

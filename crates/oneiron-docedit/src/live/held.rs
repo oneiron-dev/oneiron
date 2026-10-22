@@ -26,7 +26,10 @@ const FRAME_DATA: &[(&str, &str)] = &[(A, "graphic"), (A, "graphicData")];
 mod chart;
 pub(super) mod table;
 
-pub(crate) use chart::{bind, chart, chart_part, descriptor, label, plot_family, plots, points};
+pub(crate) use chart::{
+    bind, chart, chart_part, descriptor, flag, label, plot_family, plot_settings, plots, points,
+    view,
+};
 
 /// A slide part's parsed tree; [`ShapeView::node`] indexes into it.
 pub(crate) fn slide_tree(package: &Package, part: &str) -> Result<XmlTree, LiveError> {

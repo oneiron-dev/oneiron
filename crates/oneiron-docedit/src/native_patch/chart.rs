@@ -34,6 +34,8 @@ pub struct SeriesData {
     pub name: Option<Sequence>,
     pub categories: Option<Sequence>,
     pub values: Option<Sequence>,
+    /// A bubble series' sizes (its `c:bubbleSize`).
+    pub bubble_size: Option<Sequence>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -461,6 +463,11 @@ pub fn chart_data(package: &Package, chart: &str) -> Result<ChartData, NativeRef
                     name: read(&series.name)?,
                     categories: read(&series.categories)?,
                     values: read(&series.values)?,
+                    bubble_size: series
+                        .other
+                        .first()
+                        .map(|seq| imported(&model, &book, seq))
+                        .transpose()?,
                 })
             })
             .collect::<Result<_, NativeRefusal>>()?,

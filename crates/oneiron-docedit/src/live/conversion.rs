@@ -58,6 +58,22 @@ pub enum Conversion {
         kept: ChartSource,
         asked: ChartSource,
     },
+    /// A plot changed family and dropped these settings (as its chart part
+    /// names them) the new family does not hold; its points' data is
+    /// untouched.
+    PlotSettingsDropped {
+        family: ChartKind,
+        settings: Vec<String>,
+    },
+    /// The chart turned 3D with no 3D view, and takes a plot of `family`'s
+    /// default view (CALLS, D9b fresh 3D view).
+    ViewAdded { family: ChartKind },
+    /// A series turned bubble with no sizes: each of its `count` points
+    /// takes size 1 (Engine ruling 10-22).
+    BubbleSizesDefaulted { series: String, count: usize },
+    /// These series left a bubble plot; their bubble sizes are not drawn
+    /// and went.
+    BubbleSizesDropped { series: Vec<String> },
     /// A title or label linked to a cell keeps its text, unlinked.
     TitleLinkDropped,
     /// This many SmartArt nodes' text was written into the data part and
@@ -178,6 +194,11 @@ fn family_name(kind: ChartKind) -> &'static str {
         ChartKind::Scatter => "scatter",
         ChartKind::Doughnut => "doughnut",
         ChartKind::Radar => "radar",
+        ChartKind::Bar3D => "3D bar",
+        ChartKind::Line3D => "3D line",
+        ChartKind::Pie3D => "3D pie",
+        ChartKind::Area3D => "3D area",
+        ChartKind::Bubble => "bubble",
     }
 }
 
@@ -242,6 +263,22 @@ impl Conversion {
                 "chart data stays {}: an edit makes no {} data",
                 source_name(*kept),
                 source_name(*asked)
+            ),
+            Self::PlotSettingsDropped { family, settings } => format!(
+                "the {} plot drops settings it does not hold: {}",
+                family_name(*family),
+                settings.join(", ")
+            ),
+            Self::ViewAdded { family } => format!(
+                "the chart takes a {} chart's default 3D view",
+                family_name(*family)
+            ),
+            Self::BubbleSizesDefaulted { series, count } => format!(
+                "series {series} turned bubble with no sizes: its {count} point(s) take size 1"
+            ),
+            Self::BubbleSizesDropped { series } => format!(
+                "bubble sizes dropped from series {}: they are no longer drawn as bubbles",
+                series.join(", ")
             ),
             Self::TitleLinkDropped => {
                 "a title linked to a cell keeps its text, unlinked".to_owned()

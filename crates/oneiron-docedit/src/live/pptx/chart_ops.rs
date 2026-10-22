@@ -6,7 +6,7 @@
 
 mod categories;
 
-use super::chart::{ChartEdit, ChartSeries};
+use super::chart::{ChartEdit, ChartPlot, ChartSeries};
 use super::table_ops::order;
 use super::{LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -70,6 +70,8 @@ impl ChartEdit {
             categories,
             series,
             source,
+            plots,
+            view,
         } = chart
         else {
             return Err(LiveError::Invalid(NO_CHART));
@@ -86,6 +88,8 @@ impl ChartEdit {
                 family: kind,
                 x,
                 categories: own,
+                bubble_size,
+                bubble_3d,
             } => {
                 let id = match id {
                     Some(id) => *id,
@@ -108,6 +112,8 @@ impl ChartEdit {
                         family: *kind,
                         x: x.clone(),
                         categories: own,
+                        bubble_size: bubble_size.clone(),
+                        bubble_3d: *bubble_3d,
                     },
                 );
             }
@@ -144,6 +150,29 @@ impl ChartEdit {
                     line.x.clone_from(x);
                 }
             }
+            Self::SetSeriesBubbleSize {
+                series: id,
+                bubble_size,
+            } => {
+                if let Some(line) = find(series, *id) {
+                    line.bubble_size.clone_from(bubble_size);
+                }
+            }
+            Self::SetSeriesBubble3D {
+                series: id,
+                bubble_3d,
+            } => {
+                if let Some(line) = find(series, *id) {
+                    line.bubble_3d = *bubble_3d;
+                }
+            }
+            Self::SetPlot { plot } => {
+                plots.retain(|held| !held.is(plot.family, plot.nth));
+                if !plot.is_empty() {
+                    plots.push(plot.clone());
+                }
+            }
+            Self::SetView { view: wanted } => *view = *wanted,
             Self::SetFamily { family: kind } => *family = *kind,
             Self::SetSource { source: wanted } => *source = *wanted,
             // Applied above.
@@ -251,12 +280,16 @@ pub(super) fn lower_chart(
             categories: held_categories,
             series: held_series,
             source: held_source,
+            plots: held_plots,
+            view: held_view,
         },
         NodePayload::Chart {
             family,
             categories,
             series,
             source,
+            plots,
+            view,
         },
     ) = (held, wanted)
     else {
@@ -279,6 +312,38 @@ pub(super) fn lower_chart(
             &mut edits,
             mint,
         );
+    }
+    if view != held_view {
+        emit(
+            ChartEdit::SetView { view: *view },
+            &mut scratch,
+            &mut edits,
+            mint,
+        );
+    }
+    // Each plot's settings where they differ, and a plot `wanted` no longer
+    // names cleared.
+    for plot in plots {
+        if !held_plots.contains(plot) {
+            emit(
+                ChartEdit::SetPlot { plot: plot.clone() },
+                &mut scratch,
+                &mut edits,
+                mint,
+            );
+        }
+    }
+    for plot in held_plots {
+        if !plots.iter().any(|now| now.is(plot.family, plot.nth)) {
+            emit(
+                ChartEdit::SetPlot {
+                    plot: ChartPlot::new(plot.family, plot.nth),
+                },
+                &mut scratch,
+                &mut edits,
+                mint,
+            );
+        }
     }
     for edit in lower_set(None, held_categories, categories, mint) {
         emit(edit, &mut scratch, &mut edits, mint);
@@ -317,6 +382,8 @@ pub(super) fn lower_chart(
                 family: line.and_then(|line| line.family),
                 x: line.and_then(|line| line.x.clone()),
                 categories: line.and_then(|line| line.categories.clone()),
+                bubble_size: line.and_then(|line| line.bubble_size.clone()),
+                bubble_3d: line.and_then(|line| line.bubble_3d),
             }
         },
     );
@@ -377,6 +444,18 @@ pub(super) fn lower_chart(
             edits.push(ChartEdit::SetSeriesX {
                 series: id,
                 x: line.x.clone(),
+            });
+        }
+        if was.bubble_size != line.bubble_size {
+            edits.push(ChartEdit::SetSeriesBubbleSize {
+                series: id,
+                bubble_size: line.bubble_size.clone(),
+            });
+        }
+        if was.bubble_3d != line.bubble_3d {
+            edits.push(ChartEdit::SetSeriesBubble3D {
+                series: id,
+                bubble_3d: line.bubble_3d,
             });
         }
     }
