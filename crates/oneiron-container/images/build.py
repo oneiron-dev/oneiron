@@ -47,7 +47,9 @@ def _enter_userns(*, network: bool) -> None:
         raise HostRefusal("run build.py as a regular user: it needs no root and takes none")
     argv = ["unshare", "--user", "--map-root-user", "--mount", *([] if network else ["--net"]),
             "--", sys.executable, *sys.argv]
-    env = dict(os.environ, ONEIRON_IMAGES_USERNS="1", ONEIRON_IMAGES_OFFLINE="0" if network else "1")
+    # mkosi runs as this uid again, one namespace down (mkosi_run.MKOSI_AS_USER).
+    env = dict(os.environ, ONEIRON_IMAGES_USERNS="1", ONEIRON_IMAGES_OFFLINE="0" if network else "1",
+               ONEIRON_IMAGES_UID=str(os.getuid()), ONEIRON_IMAGES_GID=str(os.getgid()))
     sys.stdout.flush()
     os.execvpe("unshare", argv, env)
 
