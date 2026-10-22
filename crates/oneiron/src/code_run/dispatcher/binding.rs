@@ -162,6 +162,15 @@ impl<'a> HostSelfDispatcher<'a> {
         })
     }
 
+    /// The write token of the leased run this dispatcher serves, from its
+    /// lease, for a write the run makes outside a verb call's envelope (FIX
+    /// 3103); `None` for a run no attempt lease binds.
+    pub(crate) fn run_write_token(&self) -> Option<crate::skill_attribution::RunWriteToken> {
+        self.agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::RunWriteToken::from_lease)
+    }
+
     /// Binds a host-authenticated owner proof to one agent action dispatch.
     /// The guest payload has no field from which it could construct this.
     pub(crate) fn with_authenticated_owner(

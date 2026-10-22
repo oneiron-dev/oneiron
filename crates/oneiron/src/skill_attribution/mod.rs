@@ -136,8 +136,17 @@ pub(crate) use host::run_executor_model;
 pub use host::{bind_agent_run_attribution, witness_agent_run_close};
 mod judge_binding;
 pub(crate) use judge_binding::finalize_run_judge_in_txn;
+mod derivation_witness;
+pub(crate) use derivation_witness::{
+    erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
+};
 mod run_writes;
-pub(crate) use run_writes::{enter_run_writes, note_run_derivations_in_txn, run_derivations};
+pub use run_writes::{RunWriteToken, with_run_write_token};
+pub(crate) use run_writes::{
+    current_run_write_token, enter_run_write_token, enter_run_writes,
+    note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
+    run_derivations,
+};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

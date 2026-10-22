@@ -226,6 +226,7 @@ impl Vault {
                         vector: vector.to_vec(),
                         provenance: provenance.cloned(),
                     },
+                    source_run: None,
                 },
             )?;
             Ok(true)

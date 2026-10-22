@@ -896,7 +896,7 @@ pub(super) fn apply_ops_with_origin(
     }
 
     masked_files.restrict(store, wtxn)?;
-    crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref())?;
+    crate::skill_attribution::note_run_derivations_in_txn(store, wtxn, run_derivations.as_ref());
     // DOOR-101: an owner home pick this batch landed, local or from a peer's
     // log, re-elects this node's MACRO home over the final batch state.
     if crate::authority::authority_cache_generation(store, wtxn)? != authority_generation {

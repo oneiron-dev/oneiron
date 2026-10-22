@@ -160,6 +160,7 @@ pub(super) fn run_bound(
     if model_seat.is_none() && planned.is_none() {
         super::attribution::stamp_seatless_executor(vault, &status.attempt, &config);
     }
+    super::attribution::bind_before_entry(vault, &status.attempt);
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
