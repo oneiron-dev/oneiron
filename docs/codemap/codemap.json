@@ -8203,7 +8203,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/booking/anti_abuse/amendment.rs",
-     "purpose": "—",
+     "purpose": "Booking anti-abuse rule amendments and their owner-stamped activation",
      "surface": {
       "fn": 6
      }
@@ -8217,7 +8217,7 @@
       "EmailValidationEvidence"
      ],
      "path": "src/booking/anti_abuse/evaluation.rs",
-     "purpose": "—",
+     "purpose": "Pure booking abuse evaluation over one request's facts",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
@@ -8243,7 +8243,7 @@
       "BookingQuarantineReceipt"
      ],
      "path": "src/booking/anti_abuse/quarantine.rs",
-     "purpose": "—",
+     "purpose": "Booking quarantine claims and the admission of quarantined submissions",
      "surface": {
       "enum": 1,
       "fn": 2,
@@ -8257,7 +8257,7 @@
       "BookingRateDecision"
      ],
      "path": "src/booking/anti_abuse/rate.rs",
-     "purpose": "—",
+     "purpose": "Booking request counters and the slot-list cache",
      "surface": {
       "crate-vis": 1,
       "enum": 1,
@@ -8277,7 +8277,7 @@
       "RuleAmendmentOutcome"
      ],
      "path": "src/booking/anti_abuse/rules.rs",
-     "purpose": "—",
+     "purpose": "Booking anti-abuse rule vocabulary",
      "surface": {
       "crate-vis": 5,
       "enum": 2,
@@ -8298,7 +8298,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/booking/anti_abuse/storage.rs",
-     "purpose": "—",
+     "purpose": "Private booking anti-abuse rows, keys and digests",
      "surface": {
       "const": 1,
       "crate-vis": 35
@@ -8425,7 +8425,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BookingDecisions",
@@ -8452,9 +8452,20 @@
       "const": 2,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 8,
+      "fn": 7,
+      "re-export": 1,
       "struct": 13,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/booking/constraint/parse.rs",
+     "purpose": "The one constraint parse: a booking request's free text through the decision model into a…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -8573,7 +8584,7 @@
       "AffectedBooking"
      ],
      "path": "src/booking/emergency_reschedule/enumeration.rs",
-     "purpose": "—",
+     "purpose": "Enumeration of the bookings an emergency reschedule affects",
      "surface": {
       "crate-vis": 2,
       "fn": 1,
@@ -8585,7 +8596,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/booking/emergency_reschedule/execution.rs",
-     "purpose": "—",
+     "purpose": "Emergency reschedule effect delivery",
      "surface": {
       "crate-vis": 2,
       "fn": 1
@@ -8625,7 +8636,7 @@
       "EmergencyPlan"
      ],
      "path": "src/booking/emergency_reschedule/planning.rs",
-     "purpose": "—",
+     "purpose": "Emergency reschedule proposal planning and its admitted content",
      "surface": {
       "const": 2,
       "crate-vis": 14,
@@ -8639,7 +8650,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/booking/emergency_reschedule/state.rs",
-     "purpose": "—",
+     "purpose": "Emergency reschedule state and home-authority reads",
      "surface": {
       "crate-vis": 8
      }
@@ -10101,7 +10112,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/calendar/outcome/conditional.rs",
-     "purpose": "—",
+     "purpose": "Conditional calendar event outcome writes",
      "surface": {
       "crate-vis": 3
      }
@@ -10370,7 +10381,7 @@
       "TranscriptParse"
      ],
      "path": "src/calendar/transcript.rs",
-     "purpose": "—",
+     "purpose": "Calendar transcript normalization and ingest",
      "surface": {
       "crate-vis": 1,
       "enum": 2,
@@ -11249,7 +11260,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "Custody",
@@ -11262,8 +11273,19 @@
      "surface": {
       "crate-vis": 13,
       "enum": 3,
-      "fn": 19,
+      "fn": 14,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity/custody/scopes.rs",
+     "purpose": "Delegated custody scope strings: the custody effector per channel and the subject and granted scopes a…",
+     "surface": {
+      "fn": 5
      }
     },
     {
@@ -11338,7 +11360,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/channel_identity/sender.rs",
-     "purpose": "—",
+     "purpose": "Connector sender identity resolution",
      "surface": {
       "crate-vis": 4,
       "fn": 1,
@@ -11643,7 +11665,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GmailDelegatedAdapter",
@@ -11668,6 +11690,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/gmail/provider.rs",
+     "purpose": "The Gmail delegated adapter's provider trait: provisioning, the read pass and the inbound surface events a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "GmailReadAuthority"
      ],
@@ -11680,7 +11710,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GmailReplyThread",
@@ -11696,9 +11726,19 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 18,
+      "fn": 14,
       "struct": 5,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/gmail/send/adapter.rs",
+     "purpose": "The Gmail delegated adapter's send doors: send-token injection, approve-once and batch approvals, and the…",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -17464,7 +17504,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CommitmentProjectionReport",
@@ -17473,10 +17513,20 @@
      "path": "src/commitment_schedule/projection.rs",
      "purpose": "The durable projection layer: series indexing, occurrence minting, and the close hook",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commitment_schedule/projection/doors.rs",
+     "purpose": "Commitment series doors: put, supersede, reconcile and instance close",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -18147,7 +18197,7 @@
       "ConnectorKeySendAdmission"
      ],
      "path": "src/connector_key/accounting.rs",
-     "purpose": "—",
+     "purpose": "Connector key budget admission and spend settlement",
      "surface": {
       "const": 1,
       "crate-vis": 2,
@@ -18176,7 +18226,7 @@
       "ConnectorCharterCompileIssue"
      ],
      "path": "src/connector_key/charter.rs",
-     "purpose": "—",
+     "purpose": "Connector charter compilation and stamped charter constraints",
      "surface": {
       "crate-vis": 6,
       "fn": 1,
@@ -18188,7 +18238,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/codec.rs",
-     "purpose": "—",
+     "purpose": "Connector key body encoding and validation",
      "surface": {
       "const": 2,
       "crate-vis": 1,
@@ -18298,7 +18348,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/lifecycle/mod.rs",
-     "purpose": "—",
+     "purpose": "Connector key lifecycle facade",
      "surface": {
       "crate-vis": 2,
       "re-export": 5
@@ -18351,7 +18401,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorConsentRowView",
@@ -18367,8 +18417,17 @@
       "const": 2,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/lifecycle/tool_grant/doors.rs",
+     "purpose": "The owner's connector tool-consent doors: consenting a key's tools and the consent view a settings screen…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -18390,7 +18449,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorDispatchTelemetry",
@@ -18401,11 +18460,21 @@
       "EffectorPoolCharge"
      ],
      "path": "src/connector_key/meter.rs",
-     "purpose": "—",
+     "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
       "const": 5,
-      "crate-vis": 24,
+      "crate-vis": 20,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/meter/charge.rs",
+     "purpose": "Effector budget preflight and charge: the pooled and per-key passes over the budget rows a dispatch spends",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -18431,7 +18500,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ConnectorQualificationKit",
@@ -18459,8 +18528,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 4,
-      "fn": 3,
-      "re-export": 1,
+      "fn": 1,
+      "re-export": 2,
       "struct": 12,
       "trait": 3
      }
@@ -18477,6 +18546,17 @@
       "const": 3,
       "crate-vis": 11,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/qualification/runner.rs",
+     "purpose": "The qualification runner: the probe sequence a connector must pass, its header, grounding and trace checks…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -18548,7 +18628,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_key/record/mod.rs",
-     "purpose": "—",
+     "purpose": "Connector key record vocabulary facade",
      "surface": {
       "crate-vis": 7,
       "re-export": 2
@@ -18565,7 +18645,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "PackConnectionCheck",
@@ -18577,10 +18657,20 @@
      "purpose": "Guided pack setup's grants and connection checks (OF-378)",
      "surface": {
       "const": 8,
-      "crate-vis": 5,
-      "fn": 6,
+      "fn": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/setup/grants.rs",
+     "purpose": "Pack connection grant and verification doors: allow, bind, verify and the checked-connection reads a pack…",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 5
      }
     },
     {
@@ -18718,7 +18808,7 @@
       "ConnectorKeyGeneration"
      ],
      "path": "src/connector_key/txn.rs",
-     "purpose": "—",
+     "purpose": "Connector key index keys and transaction primitives",
      "surface": {
       "crate-vis": 14,
       "struct": 1
@@ -47366,7 +47456,7 @@
       "UnsupportedOutboundCapability"
      ],
      "path": "src/outbound/capability.rs",
-     "purpose": "—",
+     "purpose": "Outbound capability vocabulary and registry reads",
      "surface": {
       "const": 3,
       "crate-vis": 2,
@@ -47397,7 +47487,7 @@
       "ConnectorSendTaskOutcome"
      ],
      "path": "src/outbound/connector_task.rs",
-     "purpose": "—",
+     "purpose": "The durable connector-send task substrate",
      "surface": {
       "const": 1,
       "crate-vis": 21,
@@ -47411,7 +47501,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound/dispatch_attempt_id.rs",
-     "purpose": "—",
+     "purpose": "Logical-send and attempt identity derivation",
      "surface": {
       "crate-vis": 2
      }
@@ -47593,7 +47683,7 @@
       "OutboundExecutionSink"
      ],
      "path": "src/outbound/dispatch_types.rs",
-     "purpose": "—",
+     "purpose": "Outbound dispatch inputs and outcomes",
      "surface": {
       "crate-vis": 3,
       "enum": 4,
@@ -47609,11 +47699,21 @@
       "ConnectorTaskExecutorError"
      ],
      "path": "src/outbound/executor.rs",
-     "purpose": "—",
+     "purpose": "Connector-send attempt execution",
      "surface": {
       "crate-vis": 4,
       "enum": 1,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/executor/phases.rs",
+     "purpose": "The connector-send executor's per-attempt phases: the dispatch request a claimed task replays, and the…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -47626,7 +47726,7 @@
       "OutboundIntentTrigger"
      ],
      "path": "src/outbound/intent.rs",
-     "purpose": "—",
+     "purpose": "Outbound intent wire vocabulary",
      "surface": {
       "const": 1,
       "enum": 1,
@@ -47636,13 +47736,23 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/manifests.rs",
-     "purpose": "—",
+     "purpose": "Built-in outbound capability manifests",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/manifests/channels.rs",
+     "purpose": "The built-in channel manifests, one builder per capability, in the order…",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -47662,7 +47772,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound/receipt_fields.rs",
-     "purpose": "—",
+     "purpose": "Outbound receipt field projection",
      "surface": {
       "crate-vis": 9
      }
@@ -47840,7 +47950,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound/window_door.rs",
-     "purpose": "—",
+     "purpose": "Delivery-window resolution at the outbound dispatch door",
      "surface": {
       "crate-vis": 7
      }
@@ -47985,30 +48095,15 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "ConnectorAwaitingInput",
-      "ConnectorCallCaller",
-      "ConnectorCallHost",
-      "ConnectorCallInvocation",
-      "ConnectorCallOutcome",
-      "ConnectorCallRequest",
-      "ConnectorCallState",
-      "ConnectorQuestion",
-      "ConnectorToolSchema",
-      "PendingConnectorCallRef",
-      "UntrustedToolResult"
-     ],
+     "notable": [],
      "path": "src/outbound_consent/connector_call.rs",
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
-      "enum": 2,
-      "fn": 7,
-      "struct": 8,
-      "trait": 1
+      "crate-vis": 12,
+      "re-export": 1
      }
     },
     {
@@ -48019,7 +48114,7 @@
      "purpose": "The rows a connector call's passes pick (FIX 5455): the listing a call and its resume answer beside their…",
      "surface": {
       "crate-vis": 1,
-      "fn": 2
+      "fn": 1
      }
     },
     {
@@ -48050,6 +48145,37 @@
      "notable": [],
      "path": "src/outbound_consent/connector_call_consent.rs",
      "purpose": "FIX 990: the owner's `always ask` setting on an admitted connector call",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_delivery.rs",
+     "purpose": "Connector-call resume, the pending listing, delivery acknowledgement and the caller's status read",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_dispatch.rs",
+     "purpose": "A connector dispatch's outcome mapped to a call step and its reason codes",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_driver.rs",
+     "purpose": "The connector-call driver: tool resolution, schema reads and the durable pass that turns a gate decision…",
      "surface": {
       "crate-vis": 4,
       "fn": 1
@@ -48124,6 +48250,41 @@
      "purpose": "Resuming a held connector call the ledger already admitted (ONE-2510)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_start.rs",
+     "purpose": "The connector-call entry doors: a call, its secret-presenting forms and its listing, and the start that…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectorAwaitingInput",
+      "ConnectorCallCaller",
+      "ConnectorCallHost",
+      "ConnectorCallInvocation",
+      "ConnectorCallOutcome",
+      "ConnectorCallRequest",
+      "ConnectorCallState",
+      "ConnectorQuestion",
+      "ConnectorToolSchema",
+      "PendingConnectorCallRef",
+      "UntrustedToolResult"
+     ],
+     "path": "src/outbound_consent/connector_call_types.rs",
+     "purpose": "The connector-call shapes: the request, the host seam, its replies and questions, and the caller's status view",
+     "surface": {
+      "enum": 2,
+      "struct": 8,
+      "trait": 1
      }
     },
     {
@@ -58285,7 +58446,7 @@
       "SkillHubAdapter"
      ],
      "path": "src/skill_hub/adapter.rs",
-     "purpose": "—",
+     "purpose": "The skill hub adapter contract",
      "surface": {
       "fn": 4,
       "struct": 2,
@@ -58442,7 +58603,7 @@
       "HubSyncDisposition"
      ],
      "path": "src/skill_hub/doors.rs",
-     "purpose": "—",
+     "purpose": "Skill hub import, update and dependency doors",
      "surface": {
       "const": 1,
       "crate-vis": 5,
@@ -58542,7 +58703,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/index.rs",
-     "purpose": "—",
+     "purpose": "Skill provenance and capability indexes",
      "surface": {
       "const": 1,
       "crate-vis": 19
@@ -58739,26 +58900,51 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HookActorClass",
-      "HookAuthor",
       "HookOutcomeKind",
       "HookPhase",
       "HookRenderClass",
       "HookSelector",
-      "PackHook",
-      "PackHookBinding"
+      "PackHook"
      ],
      "path": "src/skill_hub/pack_catalog/hooks.rs",
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
+      "crate-vis": 9,
+      "enum": 4,
+      "re-export": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookAuthor"
+     ],
+     "path": "src/skill_hub/pack_catalog/hooks/author.rs",
+     "purpose": "Who a pack hook's outcomes run as: the owner, or a foreign skill publisher",
+     "surface": {
       "const": 1,
-      "crate-vis": 12,
-      "enum": 5,
+      "crate-vis": 1,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PackHookBinding"
+     ],
+     "path": "src/skill_hub/pack_catalog/hooks/bindings.rs",
+     "purpose": "Pack hook bindings: the stored row, its read doors and the owner's bind and enable switches",
+     "surface": {
+      "crate-vis": 3,
       "fn": 6,
-      "struct": 3
+      "struct": 1
      }
     },
     {
@@ -59092,7 +59278,7 @@
       "SkillPackageFormat"
      ],
      "path": "src/skill_hub/package.rs",
-     "purpose": "—",
+     "purpose": "Hub package and capability surface shapes",
      "surface": {
       "crate-vis": 6,
       "enum": 1,
@@ -59138,7 +59324,7 @@
       "TrackedHubRef"
      ],
      "path": "src/skill_hub/record.rs",
-     "purpose": "—",
+     "purpose": "Hub and pinned skill reference vocabulary",
      "surface": {
       "const": 3,
       "crate-vis": 2,
@@ -59279,7 +59465,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/skill_hub/support.rs",
-     "purpose": "—",
+     "purpose": "Bounded hub value parsing helpers",
      "surface": {
       "crate-vis": 9
      }
@@ -59321,7 +59507,7 @@
       "SkillScanReceipt"
      ],
      "path": "src/skill_hub/verdict.rs",
-     "purpose": "—",
+     "purpose": "Skill scan verdict admission",
      "surface": {
       "const": 1,
       "crate-vis": 9,
@@ -75486,9 +75672,9 @@
      "purpose": "—"
     },
     "booking": {
-     "files": 79,
+     "files": 80,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Engine-generic booking module"
     },
@@ -75528,9 +75714,9 @@
      "purpose": "CRM pack engine-side registration home"
     },
     "channel_identity": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)"
     },
@@ -75556,9 +75742,9 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)"
     },
@@ -75682,9 +75868,9 @@
      "purpose": "Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541)"
     },
     "commitment_schedule": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Commitment schedule evaluation and durable projection (CMT-2, ONE-1539)"
     },
@@ -75717,7 +75903,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 39,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76277,7 +76463,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 45,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76291,9 +76477,9 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 26,
+     "files": 31,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
@@ -76641,7 +76827,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 83,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76914,9 +77100,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 139,
+   "over_bar": 129,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5032,
+   "source_files": 5050,
    "test_files": 902
   },
   "oneiron-android": {
