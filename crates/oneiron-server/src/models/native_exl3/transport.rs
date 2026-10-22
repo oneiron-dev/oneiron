@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::llm::SessionOp;
 use oneiron_driver::WorkerLease;
+use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
 use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, Interest};
@@ -235,12 +236,14 @@ impl Channel {
 
 /// How a call's start went wrong.
 pub(super) enum Start {
-    /// Nothing left this side: the worker never saw the call.
-    NotSent,
+    /// Nothing left this side: the worker never saw the call. Carries
+    /// `OpenAiCompatTransportError::NotSent`.
+    NotSent(OpenAiCompatTransportError),
     /// The worker refused it before anything ran, with this body.
     Refused(JsonValue),
-    /// The channel failed after the call went out: it may have run.
-    Cut,
+    /// The channel failed after the call went out, or the worker answered
+    /// with a frame that is neither: it may have run.
+    Cut(OpenAiCompatTransportError),
 }
 
 /// One event of a call in flight.
@@ -254,8 +257,49 @@ pub(super) enum Event {
 }
 
 /// The channel failed, or the worker ended the call some other way, before
-/// its `final`: the call may have run.
-pub(super) struct Cut;
+/// its `final`: the call may have run. Carries what happened.
+pub(super) struct Cut(pub(super) OpenAiCompatTransportError);
+
+/// A failed step before the call left this side, logged.
+fn not_sent(stage: &'static str, cause: impl std::fmt::Display) -> Start {
+    Start::NotSent(logged(OpenAiCompatTransportError::NotSent {
+        stage,
+        detail: cause.to_string(),
+    }))
+}
+
+/// A channel failure after the call went out, logged; `None` is the
+/// worker's close.
+fn io_fault(stage: &'static str, cause: Option<io::Error>) -> OpenAiCompatTransportError {
+    let detail = cause.map_or_else(|| "closed by the worker".to_owned(), |e| e.to_string());
+    logged(OpenAiCompatTransportError::Io { stage, detail })
+}
+
+/// The worker's `refused` body as the typed refusal, logged.
+pub(super) fn refusal(body: &JsonValue) -> OpenAiCompatTransportError {
+    let message = body
+        .get("message")
+        .and_then(JsonValue::as_str)
+        .map_or_else(|| body.to_string(), str::to_owned);
+    logged(OpenAiCompatTransportError::Refused {
+        code: wire::refusal_code(body).to_owned(),
+        message,
+    })
+}
+
+/// A frame the call cannot take where it came, logged.
+fn unexpected(op: &str, at: &str) -> OpenAiCompatTransportError {
+    logged(OpenAiCompatTransportError::UnexpectedFrame(format!(
+        "`{op}` {at}"
+    )))
+}
+
+/// Every native call fault reaches the log with its cause; the caller's
+/// `LlmError` keeps only the retryable cut it always was.
+fn logged(error: OpenAiCompatTransportError) -> OpenAiCompatTransportError {
+    tracing::warn!(%error, "native EXL3 call failed");
+    error
+}
 
 /// One `generate` in flight on its own connection.
 pub(super) struct Call {
@@ -281,9 +325,11 @@ impl Call {
         lease: Option<WorkerLease>,
         session: Option<JsonValue>,
     ) -> Result<Self, Start> {
-        let bytes = serde_json::to_vec(conversation).map_err(|_| Start::NotSent)?;
-        let input = InputRegion::new(&bytes).map_err(|_| Start::NotSent)?;
-        let mut channel = Channel::connect(path).await.map_err(|_| Start::NotSent)?;
+        let bytes = serde_json::to_vec(conversation).map_err(|e| not_sent("encode input", e))?;
+        let input = InputRegion::new(&bytes).map_err(|e| not_sent("input region", e))?;
+        let mut channel = Channel::connect(path)
+            .await
+            .map_err(|e| not_sent("connect", e))?;
         let request_id = next_request_id();
         let mut body = wire::generate_body(request_id, input.len(), params, stream);
         let op = match session {
@@ -304,16 +350,20 @@ impl Call {
             lease,
             ended: false,
         };
-        if sent.is_err() {
+        if let Err(error) = sent {
             call.ended = true;
-            return Err(Start::Cut);
+            return Err(Start::Cut(io_fault("send generate", Some(error))));
         }
         loop {
             let frame = match call.channel_mut().next().await {
                 Ok(Some(frame)) => frame,
-                Ok(None) | Err(_) => {
+                Ok(None) => {
                     call.ended = true;
-                    return Err(Start::Cut);
+                    return Err(Start::Cut(io_fault("await accepted", None)));
+                }
+                Err(error) => {
+                    call.ended = true;
+                    return Err(Start::Cut(io_fault("await accepted", Some(error))));
                 }
             };
             if frame.request_id != request_id {
@@ -329,9 +379,9 @@ impl Call {
                     call.ended = true;
                     return Err(Start::Refused(frame.body));
                 }
-                _ => {
+                op => {
                     call.ended = true;
-                    return Err(Start::Cut);
+                    return Err(Start::Cut(unexpected(op, "before `accepted`")));
                 }
             }
         }
@@ -346,14 +396,21 @@ impl Call {
     /// The call's next event, until its `final`.
     pub(super) async fn next(&mut self) -> Result<Event, Cut> {
         if self.ended {
-            return Err(Cut);
+            return Err(Cut(OpenAiCompatTransportError::Io {
+                stage: "receive",
+                detail: "the call already ended".to_owned(),
+            }));
         }
         loop {
             let frame = match self.channel_mut().next().await {
                 Ok(Some(frame)) => frame,
-                Ok(None) | Err(_) => {
+                Ok(None) => {
                     self.ended = true;
-                    return Err(Cut);
+                    return Err(Cut(io_fault("receive", None)));
+                }
+                Err(error) => {
+                    self.ended = true;
+                    return Err(Cut(io_fault("receive", Some(error))));
                 }
             };
             if frame.request_id != self.request_id {
@@ -376,9 +433,13 @@ impl Call {
                     self.ended = true;
                     return Ok(Event::Final(frame.body));
                 }
-                "released" | "refused" => {
+                "refused" => {
                     self.ended = true;
-                    return Err(Cut);
+                    return Err(Cut(refusal(&frame.body)));
+                }
+                "released" => {
+                    self.ended = true;
+                    return Err(Cut(unexpected("released", "before `final`")));
                 }
                 _ => {}
             }
