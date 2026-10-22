@@ -9303,7 +9303,30 @@
       "crate-vis": 2,
       "enum": 5,
       "fn": 6,
-      "re-export": 3,
+      "re-export": 4,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmissionCaller",
+      "AdmissionSources",
+      "CallerUnavailable",
+      "ProgramAdmissionFiling",
+      "ProgramAdmissionJob",
+      "ProgramAdmissionOutcome",
+      "ProgramAdmissionReceipt",
+      "SourceUnavailable"
+     ],
+     "path": "src/browser_library/admission.rs",
+     "purpose": "The browser program admission job (CUA E8b; DESIGN-2 \"The Coach\", row E8): the Coach proposes a program it…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 4,
+      "fn": 9,
       "struct": 4
      }
     },
@@ -9357,7 +9380,7 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 12,
       "fn": 7,
       "struct": 6
      }
@@ -14529,6 +14552,16 @@
      "surface": {
       "crate-vis": 11,
       "fn": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/browser_admission.rs",
+     "purpose": "A queued browser program admission's run (CUA E8b; DESIGN-2 \"The Coach\", row E8): the write origin each of…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -66643,7 +66676,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 3,
-      "fn": 13,
+      "fn": 14,
       "struct": 2
      }
     },
@@ -75717,7 +75750,7 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "browser_library": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -75836,7 +75869,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 155,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77133,7 +77166,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5053,
+   "source_files": 5055,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91656,6 +91689,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/browser_program_admission.rs",
+     "purpose": "The browser program admission worker (CUA E8b; DESIGN-2 \"The Coach\", row E8): it runs each program the Coach…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/coach_heal.rs",
      "purpose": "The host Coach (ARCH-0066 #coach, OF-418)",
      "surface": {
@@ -92164,7 +92207,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 3,
       "re-export": 1,
       "struct": 2
@@ -96070,6 +96113,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/program_admission.rs",
+     "purpose": "A queued browser program admission's run (CUA E8b; DESIGN-2 \"The Coach\", row E8)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -96116,7 +96169,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs/solved_runs.rs",
      "purpose": "A code-mode run's solved-run capture (CUA E8a; DESIGN-2 \"The Coach\", row E8)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -96306,7 +96359,7 @@
      "path": "src/api/mcp_gateway/verb_hooks.rs",
      "purpose": "The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -105638,7 +105691,7 @@
      "path": "src/server/resident_pump/browser_workflow.rs",
      "purpose": "A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -105698,7 +105751,7 @@
      "path": "src/server/run_host_door.rs",
      "purpose": "A pumped agent run's host door (OF-533): every host row of the SDK verb table, served for the run's own…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -106664,14 +106717,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 95,
+     "files": 96,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 561,
+     "files": 562,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -107142,7 +107195,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1247,
+   "source_files": 1249,
    "test_files": 182
   },
   "oneiron-spawn": {
