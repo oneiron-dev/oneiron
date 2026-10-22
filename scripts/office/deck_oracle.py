@@ -7,6 +7,7 @@ Repair, permission prompts, and unrelated open decks cannot be clean opens.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import json
@@ -25,6 +26,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from deck_session import OBSERVER_SECONDS, expired_detail, observe, windows  # noqa: E402  (beside this file)
 APP = Path('/Applications/Microsoft PowerPoint.app')
 BUNDLE = 'com.microsoft.Powerpoint'
 VERSION = 'one-2531-v1'
@@ -279,16 +282,6 @@ def app_pid() -> int | None:
     return int(r.stdout.splitlines()[0]) if r.returncode == 0 and r.stdout.strip() else None
 
 
-def windows(observer: str, pid: int, timeout: float | None = None) -> list[str]:
-    if observer == 'cua':
-        data = json.loads(command(['cua-driver', 'call', 'list_windows', json.dumps({'pid': pid})],
-                                  min(6, timeout) if timeout is not None else 6))
-        return ['WINDOW:' + w['title'] for w in data['windows'] if w.get('title')]
-    script = 'tell application "System Events"\n    tell process "Microsoft PowerPoint"\n        set labels to {}\n        repeat with w in every window\n            set windowKind to "WINDOW:"\n            if subrole of w is "AXDialog" then set windowKind to "DIALOG:"\n            set windowTitle to name of w\n            if windowTitle is not missing value then set end of labels to windowKind & (windowTitle as text)\n            if windowKind is "DIALOG:" then\n                set textValues to get value of every static text of w\n                repeat with textEntry in textValues\n                    set actualText to contents of textEntry\n                    if actualText is not missing value then set end of labels to "DIALOG:" & (actualText as text)\n                end repeat\n            end if\n        end repeat\n    end tell\nend tell\nset AppleScript\'s text item delimiters to (ASCII character 30)\nset resultText to labels as text\nset AppleScript\'s text item delimiters to ""\nreturn resultText'
-    text = command(['osascript', '-e', script], min(5, timeout) if timeout is not None else 5)
-    return [entry.strip() for entry in text.split('\x1e') if entry.strip()]
-
-
 def dialog_class(titles: list[str], expected_stem: str) -> str | None:
     allowed = {expected_stem.lower(), expected_stem.lower() + '.pptx',
                'reference', 'reference.pptx', '', 'presentation1'}
@@ -323,7 +316,11 @@ def stop_script(proc: subprocess.Popen) -> None:
 
 
 def run_script(source: Path, action: str, target: Path | None, observer: str,
-               deadline: float) -> tuple[str | None, str]:
+               deadline: float, dialogs=None) -> tuple[str | None, str]:
+    """One AppleScript action, watched until it ends or the deadline passes.
+    An observer that fails (a window closing under it, PowerPoint not
+    answering) is read again within the deadline, never taken as the deck's;
+    a known first-run dialog `dialogs` dismisses is looked past."""
     if time.monotonic() >= deadline:
         return 'timed_out', f'{action} exceeded deadline before launch'
     args = ['osascript', str(ROOT / 'powerpoint.applescript'), action, str(source)]
@@ -332,31 +329,31 @@ def run_script(source: Path, action: str, target: Path | None, observer: str,
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     classification = None
     detail = ''
+    unread: Exception | None = None
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            classification, detail = 'timed_out', f'{action} exceeded deadline'
+            classification, detail = 'timed_out', expired_detail(action, unread)
             break
         if proc.poll() is not None:
             break
         pid = app_pid()
         if pid:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                classification, detail = 'timed_out', f'{action} exceeded deadline'
-                break
             try:
                 observed = windows(observer, pid, remaining)
-                classification = dialog_class(observed, source.stem)
+                unread = None
             except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-                classification, detail = 'unsupported', f'observer failed: {exc}'
-                break
+                observed, unread = None, exc
             if time.monotonic() >= deadline:
-                classification, detail = 'timed_out', f'{action} exceeded deadline'
+                classification, detail = 'timed_out', expired_detail(action, unread)
                 break
-            if classification:
-                detail = f'PowerPoint window: {observed}'
-                break
+            if observed is not None:
+                if dialogs and dialogs(observed, action):
+                    continue
+                classification = dialog_class(observed, source.stem)
+                if classification:
+                    detail = f'PowerPoint window: {observed}'
+                    break
         time.sleep(min(0.25, max(0, deadline - time.monotonic())))
     if classification:
         stop_script(proc)
@@ -376,17 +373,33 @@ def run_script(source: Path, action: str, target: Path | None, observer: str,
         return 'failed', (err or out).strip()[-500:]
     pid = app_pid()
     if pid:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            return 'timed_out', f'{action} exceeded deadline before final observation'
         try:
-            observed = windows(observer, pid, remaining)
-            classification = dialog_class(observed, source.stem)
+            observed = observe(observer, pid, deadline, dialogs, action)
         except (RuntimeError, ValueError, subprocess.TimeoutExpired) as exc:
-            return 'unsupported', f'observer failed: {exc}'
+            return 'timed_out', expired_detail(action, exc, ' before final observation')
+        classification = dialog_class(observed, source.stem)
     if time.monotonic() >= deadline:
         return 'timed_out', f'{action} exceeded deadline after observation'
     return classification, out.strip()
+
+
+def open_failure(detail: str, staged: Path, deadline: float) -> tuple[str | None, str, str | None]:
+    """An open the script reports failed, typed: PowerPoint refused the input
+    (`unsupported_input`), or the staged copy never became a presentation
+    (`never_opened`). One PowerPoint took but has not shown yet is waited for
+    until the candidate's deadline, since a slow open still lands: `None`
+    when it did. Either failure is the candidate's row; the pass goes on."""
+    if 'unsupported input:' in detail:
+        return 'failed', detail, 'unsupported_input'
+    if 'missing input:' not in detail:
+        while time.monotonic() < deadline:
+            try:
+                if {staged.name, staged.stem} & set(presentations()):
+                    return None, '', None
+            except RuntimeError:
+                pass
+            time.sleep(min(0.25, max(0, deadline - time.monotonic())))
+    return 'failed', detail, 'never_opened'
 
 
 # Seconds PowerPoint has to answer the custody query.
@@ -430,13 +443,13 @@ def launch_hidden() -> None:
 
 def cancel_owned_repair(staged: Path) -> None:
     """Cancel only the observed repair alert naming our staged deck; never repair or grant access."""
-    script = 'on run argv\n    tell application "System Events"\n        tell process "Microsoft PowerPoint"\n            repeat with w in every window\n                if subrole of w is "AXDialog" then\n                    set messageText to ""\n                    set textValues to get value of every static text of w\n                    repeat with textEntry in textValues\n                        set actualText to contents of textEntry\n                        if actualText is not missing value then set messageText to messageText & " " & (actualText as text)\n                    end repeat\n                    if messageText contains (item 1 of argv) and messageText contains "PowerPoint can attempt to repair" then\n                        click button "Cancel" of w\n                        return "cancelled owned repair alert"\n                    end if\n                end if\n            end repeat\n        end tell\n    end tell\n    error "owned repair alert not found; no UI action taken"\nend run'
-    command(['osascript', '-e', script, str(staged)], 8)
+    command(['osascript', str(ROOT / 'powerpoint_repair.applescript'), str(staged)], 8)
     hide_powerpoint()
 
 
-def close_owned(allowed: set[str]) -> str | None:
-    """Never close a foreign presentation, or overlook a modal after closing ours."""
+def close_owned(allowed: set[str], dialogs=None) -> str | None:
+    """Never close a foreign presentation, or overlook a modal after closing ours.
+    A known first-run dialog `dialogs` dismisses is not one."""
     pid = app_pid()
     if not pid:
         return None
@@ -451,7 +464,7 @@ def close_owned(allowed: set[str]) -> str | None:
         remaining = presentations()
         if remaining:
             return f'presentation(s) remain open: {remaining}'
-        observed = windows('system-events', pid)
+        observed = observe('system-events', pid, time.monotonic() + OBSERVER_SECONDS, dialogs, 'cleanup')
         if any(entry.startswith('DIALOG:') for entry in observed) or any(
                 dialog_class([entry], '') for entry in observed if not entry.startswith('WINDOW:')):
             return f'PowerPoint dialog remains after cleanup: {observed}'
@@ -470,7 +483,10 @@ def quit_if_empty() -> None:
     command(['osascript', '-e', 'tell application "Microsoft PowerPoint" to quit'], 10)
 
 
-def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeout: int = 90) -> dict:
+def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeout: int = 90,
+           dialogs=None) -> dict:
+    """One candidate's session. `dialogs` (deck_session.FirstRun) dismisses the
+    known first-run dialogs the session meets; its records join the receipt."""
     candidate = candidate.resolve()
     output = output.resolve()
     receipt = {'status': 'unsupported', 'detail': '', 'input': {'sha256': digest(candidate),
@@ -484,6 +500,11 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
     def record() -> dict:
         (output / 'receipt.json').write_text(json.dumps(receipt, indent=2, sort_keys=True) + '\n')
         return receipt
+
+    def met(observed: list[str], where: str) -> bool:
+        made = dialogs(observed, where) if dialogs else []
+        receipt.setdefault('dialog_dismissals', []).extend(made)
+        return bool(made)
 
     if sys.platform != 'darwin' or not APP.exists():
         receipt['detail'] = 'PowerPoint for Mac not installed (macOS-only oracle)'
@@ -519,6 +540,9 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
         if names := presentations():
             receipt['detail'] = f'PowerPoint has open presentation(s): {names}'
             return record()
+        if dialogs and (pid := app_pid()):
+            with contextlib.suppress(RuntimeError, ValueError, subprocess.TimeoutExpired):
+                observe('system-events', pid, time.monotonic() + OBSERVER_SECONDS, met, 'setup')
         deadline = time.monotonic() + timeout
 
         def expired(stage_name: str) -> bool:
@@ -560,7 +584,8 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
             try:
                 if action == 'open':
                     opened = True  # open may leave a modal or a presentation on failure
-                status, detail = run_script(staged, action, target, observer, deadline)
+                # The hook rides only when given, so run_script keeps its five-argument form.
+                status, detail = run_script(staged, action, target, observer, deadline, *([met] if dialogs else []))
             finally:
                 hide_powerpoint()
             if expired(action):
@@ -568,15 +593,26 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                 # the observer returned it at the boundary of the deadline.
                 repair_alert_seen = status == 'repaired'
                 break
+            failure = None
+            if status == 'failed' and action == 'open':
+                status, detail, failure = open_failure(detail, staged, deadline)
             if status:
                 repair_alert_seen = status == 'repaired'
                 if repair_alert_seen and invalid_presentation_package(staged):
                     receipt.update(status='failed', detail=f'{action}: repair alert on invalid package/XML; refused')
                 else:
-                    receipt.update(status=status, detail=f'{action}: {detail}')
+                    receipt.update(status=status, detail=f'{action}: {failure + ": " if failure else ""}{detail}')
+                if failure:
+                    receipt['failure'] = failure  # the candidate's row; the pass goes on
                 break
             names = presentations()
             problem = custody(names, allowed)
+            if not problem and not names:
+                # PowerPoint holds no presentation for the candidate: its row.
+                receipt['failure'] = 'never_opened' if action == 'open' else 'closed_by_powerpoint'
+                receipt.update(status='failed', detail=f"{action}: {receipt['failure']}: PowerPoint holds "
+                               'no presentation for the candidate')
+                break
             if problem or len(names) != 1:
                 detail = problem or f'expected one owned presentation; found {names}'
                 receipt.update(status='unsupported', detail=f'{action}: {detail}')
@@ -629,13 +665,16 @@ def oracle(candidate: Path, output: Path, observer: str = 'system-events', timeo
                     cancel_owned_repair(staged)
                 except (RuntimeError, subprocess.TimeoutExpired) as exc:
                     warning = f'could not dismiss owned repair alert: {exc}'
-            warning = warning or close_owned(allowed)
+            warning = warning or close_owned(allowed, met)
             if warning:
                 receipt['cleanup_warning'] = warning
                 receipt.update(status='unsupported', detail=warning)
         if stage is not None:
             try:
                 shutil.rmtree(stage)
+            except FileNotFoundError:
+                # Nothing is left to remove, so custody is not in doubt.
+                receipt['cleanup_note'] = 'the staging directory was already gone'
             except OSError as exc:
                 receipt['cleanup_warning'] = f'could not remove staging directory: {exc}'
                 receipt.update(status='unsupported', detail=receipt['cleanup_warning'])

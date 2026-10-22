@@ -59,6 +59,7 @@ pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
     XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
 };
+pub use pptx::merge_deck_peers;
 pub use pptx::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,

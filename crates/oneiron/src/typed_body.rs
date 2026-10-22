@@ -31,6 +31,7 @@ mod body_actor;
 pub(crate) mod checkpoint;
 mod lift;
 mod receipts;
+pub(crate) mod reviewed_fork;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
 pub(crate) use self::lift::{

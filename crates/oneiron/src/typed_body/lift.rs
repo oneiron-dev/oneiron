@@ -261,6 +261,34 @@ fn sources_in_txn(store: &Store, txn: &RoTxn<'_>, texts: &[String]) -> Result<Li
 }
 
 impl Vault {
+    /// `sources` and the custody records the stored-file marks of `files`
+    /// name, each file by the BLAKE3 of its bytes and a key in a marked
+    /// member included, read in `txn`: each key once, in custody-id order. A
+    /// deck preview judges its texts' keys with those of the retained
+    /// package it draws over, that package's parts and the pictures it
+    /// resolves, all read in one snapshot (FIX 9994).
+    pub(crate) fn lifted_sources_with_files_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        sources: LiftedSources,
+        files: &[[u8; 32]],
+    ) -> Result<LiftedSources> {
+        let mut keys = sources.0;
+        for hash in files {
+            let Some(mark) = masked_file_in_txn(&self.store, txn, hash)? else {
+                continue;
+            };
+            let marked = mark
+                .keys
+                .iter()
+                .chain(mark.members.iter().flat_map(|member| member.keys.iter()));
+            keys.extend(marked.map(|key| key.custody));
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(LiftedSources(keys))
+    }
+
     /// The keys the lifted texts of `entity`'s typed body hold, its live
     /// body's and each open fork's.
     pub(crate) fn typed_body_lifted_keys(&self, entity: &EntityId) -> Result<LiftedKeys> {

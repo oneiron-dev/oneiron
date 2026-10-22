@@ -18,9 +18,15 @@
 //! engine's and writes the [`super::OracleReceipt`] the gate takes through
 //! `vault.artifacts.body.deck.oracle`. Evidence tooling, not a test:
 //! nothing here runs under `cargo test`.
+//!
+//! [`main_with`] is the command line: docedit's `deck-gate-cases` runs it
+//! without the engine, the engine's `deck-gate-engine` (crates/oneiron)
+//! with its two-peer Loro merge ([`PeerMerge`]), which step 4's convergence
+//! case needs; the gate's engine half runs the latter.
 
 mod assets;
 mod checks;
+mod cli;
 mod edits;
 mod journal;
 mod merge;
@@ -28,14 +34,24 @@ mod nonpdf;
 mod recipes;
 mod record;
 mod regression;
+mod schema;
 mod spec;
 mod suite;
 mod text_check;
 mod variants;
 
 use super::deck_export::{ExportProfile, PROJECTOR_VERSION, StepOutcome};
+use super::{DeckOp, LiveDeck};
+pub use cli::main_with;
 use record::{ORACLE, Run};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// The engine's merge of two Loro peers of one deck body (FIX 3773): each
+/// side's operations applied in its own peer forked at `base`'s frontier,
+/// the two merged in both import orders (a then b, b then a), each read
+/// back as a deck, or the engine's reason it refused that order.
+pub type PeerMerge =
+    fn(&LiveDeck, &[DeckOp], &[DeckOp]) -> Result<[Result<LiveDeck, String>; 2], String>;
 
 /// What one run reads and where it writes.
 #[derive(Debug, Clone)]
@@ -48,8 +64,15 @@ pub struct RunOptions {
     /// Pinned PPTArena pairs as `deck_gate.py acquire` lays them out
     /// (`<corpus>/<case>/original.pptx`); `None` leaves the corpus unrun.
     pub corpus: Option<PathBuf>,
-    /// The source revision the runner was built from, recorded as given.
-    pub source: String,
+    /// The source revision the runner was built from, recorded as given;
+    /// `None` records the run's provenance as missing (FIX 8573).
+    pub source: Option<String>,
+    /// The pinned schema set `scripts/office/deck_schema.py fetch` wrote;
+    /// `None` leaves step 5 without schema evidence, inconclusive.
+    pub schemas: Option<PathBuf>,
+    /// The engine's two-peer Loro merge; `None` leaves step 4's
+    /// convergence case inconclusive.
+    pub peers: Option<PeerMerge>,
 }
 
 /// The engine outcome of a run, one line per step.
@@ -81,9 +104,19 @@ pub fn run(options: &RunOptions) -> Result<RunSummary, String> {
         ));
     }
     let mut run = Run::create(&options.out)?;
+    run.schema = options
+        .schemas
+        .as_deref()
+        .map(|schemas| schema::Validator::new(&options.repo, schemas));
+    run.peers = options.peers;
     let scripts = run.copy_scripts(&options.repo, &cases.office.scripts)?;
     let case_manifest = run.write_file("case-manifest.json", &manifest_bytes)?;
-    run.begin(&cases, options.source.clone(), case_manifest, scripts)?;
+    let source = options.source.clone().unwrap_or_default();
+    run.begin(&cases, source, case_manifest, scripts)?;
+    run.case("provenance", |run| {
+        provenance(run, options.source.as_deref(), &options.repo);
+        Ok(())
+    })?;
     for baseline in &cases.baselines {
         run.case(&baseline.id, |run| {
             suite::baseline(run, &options.repo, baseline, &cases)
@@ -145,6 +178,69 @@ pub fn run(options: &RunOptions) -> Result<RunSummary, String> {
         engine_passed,
         manifest: options.out.join(record::MANIFEST),
     })
+}
+
+/// Whether `source` names a full commit, as a receipt's `source_sha` must.
+fn full_commit(source: &str) -> bool {
+    source.len() == 40 && source.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// The run's provenance (FIX 8573): a given full commit is kept as given; a
+/// malformed one, or none, is named in a note and leaves step 6
+/// inconclusive, since the receipt could not name the commit its run came
+/// from. Nothing is refused, guessed or invented: the repository's HEAD at
+/// run time, when git answers, is an unverified note only, never the
+/// binary's source.
+fn provenance(run: &mut Run, source: Option<&str>, repo: &Path) {
+    const ID: &str = "provenance";
+    match source {
+        Some(given) if full_commit(given) => run.note(
+            ID,
+            format!("provenance given: {given}, as the caller asserts it built this runner"),
+        ),
+        Some(given) => {
+            run.note(
+                ID,
+                format!("provenance malformed: --source {given:?} is not a full commit"),
+            );
+            run.record(
+                ORACLE,
+                ID,
+                StepOutcome::Inconclusive(format!(
+                    "the given source {given:?} is not a full 40-character commit: the receipt cannot name its run"
+                )),
+            );
+        }
+        None => {
+            let head = git_head(repo).map_or_else(String::new, |head| {
+                format!("; git HEAD of {} at run time is {head} (unverified, not proof of the binary's source)", repo.display())
+            });
+            run.note(
+                ID,
+                format!("provenance missing: no --source was given{head}"),
+            );
+            run.record(
+                ORACLE,
+                ID,
+                StepOutcome::Inconclusive(
+                    "the run names no source revision (no --source): the receipt cannot name its run"
+                        .to_owned(),
+                ),
+            );
+        }
+    }
+}
+
+/// `git rev-parse HEAD` in `repo`, when git answers with a full commit.
+fn git_head(repo: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    let head = String::from_utf8(output.stdout).ok()?.trim().to_owned();
+    (output.status.success() && full_commit(&head)).then_some(head)
 }
 
 fn outcome_line(outcome: &StepOutcome) -> String {

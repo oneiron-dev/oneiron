@@ -93,6 +93,7 @@ pub(super) fn comments(
                     OfficeCheck::Pages { count: 1 },
                 ],
                 baseline: &commented.defects,
+                origin: &commented.bytes,
             })
         })?;
     }
@@ -341,5 +342,6 @@ fn build_case(
             OfficeCheck::Pages { count: slides },
         ],
         baseline: &animated.defects,
+        origin: &animated.bytes,
     })
 }

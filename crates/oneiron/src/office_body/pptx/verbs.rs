@@ -22,15 +22,19 @@ use oneiron_docedit::live::{
 };
 
 /// `vault.artifacts.body.deck.merge`: land a reviewed deck fork, naming the
-/// head the review read. `scope` is the approval it lands under (this fork
-/// alone when absent); `landing` merges onto the head, or switches the head
-/// to the fork's deck.
+/// head and the fork frontier the review read. The fork lands up to
+/// `reviewed_fork`; work appended to it after the review stays on the open
+/// fork for the next review (FIX 9992). `scope` is the approval it lands
+/// under (this fork alone when absent); `landing` merges onto the head, or
+/// switches the head to the fork's deck.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeckForkMergeRequest {
     pub artifact_ref: String,
     pub fork_ref: String,
     pub reviewed_head: Vec<u8>,
+    /// The review's `fork_head`: the fork's frontier the review read.
+    pub reviewed_fork: Vec<u8>,
     #[serde(default)]
     pub scope: Option<ApproveScope>,
     #[serde(default)]
@@ -101,10 +105,13 @@ pub struct DeckBodyView {
 }
 
 /// `vault.artifacts.body.deck.review`: the fork's merge preflight against
-/// the live head. A merge names `head` and lands only when `ok`.
+/// the live head. A merge names `head` and `fork_head` and lands only when
+/// `ok`, the fork up to `fork_head`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeckReviewView {
     pub head: Vec<u8>,
+    /// The fork's frontier this review read (FIX 9992).
+    pub fork_head: Vec<u8>,
     pub head_version: u64,
     pub ok: bool,
     pub diff: DeckDiff,
@@ -205,6 +212,7 @@ impl From<PptxReview> for DeckReviewView {
     fn from(review: PptxReview) -> Self {
         Self {
             head: review.head,
+            fork_head: review.fork_head,
             head_version: review.report.head_version,
             ok: review.report.ok,
             diff: review.report.diff,
@@ -263,7 +271,7 @@ impl Memory<'_> {
         Ok(self.vault().merge_pptx_body_fork(
             &artifact,
             &fork,
-            &input.reviewed_head,
+            (&input.reviewed_head, &input.reviewed_fork),
             actor,
             &made_by,
             scope,

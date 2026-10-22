@@ -149,21 +149,7 @@ pub(in crate::live) fn table(
         .iter()
         .map(|column| col_at.get(column).copied())
         .collect();
-    let col_name = tree.nodes[last_col].qualified.clone();
-    let mut grid_xml = xml::open_tag(&bytes, &tree.nodes[grid]);
-    for kept in &kept_cols {
-        match kept {
-            Some(at) => grid_xml.extend_from_slice(piece(&bytes, &tree, widths[*at])),
-            None => grid_xml.extend(
-                format!(
-                    r#"<{col_name} w="{}"/>"#,
-                    xml::escape_attribute(tree.nodes[last_col].attr("w").unwrap_or("0"))
-                )
-                .into_bytes(),
-            ),
-        }
-    }
-    grid_xml.extend(close(&tree.nodes[grid]));
+    let grid_xml = grid_patched(&bytes, &tree, grid, &widths, &kept_cols)?;
     let flags = Flags::grid(spans, height, cols);
     let mut rows_xml = Vec::new();
     for ((row, kept), flags) in wanted.rows.iter().zip(&kept_rows).zip(&flags) {
@@ -243,6 +229,58 @@ pub(in crate::live) fn table(
         return Err(refuse);
     }
     Ok(fitted)
+}
+
+/// The retained `a:tblGrid` with its column sequence made `kept`'s, by
+/// splicing its own bytes (FIX 8593): the old columns are the slots, filled
+/// in order with the kept columns' own `a:gridCol` (a new one written as
+/// the last column's width); surplus slots are emptied and further columns
+/// go just after the last slot. Every other child of the grid, comment,
+/// processing instruction and gap keeps its bytes and its place.
+fn grid_patched(
+    bytes: &[u8],
+    tree: &XmlTree,
+    grid: usize,
+    widths: &[usize],
+    kept: &[Option<usize>],
+) -> Result<Vec<u8>, LiveError> {
+    let &last_col = widths.last().ok_or(LiveError::Invalid(WRITTEN_TABLE))?;
+    let last = &tree.nodes[last_col];
+    // A column the last one's namespace declarations travel with, so a new
+    // one's prefix stays bound wherever it lands.
+    let declared: String = last
+        .attrs
+        .iter()
+        .filter(|(name, _)| name.as_str() == "xmlns" || name.starts_with("xmlns:"))
+        .map(|(name, value)| format!(r#" {name}="{}""#, xml::escape_attribute(value)))
+        .collect();
+    let column = |slot: &Option<usize>| -> Vec<u8> {
+        match slot {
+            Some(at) => piece(bytes, tree, widths[*at]).to_vec(),
+            None => format!(
+                r#"<{}{declared} w="{}"/>"#,
+                last.qualified,
+                xml::escape_attribute(last.attr("w").unwrap_or("0"))
+            )
+            .into_bytes(),
+        }
+    };
+    let span = tree.nodes[grid].span.clone();
+    let mut edits: Vec<xml::Splice> = widths
+        .iter()
+        .enumerate()
+        .map(|(slot, &at)| {
+            let value = kept.get(slot).map(&column).unwrap_or_default();
+            let range = tree.nodes[at].span.clone();
+            (range.start - span.start..range.end - span.start, value)
+        })
+        .collect();
+    if kept.len() > widths.len() {
+        let end = last.span.end - span.start;
+        let extra: Vec<u8> = kept[widths.len()..].iter().flat_map(&column).collect();
+        edits.push((end..end, extra));
+    }
+    Ok(xml::splice(&bytes[span], edits)?)
 }
 
 /// `node`'s open tag without the named attributes.

@@ -37,11 +37,13 @@ mod doc;
 mod export;
 mod log;
 mod merge;
+mod peers;
 mod preview;
 mod verbs;
 
 pub(crate) use doc::deck_log_ops;
 pub(super) use doc::{birth, validate};
+pub use peers::merge_deck_peers;
 pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{
     DeckBodyView, DeckExportRequest, DeckExportView, DeckForkMergeRequest, DeckGateRequest,
@@ -59,10 +61,10 @@ use crate::error::{ArtifactError, Error, LiveDeckRefusal, Result};
 use crate::provenance::made_by::MadeBy;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::typed_body::reviewed_fork::{ReviewedLanding, merge_reviewed_fork_in_txn};
 use crate::typed_body::{
     BodyActor, TypedBodyHead, discard_typed_body_fork_in_txn, edit_typed_body_fork_in_txn,
-    edit_typed_body_in_txn, merge_typed_body_fork_in_txn, open_typed_body_fork_in_txn,
-    typed_body_fork_in_txn,
+    edit_typed_body_in_txn, open_typed_body_fork_in_txn,
 };
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
@@ -109,6 +111,9 @@ pub struct PptxBody {
 #[derive(Debug, Clone)]
 pub struct PptxReview {
     pub head: Vec<u8>,
+    /// The fork's frontier this review read; a landing applies the fork up
+    /// to it, beside `head` (FIX 9992).
+    pub fork_head: Vec<u8>,
     pub report: PreflightReport,
     /// Units the fork touches that the head changed since its base: their
     /// answers are withdrawn (ARCH-0075 section 4), untouched units carry.
@@ -286,12 +291,15 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         // The live-born pictures' assets of the head and the candidate are read
         // in the same transaction as the head.
-        let ((head, body), work, mut report, assets) = {
+        let ((head, body), fork_head, work, mut report, assets) = {
             let txn = self.store.env.read_txn()?;
             let (head, body) = self.deck_head(&txn, artifact)?;
             let record = open_record(&self.store, &txn, artifact, fork)?;
-            let work = self.deck_fork(&txn, &record)?;
-            let report = self.deck_preflight(&txn, artifact, &body.deck, &record, &work)?;
+            // One read of the fork's document: its frontier, work and candidate.
+            let (base, proposal) = self.deck_fork_doc(&txn, &record)?;
+            let fork_head = proposal.oplog_frontiers().encode();
+            let (work, report) =
+                self.deck_preflight_of(&txn, artifact, &body.deck, &record, (&base, &proposal))?;
             let assets = HeldAssets::resolve(
                 &VaultAssets {
                     vault: self,
@@ -299,7 +307,7 @@ impl Vault {
                 },
                 &[&body.deck, &report.candidate],
             );
-            ((head, body), work, report, assets)
+            ((head, body), fork_head, work, report, assets)
         };
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
@@ -320,6 +328,7 @@ impl Vault {
             report,
             stale_units: work.stale_units(&body.deck),
             head: head.frontier,
+            fork_head,
             evidence_refusal,
         })
     }
@@ -336,7 +345,7 @@ impl Vault {
         &self,
         artifact: &EntityId,
         fork: &EntityId,
-        expected_head: &[u8],
+        (expected_head, reviewed_fork): (&[u8], &[u8]),
         actor: WriteActor,
         made_by: &MadeBy,
         scope: ApproveScope,
@@ -354,8 +363,10 @@ impl Vault {
             if head.frontier != expected_head {
                 return Err(invalid("the deck moved since the review; review it again"));
             }
-            let work = self.deck_fork(wtxn, &record)?;
-            let report = self.deck_preflight(wtxn, artifact, &body.deck, &record, &work)?;
+            // The fork as reviewed, never as it stands now (FIX 9992).
+            let (base, proposal) = self.reviewed_fork_doc(wtxn, &record, reviewed_fork)?;
+            let (work, report) =
+                self.deck_preflight_of(wtxn, artifact, &body.deck, &record, (&base, &proposal))?;
             let mut receipt = land(
                 &mut body.deck,
                 &work,
@@ -366,8 +377,23 @@ impl Vault {
                 false,
             )
             .map_err(live)?;
-            let merged =
-                merge_typed_body_fork_in_txn(self, wtxn, artifact, fork, &head.frontier, actor)?;
+            let merged = merge_reviewed_fork_in_txn(
+                self,
+                wtxn,
+                artifact,
+                fork,
+                &head.frontier,
+                reviewed_fork,
+                actor,
+            )?;
+            let (merged, rest) = match merged {
+                ReviewedLanding::Whole(head) => (head, None),
+                ReviewedLanding::Prefix {
+                    head,
+                    base,
+                    commits,
+                } => (head, Some((base, commits))),
+            };
             let (_, imported) = self.deck_head(wtxn, artifact)?;
             let landed = imported.deck.semantically_eq(&body.deck)
                 && imported.deck.next_node == body.deck.next_node
@@ -384,11 +410,20 @@ impl Vault {
                 receipt.landed_version = self.deck_head(wtxn, artifact)?.1.deck.version;
                 commit.frontier
             };
-            record.state = ForkState::Merged {
-                by: BodyActor::Actor(actor.entity_ref()),
-                at,
-                head: frontier,
-            };
+            match rest {
+                // Work appended after the review stays open for the next one.
+                Some((base, commits)) => {
+                    record.base = base;
+                    record.commits = commits;
+                }
+                None => {
+                    record.state = ForkState::Merged {
+                        by: BodyActor::Actor(actor.entity_ref()),
+                        at,
+                        head: frontier,
+                    };
+                }
+            }
             FORKS.put(&self.store, wtxn, &key, &record)?;
             Ok(receipt)
         })
@@ -524,32 +559,8 @@ impl Vault {
     /// The open deck fork as the merge preflight reads it: the deck at the
     /// fork's base, and the operations the fork's log holds past the base's.
     fn deck_fork(&self, txn: &RoTxn<'_>, record: &OfficeBodyFork) -> Result<DeckFork> {
-        let (typed, proposal) =
-            typed_body_fork_in_txn(&self.store, txn, &record.artifact, &record.id)?
-                .ok_or(Error::EntityNotFound)?;
-        let proposal = doc::read(&proposal.ok_or_else(|| invalid("the fork is not open"))?)?;
-        let (_, base) = self.loro_body(
-            txn,
-            &record.artifact,
-            OfficeBodyKind::Pptx,
-            Some(&typed.base),
-        )?;
-        let base = doc::read(&base)?;
-        let logged = proposal
-            .log
-            .get(base.log.len()..)
-            .ok_or(Error::CorruptedIndex("deck fork log"))?;
-        let ops = log::stamped(&self.store, txn, &record.artifact, logged)?;
-        let run_root = record.run_root.map(|root| root.to_hex());
-        let mut work = base.deck.fork_at(
-            &record.id.to_hex(),
-            &record.opener.to_hex(),
-            run_root.as_deref(),
-        );
-        for op in ops {
-            work.record(op);
-        }
-        Ok(work)
+        let (base, proposal) = self.deck_fork_doc(txn, record)?;
+        self.deck_fork_of(txn, record, (&base, &proposal))
     }
 
     pub(super) fn discard_deck_fork(

@@ -18335,6 +18335,7 @@ class DeckDiff(TypedDict):
     renders: NotRequired[RenderPair | None]
 class DeckReviewView(TypedDict):
     head: list[int]
+    fork_head: list[int]
     head_version: int
     ok: bool
     diff: DeckDiff
@@ -18346,6 +18347,7 @@ class DeckForkMergeRequest(TypedDict):
     artifact_ref: str
     fork_ref: str
     reviewed_head: list[int]
+    reviewed_fork: list[int]
     scope: NotRequired[ApproveScope | None]
     landing: NotRequired[Landing | None]
     made_by: NotRequired[Any | None]

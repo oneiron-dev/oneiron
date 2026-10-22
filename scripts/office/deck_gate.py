@@ -23,6 +23,8 @@ not the deck's: inconclusive, never failed. After CUSTODY_TIMEOUTS_STOP custody
 queries in a row go unanswered the pass stops with an environment verdict and
 the rest stay unrun. The Office lock is released on every exit Python can
 catch (SIGTERM and SIGHUP unwind like an exception; SIGKILL cannot be caught).
+A candidate PowerPoint never opens, or refuses, is that candidate's failed row
+and the pass goes on; only the environment stops a pass (deck_session.py).
 A run the engine half did not finish (a journal, results.jsonl, and no
 manifest) is reported from its journal and refused for every command: no
 Office pass and no receipt come from an incomplete run.
@@ -30,7 +32,6 @@ Office pass and no receipt come from an incomplete run.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import getpass
 import json
 import os
@@ -46,6 +47,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import deck_oracle as oracle_mod  # noqa: E402  (beside this file, in the repo and in a run)
+import deck_session  # noqa: E402
 
 RUN_SCHEMA = 'oneiron.deck-gate-run/1'
 JOURNAL = 'results.jsonl'
@@ -54,12 +56,11 @@ PROFILE = 'pptx-live-v1'
 CASE_MANIFEST = 'scripts/office/pptx-live-v1.json'
 ORACLE, NON_PDF, REGRESSION = 6, 7, 8
 OFFICE_STEPS = (ORACLE, NON_PDF, REGRESSION)
-LOCK = Path.home() / 'w7-oracle' / 'lock'
+LOCK = deck_session.LOCK
 # Consecutive PowerPoint custody queries that time out before an Office pass
 # stops with an environment verdict (FIX 5230): the app, not the decks.
 CUSTODY_TIMEOUTS_STOP = 3
-# Signals held while the lock changes hands, and the ones that stop a pass.
-HELD_SIGNALS = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+# The signals that stop a pass (deck_session holds them while the lock changes hands).
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGHUP)
 NAMED_CASES = 4
 RANK = {'passed': 0, 'inconclusive': 1, 'failed': 2}
@@ -496,76 +497,18 @@ def _stop(signum, _frame):
     raise Stopped(signal.Signals(signum).name)
 
 
-@contextlib.contextmanager
-def signals_held():
-    """Hold stop signals while the lock changes hands; a pending one lands after."""
-    previous = signal.pthread_sigmask(signal.SIG_BLOCK, HELD_SIGNALS)
-    try:
-        yield
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
-
-
-# The owner line of the lock this process took, until it is released.
-_held_lock: str | None = None
-
-
-def take_lock(owner: str) -> None:
-    """Take the shared Office lock. The caller releases it in a finally, even
-    when this raises after the lock directory was made."""
-    global _held_lock
-    LOCK.parent.mkdir(parents=True, exist_ok=True)
-    line = f'{owner} pid={os.getpid()}\n'
-    with signals_held():
-        try:
-            LOCK.mkdir()
-        except FileExistsError:
-            holder = (LOCK / 'owner').read_text().strip() if (LOCK / 'owner').exists() else 'unknown'
-            raise SystemExit(f'REFUSED: the shared Office lock {LOCK} is held ({holder}); one Office session at a time')
-        _held_lock = line
-        (LOCK / 'owner').write_text(line)
-
-
-def release_lock() -> str | None:
-    """Release the lock this process took, if it holds one; why it could not, else None. Never raises."""
-    global _held_lock
-    if _held_lock is None:
-        return None
-    with signals_held():
-        owner = LOCK / 'owner'
-        try:
-            found = owner.read_text()
-        except FileNotFoundError:
-            found = None  # stopped before the owner line was written, or removed by hand
-        except OSError as exc:
-            return f'the lock owner does not read: {exc}'
-        if found is not None and found != _held_lock:
-            _held_lock = None
-            return f'the lock now names another holder ({found.strip()}); left in place'
-        try:
-            owner.unlink(missing_ok=True)
-            LOCK.rmdir()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            try:
-                shutil.rmtree(LOCK)
-            except OSError as exc:
-                return f'the lock was not removed: {exc}'
-        _held_lock = None
-    return None
-
-
-def run_one(candidate: Path, output: Path, observer: str, timeout: int, custody: list[int]) -> str | None:
-    """One serial oracle run; the reason to stop the pass, if any. `custody` counts
-    the custody queries in a row that timed out."""
+def run_one(candidate: Path, output: Path, observer: str, timeout: int, custody: list[int],
+            dialogs=None) -> str | None:
+    """One serial oracle run; the reason to stop the pass, if any: only the
+    environment's, never a candidate's own failure. `custody` counts the
+    custody queries in a row that timed out."""
     if (output / 'receipt.json').exists():
         print(f'{output.name}: kept from an earlier pass', flush=True)
         return None
     if output.exists():
         shutil.rmtree(output)  # an earlier pass stopped before writing its receipt
     output.parent.mkdir(parents=True, exist_ok=True)
-    receipt = oracle_mod.oracle(candidate, output, observer=observer, timeout=timeout)
+    receipt = oracle_mod.oracle(candidate, output, observer=observer, timeout=timeout, dialogs=dialogs)
     print(f"{output.name}: {receipt['status']} - {receipt['detail']}", flush=True)
     if receipt.get('cleanup_warning'):
         return f"cleanup: {receipt['cleanup_warning']}"
@@ -573,7 +516,7 @@ def run_one(candidate: Path, output: Path, observer: str, timeout: int, custody:
     if custody[0] >= CUSTODY_TIMEOUTS_STOP:
         return (f'environment: PowerPoint left {custody[0]} custody queries in a row unanswered '
                 f"({receipt['detail']}); the remaining cases are not run")
-    if receipt['status'] == 'unsupported':
+    if receipt['status'] == 'unsupported' and not receipt.get('failure'):
         return f"unsupported: {receipt['detail']}"
     return None
 
@@ -656,22 +599,23 @@ def cmd_office(args) -> int:
         {'font_account': account, 'font_inventory_sha256': inventory, 'rows': list(rows)}, indent=2) + '\n')
     stopped = quit_error = lock_error = None
     started = time.time()
-    custody = [0]
+    custody, dialogs, lock_moved = [0], deck_session.FirstRun(), None
     # SIGTERM and SIGHUP unwind through the finally below, as SIGINT does.
     previous = {sig: signal.signal(sig, _stop) for sig in STOP_SIGNALS}
     try:
-        take_lock(f'deck-gate {manifest.get("source")} {run}')
+        lock_moved = deck_session.take_lock(f'deck-gate {manifest.get("source")} {run}')
         already_running = oracle_mod.app_pid() is not None
         try:
             for entry in manifest['candidates']:
                 if entry['trust'] == 'untrusted' and not args.isolated_account:
                     continue
-                stopped = run_one(run / entry['file'], results / entry['id'], observer, timeout, custody)
+                stopped = run_one(run / entry['file'], results / entry['id'], observer, timeout, custody,
+                                  dialogs)
                 if stopped:
                     break
             for entry in [] if stopped else manifest['calibration']:
                 stopped = run_one(run / entry['file'], results / 'calibration' / entry['id'], observer,
-                                  entry['timeout_seconds'], custody)
+                                  entry['timeout_seconds'], custody, dialogs)
                 if stopped:
                     break
         finally:
@@ -684,7 +628,7 @@ def cmd_office(args) -> int:
         stopped = f'stopped by {exc}'
     finally:
         try:
-            lock_error = release_lock()
+            lock_error = deck_session.release_lock()
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
@@ -700,6 +644,7 @@ def cmd_office(args) -> int:
         'observer': observer, 'timeout_seconds': timeout, 'started_at': started,
         'finished_at': time.time(), 'stopped': stopped, 'quit_error': quit_error,
         'custody_uncertain': uncertain, 'lock_retained': lock_error is not None, 'lock_error': lock_error,
+        'lock_moved': lock_moved, 'dialog_dismissals': dialogs.records,
         'font_versions': font_versions(run, manifest, environment),
     }
     (results / 'office-run.json').write_text(json.dumps(office_run, indent=2) + '\n')
