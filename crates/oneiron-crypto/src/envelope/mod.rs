@@ -4,7 +4,7 @@
 mod hybrid;
 mod seal;
 
-pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal};
+pub use self::seal::{OpenKey, OpenPolicy, SealKey, SealParams, seal, seal_with_aad};
 
 use crate::codec::{Reader, check_len, put_lp8};
 use crate::error::{Error, Result};
@@ -136,6 +136,12 @@ pub enum Purpose {
     /// generation), the row locator and the chunk's position in `key_id`, so no
     /// compartment opens as another owner's or at another place.
     CheckpointPayload = 24,
+    /// One chunk of a vault-owned inference snapshot, sealed under that
+    /// snapshot's own data key. The owner binds the format version, the
+    /// snapshot's id, the chunk's index and whether it is the last in
+    /// `key_id`, and the snapshot's manifest as extra associated data, so no
+    /// chunk opens reordered, truncated or under another manifest.
+    InferenceSnapshotChunk = 25,
 }
 
 impl Purpose {
@@ -165,6 +171,7 @@ impl Purpose {
             22 => Self::CustodyLogFrame,
             23 => Self::HomeHandoff,
             24 => Self::CheckpointPayload,
+            25 => Self::InferenceSnapshotChunk,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

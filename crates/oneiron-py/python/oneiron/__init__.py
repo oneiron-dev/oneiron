@@ -2023,7 +2023,7 @@ class Oneiron:
             """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
             return json.loads(_translate(lambda: self._client.vault_packs_sections_propose(json.dumps(spec))))
         def list(self, spec):
-            """Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project."""
+            """Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project."""
             return json.loads(_translate(lambda: self._client.vault_packs_sections_list(json.dumps(spec))))
         def grant(self, spec):
             """The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent."""
@@ -2879,6 +2879,12 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_review(json.dumps(spec))))
+        def decide(self, spec):
+            """The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_decide(json.dumps(spec))))
     class _VaultArchiveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2925,7 +2931,7 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_log(json.dumps({} if spec is None else spec))))
         def lift_and_erase(self, spec):
-            """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+            """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:

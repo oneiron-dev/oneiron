@@ -28,6 +28,13 @@ pub use codec::{
     decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
     process_link_bytes,
 };
+mod window_pads;
+pub use window_pads::{
+    WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
+    WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
+    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member,
+    window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
+};
 mod documents;
 pub use documents::{
     DocumentFrame, MAX_NODE_BATCH_MEMBERS, TAG_BATCH, TAG_DOCUMENT, decode_document,
@@ -187,7 +194,7 @@ pub const TAG_SUB: u8 = 31;
 
 /// Sub-tags within WindowSync messages.
 pub mod window_sub_tags {
-    /// CRDT update bytes for the window doc.
+    /// CRDT update bytes for the window doc, in their window pad envelope.
     pub const UPDATE: u8 = 0;
     /// Version vector request (sender's VV).
     pub const VV_REQUEST: u8 = 2;
@@ -205,10 +212,11 @@ pub mod window_sub_tags {
     /// Retry a durable selector request under the currently bound principal.
     /// Payload is the 32-byte identity from `SELECTOR_DEFERRED`.
     pub const SELECTOR_RETRY: u8 = 6;
-    /// Opened-item device update: `[queue_seq:8BE][Loro update]`.
-    /// Never answered with a full-window version vector.
+    /// Opened-item device update: a window pad envelope whose header holds
+    /// the durable queue sequence. Never answered with a full-window version
+    /// vector.
     pub const RESIDENCE_UPDATE: u8 = 7;
-    /// Durable home acknowledgment: `[queue_seq:8BE][blake3(update):32]`.
+    /// Durable home acknowledgment: the update's window pad receipt.
     pub const RESIDENCE_ACK: u8 = 8;
     /// Bind a full causal window to the grant on this opened-item socket.
     /// Payload is the strict encoded SyncSelector.
@@ -227,6 +235,12 @@ pub mod window_sub_tags {
     /// subscription past `max_windows_per_connection`. A peer that follows the window sends
     /// `VV_REQUEST`, which subscribes it again. Empty payload. Server to a v13 peer only.
     pub const WINDOW_INVALIDATE: u8 = 14;
+    /// The rest of a window pad envelope whose first frame came just before on this socket:
+    /// `[envelope id:32][offset:8BE][bytes]`.
+    pub const WINDOW_PAD_PART: u8 = 15;
+    /// A window pad receipt for an owner-lane `UPDATE` that came sealed, or a receiver's
+    /// `NotReady` for one it could not install.
+    pub const WINDOW_PAD_RECEIPT: u8 = 16;
 }
 
 /// Maximum key length (YYYY-MM@<32 lowercase world hex> = 40 bytes).

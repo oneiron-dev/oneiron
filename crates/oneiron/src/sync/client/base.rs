@@ -54,8 +54,13 @@ pub struct SyncClient {
     /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
     pub(crate) root_bootstrapped: bool,
-    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence.
+    /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
+    /// the BLAKE3 of each acknowledged row's own bytes, set once its window
+    /// pad receipt bound what was sent for it.
     pub(crate) residence_acks: HashMap<u64, [u8; 32]>,
+    /// This connection's window pad envelopes: sends held for their
+    /// receipts, envelopes still coming in (FIX 7107).
+    pub(crate) window_pads: Mutex<super::window_pads::WindowPadLedger>,
     pub(crate) ephemeral_store: EphemeralStore,
     pub(crate) _ephemeral_subscription: Subscription,
     pub(crate) _message_stream_subscription: Subscription,
@@ -177,6 +182,7 @@ impl SyncClient {
             staged_world_updates: Vec::new(),
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
+            window_pads: Mutex::default(),
             ephemeral_store,
             _ephemeral_subscription: ephemeral_subscription,
             _message_stream_subscription: message_stream_subscription,
@@ -252,17 +258,17 @@ impl SyncClient {
     }
 
     /// Whether an outgoing frame carries what a device-only world now keeps
-    /// here, judged as it is released: a window UPDATE by the raw verdict
-    /// (a frame that cannot be read stays), a document frame, a NOTE command
-    /// included, by its text ([`crate::sync::documents::document_frame_withheld`]).
+    /// here, judged as it is released: a window UPDATE by the raw verdict on
+    /// its envelope's payload, its parts with it (a frame that cannot be read
+    /// stays), a document frame, a NOTE command included, by its text
+    /// ([`crate::sync::documents::document_frame_withheld`]).
     pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
         if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
             return frame
                 .get(1..)
                 .and_then(|payload| transport::decode_window_sync(payload).ok())
-                .is_none_or(|(key, sub_tag, update)| {
-                    sub_tag == transport::window_sub_tags::UPDATE
-                        && self.update_verdict(key, update) != UpdateVerdict::Portable
+                .is_none_or(|(key, sub_tag, payload)| {
+                    self.window_frame_withheld(key, sub_tag, payload)
                 });
         }
         crate::sync::documents::document_frame_withheld_for(&self.vault, self.home_peer, frame)

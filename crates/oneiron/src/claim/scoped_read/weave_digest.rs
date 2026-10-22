@@ -26,6 +26,9 @@ use std::collections::BTreeSet;
 
 // An in-Grant agent's ack of an owner's due notice (FIX 5778).
 mod acknowledgements;
+// The weave Admin's digest key, saved reads, kept live render and erase
+// binding (OF-499 A3).
+mod admin;
 // The owner's digest settings and the Coach's changes to them (FIX 5495).
 mod changes;
 mod coach;
@@ -38,6 +41,7 @@ mod rewrite;
 // A due Owner schedule renders as its recorded live Owner (FIX 1259).
 pub(super) mod scheduled_owner;
 mod settings;
+pub use admin::WeaveAdminKey;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
 use settings::SettingsEdit;
@@ -64,26 +68,35 @@ pub enum WeaveDigestReader {
     Person(EntityId),
     Owner(EntityId),
     Agent(EntityId),
+    /// A weave Admin's namespace (OF-499 A3): keyed by its exact membership
+    /// grant, its person carried beside it. Identity only, taken from a
+    /// checked proof; it authenticates no one.
+    Admin(WeaveAdminKey),
 }
 
 impl WeaveDigestReader {
-    /// The reader's own id.
+    /// The reader's own id: an Admin's person, never its grant.
     #[must_use]
     pub fn id(self) -> EntityId {
         match self {
             Self::Person(id) | Self::Owner(id) | Self::Agent(id) => id,
+            Self::Admin(key) => key.actor(),
         }
     }
 
-    /// The reader's role tag, as its keys and inbox events spell it.
+    /// The reader's role tag, as its keys and inbox events spell it, with
+    /// the id its namespace keys on: an Admin's membership grant.
     pub(super) fn tag(self) -> (&'static str, EntityId) {
         match self {
             Self::Person(id) => ("p", id),
             Self::Owner(id) => ("o", id),
             Self::Agent(id) => ("a", id),
+            Self::Admin(key) => (admin::ADMIN_TAG, key.membership_grant()),
         }
     }
 
+    /// An Admin's tag decodes to no reader: its person is not in its id,
+    /// and no stored tag stands in for its proof.
     pub(super) fn from_tag(tag: &str, id: EntityId) -> Option<Self> {
         match tag {
             "p" => Some(Self::Person(id)),
@@ -94,15 +107,18 @@ impl WeaveDigestReader {
     }
 
     fn key(self, prefix: &[u8]) -> Vec<u8> {
-        let (kind, id) = match self {
-            Self::Person(id) => (b'p', id),
-            Self::Owner(id) => (b'o', id),
-            Self::Agent(id) => (b'a', id),
-        };
-        [prefix, &[kind], id.as_bytes()].concat()
+        [prefix, self.stem().as_slice()].concat()
     }
 
-    /// The reader a schedule key names; `None` for a key of another shape.
+    /// The reader's tag byte and the id its namespace keys on, as every
+    /// family of its keys starts.
+    fn stem(self) -> Vec<u8> {
+        let (kind, id) = self.tag();
+        [kind.as_bytes(), id.as_bytes()].concat()
+    }
+
+    /// The reader a schedule key names; `None` for a key of another shape,
+    /// an Admin's among them (no Admin schedule exists, OF-499 A3).
     fn from_schedule_key(key: &[u8]) -> Option<Self> {
         let (&kind, id) = key.strip_prefix(SCHEDULE_PREFIX)?.split_first()?;
         let id = EntityId::from_bytes(<[u8; 16]>::try_from(id).ok()?).ok()?;
@@ -119,17 +135,15 @@ impl WeaveDigestReader {
             WeaveReader::Person(_) => Self::Person(id),
             WeaveReader::Owner(_) => Self::Owner(id),
             WeaveReader::Agent(_) => Self::Agent(id),
+            WeaveReader::Admin(admin) => Self::Admin(WeaveAdminKey::of(admin)),
         }
     }
 
     /// The reader's inbox event for one period's digest. With the producer
-    /// it derives the NOTIFICATION id, so a replay lands the same row.
+    /// it derives the NOTIFICATION id, so a replay lands the same row. An
+    /// Admin's names its grant and goes to its person.
     pub(super) fn notification(self, scheduled_for: u64, now: u64) -> NotificationEvent {
-        let (kind, id) = match self {
-            Self::Person(id) => ("p", id),
-            Self::Owner(id) => ("o", id),
-            Self::Agent(id) => ("a", id),
-        };
+        let (kind, id) = self.tag();
         NotificationEvent {
             kind: NotificationKind::Digest,
             source: NotificationSource {
@@ -139,7 +153,7 @@ impl WeaveDigestReader {
                 ..NotificationSource::default()
             },
             subject_refs: Vec::new(),
-            recipient: Some(id),
+            recipient: Some(self.id()),
             created_at: now,
             origin_conversation: None,
         }
@@ -597,6 +611,8 @@ fn index_source_in_txn(
 /// A deleted reader's own rows go too: its saved periods (a resident's carry
 /// its dreaming counters, which index no source), its schedule and its kept
 /// live render. So do the wrong labels that name it, as reader or target.
+/// A deleted Admin membership grant takes its Admin namespace and labels,
+/// and a deleted person each Admin namespace its binding names (OF-499 A3).
 pub(crate) fn invalidate_weave_digest_source_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -612,12 +628,16 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         let digest_key = index_key
             .strip_prefix(prefix.as_slice())
             .ok_or(Error::CorruptedIndex("weave digest source index"))?;
-        if !digest_key.starts_with(DIGEST_PREFIX)
-            || digest_key.len() != DIGEST_PREFIX.len() + 1 + 16 + 8
-        {
-            return Err(Error::CorruptedIndex("weave digest source index"));
+        if let Some(stem) = admin::bound_admin_stem(digest_key) {
+            admin::erase_reader_rows_in_txn(store, txn, stem)?;
+        } else {
+            if !digest_key.starts_with(DIGEST_PREFIX)
+                || digest_key.len() != DIGEST_PREFIX.len() + 1 + 16 + 8
+            {
+                return Err(Error::CorruptedIndex("weave digest source index"));
+            }
+            rewrite::erase_source_in_period_in_txn(store, txn, digest_key, source)?;
         }
-        rewrite::erase_source_in_period_in_txn(store, txn, digest_key, source)?;
         store.vault_meta.delete(txn, &index_key)?;
     }
     for reader in [
@@ -625,17 +645,9 @@ pub(crate) fn invalidate_weave_digest_source_in_txn(
         WeaveDigestReader::Owner(*source),
         WeaveDigestReader::Agent(*source),
     ] {
-        let periods = store
-            .vault_meta
-            .prefix_iter(&*txn, &reader.key(DIGEST_PREFIX))?
-            .map(|row| row.map(|(key, _)| key.to_vec()))
-            .collect::<Result<Vec<_>>>()?;
-        for digest_key in periods {
-            erase_weave_digest_in_txn(store, txn, &digest_key)?;
-        }
-        store.vault_meta.delete(txn, &reader.key(SCHEDULE_PREFIX))?;
-        store.vault_meta.delete(txn, &reader.key(LIVE_PREFIX))?;
+        admin::erase_reader_rows_in_txn(store, txn, &reader.stem())?;
     }
+    admin::erase_reader_rows_in_txn(store, txn, &admin::grant_stem(source))?;
     // A deleted owner reader's settings, behaviour and Coach changes.
     settings::erase_owner_weave_digest_settings_in_txn(store, txn, source)?;
     super::weave_correction::erase_weave_labels_in_txn(store, txn, source)
@@ -708,6 +720,9 @@ impl Vault {
                 WeaveDigestReader::Owner(id) if id == actor => WeaveReader::Owner(owner),
                 WeaveDigestReader::Owner(_) => return Err(invalid()),
                 WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+                // No Admin schedule: an Admin reads in the foreground only,
+                // and an Owner proof never stands for an Admin's (OF-499 A3).
+                WeaveDigestReader::Admin(_) => return Err(invalid()),
             };
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
@@ -863,6 +878,9 @@ impl Vault {
                 WeaveDigestReader::Agent(id) => self
                     .render_scheduled_weave_digest(id, EdgeActorClass::Agent, now)
                     .map(|stored| stored.is_some()),
+                // No Admin schedule key decodes (OF-499 A3): one would be
+                // held to its boundary, never rendered without its proof.
+                WeaveDigestReader::Admin(_) => Ok(false),
             };
             match outcome {
                 Ok(true) => served += 1,
@@ -964,6 +982,9 @@ impl Vault {
         let (class, lens_reader) = match reader {
             WeaveDigestReader::Person(id) => (EdgeActorClass::Human, WeaveReader::Person(id)),
             WeaveDigestReader::Agent(id) => (EdgeActorClass::Agent, WeaveReader::Agent(id)),
+            // An Admin's period reads only under its current proof, which
+            // the Dreamer never holds (OF-499 A3): withheld before any model.
+            WeaveDigestReader::Admin(_) => return Ok(None),
             WeaveDigestReader::Owner(owner) => {
                 // A due Owner schedule's period reads under its schedule's
                 // binding and the live-owner census (FIX 1259).
@@ -1068,6 +1089,11 @@ impl Vault {
         report: &WeaveReport,
         render: &WeaveLensRender,
     ) -> Result<()> {
+        // An Admin's render keeps under its grant, its proof current in the
+        // writer that keeps it (OF-499 A3).
+        if let WeaveReader::Admin(admin) = reader {
+            return self.keep_weave_admin_live_lens(admin, report, render);
+        }
         let id = {
             let txn = self.store.env.read_txn()?;
             reader.id(self, &txn)?
@@ -1162,11 +1188,18 @@ impl ScopedRead<'_> {
                 }
                 actor
             }
+            // An Admin binds this lane to its proof in this snapshot (OF-499
+            // A3); its own door builds the lane here too.
+            WeaveReader::Admin(admin) => {
+                self.bind_weave_admin_in(&txn, admin)?;
+                admin.actor()
+            }
         };
         let reader_key = match reader {
             WeaveReader::Person(_) => WeaveDigestReader::Person(id),
             WeaveReader::Owner(_) => WeaveDigestReader::Owner(id),
             WeaveReader::Agent(_) => WeaveDigestReader::Agent(id),
+            WeaveReader::Admin(admin) => WeaveDigestReader::Admin(WeaveAdminKey::of(admin)),
         };
         self.saved_weave_digest_in_txn(&txn, reader_key, scheduled_for, Some(reader))
     }
@@ -1193,6 +1226,7 @@ impl ScopedRead<'_> {
             WeaveDigestReader::Person(_) => "person",
             WeaveDigestReader::Owner(_) => "owner",
             WeaveDigestReader::Agent(_) => "agent",
+            WeaveDigestReader::Admin(_) => crate::gate::weave_policy::ADMIN_ROLE,
         };
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         // Even an empty saved report must not reveal historical section names
@@ -1349,19 +1383,8 @@ impl ScopedRead<'_> {
     ) -> Result<Option<StoredWeaveDigest>> {
         let latest = {
             let txn = self.vault.store.env.read_txn()?;
-            let prefix =
-                WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?).key(DIGEST_PREFIX);
-            let mut latest = None;
-            for row in self.vault.store.vault_meta.prefix_iter(&txn, &prefix)? {
-                let (key, _) = row?;
-                if let Some(at) = key
-                    .strip_prefix(prefix.as_slice())
-                    .and_then(|at| <[u8; 8]>::try_from(at).ok())
-                {
-                    latest = Some(u64::from_be_bytes(at));
-                }
-            }
-            latest
+            let reader_key = WeaveDigestReader::of(&reader, reader.id(self.vault, &txn)?);
+            admin::latest_period_in(&self.vault.store, &txn, reader_key)?
         };
         match latest {
             Some(scheduled_for) => self.read_weave_digest(reader, scheduled_for),
@@ -1395,6 +1418,9 @@ impl ScopedRead<'_> {
             WeaveReader::Person(id) => WeaveDigestReader::Person(*id),
             WeaveReader::Owner(owner) => WeaveDigestReader::Owner(owner.revalidate(self.vault)?),
             WeaveReader::Agent(id) => WeaveDigestReader::Agent(*id),
+            // An Admin reads in the foreground only: no Admin schedule
+            // exists to render, and none publishes (OF-499 A3).
+            WeaveReader::Admin(_) => return Ok(None),
         };
         // Do not turn a non-due probe into a backdoor for inspecting the row:
         // even a skip must be actor-bound (and an owner must still be live).
@@ -1408,6 +1434,8 @@ impl ScopedRead<'_> {
                 self.actor_key.actor_ref() != actor.to_hex()
                     && self.actor_key.actor_ref() != owner.principal_ref_in_txn(self.vault, &txn)?
             }
+            // Returned above: an Admin renders nothing here.
+            WeaveReader::Admin(_) => true,
         } {
             return Err(invalid());
         }
