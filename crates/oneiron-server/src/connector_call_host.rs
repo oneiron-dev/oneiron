@@ -8,9 +8,9 @@
 //! installed, with the connector key's credential presented only inside the
 //! credential door. One send is one `tools/call`: `initialize` at the key's
 //! pinned protocol revision, `notifications/initialized`, then the call
-//! itself. No proxy, no redirects, a bounded reply and short timeouts.
+//! itself. No proxy, no redirects, a complete reply and short timeouts.
 //!
-//! The reply is foreign data. The host keeps its own bounded copy of the
+//! The reply is foreign data. The host keeps its own copy of the
 //! `tools/call` result for the caller; the ledger's scrub still destroys the
 //! raw bytes before anything durable is written. Sampling and roots are not
 //! served: any such server request on the reply stream is refused.
@@ -48,9 +48,9 @@ use std::time::{Duration, Instant};
 
 use oneiron::connector_key::{ConnectorCallRoute, SlateDisposition};
 use oneiron::outbound_consent::{
-    CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
-    ConnectorQuestion, FrozenToolCallView, OutboundResultSender, OutboundTransportResult,
-    RawOutboundResult, UntrustedToolResult,
+    ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorQuestion,
+    FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
+    UntrustedToolResult,
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
@@ -71,11 +71,10 @@ use crate::server::SyncServer;
 
 mod live_exchange;
 mod presenting;
-use live_exchange::{
-    Continuation, KeptWire, LiveSession, Reply, StreamEvent, hand_over, open_reply, post_json,
-    read_reply,
-};
+mod reply_read;
+use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+use reply_read::{Reply, StreamEvent, open_reply, read_reply};
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -204,7 +203,7 @@ impl ServedConnectorCallHost {
         // The grant admitted the frozen endpoint; this host sends only to
         // the one it installed under the same name.
         if connector.endpoint != view.endpoint() {
-            return Sent::not_sent(OutboundFailureKind::Rejected, None);
+            return Sent::not_sent(OutboundFailureKind::EndpointChanged, None);
         }
         // The route and the credential its send presents are known before
         // the exchange is declared (FIX 7646); a failure answers as before.
@@ -229,11 +228,11 @@ impl ServedConnectorCallHost {
     /// declare none. A call that names a custody record declares it too: its
     /// door clears the presented value from each question and every later
     /// reply (FIX 3843).
-    fn declared(
-        &self,
-        call: &FrozenOutboundCall,
+    fn declared<'a>(
+        &'a self,
+        call: &'a FrozenOutboundCall,
         view: &FrozenToolCallView,
-    ) -> Option<Declared<'_>> {
+    ) -> Option<Declared<'a>> {
         let caller = self.caller.as_ref()?;
         let revision = view.protocol_revision()?;
         let capability = elicitation_capability(revision)?;
@@ -247,6 +246,7 @@ impl ServedConnectorCallHost {
         Some(Declared {
             capability,
             intake,
+            call,
             vault: &self.vault,
             registry: &self.elicitations,
             binding: QuestionBinding {
@@ -269,7 +269,7 @@ impl ServedConnectorCallHost {
     /// holds their handle, so their worker cancels them now (FIX 3844).
     fn abandon_untaken(&mut self) {
         if let Some(left) = self.awaiting.take() {
-            self.elicitations.finish(&left.handle);
+            self.elicitations.finish(Some(&*self.vault), &left.handle);
         }
     }
 }
@@ -339,7 +339,7 @@ impl ConnectorCallHost for ServedConnectorCallHost {
     }
 
     fn abandon_awaiting_input(&mut self, handle: &str) {
-        self.elicitations.finish(handle);
+        self.elicitations.finish(Some(&*self.vault), handle);
     }
 
     fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
@@ -529,6 +529,8 @@ impl Sent {
 struct Declared<'a> {
     capability: Value,
     intake: Intake,
+    /// The authenticated call, which every re-send of its payload rechecks.
+    call: &'a FrozenOutboundCall,
     binding: QuestionBinding,
     /// The vault whose `[limits]` row measures the live question sets, and
     /// whose gate ledger keeps each answer's receipt (FIX 3840).
@@ -779,6 +781,7 @@ impl<'a> Exchange<'a> {
                 tool_headers: self.tool_headers.clone(),
                 request_state,
                 next_id: CALL_ID + 1,
+                original: declared.call.clone(),
             };
             let kept = value.map(SentValue::keep);
             return hand_over(declared, round, continuation, live, body, kept);

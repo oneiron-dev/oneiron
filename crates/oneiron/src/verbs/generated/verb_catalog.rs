@@ -269,6 +269,11 @@ pub enum AgentVerb {
     VaultConnectorsProxyRevokeWrite,
     VaultConnectorsSlatesRedraft,
     VaultConnectorsSlatesNarrow,
+    VaultConnectorsSlatesScopeOutcome,
+    VaultConnectorsSlatesRevisionOffers,
+    VaultConnectorsSlatesDeferRevision,
+    VaultConnectorsSlatesAcceptRevision,
+    VaultConnectorsSlatesReaskIssuer,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
     VaultConnectorsSubscriptionsRevoke,
@@ -1436,6 +1441,11 @@ impl AgentVerb {
         Self::VaultConnectorsProxyRevokeWrite,
         Self::VaultConnectorsSlatesRedraft,
         Self::VaultConnectorsSlatesNarrow,
+        Self::VaultConnectorsSlatesScopeOutcome,
+        Self::VaultConnectorsSlatesRevisionOffers,
+        Self::VaultConnectorsSlatesDeferRevision,
+        Self::VaultConnectorsSlatesAcceptRevision,
+        Self::VaultConnectorsSlatesReaskIssuer,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
         Self::VaultConnectorsSubscriptionsRevoke,
@@ -2606,6 +2616,11 @@ impl AgentVerb {
             Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
             Self::VaultConnectorsSlatesRedraft => "vault.connectors.slates.redraft",
             Self::VaultConnectorsSlatesNarrow => "vault.connectors.slates.narrow",
+            Self::VaultConnectorsSlatesScopeOutcome => "vault.connectors.slates.scope_outcome",
+            Self::VaultConnectorsSlatesRevisionOffers => "vault.connectors.slates.revision_offers",
+            Self::VaultConnectorsSlatesDeferRevision => "vault.connectors.slates.defer_revision",
+            Self::VaultConnectorsSlatesAcceptRevision => "vault.connectors.slates.accept_revision",
+            Self::VaultConnectorsSlatesReaskIssuer => "vault.connectors.slates.reask_issuer",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
             Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
@@ -3803,6 +3818,11 @@ impl AgentVerb {
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSlatesRedraft
                 | Self::VaultConnectorsSlatesNarrow
+                | Self::VaultConnectorsSlatesScopeOutcome
+                | Self::VaultConnectorsSlatesRevisionOffers
+                | Self::VaultConnectorsSlatesDeferRevision
+                | Self::VaultConnectorsSlatesAcceptRevision
+                | Self::VaultConnectorsSlatesReaskIssuer
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4997,6 +5017,11 @@ impl AgentVerb {
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSlatesRedraft
                 | Self::VaultConnectorsSlatesNarrow
+                | Self::VaultConnectorsSlatesScopeOutcome
+                | Self::VaultConnectorsSlatesRevisionOffers
+                | Self::VaultConnectorsSlatesDeferRevision
+                | Self::VaultConnectorsSlatesAcceptRevision
+                | Self::VaultConnectorsSlatesReaskIssuer
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -6318,6 +6343,11 @@ impl AgentVerb {
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSlatesRedraft
                 | Self::VaultConnectorsSlatesNarrow
+                | Self::VaultConnectorsSlatesScopeOutcome
+                | Self::VaultConnectorsSlatesRevisionOffers
+                | Self::VaultConnectorsSlatesDeferRevision
+                | Self::VaultConnectorsSlatesAcceptRevision
+                | Self::VaultConnectorsSlatesReaskIssuer
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -7309,6 +7339,10 @@ impl AgentVerb {
                 | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSlatesRedraft
                 | Self::VaultConnectorsSlatesNarrow
+                | Self::VaultConnectorsSlatesScopeOutcome
+                | Self::VaultConnectorsSlatesDeferRevision
+                | Self::VaultConnectorsSlatesAcceptRevision
+                | Self::VaultConnectorsSlatesReaskIssuer
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
@@ -8155,6 +8189,11 @@ impl AgentVerb {
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSlatesRedraft => &["spec"],
             Self::VaultConnectorsSlatesNarrow => &["spec"],
+            Self::VaultConnectorsSlatesScopeOutcome => &["spec"],
+            Self::VaultConnectorsSlatesRevisionOffers => &["spec"],
+            Self::VaultConnectorsSlatesDeferRevision => &["spec"],
+            Self::VaultConnectorsSlatesAcceptRevision => &["spec"],
+            Self::VaultConnectorsSlatesReaskIssuer => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -9323,6 +9362,11 @@ impl AgentVerb {
             Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSlatesRedraft => &["spec"],
             Self::VaultConnectorsSlatesNarrow => &["spec"],
+            Self::VaultConnectorsSlatesScopeOutcome => &["spec"],
+            Self::VaultConnectorsSlatesRevisionOffers => &["spec"],
+            Self::VaultConnectorsSlatesDeferRevision => &["spec"],
+            Self::VaultConnectorsSlatesAcceptRevision => &["spec"],
+            Self::VaultConnectorsSlatesReaskIssuer => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -11013,6 +11057,21 @@ impl AgentVerb {
             }
             Self::VaultConnectorsSlatesNarrow => {
                 "The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."
+            }
+            Self::VaultConnectorsSlatesScopeOutcome => {
+                "The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted."
+            }
+            Self::VaultConnectorsSlatesRevisionOffers => {
+                "Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing."
+            }
+            Self::VaultConnectorsSlatesDeferRevision => {
+                "The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant."
+            }
+            Self::VaultConnectorsSlatesAcceptRevision => {
+                "The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again."
+            }
+            Self::VaultConnectorsSlatesReaskIssuer => {
+                "The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."
             }
             Self::VaultConnectorsSubscriptionsPut => {
                 "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."
