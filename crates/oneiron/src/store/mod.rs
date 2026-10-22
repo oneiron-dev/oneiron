@@ -157,6 +157,7 @@ mod structural_kind_registry;
 mod sync_responses;
 mod training_link;
 pub(crate) mod turn_missing;
+mod usage_sources;
 mod world_pad_custody;
 mod writer_lease;
 
@@ -284,5 +285,6 @@ pub(crate) use sync_responses::{
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;
 pub(crate) use training_link::TrainingLinkSlot;
+pub(crate) use usage_sources::erase_usage_source_in_txn;
 pub(crate) use world_pad_custody::{PlannedPad, WorldPadCustody, plan_world_pad};
 pub use writer_lease::{VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, VaultWriterLease};

@@ -2,16 +2,18 @@
 //!
 //! An erase's initial receipt R never changes. Its historical sweep appends
 //! the factual sweep row C (`receipt_completion`). Once the sweep, when R
-//! queued one, and every custody retirement R binds by name have finished,
-//! one more row F is appended: R's body with C's sweep time and
-//! `erase_complete_at`, freshly signed (OD-6) over F's own id, which is
-//! derived from R's under its own domain. The legal hold's "erase completed"
-//! is logged with F, once. Whichever finishes last appends F: an erase that
-//! queued no sweep and owes no custody retirement gets it in its own
+//! queued one, every custody retirement R binds by name and every scrub a
+//! legal hold kept from R's ids (`legal_hold::held_scrubs`, FIX 6386, 7993,
+//! 7994) have finished, one more row F is appended: R's body with C's sweep
+//! time and `erase_complete_at`, freshly signed (OD-6) over F's own id,
+//! which is derived from R's under its own domain. The legal hold's "erase
+//! completed" is logged with F, once. Whichever finishes last appends F: an
+//! erase that queued no sweep and owes nothing else gets it in its own
 //! transaction, the sweep in its finalize transaction, a custody
-//! publication pass once its locks are released, and the custody tick of a
-//! running server retries it, settled or not. A missing proof keeps F owed;
-//! nothing waits on F: not the erase, its response nor a backup.
+//! publication pass once its locks are released, a due legal-hold pass once
+//! a released hold's scrubs settle, and the custody tick of a running server
+//! retries it, settled or not. A missing proof keeps F owed; nothing waits
+//! on F: not the erase, its response nor a backup.
 
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -78,22 +80,25 @@ pub(crate) fn redaction_erase_final_in_txn(
 enum EraseFinal {
     /// Its final row is there.
     Appended,
-    /// Owed now: its sweep, if it queued one, finished at this time, and
-    /// every custody retirement it binds has finished.
+    /// Owed now: its sweep, if it queued one, finished at this time, every
+    /// custody retirement it binds has finished, and no scrub a legal hold
+    /// kept is owed for its ids.
     Due(Option<u64>),
-    /// Its sweep or a custody retirement it binds has not finished.
+    /// Its sweep, a custody retirement it binds or a held scrub has not
+    /// finished.
     Pending,
 }
 
 /// Reads where the erase of the initial receipt `receipt` stands. A custody
 /// fault is warned and leaves it pending, as every custody fault an erase
-/// meets is.
+/// meets is, and so is a fault reading its held scrubs.
 fn erase_final_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt_id: &EntityId,
     receipt: &RedactionAuditReceipt,
 ) -> Result<EraseFinal> {
+    let store = &vault.store;
     if redaction_erase_final_in_txn(store, txn, receipt_id, receipt)?.is_some() {
         return Ok(EraseFinal::Appended);
     }
@@ -114,20 +119,35 @@ fn erase_final_in_txn(
             );
             false
         });
-    Ok(if retired {
-        EraseFinal::Due(swept)
-    } else {
+    if !retired {
+        return Ok(EraseFinal::Pending);
+    }
+    // A row a legal hold keeps from the erase keeps it owed (FIX 6386, 7993,
+    // 7994): the erase stands, and reads completion pending.
+    let owed = super::legal_hold::held_scrubs_owed_in_txn(vault, txn, &receipt.scope.entity_ids);
+    let held = owed.unwrap_or_else(|error| {
+        tracing::warn!(
+            receipt = %receipt_id.to_hex(),
+            kind = ?error.kind(),
+            "an erase's held scrubs did not read; its final row stays owed"
+        );
+        true
+    });
+    Ok(if held {
         EraseFinal::Pending
+    } else {
+        EraseFinal::Due(swept)
     })
 }
 
 /// Appends the initial receipt `receipt`'s overall final row, completed at
-/// `now`, once its sweep, if it queued one, and every custody retirement it
-/// binds have finished, and logs a legal hold's "erase completed" for its
-/// request in the same transaction (C4), the one place that event is
-/// written. `false` when it is not owed yet or is there already, or when a
-/// different row sits at a linked id (logged there, never overwritten). The
-/// device key must already be on the handle (P6c).
+/// `now`, once its sweep, if it queued one, every custody retirement it
+/// binds and every scrub a legal hold kept from its ids have finished, and
+/// logs a legal hold's "erase completed" for its request in the same
+/// transaction (C4), the one place that event is written. `false` when it is
+/// not owed yet or is there already, or when a different row sits at a
+/// linked id (logged there, never overwritten). The device key must already
+/// be on the handle (P6c).
 pub(crate) fn finish_redaction_erase_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -140,7 +160,7 @@ pub(crate) fn finish_redaction_erase_in_txn(
             "only an erase's initial receipt gets a final row",
         ));
     }
-    let swept = match erase_final_in_txn(&vault.store, wtxn, receipt_id, receipt) {
+    let swept = match erase_final_in_txn(vault, wtxn, receipt_id, receipt) {
         Ok(EraseFinal::Due(swept)) => swept,
         Ok(EraseFinal::Appended | EraseFinal::Pending)
         | Err(Error::CorruptedIndex("redaction audit receipt body")) => return Ok(false),
@@ -208,7 +228,7 @@ impl Vault {
             {
                 let id = id?;
                 let state = initial_receipt_in_txn(&self.store, &txn, &id)?
-                    .map(|receipt| erase_final_in_txn(&self.store, &txn, &id, &receipt))
+                    .map(|receipt| erase_final_in_txn(self, &txn, &id, &receipt))
                     .transpose();
                 match state {
                     Ok(Some(EraseFinal::Due(_))) => due.push(id),

@@ -86,7 +86,8 @@ def host_env(**extra: str) -> dict:
 
 
 def run(argv, *, cwd=None, env=None, check=True, capture=False, stdin=None) -> subprocess.CompletedProcess:
-    """Runs argv; with no env given it gets host_env(), never this process's environment."""
+    """Runs argv; with no env given it gets host_env(), never this process's environment.
+    Uncaptured output goes to stderr, so build.py's stdout holds its record alone."""
     shown = " ".join(str(a) for a in argv)
     log(f"$ {shown}")
     result = subprocess.run(
@@ -94,7 +95,7 @@ def run(argv, *, cwd=None, env=None, check=True, capture=False, stdin=None) -> s
         cwd=cwd,
         env=host_env() if env is None else env,
         stdin=stdin,
-        stdout=subprocess.PIPE if capture else None,
+        stdout=subprocess.PIPE if capture else sys.stderr,
         text=capture,
     )
     if check and result.returncode != 0:
