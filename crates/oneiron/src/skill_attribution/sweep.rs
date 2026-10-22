@@ -24,6 +24,11 @@ const APPLIED_CURSOR: SideTable<(), u64, side_table::Raw> =
 const CAPTURED: SideTable<String, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_SWEEP_RECEIPT_CAPTURED);
 
+/// Receipts one read of the receipt pager takes (FIX 10109): the pager's own
+/// page bound. It only paces the scan; a pass reads page after page until it
+/// has read the receipts it was asked for or the ledger ends.
+const RECEIPT_PAGE_CHUNK: usize = 1024;
+
 /// Facts that a receipt does not carry. Hosts must resolve real actor/skill IDs;
 /// neither a lease-owner string nor listing a tier-1 skill proves contribution.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,8 +65,9 @@ pub struct AttributionSweepReport {
     pub failures: Vec<(String, Error)>,
 }
 
-/// One bounded receipt page. The rule tier stays the default; fact resolution is
-/// a host seam because execution/coverage facts cannot be invented from a failure.
+/// One pass over up to `limit` receipts, read a page at a time. The rule tier
+/// stays the default; fact resolution is a host seam because
+/// execution/coverage facts cannot be invented from a failure.
 pub fn run_task_attribution_sweep(
     vault: &Vault,
     limit: usize,
@@ -93,7 +99,7 @@ pub fn run_task_attribution_sweep_with_decisions(
             .receipts_per_pass;
         limit.min(usize::try_from(budget).unwrap_or(usize::MAX))
     };
-    let (receipts, complete) = attempt_pack_receipt_page(vault, after.as_deref(), page_limit)?;
+    let (receipts, complete) = receipt_pages(vault, after.as_deref(), page_limit)?;
     let mut report = AttributionSweepReport {
         scanned: receipts.len(),
         ..Default::default()
@@ -153,6 +159,7 @@ pub fn run_task_attribution_sweep_with_decisions(
                     .direct_subjects
                     .iter()
                     .chain(credit.shares.iter().map(|share| &share.subject))
+                    .flatten()
                 {
                     if vault.get_raw(subject)?.and_then(|raw| {
                         crate::batch::EntityMetadataHeader::parse(&raw)
@@ -175,6 +182,29 @@ pub fn run_task_attribution_sweep_with_decisions(
         Ok(())
     })?;
     Ok(report)
+}
+
+/// Up to `limit` receipts after `after`, read [`RECEIPT_PAGE_CHUNK`] at a time
+/// (FIX 10109), and whether the ledger ended before `limit`.
+fn receipt_pages(
+    vault: &Vault,
+    after: Option<&str>,
+    limit: usize,
+) -> Result<(Vec<ReceiptRecord>, bool)> {
+    let mut receipts: Vec<ReceiptRecord> = Vec::new();
+    while receipts.len() < limit {
+        let cursor = receipts
+            .last()
+            .map(|receipt| receipt.receipt_id.as_str())
+            .or(after);
+        let chunk = (limit - receipts.len()).min(RECEIPT_PAGE_CHUNK);
+        let (page, complete) = attempt_pack_receipt_page(vault, cursor, chunk)?;
+        receipts.extend(page);
+        if complete {
+            return Ok((receipts, true));
+        }
+    }
+    Ok((receipts, false))
 }
 
 fn capture_receipt(
@@ -202,9 +232,10 @@ fn capture_receipt(
                 let skill = fact.skill.ok_or(Error::InvalidConfig(
                     "attribution fact must name a loaded skill".to_owned(),
                 ))?;
-                vault.get_skill_record(&skill)?.ok_or(Error::InvalidConfig(
-                    "attribution fact names an unknown skill".to_owned(),
-                ))
+                // Each fact's skill as the pack loaded it (FIX 10110).
+                crate::skill::receipt_skill_record(vault, receipt, &skill)?.ok_or(
+                    Error::InvalidConfig("attribution fact names an unknown skill".to_owned()),
+                )
             })
             .collect::<Result<Vec<_>>>()?;
         let named_revisions: std::collections::BTreeSet<_> = named

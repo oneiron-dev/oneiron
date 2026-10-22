@@ -6,6 +6,7 @@
 mod doors;
 mod hex_bytes;
 mod persistence;
+mod revisions;
 mod state;
 mod types;
 

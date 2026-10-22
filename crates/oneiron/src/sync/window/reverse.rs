@@ -394,11 +394,16 @@ fn reverse_rematerialize_scan(
                 )?;
             let fixed_actor_mismatch = crate::dreamer_runner::authority::is_base_agent_actor(id)?
                 && map_get_bytes(&entities_map, &hex_id).as_deref() != Some(raw.as_slice());
-            // A local edit to a row the doc already carries replaces it.
+            // A local edit to a row the doc already carries replaces it. A
+            // pad row the doc holds by reference is the same row as its
+            // carrier here (FIX 7107): no echo.
             let edited = if is_edited(id) {
                 let outbound = pack_sync::canonical_outbound_blob(&raw)?;
-                map_get_bytes(&entities_map, &hex_id).as_deref()
-                    != Some(outbound.as_deref().unwrap_or(raw.as_slice()))
+                !super::pad_custody::window_row_holds(
+                    id,
+                    map_get_bytes(&entities_map, &hex_id).as_deref(),
+                    outbound.as_deref().unwrap_or(raw.as_slice()),
+                )
             } else {
                 false
             };

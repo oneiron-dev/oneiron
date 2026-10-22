@@ -21,6 +21,10 @@ pub enum Error {
     /// deadline ran out (FIX 8574): a well-formed package, never invalid.
     #[error(transparent)]
     Resource(#[from] crate::resource::ResourceRefusal),
+    /// A well-formed package past a ceiling its caller set, or past classic
+    /// ZIP's widths (FIX 5354): named with its dimension, never invalid.
+    #[error("package ceiling: {0}")]
+    Capacity(crate::resource::CapacityHit),
 }
 
 impl Error {
@@ -29,8 +33,30 @@ impl Error {
     pub const fn resource(&self) -> Option<crate::resource::ResourceRefusal> {
         match self {
             Self::Resource(refusal) => Some(*refusal),
-            Self::Invalid(_) | Self::Edit(_) => None,
+            Self::Invalid(_) | Self::Edit(_) | Self::Capacity(_) => None,
         }
+    }
+
+    /// The ceiling, when a well-formed package passed one.
+    #[must_use]
+    pub const fn capacity(&self) -> Option<crate::resource::CapacityHit> {
+        match self {
+            Self::Capacity(hit) => Some(*hit),
+            Self::Invalid(_) | Self::Edit(_) | Self::Resource(_) => None,
+        }
+    }
+
+    /// `observed` past `limit` on `dimension`.
+    pub(crate) fn capacity_hit(
+        dimension: crate::resource::Dimension,
+        observed: usize,
+        limit: usize,
+    ) -> Self {
+        Self::Capacity(crate::resource::CapacityHit::new(
+            dimension,
+            crate::resource::wide(observed),
+            crate::resource::wide(limit),
+        ))
     }
 
     /// An XML reader's failure as `fallback`, keeping a resource refusal

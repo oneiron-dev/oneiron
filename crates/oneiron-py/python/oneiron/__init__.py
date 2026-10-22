@@ -994,13 +994,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def read(self, spec=None):
-            """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
+            """The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."""
             return json.loads(_translate(lambda: self._client.vault_shape_read(json.dumps({} if spec is None else spec))))
         def plan(self, spec):
-            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
             return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
         def apply(self, spec):
-            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
     class _VaultCompanionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3036,7 +3036,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def decide(self, spec):
-            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer."""
             return json.loads(_translate(lambda: self._client.vault_policy_relay_decide(json.dumps(spec))))
     class _VaultConsentVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -3628,7 +3628,7 @@ class Oneiron:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
             return json.loads(_translate(lambda: self._client.vault_code_model_heal_count(json.dumps(spec))))
         def type_diagnostics(self, spec):
-            """Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again."""
+            """Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again."""
             return json.loads(_translate(lambda: self._client.vault_code_type_diagnostics(json.dumps(spec))))
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs":
@@ -5483,7 +5483,7 @@ class Oneiron:
             """One saved query the caller owns; a query absent or not the caller's reads as not found."""
             return json.loads(_translate(lambda: self._client.self_saved_query_read(json.dumps(spec))))
         def update(self, spec):
-            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it."""
             return json.loads(_translate(lambda: self._client.self_saved_query_update(json.dumps(spec))))
         def archive(self, spec):
             """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""

@@ -15,7 +15,8 @@ pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev
 libxkbcommon-dev`), from a checkout of this repository:
 
 ```sh
-crates/oneiron-container/guest/desktop/build.sh
+crates/oneiron-container/guest/desktop/build.sh              # prints the config digest
+crates/oneiron-container/guest/desktop/build.sh --store-id   # prints this docker store's id
 ```
 
 It:
@@ -33,7 +34,16 @@ It:
    driver;
 4. checks that every binary loads inside the image (a host glibc newer than
    the image's fails here, not when a run starts its desktop);
-5. prints the local image id, `sha256:<64 hex>`, as the only line on stdout.
+5. saves the image and prints its **config digest**, `sha256:<64 hex>`, as
+   the only line on stdout. The digest comes from the saved image's own
+   `manifest.json` Config, hashed against the config bytes (the rule
+   `guest/browser/build.sh` and `deploy/firecracker/build.py` use), not from
+   `--iidfile`. With `--store-id` it prints instead the id this host's
+   docker store answers the image as (`docker image inspect` `.Id`). Both
+   ids also go to stderr: "this docker store answers the image as ...".
+
+The Dockerfile is the only route; there is no image-family or archive
+route for the desktop yet.
 
 Nothing is pushed to a registry. `ONEIRON_DESKTOP_DOCKER` names the
 container CLI (default `docker`), and `ONEIRON_DESKTOP_TAG` the tag the image
@@ -42,15 +52,30 @@ images keeps it.
 
 ## Pin
 
-Put the printed id in the engine's config:
+An image built here has two digests that are never interchangeable:
+
+- the **config digest**, printed by default. A classic docker image store
+  and a VM vault's podman store answer the image by it, and a VM vault's
+  guest-runtime descriptor names it (`deploy/firecracker/build.py`);
+- the **manifest digest**. A docker that uses the containerd image store
+  answers the image by it, and there the config digest does not resolve.
+
+Put the id the serving store answers in the engine's config. For a direct
+docker runtime that is `build.sh --store-id` (on a classic store it equals
+the default output):
 
 ```toml
 [desktop]
 runtime = "/usr/bin/docker"
-image = "sha256:<the printed id>"
+image = "sha256:<the id>"
 ```
+
+A VM vault's descriptor and podman store take the default output, the
+config digest.
 
 A local id names the image only on the host that holds it. Build on the host
 that serves the engine, or move the image with `docker save` and
-`docker load`, which keep its id. Running the build on a serving host is an
-ops step.
+`docker load`, which keep its config digest; a containerd store answers the
+loaded image by its manifest digest, so read the id there with
+`docker image inspect --format '{{.Id}}'`. Running the build on a serving
+host is an ops step.

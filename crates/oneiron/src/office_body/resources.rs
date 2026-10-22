@@ -73,6 +73,22 @@ pub(crate) fn document_refused(refusal: ResourceRefusal) -> crate::error::Error 
     }
 }
 
+/// A DOCX read's or projection's failure as the engine's error: a resource
+/// refusal as itself ([`document_refused`]), a ceiling the package passed as
+/// a refusal naming it (FIX 5354), any other one invalid under `message`.
+pub(crate) fn docx_error(
+    error: &oneiron_docedit::DoceditError,
+    message: &str,
+) -> crate::error::Error {
+    if let Some(refusal) = error.resource() {
+        return document_refused(refusal);
+    }
+    error.parse_limit_refusal().map_or_else(
+        || super::invalid(message),
+        |refusal| crate::error::Error::Refused(refusal.to_owned()),
+    )
+}
+
 /// A document read's failure as the engine's error: a resource refusal as
 /// itself ([`document_refused`]), any other one invalid under `message`.
 pub(crate) fn document_error(
