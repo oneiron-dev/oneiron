@@ -48,8 +48,8 @@ mod booked;
 
 use booked::Unbooked;
 pub use booked::{
-    FrameBooking, frame_body_len, recv_frame_polled_booked, recv_frame_until_booked,
-    recv_handshake, recv_handshake_until_booked,
+    FrameBooking, frame_body_len, frame_read_cost, recv_frame_polled_booked,
+    recv_frame_until_booked, recv_handshake, recv_handshake_until_booked,
 };
 
 /// `len: u32 LE | more: u8`.

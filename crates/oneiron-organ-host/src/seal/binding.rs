@@ -16,7 +16,7 @@ use const_oid::ObjectIdentifier;
 use der::asn1::{Any, OctetString};
 use der::{Decode, Encode, Reader, SliceReader};
 use oneiron::blob_artifact::esign::{EsignSealInput, EsignSealerError, SEAL_CONTENTS_LADDER};
-use oneiron_organ_protocol::{AskCode, AskRefusal, ByteBuf};
+use oneiron_organ_protocol::{AskCode, AskRefusal, ByteBuf, Value};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use x509_cert::spki::AlgorithmIdentifierOwned;
@@ -515,10 +515,8 @@ fn tlv(tag: u8, content: &[u8]) -> Vec<u8> {
     out
 }
 
-fn decode<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Option<T> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).ok()?;
-    rmp_serde::from_slice(&bytes).ok()
+fn decode<T: serde::de::DeserializeOwned>(value: &Value) -> Option<T> {
+    oneiron_organ_protocol::from_value(value).ok()
 }
 
 fn bad(detail: &str) -> AskRefusal {

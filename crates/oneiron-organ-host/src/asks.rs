@@ -20,7 +20,7 @@ use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{
     ASK_NET_FETCH, Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, ByteBuf, FetchAnswer,
-    Hash32, Payload, SharedRegion,
+    Hash32, Payload, SharedRegion, Value, encoded_len,
 };
 
 use crate::budget::{CallRoom, Stop};
@@ -110,8 +110,8 @@ impl<'a> CallAsks<'a> {
         self.frames
     }
 
-    pub(crate) fn frame_sent(&mut self, len: u32) {
-        self.frames.0 = self.frames.0.max(u64::from(len));
+    pub(crate) fn frame_sent(&mut self, len: u64) {
+        self.frames.0 = self.frames.0.max(len);
     }
 
     pub(crate) fn frame_received(&mut self, len: u64) {
@@ -153,7 +153,7 @@ impl<'a> CallAsks<'a> {
             let count = u64::from(*count);
             self.measure(EngineLimit::OrganAskPerVerb, u64::from(cap), count);
         }
-        let encoded = rmp_serde::to_vec_named(&ask.value).map_or(0, |bytes| bytes.len() as u64);
+        let encoded = encoded_len(&ask.value).unwrap_or(0);
         vault.measure_limit(EngineLimit::OrganAskValueBytes, encoded);
         self.ask(ask, line, (cap.is_some(), watched), clock, started)
     }
@@ -271,7 +271,7 @@ impl<'a> CallAsks<'a> {
         }
         // The value is answer bytes too: a fetch's final URL, or anything a
         // handler puts there, crosses inline and lands in the organ's heap.
-        let value_len = rmp_serde::to_vec_named(&value).map_or(0, |bytes| bytes.len() as u64);
+        let value_len = encoded_len(&value).unwrap_or(0);
         let data_len = data.as_ref().map_or(0, |bytes| bytes.len() as u64);
         let charged = value_len.saturating_add(data_len);
         // The room the answer holds: what its handler held as it read, made
@@ -341,7 +341,7 @@ impl<'a> CallAsks<'a> {
 
     /// Measures a fetch's answer: its body against the grant's own bytes,
     /// its hops, its origin and its Content-Type, each kept whole.
-    fn measure_fetch(&self, line: &AskReceipt, value: &rmpv::Value, body: u64) {
+    fn measure_fetch(&self, line: &AskReceipt, value: &Value, body: u64) {
         let vault = self.context.vault;
         self.measure(
             EngineLimit::OrganFetchBytes,

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use oneiron::EntityId;
 use oneiron::secret_custody::SecretSight;
-use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody};
+use oneiron_organ_protocol::{DEFAULT_FRAME_LIMIT, Hash32, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::budget::BudgetConfig;
@@ -238,7 +238,7 @@ pub struct OrganCall {
     pub organ: String,
     pub verb: String,
     pub schema: u32,
-    pub args: rmpv::Value,
+    pub args: Value,
     pub body: Option<TypedBody>,
     /// The vault inputs, each with the sight its caller reads it under.
     pub inputs: Vec<SightedInput>,

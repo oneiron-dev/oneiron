@@ -8,7 +8,7 @@ use oneiron::edit_settle::{OrganWait, OrganWaitView, PendingProposalView};
 use oneiron::provenance::made_by::MadeByTrigger;
 use oneiron::secret_custody::SecretSight;
 use oneiron::{EntityId, Vault, WriteActor};
-use oneiron_organ_protocol::{ByteBuf, TypedBody};
+use oneiron_organ_protocol::{ByteBuf, TypedBody, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::error::HostError;
@@ -68,7 +68,7 @@ struct HeldCall {
     organ: String,
     verb: String,
     schema: u32,
-    args: rmpv::Value,
+    args: Value,
     body: Option<TypedBody>,
     /// A version never changes, so a redrive reads the bytes the call named.
     inputs: Vec<HeldInput>,
@@ -188,7 +188,7 @@ impl OrganRouter {
             lent,
             trigger,
         } = job;
-        let held = rmp_serde::to_vec_named(&HeldCall::of(&call, &lent))
+        let held = oneiron_organ_protocol::to_vec(&HeldCall::of(&call, &lent))
             .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
@@ -253,7 +253,7 @@ impl OrganRouter {
             vault.fail_organ_wait(&artifact, &wait.run_ref, &detail, now)?;
             Ok(Redrive::Failed(detail))
         };
-        let held = match rmp_serde::from_slice::<HeldCall>(&wait.call)
+        let held = match oneiron_organ_protocol::from_slice::<HeldCall>(&wait.call)
             .map_err(|err| err.to_string())
             .and_then(HeldCall::into_call)
         {

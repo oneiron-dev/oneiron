@@ -7,7 +7,7 @@
 //! the socket: the host kills the organ's cell and process group, shuts its
 //! socket down so the reader thread wakes, and reaps it (`lifeline`).
 //!
-//! On a 1.1 session the organ may ask inside a call. The reader thread hands
+//! The organ may ask inside a call. The reader thread hands
 //! each ask to the thread waiting on that call, which answers it there and
 //! keeps waiting. One ask is in flight per call: a second one, or more asks
 //! for calls not in flight than calls the host cancelled, breaks the
@@ -27,12 +27,12 @@ use std::time::{Duration, Instant};
 use oneiron_organ_protocol::{
     Ask, Call, CancelReason, DEFAULT_FRAME_LIMIT, FrameError, FromOrgan, Hash32, Hello, HelloAck,
     INITIAL_HANDSHAKE_FRAME_BYTES, Limits, PROTOCOL, ProtocolVersion, Reply, ToOrgan,
-    frame_body_len, recv_frame_polled_booked, recv_frame_until_booked, send_frame_if,
+    frame_body_len, recv_frame_polled_booked, recv_handshake_until_booked, send_frame_if,
     send_frame_until, spin,
 };
 
 use crate::asks::{AskStep, CallAsks};
-use crate::budget::{Lease, Room};
+use crate::budget::{CallRoom, Lease, Room};
 use crate::clock::{Clock, WaitClock};
 use crate::error::HostError;
 use crate::sandbox::{self, OrganIsolation};
@@ -41,7 +41,7 @@ use crate::spec::{HostConfig, OrganSpec, OrganTier};
 mod frames;
 mod lifeline;
 
-use frames::{Handshake, Reading, book_send};
+use frames::{Handshake, Reading, book_send, reserve_read};
 use lifeline::{EndOnDrop, Lifeline};
 
 /// What the reader thread hands a waiting call.
@@ -106,8 +106,6 @@ fn lock_until<T>(
 struct Inbox {
     alive: AtomicBool,
     pending: Mutex<HashMap<u64, Pending>>,
-    /// The session speaks 1.1 or later, so the organ may ask.
-    asks: bool,
     /// Calls the host cancelled on this process: an ask of each may cross
     /// the cancel honestly.
     cancels: AtomicU64,
@@ -395,10 +393,7 @@ impl OrganProcess {
             handshake_by < own,
         )?;
         let session = PROTOCOL.session(hello.protocol).unwrap_or(hello.protocol);
-        let inbox = Arc::new(Inbox {
-            asks: session.asks(),
-            ..Inbox::default()
-        });
+        let inbox = Arc::new(Inbox::default());
         inbox.alive.store(true, Ordering::SeqCst);
         let reader_inbox = Arc::clone(&inbox);
         let reader_lifeline = Arc::clone(&lifeline);
@@ -450,10 +445,8 @@ impl OrganProcess {
         )
     }
 
-    fn sent_frame(&self, len: u32) {
-        self.inbox
-            .largest_sent
-            .fetch_max(u64::from(len), Ordering::SeqCst);
+    fn sent_frame(&self, len: u64) {
+        self.inbox.largest_sent.fetch_max(len, Ordering::SeqCst);
     }
 
     /// Whether the organ has exited, whether or not the reader has seen
@@ -584,25 +577,27 @@ impl OrganProcess {
         fds: &[BorrowedFd<'_>],
         limit: u32,
         deadline: Instant,
-    ) -> Result<u32, FrameError> {
+    ) -> Result<u64, FrameError> {
         let writer = lock_until(&self.writer, deadline, || false).ok_or(FrameError::Late)?;
         let len = send_frame_until(&writer, msg, fds, limit, Some(deadline))?;
         self.sent_frame(len);
         Ok(len)
     }
 
-    /// Room for a call or an answer this process is about to be sent: its
-    /// encoded body, counted with nothing allocated, booked before it takes
-    /// the writer (FIX 6195). The wait is on `waits`, the call's clock;
-    /// [`FrameError::Withdrawn`] once `stopped` says the frame is not
-    /// wanted.
+    /// Room for a call or an answer this process is about to be sent, made
+    /// before it takes the writer (FIX 6195): the organ's own read of it
+    /// first, held in `room` until the call ends ([`reserve_read`]), then
+    /// the encoding the host makes, counted with nothing allocated. Waits on
+    /// the call's clock until `deadline`; [`FrameError::Withdrawn`] once
+    /// `stopped` says the frame is not wanted.
     fn book(
         &self,
         msg: &ToOrgan,
-        waits: &WaitClock,
+        (room, deadline): (&CallRoom, Instant),
         stopped: &dyn Fn() -> bool,
     ) -> Result<Lease, FrameError> {
-        book_send(&self.frames, waits, frame_body_len(msg)?, stopped)
+        reserve_read(room, msg, deadline, stopped)?;
+        book_send(&self.frames, room.waits(), frame_body_len(msg)?, stopped)
     }
 
     /// Sends the answer to call `id`'s ask; `false` when it is dropped
@@ -635,12 +630,12 @@ impl OrganProcess {
         answer: &ToOrgan,
         fds: &[BorrowedFd<'_>],
         clock: Clock<'_>,
-        waits: &WaitClock,
+        room: &CallRoom,
         grant: Grant<'_>,
-    ) -> Result<Option<u32>, FrameError> {
+    ) -> Result<Option<u64>, FrameError> {
         let dropped = || grant.revoked() || self.inbox.holding_answerable(id).is_none();
         // Room for the frame first, before it waits for the writer.
-        let _frame = match self.book(answer, waits, &dropped) {
+        let _frame = match self.book(answer, (room, clock.deadline()), &dropped) {
             Ok(frame) => frame,
             Err(FrameError::Withdrawn) => return Ok(None),
             Err(err) => return Err(err),
@@ -790,7 +785,7 @@ impl OrganProcess {
         let call = ToOrgan::Call(call);
         let unwanted = || grant.revoked() || !self.is_alive();
         let sent = self
-            .book(&call, room.waits(), &unwanted)
+            .book(&call, (room, clock.deadline()), &unwanted)
             .and_then(|_frame| self.send(&call, fds, self.max_call_frame, clock.deadline()));
         match sent {
             Ok(len) => asks.frame_sent(len),
@@ -868,7 +863,7 @@ impl OrganProcess {
                                 region.iter().map(|region| region.fd()).collect();
                             let answer = ToOrgan::Answer(answer);
                             let sent =
-                                self.send_answer(id, &answer, &held, clock, room.waits(), grant);
+                                self.send_answer(id, &answer, &held, clock, room, grant);
                             if !matches!(sent, Ok(Some(_))) {
                                 asks.unsent();
                             }
@@ -1084,13 +1079,9 @@ fn handshake(
         lifeline,
         deadline,
     };
-    let (ack, _, _, lease) = recv_frame_until_booked::<FromOrgan, _>(
-        stream,
-        INITIAL_HANDSHAKE_FRAME_BYTES,
-        Some(deadline),
-        booking,
-    )
-    .map_err(start_failed)?;
+    let (ack, _, _, lease) =
+        recv_handshake_until_booked::<FromOrgan, _>(stream, Some(deadline), booking)
+            .map_err(start_failed)?;
     let FromOrgan::HelloAck(ack) = ack else {
         return Err(HostError::Handshake(
             "the first reply was not hello_ack".into(),
@@ -1139,9 +1130,9 @@ fn check_handshake(spec: &OrganSpec, ack: &HelloAck) -> Result<(), HostError> {
 fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, room: &Room) {
     loop {
         spin::poll_readable(stream);
-        // Each frame's body has budget room before a byte of it is
-        // allocated, and its value before that is built, under the wire's
-        // own `u32` bound alone.
+        // Each frame's bytes have budget room before a byte of them is
+        // allocated, and the message's value before that is built; a
+        // message takes as many frames as it needs.
         let booking = Reading {
             inbox,
             room,
@@ -1149,9 +1140,7 @@ fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, room: &
         };
         let received = recv_frame_polled_booked::<FromOrgan, _>(stream, u32::MAX, booking);
         if let Ok((_, _, len, _)) = &received {
-            inbox
-                .largest_received
-                .fetch_max(u64::from(*len), Ordering::SeqCst);
+            inbox.largest_received.fetch_max(*len, Ordering::SeqCst);
         }
         match received.map(|(message, fds, _, lease)| (message, fds, lease)) {
             Ok((FromOrgan::Reply(reply), fds, lease)) => {
@@ -1163,12 +1152,12 @@ fn read_replies(stream: &UnixStream, inbox: &Inbox, lifeline: &Lifeline, room: &
                     let _ = waiter.deliver.try_send(Delivery::Reply(reply, fds, lease));
                 }
             }
-            Ok((FromOrgan::Ask(ask), _, lease)) if inbox.asks => {
+            Ok((FromOrgan::Ask(ask), _, lease)) => {
                 if !inbox.route_ask(ask, lease) {
                     break;
                 }
             }
-            // An ask on a 1.0 session, a second hello_ack, a broken frame.
+            // A second hello_ack, a broken frame.
             _ => break,
         }
     }

@@ -35,13 +35,15 @@ mod runtime;
 #[cfg(unix)]
 pub mod spin;
 
-pub use codec::{CodecError, TYPED_DEPTH, encoded_len, from_slice, from_value, to_value, to_vec};
+pub use codec::{
+    CodecError, TYPED_DEPTH, encoded_len, from_slice, from_value, read_cost, to_value, to_vec,
+};
 
 pub use memory::{ASK_MEMORY_GROW, MemoryAnswer, MemoryAsk};
 
 #[cfg(unix)]
 pub use frame::{
-    FrameBooking, FrameError, frame_body_len, recv_frame, recv_frame_polled,
+    FrameBooking, FrameError, frame_body_len, frame_read_cost, recv_frame, recv_frame_polled,
     recv_frame_polled_booked, recv_frame_until, recv_frame_until_booked, recv_handshake,
     recv_handshake_until_booked, send_frame, send_frame_if, send_frame_until,
 };
