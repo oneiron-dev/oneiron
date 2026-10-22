@@ -308,7 +308,7 @@ pub struct SlideReviewRun {
 /// clock (a cut, no rung able to take it), or the presence step's when it left
 /// a Box or Point question unanswered; none when the host had no image, or no
 /// rung reads one for a Box or Point question.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     pub decision: Option<TypedDecision>,
@@ -324,7 +324,9 @@ pub struct SlideUnitRefusal {
     pub offer: Option<PptxCommentTarget>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire as its variant name (`MissingShape`, ...), the words a
+/// review's refusals have always carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SlideUnitRefusalReason {
     /// No shape on the slide carries the creation id.
     MissingShape,

@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::runtime_hooks::HookBudgetOverrun;
 use crate::runtime_hooks::store::{self, HookReadPin, HookRunRef, RunKey};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::HookPhase;
@@ -35,12 +36,14 @@ pub(in crate::runtime_hooks) struct HookVerbRunRecord {
     /// The outcome the body returned, as it returned it; `None` when it
     /// returned none or past the outcome bound.
     pub(in crate::runtime_hooks) outcome_json: Option<String>,
-    /// The outcome kind, or `refused`, `failed` or `timed_out`, as the
-    /// receipt tells it.
+    /// The outcome kind, or `refused` or `failed`, as the receipt tells it.
     pub(in crate::runtime_hooks) outcome: String,
     pub(in crate::runtime_hooks) reason: Option<String>,
     pub(in crate::runtime_hooks) receipt_id: String,
     pub(in crate::runtime_hooks) duration_ms: u64,
+    /// Set when the run ended past its `budget_ms`: measured beside its
+    /// outcome, which it does not change (FIX 8842).
+    pub(in crate::runtime_hooks) budget_overrun: Option<HookBudgetOverrun>,
     /// Unix milliseconds, as the body saw it.
     pub(in crate::runtime_hooks) now: u64,
     /// Unix milliseconds of the write: its place in the run index.

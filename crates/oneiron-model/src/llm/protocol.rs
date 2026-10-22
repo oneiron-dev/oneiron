@@ -316,6 +316,21 @@ pub enum FinishReason {
     ContentFiltered,
     Cancelled,
     Other { name: String },
+    /// The answer is what its stream already showed, and it is not whole
+    /// (FIX 8617): the provider's terminal disagreed with it. Never a stop,
+    /// never a refusal; nothing shown is taken back or sent again.
+    Incomplete {
+        reason: IncompleteReason,
+    },
+}
+
+/// Why an answer ended [`FinishReason::Incomplete`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum IncompleteReason {
+    /// The provider's terminal message did not match the content its stream
+    /// had already emitted.
+    TerminalDisagreement,
 }
 
 /// Serializes `value` as JSON with every object's keys sorted, so equal values hash equal.
