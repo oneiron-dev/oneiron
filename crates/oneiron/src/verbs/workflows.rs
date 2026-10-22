@@ -355,11 +355,14 @@ fn started_run(outcome: AgentDispatchOutcome) -> MemoryResult<WorkflowRunView> {
 /// run's; nothing of either comes from the request. The intent key is
 /// qualified by the agent, its try, the TASK and the workflow, so no other
 /// caller's or try's retry names this run. The binder rechecks the lease in
-/// the admitting writer.
+/// the admitting writer, and reads on `lane`, the read key its door already
+/// admitted, the TASK, the workflow and every step the run captures, a
+/// replay's included (FIX 9700).
 pub(crate) fn dispatch_workflow_bound_as(
     vault: &Vault,
     agent: WriteActor,
     lease: &HostBinding,
+    lane: &crate::claim::ScopedReadActorKey,
     input: WorkflowBoundDispatchRequest,
 ) -> MemoryResult<WorkflowRunView> {
     let parent = lease.parent();
@@ -389,6 +392,7 @@ pub(crate) fn dispatch_workflow_bound_as(
     let binder = WorkflowBinder::Agent {
         actor: agent,
         lease,
+        lane,
     };
     started_run(dispatch_bound(
         vault,

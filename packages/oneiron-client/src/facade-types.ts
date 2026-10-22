@@ -3923,7 +3923,7 @@ export type LateCreditReceipt = { receipt_id: string; attempt_receipt: string; o
 /** `oneiron::learning::doors::LearningProjectionView` */
 export type LearningProjectionView = { receipt?: LateCreditReceipt | null }
 /** `oneiron::self_heal::audit::ObjectiveConfession` */
-export type ObjectiveConfession = { objective: string; met: boolean; flaw?: string | null; uncertainty?: string | null }
+export type ObjectiveConfession = { objective: string; met?: boolean | null; flaw?: string | null; uncertainty?: string | null }
 /** `oneiron::self_heal::audit::AttemptConfession` */
 export type AttemptConfession = { attempt: AttemptId; subject: EntityId; type_ref: CellTypeRef; objectives: ObjectiveConfession[] }
 /** `oneiron::self_heal::audit::AuditDraw` */

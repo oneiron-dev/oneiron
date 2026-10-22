@@ -288,7 +288,8 @@ impl super::AgentDispatcher<'_> {
                         .ok_or_else(|| invalid("workflow context retry lineage"))?,
                 )?
                 .ok_or_else(|| invalid("workflow context retry ancestor is missing"))?;
-            if previous.state != AttemptState::Failed
+            // FIX 9577: the retry tip's own rule for a superseded try.
+            if !previous.continues_retry_lineage()
                 || previous.kind != cursor.kind
                 || previous.payload != cursor.payload
                 || previous.run_id != cursor.run_id

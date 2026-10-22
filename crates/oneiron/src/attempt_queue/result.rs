@@ -1,11 +1,15 @@
-//! Transaction-composable result attachment and abandonment.
+//! Transaction-composable result attachment and abandonment, and the
+//! durable exhaust a settled try records (FIX 9578).
 
 use crate::error::Result;
 
 use super::AttemptQueue;
 use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
-use super::types::{AbandonAttempt, AbandonOutcome, AttemptRecord, AttemptState, SetAttemptResult};
+use super::types::{
+    AbandonAttempt, AbandonOutcome, AttemptRecord, AttemptState, AttemptTerminalExhaust,
+    SetAttemptResult,
+};
 use super::validate::{
     validate_failure_reason, validate_lease_owner, validate_result_rebind, validate_result_ref,
     validate_transition_lease,
@@ -178,5 +182,35 @@ impl AttemptQueue<'_> {
             }
             state => Err(invalid_transition("abandon", state.as_str())),
         }
+    }
+}
+
+/// Records what a settled row left behind, once, in the write that settles
+/// it (FIX 9578): the output its try attached, explicitly none when it
+/// attached none, and the checkpoint frontier it recorded. Nothing is made
+/// up, and no missing output refuses the settlement. A row that is not
+/// terminal carries none, so a row put back in the queue records its own
+/// next settlement.
+pub(super) fn settle_terminal_exhaust(record: &mut AttemptRecord) {
+    if !record.state.is_terminal() {
+        record.terminal_exhaust = None;
+        return;
+    }
+    if record.terminal_exhaust.is_some() {
+        return;
+    }
+    record.terminal_exhaust = Some(AttemptTerminalExhaust {
+        outputs: record.result_ref.iter().cloned().collect(),
+        frontier: record.cancel_state.resume_point.clone(),
+    });
+}
+
+impl AttemptRecord {
+    /// What this try left behind, once it settled (FIX 9578): its attached
+    /// outputs, explicitly empty when it attached none, and its recorded
+    /// checkpoint frontier. `None` while it has not settled.
+    #[must_use]
+    pub fn terminal_exhaust(&self) -> Option<&AttemptTerminalExhaust> {
+        self.terminal_exhaust.as_ref()
     }
 }

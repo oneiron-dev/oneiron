@@ -12,7 +12,7 @@ use super::AttemptQueue;
 use super::AttemptResumePoint;
 use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
-use super::types::{AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState};
+use super::types::{AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState};
 use super::validate::{
     append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
 };
@@ -27,6 +27,9 @@ pub const BUDGET_HOLD_ACTOR: &str = "engine:budget_hold";
 pub(in crate::attempt_queue) const ERR_BUDGET_HOLD_ACTOR_RESERVED: &str =
     "intervention actor is reserved for the budget hold";
 
+/// The note of a budget hold's pause event.
+const BUDGET_HOLD_NOTE: &str = "budget hold; resumes from its recorded checkpoint";
+
 /// The lease holder's request to hold its attempt at the spend cap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HoldAttemptForBudget {
@@ -39,26 +42,13 @@ pub struct HoldAttemptForBudget {
 }
 
 impl AttemptRecord {
-    /// Whether this row is paused by a budget hold: paused, and its newest
-    /// pause is the engine's hold. A row a person paused afterwards reads
-    /// `false`.
+    /// Whether this row is paused by a budget hold: paused, and held under
+    /// the engine's hold. A row a person paused afterwards reads `false`.
+    /// Read from the row's held pause, never from its pruned event history
+    /// (FIX 9579).
     #[must_use]
     pub fn budget_hold(&self) -> bool {
-        if self.state != AttemptState::Paused {
-            return false;
-        }
-        self.events
-            .iter()
-            .rev()
-            .find(|event| {
-                matches!(
-                    event.kind,
-                    AttemptInterventionKind::Pause | AttemptInterventionKind::Resume
-                )
-            })
-            .is_some_and(|event| {
-                event.kind == AttemptInterventionKind::Pause && event.actor == BUDGET_HOLD_ACTOR
-            })
+        self.state == AttemptState::Paused && self.active_pause == Some(AttemptPause::Budget)
     }
 }
 
@@ -139,7 +129,6 @@ impl AttemptQueue<'_> {
             input.attempt_count,
             "budget_hold",
         )?;
-        let note = format!("checkpoint {}", input.resume_point.marker);
         // A held row is not claimable; resume restores its readiness.
         self.delete_ready_entry_for_record(wtxn, &record)?;
         // A hold is not a landing: the row leaves Landing for Paused, keeps
@@ -147,14 +136,18 @@ impl AttemptQueue<'_> {
         record.cancel_state.landing = None;
         record.cancel_state.pressure.pending = 0;
         record.cancel_state.resume_point = Some(input.resume_point);
+        // The note is fixed text: the checkpoint lives in the resume point
+        // alone, so no note repeats it past what an event note holds (FIX
+        // 9580).
         append_attempt_event(
             &mut record,
             AttemptInterventionKind::Pause,
             BUDGET_HOLD_ACTOR.to_owned(),
-            Some(note),
+            Some(BUDGET_HOLD_NOTE.to_owned()),
             input.now,
         )?;
         record.state = AttemptState::Paused;
+        record.active_pause = Some(AttemptPause::Budget);
         record.lease_owner = None;
         record.updated_at = input.now;
         let encoded = self.encode_in_txn(wtxn, &mut record)?;

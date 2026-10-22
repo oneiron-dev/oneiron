@@ -42,10 +42,10 @@ use oneiron::agent_dispatch::{
     AgentDispatcher, BudgetHoldLease, ProjectDetection, ProjectDetectionRun, SpendSignal,
     WorkflowProgress,
 };
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::learning::TypeRef;
-use oneiron::self_heal::audit::AttemptConfession;
+use oneiron::self_heal::audit::{AttemptConfession, ObjectiveConfession};
 use oneiron::task_verb::RunnerDoneAnswer;
 use tokio::sync::{broadcast, watch};
 
@@ -263,15 +263,26 @@ fn pump_once(
                     match ran {
                         Ok(output) => {
                             // The seal measures the agent that ran, on the
-                            // type the spawn was placed under.
-                            confession = output.confession.and_then(|objectives| {
-                                Some(AttemptConfession {
+                            // type the spawn was placed under. A step asked
+                            // to confess is sealed whether or not its
+                            // confession parsed (FIX 9466): each objective
+                            // it gave no answer for is recorded as none.
+                            let objectives = match output.confession {
+                                Some(confessed) => confessed,
+                                None => output.objectives.into_iter().map(unanswered).collect(),
+                            };
+                            confession = step
+                                .input
+                                .target
+                                .agent_definition_ref()
+                                .ok()
+                                .filter(|_| !objectives.is_empty())
+                                .map(|subject| AttemptConfession {
                                     attempt: step.attempt.id,
-                                    subject: step.input.target.agent_definition_ref().ok()?,
+                                    subject,
                                     type_ref: TypeRef::from(&step.input.type_ref),
                                     objectives,
-                                })
-                            });
+                                });
                             Ok(output.bytes)
                         }
                         // The meter ran out inside the model call: held as
@@ -333,8 +344,11 @@ fn pump_once(
                     }
                 }
             });
-            if progress.is_ok()
-                && let Some(confession) = confession
+            // A leaf that completed durably is sealed, and so stays in the
+            // random-audit pool, even when advancing its wrapper did not
+            // (FIX 9466).
+            if let Some(confession) = confession
+                && leaf_completed(vault, confession.attempt)
             {
                 seal(vault, &confession);
             }
@@ -488,6 +502,29 @@ fn ask_project_questions(
 fn seal(vault: &Vault, confession: &AttemptConfession) {
     if let Err(error) = vault.record_attempt_confession(confession, now_secs()) {
         tracing::warn!(kind = ?error.kind(), attempt = ?confession.attempt, "a workflow leaf's confession was not sealed");
+    }
+}
+
+/// An objective a step was asked to confess against and gave no answer for:
+/// recorded as none, never filled in (FIX 9466).
+fn unanswered(objective: String) -> ObjectiveConfession {
+    ObjectiveConfession {
+        objective,
+        met: None,
+        flaw: None,
+        uncertainty: None,
+    }
+}
+
+/// Whether the leaf `attempt` settled Completed, read now. One that does not
+/// read is logged and left unsealed; its work stands.
+fn leaf_completed(vault: &Vault, attempt: AttemptId) -> bool {
+    match AttemptQueue::new(vault).get(attempt) {
+        Ok(record) => record.is_some_and(|record| record.state == AttemptState::Completed),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), ?attempt, "a workflow leaf's state did not read; it is not sealed");
+            false
+        }
     }
 }
 
