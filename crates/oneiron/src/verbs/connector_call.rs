@@ -106,9 +106,9 @@ pub enum ConnectorCallReply {
     /// still, or that a reply read from the row carries no questions.
     AwaitingInput {
         handle: String,
-        /// The call's ref, 32 hex, as `connector.call_status` reads it.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        call_ref: Option<String>,
+        /// The call's ref, 32 hex, as `connector.call_status` reads it: the
+        /// engine keeps every round on its call's row (FIX 9161).
+        call_ref: String,
         /// `connector:<name>.<tool>`.
         source: String,
         /// Always true: the connector wrote every question.
@@ -269,7 +269,7 @@ impl ConnectorCallReply {
             },
             ConnectorCallOutcome::AwaitingInput {
                 call_ref, input, ..
-            } => Self::awaiting_input(name, tool, Some(call_ref), input),
+            } => Self::awaiting_input(name, tool, call_ref, input),
         }
     }
 
@@ -280,7 +280,7 @@ impl ConnectorCallReply {
     pub fn awaiting_input(
         name: &str,
         tool: &str,
-        call_ref: Option<EntityId>,
+        call_ref: EntityId,
         input: ConnectorAwaitingInput,
     ) -> Self {
         // A live round always asks something; none here means a reply read
@@ -292,7 +292,7 @@ impl ConnectorCallReply {
         };
         Self::AwaitingInput {
             handle: input.handle,
-            call_ref: call_ref.map(|call_ref| call_ref.to_hex()),
+            call_ref: call_ref.to_hex(),
             source: source(name, tool),
             foreign: true,
             questions: input.questions,
@@ -515,12 +515,19 @@ pub fn connector_call_status_read(
         memory.produced_from(state.source_rows.into_iter().flatten());
         let (name, tool) = (state.name, state.tool);
         return Ok(match state.settled {
-            Some(outcome) => ConnectorCallStatus::Settled {
-                reply: ConnectorCallReply::project(&name, &tool, outcome),
-                call_ref: call_ref.to_hex(),
-                name,
-                tool,
-            },
+            Some(outcome) => {
+                // Read once settled, its row goes; its acknowledged caller
+                // keeps this status (FIX 9158).
+                if let Err(error) = vault.consume_settled_connector_input(&call_ref) {
+                    tracing::warn!(%error, "connector call input row not consumed");
+                }
+                ConnectorCallStatus::Settled {
+                    reply: ConnectorCallReply::project(&name, &tool, outcome),
+                    call_ref: call_ref.to_hex(),
+                    name,
+                    tool,
+                }
+            }
             None => ConnectorCallStatus::AwaitingInput {
                 call_ref: call_ref.to_hex(),
                 generation: input.generation,
@@ -529,7 +536,7 @@ pub fn connector_call_status_read(
                 reply: ConnectorCallReply::awaiting_input(
                     &name,
                     &tool,
-                    Some(call_ref),
+                    call_ref,
                     ConnectorAwaitingInput {
                         handle: input.handle,
                         questions: Vec::new(),
@@ -539,6 +546,20 @@ pub fn connector_call_status_read(
                 name,
                 tool,
             },
+        });
+    }
+    // A call whose connector asked for input, its row read and gone: its
+    // acknowledged caller keeps its outcome, never its wait's first
+    // questions (FIX 9158).
+    if state.acknowledged
+        && let Some(outcome) = state.settled
+    {
+        memory.produced_from(state.source_rows.into_iter().flatten());
+        return Ok(ConnectorCallStatus::Settled {
+            reply: ConnectorCallReply::project(&state.name, &state.tool, outcome),
+            call_ref: input.call_ref,
+            name: state.name,
+            tool: state.tool,
         });
     }
     let settled = crate::code_run::WaitDeliveries::canonical(vault).settled(call_ref)?;

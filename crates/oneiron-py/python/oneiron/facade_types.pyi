@@ -15165,7 +15165,7 @@ class ConnectorCallReplyPendingDelivery(TypedDict):
 class ConnectorCallReplyAwaitingInput(TypedDict):
     outcome: Literal["awaiting_input"]
     handle: str
-    call_ref: NotRequired[str | None]
+    call_ref: str
     source: str
     foreign: bool
     questions: list[ConnectorQuestion]
