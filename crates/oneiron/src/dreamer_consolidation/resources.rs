@@ -604,8 +604,9 @@ impl<'a> BranchResources<'a> {
 
     /// The verified `candidates` sealed into one write for `sink`, carrying
     /// the wake pass's `deadline`, which its promotion's checker turns and
-    /// consults spend (FIX 8701).
-    pub(super) fn accept_until(
+    /// consults spend (FIX 8701). The sink awaits its checker's turn rather
+    /// than hold the executor's thread in line (FIX 9110).
+    pub(super) async fn accept_until(
         &self,
         scope: &Scope,
         sink: &mut dyn ConsolidationSink,
@@ -615,7 +616,8 @@ impl<'a> BranchResources<'a> {
         let due =
             std::time::Instant::now() + std::time::Duration::from_millis(deadline.remaining_ms());
         let write = self.prepare_write_verified(scope, candidates)?;
-        sink.accept_scoped(write.with_checker_deadline(due))
+        sink.accept_scoped_in_line(write.with_checker_deadline(due))
+            .await
     }
 
     #[cfg(test)]
