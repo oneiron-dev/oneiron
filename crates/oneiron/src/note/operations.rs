@@ -303,7 +303,15 @@ impl Memory<'_> {
                 }
             }
             NoteChange::SetTitle { title } => {
-                doc.set_title(title, &actor)?;
+                // Admitted before its operation is written (FIX 1098).
+                let title = super::document_store::admit_title(
+                    self.vault(),
+                    txn,
+                    note,
+                    title,
+                    &mut crate::batch::secret_scan::Lifted::default(),
+                )?;
+                doc.set_title(&title, &actor)?;
                 None
             }
             NoteChange::Cite { pin } => {
