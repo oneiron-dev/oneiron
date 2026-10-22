@@ -128,6 +128,8 @@ use rmpv::Value;
 mod host;
 pub(crate) use host::run_executor_model;
 pub use host::{bind_agent_run_attribution, witness_agent_run_close};
+mod judge_binding;
+pub(crate) use judge_binding::finalize_run_judge_in_txn;
 mod run_writes;
 pub(crate) use run_writes::{enter_run_writes, note_run_derivations_in_txn, run_derivations};
 mod sweep;

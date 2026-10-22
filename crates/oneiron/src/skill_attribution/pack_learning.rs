@@ -240,8 +240,9 @@ fn project(
                 Observation::Success(success),
             );
             learning.weight = weight;
-            learning.judge = Some(fields.judge.clone());
-            learning.on_judge_model = fields.executor == fields.judge;
+            // An unknown judge stays unknown, and no run is on it (FIX 1877).
+            learning.judge = fields.judge.clone();
+            learning.on_judge_model = fields.judge.as_deref() == Some(fields.executor.as_str());
             learning.pack_attribution = Some(PackLearningContext {
                 attempt_receipt: attempt_receipt.to_owned(),
                 outcome_receipt: outcome.receipt.clone(),

@@ -371,8 +371,9 @@ fn join_credited_in_txn(
             credit.anchor,
             Observation::Success(true),
         );
-        learning.judge = Some(attribution.judge.clone());
-        learning.on_judge_model = attribution.executor == attribution.judge;
+        learning.judge = attribution.judge.clone();
+        learning.on_judge_model =
+            attribution.judge.as_deref() == Some(attribution.executor.as_str());
         learning.pack_attribution = Some(PackLearningContext {
             attempt_receipt: credit.attempt_receipt.clone(),
             outcome_receipt: credit.outcome_receipt.clone(),
