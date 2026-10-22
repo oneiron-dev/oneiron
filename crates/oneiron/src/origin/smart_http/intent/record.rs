@@ -103,6 +103,7 @@ impl Vault {
             push: stamp.push.clone(),
             // Set in the writer, from the marks it writes.
             scan: ReceivePackScanSummary::Clean,
+            ingress_proof: None,
         };
         let key = ReceivePackIntentKey {
             repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,

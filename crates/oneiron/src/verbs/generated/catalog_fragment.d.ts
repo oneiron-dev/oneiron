@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1192 code-mode rows (1152 host rows, 40 run rows), 4064 declarations.
-// Replies: 1072 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1195 code-mode rows (1155 host rows, 40 run rows), 4075 declarations.
+// Replies: 1075 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 110; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -815,7 +815,7 @@ declare namespace Sdk {
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
   type WeaveSieveDiscoveryView = { start: number; end: number; kind: string; confidence: number };
   type WeaveSieveFindingView = { expectation: string; window_ref: string; turn_ref: string; source_ref: string; start: number; end: number; discovered: WeaveSieveDiscoveryView[]; agrees: boolean; audited_at: number };
-  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "sieve_window_audit"; attempt_ref: string; finding: WeaveSieveFindingView } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] };
+  type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard; draft_erased?: boolean } | { item: "sieve_audit"; attempt_ref: string; span_ref: string; turn_ref: string; source_ref: string; expected_kind: string; actual_kind: string; expected_entity_ref?: string | null; actual_entity_ref?: string | null; novel: boolean; confidence: number; agrees: boolean; audited_at: number } | { item: "sieve_window_audit"; attempt_ref: string; finding: WeaveSieveFindingView } | { item: "loop_decision"; decision_ref: string; created_at: number; family: string; kind: string; outcome: string; reason_codes: string[]; redacted: boolean; claim_ref?: string | null; actor_ref?: string | null; evidence_refs: string[] };
   type WeaveSieveScoreView = { sampled: number; agreeing: number };
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[]; sieve_score?: WeaveSieveScoreView | null };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
@@ -1143,6 +1143,10 @@ declare namespace Sdk {
   type ConnectorSlateView = { id: string; revision: number; stamped: boolean; facet_limit?: string[] | null; manifest: SlateToolManifest[]; rows: SlateRow[]; reach: ShapePlanReach };
   type ProxyConnectorRegistration = { connector: string; key: ConnectorKeyView; slate: ConnectorSlateView };
   type ProxyConnectorRevokeWriteRequest = { actor: string; key: string; revision: number };
+  type ConnectorSlateRedraftRequest = { slate_ref: string; expected_revision: number; instruction: string };
+  type ConnectorSlateRedraftReply = { status: "proposed"; slate_ref: string; expected_revision: number; proposed: Record<string, SlateDisposition>; rationale: Record<string, string> } | { status: "unavailable"; code: string; reason: string };
+  type ConnectorSlateNarrowRequest = { key_ref: string; expected_revision: number; narrows?: Record<string, SlateDisposition>; facets?: string[] | null };
+  type ConnectorSlateNarrowView = { key_ref: string; slate_ref: string; slate_revision: number; settings: Record<string, SlateDisposition>; facets?: string[] | null; narrows: Record<string, SlateHolderNarrow> };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
   type ChannelSubscriptionsRequest = { agent: string };
@@ -1803,6 +1807,7 @@ declare namespace Sdk {
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type ApproveOnceRequest = { effect_digest: string };
   type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
+  type ConnectorCallApproveOnceRequest = { call_ref: string; approval_digest: string };
   type DenyConsentRequest = { effect_digest: string };
   type ActionEnvelopeRequest = { project: string; audience: string[]; budget?: number | null };
   type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
@@ -3482,11 +3487,17 @@ declare namespace Sdk {
   type HeldMedia = { part: string; hash: Digest };
   type TableMerge = { first_row: NodeId; first_column: NodeId; last_row: NodeId; last_column: NodeId };
   type TableBody = { rows: NodeId[]; columns: NodeId[]; cells?: Record<string, Record<string, string>>; merges?: TableMerge[] };
-  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar";
+  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble";
   type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
   type ChartCategories = { level_count?: number; points?: ChartCategory[] };
-  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null };
+  type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null };
   type ChartSource = "workbook" | "literal" | "cached";
+  type BarDirection = "bar" | "col";
+  type PlotGrouping = "standard" | "clustered" | "stacked" | "percent_stacked";
+  type BarShape = "box" | "cone" | "cone_to_max" | "cylinder" | "pyramid" | "pyramid_to_max";
+  type SizeRepresents = "area" | "width";
+  type ChartPlot = { family: ChartKind; nth?: number; bar_dir?: BarDirection | null; grouping?: PlotGrouping | null; shape?: BarShape | null; gap_depth?: number | null; bubble_3d?: boolean | null; bubble_scale?: number | null; show_neg_bubbles?: boolean | null; size_represents?: SizeRepresents | null };
+  type ChartView = { rot_x?: number | null; h_percent?: number | null; rot_y?: number | null; depth_percent?: number | null; r_ang_ax?: boolean | null; perspective?: number | null };
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
   type SmartArtNode = { text: string; level: number; id?: string | null };
@@ -3495,7 +3506,7 @@ declare namespace Sdk {
   type PathPoint = { x: Coord; y: Coord };
   type PathCommand = { move_to: { to: PathPoint } } | { line_to: { to: PathPoint } } | { arc_to: { w_r: Coord; h_r: Coord; st_ang: Coord; sw_ang: Coord } } | { quad_bez_to: { control: PathPoint; to: PathPoint } } | { cubic_bez_to: { control1: PathPoint; control2: PathPoint; to: PathPoint } } | "close";
   type GeomPath = { w?: number | null; h?: number | null; fill?: PathFill | null; stroke?: boolean | null; extrusion_ok?: boolean | null; commands: PathCommand[] };
-  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: ChartCategories; series: ChartSeries[]; source?: ChartSource } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
+  type NodePayload = { picture: { image: AssetRef } } | { held_picture: { media: HeldMedia } } | { table: TableBody } | { chart: { family: ChartKind; categories: ChartCategories; series: ChartSeries[]; source?: ChartSource; plots?: ChartPlot[]; view?: ChartView | null } } | { connector: { preset?: ConnectorPreset | null; start?: ConnectorEnd | null; end?: ConnectorEnd | null } } | { smart_art: { nodes: SmartArtNode[] } } | { ole: { prog_id?: string | null; preview?: HeldMedia | null } } | { custom_geometry: { paths: GeomPath[] } };
   type Run = { text: string; bold?: boolean | null; italic?: boolean | null; size?: number | null; latin?: string | null };
   type Paragraph = { id: NodeId; level: number; runs: Run[] };
   type TextBody = { paragraphs: Paragraph[] };
@@ -3509,7 +3520,7 @@ declare namespace Sdk {
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
   type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type TableEdit = { insert_row: { id?: NodeId | null; after?: NodeId | null } } | { insert_column: { id?: NodeId | null; after?: NodeId | null } } | { delete_row: { row: NodeId } } | { delete_column: { column: NodeId } } | { move_row: { row: NodeId; after?: NodeId | null } } | { move_column: { column: NodeId; after?: NodeId | null } } | { set_cell: { row: NodeId; column: NodeId; text: string } } | { merge: TableMerge } | { unmerge: TableMerge };
-  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } };
+  type ChartEdit = { insert_series: { id?: NodeId | null; after?: NodeId | null; name?: string; values?: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null } } | { delete_series: { series: NodeId } } | { move_series: { series: NodeId; after?: NodeId | null } } | { set_series_name: { series: NodeId; name: string } } | { set_series_values: { series: NodeId; values: (number | null)[] } } | { set_series_family: { series: NodeId; family?: ChartKind | null } } | { set_series_x: { series: NodeId; x?: (number | null)[] | null } } | { set_series_bubble_size: { series: NodeId; bubble_size?: (number | null)[] | null } } | { set_series_bubble_3d: { series: NodeId; bubble_3d?: boolean | null } } | { set_plot: { plot: ChartPlot } } | { set_view: { view?: ChartView | null } } | { set_family: { family: ChartKind } } | { set_categories: { categories: ChartCategories } } | { set_series_categories: { series: NodeId; categories?: ChartCategories | null } } | { insert_category: { owner?: NodeId | null; id?: NodeId | null; after?: NodeId | null; levels?: (string | null)[] } } | { delete_category: { owner?: NodeId | null; category: NodeId } } | { move_category: { owner?: NodeId | null; category: NodeId; after?: NodeId | null } } | { set_category_levels: { owner?: NodeId | null; category: NodeId; levels: (string | null)[] } } | { reserve_categories: { ids: NodeId[] } } | { set_source: { source: ChartSource } };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { edit_table: { node: NodeId; edits: TableEdit[] } } | { edit_chart: { node: NodeId; edits: ChartEdit[] } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
@@ -3552,7 +3563,7 @@ declare namespace Sdk {
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
   type NodeMove = { node: NodeId; old_parent?: NodeId | null; new_parent?: NodeId | null; old_index?: number | null; new_index?: number | null; cross_slide: boolean };
   type OpaqueChange = { part: string; base?: number[] | null; proposal?: number[] | null };
-  type SeriesField = "name" | "values" | "family" | "x" | "categories" | "order" | "existence";
+  type SeriesField = "name" | "values" | "family" | "x" | "bubble_size" | "bubble_3d" | "categories" | "order" | "existence";
   type CategoryField = "levels" | "order" | "existence";
   type Conflict = { both_moved: { node: NodeId } } | { deleted_vs_edited: { node: NodeId; deleted_by_head: boolean } } | { text_vs_text: { node: NodeId } } | { geometry_vs_reparent: { node: NodeId } } | { both_replaced_opaque: { part: string } } | { payload_vs_payload: { node: NodeId } } | { cell_vs_cell: { node: NodeId; row: NodeId; column: NodeId } } | { series_vs_series: { node: NodeId; series: NodeId; field: SeriesField } } | { category_vs_category: { node: NodeId; owner?: NodeId | null; category: NodeId; field: CategoryField } };
   type RelationshipChange = { source: string; id: string; kind: string; before?: string | null; after?: string | null };
@@ -5288,11 +5299,21 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   connectors: {
+    calls: {
+      /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+      approve_once(input: Sdk.ConnectorCallApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    };
     proxy: {
       /** The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key. */
       admit(input: Sdk.ProxyConnectorAdmitRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
       /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
       revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
+    };
+    slates: {
+      /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+      narrow(input: Sdk.ConnectorSlateNarrowRequest): Promise<Sdk.ConnectorSlateNarrowView | StoredResult>;
+      /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+      redraft(input: Sdk.ConnectorSlateRedraftRequest): Promise<Sdk.ConnectorSlateRedraftReply | StoredResult>;
     };
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */

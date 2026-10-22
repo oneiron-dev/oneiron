@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1141 facade rows, 4009 declarations.
-Inputs: 1075 of 1141 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1027 of 1141 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1144 facade rows, 4020 declarations.
+Inputs: 1078 of 1144 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1030 of 1144 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
@@ -4070,6 +4070,7 @@ class WeaveItemViewAgentHealth(TypedDict):
     item: Literal["agent_health"]
     card_ref: str
     card: AgentHealthCard
+    draft_erased: NotRequired[bool]
 class WeaveItemViewSieveAudit(TypedDict):
     item: Literal["sieve_audit"]
     attempt_ref: str
@@ -5635,6 +5636,33 @@ class ProxyConnectorRevokeWriteRequest(TypedDict):
     actor: str
     key: str
     revision: int
+class ConnectorSlateRedraftRequest(TypedDict):
+    slate_ref: str
+    expected_revision: int
+    instruction: str
+class ConnectorSlateRedraftReplyProposed(TypedDict):
+    status: Literal["proposed"]
+    slate_ref: str
+    expected_revision: int
+    proposed: dict[str, SlateDisposition]
+    rationale: dict[str, str]
+class ConnectorSlateRedraftReplyUnavailable(TypedDict):
+    status: Literal["unavailable"]
+    code: str
+    reason: str
+ConnectorSlateRedraftReply = ConnectorSlateRedraftReplyProposed | ConnectorSlateRedraftReplyUnavailable
+class ConnectorSlateNarrowRequest(TypedDict):
+    key_ref: str
+    expected_revision: int
+    narrows: NotRequired[dict[str, SlateDisposition]]
+    facets: NotRequired[list[str] | None]
+class ConnectorSlateNarrowView(TypedDict):
+    key_ref: str
+    slate_ref: str
+    slate_revision: int
+    settings: dict[str, SlateDisposition]
+    facets: NotRequired[list[str] | None]
+    narrows: dict[str, SlateHolderNarrow]
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str
@@ -8940,6 +8968,9 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class ConnectorCallApproveOnceRequest(TypedDict):
+    call_ref: str
+    approval_digest: str
 class DenyConsentRequest(TypedDict):
     effect_digest: str
 class ActionEnvelopeRequest(TypedDict):
@@ -17027,7 +17058,7 @@ class TableBody(TypedDict):
     columns: list[NodeId]
     cells: NotRequired[dict[str, dict[str, str]]]
     merges: NotRequired[list[TableMerge]]
-ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar"]
+ChartKind = Literal["bar", "line", "pie", "area", "scatter", "doughnut", "radar", "bar_3d", "line_3d", "pie_3d", "area_3d", "bubble"]
 class ChartCategory(TypedDict):
     id: NotRequired[NodeId | None]
     levels: NotRequired[list[str | None]]
@@ -17041,7 +17072,31 @@ class ChartSeries(TypedDict):
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
     categories: NotRequired[ChartCategories | None]
+    bubble_size: NotRequired[list[float | None] | None]
+    bubble_3d: NotRequired[bool | None]
 ChartSource = Literal["workbook", "literal", "cached"]
+BarDirection = Literal["bar", "col"]
+PlotGrouping = Literal["standard", "clustered", "stacked", "percent_stacked"]
+BarShape = Literal["box", "cone", "cone_to_max", "cylinder", "pyramid", "pyramid_to_max"]
+SizeRepresents = Literal["area", "width"]
+class ChartPlot(TypedDict):
+    family: ChartKind
+    nth: NotRequired[int]
+    bar_dir: NotRequired[BarDirection | None]
+    grouping: NotRequired[PlotGrouping | None]
+    shape: NotRequired[BarShape | None]
+    gap_depth: NotRequired[int | None]
+    bubble_3d: NotRequired[bool | None]
+    bubble_scale: NotRequired[int | None]
+    show_neg_bubbles: NotRequired[bool | None]
+    size_represents: NotRequired[SizeRepresents | None]
+class ChartView(TypedDict):
+    rot_x: NotRequired[int | None]
+    h_percent: NotRequired[int | None]
+    rot_y: NotRequired[int | None]
+    depth_percent: NotRequired[int | None]
+    r_ang_ax: NotRequired[bool | None]
+    perspective: NotRequired[int | None]
 ConnectorPreset = Literal["straight", "elbow", "curved"]
 class ConnectorEnd(TypedDict):
     node: NodeId
@@ -17104,6 +17159,8 @@ class NodePayloadChartBody(TypedDict):
     categories: ChartCategories
     series: list[ChartSeries]
     source: NotRequired[ChartSource]
+    plots: NotRequired[list[ChartPlot]]
+    view: NotRequired[ChartView | None]
 class NodePayloadChart(TypedDict):
     chart: NodePayloadChartBody
 class NodePayloadConnectorBody(TypedDict):
@@ -17339,6 +17396,8 @@ class ChartEditInsertSeriesBody(TypedDict):
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
     categories: NotRequired[ChartCategories | None]
+    bubble_size: NotRequired[list[float | None] | None]
+    bubble_3d: NotRequired[bool | None]
 class ChartEditInsertSeries(TypedDict):
     insert_series: ChartEditInsertSeriesBody
 class ChartEditDeleteSeriesBody(TypedDict):
@@ -17370,6 +17429,24 @@ class ChartEditSetSeriesXBody(TypedDict):
     x: NotRequired[list[float | None] | None]
 class ChartEditSetSeriesX(TypedDict):
     set_series_x: ChartEditSetSeriesXBody
+class ChartEditSetSeriesBubbleSizeBody(TypedDict):
+    series: NodeId
+    bubble_size: NotRequired[list[float | None] | None]
+class ChartEditSetSeriesBubbleSize(TypedDict):
+    set_series_bubble_size: ChartEditSetSeriesBubbleSizeBody
+class ChartEditSetSeriesBubble3DBody(TypedDict):
+    series: NodeId
+    bubble_3d: NotRequired[bool | None]
+class ChartEditSetSeriesBubble3D(TypedDict):
+    set_series_bubble_3d: ChartEditSetSeriesBubble3DBody
+class ChartEditSetPlotBody(TypedDict):
+    plot: ChartPlot
+class ChartEditSetPlot(TypedDict):
+    set_plot: ChartEditSetPlotBody
+class ChartEditSetViewBody(TypedDict):
+    view: NotRequired[ChartView | None]
+class ChartEditSetView(TypedDict):
+    set_view: ChartEditSetViewBody
 class ChartEditSetFamilyBody(TypedDict):
     family: ChartKind
 class ChartEditSetFamily(TypedDict):
@@ -17415,7 +17492,7 @@ class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetSeriesBubbleSize | ChartEditSetSeriesBubble3D | ChartEditSetPlot | ChartEditSetView | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
@@ -17691,7 +17768,7 @@ class OpaqueChange(TypedDict):
     part: str
     base: NotRequired[list[int] | None]
     proposal: NotRequired[list[int] | None]
-SeriesField = Literal["name", "values", "family", "x", "categories", "order", "existence"]
+SeriesField = Literal["name", "values", "family", "x", "bubble_size", "bubble_3d", "categories", "order", "existence"]
 CategoryField = Literal["levels", "order", "existence"]
 class ConflictBothMovedBody(TypedDict):
     node: NodeId

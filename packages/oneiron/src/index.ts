@@ -1141,6 +1141,12 @@ export class Oneiron {
         /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
         revoke_write: (input: Facade.ProxyConnectorRevokeWriteRequest): Facade.ProxyConnectorRegistration => this.#call(() => this.#client.vaultConnectorsProxyRevokeWrite(input) as Facade.ProxyConnectorRegistration),
       },
+      slates: {
+        /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+        redraft: (input: Facade.ConnectorSlateRedraftRequest): Facade.ConnectorSlateRedraftReply => this.#call(() => this.#client.vaultConnectorsSlatesRedraft(input) as Facade.ConnectorSlateRedraftReply),
+        /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+        narrow: (input: Facade.ConnectorSlateNarrowRequest): Facade.ConnectorSlateNarrowView => this.#call(() => this.#client.vaultConnectorsSlatesNarrow(input) as Facade.ConnectorSlateNarrowView),
+      },
       subscriptions: {
         /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
         put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
@@ -1148,6 +1154,10 @@ export class Oneiron {
         list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
         /** The owner stops one connector event subscription; the agent's key for the channel stays. */
         revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
+      },
+      calls: {
+        /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+        approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
       },
     },
     authority: {

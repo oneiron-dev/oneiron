@@ -9,10 +9,12 @@ use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
 
+mod ceiling;
 mod live_audience;
 mod thread_readers;
 mod upkeep_posture;
 
+pub(crate) use ceiling::room_facets_axis_in;
 pub(crate) use thread_readers::{
     off_room_reader_clearance_in, thread_ceiling_in, thread_reader_in,
 };
@@ -578,17 +580,6 @@ pub(crate) fn room_clearance_in(
     Ok(room_clearance(&clearances_in(vault, txn, members)?))
 }
 
-/// The facets `room` limits its reads to as `txn` reads it; `All` is a room
-/// with no facet.
-fn room_facets_axis_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    room: EntityId,
-) -> crate::Result<crate::federation::ScopeAxis<crate::federation::ScopeId>> {
-    Ok(crate::workspace_roster::room_facets_in(vault, txn, room)?
-        .unwrap_or(crate::federation::ScopeAxis::All))
-}
-
 /// One read key per member other than `caller`. A member positively known
 /// as the vault owner reads with the owner's key. Any other member names no
 /// class, so only class-agnostic grants admit it, and its access grants
@@ -682,36 +673,9 @@ pub(crate) fn room_ceiling_in(
         return Ok(None);
     }
     let live = vault.room_live_speaker_entries_in(txn, room)?;
-    let worlds = reading_defaults_in(vault, txn, &members)?;
-    let clearances = clearances_in(vault, txn, &members)?;
-    let roster: Vec<_> = members
-        .iter()
-        .zip(worlds.into_iter().zip(clearances))
-        .map(|(member, (active_worlds, clearance))| RoomPresence {
-            actor: *member,
-            actor_class: None,
-            label: String::new(),
-            present: true,
-            active_worlds,
-            clearance,
-        })
-        .collect();
-    let terms = RoomTerms {
-        worlds: room_worlds(&roster)?,
-        facets: room_facets_axis_in(vault, txn, room)?,
-        clearance: crate::claim::meet_clearance(
-            room_clearance(&roster).as_ref(),
-            vault.live_speaker_clearance_in(txn, &live)?.as_ref(),
-        ),
-        p7: true,
-    };
-    Ok(Some(RoomTurnCeiling {
-        room,
-        caller,
-        terms: crate::claim::TurnTerms::new(terms),
-        peers: peer_read_keys_in(vault, txn, caller, &members)?,
-        roster: live_audience::with_entries(members, &live),
-        branch: None,
-        personal: false,
-    }))
+    let speakers = vault.live_speaker_clearance_in(txn, &live)?;
+    let mut ceiling =
+        ceiling::room_turn_ceiling_in(vault, txn, room, caller, &members, speakers.as_ref())?;
+    ceiling.roster = live_audience::with_entries(members, &live);
+    Ok(Some(ceiling))
 }

@@ -20,6 +20,10 @@
 //! The rebuild reads, the same way, the members a place lies under, builds
 //! each from the bottom up, then has the container's reader read it again
 //! and encode it around those members, handed back at their steps in order.
+//! What it does at each place is its leaf transform's
+//! ([`RetainedLeafTransform`]): masking fills the place's spans, and a
+//! projection edit replays a member's edit onto its original (FIX 7608
+//! 2b-ii), over this one traversal and these readers.
 
 use super::{Budget, Kind, Stop, Walked, archive, gzip, kind, pdf};
 use crate::error::Error;
@@ -142,6 +146,45 @@ enum Opened {
     Open(Open),
 }
 
+/// What the retained rebuild does at each place it builds: the place's own
+/// transform, and which members it goes down into.
+pub(super) trait RetainedLeafTransform {
+    /// `bytes`, the place at `path`, once transformed.
+    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>>;
+    /// Whether a place lies strictly under `path`.
+    fn descends(&self, path: &[MemberStep]) -> bool;
+    /// Whether `path` is a place or lies on the way to one.
+    fn reaches(&self, path: &[MemberStep]) -> bool;
+}
+
+/// Masking's transform: each place's spans filled, `met` counting the
+/// places met.
+struct FillPlaces<'p> {
+    places: &'p KeyPlaces,
+    met: usize,
+}
+
+impl RetainedLeafTransform for FillPlaces<'_> {
+    fn transform(&mut self, path: &[MemberStep], bytes: Vec<u8>) -> Walked<Vec<u8>> {
+        let mut copy = bytes;
+        for (_, spans) in self.places.iter().filter(|(at, _)| at.as_slice() == path) {
+            copy = filled(&copy, spans.iter().copied())?;
+            self.met += 1;
+        }
+        Ok(copy)
+    }
+
+    fn descends(&self, path: &[MemberStep]) -> bool {
+        self.places
+            .iter()
+            .any(|(at, _)| at.len() > path.len() && at.starts_with(path))
+    }
+
+    fn reaches(&self, path: &[MemberStep]) -> bool {
+        self.places.iter().any(|(at, _)| at.starts_with(path))
+    }
+}
+
 /// `rebuild` over a retained repository read: `bytes` with each key
 /// `places` names overwritten, every container on the way rebuilt by its
 /// own reader. `met` counts the places met.
@@ -151,8 +194,22 @@ pub(super) fn rebuild(
     budget: &mut Budget,
     met: &mut usize,
 ) -> Walked<Vec<u8>> {
+    let mut fill = FillPlaces { places, met: 0 };
+    let rebuilt = rebuild_with(bytes, &mut fill, budget);
+    *met += fill.met;
+    rebuilt
+}
+
+/// [`rebuild`] under any leaf transform: `bytes` with each place `leaf`
+/// reaches transformed by it, every container on the way rebuilt by its
+/// own reader.
+pub(super) fn rebuild_with(
+    bytes: &[u8],
+    leaf: &mut dyn RetainedLeafTransform,
+    budget: &mut Budget,
+) -> Walked<Vec<u8>> {
     let mut open = Vec::new();
-    let rebuilt = rebuild_open(bytes, places, budget, met, &mut open);
+    let rebuilt = rebuild_open(bytes, leaf, budget, &mut open);
     // A stop ends the rebuild inside each container still open.
     for _ in &open {
         budget.leave_container();
@@ -162,20 +219,19 @@ pub(super) fn rebuild(
 
 fn rebuild_open(
     bytes: &[u8],
-    places: &KeyPlaces,
+    leaf: &mut dyn RetainedLeafTransform,
     budget: &mut Budget,
-    met: &mut usize,
     open: &mut Vec<Open>,
 ) -> Walked<Vec<u8>> {
     let mut path = Vec::new();
-    match start(bytes, &mut path, places, budget, met)? {
+    match start(bytes, &mut path, leaf, budget)? {
         Opened::Built(copy) => return Ok(copy),
         Opened::Open(file) => open.push(file),
     }
     while let Some(top) = open.last_mut() {
         if let Some((step, member)) = top.pending.pop() {
             path.push(step);
-            match start(&member, &mut path, places, budget, met)? {
+            match start(&member, &mut path, leaf, budget)? {
                 Opened::Built(copy) => {
                     path.pop();
                     top.built.push((step, copy));
@@ -203,28 +259,18 @@ fn rebuild_open(
     )))
 }
 
-/// The place at `path`: `bytes` with its own spans filled, built as it is
-/// when no place lies under it, or else entered, with each member a place
-/// lies under read one level down to build first.
+/// The place at `path`: `bytes` once `leaf` transformed it (masking fills
+/// its own spans), built as it is when no place lies under it, or else
+/// entered, with each member a place lies under read one level down to
+/// build first.
 fn start(
     bytes: &[u8],
     path: &mut Vec<MemberStep>,
-    places: &KeyPlaces,
+    leaf: &mut dyn RetainedLeafTransform,
     budget: &mut Budget,
-    met: &mut usize,
 ) -> Walked<Opened> {
-    let mut copy = bytes.to_vec();
-    for (_, spans) in places
-        .iter()
-        .filter(|(at, _)| at.as_slice() == path.as_slice())
-    {
-        copy = filled(&copy, spans.iter().copied())?;
-        *met += 1;
-    }
-    if !places
-        .iter()
-        .any(|(at, _)| at.len() > path.len() && at.starts_with(path.as_slice()))
-    {
+    let copy = leaf.transform(path.as_slice(), bytes.to_vec())?;
+    if !leaf.descends(path.as_slice()) {
         return Ok(Opened::Built(copy));
     }
     let container =
@@ -233,7 +279,7 @@ fn start(
     let mut pending: Vec<(MemberStep, Vec<u8>)> = Vec::new();
     let mut each = |step: MemberStep, member: &[u8], _: &mut Budget| -> Walked<()> {
         path.push(step);
-        if places.iter().any(|(at, _)| at.starts_with(path.as_slice())) {
+        if leaf.reaches(path.as_slice()) {
             pending.push((step, member.to_vec()));
         }
         path.pop();

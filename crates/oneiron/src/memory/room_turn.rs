@@ -245,7 +245,7 @@ impl<'v> Memory<'v> {
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),
                 external_git_source_host: None,
-                repo_tool_recipient: self.repo_tool_recipient,
+                repo_tool_recipient: self.repo_tool_recipient.clone(),
             },
         })
     }

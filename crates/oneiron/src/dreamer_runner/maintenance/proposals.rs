@@ -100,6 +100,19 @@ pub(super) fn emit_in_txn(
     .map(|(id, _)| id)
 }
 
+/// Lands `finding` under `envelope` in the caller's write, with whether it
+/// landed fresh (false: the same content had landed before), for a writer
+/// that applies part of it once (FIX 8712).
+pub(super) fn emit_fresh_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    finding: &Finding<'_>,
+    envelope: &crate::WriteEnvelope,
+    now: u64,
+) -> Result<(EntityId, bool)> {
+    write_in_txn(vault, txn, finding, envelope, now)
+}
+
 /// Lands one finding under `envelope`, or returns the one already landed
 /// with the same content; the flag is true only for a fresh landing.
 fn write_in_txn(
