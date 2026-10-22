@@ -20,20 +20,30 @@ mod machine_history;
 mod policy;
 mod prune;
 mod recall_scope;
+mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
-    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
-    AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
+    AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
+    AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
+    authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
     authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
     import_authority_page,
 };
 pub(crate) use bundle::holds_sealed_bundle;
 pub use bundle::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt,
-    SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, SealedBundleStage,
-    commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_commit_receipt,
-    sealed_bundle_generations, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
+    BundlePartRead, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX,
+    SealedBundleCommitReceipt, SealedBundleEntry, SealedBundleIndex, SealedBundleKitRoot,
+    SealedBundleObject, SealedBundleStage, commit_sealed_bundle, replace_sealed_bundle_pads,
+    sealed_bundle_commit_receipt, sealed_bundle_generations, sealed_bundle_index,
+    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex, stage_sealed_bundle_part,
+};
+#[allow(unused_imports, reason = "02A2 wires the object copy (L02)")]
+pub(crate) use bundle::{
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
+    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
+    refill_pad_object,
 };
 pub use bundle_access::{
     PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
@@ -62,7 +72,8 @@ pub use home_handoff::{
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KitBundleFetch, kit_bundle_fetch_origin, kit_sealed_bundle_part,
+    KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch, KitPadIndexFetch, kit_bundle_fetch_origin,
+    kit_sealed_bundle_index, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
@@ -77,6 +88,10 @@ pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
+pub use search::{
+    RESIDENCE_PAGE_REPLY_BYTES, ResidenceSearchCursor, home_search_page_candidates,
+    residence_search_revision, with_forwarded_search_page,
+};
 
 #[cfg(test)]
 use loro::ExportMode;
@@ -171,7 +186,8 @@ pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
     })
 }
 
-/// The maximum number of metadata rows returned in one index page.
+/// The shipped index page work slice. A larger request is served a page
+/// of the resolved slice with a cursor, never refused (FIX 8881).
 pub const INDEX_PAGE_MAX: usize = 256;
 /// A bounded promotion snapshot fits inside the app RPC result after base64
 /// expansion. Above this, do not perform a partial promotion.
@@ -281,7 +297,7 @@ pub fn window_index_page(
     entries: &[WindowIndexEntry],
     page: IndexPage,
 ) -> Result<Vec<WindowIndexEntry>> {
-    if page.limit == 0 || page.limit > INDEX_PAGE_MAX {
+    if page.limit == 0 {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,
         ));

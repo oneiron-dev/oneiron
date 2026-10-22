@@ -4,7 +4,7 @@ use super::narrowing::validate_context_narrows;
 use super::panel_spec::LEAD_PANEL_SPEC_ROLE;
 use super::spec::{
     CONTEXT_SPEC_DEFAULT_CHAT_LAST_N, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, ChatProjection,
-    ContextSpec, MemoryProjection, normalize_context_spec, validate_context_spec,
+    ContextSpec, MemoryProjection, domain_contains, normalize_context_spec, validate_context_spec,
 };
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
@@ -396,10 +396,17 @@ fn scan_memory_sections(
         if !in_world {
             continue;
         }
-        let domain = memory_domain_of(&claim.predicate);
-        if domains.is_some_and(|scope| !scope.iter().any(|known| known == domain)) {
+        // A requested domain matches the whole predicate at a dot boundary
+        // (FIX 7751): `goal.career` reads `goal.career.pm`. The section
+        // keeps its top-level token either way.
+        if domains.is_some_and(|scope| {
+            !scope
+                .iter()
+                .any(|known| domain_contains(known, &claim.predicate))
+        }) {
             continue;
         }
+        let domain = memory_domain_of(&claim.predicate);
         sections.push(format!("{domain}:cl_{}", id.to_hex()));
     }
     Ok(sections)

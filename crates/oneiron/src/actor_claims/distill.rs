@@ -10,15 +10,16 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 use crate::llm::CallPurpose;
+use crate::provenance::birth::RowBirth;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, Raw, SideTable};
+use crate::write_envelope::WriteActor;
 
 use super::evidence::ActorClaimEvidence;
 use super::invalid;
-use super::rows::{
-    ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorClaimRow, ActorNote,
-};
-use super::write::{ground_actor_claim, require_session_entity, write_actor_claim_in_txn};
+use super::rows::{ACTOR_DISTILL_CALL_PURPOSE_NAME, ActorClaimRow, ActorNote};
+use super::write::{ground_actor_claim, require_session_entity, write_born_actor_claim_in_txn};
 
 /// The durable SessionEnd → distill JOB, keyed by session id, value `ended_at`.
 ///
@@ -27,6 +28,8 @@ use super::write::{ground_actor_claim, require_session_entity, write_actor_claim
 /// consumed by [`run_session_end_actor_distill`].
 const DISTILL_PENDING: SideTable<EntityId, u64, Raw> =
     SideTable::new(&side_table::ACTOR_CLAIMS_DISTILL_PENDING_JOB);
+/// The door a distilled note's birth names as its process (FIX 329).
+const DISTILL_BIRTH_DOOR: &str = "actor_claims.distill";
 /// `temporal_learned` key layout: `learned_at` (8 BE) + entity id.
 // ---------------------------------------------------------------------------
 // CHAT lane — SessionEnd distillation
@@ -48,6 +51,9 @@ pub struct SessionDistillTurn {
     /// holding a question and its answer yields two utterances, and flattening
     /// them into one speaker would attribute half the turn to the wrong actor.
     pub said: Vec<SessionDistillUtterance>,
+    /// The MESSAGE rows `said` was read from, in its order (FIX 7101); empty
+    /// when the TURN body held the words.
+    pub messages: Vec<EntityId>,
 }
 /// What a session-end distillation gets to reason over.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,10 @@ pub struct SessionDistillBrief {
     pub ended_at: u64,
     /// Its turns, in `(learned_at, id)` scan order.
     pub turns: Vec<SessionDistillTurn>,
+    /// The rows the brief was read from (FIX 7101): the sitting, each TURN
+    /// and each MESSAGE its words came from. A host that resolves speakers
+    /// adds the rows it reads for them; `None` is unknown.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 /// Distills an ended sitting into actor notes, or returns none.
 ///
@@ -126,12 +136,26 @@ pub fn run_session_end_actor_distill(
     session: &EntityId,
     distiller: &dyn SessionActorDistiller,
 ) -> Result<Vec<EntityId>> {
+    distill_session(vault, session, distiller, None)
+}
+/// [`run_session_end_actor_distill`] by a named `writer` (FIX 329): each note
+/// the pass mints is born of `writer` from the turns it cites, stamped in the
+/// transaction that lands it. A note a standing head already holds is not
+/// minted, so it is not born again.
+pub(super) fn distill_session(
+    vault: &Vault,
+    session: &EntityId,
+    distiller: &dyn SessionActorDistiller,
+    writer: Option<WriteActor>,
+) -> Result<Vec<EntityId>> {
     let ended_at = distill_job(vault, session)?;
     let sitting = sitting_window(vault, session, ended_at)?;
+    let turns = sitting_turns(vault, session, sitting)?;
     let brief = SessionDistillBrief {
         session: *session,
         ended_at,
-        turns: sitting_turns(vault, session, sitting)?,
+        source_rows: Some(brief_rows(session, &turns)),
+        turns,
     };
     if brief.turns.is_empty() {
         // Nothing to learn from, and nothing that can arrive later: the sitting
@@ -144,6 +168,7 @@ pub fn run_session_end_actor_distill(
     }
 
     let turn_ids: Vec<EntityId> = brief.turns.iter().map(|turn| turn.turn).collect();
+    let birth = writer.and_then(|writer| distill_birth(writer, &turn_ids, ended_at));
     let evidence = ActorClaimEvidence::chat(*session, turn_ids, ended_at)?;
     // Grounded before the transaction opens, and SKIPPED rather than fatal —
     // the TASK lane's posture: a distiller naming an entity that cannot hold a
@@ -159,13 +184,31 @@ pub fn run_session_end_actor_distill(
     vault.with_write_txn_grouped(|wtxn| {
         let mut written = Vec::with_capacity(rows.len());
         for row in &rows {
-            written.push(write_actor_claim_in_txn(vault, wtxn, row, &evidence)?);
+            written.push(write_born_actor_claim_in_txn(
+                vault,
+                wtxn,
+                row,
+                &evidence,
+                birth.as_ref(),
+            )?);
         }
         // LAST, deliberately: the job authorized this pass, so it is spent only
         // once the pass has landed.
         consume_distill_job_in_txn(vault, wtxn, session, ended_at)?;
         Ok(written)
     })
+}
+/// The birth `writer` stamps on a note it distilled at `at` (FIX 329): a
+/// conclusion made from the turns the note cites.
+fn distill_birth(writer: WriteActor, turns: &[EntityId], at: u64) -> Option<RowBirth> {
+    RowBirth::written(
+        writer,
+        MadeByClass::of_writer(writer.actor_class()),
+        DISTILL_BIRTH_DOOR,
+        turns,
+        &[],
+        at,
+    )
 }
 /// Reads the pending job for `session`, returning its `ended_at`.
 fn distill_job(vault: &Vault, session: &EntityId) -> Result<u64> {
@@ -260,25 +303,37 @@ pub(super) fn session_turns(
 /// and, when the turn body has no text (the witness door's speaker-only stamp
 /// included), the turn's MESSAGE children, where the witnessed words live.
 ///
-/// The whole count is measured. The brief keeps the LAST
-/// [`ACTOR_CLAIM_MAX_CITED_EVIDENCE`] turns: the brief and the citation list
-/// are the same set, and the chat lane's evidence refuses a longer list, so a
-/// longer brief would fail its sitting on every pass.
-fn distill_turns(vault: &Vault, mut turn_ids: Vec<EntityId>) -> Result<Vec<SessionDistillTurn>> {
+/// Every turn is kept (Engine 10-21, Rule 5, FIX 6849): the brief and the
+/// citation list are the same set, and the chat lane cites however many turns
+/// the sitting had. The whole count is measured, which asks whether
+/// everything is okay past the bound and drops nothing.
+fn distill_turns(vault: &Vault, turn_ids: Vec<EntityId>) -> Result<Vec<SessionDistillTurn>> {
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, turn_ids.len() as u64);
-    if turn_ids.len() > ACTOR_CLAIM_MAX_CITED_EVIDENCE {
-        turn_ids.drain(..turn_ids.len() - ACTOR_CLAIM_MAX_CITED_EVIDENCE);
-    }
-
     let mut turns = Vec::with_capacity(turn_ids.len());
     for turn in turn_ids {
-        let said = match turn_utterance(vault, &turn)? {
-            Some(utterance) => vec![utterance],
+        let (messages, said) = match turn_utterance(vault, &turn)? {
+            Some(utterance) => (Vec::new(), vec![utterance]),
             None => turn_message_utterances(vault, &turn)?,
         };
-        turns.push(SessionDistillTurn { turn, said });
+        turns.push(SessionDistillTurn {
+            turn,
+            said,
+            messages,
+        });
     }
     Ok(turns)
+}
+
+/// The rows a brief over `turns` of `session` was read from: the sitting,
+/// then each turn and the MESSAGE rows its words came from.
+fn brief_rows(session: &EntityId, turns: &[SessionDistillTurn]) -> Vec<EntityId> {
+    std::iter::once(*session)
+        .chain(
+            turns
+                .iter()
+                .flat_map(|turn| std::iter::once(turn.turn).chain(turn.messages.iter().copied())),
+        )
+        .collect()
 }
 /// The utterance a TURN body carries itself when it has text, or `None` when
 /// it has only the witness door's speaker stamp and its words are children.
@@ -297,8 +352,12 @@ fn turn_utterance(vault: &Vault, turn: &EntityId) -> Result<Option<SessionDistil
     let utterance = decode_utterance(body, "spkr", "txt");
     Ok(utterance.text.is_some().then_some(utterance))
 }
-/// The witnessed words of a turn: its MESSAGE children, in `(order, id)`.
-fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<SessionDistillUtterance>> {
+/// The witnessed words of a turn: its MESSAGE children, in `(order, id)`,
+/// each beside the MESSAGE it was read from.
+fn turn_message_utterances(
+    vault: &Vault,
+    turn: &EntityId,
+) -> Result<(Vec<EntityId>, Vec<SessionDistillUtterance>)> {
     // `edges_in` reports the FAR end in `target`, so these are the messages
     // that named this turn as their part-of container.
     let messages: Vec<EntityId> = vault
@@ -328,8 +387,8 @@ fn turn_message_utterances(vault: &Vault, turn: &EntityId) -> Result<Vec<Session
     said.sort_by_key(|(order, id, _)| (*order, *id));
     Ok(said
         .into_iter()
-        .map(|(_, _, utterance)| utterance)
-        .collect())
+        .map(|(_, message, utterance)| (message, utterance))
+        .unzip())
 }
 /// Reads one utterance from a MessagePack body, tolerating any other shape: an
 /// undecodable turn is still a turn that happened.

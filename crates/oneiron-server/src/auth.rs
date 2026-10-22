@@ -19,13 +19,14 @@ use crate::server::SyncServer;
 
 pub(crate) mod account_key;
 mod binding_admission;
+mod body_credential;
 mod client_address;
 mod left_notices;
 mod locality;
 mod machine_proof;
 mod managed_request;
 mod slips;
-pub(crate) use binding_admission::admit_http_binding;
+pub(crate) use binding_admission::{admit_http_binding, admit_owner_proof};
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};
@@ -366,6 +367,7 @@ impl CoreAuth {
     /// key, never owner-grade, with the presented key's node-local
     /// fingerprint as its instrument identity.
     fn from_verified_account_key(verified: account_key::VerifiedAccountKey) -> Self {
+        body_credential::attach_account_key(&verified.key_id);
         Self {
             principal: format!("account-key:{}", verified.key_id),
             principal_ref: verified.principal_ref,

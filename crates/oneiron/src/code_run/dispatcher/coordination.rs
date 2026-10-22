@@ -95,6 +95,7 @@ impl<'a> HostSelfDispatcher<'a> {
             return Err(invalid());
         }
         dispatcher.agent_lease = Some(binding);
+        dispatcher.witness_attempt_activity();
         Ok(dispatcher)
     }
 
@@ -329,19 +330,39 @@ impl<'a> HostSelfDispatcher<'a> {
             context,
         )?;
         let launch = result.launch().cloned();
+        // FIX 7446: a dedupe hit answers with the receipt its child keeps,
+        // the first call's, never this call's ask; none kept lists none.
+        let kept = |receipt: Option<&crate::agent_dispatch::DirectSpawnReceipt>| {
+            receipt
+                .map(|receipt| receipt.unapplied.clone())
+                .unwrap_or_default()
+        };
         Ok(SelfDispatchOutcome::AgentSpawn(match result {
-            AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status) => {
-                SelfAgentSpawnResult::Queued {
-                    attempt_ref: status.attempt.id,
-                    launch,
-                    unapplied,
-                }
-            }
-            AgentDispatchOutcome::WorkflowDispatched(status)
-            | AgentDispatchOutcome::WorkflowExisting(status) => SelfAgentSpawnResult::Queued {
+            AgentDispatchOutcome::Dispatched(status) => SelfAgentSpawnResult::Queued {
                 attempt_ref: status.attempt.id,
                 launch,
                 unapplied,
+            },
+            AgentDispatchOutcome::Existing(status) => SelfAgentSpawnResult::Queued {
+                attempt_ref: status.attempt.id,
+                launch,
+                unapplied: kept(status.input.direct_spawn.as_ref()),
+            },
+            AgentDispatchOutcome::WorkflowDispatched(status) => SelfAgentSpawnResult::Queued {
+                attempt_ref: status.attempt.id,
+                launch,
+                unapplied,
+            },
+            // One receipt rides every step a workflow captured.
+            AgentDispatchOutcome::WorkflowExisting(status) => SelfAgentSpawnResult::Queued {
+                attempt_ref: status.attempt.id,
+                launch,
+                unapplied: kept(
+                    status
+                        .captured_steps
+                        .first()
+                        .and_then(|step| step.direct_spawn.as_ref()),
+                ),
             },
             AgentDispatchOutcome::ProposedWiden(proposal) => SelfAgentSpawnResult::ProposedWiden {
                 proposal_ref: proposal.proposal_id,

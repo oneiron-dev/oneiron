@@ -150,6 +150,21 @@ pub(super) fn draft(
     // revision and the Coach's model on the attempt, and each offer names
     // them.
     let attempt = &admitted.status.attempt;
+    // The pass and the pack load door that reads the offer skill are the
+    // producers its attempt's read set waits on: declared before the load
+    // reads anything, the set reads complete only once both reported, and
+    // stays unknown if either never does (FIX 7073, 7017).
+    let mut read_set_lost = false;
+    if let Err(error) = vault
+        .declare_attempt_read_producers(attempt.id, &[OFFER_DRAFT, ReadSetProducer::SKILL_PACK])
+    {
+        read_set_lost = true;
+        tracing::warn!(
+            attempt = ?attempt.id,
+            %error,
+            "the offer draft could not declare its read set; its pack receipt keeps it unknown"
+        );
+    }
     let loaded = match vault.load_attempt_skill_pack(
         attempt.id,
         &training_offer_skill_id()?,
@@ -183,18 +198,6 @@ pub(super) fn draft(
         ),
         None => (serde_json::Value::Null, Vec::new()),
     };
-    // The pass is the one producer its attempt's read set waits on: declared
-    // before its first call reads anything, the set reads complete only once
-    // it reported, and stays unknown if it never does (FIX 7073).
-    let mut read_set_lost = false;
-    if let Err(error) = vault.declare_attempt_read_producers(attempt.id, &[OFFER_DRAFT]) {
-        read_set_lost = true;
-        tracing::warn!(
-            attempt = ?attempt.id,
-            %error,
-            "the offer draft could not declare its read set; its pack receipt keeps it unknown"
-        );
-    }
     for (role, model, locality, usage) in seats {
         let Some(brief) = Brief::gather(
             vault,
@@ -416,9 +419,16 @@ impl Brief {
             (None, None) => std::cmp::Ordering::Equal,
         });
         let mut recipes: Vec<Choice> = Vec::new();
+        // A question head trains no seat's role, so no offer recipe names it.
         let mut seat_runs: Vec<&TrainingRun> = runs
             .iter()
-            .filter(|run| run.plan.role == role && run.plan.seat == seat)
+            .filter(|run| {
+                run.plan
+                    .target
+                    .role_binding()
+                    .is_some_and(|(run_role, _)| run_role == role)
+                    && run.plan.seat == seat
+            })
             .collect();
         seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
         for run in &seat_runs {

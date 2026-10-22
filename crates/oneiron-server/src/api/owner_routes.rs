@@ -48,9 +48,11 @@ mod concern_routes;
 mod conflict_routes;
 pub(crate) mod connector_admission_routes;
 mod connector_consent_routes;
+pub(crate) mod connector_slate_routes;
 mod connector_subscription_routes;
 mod conversation_learning_routes;
-pub(super) mod cooperative_deletion_routes;
+pub(super) mod courtesy_delete_routes;
+pub(super) use self::courtesy_delete_routes as cooperative_deletion_routes;
 mod craft_candidate_routes;
 mod decision_ask_routes;
 mod desktop_takeover_routes;
@@ -68,6 +70,7 @@ mod handoff_alarm_routes;
 mod history_routes;
 mod house_routes;
 mod inbox_routes;
+mod intent_routes;
 mod learning_setting_routes;
 mod legal_hold_routes;
 pub(super) mod machine_routes;
@@ -88,6 +91,7 @@ mod secret_found_routes;
 mod secret_lift_routes;
 mod secret_reveal_routes;
 mod secret_use_routes;
+mod shared_training_setup_routes;
 mod skill_judge_routes;
 mod space_posting_routes;
 mod steer_routes;
@@ -144,6 +148,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(conflict_routes::routes())
         .merge(connector_admission_routes::routes())
         .merge(connector_consent_routes::routes())
+        .merge(connector_slate_routes::routes())
         .merge(connector_subscription_routes::routes())
         .merge(diary_routes::routes())
         .merge(disclosure_routes::routes())
@@ -155,6 +160,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(history_routes::routes())
         .merge(house_routes::routes())
         .merge(inbox_routes::routes())
+        .merge(intent_routes::routes())
         .merge(concern_routes::routes())
         .merge(learning_setting_routes::routes())
         .merge(machine_routes::routes())
@@ -172,7 +178,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
         .merge(pack_preview_routes::routes())
-        .merge(cooperative_deletion_routes::routes())
+        .merge(courtesy_delete_routes::routes())
         .merge(federation_connect_routes::routes())
         .merge(feedback_triage_routes::routes())
         .merge(decision_ask_routes::routes())
@@ -194,6 +200,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(training_swap_routes::routes())
         .merge(usage_repair_routes::routes())
         .merge(conversation_learning_routes::routes())
+        .merge(shared_training_setup_routes::routes())
         .merge(world_privacy_routes::routes())
         .merge(world_privacy_work_routes::routes())
         .merge(owner_key_enrollment_routes::routes())
@@ -411,8 +418,8 @@ pub(super) async fn blocking<T: Send + 'static>(
 }
 
 /// `GET /v1/owner/status`: where the data lives, the embedder as this
-/// server serves it, where feedback goes, and the bytes this process's sync
-/// links moved.
+/// server serves it, where feedback goes, the bytes this process's sync
+/// links moved, and how its browser stands.
 #[derive(serde::Serialize)]
 struct OwnerStatus {
     #[serde(flatten)]
@@ -422,6 +429,9 @@ struct OwnerStatus {
     /// Every sync link since this process started, summed per inner frame
     /// tag: raw bytes against the bytes on the wire, each way (OF-604).
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
+    /// The browser readiness a managed `Ping` carries, read from the same
+    /// value: its section, its binding and its last guest start (FIX 7670).
+    browser: oneiron_vault_contract::BrowserReadiness,
 }
 
 /// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
@@ -452,6 +462,7 @@ async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
             embedder: server.embedder_report()?,
             feedback: feedback::status(server.feedback.as_deref(), &server.config.feedback_inbox),
             link_bytes: oneiron::sync::transport::process_link_bytes(),
+            browser: server.browser_readiness().snapshot(),
         })
     })
     .await?;

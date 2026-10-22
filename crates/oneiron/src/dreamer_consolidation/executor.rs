@@ -6,6 +6,7 @@ mod failure;
 mod merge_resolution;
 
 pub use decisions::ConsolidationDecisions;
+pub(super) use decisions::{Decider, ScopedRead};
 use merge_resolution::MergeResolution;
 
 use super::evidence::{
@@ -16,10 +17,11 @@ use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
+use super::branch::BranchAxes;
 use super::conflict::{ConflictIdentity, ConflictSet, candidate_facts, deterministic_claim_id};
 use super::failure_rules::{self, Stage};
 use super::gap::{ReflectionGap, ReflectionGapKind};
-use super::partition::{ConsolidationPartitionKey, decode_partition_payload};
+use super::partition::decode_partition_payload;
 use super::provenance::{
     ConsolidationProvenanceHop, ConsolidationSink, KeptDecision, PromotionCandidate,
     join_decisions, source_meet,
@@ -64,7 +66,8 @@ pub struct ConsolidationExecutor<'a> {
     /// Explicit host binding and extraction egress decision for this backend.
     pub inference: HostInferenceContext<'a>,
     /// The backend each role's calls go out on; a role it does not name
-    /// calls `backend` as `model`.
+    /// calls `backend` as `model`. It holds the sieve's and a child
+    /// extraction's ports too (OF-498a), by default on these roles.
     pub roles: RoleBackends,
     pub sink: &'a mut dyn ConsolidationSink,
     /// Trusted caller's exact branch scope, in addition to actor authority.
@@ -679,6 +682,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         if attempt.status.payload.attempt_type == super::nightly_merge::ATTEMPT {
             return self.run_nightly_merge(attempt, ctx).await;
         }
+        if attempt.status.payload.attempt_type == super::nightly_links::ATTEMPT {
+            return self.run_nightly_links(attempt, ctx).await;
+        }
         if attempt.status.payload.attempt_type
             == crate::dreamer_runner::DREAMER_NOTE_REVIEW_ATTEMPT_KIND
         {
@@ -694,6 +700,9 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
+        }
+        if attempt.status.payload.attempt_type == crate::dreamer_wake::follower::FOLLOWER_ATTEMPT {
+            return self.run_follower(attempt, ctx).await;
         }
         // The session-end miner carries its own pinned `{session}` payload,
         // not a partition map. Reject a supplied branch scope explicitly,
@@ -762,7 +771,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
 
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
             // Gap-scan child attempt: deterministic detectors + queue upsert.
-            let (_, turn_ids, _) = decode_partition_payload(&attempt.status.payload.input)?;
+            let turn_ids = decode_partition_payload(&attempt.status.payload.input)?.turn_ids();
             let mut working_set = Vec::new();
             for turn_id in &turn_ids {
                 let facts = read_turn_facts(ctx.vault, turn_id)?;
@@ -902,7 +911,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
                 if let Err(error) =
-                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }
@@ -915,7 +924,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 retry_at_ms,
             }) => {
                 if let Err(error) =
-                    resources.accept_verified(resources.scope(), self.sink, candidates)
+                    resources.accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
                 {
                     return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
                 }

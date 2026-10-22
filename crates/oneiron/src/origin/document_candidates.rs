@@ -11,7 +11,10 @@
 //! trailer or ref name stands in. One pushed ref update becomes ONE fork
 //! and ONE Proposed bundle carrying every file, co-committed with the
 //! candidate. Every other outcome is a typed hold that keeps the source;
-//! the receive result never changes and nothing is approved or queued.
+//! the receive result never changes and nothing is approved. The bundle
+//! names no catalog: the vault's review policy, enforced by the queue's one
+//! policy point, decides its review (FIX 8268), and with none set the
+//! queue's intake enqueues it once into the same checks.
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
@@ -35,6 +38,9 @@ use crate::repo_mutation::{
 use crate::{EntityId, TimeRange, Vault};
 
 mod files;
+pub(crate) mod projected;
+pub(crate) mod projected_files;
+pub(crate) mod projected_source;
 mod reads;
 use files::prepare_push_candidate_documents;
 
@@ -237,6 +243,7 @@ impl Vault {
                     source_digest: digest,
                     resolved: None,
                     hold: Some(held),
+                    projected: None,
                 },
             )?,
             Ok(prepared) => {
@@ -262,7 +269,7 @@ impl Vault {
         id: EntityId,
         digest: [u8; 32],
     ) -> Result<Option<Held<PreparedPushCandidate>>> {
-        use CodePushCandidateState::{HeldReviewPolicy, HeldShape};
+        use CodePushCandidateState::HeldShape;
         let source = &row.source;
         let Some(new_hex) = &source.new_oid else {
             return hold(HeldShape, "ref_deleted");
@@ -320,14 +327,6 @@ impl Vault {
             Ok(base) => base,
             Err(held) => return Ok(Some(Err(held))),
         };
-        let catalog = {
-            let txn = self.store.env.read_txn()?;
-            let owners = crate::policy_model::owners_in_txn(self, &txn)?;
-            self.owner_review_catalog_in_txn(&txn, &owners, &queue.folder)?
-        };
-        let Some(catalog) = catalog else {
-            return hold(HeldReviewPolicy, "repo_review_policy_required");
-        };
         let tested = base
             .revision
             .tested_queue
@@ -376,7 +375,6 @@ impl Vault {
                     metadata_edit: Some(file.0.metadata_edit.clone()),
                 })
                 .collect(),
-            catalog,
             created_at: row.received_at,
         };
         let prepared = match self.prepare_received_files_proposal(repo, input)? {
@@ -400,6 +398,7 @@ impl Vault {
                     files: files.into_iter().map(|file| file.0).collect(),
                 }),
                 hold: None,
+                projected: None,
             },
             fork: CodeRevisionFork::new(
                 fork_session,

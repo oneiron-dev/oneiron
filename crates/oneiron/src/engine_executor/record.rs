@@ -13,7 +13,7 @@ use crate::code_run::{
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::session_overlay::RouteTarget;
-use crate::{Error, ModelLocality};
+use crate::{Error, ModelLocality, Vault};
 use serde::{Deserialize, Serialize};
 
 pub(super) struct LoadedReplayRecord {
@@ -109,6 +109,10 @@ impl StoredDurableWait {
 }
 
 const CHECKPOINT_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:v1";
+
+/// Marks a step that ran as the JavaScript Oxc printed for its TypeScript
+/// program (FIX 8276); a JavaScript step hashes no such part.
+const PREPARED_SOURCE_DOMAIN: &[u8] = b"oneiron:engine-executor-repl-step:prepared-source:v1";
 
 const CONFIG_HASH_DOMAIN: &[u8] = b"oneiron:engine-executor-config:v1";
 
@@ -213,6 +217,46 @@ fn load_config_marker(
     serde_json::from_str(&text)
         .map(Some)
         .map_err(|_| Error::CorruptedIndex("executor replay config marker").into())
+}
+
+/// The identity a canonical run was entered under, as its replay record's
+/// config marker holds it (FIX 2310): read once, so a host that keeps no
+/// note of a binding it chose at the run's first entry tells which of the
+/// configs it could have chosen that entry took, and never decides again.
+pub struct EnteredRun<'v> {
+    vault: &'v Vault,
+    /// `None` for a record with no marker of this schema.
+    config_hash: Option<String>,
+}
+
+impl EnteredRun<'_> {
+    /// Whether the run was entered under `config`: its marker binds this
+    /// config's identity on canonical storage, under no continuation.
+    #[must_use]
+    pub fn under(&self, config: &EngineExecutorConfig) -> bool {
+        self.config_hash.as_deref().is_some_and(|hash| {
+            hash == executor_config_hash_hex(&ExecutorStorage::Canonical(self.vault), config, None)
+        })
+    }
+}
+
+/// What canonical run `run_id` was entered under; `None` when it holds no
+/// replay record yet, so its first entry is still to come.
+///
+/// # Errors
+///
+/// Storage errors, and a config marker that does not decode.
+pub fn entered_run(
+    vault: &Vault,
+    run_id: EntityId,
+) -> EngineExecutorResult<Option<EnteredRun<'_>>> {
+    let Some(record) = vault.get_code_run_replay_record(&run_id)? else {
+        return Ok(None);
+    };
+    let config_hash = load_config_marker(&ExecutorStorage::Canonical(vault), &record)?
+        .filter(|marker| marker.schema_version == REPLAY_METADATA_SCHEMA_VERSION)
+        .map(|marker| marker.config_hash);
+    Ok(Some(EnteredRun { vault, config_hash }))
 }
 
 fn executor_config_hash_hex(
@@ -548,11 +592,45 @@ impl StepResultDigests {
     }
 }
 
+/// [`prepared_step_state_hash`] for a JavaScript step, which hashes no
+/// preparation; every caller outside the tests passes its preparation.
+#[cfg(test)]
 pub(super) fn step_state_hash(
     previous: [u8; 32],
     seq: u64,
     request_hash: &[u8; 32],
     script: &str,
+    result: &StepResultDigests,
+    implicit_speak: Option<&str>,
+    bridge_calls: &[CodeRunBridgeCall],
+) -> EngineExecutorResult<[u8; 32]> {
+    prepared_step_state_hash(
+        previous,
+        seq,
+        request_hash,
+        script,
+        None,
+        result,
+        implicit_speak,
+        bridge_calls,
+    )
+}
+
+/// The checkpoint hash of one step, for a step whose program may have run as
+/// the JavaScript Oxc printed for it (FIX 8276). `prepared` is that
+/// preparation's identity (the executed JavaScript, its map and the Oxc
+/// pin), hashed beside the original program; a JavaScript step has none,
+/// and its hash is the one it always had.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the checkpoint hashes every part of the step's state"
+)]
+pub(super) fn prepared_step_state_hash(
+    previous: [u8; 32],
+    seq: u64,
+    request_hash: &[u8; 32],
+    script: &str,
+    prepared: Option<&[u8; 32]>,
     result: &StepResultDigests,
     implicit_speak: Option<&str>,
     bridge_calls: &[CodeRunBridgeCall],
@@ -563,6 +641,10 @@ pub(super) fn step_state_hash(
     hash_u64(&mut hasher, seq);
     hash_bytes(&mut hasher, request_hash);
     hash_bytes(&mut hasher, blake3::hash(script.as_bytes()).as_bytes());
+    if let Some(identity) = prepared {
+        hash_bytes(&mut hasher, PREPARED_SOURCE_DOMAIN);
+        hash_bytes(&mut hasher, identity);
+    }
     hash_bytes(&mut hasher, &result.observation);
     hash_bytes(&mut hasher, &[u8::from(result.done)]);
     hash_bytes(&mut hasher, &[u8::from(implicit_speak.is_some())]);

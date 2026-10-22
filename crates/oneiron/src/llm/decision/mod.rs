@@ -9,7 +9,9 @@ pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
 mod codec;
 mod generated;
-pub use generated::{GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep};
+pub use generated::{
+    DecisionWireLabels, GeneratedDecisions, GeneratedMiss, GeneratedRung, GeneratedStep,
+};
 mod held;
 pub use held::HeldLadder;
 pub use held::{cut_text, fit_state};

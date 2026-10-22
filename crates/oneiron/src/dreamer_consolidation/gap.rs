@@ -15,6 +15,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, RawValue, SideKey, SideTable};
 
+mod intent;
+
 /// Global reflection-gap queue row keyed by a hash of (kind, subject). Key: hash32.
 const PRIVATE_GAP: SideTable<[u8; 32], ReflectionGap, Raw> =
     SideTable::new(&side_table::DREAMER_GAP);
@@ -326,15 +328,24 @@ pub(super) fn upsert_scanned_gap_queue(
 /// at the write's recheck, defers the whole scan until the promotion brings
 /// it back (FIX 3861): no gap of the set is written from part of it, and
 /// none is left to decay for it.
+///
+/// A new stated intent raises the owner's optional ask, and each yes he
+/// gave one lands his words as his intent (FIX 8949, `intent`); neither
+/// holds or fails the scan.
 pub(super) fn run_gap_scan(
     vault: &Vault,
     working_set: &[WorkingSetTurn],
     now_ms: u64,
 ) -> Result<crate::dreamer_wake::DreamerAttemptExecution> {
-    let scanned = scan_with_texts(vault, working_set, now_ms)
-        .and_then(|(gaps, texts)| upsert_scanned_gap_queue(vault, gaps, &texts, now_ms));
+    let scanned = scan_with_texts(vault, working_set, now_ms).and_then(|(gaps, texts)| {
+        upsert_scanned_gap_queue(vault, gaps, &texts, now_ms).map(|delta| (delta, texts))
+    });
     match scanned {
-        Ok(_) => Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 }),
+        Ok((delta, texts)) => {
+            intent::ask_stated_intents(vault, &delta.escalations, &texts);
+            intent::land_answered_intents(vault);
+            Ok(crate::dreamer_wake::DreamerAttemptExecution::Completed { completed_units: 0 })
+        }
         Err(error) if super::residency::waits_on_residency(&error) => {
             Ok(super::residency::residency_deferral(now_ms, 0))
         }
@@ -342,16 +353,17 @@ pub(super) fn run_gap_scan(
     }
 }
 
-/// A real private projection namespace. Partition identity includes the world
-/// and facet, so a branch can neither refresh nor decay a different branch.
-pub(super) fn branch_gap_projection(
-    partition: &super::partition::ConsolidationPartitionKey,
+/// A real private projection namespace. Branch identity includes the world
+/// and facet and binds every part (a one-part branch is its partition's
+/// hash), so a branch can neither refresh nor decay a different branch.
+pub(super) fn branch_gap_projection<T>(
+    branch: &super::ConsolidationBranchPlan<T>,
     scope: &crate::llm::Scope,
 ) -> crate::llm::ScopeResource {
     crate::llm::ScopeResource::Projection {
         key: format!(
             "dreamer:gap-branch:v1:{}:{}:{}:",
-            crate::entity_id::bytes_to_hex_lower(&partition.partition_hash()),
+            crate::entity_id::bytes_to_hex_lower(&branch.identity()),
             scope
                 .relationship
                 .map_or_else(|| "none".to_owned(), |id| id.to_hex()),
@@ -368,15 +380,15 @@ pub(super) fn branch_gap_projection(
 pub(super) fn upsert_branch_gap_queue(
     vault: &Vault,
     scope: &crate::llm::Scope,
-    partition: &super::partition::ConsolidationPartitionKey,
+    branch: &super::branch::QueuedBranch,
     fence: &super::resources::ConsolidationFence,
     gaps: Vec<ReflectionGap>,
     now: u64,
 ) -> Result<GapQueueDelta> {
-    let resource = branch_gap_projection(partition, scope);
+    let resource = branch_gap_projection(branch, scope);
     if !scope.allows_write(&resource)
-        || scope.world != partition.world_ref
-        || scope.facet != partition.facet_ref
+        || scope.world != branch.world_ref
+        || scope.facet != branch.facet_ref
     {
         return Err(invalid_consolidation("branch gap projection write refused"));
     }

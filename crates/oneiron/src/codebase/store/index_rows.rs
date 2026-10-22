@@ -1,3 +1,7 @@
+//! Codebase snapshot index insertion, removal and lookup.
+//! The write entry is `put_scope_index_rows_for_snapshot`.
+//! `store` owns the tables and row types; this leaf forwards no definitions.
+
 use super::*;
 
 pub(super) fn fork_has_other_snapshot(

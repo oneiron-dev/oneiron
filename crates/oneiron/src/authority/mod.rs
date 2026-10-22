@@ -33,6 +33,7 @@
 pub use crate::gate::manifest_authenticity::ManifestContribution;
 
 mod act_standing;
+mod admission;
 mod adopted_build;
 mod adopted_evidence;
 mod adopted_fold;
@@ -59,8 +60,10 @@ mod claim_write;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
+mod current_scope;
 mod engine_machine;
 mod entry_transition;
+mod entry_transition_predicates;
 mod first_seen_clock;
 mod fold_engine;
 mod fold_project;
@@ -68,6 +71,7 @@ mod fold_resume;
 mod fold_schedule;
 mod fold_state;
 mod forwarded_caller;
+mod frontier_join;
 mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
@@ -157,22 +161,21 @@ pub use oneiron_authority::authority::{
     FederationLifecycleKind, FederationLifecycleRejection, FederationPactGesture,
     FederationPactState, FederationPactStatus, FoldedDevice, GENESIS_FRAGILE_FLAG,
     GenesisRecoveryStep, GrantTravelSet, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX, MAX_PACT_SCOPE_BYTES,
-    MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole,
-    ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MAX_PACT_SCOPE_BYTES, MachineDeviceClass,
+    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ModelOrder,
+    OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind, OwnerHandover, OwnerHandoverCause,
     OwnerRootRecord, OwnerWorkBody, OwnerWorkKind, OwnerWorkOutcome, OwnerWorkRefusal,
     OwnerWorkRequest, OwnerWorkResult, PrivacyDirection, RESIDENCE_REASON_MAX,
     RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
     ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
     ResidenceResultStatus, RootChange, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
-    WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
-    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
-    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
-    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
-    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
+    authority_log_entity_id, authority_log_entity_id_from_hash, authority_transcript,
+    decode_authority_log_entry_body, effective_slip_comm, encode_authority_log_entry_body,
+    federation_pact_transcript, federation_scope_digest, genesis_vault_id,
+    machine_profile_proof_transcript, privacy_direction, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04).
 pub use oneiron_authority::authority::{
@@ -196,6 +199,11 @@ pub use federation_activation::federation_grant_activation;
 // hand-maintained name list to drift out of date. The globs are also the
 // module's internal wiring — sibling files and `tests` share one scope through
 // `use super::*`, so the file boundaries below do not change name resolution.
+pub(crate) use admission::{AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT, measure_authority_work};
+pub use admission::{
+    AUTHORITY_WORK_MEASURE_ONLY, AUTHORITY_WORK_WAIT_MS, AuthorityWorkPolicy,
+    AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
+};
 pub use causal_write::CausalWriteDisposition;
 pub use checkpoint::{
     AUTHORITY_CHECKPOINT_MAX_AGE_SECS, AUTHORITY_CHECKPOINT_NEW_BYTES,
@@ -272,7 +280,7 @@ pub use mesh_machine::{
 pub use observation_policy::*;
 pub use owner_act::{ActAuthority, GrantedAct, KeyWork};
 pub(crate) use owner_act::{
-    GrantStanding, authority_refusal_as, authority_refused, grant_standing_in_txn,
+    GrantStanding, authority_refusal_as, authority_refused, grant_omission, grant_standing_in_txn,
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
@@ -321,6 +329,7 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
+pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
@@ -337,7 +346,10 @@ pub(crate) use pinned_root::{
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 pub(crate) use principal_standing::{
-    NoStanding, PACT_STANDING_LAPSED, StandingHome, principal_standing_in,
+    GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
+};
+pub(crate) use principal_standing::{
+    NoStanding, PACT_STANDING_LAPSED, StandingHome, live_agent_principal_in, principal_standing_in,
     principal_standing_in_txn, principal_standing_or_lapse_in_txn,
 };
 pub(crate) use readonly_fold::AuthorityView;

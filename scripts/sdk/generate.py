@@ -80,11 +80,23 @@ for row in MANIFEST['verbs']:
 # TASK it mints is born there (ARCH-0067 §5).
 # The one exception is a `context: "browser"` row: the run's own browser
 # session answers it, a host resource code mode binds per run, so it states
-# `mcp: "none"` and code mode is its only door.
+# `mcp: "none"` and code mode is its only door. A `context: "scoped_child"`
+# row (FIX 7508, L13 10-22) is the other: a port a host lends a scoped child
+# it queues (`ScopedChildPorts`), which the child's dispatcher runs on the
+# host's adapter. It is in the verb table, the schema table and the code-mode
+# catalogue, and in no facade, HTTP or public MCP door; its `call` is the
+# host-only refusal an embedded handle answers, and it has no host door.
+MCP_NONE_CONTEXTS = ('browser', 'scoped_child')
+for row in MANIFEST['verbs']:
+    if row.get('context') != 'scoped_child': continue
+    if (set(row) - {'description'} != {'name', 'input', 'output', 'call', 'scope', 'context', 'mcp', 'section'}
+            or row['scope'] not in ('Read', 'Write') or row['section']
+            or row['call'] != f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?'):
+        raise ValueError(f'{row["name"]}: a scoped-child row names its input, output, scope and description, calls the host-only refusal, and nothing else')
 MCP_SCOPES = {'filtered', 'unrestricted', 'addressed', 'born'}
 for row in ROWS:
-    if (row.get('context') == 'browser') != (row.get('mcp', 'tool') == 'none'):
-        raise ValueError(f'{row["name"]}: only a browser row states "mcp": "none", and every browser row does')
+    if (row.get('context') in MCP_NONE_CONTEXTS) != (row.get('mcp', 'tool') == 'none'):
+        raise ValueError(f'{row["name"]}: only a browser or scoped-child row states "mcp": "none", and every such row does')
     row.setdefault('mcp_fields', {'spec': '$'})
     row.setdefault('mcp_scope', 'unrestricted')
     if row['mcp_scope'] not in MCP_SCOPES: raise ValueError(f'{row["name"]}: mcp_scope must be one of {sorted(MCP_SCOPES)}')
@@ -885,7 +897,7 @@ def mcp_dispatch():
     invalid = 'let invalid = || McpGatewayError::new(-32602, "tool_args_invalid", "invalid typed agent-verb argument");\n'
     result = '''/// A `tools/call` of one generated verb: its arguments assemble the verb's typed
 /// input, which then takes the one dispatcher every MCP door shares.
-async fn execute_mcp_agent_verb(
+pub(super) async fn execute_mcp_agent_verb(
         server: &Arc<SyncServer>,
         args: &McpVerbToolArgs,
         actor: &McpCallContext,
@@ -1807,20 +1819,38 @@ def outputs():
     http = http_facade()
     files = {
         'packages/oneiron-client/src/facade.ts': http,
-        'crates/oneiron/src/task_verb/run_verb_catalog.rs': run_catalog(),
-        'crates/oneiron-uniffi/src/facade_generated.rs': uniffi,
-        'crates/oneiron-uniffi/src/facade_types_generated.rs': uniffi_types,
-        'crates/oneiron/src/task_verb/sdk_generated.rs':core,
-        'crates/oneiron/src/task_verb/verb_catalog.rs':catalog,
-        'crates/oneiron-server/src/api/facade/agent_verbs.rs':server,
-        'crates/oneiron-server/src/api/facade/dispatch.rs':dispatch,
-        'crates/oneiron-remote/src/agent_verbs.rs':remote,
-        'crates/oneiron-napi/src/facade/client/agent_verbs.rs':napi,
+        'crates/oneiron/src/verbs/generated/run_verb_catalog.rs': run_catalog(),
+        'crates/oneiron-uniffi/src/generated/facade_generated.rs': uniffi,
+        'crates/oneiron-uniffi/src/generated/facade_types_generated.rs': uniffi_types,
+        'crates/oneiron/src/verbs/generated/sdk_generated.rs':core,
+        'crates/oneiron/src/verbs/generated/verb_catalog.rs':catalog,
+        'crates/oneiron-server/src/api/facade/generated/agent_verbs.rs':server,
+        'crates/oneiron-server/src/api/facade/generated/dispatch.rs':dispatch,
+        'crates/oneiron-remote/src/generated/agent_verbs.rs':remote,
+        'crates/oneiron-napi/src/facade/client/generated/agent_verbs.rs':napi,
+        # FIX 8907: the MCP dispatch is a whole-file child of tasks_response.
+        'crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs': HEADER + 'use super::*;\n' + mcp_dispatch(),
         'packages/oneiron/src/agent-verbs.ts':ts,
     }
+    # FIX 8907: the old marked MCP block gives way to the seam that mounts
+    # the whole-file dispatch above; once replaced, no marker remains.
+    mcp_path = 'crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs'
+    mcp_text = (ROOT / mcp_path).read_text()
+    mcp_begin = '// BEGIN GENERATED MCP DISPATCH'
+    mcp_end = '// END GENERATED MCP DISPATCH'
+    if mcp_begin in mcp_text:
+        a = mcp_text.index(mcp_begin)
+        b = mcp_text.index(mcp_end, a) + len(mcp_end)
+        seam = (
+            'use super::{board_setup, skill_execution, verb_hooks};\n'
+            '#[path = "generated/agent_verb_dispatch.rs"]\n'
+            'mod agent_verb_dispatch;\n'
+            'use agent_verb_dispatch::execute_mcp_agent_verb;\n'
+            'pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};'
+        )
+        files[mcp_path] = mcp_text[:a] + seam + mcp_text[b:]
     for path, start, end, body in [
         ('crates/oneiron/src/board_verb.rs', '// BEGIN GENERATED BOARD CATALOG', '// END GENERATED BOARD CATALOG', None),
-        ('crates/oneiron-server/src/api/mcp_gateway/tasks_response.rs', '// BEGIN GENERATED MCP DISPATCH', '// END GENERATED MCP DISPATCH', mcp_dispatch()),
         ('crates/oneiron-py/python/oneiron/__init__.pyi', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows), stub=True)),
         ('packages/oneiron/src/index.ts', '// BEGIN GENERATED FACADE VERBS', '// END GENERATED FACADE VERBS', ts_class_verbs(verb_tree(facade_rows))),
         ('crates/oneiron-py/python/oneiron/__init__.py', '# BEGIN GENERATED FACADE VERBS', '# END GENERATED FACADE VERBS', python_class_verbs(verb_tree(facade_rows))),
@@ -1857,7 +1887,20 @@ def outputs():
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
             files[path] = result.stdout
-    files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi']})
+    files.update({path: None for path in ['crates/oneiron/src/workspace_roster/rooms/verb_catalog.rs', 'crates/oneiron-server/src/mcp/agent_catalog.rs', 'crates/oneiron-py/python/oneiron/agent_verbs.py', 'crates/oneiron-py/python/oneiron/agent_verbs.pyi',
+        # FIX 8907: the whole-file outputs' homes before generated/.
+        'crates/oneiron/src/task_verb/verb_catalog.rs',
+        'crates/oneiron/src/task_verb/run_verb_catalog.rs',
+        'crates/oneiron/src/task_verb/sdk_generated.rs',
+        'crates/oneiron/src/task_verb/catalog_fragment_revision.rs',
+        'crates/oneiron-server/src/api/facade/agent_verbs.rs',
+        'crates/oneiron-server/src/api/facade/dispatch.rs',
+        'crates/oneiron-remote/src/agent_verbs.rs',
+        'crates/oneiron-napi/src/facade/client/agent_verbs.rs',
+        'crates/oneiron-uniffi/src/facade_generated.rs',
+        'crates/oneiron-uniffi/src/facade_types_generated.rs',
+        'crates/oneiron/src/task_verb/catalog_fragment.d.ts',
+        'crates/oneiron/src/task_verb/code-mode.d.ts']})
     return files
 
 # OF-237: the UniFFI binding. Every facade row is one exported method of the

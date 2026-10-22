@@ -21,12 +21,16 @@ use heed::types::Bytes;
 
 use super::carried_bodies::{BodyCensus, Unbound, inline_asset};
 use super::{StorageTier, response_rows, storage_tier};
-use crate::store::{BODY_KEYS, BodyKeyRow, INLINE_ASSETS, Store, pin_body_custody_in_txn};
+use crate::store::{
+    BODY_KEYS, BodyKeyRow, INLINE_ASSETS, ManifestDbs, Store, pin_body_custody_in_txn,
+    remember_body_instances_in_txn,
+};
 use crate::{Error, Result, Vault};
 
 /// The databases whose rows name the bodies a checkpoint carries: the host's
-/// row-held responses rest in `sync_state` (KS-2B2).
-const BODY_DATABASES: [&str; 3] = ["entities", "vault_meta", "sync_state"];
+/// row-held responses rest in `sync_state` (KS-2B2), an agent dispatch's
+/// payload text in `job_records` (FIX 7115).
+const BODY_DATABASES: [&str; 4] = ["entities", "vault_meta", "sync_state", "job_records"];
 
 impl Vault {
     /// Mints and binds an instance for every body the next checkpoint will
@@ -47,18 +51,23 @@ impl Vault {
         if !unbound.is_empty() {
             let mint = self.store.body_mint()?;
             for body in unbound {
-                let instance = *mint.mint()?.instance();
-                minted.push((body, instance));
+                // Each instance stays leased until the writer below is done
+                // (FIX 6022).
+                minted.push((body, mint.mint()?));
             }
         }
         self.with_write_txn(|txn| {
             if !minted.is_empty() {
                 pin_body_custody_in_txn(&self.store, txn)?;
             }
+            let mut history = Vec::new();
             for (body, instance) in &minted {
-                bind_in_txn(self, txn, body, *instance)?;
+                history.extend(bind_in_txn(self, txn, body, *instance.instance())?);
             }
-            response_rows::release_stale_in_txn(&self.store, txn, &stale)
+            response_rows::release_stale_in_txn(&self.store, txn, &stale)?;
+            // The obligations are journaled before the writer commits (FIX
+            // 6229), in one frame.
+            self.store.key_custody().journal_body_history(history)
         })
     }
 }
@@ -84,13 +93,15 @@ fn unbound_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<(Vec<Unbound>, BTree
 }
 
 /// Binds `instance` to `body` in `txn`, unless one was bound since or the
-/// body has gone: then the instance is debris.
+/// body has gone: then the instance is debris. A digest whose row switches
+/// between inline and file keeps the instance it displaced (FIX 6023).
+/// Returns a response's obligation rows, for the writer to journal.
 fn bind_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     body: &Unbound,
     instance: [u8; 16],
-) -> Result<()> {
+) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
     let store = &vault.store;
     match body {
         Unbound::Asset(id) => {
@@ -107,22 +118,36 @@ fn bind_in_txn(
             }
         }
         Unbound::Result(digest, len) => {
-            let inline = BODY_KEYS
-                .get(store, txn, digest)?
-                .is_some_and(|row| row.inline);
+            let prior = BODY_KEYS.get(store, txn, digest)?;
+            let inline = prior.as_ref().is_some_and(|row| row.inline);
             if !inline && vault.code_run_body_inline_in_txn(txn, digest)? {
+                if let Some(prior) = prior {
+                    remember_body_instances_in_txn(
+                        store,
+                        txn,
+                        digest,
+                        &[prior.instance, instance],
+                    )?;
+                }
                 BODY_KEYS.put(store, txn, digest, &BodyKeyRow::vault(instance, *len, true))?;
             }
         }
         Unbound::File(digest, len) => {
-            let held = BODY_KEYS
-                .get(store, txn, digest)?
-                .is_some_and(|row| !row.inline);
+            let prior = BODY_KEYS.get(store, txn, digest)?;
+            let held = prior.as_ref().is_some_and(|row| !row.inline);
             if !held {
                 // A file a row names and the disk lacks is no body to bind:
                 // the checkpoint refuses, as it refused before.
                 if store.body_dir()?.open_reader(digest, *len, None)?.is_none() {
                     return Err(Error::CorruptedIndex("code-run result body file missing"));
+                }
+                if let Some(prior) = prior {
+                    remember_body_instances_in_txn(
+                        store,
+                        txn,
+                        digest,
+                        &[prior.instance, instance],
+                    )?;
                 }
                 BODY_KEYS.put(
                     store,
@@ -132,7 +157,9 @@ fn bind_in_txn(
                 )?;
             }
         }
-        Unbound::Response(carrier) => response_rows::bind_in_txn(store, txn, carrier, instance)?,
+        Unbound::Response(carrier) => {
+            return response_rows::bind_in_txn(store, txn, carrier, instance);
+        }
     }
-    Ok(())
+    Ok(Vec::new())
 }

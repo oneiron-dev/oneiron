@@ -51,6 +51,22 @@ credential.
   revision, with the hashes and that floor, before it stages any of the files,
   prepares the VMM or hands over F, C or A, and boots no image before the floor
   for a profile that needs one of them.
+- The guest runtime (FIX 7671) adds two required manifest fields:
+  `vm_guest_runtime_revision` (1 for an image that stages the guests' whole
+  rootless runtime and both image archives, 0 for one built without) and
+  `guest_runtime` (the image's descriptor, `null` exactly at 0). The
+  supervisor writes `/config/browser-runtime` or `/config/desktop-runtime`
+  only for an image at revision 1, each naming the descriptor's guest-local
+  CLI, never a host path. The bootstrap prepares the runtime for the vault UID
+  and passes the engine one `--guest-runtime-fact` on every serving boot; no
+  fact stops the vault.
+- The trusted organ builds file (FIX 7889) adds a required manifest field,
+  `vm_trusted_organ_builds_revision: 1`, which the rootfs receipt carries into
+  the manifest. Its floor is the engine commit that merged FIX 7889. An image
+  before it ignores `/config/trusted-organ-builds`, so every pack organ build
+  in its vault runs as third party. The supervisor checks the revision, with
+  the hashes and that floor, before it stages a list, and counts a list
+  applied only on an image at or after the floor.
 
 ## The channel
 
@@ -337,6 +353,34 @@ the ones whose values became absent, and builds the one drive that an open and
 a restore both boot with. A RAM resume reads no file again, so a changed
 profile takes effect at the next cold boot: drop a published snapshot first.
 
+## Trusted organ builds (FIX 7889)
+
+A vault VM's engine takes `--trusted-organ-build` as a node's serve does. In a
+VM the operator's list is `/config/trusted-organ-builds`
+(`VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE`) on the config drive: one organ build's
+blake3, 64 hex digits, per line. The image's init passes each line, as written,
+to the engine as its own `--trusted-organ-build`. The drive carries the flag;
+it is not another source, and nothing a pack carries adds to the list.
+
+- No file, or an empty one, lists none: every pack organ build runs as third
+  party, as on a node without the flag.
+- Blank lines pass nothing. A last line without a final LF still counts.
+- A line the flag refuses (not exactly 64 hex digits, or with a space or a CR)
+  refuses the boot, as the flag does on a node.
+
+To build the drive offline, put the list in the operator's tree beside the
+other config files and run `deploy/firecracker/build.py config-disk
+--source-dir <tree> --size-mib <size> --output <new directory>`. It writes a
+fresh read-only `config.ext4` with the tree's files at its root, and a receipt
+with its SHA256. Give that image as the VM profile's `config_disk`. It never
+writes to a drive a VM has attached.
+
+Publish the list with the profile, under the same config-drive lock: write the
+list the operator holds now, drop the entries they removed, and build the one
+drive an open and a restore both boot with. A RAM resume reads no file again,
+so a changed list takes effect at the next cold boot: drop a published snapshot
+first.
+
 ## Lost result: decision table
 
 If the same restored guest is still serving, read ctl `restore_status` and
@@ -376,3 +420,9 @@ overwrite.
   the config drive's lock, building the drive an open and a restore share, and
   holding back a profile until the image's revision and floor check out are the
   supervisor's (FIX 6809's LC half, FIX 7081).
+- **Trusted organ builds publication.** Writing the operator's list under the
+  config drive's lock, building the drive (`config-disk` or the supervisor's
+  own builder) and picking an image whose manifest names
+  `vm_trusted_organ_builds_revision: 1` are the supervisor's (FIX 7889's host
+  half). `host vm` takes paths, not a manifest, so no host check reads the
+  revision.

@@ -21,6 +21,12 @@
 mod archive;
 mod gzip;
 mod pdf;
+mod projection_edit;
+mod retained_iterative;
+
+pub(crate) use self::projection_edit::{
+    RetainedProjectionEdit, apply_retained_repo_projection_diff,
+};
 
 use super::{release_hit, scan_payload, secret_scan_error};
 use crate::error::{Error, Result};
@@ -47,6 +53,10 @@ pub(super) const MAX_FILE_KEYS: usize = 10_000;
 pub(super) const REASON_UNREADABLE: &str = "gate.secret_scan.container_unreadable";
 /// A container past one of the bounds above.
 pub(super) const REASON_OVER_BUDGET: &str = "gate.secret_scan.container_over_budget";
+/// A container a retained repository read meets inside itself: its whole
+/// bytes are those of a container the walk is already inside (FIX 8031).
+/// An integrity stop, not a bound: the walk reads no further down it.
+const REASON_ARCHIVE_CYCLE: &str = "gate.secret_scan.archive_cycle";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -97,7 +107,8 @@ pub(super) fn holds_spans(bytes: &[u8]) -> bool {
 pub(super) enum Stop {
     /// The door refuses the file with this reason code: a hit, or a
     /// container read no further ([`REASON_UNREADABLE`],
-    /// [`REASON_OVER_BUDGET`]).
+    /// [`REASON_OVER_BUDGET`], and a retained read's
+    /// [`REASON_ARCHIVE_CYCLE`]).
     Refuse(&'static str),
     /// The engine failed, or a reader's own scan refused.
     Fail(Error),
@@ -134,36 +145,126 @@ pub(super) fn refusal(stop: Stop) -> Error {
     }
 }
 
+/// How a walk reads a file's tree.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContainerReadMode {
+    /// The write door's, release doors' and serving doors' read: every bound
+    /// above holds.
+    Generic,
+    /// A retained repository blob's read (FIX 7608, rule 5): no member,
+    /// object, depth or expanded-byte bound. The same decoders read it, with
+    /// every integrity check theirs (declared lengths, CRCs, duplicate
+    /// names, methods, filters, encryption, cross-references); what stops it
+    /// is a container no reader here reads, or the machine.
+    RetainedRepo,
+}
+
 /// What a walk over one file's tree has left. A member's own walk spends
-/// from it; none starts a budget of its own.
+/// from it; none starts a budget of its own. A retained repository read
+/// counts against none of it, and keeps the containers it is inside.
 struct Budget {
+    mode: ContainerReadMode,
     members: usize,
     expanded: usize,
+    /// The BLAKE3 of each container a retained read is inside, the file
+    /// first: this walk's own, never kept or logged.
+    ancestors: Vec<[u8; 32]>,
 }
 
 impl Budget {
     fn new() -> Self {
+        Self::of(ContainerReadMode::Generic)
+    }
+
+    fn of(mode: ContainerReadMode) -> Self {
         Self {
+            mode,
             members: MAX_MEMBERS,
             expanded: MAX_EXPANDED_BYTES,
+            ancestors: Vec::new(),
         }
+    }
+
+    /// Whether the bounds above hold for this walk.
+    fn capped(&self) -> bool {
+        self.mode == ContainerReadMode::Generic
     }
 
     /// Counts one more member.
     fn member(&mut self) -> Walked<()> {
-        self.members = self.members.checked_sub(1).ok_or_else(over_budget)?;
+        if self.capped() {
+            self.members = self.members.checked_sub(1).ok_or_else(over_budget)?;
+        }
         Ok(())
     }
 
-    /// The most bytes the next member may decode to.
+    /// The members the walk may still read; `None` when no bound holds.
+    fn members_left(&self) -> Option<usize> {
+        self.capped().then_some(self.members)
+    }
+
+    /// The most bytes the next member may decode to: the machine's most
+    /// when no bound holds.
     fn limit(&self) -> usize {
-        self.expanded.min(MAX_MEMBER_BYTES)
+        if self.capped() {
+            self.expanded.min(MAX_MEMBER_BYTES)
+        } else {
+            usize::MAX
+        }
+    }
+
+    /// The most bytes a PDF's loader may decompress one stream to; `None`
+    /// when no bound holds.
+    fn decompressed_ceiling(&self) -> Option<usize> {
+        self.capped().then_some(MAX_MEMBER_BYTES)
+    }
+
+    /// Whether `objects` indirect objects are past the PDF bound.
+    fn objects_over(&self, objects: usize) -> bool {
+        self.capped() && objects > MAX_PDF_OBJECTS
+    }
+
+    /// Whether a container `depth` steps down is past the depth bound.
+    fn too_deep(&self, depth: usize) -> bool {
+        self.capped() && depth >= MAX_DEPTH
+    }
+
+    /// Whether a rebuilt copy of `len` bytes is past the expanded bound.
+    fn copy_over(&self, len: usize) -> bool {
+        self.capped() && len > MAX_EXPANDED_BYTES
     }
 
     /// Charges `len` decoded bytes.
     fn spend(&mut self, len: usize) -> Walked<()> {
-        self.expanded = self.expanded.checked_sub(len).ok_or_else(over_budget)?;
+        if self.capped() {
+            self.expanded = self.expanded.checked_sub(len).ok_or_else(over_budget)?;
+        }
         Ok(())
+    }
+
+    /// Enters the container whose whole bytes are `bytes`, before its
+    /// members are read (FIX 8031). A retained read already inside a
+    /// container of the same bytes has met a cycle, and reads no further
+    /// down it. Each entry is left once its members are read, so a
+    /// container met again beside itself is read again. A bounded walk
+    /// keeps no ancestry: its own bounds end it.
+    fn enter_container(&mut self, bytes: &[u8]) -> Walked<()> {
+        if self.capped() {
+            return Ok(());
+        }
+        let digest = *blake3::hash(bytes).as_bytes();
+        if self.ancestors.contains(&digest) {
+            return Err(Stop::Refuse(REASON_ARCHIVE_CYCLE));
+        }
+        self.ancestors.push(digest);
+        Ok(())
+    }
+
+    /// Leaves the container entered last.
+    fn leave_container(&mut self) {
+        if !self.capped() {
+            self.ancestors.pop();
+        }
     }
 }
 
@@ -178,6 +279,20 @@ pub(super) fn walk_members(
     walk(bytes, &mut Vec::new(), &mut Budget::new(), visit)
 }
 
+/// [`walk_members`] over a retained repository blob (FIX 7608, rule 5):
+/// every member, at any depth, read whole, with no policy bound. A stop is
+/// a container no reader here reads, one met inside itself
+/// ([`REASON_ARCHIVE_CYCLE`]), or a visitor's own. Its frames are on the
+/// heap ([`retained_iterative`]), so no depth of nesting runs the thread's
+/// stack out.
+pub(super) fn walk_retained_repo_members(
+    bytes: &[u8],
+    visit: &mut dyn FnMut(&[MemberStep], &[u8]) -> Walked<()>,
+) -> Walked<()> {
+    let mut budget = Budget::of(ContainerReadMode::RetainedRepo);
+    retained_iterative::walk(bytes, &mut budget, visit)
+}
+
 fn walk(
     bytes: &[u8],
     path: &mut Vec<MemberStep>,
@@ -187,7 +302,7 @@ fn walk(
     let Some(kind) = kind(bytes) else {
         return Ok(());
     };
-    if path.len() >= MAX_DEPTH {
+    if budget.too_deep(path.len()) {
         return Err(over_budget());
     }
     let mut each = |step: MemberStep, member: &[u8], budget: &mut Budget| -> Walked<()> {
@@ -234,11 +349,25 @@ pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
 /// filled first, then each member under it rebuilt the same way and the
 /// container encoded around its members again. Every place must be met.
 pub(crate) fn masked_copy(bytes: &[u8], places: &KeyPlaces) -> Result<Vec<u8>> {
+    masked_copy_in(bytes, places, Budget::new()).map_err(refusal)
+}
+
+/// [`masked_copy`] of a retained repository blob, under its whole read
+/// ([`walk_retained_repo_members`]). The stop is the caller's to read: a
+/// container no reader here rebuilds is not an engine failure.
+pub(super) fn masked_retained_repo_copy(bytes: &[u8], places: &KeyPlaces) -> Walked<Vec<u8>> {
+    masked_copy_in(bytes, places, Budget::of(ContainerReadMode::RetainedRepo))
+}
+
+fn masked_copy_in(bytes: &[u8], places: &KeyPlaces, mut budget: Budget) -> Walked<Vec<u8>> {
     let mut met = 0;
-    let copy =
-        rebuild(bytes, &mut Vec::new(), places, &mut Budget::new(), &mut met).map_err(refusal)?;
+    let copy = if budget.capped() {
+        rebuild(bytes, &mut Vec::new(), places, &mut budget, &mut met)?
+    } else {
+        retained_iterative::rebuild(bytes, places, &mut budget, &mut met)?
+    };
     if met != places.len() {
-        return Err(Error::CorruptedIndex("masked file member path"));
+        return Err(Stop::Fail(Error::CorruptedIndex("masked file member path")));
     }
     Ok(copy)
 }
@@ -265,7 +394,7 @@ fn rebuild(
         return Ok(copy);
     }
     let kind = kind(bytes).ok_or(Stop::Fail(Error::CorruptedIndex("masked file member path")))?;
-    if path.len() >= MAX_DEPTH {
+    if budget.too_deep(path.len()) {
         return Err(over_budget());
     }
     let mut each =
@@ -285,7 +414,7 @@ fn rebuild(
         Kind::Gzip => gzip::rebuilt(&copy, budget, &mut each),
         Kind::Pdf => pdf::rebuilt(&copy, budget, &mut each),
     }?;
-    if copy.len() > MAX_EXPANDED_BYTES {
+    if budget.copy_over(copy.len()) {
         return Err(over_budget());
     }
     Ok(copy)

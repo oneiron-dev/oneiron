@@ -1,7 +1,7 @@
 //! The seat pick as typed decisions through the host's ladder, and the note seam beside it.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -20,7 +20,9 @@ const FIRST_RUNG: &str = "default";
 
 /// Generation beside a decided seat pick: the plain-language `why` the seat's receipt
 /// keeps, from the host's own model transport. The model and effort are already decided;
-/// the note cannot change them. The engine refuses a blank one.
+/// the note cannot change them. The engine refuses a blank one. `deadline` is the birth's
+/// own clock, the one its pick ran on (FIX 8230): a note runs in what is left of it and
+/// never starts a new one.
 pub trait SeatNotes: Send + Sync {
     fn why(
         &self,
@@ -28,6 +30,7 @@ pub trait SeatNotes: Send + Sync {
         candidates: &[SeatCandidate],
         model: &ModelId,
         effort: ReasoningEffort,
+        deadline: &RetrievalDeadline,
     ) -> Result<String>;
 }
 
@@ -52,15 +55,17 @@ pub struct SeatDecisions {
 
 impl SeatDecisions {
     /// Which candidate the seat pins, then, unless the holder fixed the effort or the
-    /// model has one rung, which of its allowed efforts it runs at, under one clock. An
-    /// abstained pick fails the birth, as a judge's error did; an abstained effort keeps
-    /// the first rung.
-    pub(super) fn pick(
+    /// model has one rung, which of its allowed efforts it runs at, under `deadline`, the
+    /// clock its caller already runs on (FIX 7507): both questions share it, so a birth
+    /// bound by a parent's clock never starts a new one. A caller passes its own deadline
+    /// cut to the seat budget it allows. An abstained pick fails the birth, as a judge's
+    /// error did; an abstained effort keeps the first rung.
+    pub fn pick_before(
         &self,
         task: &SeatTask,
         candidates: &[SeatCandidate],
+        deadline: &RetrievalDeadline,
     ) -> Result<(usize, Option<ReasoningEffort>)> {
-        let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
         let ladder = self.ladder.ladder();
         let ask = |question: &DecisionQuestion, chosen: Option<&ModelId>| {
             ladder.run(
@@ -71,7 +76,7 @@ impl SeatDecisions {
                 self.dial,
                 &self.bands,
                 Reversibility::ReversibleRead,
-                &deadline,
+                deadline,
             )
         };
         let model = SEAT_PICK.question(

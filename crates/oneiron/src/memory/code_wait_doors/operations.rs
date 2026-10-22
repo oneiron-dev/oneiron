@@ -1,3 +1,7 @@
+//! Code wait doors: resolve a code wait and read its receipt.
+//! `Memory::code_wait_resolve_as` is its call surface.
+//! `memory::code_wait_doors::types` defines the wire records; `crate::code_run` the consent waits.
+
 use super::*;
 use crate::code_run::{
     CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSettleOutcome, CodeConsentWaitState,

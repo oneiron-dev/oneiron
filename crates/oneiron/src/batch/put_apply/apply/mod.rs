@@ -255,7 +255,7 @@ pub(in crate::batch) fn apply_put(
         }
         decoded_claim_body = Some(body);
     } else if entity_type == crate::registry::ENTITY_TYPE_NOTE {
-        super::claim_admission::validate_note_birth_put(store, wtxn, &id, data)?;
+        super::validate_note_birth_put(store, wtxn, &id, data)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
         super::claim_admission::validate_witness_message_body(data, replicated)?;
     } else if entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT {
@@ -508,8 +508,7 @@ pub(in crate::batch) fn apply_put(
         crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
     {
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
-        previous_skill_record =
-            super::put_entity_update::decode_previous_skill_record(old_type, &old_record)?;
+        previous_skill_record = super::decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
         // must not leave stale BM25F postings live. Replicated/LWW overwrites
         // always deindex the loser because sync carries no `BatchOp::Text`.

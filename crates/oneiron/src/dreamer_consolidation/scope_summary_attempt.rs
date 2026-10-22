@@ -5,6 +5,8 @@
 //! summary instruction, and lands the body under the Dreamer's byline. The
 //! instruction is host configuration: the engine ships no summary prompt.
 
+use super::call_labels::{CallLabelMap, LabelKind};
+use super::note_text::NoteText;
 use super::residency::{residency_deferral, waits_on_residency};
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
@@ -25,15 +27,29 @@ use crate::llm::{
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_TURN};
 use crate::scope_summary::{
-    ComposedSummary, ScopeSummaryPlan, SummarySourceMessage, SummarySourceVersion,
+    ComposedSummary, ScopeSummaryPlan, SummarySourceMessage, SummarySourceNote,
+    SummarySourceVersion,
 };
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 
+mod arc_children;
+mod arc_chunks;
+mod arc_claims;
+mod arc_compose;
+mod arc_evidence;
+mod arc_output;
+mod arc_part_merge;
+mod arc_reduce;
+mod arc_review;
+mod arc_turns;
 mod chunks;
 mod output;
+mod window;
+
+pub(crate) use arc_evidence::arc_evidence_in_txn;
 
 /// Wraps an executor with the declared-summary arm. Every other attempt is
 /// delegated untouched.
@@ -138,6 +154,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 "an epoch summary is never a scope summary's editor text",
             ));
         }
+        // An Arc composes from its sittings' lines (FIX 7509 P8).
+        if plan.arc.is_some() {
+            return self
+                .compose_arc(attempt, ctx, &plan, &evidence, instruction)
+                .await;
+        }
         // A NOTE review's topic summary the topic's group outgrew completes
         // without composing (Engine 10-21, option A): the larger group's
         // own declaration composes it.
@@ -159,9 +181,9 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             }
             return Err(invalid_consolidation("summary scope has no text"));
         };
-        // A sitting's lines cite its TURNs by the labels its evidence showed
-        // (FIX 7509).
-        let labels = plan.session.map(|_| output::turn_labels(&evidence.covers));
+        // A sitting's lines cite its TURNs by the call-local labels its
+        // evidence showed (FIX 7509, 7574).
+        let labels = plan.session.map(|_| evidence.labels.clone());
         // The host supplies the instruction. The typed output contract makes
         // the Dreamer distill editor wants into `keep` alongside its prose.
         let schema = if labels.is_some() {
@@ -178,7 +200,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         // is unknown, is the one call below, byte for byte.
         if labels.is_some()
             && let Some(window) = self.session_window(ctx.vault)
-            && chunks::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
+            && window::framed_tokens(instruction, &summary_input(&plan, &evidence.text)?, &schema)?
                 > window
         {
             return self
@@ -319,6 +341,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             messages: evidence.messages.clone(),
             memo,
             line_sources,
+            arc_work: None,
         };
         match ctx
             .vault
@@ -397,6 +420,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
             .into_request();
         super::roles::bind_reasoning(vault, self.backend, &mut request)?;
+        // The records' call-local labels are the request's own (FIX 7574):
+        // a call that binds them to other ids is another request. A call
+        // showing labels of its own binds its map over this one.
+        evidence.labels.bind_request(&mut request, None);
         Ok(request)
     }
 }
@@ -459,12 +486,25 @@ pub(crate) struct ScopeSummaryEvidence {
     pub(crate) text: String,
     pub(crate) covers: Vec<EntityId>,
     pub(crate) messages: Vec<SummarySourceMessage>,
+    /// Each NOTE cover as read (FIX 6321): what the body pins and every
+    /// serve reads again.
+    pub(crate) notes: Vec<SummarySourceNote>,
     pub(crate) source_versions: Vec<SummarySourceVersion>,
     readable: BTreeSet<ScopeResource>,
+    /// The call-local labels the records show under (FIX 7574): each TURN
+    /// a `T`, each NOTE an `N`, numbered in the order `text` renders them.
+    labels: CallLabelMap,
     /// A sitting's TURNs as read, one beside each of `covers` (FIX 7509
     /// P7b): the text a sitting too big for one call pages. Empty for every
     /// other target.
     turns: Vec<(EntityId, TurnText)>,
+    /// An Arc's TURNs a MESSAGE of which the Dreamer's read withheld (FIX
+    /// 8059), in source order: the Arc stays owed for the first. Empty for
+    /// every other target, whose read refuses instead.
+    withheld: Vec<EntityId>,
+    /// What an Arc's call shows and its labels (FIX 7509 P8); `None` for
+    /// every other target.
+    arc: Option<arc_evidence::ArcView>,
 }
 
 impl ScopeSummaryEvidence {
@@ -503,16 +543,75 @@ fn source_pin(
     })
 }
 
+/// A NOTE as a summary reads it (FIX 907, 6321): the Dreamer's one NOTE
+/// projection of `body`, and the pin of it a summary's body holds, its
+/// stored revision and the projection's fingerprint. `None` when the
+/// Dreamer does not read it as a source.
+fn note_read_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<(SummarySourceNote, NoteText)>> {
+    Ok(
+        super::note_text::note_text_in(vault, txn, id, body)?.map(|note| {
+            let pin = SummarySourceNote {
+                id: *id,
+                revision: super::swarm_evidence_content_hash(body),
+                projected_text: note.fingerprint,
+            };
+            (pin, note)
+        }),
+    )
+}
+
+/// Each of `notes` as a summary's evidence would pin it now, through the
+/// Dreamer's own read and NOTE projection (FIX 6321): `None` for one the
+/// Dreamer does not read as a source. A NOTE set's summary is checked
+/// against these at every serve.
+pub(crate) fn note_source_pins_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    notes: &[EntityId],
+) -> Result<Vec<Option<SummarySourceNote>>> {
+    let read = dreamer_read(vault)?;
+    let rows = read.get_entities_parts_in_txn(txn, notes)?;
+    let mut pins = Vec::with_capacity(notes.len());
+    for (note, row) in notes.iter().zip(rows) {
+        pins.push(match row {
+            Some((ENTITY_TYPE_NOTE, _, body)) => {
+                note_read_in(vault, txn, note, &body)?.map(|(pin, _)| pin)
+            }
+            _ => None,
+        });
+    }
+    Ok(pins)
+}
+
 /// Reads through the Dreamer's own scoped read, including every child of a
 /// witnessed turn. It is also the landing fence, under the landing writer.
-/// A sitting's TURNs (`labelled`, FIX 7509) are shown under the labels the
-/// engine mints for the call, in source order, which its lines cite; every
-/// other TURN under its id.
+/// Every record shows under a call-local label (FIX 7574), each TURN a `T`
+/// and each NOTE an `N`, in source order: a sitting's lines cite those.
+/// A sitting's TURNs (`keep_turns`, FIX 7509) are kept as read for paging.
 pub(crate) fn scope_summary_evidence_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     sources: &[EntityId],
-    labelled: bool,
+    keep_turns: bool,
+) -> Result<ScopeSummaryEvidence> {
+    evidence_in_txn(vault, txn, sources, keep_turns, false)
+}
+
+/// [`scope_summary_evidence_in_txn`]; with `arc`, a TURN whose MESSAGE the
+/// Dreamer's read withholds is recorded as withheld (FIX 8059), its pin
+/// read without its words, instead of refusing the read. The read floor is
+/// the same: no withheld word is read.
+fn evidence_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    sources: &[EntityId],
+    keep_turns: bool,
+    arc: bool,
 ) -> Result<ScopeSummaryEvidence> {
     let read = dreamer_read(vault)?;
     let rows = read.get_entities_parts_in_txn(txn, sources)?;
@@ -523,12 +622,14 @@ pub(crate) fn scope_summary_evidence_in_txn(
         // admitted text, pinned by the projection's fingerprint beside the
         // row, its frontier and the policy the plan pins.
         if let Some((ENTITY_TYPE_NOTE, _, body)) = &row {
-            if let Some(note) = super::note_text::note_text_in(vault, txn, record, body)? {
+            if let Some((note_pin, note)) = note_read_in(vault, txn, record, body)? {
                 pin.projected_text = Some(note.fingerprint);
+                let label = evidence.labels.assign(LabelKind::Note, *record);
                 evidence
                     .text
-                    .push_str(&format!("[{}] {}\n", record.to_hex(), note.text));
+                    .push_str(&format!("[{label}] {}\n", note.text));
                 evidence.covers.push(*record);
+                evidence.notes.push(note_pin);
                 evidence.readable.insert(note.version);
             }
             evidence.source_versions.push(pin);
@@ -538,20 +639,25 @@ pub(crate) fn scope_summary_evidence_in_txn(
             evidence.source_versions.push(pin);
             continue;
         };
-        let turn = collect_in(&read, txn, record, &body, &mut 0)?;
+        let mut withheld = 0;
+        let turn = match collect_in(&read, txn, record, &body, &mut withheld) {
+            Ok(turn) => turn,
+            Err(_) if arc && withheld != 0 => {
+                evidence.withheld.push(*record);
+                evidence.source_versions.push(pin);
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         pin.projected_text = Some(turn.summary_fingerprint()?);
         evidence.source_versions.push(pin);
         let Some(text) = turn.text() else {
             continue;
         };
-        let label = if labelled {
-            output::turn_label(evidence.covers.len())
-        } else {
-            record.to_hex()
-        };
+        let label = evidence.labels.assign(LabelKind::Turn, *record);
         evidence.text.push_str(&format!("[{label}] {text}\n"));
         evidence.covers.push(*record);
-        if labelled {
+        if keep_turns {
             evidence.turns.push((*record, turn.clone()));
         }
         evidence.readable.insert(document_version(*record, &body));

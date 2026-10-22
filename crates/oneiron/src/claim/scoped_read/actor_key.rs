@@ -45,6 +45,9 @@ pub struct ScopedReadActorKey {
     pub(super) owner_exemption: Option<EntityId>,
     /// The room turn this key reads inside, when a host bound one.
     pub(super) room_turn: Option<Box<RoomTurnCeiling>>,
+    /// The room whose signed facets a named-room read outside a turn reads
+    /// inside (FIX 643); see [`Self::within_room_facets`].
+    pub(super) room_facets: Option<EntityId>,
     /// The worlds this read asked for (ARCH-0022). Every row it serves,
     /// ranked or reached through the graph, lies in one of them.
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
@@ -370,6 +373,7 @@ impl ScopedReadActorKey {
             owner: None,
             owner_exemption: None,
             room_turn: None,
+            room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
@@ -407,6 +411,7 @@ impl ScopedReadActorKey {
             owner: Some(owner),
             owner_exemption: None,
             room_turn: None,
+            room_facets: None,
             worlds: None,
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
@@ -510,6 +515,16 @@ impl ScopedReadActorKey {
         self.room_turn.as_deref()
     }
 
+    /// Read inside `room`'s signed facets as each snapshot finds them, as a
+    /// turn in it does (FIX 643): a named-room read outside a turn keeps every
+    /// other term it has. Like every facet bound, it only narrows, and the
+    /// owner's key reads past it.
+    #[must_use]
+    pub(crate) fn within_room_facets(mut self, room: EntityId) -> Self {
+        self.room_facets = Some(room);
+        self
+    }
+
     /// Read only rows in `worlds`, each where `record_world_in` places it: a
     /// claim by its own world, a TASK and its facts by their birth, any
     /// other record as base reality. The ceiling only narrows: it meets any
@@ -604,6 +619,28 @@ impl ScopedReadActorKey {
             proof.claims().actor_class.clone(),
         )?;
         key.authority = Some(Self::read_authority(proof.scope()));
+        key.proof = Some(proof.clone());
+        Some(key)
+    }
+
+    /// [`Self::from_verified_slip`] for a credential that names a row it
+    /// writes about rather than reads (FIX 8155): the same holder, class,
+    /// proof and record, world, facet and channel bounds, its verb axis
+    /// taken to admit `read`, so a write-only credential is judged by its
+    /// bounds and never by a read verb it was not asked to hold.
+    #[must_use]
+    pub(crate) fn from_verified_slip_as_target(
+        proof: &crate::authority::VerifiedSlip,
+    ) -> Option<Self> {
+        let mut key = Self::from_parts(
+            proof.claims().holder_ref.clone(),
+            proof.claims().actor_class.clone(),
+        )?;
+        let mut authority = Self::read_authority(proof.scope());
+        if let crate::federation::ScopeAxis::Some(verbs) = &mut authority.verbs {
+            verbs.insert("read".to_owned());
+        }
+        key.authority = Some(authority);
         key.proof = Some(proof.clone());
         Some(key)
     }

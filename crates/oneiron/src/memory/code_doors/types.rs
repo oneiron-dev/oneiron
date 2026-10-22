@@ -1,3 +1,7 @@
+//! Code symbol lease, proposal and mutation-log request and view records.
+//! `CodeSymbolsDeclareRequest` is the first of its records.
+//! These are local definitions; `memory::code_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
@@ -78,9 +82,12 @@ pub struct CodeProposalSubmitRequest {
     /// The turn, activity, intent and model behind the change, each a
     /// readable record when present. Absent fields stay unrecorded.
     pub op_provenance: CodeOpProvenance,
-    /// The owner's review policy for this proposal: the lenses it must pass.
-    /// A policy, not a verdict.
-    pub catalog: LensCatalog,
+    /// The owner's own review catalog for this proposal: the lenses it must
+    /// pass, a policy and not a verdict. Omitted, it is held to the vault's
+    /// review policy, and with none set the same checked queue lands it on
+    /// green (FIX 8268).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog: Option<LensCatalog>,
 }
 
 /// The staged proposal, as the engine stored it.

@@ -120,15 +120,23 @@ pub struct VaultVmConfig {
     /// `--settings-file`, and under `seal/` `key.pem`, `chain.pem`,
     /// `trust.pem` and `organ` as the matching `--seal-*-file` and
     /// `--seal-organ` flags, the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`, and the one-line
+    /// `--seal-tsa-url` and `--seal-signing-url`, the one-line
     /// `oauth-resource-indicator` and `kit-bundle-public-urls` (the host's
     /// public https origin, and the comma-separated URLs a kit dials) as the
-    /// flags of those names. Files a settings path names may sit beside it.
+    /// flags of those names, and each line of `trusted-organ-builds`, an organ
+    /// build's blake3, as its own `--trusted-organ-build` (FIX 7889, an image
+    /// whose manifest names `vm_trusted_organ_builds_revision`). Files a
+    /// settings path names may sit beside it.
     /// The guest's bootstrap reads its typed files itself: `network.json`
     /// (below), and the managed profile's five files (FIX 6809), which give
     /// the engine its `--organization-owner`, `--member-vault`,
     /// `--failure-signal-export`, `--failure-signal-training` and
-    /// `--fast-dims`. Without it the guest runs with none of them.
+    /// `--fast-dims`. It reads the guests' one-line runtime bindings,
+    /// `browser-runtime` and `desktop-runtime`, itself too (FIX 7671): each
+    /// must name the image's own guest-local container CLI, and the engine
+    /// gets it only once the bootstrap has prepared that runtime for the
+    /// vault's UID; no host path is a binding. Without it the guest runs
+    /// with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
     /// The vault's provision binding (FIX 6308): the UID its engine runs as,
@@ -661,10 +669,11 @@ impl VaultVm {
 
     async fn restore(&mut self, timeout: Duration) -> anyhow::Result<()> {
         // Consumed before load: a crash from here on never resumes this RAM
-        // a second time, it boots cold from the vault disk instead.
-        let (snap, mem) = (self.path("vm.snap.taken"), self.path("vm.mem.taken"));
-        std::fs::rename(self.path("vm.snap"), &snap)?;
-        std::fs::rename(self.path("vm.mem"), &mem)?;
+        // a second time, it boots cold from the vault disk instead. A restore
+        // that fails, or is dropped, after a rename unlinks the name it took
+        // (FIX 7702).
+        let snap = TakenSnapshotFile::take(self.path("vm.snap"), self.path("vm.snap.taken"))?;
+        let mem = TakenSnapshotFile::take(self.path("vm.mem"), self.path("vm.mem.taken"))?;
         let anchor = self.take_snapshot_anchor()?;
         self.spawn_vmm().await?;
         let loaded = self
@@ -672,13 +681,13 @@ impl VaultVm {
                 "PUT",
                 "/snapshot/load",
                 json!({
-                    "snapshot_path": snap,
-                    "mem_backend": { "backend_type": "File", "backend_path": mem },
+                    "snapshot_path": snap.taken,
+                    "mem_backend": { "backend_type": "File", "backend_path": mem.taken },
                     "resume_vm": true,
                 }),
             )
             .await;
-        let _ = std::fs::remove_file(&snap);
+        snap.remove();
         loaded?;
         // The guest's anchor is the one its cold boot was handed, kept with
         // its snapshot whatever was attached since (FIX 7183).
@@ -687,7 +696,7 @@ impl VaultVm {
         self.send(&VmHostFrame::Resumed).await?;
         // The memory file backs guest RAM until the VMM exits; unlinking it
         // keeps the pages and leaves nothing to resume twice.
-        let _ = std::fs::remove_file(&mem);
+        mem.remove();
         // Thaw the reap freeze taken before the snapshot.
         self.ctl(&CtlRequest::ReapAbort).await?;
         Ok(())
@@ -735,5 +744,40 @@ impl VaultVm {
         self.lifecycle = None;
         self.source_attached = false;
         self.anchor.end_proxy();
+    }
+}
+
+/// A published snapshot file its restore consumed: renamed to its `.taken`
+/// name, which only this restore holds. Dropped while armed, as a restore
+/// that failed returns or is dropped, it unlinks that name, so no RAM-sized
+/// file is left behind (FIX 7702). It never names the published file, which
+/// the rename gave up.
+struct TakenSnapshotFile {
+    taken: PathBuf,
+    /// Still to unlink when dropped: false once [`Self::remove`] did.
+    armed: bool,
+}
+
+impl TakenSnapshotFile {
+    /// Renames `source` to `taken`; the guard exists only once that rename
+    /// did.
+    fn take(source: PathBuf, taken: PathBuf) -> std::io::Result<Self> {
+        std::fs::rename(source, &taken)?;
+        Ok(Self { taken, armed: true })
+    }
+
+    /// Unlinks the taken name now, where the restore is done with it, and
+    /// disarms the guard.
+    fn remove(mut self) {
+        self.armed = false;
+        let _ = std::fs::remove_file(&self.taken);
+    }
+}
+
+impl Drop for TakenSnapshotFile {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.taken);
+        }
     }
 }

@@ -12,7 +12,7 @@ use super::test_hooks::{RestoreStep, fail_at};
 use super::{
     CheckpointImage, Custody, ForkedCustody, RESTORE_EPOCH, RecoveryWriteBudget, Rejected,
     RestoreEpoch, RestoreReason, RestoreReport, artifact, carried_bodies, codec_error, rebuild,
-    write_budget,
+    response_rows, write_budget,
 };
 use crate::store::{DB_MANIFEST, MadeDestination};
 use crate::{EntityId, Result, Vault, VaultConfig};
@@ -57,13 +57,13 @@ impl Vault {
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
         let (fork, source, home) = match custody {
-            Custody::Keep | Custody::NewHost => (false, None, None),
+            Custody::Keep | Custody::Landed | Custody::NewHost => (false, None, None),
             Custody::Replace(home, _) => (false, None, Some(home)),
             Custody::Fork(source) => (true, source.map(|(live, _)| live), None),
         };
         let candidacy = match custody {
             Custody::Replace(_, candidacy) => candidacy,
-            Custody::Keep | Custody::NewHost | Custody::Fork(_) => None,
+            Custody::Keep | Custody::Landed | Custody::NewHost | Custody::Fork(_) => None,
         };
         let new_host = matches!(custody, Custody::NewHost);
         let mut gate_custody = if new_host {
@@ -95,7 +95,17 @@ impl Vault {
         // live one forks with the rest, and a bare reference rests again
         // once the rows land.
         let pads = super::pad_custody::require(&mut image, gate_custody.plan_mut(), custody)?;
+        // Every credential value a row commits to, by exact id through the
+        // same plan (KS-6 part 2): a row rides sealed as it rests, and a
+        // fork copies its value's key with the rest, no older generation
+        // besides. A row carried in the clear lands withheld.
+        let credentials =
+            super::credential_custody::require(&mut image, gate_custody.plan_mut(), custody)?;
         let body_custody = gate_custody.plan_mut().source().cloned();
+        // The responses that never decoded and land as they rested (FIX
+        // 6227): a claim among them is never decoded, indexed or embedded.
+        let (opaque_responses, opaque_claims) = carried_bodies::opaque_landing(&image, &retired)?;
+        let checkpoint_sequence = image.checkpoint_sequence;
         if fork {
             crate::store::refuse_custody_beside(destination)?;
         }
@@ -108,7 +118,9 @@ impl Vault {
         // it: only a committed restore keeps them (C8). The config is checked
         // first, as an owned open checks it before it touches the disk.
         Self::check_open_config(&config)?;
-        let mut room = write_budget::RestoreRoom::new(budget, &image, &config);
+        // Each row is counted at the length it lands at (FIX 6025, 6232).
+        let lengths = super::landing_lengths::LandingRowLengths::of(&image, &retired);
+        let mut room = write_budget::RestoreRoom::new(budget, &image, &lengths, &config);
         room.admit()?;
         let mut made = MadeDestination::make(destination, home)?;
         // A sealed copy's open writes its page-seal mirror beside it, outside
@@ -134,6 +146,9 @@ impl Vault {
             (body_custody.as_ref(), &retired),
         )
         .map_err(Rejected::landing)?;
+        // A queue row landed from its carried bytes goes unleased, as the
+        // snapshot unleased every other (FIX 7115).
+        response_rows::unlease_carried_attempts(&mut image, &retired).map_err(Rejected::landing)?;
         room.landing_rows(&image)?;
         vault.with_write_txn_grouped(|txn| {
             for entry in DB_MANIFEST {
@@ -194,6 +209,15 @@ impl Vault {
             // An erased actor's name, carried back by the image's rows, goes
             // again, now the type index is back.
             crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, erased)?;
+            // A step claim's response pins go with what the rows no longer
+            // hold, now the type index is back: an erased shell's release,
+            // an omitted claim's or version's pin goes alone (FIX 6225).
+            crate::llm::prune_step_response_pins_in_txn(
+                &vault.store,
+                txn,
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+            )?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(())
@@ -225,14 +249,12 @@ impl Vault {
         // custody holds, or is withheld by its world's setting; any other is
         // refused before the vault is kept (KS-5).
         let pad_notes = super::pad_custody::land(&vault, pads)?;
-        // A credential row the image carried in the clear rests sealed again
-        // under this vault's custody, one row per writer (KS-6 part 1). One
-        // custody cannot take a key for stays pending, never opened from its
-        // carrier on a custody fault; the restore goes on as on main.
-        vault.reseal_credential_carriers_warned();
+        // Each credential value reads back from the custody this vault now
+        // holds; each it did not land readable is named (KS-6 part 2).
+        let credential_notes = super::credential_custody::land(&vault, credentials);
         room.admit_derived(destination)?;
         let (rebuilt_entities, rebuilt_text_documents, pending_embeddings) =
-            rebuild::rebuild(&vault)?;
+            rebuild::rebuild(&vault, &opaque_claims)?;
         room.admit_derived(destination)?;
         rebuild::rebuild_auxiliary(&vault, image.created_at)?;
         room.admit_derived(destination)?;
@@ -268,6 +290,9 @@ impl Vault {
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
             pad_notes,
+            checkpoint_sequence,
+            opaque_responses,
+            credential_notes,
         };
         Ok((made, forked, vault, report))
     }

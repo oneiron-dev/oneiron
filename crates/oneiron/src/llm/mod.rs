@@ -71,6 +71,11 @@ pub(crate) use step::{
     erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
     retire_step_claim_in_txn, step_claim_carriage, step_state_carriage, step_state_owners,
 };
+// FIX 6225: an oversize step response's exact-version pins.
+pub(crate) use step::{
+    prune_step_response_pins_in_txn, release_step_response_pins_in_txn,
+    retire_erased_step_responses_in_rows,
+};
 
 pub use oneiron_model::llm::{
     BUDGET_LAND_PROMPT_TEMPLATE, BUDGET_LAND_PROMPT_TEMPLATE_ID,
@@ -89,6 +94,18 @@ pub use oneiron_model::llm::{
     joint_marginals,
 };
 pub use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
+// FIX 6567: the cache evidence a backend reports on a physical call.
+pub use oneiron_model::llm::{
+    CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
+    CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+};
+// FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
+pub use oneiron_model::llm::{
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
+    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
+};
+// FIX 7895: the answering llama.cpp process's launch alias, read in one place.
+pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
 pub use self::autocheck::{
     AUTO_CHECK_VALUE_PREVIEW_BYTES, AUTO_CHECKER_DEADLINE_MS, AutoCheckCandidate,
@@ -106,13 +123,14 @@ pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
-    FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability, LlmCatalogCost,
-    LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent,
-    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
-    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
-    ResponseFormat, RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError,
-    SingleRouteBackend, SingleSend, SpentKind, TierPrecedence, UnsupportedCapability,
+    FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend, LlmCapability,
+    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream,
+    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
+    UnsupportedCapability,
 };
 
 #[cfg(test)]

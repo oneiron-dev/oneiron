@@ -40,6 +40,25 @@ impl Vault {
         self.credential_read_key_in(&txn, proof)
     }
 
+    /// The key `proof`'s holder is judged under when it names a row it
+    /// writes about rather than reads (FIX 8155): the rule
+    /// [`Self::credential_read_key`] applies (the owner check, the
+    /// relationship grants, the host root's action), built without asking
+    /// the read verb, so a write-only credential is held to its bounds
+    /// rather than refused for a verb it was not given. A door reads the
+    /// named row under it only to judge whether the credential reaches it.
+    pub fn credential_target_key(
+        &self,
+        proof: &VerifiedSlip,
+    ) -> Result<Option<ScopedReadActorKey>> {
+        let txn = self.store.env.read_txn()?;
+        self.credential_key_in_with(
+            &txn,
+            proof,
+            ScopedReadActorKey::from_verified_slip_as_target,
+        )
+    }
+
     /// Whether `proof`'s facet bounds leave its holder unbound (owner ruling
     /// FACET-READ = A), judged in one snapshot by the key
     /// [`Self::credential_read_key`] builds: the owner's own live credential,
@@ -61,6 +80,16 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         proof: &VerifiedSlip,
     ) -> Result<Option<ScopedReadActorKey>> {
+        self.credential_key_in_with(txn, proof, ScopedReadActorKey::from_verified_slip)
+    }
+
+    /// [`Self::credential_read_key_in`], its proof-backed key built by `base`.
+    fn credential_key_in_with(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: &VerifiedSlip,
+        base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
+    ) -> Result<Option<ScopedReadActorKey>> {
         let claims = proof.claims();
         if claims.holder_ref == HOST_HOLDER {
             // FIX 2222 (owner ruling "A + support"): no host credential reads
@@ -79,7 +108,7 @@ impl Vault {
             // A slip cut from it still names the host but may be held by
             // anyone (`attenuate_to`): it reads what its Scope grants, and a
             // relationship's rows only on a grant, which none can name.
-            return Ok(ScopedReadActorKey::from_verified_slip(proof).map(|key| {
+            return Ok(base(proof).map(|key| {
                 if proof.is_full_vault_owner_grade() {
                     key
                 } else {
@@ -106,7 +135,7 @@ impl Vault {
             }
             None => false,
         };
-        self.credential_read_key_in_txn(txn, proof, holder, owner)
+        self.credential_key_in_txn_with(txn, proof, holder, owner, base)
     }
 
     /// The one rule for a proof-backed read key, once the owner check
@@ -134,11 +163,30 @@ impl Vault {
         holder: EntityId,
         owner: bool,
     ) -> Result<Option<ScopedReadActorKey>> {
+        self.credential_key_in_txn_with(
+            txn,
+            proof,
+            holder,
+            owner,
+            ScopedReadActorKey::from_verified_slip,
+        )
+    }
+
+    /// [`Self::credential_read_key_in_txn`], its proof-backed key built by
+    /// `base`.
+    fn credential_key_in_txn_with(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        proof: &VerifiedSlip,
+        holder: EntityId,
+        owner: bool,
+        base: fn(&VerifiedSlip) -> Option<ScopedReadActorKey>,
+    ) -> Result<Option<ScopedReadActorKey>> {
         let claims = proof.claims();
         if claims.holder_ref != holder.to_hex() {
             return Ok(None);
         }
-        let Some(key) = ScopedReadActorKey::from_verified_slip(proof) else {
+        let Some(key) = base(proof) else {
             return Ok(None);
         };
         // A handle bound as a person (the campaign surface binds every

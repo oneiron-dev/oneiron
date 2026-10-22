@@ -4,24 +4,57 @@
 //! A program joins the library only after two checks. First the host checks
 //! that the run succeeded: the program's postcondition, read on the page
 //! itself, never the program's own "done". Then the program replays once
-//! with no model (a routine step takes only a rule's answer) and the replay
-//! meets the postcondition again. Repeated work on a site tries the library
-//! first: opening a page lists the site's programs. A library run is live:
-//! every effect in it still crosses its gated door, and a run that misses
-//! its postcondition goes back to the planner with the checks it missed and
-//! the page it left. A program that stops working leaves by retire, and a
-//! later solved run that passes both checks files it afresh.
+//! with no model (a routine step takes only a rule's answer), on a fresh
+//! guest the host starts for it and never on the solved run's page, and the
+//! replay meets the postcondition again on that guest's page. A proposal
+//! that gives held-out values (`replay_args`) replays with them, so the
+//! program is shown to work past its solved run's values (`held_out`).
+//! Repeated work on a site tries the library first: opening a page lists
+//! the site's programs, each card with its lineage's recent outcomes. A
+//! library run is live: every effect in it still crosses its gated door,
+//! and a run that misses its postcondition goes back to the planner with
+//! the checks it missed and the page it left. A run is strict, where only a
+//! rule answers its routine steps, or assisted (CUA E2); a program whose
+//! strict runs miss three times in a row retires `drift`. A program that
+//! stops working leaves by retire, and a later solved run that passes both
+//! checks files it afresh, or files its repair as its successor
+//! (`supersedes`), which retires it in the same write.
 //!
 //! A program's `{{name}}` slots take the run's arguments as data, in the
-//! batch's own fields; nothing is spliced into code.
+//! batch's own fields; nothing is spliced into code. A secret takes a typed
+//! slot (FIX 8028, `secret_slots`): neither the program nor its proof holds
+//! a secret, or the handle a run found it as.
 //!
 //! A program names elements by locator only, never by a live handle (a
 //! handle names one node of one session's page). A proposal's handles the
 //! session minted are put back to their rows' locators before the program
 //! is checked; each step resolves its locators on the page as it runs.
 
+mod admission;
+mod draft;
+mod live_run;
+mod secret_slots;
+mod targets;
+
+pub use admission::{
+    AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
+    WorkflowSeed, validate_replay_args,
+};
+pub use draft::{
+    DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
+    PressedThrough, SlotCandidate, SlotField, draft_from_steps,
+};
 #[cfg(feature = "driver")]
-use crate::{BatchInput, BrowserDriver, ObserveInput, RoutineDecider};
+pub(crate) use live_run::run;
+pub use live_run::{
+    FiledWorkflow, LibraryRunMode, RunOutcome, default_mode, effective_mode, model_free,
+};
+pub use secret_slots::SecretParam;
+
+#[cfg(feature = "driver")]
+use crate::CheckReceipt;
+#[cfg(feature = "driver")]
+use crate::{BatchInput, BrowserDriver, NoWriter, ObserveInput, RoutineDecider, SwitchStage};
 use crate::{
     BatchOutput, BatchStep, BrowserError, EffectReceipt, ExpectInput, ObservationBase,
     SubgoalStatus, is_live_handle,
@@ -29,13 +62,6 @@ use crate::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-
-/// Parameters one program may take.
-pub const WORKFLOW_MAX_PARAMS: usize = 16;
-/// Checks one postcondition may hold.
-pub const WORKFLOW_MAX_CHECKS: usize = 16;
-/// The longest subgoal a program is filed under, in bytes.
-pub const WORKFLOW_SUBGOAL_BYTES: usize = 512;
 
 /// A parameterised program: one subgoal's batch on one site, its `{{name}}`
 /// slots filled from a run's arguments, and the postcondition that says it
@@ -45,6 +71,10 @@ pub struct WorkflowProgram {
     pub subgoal: String,
     /// The names the steps' and checks' `{{name}}` slots take.
     pub params: Vec<String>,
+    /// Those of `params` that take a secret, each with its kind: a step's
+    /// or a check's `secret: "{{name}}"`, filled with a handle the run holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_params: Vec<SecretParam>,
     /// The batch. Its first step opens the page that names its site.
     pub steps: Vec<BatchStep>,
     /// What the page shows when the program worked: every check must hold.
@@ -52,8 +82,9 @@ pub struct WorkflowProgram {
 }
 
 /// Offers a solved run's program to the library. `args` are the values the
-/// solved run used; the host checks the page now, then replays the program
-/// with them once, with no model.
+/// solved run used: the host checks the page now with them, then replays
+/// the program once with no model on a fresh guest, with `replay_args`
+/// where the proposal gives them, else with `args` again.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProposeInput {
@@ -64,6 +95,21 @@ pub struct ProposeInput {
     pub postcondition: Vec<ExpectInput>,
     #[serde(default)]
     pub args: BTreeMap<String, String>,
+    /// Values held out from `args` for the replay: the same names, at least
+    /// one slot the steps or the postcondition use taking another value.
+    /// None replays with `args`, and the program is filed as holding none
+    /// out.
+    #[serde(default)]
+    pub replay_args: BTreeMap<String, String>,
+    /// The program this one repairs, by the `workflow` ref its card names:
+    /// one filed for the same site, live or retired. Once this one is
+    /// filed, a live one retires `superseded:<this one's ref>`.
+    #[serde(default)]
+    pub supersedes: Option<String>,
+    /// Where the program came from, when a hub pack seeded it: provenance
+    /// only, which grants nothing.
+    #[serde(default)]
+    pub seed: Option<WorkflowSeed>,
 }
 
 /// Which check refused a program.
@@ -74,8 +120,21 @@ pub enum WorkflowCheck {
     Solved,
     /// The no-model replay did not finish, or did not meet it.
     Replay,
+    /// The no-model replay missed while a one-time-code slot gave it the
+    /// code the solved run entered, which that run may have spent (FIX
+    /// 8028): held out with a fresh code's handle, it may pass.
+    SecretReplay,
+    /// The `replay_args` given hold nothing out.
+    HeldOut,
+    /// No fresh guest ran the replay.
+    FreshGuest,
+    /// The library refused the `supersedes` link.
+    Supersedes,
 }
 
+/// An admission's answer: the program's ref once filed, or the check that
+/// refused it and what it found. The replay comes whole, as it ran on the
+/// fresh guest: that guest is gone, so no cursor pages it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProposeOutput {
     pub admitted: bool,
@@ -83,26 +142,45 @@ pub struct ProposeOutput {
     pub workflow: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused_by: Option<WorkflowCheck>,
+    /// What the refusing check found, where `unmet` does not say it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<AdmissionRefusal>,
     /// The postcondition checks the page missed, by index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<BatchOutput>,
+    /// The fresh guest the replay ran on, and what it took of this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_guest: Option<ReplayGuest>,
+    /// What became of the program `supersedes` named, once this one filed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded: Option<SupersedeOutcome>,
 }
 
 /// The two checks' evidence, kept with an admitted program.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WorkflowProof {
-    /// The arguments the solved run and its replay used.
+    /// The arguments the solved run used, its secret slots' left out.
     pub args: BTreeMap<String, String>,
+    /// The values held out from `args` that the replay used, its secret
+    /// slots' left out; empty when it replayed with `args`.
+    pub replay_args: BTreeMap<String, String>,
+    /// Whether the replay ran with values held out from the solved run's.
+    pub held_out: bool,
+    /// Where the program came from, when a hub pack seeded it.
+    pub seed: Option<WorkflowSeed>,
     /// The page the solved run ended on, which met the postcondition.
     pub solved_url: String,
     pub solved_title: String,
-    /// The no-model replay's effect receipts and routine decisions.
+    /// The no-model replay's effect receipts and routine decisions, each
+    /// handle a row showed there kept as `[secret]`.
     pub replay_receipts: Vec<EffectReceipt>,
     pub replay_decisions: Vec<serde_json::Value>,
     /// The page the replay ended on, which met the postcondition again.
     pub replay_url: String,
+    /// The fresh guest the replay ran on.
+    pub replay_guest: ReplayGuest,
 }
 
 /// Lists the library's programs for a site: `site` (a host, as
@@ -115,17 +193,50 @@ pub struct LibraryFindInput {
     /// Words the program's subgoal holds, ignoring case.
     #[serde(default)]
     pub subgoal: Option<String>,
+    /// The task type the program was filed under, as `node_id@tree_version`
+    /// (a card's `type_ref`): that node at that tree version only, never a
+    /// descendant or another version's node (CUA E4). A filter in another
+    /// form is refused.
+    #[serde(default)]
+    pub type_ref: Option<String>,
 }
 
-/// One library program as a planner reads it.
+/// One library program as a planner reads it: its lifetime runs and
+/// failures, its lineage's recent outcomes, how its admission proved it,
+/// and where it came from.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LibraryCard {
     pub workflow: String,
     pub site: String,
     pub subgoal: String,
+    /// The task type its subgoal placed at when it was filed, as
+    /// `node_id@tree_version`: the form `find`'s `type_ref` takes.
+    pub type_ref: String,
     pub params: Vec<String>,
+    /// Those of `params` that take a secret: a run names a handle it holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secret_params: Vec<SecretParam>,
     pub runs: u32,
     pub failures: u32,
+    /// The newest outcomes of its lineage: its own, and those of the
+    /// programs it supersedes.
+    pub recent: RecentCounts,
+    /// Whether its admission replayed with values held out from the solved
+    /// run's; one that held none out was shown on those values only.
+    pub held_out: bool,
+    /// The program this one repaired, by its `workflow` ref.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<WorkflowSeed>,
+    /// When it was filed, or last refiled, as the vault records time.
+    pub filed_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<u64>,
+    /// Its strict runs in a row that missed their postcondition or a
+    /// locator: the third retires it `drift`, and a strict run that met it
+    /// starts the count again.
+    pub strict_misses: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -139,20 +250,38 @@ pub struct LibraryFindOutput {
 #[serde(deny_unknown_fields)]
 pub struct LibraryRunInput {
     pub workflow: String,
+    /// A secret slot's names a handle this run holds, or is its own text.
     #[serde(default)]
     pub args: BTreeMap<String, String>,
     /// The observation the run's last observation edits, as `observe`'s
     /// `base`; by default the last one the caller read whole.
     #[serde(default)]
     pub base: Option<ObservationBase>,
+    /// Strict or assisted; by default the program's own ([`default_mode`]).
+    #[serde(default)]
+    pub mode: Option<LibraryRunMode>,
 }
 
 /// A library run: its batch, and the postcondition checks the page missed.
-/// A miss sets `NEEDS_AGENT`: the run goes back to the planner.
+/// A miss sets `NEEDS_AGENT`: the run goes back to the planner, with the
+/// batch's `failed_receipt` naming each missed check and what the page
+/// showed for it.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryRunOutput {
     pub workflow: String,
     pub status: SubgoalStatus,
+    /// The mode the run ran in.
+    pub mode: LibraryRunMode,
+    /// Whether no model answered any of the run's routine decisions, as
+    /// their receipts show ([`model_free`]); never read from the mode.
+    pub model_free: bool,
+    /// The first decision whose record shows neither the rungs that ran nor
+    /// a strict denial: no evidence proves the run model-free, so
+    /// `model_free` is false.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_free_unproven: Option<usize>,
+    /// The postcondition checks the page missed, by index; each, with what
+    /// its read found, is in the batch's `failed_receipt`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
     pub batch: BatchOutput,
@@ -203,19 +332,31 @@ pub struct LibraryRetiredOutput {
 
 /// Where library programs are kept: the engine's vault, behind the session.
 pub trait WorkflowLibrary: Send {
-    /// The programs filed for `site`, those whose subgoal holds `subgoal`.
-    fn find(&mut self, site: &str, subgoal: Option<&str>)
-    -> Result<Vec<LibraryCard>, BrowserError>;
-    fn program(&mut self, workflow: &str) -> Result<Option<WorkflowProgram>, BrowserError>;
-    /// Files a program both checks passed; returns its ref.
+    /// The programs filed for `site`, those whose subgoal holds `subgoal`
+    /// and, with `type_ref` (`node_id@tree_version`), whose task type is
+    /// that node at that version; one in another form is refused.
+    fn find(
+        &mut self,
+        site: &str,
+        subgoal: Option<&str>,
+        type_ref: Option<&str>,
+    ) -> Result<Vec<LibraryCard>, BrowserError>;
+    /// The program filed under `workflow`, with its admission's proof.
+    fn program(&mut self, workflow: &str) -> Result<Option<FiledWorkflow>, BrowserError>;
+    /// Files a program both checks passed, as the successor of the program
+    /// `supersedes` names when it names one: its ref and what became of
+    /// that program, or the link's refusal, with nothing filed.
     fn admit(
         &mut self,
         site: &str,
         program: &WorkflowProgram,
         proof: &WorkflowProof,
-    ) -> Result<String, BrowserError>;
-    /// Counts one library run, and whether it met its postcondition.
-    fn record_run(&mut self, workflow: &str, met: bool) -> Result<(), BrowserError>;
+        supersedes: Option<&str>,
+    ) -> Result<Admitted, BrowserError>;
+    /// Counts one library run: whether it met its postcondition, and, for
+    /// a strict run, its strict misses in a row, the third retiring it
+    /// `drift` in the same write.
+    fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError>;
     /// Takes a program out of the library for `reason`; `None` when none is
     /// filed under `workflow`.
     fn retire(
@@ -231,62 +372,31 @@ pub trait WorkflowLibrary: Send {
     }
 }
 
-impl BatchStep {
-    /// Every element the step names, by handle or locator.
-    fn targets(&self) -> Vec<&String> {
-        match self {
-            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
-                vec![target]
-            }
-            Self::WaitFor { targets, .. } => targets.iter().collect(),
-            Self::Expect { target, .. }
-            | Self::Key { target, .. }
-            | Self::Scroll { target, .. } => target.iter().collect(),
-            Self::Decide(step) => step.targets.iter().collect(),
-            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
-        }
-    }
-
-    /// The same, to put back to locators.
-    #[cfg(feature = "driver")]
-    fn targets_mut(&mut self) -> Vec<&mut String> {
-        match self {
-            Self::Click { target } | Self::Type { target, .. } | Self::Select { target, .. } => {
-                vec![target]
-            }
-            Self::WaitFor { targets, .. } => targets.iter_mut().collect(),
-            Self::Expect { target, .. }
-            | Self::Key { target, .. }
-            | Self::Scroll { target, .. } => target.iter_mut().collect(),
-            Self::Decide(step) => step.targets.iter_mut().collect(),
-            Self::Open { .. } | Self::Screenshot { .. } | Self::Hotkey { .. } => Vec::new(),
-        }
-    }
-}
-
 impl WorkflowProgram {
-    /// The site the program runs on, once its shape holds: a subgoal, named
-    /// parameters, one or more steps opening with a page whose host takes no
-    /// slot, 1 to [`WORKFLOW_MAX_CHECKS`] checks, and no live handle among
-    /// the elements they name (a program names elements by locator).
+    /// The site the program runs on, once its shape holds: a subgoal,
+    /// distinct named parameters, one or more steps opening with a page
+    /// whose host takes no slot, one or more checks, and no live handle
+    /// among the elements they name (a program names elements by locator).
     pub fn site(&self) -> Result<String, BrowserError> {
         let invalid = |why: &str| Err(BrowserError::Input(why.to_owned()));
-        if self.subgoal.trim().is_empty() || self.subgoal.len() > WORKFLOW_SUBGOAL_BYTES {
-            return invalid("a program's subgoal is 1 to 512 bytes");
+        if self.subgoal.trim().is_empty() {
+            return invalid("a program names its subgoal");
         }
-        if self.params.len() > WORKFLOW_MAX_PARAMS
-            || self.params.iter().any(|name| !slot_name(name))
+        if self.params.iter().any(|name| !slot_name(name))
             || (1..self.params.len()).any(|at| self.params[..at].contains(&self.params[at]))
         {
             return invalid(
-                "a program names at most 16 distinct parameters, each a-z, 0-9 and _ from a letter",
+                "a program names distinct parameters, each a-z, 0-9 and _ from a letter",
             );
+        }
+        if !secret_slots::distinct(self) {
+            return invalid("a program's secret slots are distinct parameters of its own");
         }
         if self.steps.is_empty() {
             return invalid("a program holds one or more steps");
         }
-        if self.postcondition.is_empty() || self.postcondition.len() > WORKFLOW_MAX_CHECKS {
-            return invalid("a program's postcondition holds 1 to 16 checks");
+        if self.postcondition.is_empty() {
+            return invalid("a program's postcondition holds one or more checks");
         }
         let live = self
             .steps
@@ -314,7 +424,8 @@ impl WorkflowProgram {
     }
 
     /// The steps and checks with every slot filled from `args`, which name
-    /// exactly the program's parameters.
+    /// exactly the program's parameters; a secret slot's handle stays a
+    /// secret, any other value of it is plain text (`secret_slot_arg_policy`).
     pub fn fill(
         &self,
         args: &BTreeMap<String, String>,
@@ -333,10 +444,10 @@ impl WorkflowProgram {
         let decoded = |error: serde_json::Error| {
             BrowserError::Input(format!("a filled slot breaks the program: {error}"))
         };
-        Ok((
-            serde_json::from_value(steps).map_err(decoded)?,
-            serde_json::from_value(checks).map_err(decoded)?,
-        ))
+        let mut steps: Vec<BatchStep> = serde_json::from_value(steps).map_err(decoded)?;
+        let mut checks: Vec<ExpectInput> = serde_json::from_value(checks).map_err(decoded)?;
+        secret_slots::bind(&mut steps, &mut checks);
+        Ok((steps, checks))
     }
 }
 
@@ -356,8 +467,7 @@ pub fn site_of(url: &str) -> Option<String> {
 }
 
 fn slot_name(name: &str) -> bool {
-    name.len() <= 32
-        && name.starts_with(|c: char| c.is_ascii_lowercase())
+    name.starts_with(|c: char| c.is_ascii_lowercase())
         && name
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
@@ -370,23 +480,12 @@ fn fill_slots(
 ) -> Result<(), BrowserError> {
     match value {
         serde_json::Value::String(text) if text.contains("{{") => {
-            let mut filled = String::with_capacity(text.len());
-            let mut rest = text.as_str();
-            while let Some(open) = rest.find("{{") {
-                filled.push_str(&rest[..open]);
-                let after = &rest[open + 2..];
-                let close = after
-                    .find("}}")
-                    .ok_or_else(|| BrowserError::Input("a {{ slot is never closed".to_owned()))?;
-                let name = after[..close].trim();
-                let arg = args.get(name).ok_or_else(|| {
+            *text = fill_text(text, args).map_err(|gap| match gap {
+                SlotGap::Unclosed => BrowserError::Input("a {{ slot is never closed".to_owned()),
+                SlotGap::Missing(name) => {
                     BrowserError::Input(format!("slot {{{{{name}}}}} is no parameter"))
-                })?;
-                filled.push_str(arg);
-                rest = &after[close + 2..];
-            }
-            filled.push_str(rest);
-            *text = filled;
+                }
+            })?;
         }
         serde_json::Value::Array(items) => {
             for item in items {
@@ -403,19 +502,61 @@ fn fill_slots(
     Ok(())
 }
 
+/// A slot [`fill_text`] could not fill: one `args` holds no value for, by
+/// its name, or one never closed.
+pub(crate) enum SlotGap {
+    Missing(String),
+    Unclosed,
+}
+
+/// `text` with every `{{name}}` slot filled from `args`: the one slot
+/// filler a program's fields and a Fill's template share (CUA E6).
+pub(crate) fn fill_text(text: &str, args: &BTreeMap<String, String>) -> Result<String, SlotGap> {
+    let mut filled = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find("{{") {
+        filled.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        let close = after.find("}}").ok_or(SlotGap::Unclosed)?;
+        let name = after[..close].trim();
+        let arg = args
+            .get(name)
+            .ok_or_else(|| SlotGap::Missing(name.to_owned()))?;
+        filled.push_str(arg);
+        rest = &after[close + 2..];
+    }
+    filled.push_str(rest);
+    Ok(filled)
+}
+
+#[cfg(feature = "driver")]
+/// The checks the page as it is now misses, by index, each with what its
+/// read found.
+fn missed<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    checks: &[ExpectInput],
+) -> Result<Vec<(usize, CheckReceipt)>, BrowserError> {
+    let mut missed = Vec::new();
+    for (index, check) in checks.iter().enumerate() {
+        let observed = driver.expect(check.clone())?;
+        if !observed.met {
+            let expect = check.clone();
+            missed.push((index, CheckReceipt { expect, observed }));
+        }
+    }
+    Ok(missed)
+}
+
 #[cfg(feature = "driver")]
 /// The checks the page as it is now misses, by index.
 fn unmet<D: BrowserDriver + ?Sized>(
     driver: &mut D,
     checks: &[ExpectInput],
 ) -> Result<Vec<usize>, BrowserError> {
-    let mut missed = Vec::new();
-    for (index, check) in checks.iter().enumerate() {
-        if !driver.expect(check.clone())?.met {
-            missed.push(index);
-        }
-    }
-    Ok(missed)
+    Ok(missed(driver, checks)?
+        .into_iter()
+        .map(|(index, _)| index)
+        .collect())
 }
 
 #[cfg(feature = "driver")]
@@ -447,39 +588,139 @@ fn hidden_look() -> ObserveInput {
 }
 
 #[cfg(feature = "driver")]
-/// Offers a solved run's program: the solved page first, then one no-model
-/// replay, then the library files it. The live handles the proposal names
-/// are put back to their locators first.
-pub(crate) fn propose<D: BrowserDriver + ?Sized>(
-    driver: &mut D,
-    library: &mut dyn WorkflowLibrary,
-    decider: &mut dyn RoutineDecider,
-    input: ProposeInput,
-) -> Result<ProposeOutput, BrowserError> {
-    let (mut steps, mut postcondition) = (input.steps, input.postcondition);
-    by_locator(&*driver, &mut steps, &mut postcondition);
-    let program = WorkflowProgram {
-        subgoal: input.subgoal,
-        params: input.params,
-        steps,
-        postcondition,
-    };
-    let site = program.site()?;
-    let (steps, checks) = program.fill(&input.args)?;
-    let refused = |check, unmet, replay| ProposeOutput {
+/// A proposal its solved page met, ready to replay on a fresh guest: the
+/// program and its site, the replay's own steps and checks filled from its
+/// values, and what the proof and the library keep of the proposal.
+pub(crate) struct Solved {
+    site: String,
+    program: WorkflowProgram,
+    steps: Vec<BatchStep>,
+    checks: Vec<ExpectInput>,
+    args: BTreeMap<String, String>,
+    replay_args: BTreeMap<String, String>,
+    held_out: bool,
+    seed: Option<WorkflowSeed>,
+    supersedes: Option<String>,
+    solved_url: String,
+    solved_title: String,
+}
+
+#[cfg(feature = "driver")]
+/// A refusal by `check`, with what it found.
+fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOutput {
+    ProposeOutput {
         admitted: false,
         workflow: None,
         refused_by: Some(check),
-        unmet,
-        replay,
-    };
+        refusal,
+        unmet: Vec::new(),
+        replay: None,
+        replay_guest: None,
+        superseded: None,
+    }
+}
+
+#[cfg(feature = "driver")]
+/// A proposal's first check, on the proposing session's own page: the live
+/// handles it names put back to their locators, its secrets put in slots,
+/// its shape and its held-out values checked, then the solved page read
+/// against the postcondition filled from `args`. A refusal is the
+/// proposal's answer.
+pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    input: ProposeInput,
+) -> Result<Result<Solved, ProposeOutput>, BrowserError> {
+    let (mut steps, mut postcondition) = (input.steps, input.postcondition);
+    let (mut args, mut replay_args) = (input.args, input.replay_args);
+    // What the steps' targets held, read before handles go back to locators.
+    let targets = secret_slots::Targets::read(&*driver, &steps, &postcondition);
+    by_locator(&*driver, &mut steps, &mut postcondition);
     // The independent check: the host reads the solved run's page itself.
     let solved = driver.observe(hidden_look())?;
-    let missed = unmet(driver, &checks)?;
+    let mut program = WorkflowProgram {
+        subgoal: input.subgoal,
+        params: input.params,
+        secret_params: Vec::new(),
+        steps,
+        postcondition,
+    };
+    targets.slot(
+        &*driver,
+        &solved.rows,
+        &mut program,
+        &mut args,
+        &mut replay_args,
+    )?;
+    let site = program.site()?;
+    let (_, solved_checks) = program.fill(&args)?;
+    let held_out = match validate_replay_args(&program, &args, &replay_args) {
+        Ok(held_out) => held_out,
+        Err(refusal) => return Ok(Err(refused(WorkflowCheck::HeldOut, Some(refusal)))),
+    };
+    // The replay fills its steps and its checks from its own values.
+    let values = if held_out { &replay_args } else { &args };
+    let (steps, checks) = program.fill(values)?;
+    let missed = unmet(driver, &solved_checks)?;
     if !missed.is_empty() {
-        return Ok(refused(WorkflowCheck::Solved, missed, None));
+        return Ok(Err(ProposeOutput {
+            unmet: missed,
+            ..refused(WorkflowCheck::Solved, None)
+        }));
     }
-    let replay = driver.batch_with(
+    Ok(Ok(Solved {
+        site,
+        program,
+        steps,
+        checks,
+        args,
+        replay_args,
+        held_out,
+        seed: input.seed,
+        supersedes: input.supersedes,
+        solved_url: solved.url,
+        solved_title: solved.title,
+    }))
+}
+
+#[cfg(feature = "driver")]
+/// A proposal's answer when no fresh guest ran its replay: the host gives
+/// none, or one did not start or take the carried cookies, at `stage`.
+pub(crate) fn no_fresh_guest(stage: SwitchStage, error: &BrowserError) -> ProposeOutput {
+    let refusal = AdmissionRefusal::FreshGuest {
+        stage,
+        code: error.code().to_owned(),
+        detail: error.to_string(),
+    };
+    refused(WorkflowCheck::FreshGuest, Some(refusal))
+}
+
+#[cfg(feature = "driver")]
+/// A proposal's second check, on the fresh guest the host started for it
+/// (`fresh`, as `guest` records it): the no-model replay with its own
+/// values, and its own checks read on that guest's page. Then the library
+/// files the program, as the successor of the program its `supersedes`
+/// names.
+pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
+    fresh: &mut D,
+    decider: &mut dyn RoutineDecider,
+    library: &mut dyn WorkflowLibrary,
+    solved: Solved,
+    guest: ReplayGuest,
+) -> Result<ProposeOutput, BrowserError> {
+    let Solved {
+        site,
+        program,
+        steps,
+        checks,
+        args,
+        replay_args,
+        held_out,
+        seed,
+        supersedes,
+        solved_url,
+        solved_title,
+    } = solved;
+    let replay = fresh.batch_with(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
             steps,
@@ -488,74 +729,62 @@ pub(crate) fn propose<D: BrowserDriver + ?Sized>(
             no_model: true,
         },
         decider,
+        // A replay asks no model, so a Fill's generation goes up unasked.
+        &NoWriter,
     )?;
-    if replay.status != SubgoalStatus::Done {
-        return Ok(refused(WorkflowCheck::Replay, Vec::new(), Some(replay)));
-    }
-    let missed = unmet(driver, &checks)?;
-    if !missed.is_empty() {
-        return Ok(refused(WorkflowCheck::Replay, missed, Some(replay)));
-    }
-    let replayed = driver.observe(hidden_look())?;
-    let proof = WorkflowProof {
-        args: input.args,
-        solved_url: solved.url,
-        solved_title: solved.title,
-        replay_receipts: replay.receipts.clone(),
-        replay_decisions: replay.decisions.clone(),
-        replay_url: replayed.url,
-    };
-    let workflow = library.admit(&site, &program, &proof)?;
-    Ok(ProposeOutput {
-        admitted: true,
-        workflow: Some(workflow),
-        refused_by: None,
-        unmet: Vec::new(),
-        replay: Some(replay),
-    })
-}
-
-#[cfg(feature = "driver")]
-/// Runs a library program live, then checks its postcondition on the page.
-pub(crate) fn run<D: BrowserDriver + ?Sized>(
-    driver: &mut D,
-    library: &mut dyn WorkflowLibrary,
-    decider: &mut dyn RoutineDecider,
-    input: LibraryRunInput,
-) -> Result<LibraryRunOutput, BrowserError> {
-    let program = library
-        .program(&input.workflow)?
-        .ok_or_else(|| BrowserError::NoWorkflow(input.workflow.clone()))?;
-    let (steps, checks) = program.fill(&input.args)?;
-    let mut batch = driver.batch_with(
-        BatchInput {
-            subgoal: Some(program.subgoal.clone()),
-            steps,
-            base: input.base.clone(),
-            until_ms: None,
-            no_model: false,
-        },
-        decider,
-    )?;
-    let missed = if batch.status == SubgoalStatus::Done {
-        unmet(driver, &checks)?
+    let missed = if replay.status == SubgoalStatus::Done {
+        unmet(fresh, &checks)?
     } else {
         Vec::new()
     };
-    if !missed.is_empty() {
-        // A missed postcondition goes back to the planner, with the page.
-        batch.status = SubgoalStatus::NeedsAgent;
-        batch.error = Some("postcondition_unmet".to_owned());
-        batch.observation = Some(driver.observe(ObserveInput {
-            base: input.base,
-            ..ObserveInput::default()
-        })?);
+    if replay.status != SubgoalStatus::Done || !missed.is_empty() {
+        let (check, refusal) = secret_slots::replay_check(&program, &args, &replay_args, held_out);
+        return Ok(ProposeOutput {
+            unmet: missed,
+            replay: Some(replay),
+            replay_guest: Some(guest),
+            ..refused(check, refusal)
+        });
     }
-    library.record_run(&input.workflow, batch.status == SubgoalStatus::Done)?;
-    Ok(LibraryRunOutput {
-        workflow: input.workflow,
-        status: batch.status,
-        unmet: missed,
-        batch,
+    let replayed = fresh.observe(hidden_look())?;
+    let withheld = secret_slots::values(&program, &args, &replay_args);
+    let (replay_receipts, replay_decisions) =
+        secret_slots::unbound(replay.receipts.clone(), replay.decisions.clone(), &withheld);
+    let proof = WorkflowProof {
+        args: secret_slots::public(&program, args),
+        replay_args: secret_slots::public(&program, replay_args),
+        held_out,
+        seed,
+        solved_url,
+        solved_title,
+        replay_receipts,
+        replay_decisions,
+        replay_url: replayed.url,
+        replay_guest: guest,
+    };
+    let output = match library.admit(&site, &program, &proof, supersedes.as_deref())? {
+        Admitted::Filed {
+            workflow,
+            superseded,
+        } => ProposeOutput {
+            admitted: true,
+            workflow: Some(workflow),
+            refused_by: None,
+            refusal: None,
+            unmet: Vec::new(),
+            replay: None,
+            replay_guest: None,
+            superseded,
+        },
+        Admitted::Refused(why) => {
+            let workflow = supersedes.unwrap_or_default();
+            let refusal = AdmissionRefusal::Supersedes { workflow, why };
+            refused(WorkflowCheck::Supersedes, Some(refusal))
+        }
+    };
+    Ok(ProposeOutput {
+        replay: Some(replay),
+        replay_guest: Some(proof.replay_guest),
+        ..output
     })
 }

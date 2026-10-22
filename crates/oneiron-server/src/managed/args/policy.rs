@@ -251,6 +251,12 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     ("organ-dir", |args| args.organ_dir.is_some(), ArgvUse::Read),
+    // The organ builds the supervisor vouches for as first party (FIX 7644).
+    (
+        "trusted-organ-build",
+        |args| !args.trusted_organ_builds.is_empty(),
+        ArgvUse::Read,
+    ),
     ("mesh-bind", |args| args.mesh_bind.is_some(), ArgvUse::Read),
     (
         "mesh-relays",
@@ -272,6 +278,18 @@ const MANAGED_ARGV: &[ArgvRule] = &[
     (
         "container-runtime-dir",
         |args| args.container_runtime_dir.is_some(),
+        ArgvUse::Read,
+    ),
+    // The supervisor's guest runtime fact for the vault's UID (FIX 7670).
+    (
+        "guest-runtime-fact",
+        |args| args.guest_runtime_fact.is_some(),
+        ArgvUse::Read,
+    ),
+    // The private origins the operator lets a hosted fetch reach (FIX 7657).
+    (
+        "hosted-private-origin",
+        |args| !args.hosted_private_origins.is_empty(),
         ArgvUse::Read,
     ),
     // The bind: the supervisor's socket, never a host:port.

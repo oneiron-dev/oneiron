@@ -2,16 +2,15 @@ use std::collections::BTreeMap;
 
 use rmpv::Value;
 
+use super::branch::ConsolidationBranchPlan;
 use super::support::{
     CURSOR_SCHEMA_VERSION, DREAMER_PARTITION_HASH_DOMAIN, DREAMER_PARTITION_ROUND_HASH_DOMAIN,
-    DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_CONVERSATION, KEY_FACET, KEY_LAST_LEARNED_AT,
-    KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, KEY_TURNS, KEY_WATERMARK, KEY_WORLD,
-    PARTITION_PAYLOAD_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map,
-    hash_optional_entity, invalid_consolidation, scope_byte,
+    DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE, KEY_LAST_LEARNED_AT, KEY_LAST_LEDGER_REVISION_HINT,
+    KEY_SCHEMA_VERSION, decode_value, encode_value, expect_key, expect_map, hash_optional_entity,
+    invalid_consolidation, scope_byte,
 };
 use super::watermark::{
-    ConsolidationWatermark, WorkingSetTurn, entity_ref_from_value, read_turn_facts,
-    read_turn_facts_in_txn,
+    ConsolidationWatermark, WorkingSetTurn, read_turn_facts, read_turn_facts_in_txn,
 };
 use crate::Vault;
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
@@ -26,6 +25,10 @@ use crate::dreamer_runner::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
+
+mod payload;
+pub use payload::{PartitionThing, decode_partition_payload};
+pub(crate) use payload::{decode_branch_origin, encode_branch_payload, encode_partition_payload};
 
 /// Per-scope, per-partition consolidation cursor row. Key: u8 (scope byte) + hash32 (partition
 /// hash).
@@ -77,69 +80,6 @@ pub struct ConsolidationCursor {
     pub schema_version: u64,
     pub last_learned_at: u64,
     pub last_ledger_revision_hint: u64,
-}
-
-/// The payload key naming the thing a nightly child is cut for (OF-498c).
-const KEY_THING: &str = "thing";
-
-/// The thing a nightly child is cut for (OF-498c, FIX 7497), carried in its
-/// partition payload: the entity a span's reading bound (`None`: the
-/// partition's structural topic) and the private thread its turns are of
-/// (`None`: off any private thread). Its world and facet are the payload's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct PartitionThing {
-    pub(crate) entity: Option<EntityId>,
-    pub(crate) audience: Option<EntityId>,
-}
-
-impl PartitionThing {
-    fn encode(self) -> Value {
-        let reference = |entity: Option<EntityId>| {
-            entity.map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec()))
-        };
-        Value::Map(vec![
-            (Value::from("entity"), reference(self.entity)),
-            (Value::from("audience"), reference(self.audience)),
-        ])
-    }
-
-    fn decode(value: &Value) -> Result<Self> {
-        let entries = expect_map(value, "partition payload thing must be a MessagePack map")?;
-        let mut thing = Self {
-            entity: None,
-            audience: None,
-        };
-        for (key, value) in entries {
-            let slot = match expect_key(key)? {
-                "entity" => &mut thing.entity,
-                "audience" => &mut thing.audience,
-                _ => {
-                    return Err(invalid_consolidation(
-                        "partition payload thing key is not pinned",
-                    ));
-                }
-            };
-            *slot = match value {
-                Value::Nil => None,
-                _ => Some(entity_ref_from_value(value).ok_or(invalid_consolidation(
-                    "partition payload thing refs must be 16-byte binary",
-                ))?),
-            };
-        }
-        Ok(thing)
-    }
-}
-
-/// The thing a partition payload names; `None` for one that names none, or
-/// whose thing does not decode (its partition decoder refuses that one).
-pub(crate) fn decode_partition_thing(value: &Value) -> Option<PartitionThing> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(KEY_THING))
-        .and_then(|(_, thing)| PartitionThing::decode(thing).ok())
 }
 
 /// One planned partition attempt over the dirty turns that fell into it.
@@ -356,7 +296,7 @@ pub(crate) fn partition_round_hash(turns: &[WorkingSetTurn]) -> [u8; 32] {
 /// `carried` stood at its re-dirty carrier, whose id replaces the TURN id in
 /// the preimage. Every other TURN hashes byte-identically, and a TURN changed
 /// again, even in the same second, takes a new carrier id and a new round.
-fn keyed_partition_round_hash(
+pub(super) fn keyed_partition_round_hash(
     turns: &[WorkingSetTurn],
     carried: &BTreeMap<EntityId, EntityId>,
 ) -> [u8; 32] {
@@ -504,37 +444,50 @@ pub(crate) fn enqueue_partition_plans_in_txn(
     Ok(outcomes)
 }
 
-/// Enqueues already-selected interest topics as children of one recipe
-/// receipt, each naming the thing it is cut for in its payload. The interest
-/// queue has done selection; running the statistical prefilter again here
-/// would consume work without giving it a child.
-pub(crate) fn enqueue_parented_partition_plans_in_txn(
+/// Enqueues already-selected nightly things as children of one recipe
+/// receipt (FIX 7524), each a branch over every conversation part its thing
+/// holds and naming its thing in its payload. The interest queue has done
+/// selection; running the statistical prefilter again here would consume
+/// work without giving it a child. The advisory dedupe key is
+/// `hex(parent):hex(branch identity):hex(round hash)`, then the thing's
+/// entity and audience (`-` for none) for a child cut for one (FIX 8723).
+pub(crate) fn enqueue_parented_branch_plans_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     scope: DreamerConsolidationScope,
-    plans: &[(ConsolidationPartitionPlan, PartitionThing)],
+    branches: &[ConsolidationBranchPlan],
     parent: crate::attempt_queue::AttemptId,
     run_id: Option<&str>,
     now: u64,
-) -> Result<Vec<(ConsolidationPartitionKey, EnqueueDreamerAttemptOutcome)>> {
+) -> Result<Vec<EnqueueDreamerAttemptOutcome>> {
     let store = DreamerRunnerStore::new(vault);
-    let mut outcomes = Vec::with_capacity(plans.len());
-    for (plan, thing) in plans {
-        let carried = plan
-            .turns
-            .iter()
-            .filter_map(|turn| Some((turn.turn_id, turn.carrier?)))
-            .collect();
-        let mut input =
-            partition_attempt_input(scope, plan, &carried, run_id.map(str::to_owned), now);
-        input.parent_attempt = Some(parent);
-        if let Value::Map(entries) = &mut input.input {
-            entries.push((Value::from(KEY_THING), thing.encode()));
+    let mut outcomes = Vec::with_capacity(branches.len());
+    for branch in branches {
+        let mut dedupe_key = format!(
+            "{}:{}:{}",
+            bytes_to_hex_lower(parent.as_bytes()),
+            bytes_to_hex_lower(&branch.identity()),
+            bytes_to_hex_lower(&branch.round_hash()),
+        );
+        // Two things may hold the same TURNs of one conversation (FIX 8723):
+        // each keeps its own child, never one coalesced into the other's.
+        if let Some(thing) = branch.thing {
+            for axis in [thing.entity, thing.audience] {
+                dedupe_key.push(':');
+                dedupe_key.push_str(&axis.map_or_else(|| "-".to_owned(), |id| id.to_hex()));
+            }
         }
-        input.dedupe_key = input
-            .dedupe_key
-            .map(|key| format!("{}:{key}", bytes_to_hex_lower(parent.as_bytes())));
-        outcomes.push((plan.key, store.enqueue_consolidation_in_txn(txn, input)?));
+        outcomes.push(store.enqueue_consolidation_in_txn(
+            txn,
+            EnqueueDreamerConsolidationAttempt {
+                scope,
+                input: encode_branch_payload(branch, None),
+                parent_attempt: Some(parent),
+                dedupe_key: Some(dedupe_key),
+                run_id: run_id.map(str::to_owned),
+                now,
+            },
+        )?);
     }
     Ok(outcomes)
 }
@@ -681,92 +634,4 @@ pub(crate) fn register_substitution_mine_in_txn(
         DREAMER_SUBSTITUTION_MINE_ATTEMPT_TYPE,
     )?;
     Ok(())
-}
-
-pub(super) fn encode_partition_payload(plan: &ConsolidationPartitionPlan) -> Value {
-    Value::Map(vec![
-        (
-            Value::from(KEY_SCHEMA_VERSION),
-            Value::from(PARTITION_PAYLOAD_SCHEMA_VERSION),
-        ),
-        (
-            Value::from(KEY_CONVERSATION),
-            Value::Binary(plan.key.conversation_ref.as_bytes().to_vec()),
-        ),
-        (
-            Value::from(KEY_WORLD),
-            plan.key
-                .world_ref
-                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
-        ),
-        (
-            Value::from(KEY_FACET),
-            plan.key
-                .facet_ref
-                .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
-        ),
-        (
-            Value::from(KEY_WATERMARK),
-            Value::from(plan.watermark_last_learned_at),
-        ),
-        (
-            Value::from(KEY_TURNS),
-            Value::Array(
-                plan.turns
-                    .iter()
-                    .map(|turn| Value::Binary(turn.turn_id.as_bytes().to_vec()))
-                    .collect(),
-            ),
-        ),
-    ])
-}
-
-/// Decodes a partition attempt payload back into its plan facts.
-pub fn decode_partition_payload(
-    value: &Value,
-) -> Result<(ConsolidationPartitionKey, Vec<EntityId>, u64)> {
-    let entries = expect_map(value, "dreamer partition payload must be a MessagePack map")?;
-    super::branch_scope::decode_branch_scope(value)?;
-    let mut conversation = None;
-    let mut world = None;
-    let mut facet = None;
-    let mut watermark = None;
-    let mut turns = Vec::new();
-    for (key, value) in entries {
-        match expect_key(key)? {
-            KEY_SCHEMA_VERSION => {}
-            super::branch_scope::KEY_BRANCH_SCOPE => {}
-            KEY_THING => {
-                PartitionThing::decode(value)?;
-            }
-            KEY_CONVERSATION => conversation = entity_ref_from_value(value),
-            KEY_WORLD => world = entity_ref_from_value(value),
-            KEY_FACET => facet = entity_ref_from_value(value),
-            KEY_WATERMARK => watermark = value.as_u64(),
-            KEY_TURNS => {
-                let Value::Array(items) = value else {
-                    return Err(invalid_consolidation(
-                        "partition payload turns must be an array",
-                    ));
-                };
-                for item in items {
-                    turns.push(entity_ref_from_value(item).ok_or(invalid_consolidation(
-                        "partition payload turn refs must be 16-byte binary",
-                    ))?);
-                }
-            }
-            _ => return Err(invalid_consolidation("partition payload key is not pinned")),
-        }
-    }
-    Ok((
-        ConsolidationPartitionKey {
-            conversation_ref: conversation.ok_or(invalid_consolidation(
-                "partition payload missing conversation_ref",
-            ))?,
-            world_ref: world,
-            facet_ref: facet,
-        },
-        turns,
-        watermark.ok_or(invalid_consolidation("partition payload missing watermark"))?,
-    ))
 }

@@ -67,12 +67,14 @@ pub struct StepRebound {
     pub rebound: Rebound,
 }
 
-/// What a session knows of a live handle it minted: its row's locator and
-/// the scope it was last read in.
+/// What a session knows of a live handle it minted: its row's locator, the
+/// scope it was last read in, and the kind of secret its row showed then
+/// (FIX 8028), when it showed one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HandleInfo {
     pub locator: String,
     pub scope: String,
+    pub secret: Option<crate::SecretKind>,
 }
 
 /// Whether `target` has a live handle's form, `h<token>:<n>`. A locator
@@ -163,7 +165,6 @@ pub(crate) fn rows_named(
 /// The ordered edit that makes `base` into `now`: the longest equal prefix
 /// and then the longest equal suffix of what is left (whole-row equality)
 /// stay, and the rows between are replaced. Rows that only moved change it.
-#[cfg(feature = "driver")]
 pub(crate) fn splice_of(base: &[Row], now: &[Row]) -> (RowSplice, Vec<Row>) {
     let prefix = base
         .iter()

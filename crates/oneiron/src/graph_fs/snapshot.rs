@@ -242,31 +242,43 @@ impl GraphFsResolver<'_, '_> {
                 let Some(file) = snapshot.files.iter().find(|file| file.path == relative) else {
                     return Ok(None);
                 };
-                let withheld = self
-                    .scoped_read
-                    .vault()
-                    .codebase_withheld_paths_in_txn(txn, &hash)?;
+                let vault = self.scoped_read.vault();
+                let withheld = vault.codebase_withheld_paths_in_txn(txn, &hash)?;
                 let asset = snapshot_asset_entity_id(&file.content_hash)?;
                 if withheld.contains(relative)
                     || !self.scoped_read.entities_readable_in_txn(txn, &[asset])?[0]
                 {
                     return Ok(None);
                 }
+                // A mount whose handle reads repo bytes masked (a tool or a
+                // run on the owner's key, FIX 8964) reads as a non-owner.
+                let owner =
+                    self.scoped_read.actor_key().reads_as_vault_owner() && !self.repo_masked();
+                // A file a repo mark covers reads as its projection to all
+                // but the owner, before its bytes are read (FIX 7608).
+                let marked = if owner {
+                    None
+                } else {
+                    vault.repo_marked_asset_copy_in_txn(txn, &file.content_hash)?
+                };
                 Ok(Some(GraphFsFile {
                     path: path.to_owned(),
                     mount: self.options.mount,
                     // A body kept in its ASSET's file is masked as it is
                     // read, as the hosted door reads it (FIX 6557).
-                    bytes: read_asset_blob_sighted_in_txn(
-                        self.scoped_read.vault(),
-                        txn,
-                        &file.content_hash,
-                        if self.scoped_read.actor_key().reads_as_vault_owner() {
-                            crate::secret_custody::SecretSight::Owner
-                        } else {
-                            crate::secret_custody::SecretSight::Masked
-                        },
-                    )?,
+                    bytes: match marked {
+                        Some(copy) => copy.into_bytes(),
+                        None => read_asset_blob_sighted_in_txn(
+                            vault,
+                            txn,
+                            &file.content_hash,
+                            if owner {
+                                crate::secret_custody::SecretSight::Owner
+                            } else {
+                                crate::secret_custody::SecretSight::Masked
+                            },
+                        )?,
+                    },
                 }))
             },
         )?;

@@ -79,11 +79,14 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.rsi.top_up`
 - `vault.budgets.rsi.hold`
 - `vault.budgets.rsi.hold.resume`
+- `vault.runners.seats.quotas`
+- `vault.runners.seats.top_up`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
 - `tasks.update`
 - `tasks.accept`
+- `tasks.redo`
 - `vault.commit_message`
 - `vault.begin_message_stream`
 - `vault.append_to_stream`
@@ -266,6 +269,13 @@ both bindings and their export-census tests in one change.
 - `ai.chat.completions`
 - `vault.connectors.proxy.admit`
 - `vault.connectors.proxy.revoke_write`
+- `vault.connectors.slates.redraft`
+- `vault.connectors.slates.narrow`
+- `vault.connectors.slates.scope_outcome`
+- `vault.connectors.slates.revision_offers`
+- `vault.connectors.slates.defer_revision`
+- `vault.connectors.slates.accept_revision`
+- `vault.connectors.slates.reask_issuer`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`
 - `vault.connectors.subscriptions.revoke`
@@ -443,6 +453,8 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
 - `vault.cleanup.run`
+- `vault.archive.delete.preview`
+- `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
 - `vault.entities.mention`
@@ -474,6 +486,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.connectors.calls.approve_once`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
@@ -609,6 +622,8 @@ both bindings and their export-census tests in one change.
 - `vault.results.slice`
 - `vault.code.repo_diff`
 - `vault.code.export`
+- `vault.code.export.preview`
+- `vault.code.export.preview.read`
 - `vault.code.import`
 - `vault.code.repos.get`
 - `vault.code.forks.get`
@@ -662,6 +677,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.merge_queue.diagnose`
 - `vault.code.merge_queue.check_status`
 - `vault.code.checks.get`
+- `vault.code.merge_queue.review_policy.get`
+- `vault.code.merge_queue.review_policy.set`
 - `vault.code.merge_queue.export_green`
 - `vault.artifacts.export`
 - `vault.agents.create`
@@ -852,6 +869,7 @@ both bindings and their export-census tests in one change.
 - `vault.voices.targets.provision`
 - `vault.voices.targets.evict`
 - `vault.voices.inspect`
+- `vault.voices.lineage`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`

@@ -366,6 +366,70 @@ pub const PAYER_NEEDED: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Is one sieve span's mention new information worth retaining (OF-498a)? Asked by an owed
+/// sieve rung beside [`SIEVE_KIND`], [`SIEVE_ENTITY`] and [`SIEVE_CONFIDENCE`], in one pack.
+/// Keyed by the rung.
+pub const SIEVE_NOVELTY: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.novelty",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Which kind one sieve span is: one of the sieve's span kinds (a date or a name). Keyed by
+/// the rung.
+pub const SIEVE_KIND: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.kind",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Which supplied entity candidate, if any, one sieve span names. The options are none and
+/// the candidates, every candidate in some group under the option limit. Keyed by the rung
+/// and the option group.
+pub const SIEVE_ENTITY: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.entity",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// How sure one sieve reading is, as an integer percent from 0 to 100: the confidence its
+/// band and interest score read. Keyed by the rung.
+pub const SIEVE_CONFIDENCE: QuestionFamily = QuestionFamily {
+    name: "dreamer.sieve.confidence",
+    version: 1,
+    class: DecisionClass::Triage,
+};
+
+/// Do two claims that different children of one night proposed, in one exposure group, state
+/// the same thing (OF-498d)? The fixed choices are same_as, no_link and unresolved; a same_as
+/// only proposes a SameAs status claim, never an applied edge. Keyed by the pair's position in
+/// its call.
+pub const NIGHTLY_LINK: QuestionFamily = QuestionFamily {
+    name: "dreamer.nightly.link",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Would delivering one prepared result only at the next regular digest harm the stated
+/// intent of the owner it is for (OF-194)? A yes breaks the digest's cadence for that result
+/// alone; a no, an abstain or no answer leaves it to the regular digest. Keyed by the result's
+/// digest group.
+pub const URGENT_DIGEST_HARM: QuestionFamily = QuestionFamily {
+    name: "dreamer.digest.waiting_harm",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
+/// Does the retained span support what an agent's self-written compaction summary says (FIX
+/// 4465 B and D, FIX 8713)? The fixed choices are supported and mismatch; an abstain leaves the
+/// summary unjudged and never touches it. Keyed by the landing's kind and the host rubric's
+/// digest.
+pub const COMPACTION_SUPPORT: QuestionFamily = QuestionFamily {
+    name: "dreamer.compaction.support",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -405,4 +469,11 @@ pub const FAMILIES: &[QuestionFamily] = &[
     COACH_HEAL_ROUTE,
     CODE_FIX_JUDGMENT,
     PAYER_NEEDED,
+    SIEVE_NOVELTY,
+    SIEVE_KIND,
+    SIEVE_ENTITY,
+    SIEVE_CONFIDENCE,
+    NIGHTLY_LINK,
+    URGENT_DIGEST_HARM,
+    COMPACTION_SUPPORT,
 ];

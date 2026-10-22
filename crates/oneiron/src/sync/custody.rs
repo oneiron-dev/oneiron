@@ -3,7 +3,9 @@
 //! L04 row 04).
 //!
 //! A custody record never rides a window; its transition does, in the base
-//! window's `custody` map under the record's id, in the window of the month it
+//! window's `custody` map under the record's id, each further piece of it
+//! under the id and its place (CALLS `Phase2 custody pieces request bound`),
+//! in the window of the month it
 //! was signed in. The month a transition was signed in is the month its door
 //! ran, so a fresh transition lands in a window every peer holds open. The
 //! protected input an active change hands its holder rides beside the
@@ -28,10 +30,12 @@
 //! - Forward rematerialization and Observer B judge each transition against
 //!   this vault's fold as it is now: the request it enacts counts, its named
 //!   executor signed it, and it carries exactly the request's generation,
-//!   input and permits (CALLS CUSTODY_PAYLOAD). What stands is written into
-//!   this vault's custody through the local door, judged again in the
-//!   committing transaction, with the value this machine opens. A machine
-//!   the value was not sealed to keeps the transition unread. The holder a
+//!   input and permits (CALLS CUSTODY_PAYLOAD). A piece that stands is kept
+//!   first, the rest of its transition owed; only a whole group of pieces,
+//!   verified as one (`CustodyPieces::verify`), is written into this vault's
+//!   custody through the local door, judged again in the committing
+//!   transaction, with the value this machine opens. A machine the value
+//!   was not sealed to keeps the transition unread. The holder a
 //!   pending request names keeps the input it names, each part as it
 //!   arrives, rechecked in the transaction that keeps it; its pickup joins
 //!   the parts and waits while one is missing.
@@ -40,6 +44,10 @@
 //!   own after the admission and on this upkeep (CALLS
 //!   CUSTODY_ROSTER_REWRAP); any other linked machine only from a rewrap the
 //!   owner records (CALLS CUSTODY_PERMITS).
+
+pub(super) mod checkpoint;
+
+use std::collections::BTreeMap;
 
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
@@ -52,8 +60,9 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     CustodyApplied, CustodyTransition, RelayedInput, SecretCustodyStatus,
-    apply_custody_transition_in_txn, custody_transitions, held_input_in_txn, held_inputs,
-    holds_custody_carrier_in_txn, keep_input_in_txn, remember_custody_transition_in_txn,
+    apply_custody_transition_in_txn, completed_custody_groups_in_txn, custody_transitions,
+    held_input_in_txn, held_inputs, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
+    keep_input_in_txn,
 };
 
 /// Which input rows a window admits and prunes (CALLS CUSTODY_INPUT_PRUNE,
@@ -191,8 +200,8 @@ pub(crate) fn admit_custody_carrier(
         return Ok(());
     }
     let transition = CustodyTransition::decode(bytes)?;
-    if transition.id.to_hex() != map_key {
-        return Err(refused("filed under another id"));
+    if transition.row_key() != map_key {
+        return Err(refused("filed under another id or piece"));
     }
     if key.is_some_and(|key| *key != transition_window(&transition)) {
         return Err(refused("outside its signing month's base window"));
@@ -231,8 +240,9 @@ pub(crate) fn admit_custody_map(
 /// supersedes it. A record whose latest transition rides another window has
 /// its carrier here dropped once that transition supersedes it, so a rotated
 /// or revoked value's ciphertext stops riding the month it was signed in; a
-/// closed window catches up as it opens. Returns whether it wrote any; the
-/// caller commits.
+/// closed window catches up as it opens. Each piece commits on its own, so
+/// no one update outgrows a frame and a transition rides across commits;
+/// the rest commits at the end. Returns whether it wrote any.
 pub(crate) fn mirror_custody_transitions(
     vault: &Vault,
     doc: &LoroDoc,
@@ -246,68 +256,72 @@ pub(crate) fn mirror_custody_transitions(
         vault.authority_view_readonly_in_txn(&rtxn)?
     };
     let mut wrote = mirror_custody_inputs(vault, doc, key, &fold)?;
+    // Every piece this vault holds rides its window under its own key
+    // (CALLS `Phase2 custody pieces request bound`).
     let mut due = Vec::new();
-    let mut elsewhere = Vec::new();
-    for (_, carrier) in custody_transitions(vault)? {
-        let Ok(latest) = CustodyTransition::decode(&carrier) else {
-            continue;
-        };
-        if sealed_after_revoke(&fold, &latest) {
+    let mut latest: BTreeMap<EntityId, CustodyTransition> = BTreeMap::new();
+    for piece in custody_transitions(vault)? {
+        if sealed_after_revoke(&fold, &piece) {
             continue;
         }
-        if transition_window(&latest) == *key {
-            due.push((latest, carrier));
-        } else {
-            elsewhere.push(latest);
+        if transition_window(&piece) == *key {
+            due.push(piece.clone());
         }
+        latest.entry(piece.id).or_insert(piece);
     }
     if !due.is_empty() {
         let map = doc.get_map(CUSTODY_MAP);
-        for (latest, carrier) in due {
-            let hex = latest.id.to_hex();
-            let held = map_get_bytes(&map, &hex);
+        for piece in due {
+            let row = piece.row_key();
+            let carrier = piece.encode();
+            let held = map_get_bytes(&map, &row);
             if held.as_deref() == Some(carrier.as_slice())
                 || held
                     .and_then(|held| CustodyTransition::decode(&held).ok())
-                    .is_some_and(|held| !latest.supersedes(&held))
+                    .is_some_and(|held| !piece.supersedes(&held))
             {
                 continue;
             }
-            map_insert_bytes(&map, &hex, &carrier)?;
+            // Writes waiting before the first piece commit apart from it.
+            if wrote {
+                commit_custody(doc);
+            }
+            map_insert_bytes(&map, &row, &carrier)?;
+            commit_custody(doc);
             wrote = true;
         }
     }
-    if !elsewhere.is_empty() && holds_custody_map(doc) {
-        let map = doc.get_map(CUSTODY_MAP);
-        for latest in elsewhere {
-            let hex = latest.id.to_hex();
-            if map_get_bytes(&map, &hex)
-                .and_then(|held| CustodyTransition::decode(&held).ok())
-                .is_some_and(|held| latest.supersedes(&held))
-            {
-                map_delete(&map, &hex)?;
-                wrote = true;
-            }
-        }
-    }
+    // A carrier this vault's latest supersedes leaves every window, each
+    // piece of it, as does one that still seals a value an admitted revoke
+    // ended.
     if holds_custody_map(doc) {
         let map = doc.get_map(CUSTODY_MAP);
-        let mut sealed = Vec::new();
+        let mut gone = Vec::new();
         map.for_each(|map_key, value| {
             if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
                 && !map_key.starts_with(INPUT_ROW_PREFIX)
-                && CustodyTransition::decode(&bytes)
-                    .is_ok_and(|held| sealed_after_revoke(&fold, &held))
+                && let Ok(held) = CustodyTransition::decode(&bytes)
+                && (sealed_after_revoke(&fold, &held)
+                    || latest
+                        .get(&held.id)
+                        .is_some_and(|latest| latest.supersedes(&held)))
             {
-                sealed.push(map_key.to_owned());
+                gone.push(map_key.to_owned());
             }
         });
-        for row in sealed {
+        for row in gone {
             map_delete(&map, &row)?;
             wrote = true;
         }
     }
+    if wrote {
+        commit_custody(doc);
+    }
     Ok(wrote)
+}
+
+fn commit_custody(doc: &LoroDoc) {
+    doc.commit_with(loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN));
 }
 
 /// Relays each input this vault keeps into window `key`, the base window of
@@ -428,11 +442,13 @@ pub(crate) fn materialize_custody_from_delta(
     Some(Vec::new())
 }
 
-/// Judges each carrier against this vault's fold, opens the value sealed to
-/// this machine, and writes what stands through the custody door. Each that
-/// stands is kept as the record's latest when it supersedes the one this
-/// vault holds. Input rows go to [`keep_relayed_inputs`]. With `skip_held`,
-/// a transition this vault already holds byte for byte is left alone.
+/// Judges each carrier, one piece, against this vault's fold and keeps each
+/// that stands beside the pieces of its transition this vault holds, as the
+/// record's latest when it supersedes the one held. Only a group of pieces
+/// that is then whole and stands as one has custody effects: its value
+/// sealed to this machine is opened and written through the custody door.
+/// Input rows go to [`keep_relayed_inputs`]. With `skip_held`, a piece this
+/// vault already holds byte for byte is left alone.
 fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, skip_held: bool) {
     let (inputs, rows): (Vec<_>, Vec<_>) = rows
         .into_iter()
@@ -445,13 +461,13 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
     // one of the owner's machines has no secret, and keeps every value sealed.
     let secret = vault.machine_secret_outside_txn().ok();
     let outcome = (|| -> Result<usize> {
-        let judged = {
+        let (arrived, whole) = {
             let rtxn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&rtxn)?;
-            let mut judged = Vec::new();
+            let mut arrived = Vec::new();
             for (map_key, bytes) in &rows {
                 let transition = match CustodyTransition::decode(bytes) {
-                    Ok(transition) if transition.id.to_hex() == *map_key => transition,
+                    Ok(transition) if transition.row_key() == *map_key => transition,
                     _ => {
                         tracing::warn!(window, key = %map_key, "custody transition malformed; left out");
                         continue;
@@ -464,41 +480,44 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, ski
                     tracing::warn!(window, key = %map_key, error = %error, "custody transition does not stand on its request here; left out");
                     continue;
                 }
+                arrived.push(transition);
+            }
+            // A piece alone has no custody effect: only a group the pieces
+            // make with those kept here, whole and standing as one, does.
+            let mut whole = Vec::new();
+            for group in completed_custody_groups_in_txn(vault, &rtxn, &arrived)? {
+                if group.verify(&fold).is_err() {
+                    continue;
+                }
                 let value = match (&secret, fold.vault_id) {
                     (Some(secret), Some(vault_id)) => {
-                        transition.open_value(&vault_id, secret.machine, &secret.secret)
+                        group.open_value(&vault_id, secret.machine, &secret.secret)
                     }
                     _ => None,
                 };
-                judged.push((transition, value));
+                whole.push((group, value));
             }
-            judged
+            (arrived, whole)
         };
-        if judged.is_empty() {
+        if arrived.is_empty() {
             return Ok(0);
         }
         vault.with_write_txn_grouped(|wtxn| {
+            // Every piece that stands is kept first, the rest of its
+            // transition owed; a piece an admitted revoke of its id refused,
+            // or that no longer stands on this transaction's fold, is not
+            // kept, so it is never relayed from here (WILL L04 row 04).
+            let fold = vault.authority_view_readonly_in_txn(wtxn)?;
+            for piece in &arrived {
+                keep_custody_piece_in_txn(vault, wtxn, &fold, piece)?;
+            }
             let mut written = 0;
-            for (transition, value) in &judged {
+            for (group, value) in &whole {
                 let value = value.as_ref().map(|value| value.as_slice());
-                let applied = apply_custody_transition_in_txn(
-                    vault,
-                    wtxn,
-                    transition,
-                    value,
-                    transition.signed_at,
-                )?;
+                let at = group.lead().signed_at;
+                let applied = apply_custody_transition_in_txn(vault, wtxn, group, value, at)?;
                 if applied == CustodyApplied::Written {
                     written += 1;
-                }
-                // A carrier an admitted revoke of its id refused, or that no
-                // longer stands on this transaction's fold, is not kept, so
-                // it is never relayed from here (WILL L04 row 04).
-                if !matches!(
-                    applied,
-                    CustodyApplied::Refused | CustodyApplied::Unadmitted
-                ) {
-                    remember_custody_transition_in_txn(vault, wtxn, transition)?;
                 }
             }
             Ok(written)
@@ -609,13 +628,9 @@ impl Vault {
             if window.key.world().is_some() {
                 continue;
             }
+            // It commits what it writes, a piece to a commit.
             match mirror_custody_transitions(self, &window.doc, &window.key) {
-                Ok(true) => {
-                    window.doc.commit_with(
-                        loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN),
-                    );
-                }
-                Ok(false) => {}
+                Ok(_) => {}
                 Err(error) => {
                     tracing::warn!(window = %window.key, error = %error, "custody transition not mirrored");
                 }

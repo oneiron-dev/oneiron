@@ -3,10 +3,11 @@
 use super::*;
 use crate::learning::{Anchor, LearningEvidence, Observation};
 use crate::llm::decision::questions::{
-    self, OutcomeBinding, QuestionActivation, QuestionDefinition, RefreshPolicy, StandingAnswer,
+    self, OutcomeBinding, QuestionActivation, QuestionDefinitionInput, RefreshPolicy,
+    StandingAnswer,
 };
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, ProviderPin,
+    AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestionInput, ProviderPin,
 };
 use crate::note::TakeTarget;
 
@@ -56,7 +57,8 @@ pub fn preserve_review_dissent(
         return Ok(None);
     };
     validate_critique_artifact(&artifact)?;
-    let (principal, mut state, verdict) = dissent_state(vault, &result.verdict_claim, artifact_id)?;
+    let (principal, class, mut state, verdict) =
+        dissent_state(vault, &result.verdict_claim, artifact_id)?;
     if verdict == artifact.verdict && !dismissed(vault, &result.verdict_claim, artifact_id)? {
         return Ok(None);
     }
@@ -73,13 +75,17 @@ pub fn preserve_review_dissent(
     }
     let unit = EntityId::from_hex(&artifact.candidate_ref)?;
     if state.question.is_none() {
+        // The question keeps the class its review's actor authenticated as
+        // (FIX 1588); a review stored before that asks as its principal reads.
+        let asker = match class {
+            Some(class) => WriteActor::new(principal, class),
+            None => questions::principal_actor(vault, principal)?,
+        };
         let record = questions::create_question(
             vault,
-            principal,
-            QuestionDefinition {
-                question: DecisionQuestion {
-                    id: EntityId::now(),
-                    version: 1,
+            asker,
+            QuestionDefinitionInput {
+                question: DecisionQuestionInput {
                     text: prediction.what.clone(),
                     class: DecisionClass::Judgment,
                     contract: AnswerContract::Noul,
@@ -194,7 +200,7 @@ pub fn project_review_dissent(vault: &Vault, result: &ReviewResult, at: u64) -> 
         .filter(|artifact| !artifact.out_of_scope && artifact.prediction.is_some())
     {
         let stored = persisted_artifact(vault, &result.verdict_claim, &artifact.artifact_id)?;
-        let (principal, mut state, _) =
+        let (principal, _, mut state, _) =
             dissent_state(vault, &result.verdict_claim, &stored.artifact_id)?;
         let Some(question) = state.question else {
             continue;

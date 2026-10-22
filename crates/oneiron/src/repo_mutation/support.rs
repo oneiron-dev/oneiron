@@ -1,3 +1,7 @@
+//! Path, digest, time and actor-name helpers for repository mutations.
+//! The digest entry is `sha256_bytes`.
+//! `deletion` owns the forwarded actor predicate; the other helpers are local.
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,7 +11,6 @@ use crate::error::{Error, Result};
 
 use super::types::RepoForkHash;
 use crate::error::CodeError;
-use crate::{EntityId, Vault};
 
 const MAX_REPO_MUTATION_FAILURE_BYTES: usize = 4096;
 
@@ -65,19 +68,7 @@ pub(super) fn now_millis() -> u64 {
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the mutation log or the proposals (FIX 3520).
-pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+pub(super) use crate::deletion::names_no_actor;
 
 pub(super) fn now_secs() -> u64 {
     SystemTime::now()

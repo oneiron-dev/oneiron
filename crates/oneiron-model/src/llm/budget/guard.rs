@@ -124,41 +124,27 @@ impl BudgetGuard {
         Ok(state.metered_admission(lease))
     }
 
+    /// Admits one call of `request`. A call its route selected to run on this
+    /// device is free local work (FIX 8623): it takes an unmetered lease that
+    /// reserves nothing ([`Self::admit_local`]) before any paid policy, row
+    /// cap or capacity is read, so a full or exhausted paid line never holds
+    /// it. Every other call reserves on the paid line, its purpose's policy
+    /// rows capping it.
     pub fn admit_for_request(&self, request: &LlmRequest) -> Result<BudgetAdmission, BudgetDenied> {
-        let mut state = self.lock_state();
-        let purpose = &request.envelope.purpose;
-        let reserve_units = state.reserve_units;
-        let continue_local = matches!(request.envelope.locality, ModelLocality::OnDevice)
-            && matches!(
-                state.on_budget_exhausted,
-                BudgetExhaustionPolicy::ContinueOnLocal
-            )
-            && state.local_continuation_available(reserve_units, Some(purpose));
-        if continue_local {
-            let lease = state.issue_lease(0, false, "local", None);
-            let read = state.read();
-            return Ok(BudgetAdmission {
-                lease,
-                read,
-                ladder_events: Vec::new(),
-            });
+        if request.envelope.locality == ModelLocality::OnDevice {
+            return self.admit_local();
         }
-
-        let lease = state.reserve_for(reserve_units, Some(purpose))?;
+        let mut state = self.lock_state();
+        let reserve_units = state.reserve_units;
+        let lease = state.reserve_for(reserve_units, Some(&request.envelope.purpose))?;
         Ok(state.metered_admission(lease))
     }
 
+    /// An unmetered lease for free local work: it reserves nothing and its
+    /// settlement charges no paid spend, whatever the line's exhaustion
+    /// policy or spend (FIX 8623). The usage a call reports stays its own.
     pub fn admit_local(&self) -> Result<BudgetAdmission, BudgetDenied> {
         let mut state = self.lock_state();
-        let reserve_units = state.reserve_units;
-        if !matches!(
-            state.on_budget_exhausted,
-            BudgetExhaustionPolicy::ContinueOnLocal
-        ) || !state.local_continuation_available(reserve_units, None)
-        {
-            return Err(BudgetDenied::AdmissionDenied);
-        }
-
         let lease = state.issue_lease(0, false, "local", None);
         let read = state.read();
         Ok(BudgetAdmission {

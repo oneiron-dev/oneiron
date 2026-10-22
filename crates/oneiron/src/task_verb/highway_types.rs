@@ -82,15 +82,15 @@ impl HostBinding {
         }
     }
 
-    pub(super) const fn parent(&self) -> AttemptId {
+    pub(crate) const fn parent(&self) -> AttemptId {
         self.parent
     }
 
-    pub(super) fn lease_owner(&self) -> &str {
+    pub(crate) fn lease_owner(&self) -> &str {
         &self.lease_owner
     }
 
-    pub(super) const fn attempt_count(&self) -> u32 {
+    pub(crate) const fn attempt_count(&self) -> u32 {
         self.attempt_count
     }
 
@@ -102,6 +102,14 @@ impl HostBinding {
     /// (OF-181): the log a live-run action's fold verbs reach.
     pub(crate) const fn executor_run(&self) -> Option<EntityId> {
         self.run_id
+    }
+
+    /// The witness a call receipt states of the try this binding sealed
+    /// (OF-568 L4): its attempt and lease generation, from the sealed
+    /// fields, so a call that held this binding's run names that attempt.
+    #[must_use]
+    pub const fn call_attempt_witness(&self) -> crate::receipt::CallAttemptWitness {
+        crate::receipt::CallAttemptWitness::sealed(self.parent, self.attempt_count)
     }
 
     /// The try this binding sealed, read live in `vault`: still leased, by
@@ -174,6 +182,7 @@ pub enum TaskCall {
     Accept(TaskAccept),
     Report(TaskReport),
     Status(TaskStatusQuery),
+    Redo(TaskRedo),
 }
 
 /// Post work as a TASK with a typed brief and an explicit assignee.
@@ -203,6 +212,17 @@ pub struct TaskPost {
 #[serde(deny_unknown_fields)]
 pub struct TaskAccept {
     pub task_ref: EntityId,
+    pub intent_key: String,
+}
+
+/// Redo one TASK (FIX 3153): post a new TASK from its current brief and its
+/// assignee, spec, label and parent. The TASK named is never written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRedo {
+    /// The TASK whose content the new one copies.
+    pub task_ref: EntityId,
+    /// The caller's idempotency key: one actor, TASK and key name one redo.
     pub intent_key: String,
 }
 
@@ -413,6 +433,11 @@ pub struct TaskStatusView {
     pub pending: bool,
     pub asks: Vec<(TaskAskHandle, TaskAskStatus)>,
     pub last_receipt: Option<String>,
+    /// A bound TASK's try and the library program it pinned (CUA E4): the
+    /// try a handle names, else the TASK's newest bound one. Absent for an
+    /// unbound TASK.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<TaskWorkflowStatus>,
     /// Digest of everything above; a poll passes it back as `after`.
     #[serde(with = "hex32")]
     pub observed: [u8; 32],
@@ -427,6 +452,83 @@ pub struct AttemptView {
     pub yours: bool,
     pub claimed_at: Option<u64>,
     pub backoff_until: Option<u64>,
+}
+
+/// One bound try's library program (CUA E4): the record its TASK named, the
+/// one its first lease resolved that to, the brief it was leased under, and
+/// what its strict run came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWorkflowStatus {
+    pub attempt_ref: String,
+    /// The record the TASK's handle named.
+    pub requested: EntityId,
+    /// The live program the try pinned; `None` when the handle led to none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<EntityId>,
+    pub brief: BriefStamp,
+    pub outcome: TaskWorkflowOutcome,
+}
+
+/// What a bound try's strict library run came to (CUA E4). Each settled
+/// outcome names the receipt NOTE that holds its whole evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskWorkflowOutcome {
+    /// Not run yet.
+    Pending,
+    /// The strict program was started at `at`, under the try's lease, and
+    /// its end is not recorded yet (FIX 8104). An entry that finds it hands
+    /// the run off as [`TaskWorkflowHandoff::Interrupted`]; it never runs
+    /// the program again.
+    Started { at: u64 },
+    /// The program met its postcondition and every TASK check held.
+    Done { receipt_ref: EntityId },
+    /// The try went on to its planner, for `cause`.
+    Handoff {
+        cause: TaskWorkflowHandoff,
+        receipt_ref: EntityId,
+    },
+}
+
+/// Why a bound try went on to its planner (CUA E4).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskWorkflowHandoff {
+    /// The strict program stopped short, for its own `stop_cause` (E2).
+    Program {
+        stop_cause: oneiron_browser::BatchStopCause,
+    },
+    /// The program met its postcondition and a TASK check did not hold
+    /// (`task_goal_unmet`).
+    GoalUnmet,
+    /// The handle's lineage ends at `id`, retired with no successor.
+    Retired {
+        id: EntityId,
+        reason: Option<String>,
+    },
+    /// No program was ever filed under `id`.
+    Missing { id: EntityId },
+    /// The library could not be read for `id` at the try's first lease; the
+    /// error is in the receipt.
+    Unreadable { id: EntityId },
+    /// The strict program was started at an earlier entry and its end was
+    /// never recorded (FIX 8104): what it did on the page is unknown.
+    Interrupted,
+}
+
+impl TaskWorkflowHandoff {
+    /// The stable code a planner reads the handoff by.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::Program { .. } => "workflow_stopped",
+            Self::GoalUnmet => "task_goal_unmet",
+            Self::Retired { .. } => "workflow_retired",
+            Self::Missing { .. } => "workflow_missing",
+            Self::Unreadable { .. } => "workflow_unreadable",
+            Self::Interrupted => "workflow_interrupted",
+        }
+    }
 }
 
 /// The body of the `TaskLifecycle` receipt one mutating call owes: the call,

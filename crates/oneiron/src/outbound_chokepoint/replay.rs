@@ -5,7 +5,8 @@ use super::types::{
     OutboundEffectResult, OutboundTransport, PreparedAuthorization, PreparedEffect,
 };
 use crate::Vault;
-use crate::connector_key::{self, ConnectorKeyStatus};
+use crate::connector_key::{self, ConnectorKeyStatus, SlateDisposition};
+use crate::consent::EffectDigest;
 use crate::error::Error;
 use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
@@ -21,6 +22,11 @@ pub(super) enum RecoveryGovernance {
     Allow,
     Block(&'static str),
     Revoke,
+    /// FIX 990: the tool's setting is `always ask`; the send boundary
+    /// releases it only on the owner's press on exactly this call.
+    AlwaysAsk,
+    /// FIX 990: the tool's setting is `never allow`; the request stops.
+    NeverAllow,
 }
 
 pub(super) fn replay_record<T: OutboundTransport>(
@@ -46,7 +52,9 @@ pub(super) fn replay_record<T: OutboundTransport>(
             Ok(effect_result(&record, None, true, Some(reason)))
         }
         (IntentState::Pending, Some(RecordedOutboundOutcome::DefiniteNonDelivery)) => {
-            send_pending_with_gate(vault, authority, record, prepared, now_ms, true, transport)
+            send_pending_with_gate(
+                vault, authority, record, prepared, None, now_ms, true, transport,
+            )
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
             // A previous node may have sent before crashing. The stop reason
@@ -77,7 +85,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
             // BEFORE a resumed no-wire failure can replace its retry marker.
             let uncertain = record_possible_delivery(vault, record.id)?;
             send_pending_with_gate(
-                vault, authority, uncertain, prepared, now_ms, true, transport,
+                vault, authority, uncertain, prepared, None, now_ms, true, transport,
             )
         }
         _ => Err(IntentLedgerError::InvalidRecord(
@@ -86,6 +94,7 @@ pub(super) fn replay_record<T: OutboundTransport>(
     }
 }
 
+#[cfg(test)]
 pub(super) fn send_pending<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -94,14 +103,35 @@ pub(super) fn send_pending<T: OutboundTransport>(
     replayed: bool,
     transport: &mut T,
 ) -> Result<OutboundEffectResult, IntentLedgerError> {
-    send_pending_with_gate(vault, authority, record, None, now_ms, replayed, transport)
+    send_pending_with_gate(
+        vault, authority, record, None, None, now_ms, replayed, transport,
+    )
 }
 
+/// The first send of the row its admission just committed. `pass_proof` is
+/// the owner's press that admission's Gate spent on it, if it spent one: it
+/// releases this send under `always ask` even when its kept copy did not
+/// write (FIX 990).
+pub(super) fn send_admitted<T: OutboundTransport>(
+    vault: &Vault,
+    authority: &OutboundBindingAuthority,
+    record: crate::outbound_intent_ledger::IntentLedgerRecord,
+    pass_proof: Option<EffectDigest>,
+    now_ms: u64,
+    transport: &mut T,
+) -> Result<OutboundEffectResult, IntentLedgerError> {
+    send_pending_with_gate(
+        vault, authority, record, None, pass_proof, now_ms, false, transport,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
 fn send_pending_with_gate<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
     record: crate::outbound_intent_ledger::IntentLedgerRecord,
     prepared: Option<&PreparedEffect>,
+    pass_proof: Option<EffectDigest>,
     now_ms: u64,
     replayed: bool,
     transport: &mut T,
@@ -131,7 +161,12 @@ fn send_pending_with_gate<T: OutboundTransport>(
     }
 
     match recovery_governance(vault, &record)? {
-        RecoveryGovernance::Allow => {}
+        // `always ask` is judged at the send boundary below, after the live
+        // retry's Gate.
+        RecoveryGovernance::Allow | RecoveryGovernance::AlwaysAsk => {}
+        RecoveryGovernance::NeverAllow => {
+            return super::connector_slate::never_allow(vault, &record, now_ms, replayed);
+        }
         RecoveryGovernance::Block(reason) => {
             let mut result = effect_result(&record, None, replayed, None);
             result.gate_receipt_reasons.push(reason.to_owned());
@@ -264,6 +299,13 @@ fn send_pending_with_gate<T: OutboundTransport>(
             return Ok(result);
         }
     }
+    // FIX 990: the last snapshot of the key, manifest, tool setting and
+    // charters before the retry permit, the dedupe touch and the send.
+    if let Some(stop) =
+        super::connector_slate::send_boundary(vault, &record, pass_proof, now_ms, replayed)?
+    {
+        return Ok(stop);
+    }
 
     // A definite non-delivery permits retry even without provider-native
     // idempotency. Clear that permit durably immediately before transport so a
@@ -342,7 +384,9 @@ pub(super) fn recovery_governance(
     let Some(key_ref) = record.budget_accounting.key_ref.as_ref() else {
         return Ok(RecoveryGovernance::Allow);
     };
-    let Some(key) = vault.get_connector_key(key_ref)? else {
+    // The key, the catalog charter and the tool's setting, one snapshot.
+    let txn = vault.store.env.read_txn().map_err(Error::from)?;
+    let Some(key) = connector_key::read_key_for_pack_in_txn(vault, &txn, key_ref)? else {
         return Ok(RecoveryGovernance::Block("connector_key_unregistered"));
     };
     match key.status {
@@ -385,12 +429,17 @@ pub(super) fn recovery_governance(
     {
         return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
     }
+    // FIX 988: a row that depends on a credential binding whose issuer
+    // changed sends nothing until the owner accepts its re-ask.
+    if connector_key::connector_issuer_hold_in_txn(&vault.store, &txn, key_ref, &key, &record.tool)?
+    {
+        return Ok(RecoveryGovernance::Block(
+            connector_key::CONNECTOR_ISSUER_HOLD_REASON,
+        ));
+    }
     // A per-grant key's call meets its catalog connector's charter too, as
     // the gate read it at admission.
-    let catalog_charter = {
-        let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        connector_key::catalog_charter_in_txn(&vault.store, &txn, &key)?
-    };
+    let catalog_charter = connector_key::catalog_charter_in_txn(&vault.store, &txn, &key)?;
     for charter in key.charter.iter().chain(catalog_charter.iter()) {
         if connector_key::charter_block_drifted(charter)? {
             return Ok(RecoveryGovernance::Block("charter_drift"));
@@ -425,6 +474,21 @@ pub(super) fn recovery_governance(
         };
         if never_list_matches {
             return Ok(RecoveryGovernance::Block("charter_never_list"));
+        }
+    }
+    // FIX 990: a scoped call meets its tool's setting now, as the Gate met
+    // it at admission (a per-grant key's catalog slate included).
+    if record.capability_provenance().is_some() {
+        match connector_key::connector_tool_setting_in_txn(
+            &vault.store,
+            &txn,
+            key_ref,
+            &key,
+            &record.tool,
+        )? {
+            SlateDisposition::NeverAllow => return Ok(RecoveryGovernance::NeverAllow),
+            SlateDisposition::AlwaysAsk => return Ok(RecoveryGovernance::AlwaysAsk),
+            SlateDisposition::Auto | SlateDisposition::AlwaysAllow => {}
         }
     }
     Ok(RecoveryGovernance::Allow)

@@ -1,3 +1,7 @@
+//! Origin doors: authority get and set, checkout door binding, code export and publications.
+//! `Memory::origin_authority_get_as` is its call surface.
+//! `memory::origin_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::checkout::lease::CheckoutRepoOps;
 use crate::git_wire::{GitOid, GitRefName, GitWireRepo};
@@ -151,7 +155,7 @@ impl Memory<'_> {
 
     /// The CALL behind the publication lookup: exact repository, ref and
     /// commit, every matching history in every status, ordered by id.
-    fn origin_matching_publications(
+    pub(super) fn origin_matching_publications(
         &self,
         repo_id: EntityId,
         ref_name: &GitRefName,
@@ -174,7 +178,7 @@ impl Memory<'_> {
     /// The CALL behind the export source: the live checkout the owner holds,
     /// already materialized, whose object store is the served repository.
     /// A different clone or a caller path cannot stand in for it.
-    fn origin_export_source(
+    pub(super) fn origin_export_source(
         &self,
         owner: &AuthenticatedOwner,
         wire: &GitWire<'_>,
@@ -206,7 +210,10 @@ impl Memory<'_> {
     /// epoch passes its lease, an unconfigured origin passes none, a mirror or
     /// another writer refuses, and an erased writer names the owner's cutover.
     /// A read failure is an error, never unconfigured.
-    fn origin_export_authority(&self, repo: &str) -> MemoryResult<Option<OriginAuthorityLease>> {
+    pub(super) fn origin_export_authority(
+        &self,
+        repo: &str,
+    ) -> MemoryResult<Option<OriginAuthorityLease>> {
         match self.vault.origin_host_authority(repo)? {
             OriginHostAuthority::Unconfigured => Ok(None),
             OriginHostAuthority::Held(lease) => Ok(Some(lease)),

@@ -14,10 +14,10 @@
   "patched_dtoa_sha256": "bcbbcff57f97d02d3cbe662b059e1aaad90ef9da213cf8aefee35f548beca2fe",
   "wit_sha256": "5d315687fdde4be0b324314a39cb86e0cde93631b705db60b96c71e224973c83",
   "sources": {
-    "guest.c": "d173555616c5e4d04972bdf204fe1bb1fa20c3f27a2b5c3145efe6a9ae6bdb64",
+    "guest.c": "fac7f416152488370b086423a820dc6d484e8a590d88d14743c2989b9bff53c6",
     "libc_denials.c": "34d4078d819b41381cfec7773434bc0a04a9c1d9c2895246a0a22ddf427808fd",
-    "bootstrap.js": "a43db32f5bf70109c77ee33ebf7490b1ad609c3cdbf029b232d81776f6c8ea64",
-    "reader_forks.js": "8ffd9d1da2ef4731abd26122c4094e28b2a3f1115259f354deef8a556cdc7093",
+    "bootstrap.js": "e4360d957284f4d81dcbb1a5980cabf6a6c8e29696b082ca605fdef588905071",
+    "reader_forks.js": "8418c12bf23be76f4a4b00682a3fa524acf7b601bf373cfc3328cd2c6b3d1b6a",
     "diff.js": "928816d75a92bb0e98c21216c2728044c9095d2c6bc75cd38aee2c08981fcf1f",
     "hook_guest.c": "7e65ba8fce7db9d63991003b9430f3bd451669ab10daaf07788a797ac74d3816",
     "hook_bootstrap.js": "7647b9e3d05d4e0220b38f0f509dbd021eea47f1a0bf125550ba8f752958c8bb",
@@ -27,13 +27,13 @@
   "artifacts": {
     "first-party": {
       "file": "quickjs-first-party.wasm",
-      "sha256": "b8e46a5e78fe0e7e411b808f06db33b770e349691a492761ce9909289033c6c6",
-      "bytes": 1087852
+      "sha256": "e03fce5d9476a0ff436c0f687a57a3818cd85bbafd551a59b5ea347c56542671",
+      "bytes": 1096172
     },
     "foreign": {
       "file": "quickjs-foreign.wasm",
-      "sha256": "09455c09e9f03265ce860c2e505aa00883309c64d085a01943529c74ed0f014c",
-      "bytes": 1082955
+      "sha256": "06d45775d0a3132cde95d646d068ffc821447957549e0f4ad4173bd9b9a391a7",
+      "bytes": 1091292
     },
     "hook": {
       "file": "quickjs-hook.wasm",

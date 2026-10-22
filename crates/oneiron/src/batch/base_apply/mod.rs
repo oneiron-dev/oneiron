@@ -160,6 +160,7 @@ pub(super) fn apply_ops_with_origin(
     let text_births = std::mem::take(&mut gate_mode.text_births);
     let births = std::mem::take(&mut gate_mode.births);
     let mut asset_files = std::mem::take(&mut gate_mode.asset_files);
+    let replicated_puts = std::mem::take(&mut gate_mode.replicated_puts);
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     let authority_generation = crate::authority::authority_cache_generation(store, wtxn)?;
     let record_gate_decisions = gate_mode.record_decisions;
@@ -207,6 +208,8 @@ pub(super) fn apply_ops_with_origin(
     let mut had_graph_mutation = false;
     let mut had_vector_mutation = false;
     let mut materialized_entity_ids = BTreeSet::new();
+    // FIX 7925: this batch's own writes; replay keeps its bytes for read quarantine.
+    let mut local_materialized_ids = BTreeSet::new();
     // FIX 4652: rows this batch deleted, for the seal standing rerun.
     let mut deleted_entity_ids = BTreeSet::new();
     let mut project_edge_endpoints = BTreeSet::new();
@@ -539,6 +542,9 @@ pub(super) fn apply_ops_with_origin(
                 if entity_type != crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT {
                     materialized_entity_ids.insert(id);
                 }
+                if !(replicated && replicated_puts.contains(&id)) {
+                    local_materialized_ids.insert(id);
+                }
             }
             BatchOp::ClaimCandidate {
                 id,
@@ -599,6 +605,7 @@ pub(super) fn apply_ops_with_origin(
                     pending_embedding_enqueue_priorities.remove(&id);
                 }
                 materialized_entity_ids.insert(id);
+                local_materialized_ids.insert(id);
             }
             BatchOp::ReconcileLexicalQueryHints { source, keep } => {
                 let keep: HashSet<EntityId> = keep.into_iter().collect();
@@ -686,10 +693,18 @@ pub(super) fn apply_ops_with_origin(
                 kind,
                 text_hash,
                 vector,
+                provenance,
             } => {
                 let vector = Zeroizing::new(vector);
                 crate::embed::replay_media_vector_in_txn(
-                    store, wtxn, &space, &id, kind, text_hash, &vector,
+                    store,
+                    wtxn,
+                    &space,
+                    &id,
+                    kind,
+                    text_hash,
+                    &vector,
+                    provenance.as_ref(),
                 )?;
             }
             BatchOp::Phonetic { id, codes } => {
@@ -864,7 +879,7 @@ pub(super) fn apply_ops_with_origin(
         store,
         wtxn,
         config.privacy.posture,
-        &materialized_entity_ids,
+        &local_materialized_ids,
     )?;
 
     #[cfg(feature = "sync")]

@@ -42,9 +42,11 @@ use oneiron_driver::{
 
 use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
+mod claim_authoring;
 mod compaction_check;
 mod free_time;
 mod run_log;
+mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
@@ -297,6 +299,13 @@ async fn supervise(
         settings.pass_budget_units,
         admission.clone(),
     ));
+    // So do the urgent digest's harm questions (OF-194): each queues on the
+    // Dreamer's own maintenance lane, which its passes answer.
+    tokio::spawn(urgent_digest::candidate_loop(
+        Arc::clone(&vault),
+        settings.urgent_digest_question.clone(),
+        admission.clone(),
+    ));
     let built = (|| -> anyhow::Result<_> {
         let node_id = claim_home_node(&vault, device)?;
         // The nightly harness audit reads this; a failed record never stops
@@ -328,6 +337,7 @@ async fn supervise(
             task_instruction: settings.task_instruction.clone().unwrap_or_else(|| {
                 oneiron::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION.to_owned()
             }),
+            confession_instruction: settings.wording.confession().to_owned(),
             windows,
             weaver: None,
             weaver_ladder: None,
@@ -355,7 +365,9 @@ async fn supervise(
             WakePolicyTicks::new(
                 HybridTick::new(
                     TimerTick::new(
-                        AttemptQueueDeadlines::new(&vault, node_id).for_worker(LEASE_OWNER),
+                        AttemptQueueDeadlines::new(&vault, node_id)
+                            .for_worker(LEASE_OWNER)
+                            .with_idle(Arc::clone(&idle)),
                     ),
                     push,
                 ),
@@ -458,6 +470,8 @@ struct ObservedFactory {
     /// A Dreamer-lane TASK realizes with this: the host's wording, else the
     /// catalogue's own.
     task_instruction: String,
+    /// A TASK's realization is asked for its confession in this (FIX 8696).
+    confession_instruction: String,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
@@ -595,6 +609,17 @@ impl ObservedFactory {
             .get(DREAMER_EXTRACTION_ROLE)
             .cloned()
             .ok_or_else(|| oneiron::Error::InvalidConfig("dreamer extraction unrouted".into()))?;
+        // A thing's branch runs as a scoped code-mode agent on this server's
+        // code host, its own generation on the extraction route (FIX 7508).
+        let thing_route = routes
+            .iter()
+            .find(|(role, _)| *role == DREAMER_EXTRACTION_ROLE)
+            .map(|(_, route)| super::dreamer_thing::ThingRoute {
+                ladder: Arc::clone(&route.ladder),
+                model: route.model.clone(),
+                locality: route.locality,
+                window: self.windows.get(&route.model).copied(),
+            });
         let selected = routes.iter().map(|(_, route)| route.model.clone());
         let host = self.decisions.get();
         let sink = AttemptPromotionSink::new(Arc::clone(&self.vault))
@@ -634,6 +659,16 @@ impl ObservedFactory {
                     Arc::clone(&self.runtime),
                     self.serve.clone(),
                     Arc::clone(&self.question_timer),
+                ),
+            ));
+        }
+        if let Some(route) = thing_route {
+            factory = factory.with_thing_child_host(Arc::new(
+                super::dreamer_thing::ServedThingChildHost::new(
+                    Arc::clone(&self.vault),
+                    Arc::clone(&self.runtime),
+                    Arc::clone(&self.question_timer),
+                    route,
                 ),
             ));
         }
@@ -680,6 +715,7 @@ impl PassExecutorFactory for ObservedFactory {
                 egress: self.egress,
                 actor: self.actor,
                 instruction: &self.task_instruction,
+                confession: &self.confession_instruction,
             });
         let check = self
             .weaver
@@ -735,6 +771,7 @@ impl PassExecutorFactory for ObservedFactory {
                 egress: self.egress,
                 actor: self.actor,
                 instruction: &self.task_instruction,
+                confession: &self.confession_instruction,
             });
         let check = self
             .weaver
@@ -815,6 +852,15 @@ impl PassExecutorFactory for ObservedFactory {
                 guard.read().limit_units,
             ),
         )))
+    }
+
+    /// The claim-authoring campaign the pass's consolidation admissions
+    /// re-read (FIX 897), under the binding policy.
+    fn claim_authoring_selector(
+        &self,
+        vault: &Vault,
+    ) -> oneiron::Result<oneiron::dreamer_wake::ClaimAuthoringSelection> {
+        Ok(claim_authoring::claim_authoring_selection(vault))
     }
 
     /// The host's gate, asked as each pass starts and held until it ends. A
@@ -970,6 +1016,7 @@ struct TaskLend<'p> {
     egress: bool,
     actor: WriteActor,
     instruction: &'p str,
+    confession: &'p str,
 }
 
 impl TaskLend<'_> {
@@ -1001,6 +1048,7 @@ impl TaskLend<'_> {
                 role: self.role,
                 actor: self.actor,
                 instruction: self.instruction,
+                confession: self.confession,
             },
         )
         .await?;
@@ -1338,7 +1386,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
         {
             // FIX 4465 B: judged on the weaver's route; never rewrites.
             match self.check {
-                Some(lend) => lend.check(attempt, ctx).await,
+                Some(lend) => lend.check(attempt, ctx, self.decisions).await,
                 None => Ok(oneiron::dreamer_runner::maintenance::compaction_check::unlent()),
             }
         } else if attempt.status.payload.attempt_type
@@ -1351,6 +1399,11 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                     cause: oneiron::dreamer_runner::DreamerParkCause::Retry,
                 }),
             }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_runner::maintenance::digest::DIGEST_ASSESS_FACET
+        {
+            // OF-194: asked on the shared ladder, off this pass's runtime.
+            urgent_digest::assess_waiting_harm(attempt, ctx, self.decisions).await
         } else {
             self.inner.execute(attempt, ctx).await
         };

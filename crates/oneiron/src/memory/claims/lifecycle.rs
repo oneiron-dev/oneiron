@@ -1,3 +1,7 @@
+//! Claim lifecycle doors: commit, upsert, propose, retract and the deletion gates.
+//! `Memory::evaluate_deletion_gate` and `Memory::commit` are its call surface.
+//! `memory::claims` defines the claim inputs and receipts these write.
+
 use super::commit::claim_envelope_actor;
 use super::*;
 
@@ -54,6 +58,32 @@ impl Memory<'_> {
             crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
             policy.read_frontier_hash()?,
         ))
+    }
+
+    /// [`Self::evaluate_deletion_gate`] for an archive delete (OF-449 L4):
+    /// `authority` is read in the gate's own snapshot in place of the owner
+    /// binding, and the decision record states the role and Grant it
+    /// admitted. [`Self::evaluate_deletion_gate`] is unchanged.
+    pub(in crate::memory) fn evaluate_archive_delete_gate(
+        &self,
+        authority: &dyn Fn(
+            &heed::RoTxn<'_>,
+        ) -> MemoryResult<crate::federation::ArchiveDeleteAuthority>,
+    ) -> MemoryResult<(
+        DeletionGateContext,
+        crate::federation::ArchiveDeleteAuthority,
+    )> {
+        let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let admitted = authority(&rtxn)?;
+        let policy = crate::gate::resolve_policy_manifest(&self.vault.store, &rtxn)?;
+        let context = DeletionGateContext::new_archive(
+            self.actor,
+            self.actor_class,
+            crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            policy.read_frontier_hash()?,
+            admitted,
+        );
+        Ok((context, admitted))
     }
 
     /// Commits claims through the gated candidate path, one individually

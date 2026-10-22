@@ -77,6 +77,9 @@ pub struct LimitsConfig {
     /// once. Past it, each caller's work waits its fair turn, up to
     /// `queue_wait_timeout_ms`, then runs anyway: it is never refused.
     pub task_work: usize,
+    /// Deck and slide renders at once (FIX 7653): past it each caller's render
+    /// waits its fair turn, then answers `render_deadline`. Never a refusal.
+    pub renderer_work: usize,
     /// Bytes stored LFS objects may come to, counting what uploads in flight
     /// have reserved: each reserves its declared size, or the per-object row
     /// when it declares none. Past it, an upload still lands and the row asks.
@@ -133,6 +136,13 @@ pub struct LimitsConfig {
     /// its memory), not a count: past it, such state is the memory floor's
     /// one refusal, and a retained ring falls back to a resync.
     pub retained_memory_bytes: u64,
+    /// Bytes the media replies providers send this server (an image, a clip,
+    /// speech) may hold in memory at once (FIX 8615): a reply takes room as
+    /// it is read, waiting its turn past it, and keeps it until its decoded
+    /// answer leaves the adapter. One larger than the whole line runs alone.
+    /// A memory bound sized from the machine (an eighth of its memory), not
+    /// a size cap: no reply is refused for its size.
+    pub media_reply_bytes: u64,
     /// Bytes one note to the open feedback inbox may carry: a POST body, or
     /// a GET link's query. A memory floor: a longer note is refused with 413
     /// before it is stored. Room for any v1 feedback bundle.
@@ -156,6 +166,7 @@ impl Default for LimitsConfig {
             embedder_answer_bytes: 256 * 1024 * 1024,
             decision_reads: 2_048,
             task_work: TASK_WORK,
+            renderer_work: crate::slide_render::default_turns(),
             lfs_quota_bytes: 64 * 1024 * 1024 * 1024,
             // The door window's family (`DOOR_WINDOW_TIMEOUT`): long enough
             // for a slow link, short against a held-open socket.
@@ -173,6 +184,7 @@ impl Default for LimitsConfig {
             message_streams: oneiron::live_rows::LiveRows::DEFAULT_MESSAGE_STREAMS,
             live_documents: oneiron::live_rows::LiveRows::DEFAULT_LIVE_DOCUMENTS,
             retained_memory_bytes: memory_floor(),
+            media_reply_bytes: memory_floor(),
             feedback_inbox_bytes: 128 * 1024,
             engine: EngineLimits::default(),
         }
@@ -189,8 +201,8 @@ fn descriptor_floor() -> usize {
 }
 
 /// An eighth of the machine's memory for what LFS transfers hold in memory,
-/// and as much for app-tier state kept between frames, each at least 256
-/// MiB; 2 GiB when the platform does not say.
+/// and as much for app-tier state kept between frames and for media replies,
+/// each at least 256 MiB; 2 GiB when the platform does not say.
 fn memory_floor() -> u64 {
     const MIB: u64 = 1024 * 1024;
     crate::machine::memory_bytes().map_or(2_048 * MIB, |memory| (memory / 8).max(256 * MIB))
@@ -226,6 +238,7 @@ impl LimitsConfig {
             embedder_answer_bytes,
             decision_reads,
             task_work,
+            renderer_work,
             lfs_quota_bytes,
             transfer_idle_timeout_ms,
             retrieval_query_bytes,
@@ -239,6 +252,7 @@ impl LimitsConfig {
             message_streams,
             live_documents,
             retained_memory_bytes,
+            media_reply_bytes,
             feedback_inbox_bytes,
             keyed_filter_json_bytes,
             code_result_inline_bytes,
@@ -356,6 +370,8 @@ impl LimitsConfig {
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
+            authority_record_items,
+            connector_live_questions,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -371,6 +387,7 @@ impl LimitsConfig {
         set(&mut self.embedder_answer_bytes, embedder_answer_bytes);
         set(&mut self.decision_reads, decision_reads);
         set(&mut self.task_work, task_work);
+        set(&mut self.renderer_work, renderer_work);
         set(&mut self.lfs_quota_bytes, lfs_quota_bytes);
         set(&mut self.transfer_idle_timeout_ms, transfer_idle_timeout_ms);
         set(&mut self.retrieval_query_bytes, retrieval_query_bytes);
@@ -387,6 +404,7 @@ impl LimitsConfig {
         set(&mut self.message_streams, message_streams);
         set(&mut self.live_documents, live_documents);
         set(&mut self.retained_memory_bytes, retained_memory_bytes);
+        set(&mut self.media_reply_bytes, media_reply_bytes);
         set(&mut self.feedback_inbox_bytes, feedback_inbox_bytes);
         for (row, bound) in [
             (EngineLimit::KeyedFilterJsonBytes, keyed_filter_json_bytes),
@@ -562,6 +580,11 @@ impl LimitsConfig {
                 EngineLimit::BackupHandoffPendingBytes,
                 backup_handoff_pending_bytes,
             ),
+            (EngineLimit::AuthorityRecordItems, authority_record_items),
+            (
+                EngineLimit::ConnectorLiveQuestions,
+                connector_live_questions,
+            ),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -588,6 +611,7 @@ impl LimitsConfig {
             ("embedder_answer_bytes", self.embedder_answer_bytes),
             ("decision_reads", self.decision_reads as u64),
             ("task_work", self.task_work as u64),
+            ("renderer_work", self.renderer_work as u64),
             ("lfs_quota_bytes", self.lfs_quota_bytes),
             ("transfer_idle_timeout_ms", self.transfer_idle_timeout_ms),
             ("retrieval_query_bytes", self.retrieval_query_bytes as u64),
@@ -600,6 +624,7 @@ impl LimitsConfig {
             ("message_streams", self.message_streams as u64),
             ("live_documents", self.live_documents as u64),
             ("retained_memory_bytes", self.retained_memory_bytes),
+            ("media_reply_bytes", self.media_reply_bytes),
             ("feedback_inbox_bytes", self.feedback_inbox_bytes),
         ] {
             if value == 0 {
@@ -657,6 +682,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) embedder_answer_bytes: Option<u64>,
     pub(super) decision_reads: Option<usize>,
     pub(super) task_work: Option<usize>,
+    pub(super) renderer_work: Option<usize>,
     pub(super) lfs_quota_bytes: Option<u64>,
     pub(super) transfer_idle_timeout_ms: Option<u64>,
     pub(super) retrieval_query_bytes: Option<usize>,
@@ -670,6 +696,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) message_streams: Option<usize>,
     pub(super) live_documents: Option<usize>,
     pub(super) retained_memory_bytes: Option<u64>,
+    pub(super) media_reply_bytes: Option<u64>,
     pub(super) feedback_inbox_bytes: Option<u64>,
     pub(super) keyed_filter_json_bytes: Option<u64>,
     pub(super) code_result_inline_bytes: Option<u64>,
@@ -787,4 +814,6 @@ pub(super) struct LimitsConfigOverride {
     pub(super) deadline_jobs_per_caller: Option<u64>,
     pub(super) backup_handoff_pending_backups: Option<u64>,
     pub(super) backup_handoff_pending_bytes: Option<u64>,
+    pub(super) authority_record_items: Option<u64>,
+    pub(super) connector_live_questions: Option<u64>,
 }

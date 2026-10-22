@@ -47,6 +47,9 @@ pub struct BatchBuilder<'a> {
     births: Vec<(EntityId, crate::provenance::birth::RowBirth)>,
     /// The body file each ASSET put queued as a manifest names (FIX 3677).
     asset_files: std::collections::HashMap<EntityId, crate::store::AssetBodyFacts>,
+    /// The rows `put_replicated` queued: replay's materialization provenance
+    /// (FIX 7925), set by that door alone.
+    replicated_puts: std::collections::BTreeSet<EntityId>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -107,6 +110,7 @@ impl<'a> BatchBuilder<'a> {
             text_births: std::collections::HashMap::new(),
             births: Vec::new(),
             asset_files: std::collections::HashMap::new(),
+            replicated_puts: std::collections::BTreeSet::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]

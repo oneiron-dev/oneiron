@@ -51,16 +51,17 @@
 //! provenance, so source honesty is unforgeable). Two provenance facts ride
 //! different fields, deliberately:
 //!
-//! * `src` is [`ClaimSource::Observed`](crate::ClaimSource::Observed) on every row — the projector and the
-//!   Dreamer OBSERVED the trace, which is the same stamp the sibling
-//!   `actor.confidence_prior` and `skill.reliability` projections carry. It is
-//!   also this ledger's federation boundary: the cross-vault door restamps
-//!   foreign claims `src → Imported`, and `validate_actor_claim_structure`
-//!   then refuses them, so a peer's opinion of who is careless never enters
-//!   this vault's routing signal. (`src` is additionally the consent axis: a
-//!   derived source demands an explicit policy auto-permit, and these rows are
-//!   `Auto`, so a `ToolOutput` stamp here would not be a truer label — it would
-//!   be a different, wrong claim about consent.)
+//! * `src` says who made the row's assertion (FIX 8641). A TASK or amendment
+//!   row is [`ClaimSource::Observed`](crate::ClaimSource::Observed): the
+//!   engine measured receipts it holds, the stamp the sibling
+//!   `actor.confidence_prior` and `skill.reliability` projections carry. A
+//!   distilled CHAT note, a dreaming candidate and the owner's verdict on one
+//!   are [`ClaimSource::Generated`](crate::ClaimSource::Generated): a model
+//!   wrote the prose. `src` is also this ledger's federation boundary: the
+//!   cross-vault door restamps foreign claims `src → Imported`, and
+//!   `validate_actor_claim_structure` then refuses them as learned truth, so a
+//!   peer's opinion of who is careless never enters this vault's routing
+//!   signal.
 //! * [`ACTOR_CLAIM_LINEAGE_KEY`] — the engine's own `evidence_taint` SCOPE
 //!   entry (ONE-1385/ONE-1314) — carries the EVIDENCE MEET: `tool_output` for
 //!   a TASK-lane row resting on attempt receipts, `generated` for a CHAT-lane
@@ -102,6 +103,7 @@ mod write;
 pub use self::craft_read::{
     CRAFT_HEADING, CraftNote, craft_message_entries, craft_message_text, craft_note_line,
     resident_craft_claim_ids, resident_craft_pack, resident_craft_pack_scoped,
+    supported_craft_note,
 };
 pub use self::distill::{
     SessionActorDistiller, SessionDistillBrief, SessionDistillTurn, SessionDistillUtterance,
@@ -109,11 +111,10 @@ pub use self::distill::{
 };
 pub use self::evidence::ActorClaimEvidence;
 pub use self::rows::{
-    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_CLAIM_MAX_CITED_EVIDENCE, ACTOR_DISTILL_CALL_PURPOSE_NAME,
-    ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES,
-    ACTOR_SKILL_FIT_SCOPE_KEY, ActorClaimRow, ActorNote, ActorNoteKind, LAPSE_FAILURE_MODE,
-    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE,
-    PREDICATE_ACTOR_SKILL_FIT,
+    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_EDIT_COST_SCOPE_KEY,
+    ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY,
+    ActorClaimRow, ActorNote, ActorNoteKind, LAPSE_FAILURE_MODE, PREDICATE_ACTOR_FAILURE_MODE,
+    PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT,
 };
 pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};

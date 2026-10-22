@@ -3,6 +3,7 @@
 mod cli_and_pinned_config;
 mod config_types;
 mod eval_run;
+mod provider;
 mod reports_and_fixture_helpers;
 mod taskgen;
 #[cfg(test)]
@@ -12,6 +13,8 @@ mod tests_b;
 mod wire_and_scoring;
 
 pub(crate) use self::cli_and_pinned_config::run;
+pub(crate) use self::cli_and_pinned_config::{parse_pinned_model_config, pinned_model_for_wire_id};
+pub(crate) use self::taskgen::{freeze_tail, write_json_atomic};
 
 #[cfg(test)]
 use self::{cli_and_pinned_config::*, config_types::*, wire_and_scoring::*};

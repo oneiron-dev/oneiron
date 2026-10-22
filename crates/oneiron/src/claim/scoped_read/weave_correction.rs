@@ -71,7 +71,8 @@ pub enum WeaveItemTarget {
 impl WeaveItemTarget {
     /// The target a report row is, when it takes a wrong-item label. A link
     /// takes a wrong-link label; a health card settles through the concern
-    /// door; a resident's dream progress takes none.
+    /// door; a resident's dream progress takes none, and neither does a loop
+    /// decision yet.
     #[must_use]
     pub fn of(item: &WeaveItem) -> Option<Self> {
         match item {
@@ -90,6 +91,10 @@ impl WeaveItemTarget {
             WeaveItem::Link { .. }
             | WeaveItem::DreamProgress { .. }
             | WeaveItem::AgentHealth { .. } => None,
+            // A loop decision is a gate decision, not an entity: it takes no
+            // wrong label until a decision-target key is agreed (FIX 7598),
+            // and its claim never stands in for it.
+            WeaveItem::LoopDecision { .. } => None,
         }
     }
 

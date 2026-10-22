@@ -14,6 +14,8 @@ mod legal_hold;
 mod publish;
 mod receipt;
 mod receipt_completion;
+mod receipt_final;
+mod receipt_grammar;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
@@ -53,6 +55,8 @@ pub use coop_succession::{
 pub use delete::{
     DeleteEntityOptions, DeleteEntityOutcome, DeleteEntityPreview, HeldBytes, LfsChunkImpact,
 };
+// A maintenance pass's audited corrupt-CLAIM classification (FIX 7800).
+pub use erase::CorruptClaimRepair;
 pub use legal_hold::{
     ERASE_COMPLETION_PENDING, ErasePendingReason, HostOrderHold, LEGAL_HOLD_DEFERRAL,
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LEGAL_HOLD_REFUSAL, LEGAL_HOLD_SELF_HOSTED_NOTE,
@@ -82,6 +86,10 @@ pub use actor_fields::{
     ACTOR_ERASE_CARRIER_MERGE, ACTOR_ERASE_CARRIER_SOURCE, CarrierActorMerge, CarrierEraseSource,
 };
 
+// Whether an id is no actor: the one header check every lane's actor scrub
+// asks (FIX 8908).
+pub(crate) use actor_fields::names_no_actor;
+
 // A checkpoint restore reruns the erase's actor sweep (FIX 3655).
 pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
 // A due owner-confirmed erase rechecks its pending row (FIX 6337).
@@ -89,11 +97,18 @@ pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::TombstoneScopeProbes;
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
-pub(crate) use receipt::{decode_redaction_audit_receipt, validate_redaction_receipt_body};
+pub(crate) use receipt::decode_redaction_audit_receipt;
+// A corrupt CLAIM's repair event is no erase receipt (FIX 7800).
+pub(crate) use receipt::is_corrupt_claim_repair_event;
 pub(crate) use receipt_completion::{
     append_redaction_sweep_completion_in_txn, redaction_sweep_completion_id,
     redaction_sweep_completion_in_txn,
 };
+// An erase's overall final row (FIX 5844).
+pub(crate) use receipt_final::{
+    finish_redaction_erase_in_txn, redaction_erase_final_id, redaction_erase_final_in_txn,
+};
+pub(crate) use receipt_grammar::validate_redaction_receipt_body;
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{
@@ -129,10 +144,7 @@ pub(crate) use tombstone::ReplayedTombstoneOutcome;
 pub(crate) use tombstone::PENDING_TOMBSTONE_PREFIX;
 
 #[cfg(feature = "sync")]
-pub(crate) use receipt::{
-    ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts,
-    redaction_receipt_is_stale_finalization_echo,
-};
+pub(crate) use receipt::{ATT_EMPTY_MAP_BYTE, RECEIPT_ATT_DOMAIN, receipt_attestation_parts};
 
 // Crate-facing paths whose consumers are all `#[cfg(test)]`; the re-export
 // carries the same gate so a non-test build re-exports nothing it never uses.

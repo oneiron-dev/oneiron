@@ -104,13 +104,20 @@ impl CoachHealthHost for HostModel<'_> {
             return Ok(None);
         };
         let card = &brief.card;
-        // The draft reads the TASK, every pad and each loaded skill whole:
-        // their sizes are measured, never cut.
+        // The draft reads the TASK, the observed brief, every pad and each
+        // loaded skill whole: their sizes are measured, never cut.
         let longest = brief
             .pads
             .iter()
             .map(|pad| pad.markdown.len())
-            .chain(brief.task.as_ref().map(String::len))
+            .chain(brief.current_task.as_ref().map(String::len))
+            .chain(
+                brief
+                    .observed_brief
+                    .as_ref()
+                    .and_then(|observed| observed.text.as_ref())
+                    .map(String::len),
+            )
             .chain(brief.skills.iter().map(|skill| skill.instructions.len()))
             .max()
             .unwrap_or(0);
@@ -126,11 +133,13 @@ impl CoachHealthHost for HostModel<'_> {
             "measured": card.measured,
             "dial": card.dial,
             "counter_evidence": card.counter_evidence,
+            "causes": card.causes,
             "agent_said_stuck": card.agent_blocked,
             "evidence_count": card.evidence.len(),
             "window": [card.window_from, card.window_to],
             "skills": brief.skills,
-            "task": brief.task,
+            "observed_brief": brief.observed_brief,
+            "current_task": brief.current_task,
             "scratchpads": brief
                 .pads
                 .iter()

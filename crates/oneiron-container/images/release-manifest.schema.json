@@ -1,0 +1,597 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/oneiron-dev/oneiron/blob/main/crates/oneiron-container/images/release-manifest.schema.json",
+  "title": "Oneiron guest image release manifest (image-release.json)",
+  "description": "The closed wire of one image generation's release manifest. A detached envelope ($defs.signature_envelope, image-release.sig.json) signs the exact file bytes; no canonical form exists. The reader is oneiron_container::image_release; see manifest.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kind",
+    "variant",
+    "arch",
+    "generation",
+    "engine",
+    "contracts",
+    "artifacts",
+    "binaries",
+    "sbom",
+    "provenance",
+    "host",
+    "snapshot",
+    "facts"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "kind": {
+      "const": "oneiron-image-release"
+    },
+    "variant": {
+      "enum": [
+        "base",
+        "vault",
+        "browser",
+        "desktop-cua",
+        "checker",
+        "generic-agent"
+      ]
+    },
+    "arch": {
+      "enum": [
+        "linux/amd64"
+      ]
+    },
+    "generation": {
+      "description": "The engine commit's first 12 hex, '-', the build receipt's sha256 first 16 hex.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{1,128}$"
+    },
+    "engine": {
+      "$ref": "#/$defs/engine"
+    },
+    "contracts": {
+      "$ref": "#/$defs/contracts"
+    },
+    "artifacts": {
+      "$ref": "#/$defs/artifacts"
+    },
+    "binaries": {
+      "$ref": "#/$defs/binaries"
+    },
+    "sbom": {
+      "description": "The build's SPDX 2.3 JSON SBOM (sbom.spdx.json), or null for a build without one; never a placeholder.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/document"
+        }
+      ]
+    },
+    "provenance": {
+      "description": "The build receipt (receipt.json).",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/document"
+        }
+      ]
+    },
+    "host": {
+      "$ref": "#/$defs/host"
+    },
+    "snapshot": {
+      "$ref": "#/$defs/snapshot"
+    },
+    "facts": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "blake3_unmeasured"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "blake3": {
+      "type": "string",
+      "pattern": "^blake3:[0-9a-f]{64}$"
+    },
+    "u32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "relative_path": {
+      "description": "Relative to the manifest's directory (artifacts) or the repo root at engine.commit (source pins): no leading '/', no backslash, no empty, '.' or '..' component.",
+      "type": "string",
+      "pattern": "^(?!.*\\\\)(?!(?:.*/)?\\.\\.?(?:/|$))(?:[^/]+/)*[^/]+$"
+    },
+    "source_pin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "commit",
+        "version"
+      ],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "vault_contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "vm_provision_revision",
+        "vm_outbox_wire_revision",
+        "vm_restore_wire_revision",
+        "vm_anchor_wire_revision",
+        "vm_anchor_proxy_revision",
+        "vm_network_revision",
+        "vm_managed_profile_revision"
+      ],
+      "properties": {
+        "contract_version": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_provision_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_outbox_wire_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_restore_wire_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_anchor_wire_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_anchor_proxy_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_network_revision": {
+          "$ref": "#/$defs/u32"
+        },
+        "vm_managed_profile_revision": {
+          "$ref": "#/$defs/u32"
+        }
+      }
+    },
+    "storage_abi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "abi_version",
+        "schema_version"
+      ],
+      "properties": {
+        "abi_version": {
+          "$ref": "#/$defs/u32"
+        },
+        "schema_version": {
+          "$ref": "#/$defs/u32"
+        }
+      }
+    },
+    "unversioned_contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "native_session",
+        "fence_wire",
+        "fence_supervisor",
+        "relay"
+      ],
+      "properties": {
+        "native_session": {
+          "$ref": "#/$defs/source_pin"
+        },
+        "fence_wire": {
+          "$ref": "#/$defs/source_pin"
+        },
+        "fence_supervisor": {
+          "$ref": "#/$defs/source_pin"
+        },
+        "relay": {
+          "$ref": "#/$defs/source_pin"
+        }
+      }
+    },
+    "contracts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guest_protocol",
+        "checker_helper",
+        "wit_world",
+        "vault",
+        "storage",
+        "unversioned"
+      ],
+      "properties": {
+        "guest_protocol": {
+          "$ref": "#/$defs/u32"
+        },
+        "checker_helper": {
+          "$ref": "#/$defs/u32"
+        },
+        "wit_world": {
+          "type": "string",
+          "minLength": 1
+        },
+        "vault": {
+          "$ref": "#/$defs/vault_contracts"
+        },
+        "storage": {
+          "description": "null for a variant that keeps no vault storage.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/storage_abi"
+            }
+          ]
+        },
+        "unversioned": {
+          "$ref": "#/$defs/unversioned_contracts"
+        }
+      }
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "bytes",
+        "sha256",
+        "blake3"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "blake3": {
+          "description": "null only beside the manifest fact blake3_unmeasured.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/blake3"
+            }
+          ]
+        }
+      }
+    },
+    "oci": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "index_digest",
+        "manifest_digest",
+        "config_digest",
+        "layer_digest",
+        "layer_diff_id",
+        "archive"
+      ],
+      "properties": {
+        "reference": {
+          "description": "The tag the archive loads as: a name, not an identity.",
+          "type": "string",
+          "minLength": 1
+        },
+        "index_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "config_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "layer_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "layer_diff_id": {
+          "$ref": "#/$defs/sha256"
+        },
+        "archive": {
+          "$ref": "#/$defs/file"
+        }
+      }
+    },
+    "kernel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "image"
+      ],
+      "properties": {
+        "config": {
+          "$ref": "#/$defs/source_pin"
+        },
+        "image": {
+          "description": "The family builds no kernel; an operator-supplied one is listed here, else null.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/file"
+            }
+          ]
+        }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "oci",
+        "rootfs_ext4",
+        "kernel"
+      ],
+      "properties": {
+        "oci": {
+          "$ref": "#/$defs/oci"
+        },
+        "rootfs_ext4": {
+          "$ref": "#/$defs/file"
+        },
+        "kernel": {
+          "$ref": "#/$defs/kernel"
+        }
+      }
+    },
+    "binary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "binaries": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "guest",
+        "fence",
+        "relay"
+      ],
+      "properties": {
+        "guest": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/binary"
+            }
+          ]
+        },
+        "fence": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/binary"
+            }
+          ]
+        },
+        "relay": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/binary"
+            }
+          ]
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_type",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "$ref": "#/$defs/relative_path"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kvm",
+        "kernel_floor",
+        "landlock_abi_floor",
+        "seccomp_user_notify"
+      ],
+      "properties": {
+        "kvm": {
+          "description": "Every launch form needs /dev/kvm (the vault). false: the OCI form runs without KVM; the Firecracker form still needs it.",
+          "type": "boolean"
+        },
+        "kernel_floor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "string",
+              "pattern": "^[0-9]{1,4}\\.[0-9]{1,4}$"
+            }
+          ]
+        },
+        "landlock_abi_floor": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/u32"
+            }
+          ]
+        },
+        "seccomp_user_notify": {
+          "type": "boolean"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "qualified",
+        "rootfs_ext4_blake3",
+        "kernel_blake3",
+        "guest_protocol",
+        "storage_abi"
+      ],
+      "properties": {
+        "qualified": {
+          "type": "boolean"
+        },
+        "rootfs_ext4_blake3": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/blake3"
+            }
+          ]
+        },
+        "kernel_blake3": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/blake3"
+            }
+          ]
+        },
+        "guest_protocol": {
+          "$ref": "#/$defs/u32"
+        },
+        "storage_abi": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/u32"
+            }
+          ]
+        }
+      }
+    },
+    "signature_envelope": {
+      "description": "image-release.sig.json, detached: a signature over the exact image-release.json bytes. Shaped after a Sigstore bundle's verification material (https://docs.sigstore.dev/about/bundle/), so a KMS/HSM key, Sigstore keyless or an owner hardware key fills it without any caller changing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provider",
+        "algorithm",
+        "key_or_identity_ref",
+        "signature"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "kms_hsm",
+            "sigstore_keyless",
+            "owner_hardware_key"
+          ]
+        },
+        "algorithm": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$"
+        },
+        "key_or_identity_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signature": {
+          "description": "Standard base64.",
+          "type": "string",
+          "minLength": 1
+        },
+        "certificate_or_bundle": {
+          "description": "A PEM certificate chain or a whole Sigstore v0.3 bundle (application/vnd.dev.sigstore.bundle.v0.3+json).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}

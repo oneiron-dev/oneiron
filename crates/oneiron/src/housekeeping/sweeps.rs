@@ -34,8 +34,9 @@ const SECRET_TEARDOWN_RETRIES: usize = 64;
 /// Rows one cache-eviction page reads.
 const PPR_CACHE_PAGE: usize = 512;
 
-/// Draft claims one signing page reads, well inside the signing doors' batch
-/// bound of 100 documents.
+/// Draft claims one signing page reads. The signing doors sweep every
+/// document handed; past the `[limits] esign_sweep_documents` row they ask
+/// and go on, so this page only paces the walk.
 const ESIGN_PAGE: usize = 32;
 
 /// What one sweep run did.
@@ -200,6 +201,11 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_known_history_retirements_after_commit();
     // An erased world's pads (KS-5, FIX 346), retried here.
     vault.finish_world_pad_retirements_after_commit();
+    // A dropped connector call's resume keys (FIX 9157, 9159), retried here.
+    vault.finish_connector_resume_retirements_after_commit();
+    // Body instances nothing needs any longer, by the one policy (FIX 6022).
+    #[cfg(unix)]
+    vault.sweep_body_retention_after_commit();
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {

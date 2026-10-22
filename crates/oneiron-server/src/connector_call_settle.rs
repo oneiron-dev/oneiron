@@ -11,7 +11,11 @@
 //! caller that reads the settled wait later), and only then acknowledged, so
 //! the engine keeps the row until that reply has committed. A crash in
 //! between leaves a settled row, whose next pass delivers its receipt with no
-//! reply body (`result_not_retained`); nothing is resent to rebuild one. The
+//! reply body (`result_not_retained`); nothing is resent to rebuild one. A
+//! resumed call whose connector asked for input delivers its questions and
+//! their handle the same way, so the run or caller waiting on it answers
+//! them through `connector.answer` (FIX 3839). Its row keeps the round for
+//! its caller's polls and is never resumed again (FIX 3837). The
 //! acknowledgement keeps who called it, so `connector.call_status` serves the
 //! settled wait to that caller and the owner alone (FIX 2279). The reply is
 //! delivered beside the rows the call's passes picked (FIX 5455), which the
@@ -180,14 +184,15 @@ fn settle_connector_calls(
             }
         };
         let reply = ConnectorCallReply::project(&call.name, &call.tool, outcome);
-        // A connector that asked for input mid-call received the call: its
-        // row now keeps that delivery, which a later pass delivers to the
-        // wait, receipt-only. Nobody parked on the wait holds the questions'
-        // handle, so they lapse unanswered.
-        if reply.wait_ref().is_some() || matches!(reply, ConnectorCallReply::AwaitingInput { .. }) {
+        if reply.wait_ref().is_some() {
             backoffs.defer(call.call_ref, now);
             continue;
         }
+        // A connector that asked for input mid-call received the call: its
+        // questions and their handle are the call's reply, delivered to the
+        // wait like any other, so whoever waits on the call answers them
+        // (FIX 3839). Its row keeps the round for its caller's polls
+        // (FIX 3837), so the acknowledgement below leaves that row.
         let reply = serde_json::to_value(&reply)
             .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
         // The reply rides beside the rows the call's passes picked, kept

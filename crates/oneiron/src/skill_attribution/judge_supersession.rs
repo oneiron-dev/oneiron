@@ -63,6 +63,16 @@ pub(crate) fn ensure_current_attribution_judge_in_txn(
     Ok(())
 }
 
+/// The revision that displaced `revision`, when one has: its fence's
+/// replacement. A retained cause by that judge is history, never rescored.
+pub(super) fn displacing_revision_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    revision: &str,
+) -> Result<Option<String>> {
+    REVISION_FENCE.get(&vault.store, txn, &revision.to_owned())
+}
+
 pub(super) fn stamp_judge_revision(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

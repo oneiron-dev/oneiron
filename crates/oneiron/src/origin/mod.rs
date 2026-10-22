@@ -14,8 +14,12 @@ pub use document_candidate_types::{
     ReceivedRefSource,
 };
 pub(crate) use document_candidates::CandidateQueue;
+pub use document_candidates::projected::{
+    RepoProjectedCandidateFilePin, RepoProjectedCandidatePins,
+};
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
+pub use secret_projection::clearance::RepoProjectionHoldCause;
 pub mod lfs;
 pub mod publication;
 pub mod smart_http;
@@ -23,7 +27,9 @@ pub mod smart_http;
 pub mod change_index;
 pub mod conflict_tree;
 pub mod export;
+mod export_input;
 mod export_parent;
+pub mod export_preview;
 pub mod mirror;
 pub mod mirror_auto;
 mod mirror_census;
@@ -38,4 +44,6 @@ mod repo_import;
 pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
 pub mod residence;
 pub mod secret_manifest;
+pub(crate) mod secret_marks;
+pub(crate) mod secret_projection;
 pub mod tree;

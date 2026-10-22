@@ -11,7 +11,7 @@
 //! The route projection is generated from `scripts/sdk/agent-verbs.json`.
 //! Claim lifecycle, scoped reads, export, notes, artifacts, tasks and rooms
 //! all use the same inventory and engine DTOs as the native clients. Every
-//! route runs its row through the generated dispatch (`dispatch.rs`), the one
+//! route runs its row through the generated dispatch (`facade/generated/dispatch.rs`), the one
 //! the held socket's `rpc.req` runs too (OF-489), so a verb meets the same
 //! admission on both. Live subscriptions remain owned by the held socket
 //! rather than this router.
@@ -29,6 +29,7 @@ mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_grant_doors;
+#[path = "facade/generated/agent_verbs.rs"]
 mod agent_verbs;
 mod aging_doors;
 mod artifact_hosting_doors;
@@ -58,6 +59,8 @@ mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
+mod connector_revision_doors;
+mod connector_slate_doors;
 mod consent_doors;
 mod consolidation_doors;
 mod content_policy_doors;
@@ -74,6 +77,7 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod deck_creation_doors;
 mod disclosure_doors;
+#[path = "facade/generated/dispatch.rs"]
 mod dispatch;
 mod embedding_space_doors;
 mod eval_doors;
@@ -137,6 +141,7 @@ pub(super) mod role_picks;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
+mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
@@ -469,11 +474,12 @@ async fn facade_call_receipt(
         Some(value) => oneiron::receipt::call_json_digest(value),
         None => oneiron::receipt::call_bytes_digest(&bytes),
     };
-    // OF-568: what the call reads, captured before it runs.
+    // OF-568: what the call reads, captured before it runs. OF-568 L4: the
+    // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
-    let mut response = next
-        .run(Request::from_parts(parts, Body::from(bytes)))
-        .await;
+    let (mut response, attempt) =
+        call_receipt::attempt_witnessed(next.run(Request::from_parts(parts, Body::from(bytes))))
+            .await;
     let mut refusal = response.extensions_mut().remove::<FacadeApiError>();
     let status = response.status();
     let mut result_digest = None;
@@ -536,6 +542,7 @@ async fn facade_call_receipt(
             request_digest,
             result_digest,
             inputs,
+            attempt,
             served: Vec::new(),
         },
     );
@@ -988,7 +995,9 @@ pub(super) fn owner_authorship(
     }) else {
         return Ok(None);
     };
-    if server.managed_issuer.is_some() || !auth.is_owner_grade() {
+    // The owner's own forwarded slip carries his authorship on a managed
+    // vault too (FIX 5121): it is his say-so, on his own proof.
+    if !auth.is_owner_grade() {
         return Ok(None);
     }
     let refused = || ApiError::forbidden_scope("owner");
@@ -1420,7 +1429,7 @@ fn facade_rewrite_admit(
         facade_admit_rewritten(&vault, &auth, &original, rewritten)?;
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
-        crate::owner::cooperative_deletion::check_rewritten_reply_to(verb, rewritten)
+        crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
     })
 }
 
@@ -1642,6 +1651,11 @@ impl From<MemoryError> for FacadeApiError {
             | oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE => {
                 StatusCode::CONFLICT
             }
+            // FIX 7650: a foreign guest's proposal spool met the host's disk
+            // floor. The server's storage, named, never the caller's request.
+            oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
+                StatusCode::INSUFFICIENT_STORAGE
+            }
             // A paid call its line cannot cover, as a chat turn's is.
             MEMORY_CODE_BUDGET_SPENT => StatusCode::PAYMENT_REQUIRED,
             // A verb hook asked first: accepted, not run, and the body names
@@ -1674,6 +1688,11 @@ impl From<MemoryError> for FacadeApiError {
                 browser_doors::browser_refusal_status(code)
                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
+            // FIX 7653: a render that ran past its deadline or met a machine
+            // floor is not the caller's fault, and can be asked again.
+            crate::slide_render::RENDER_DEADLINE
+            | crate::slide_render::RENDER_MEMORY_FLOOR
+            | crate::slide_render::RENDER_DISK_FLOOR => StatusCode::SERVICE_UNAVAILABLE,
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };

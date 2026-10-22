@@ -477,6 +477,8 @@ class Oneiron:
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
+        @property
+        def runners(self) -> "Oneiron._VaultRunnersVerbs": ...
         def commit_message(self, spec: Facade.CommitMessageRequest) -> Facade.WitnessReceipt:
             """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
         def begin_message_stream(self, spec: Facade.BeginMessageStreamRequest) -> Facade.MessageStreamHandle:
@@ -577,6 +579,8 @@ class Oneiron:
         def roots(self) -> "Oneiron._VaultRootsVerbs": ...
         @property
         def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
+        @property
+        def archive(self) -> "Oneiron._VaultArchiveVerbs": ...
         @property
         def usage(self) -> "Oneiron._VaultUsageVerbs": ...
         @property
@@ -884,6 +888,14 @@ class Oneiron:
             """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
         def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
             """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
+    class _VaultRunnersVerbs:
+        @property
+        def seats(self) -> "Oneiron._VaultRunnersSeatsVerbs": ...
+    class _VaultRunnersSeatsVerbs:
+        def quotas(self, spec: Facade.RunnerSeatQuotasRequest) -> Facade.RunnerSeatQuotasView:
+            """The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from."""
+        def top_up(self, spec: Facade.RunnerSeatCreditTopUpRequest) -> Facade.RunnerSeatTopUpReceipt:
+            """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
     class _VaultMessagesVerbs:
         def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
             """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
@@ -1227,7 +1239,7 @@ class Oneiron:
         def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
             """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
         def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
-            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+            """The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
         @property
         def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
         @property
@@ -1458,12 +1470,31 @@ class Oneiron:
         @property
         def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs": ...
         @property
+        def slates(self) -> "Oneiron._VaultConnectorsSlatesVerbs": ...
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+        @property
+        def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
     class _VaultConnectorsProxyVerbs:
         def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
             """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
         def revoke_write(self, spec: Facade.ProxyConnectorRevokeWriteRequest) -> Facade.ProxyConnectorRegistration:
             """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
+    class _VaultConnectorsSlatesVerbs:
+        def redraft(self, spec: Facade.ConnectorSlateRedraftRequest) -> Facade.ConnectorSlateRedraftReply:
+            """The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."""
+        def narrow(self, spec: Facade.ConnectorSlateNarrowRequest) -> Facade.ConnectorSlateNarrowView:
+            """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
+        def scope_outcome(self, spec: Facade.ConnectorScopeOutcomeRequest) -> Facade.ConnectorScopeOutcomeView:
+            """The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted."""
+        def revision_offers(self, spec: Facade.ConnectorSlateRevisionOffersRequest) -> Facade.ConnectorSlateRevisionOffersView:
+            """Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing."""
+        def defer_revision(self, spec: Facade.ConnectorSlateRevisionDeferRequest) -> Facade.ConnectorRevisionSnoozeView:
+            """The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant."""
+        def accept_revision(self, spec: Facade.ConnectorSlateRevisionAcceptRequest) -> Facade.ConnectorSlateRevisionAcceptedView:
+            """The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again."""
+        def reask_issuer(self, spec: Facade.ConnectorIssuerReaskRequest) -> Facade.ConnectorCredentialBindingView:
+            """The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."""
     class _VaultConnectorsSubscriptionsVerbs:
         def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
             """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
@@ -1471,6 +1502,9 @@ class Oneiron:
             """An agent's connector event subscriptions, standing and revoked, for the owner."""
         def revoke(self, spec: Facade.ChannelSubscriptionRevokeRequest) -> Facade.ChannelSubscriptionRevoked:
             """The owner stops one connector event subscription; the agent's key for the channel stays."""
+    class _VaultConnectorsCallsVerbs:
+        def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
@@ -1663,7 +1697,7 @@ class Oneiron:
             """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
-            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+            """A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
         def list(self, spec: Facade.TrustedContactsRequest) -> list[Facade.TrustedContact]:
             """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
         def consent(self, spec: Facade.TrustedContactConsentRequest) -> Facade.TrustedContact:
@@ -1678,15 +1712,15 @@ class Oneiron:
         def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs": ...
     class _VaultTrustedContactsDialVerbs:
         def set(self, spec: Facade.TrustedContactDialRequest) -> Facade.TrustedContact:
-            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+            """A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
     class _VaultTrustedContactsTierVerbs:
         def set(self, spec: Facade.TrustedContactTierRequest) -> Facade.TrustedContactTierSet:
             """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
     class _VaultTrustedContactsConcernVerbs:
         def asks(self, spec: Facade.TrustedContactAsksRequest) -> list[Facade.TrustedContactAsk]:
-            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+            """A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
         def authorize(self, spec: Facade.TrustedContactAuthorizeRequest) -> Facade.TrustedContactAuthorization:
-            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
+            """A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
         def propose(self, spec: Facade.TrustedContactConcernRequest) -> Facade.TrustedContactConcernProposal:
             """The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."""
         def deliver(self, spec: Facade.TrustedContactDeliverRequest) -> Facade.TrustedContactDeliveryReceipt | None:
@@ -1754,7 +1788,7 @@ class Oneiron:
         def save_from_here(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."""
         def export(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomExport:
-            """A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in."""
+            """A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in."""
         def suggest_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomView:
             """An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."""
         def confirm_save(self, spec: Facade.OffRecordRoomRequest) -> Facade.OffRecordRoomSaved:
@@ -1877,6 +1911,14 @@ class Oneiron:
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultArchiveVerbs:
+        @property
+        def delete(self) -> "Oneiron._VaultArchiveDeleteVerbs": ...
+    class _VaultArchiveDeleteVerbs:
+        def preview(self, spec: Facade.ArchiveDeletePreviewRequest) -> Facade.ArchiveDeletePreviewView:
+            """Previews explicit archived records under the caller's delete authority."""
+        def confirm(self, spec: Facade.ArchiveDeleteConfirmRequest) -> Facade.ArchiveDeleteBatchResult:
+            """Deletes explicit archived records under the caller's current delete authority and returns each receipt."""
     class _VaultUsageVerbs:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs": ...
@@ -2017,7 +2059,7 @@ class Oneiron:
         def get(self, spec: Facade.PolicyManifestRead) -> Facade.PolicyManifestsView:
             """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
         def put(self, spec: Facade.PolicyManifestPut) -> Facade.PolicyManifestReceipt:
-            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+            """The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
         def propose(self, spec: Facade.PolicyManifestPropose) -> Facade.PolicyManifestReceipt:
             """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
     class _VaultGateCheckerVerbs:
@@ -2265,7 +2307,7 @@ class Oneiron:
         @property
         def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
         def proposal_submit(self, spec: Facade.CodeProposalSubmitRequest) -> Facade.CodeProposalSubmitted:
-            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed."""
         def conflict_record(self, spec: Facade.CodeConflictRecordRequest) -> Facade.CodeConflictView:
             """Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."""
         def conflict_view(self, spec: Facade.CodeConflictViewRequest) -> Facade.CodeConflictHistory:
@@ -2275,7 +2317,7 @@ class Oneiron:
         def proposal_review(self, spec: Facade.CodeProposalReviewRequest) -> Facade.CodeProposalSettlementView:
             """Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."""
         def proposal_settle(self, spec: Facade.CodeProposalSettleRequest) -> Facade.CodeProposalSettlementView:
-            """Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."""
+            """Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it."""
         def proposal_settlement(self, spec: Facade.CodeProposalSettlementRequest) -> Facade.CodeProposalSettlementView:
             """Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."""
         def oplog(self, spec: Facade.CodeRepoRequest) -> Facade.CodeMutationLog:
@@ -2285,8 +2327,8 @@ class Oneiron:
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs": ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
-        def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
-            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        @property
+        def export(self) -> "Oneiron._VaultCodeExportVerbs": ...
         def import_(self, spec: Facade.CodeRepoImportRequest) -> Facade.CodeRepoImportView:
             """Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only."""
         @property
@@ -2325,6 +2367,16 @@ class Oneiron:
             """Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."""
         def receipt(self, spec: Facade.CodeWaitReceiptRequest) -> Facade.CodeWaitReceiptView | None:
             """Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."""
+    class _VaultCodeExportVerbs:
+        def __call__(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
+            """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
+        @property
+        def preview(self) -> "Oneiron._VaultCodeExportPreviewVerbs": ...
+    class _VaultCodeExportPreviewVerbs:
+        def __call__(self, spec: Facade.CodeExportPreviewRequest) -> Facade.CodeExportPreviewAnswer:
+            """Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written."""
+        def read(self, spec: Facade.CodeExportFileReadRequest) -> Facade.CodeExportFileReadAnswer:
+            """Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read."""
     class _VaultCodeReposVerbs:
         def get(self, spec: Facade.CodeRepoGetRequest) -> Facade.CodeRepoView | None:
             """Read the selected served code repository, immutable import and workbench links. Owner only. Does not discover a global directory or mutate work."""
@@ -2431,7 +2483,7 @@ class Oneiron:
         def requeue_survivors(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueRequeueView:
             """Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."""
         def land_reviewed(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
-            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."""
+            """Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing."""
         def settle_slow(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
@@ -2444,8 +2496,15 @@ class Oneiron:
             """Request the frozen-plan fast checks needed for existing red-batch diagnosis, retaining proposals and the existing minimal quarantine. Owner only."""
         def check_status(self, spec: Facade.MergeQueueCheckStatusRequest) -> Facade.MergeQueueCheckWorkView:
             """Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only."""
+        @property
+        def review_policy(self) -> "Oneiron._VaultCodeMergeQueueReviewPolicyVerbs": ...
         def export_green(self, spec: Facade.MergeQueueGreenExportRequest) -> Facade.CodeExportResult:
             """Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result."""
+    class _VaultCodeMergeQueueReviewPolicyVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.QueueReviewPolicyView:
+            """Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant."""
+        def set(self, spec: Facade.QueueReviewPolicySetRequest) -> Facade.QueueReviewPolicyView:
+            """Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant."""
     class _VaultCodeChecksVerbs:
         def get(self, spec: Facade.CodeCheckReceiptRequest) -> Facade.CodeCheckReceiptView | None:
             """Read retained checker receipts for one inputs reference of the named work, including their generations, results and pinned evidence. Owner only. Never runs a check or accepts a pass."""
@@ -2505,7 +2564,7 @@ class Oneiron:
         @property
         def work(self) -> "Oneiron._VaultRepoWorkVerbs": ...
         def proposal_submit(self, spec: Facade.LiveRunRequest[Facade.RepoProposalSubmitInput]) -> Facade.RepoProposalSubmitOutput:
-            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept."""
+            """Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept."""
         @property
         def checkout(self) -> "Oneiron._VaultRepoCheckoutVerbs": ...
         def export(self, spec: Facade.LiveRunRequest[Facade.RepoExportInput]) -> Facade.RepoExportOutput:
@@ -2814,19 +2873,21 @@ class Oneiron:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
         def render_consent(self, spec: Facade.VoiceRenderConsentRequest) -> Facade.VoiceRenderConsentReceipt:
-            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+            """A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history."""
         @property
         def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs": ...
         def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
-            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            """A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone."""
+        def lineage(self, spec: Facade.VoiceRenderLineageRequest) -> list[Facade.VoiceRenderEventView]:
+            """A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call."""
     class _VaultVoicesPacksVerbs:
         def put(self, spec: Facade.VoiceBankPackPutRequest) -> Facade.VoiceBankPackReceipt:
-            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            """A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op."""
     class _VaultVoicesTargetsVerbs:
         def provision(self, spec: Facade.VoiceTargetProvisionRequest) -> Facade.VoiceTargetReceipt:
-            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+            """The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first."""
         def evict(self, spec: Facade.VoiceTargetEvictRequest) -> Facade.VoiceTargetEvictReceipt:
-            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
+            """A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
         def admit(self, spec: Facade.GraphAdmitRequest) -> Facade.GraphAskOutcome:
@@ -2837,7 +2898,8 @@ class Oneiron:
         def pause(self, spec: Facade.QuestionPauseRequest) -> Facade.QuestionPaused: ...
         def backfill(self, spec: Facade.QuestionBackfillRequest) -> Facade.ScheduledBackfill: ...
         def read(self, spec: Facade.QuestionReadRequest) -> Facade.QuestionRecord | None: ...
-        def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.QuestionAnswer]: ...
+        def answers(self, spec: Facade.QuestionAnswersRequest) -> Facade.QuestionAnswersReply:
+            """Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each."""
         def refresh(self, spec: Facade.QuestionRefreshRequest) -> list[Facade.QuestionAnswer]:
             """Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it."""
         @property
@@ -3403,7 +3465,7 @@ class Oneiron:
         def open(self, spec: Facade.LiveRunRequest[Facade.OpenInput]) -> Facade.BrowserObservationPage:
             """Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor."""
         def observe(self, spec: Facade.LiveRunRequest[Facade.ObserveInput]) -> Facade.BrowserObservationPage:
-            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched."""
+            """Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle."""
         def find(self, spec: Facade.LiveRunRequest[Facade.FindInput]) -> Facade.BrowserFindOutput:
             """Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page."""
         def click(self, spec: Facade.LiveRunRequest[Facade.ClickInput]) -> Facade.BrowserObservationPage:
@@ -3411,13 +3473,13 @@ class Oneiron:
         def click_at(self, spec: Facade.LiveRunRequest[Facade.PointInput]) -> Facade.BrowserObservationPage:
             """Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor."""
         def type(self, spec: Facade.LiveRunRequest[Facade.TypeInput]) -> Facade.BrowserObservationPage:
-            """Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next."""
+            """Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page."""
         def select(self, spec: Facade.LiveRunRequest[Facade.SelectInput]) -> Facade.BrowserObservationPage:
             """Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor."""
         def wait_for(self, spec: Facade.LiveRunRequest[Facade.WaitForInput]) -> Facade.BrowserWaitForOutput:
             """Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next."""
         def expect(self, spec: Facade.LiveRunRequest[Facade.ExpectInput]) -> Facade.BrowserExpectOutput:
-            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
+            """Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings."""
         def screenshot(self, spec: Facade.LiveRunRequest[Facade.ScreenshotInput]) -> Facade.BrowserScreenshotOutput:
             """Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope."""
         def view(self, spec: Facade.LiveRunRequest[Facade.ViewInput]) -> Facade.BrowserImageOutput:
@@ -3427,24 +3489,33 @@ class Oneiron:
         def zoom(self, spec: Facade.LiveRunRequest[Facade.ZoomInput]) -> Facade.BrowserImageOutput:
             """Zooms into a rectangle of a held image."""
         def batch(self, spec: Facade.LiveRunRequest[Facade.BatchInput]) -> Facade.BrowserBatchOutput:
-            """Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one."""
+            """Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."""
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
         def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
             """Moves the run browser to the other engine (lightpanda or chromium) when a page does not work on this one, as after a click_no_effect fact; carries the URL, cookies, storage and scroll, and records the switch. Nothing switches by itself."""
     class _SelfBrowserLibraryVerbs:
         def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.BrowserLibraryFindOutput:
-            """The replay library's programs for a site, or for the attached run's open page's site."""
+            """The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed."""
+        def draft(self, spec: Facade.LiveRunRequest[Facade.DraftInput]) -> Facade.BrowserLibraryDraftOutput:
+            """Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press."""
         def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.BrowserLibraryProposeOutput:
-            """Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition."""
+            """Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires."""
         def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.BrowserLibraryRetireOutput:
             """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
         def retired(self, spec: Facade.LiveRunRequest[Facade.LibraryRetiredInput]) -> Facade.BrowserLibraryRetiredOutput:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
         def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.BrowserLibraryRunOutput:
-            """Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner."""
+            """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
+    class _SelfBrowserDemonstrationVerbs:
+        def start(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStartInput]) -> Facade.BrowserDemonstrationStartOutput:
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+        def stop(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStopInput]) -> Facade.BrowserDemonstrationStopOutput:
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""
@@ -3453,13 +3524,15 @@ class Oneiron:
             """Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
-            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
+            """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`)."""
         def wave(self, spec: Facade.TaskWaveRequest) -> Facade.TaskWaveReceipt:
             """Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."""
         def update(self, spec: Facade.TaskUpdateRequest) -> Facade.TaskUpdateReceipt:
-            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK."""
+            """Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries."""
         def accept(self, spec: Facade.TaskAccept) -> Facade.TaskCallReceipt:
             """Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports."""
+        def redo(self, spec: Facade.TaskRedo) -> Facade.TaskCallReceipt:
+            """Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written."""
         def answer(self, handle: Facade.TaskAskHandle, word: Facade.TaskAskWord) -> Facade.TaskAskAnswer:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
@@ -3595,9 +3668,11 @@ class Oneiron:
         def schema(self, spec: Facade.ConnectorSchemaRequest) -> Facade.ConnectorSchemaReply:
             """One catalogued connector tool's approved input schema, as the caller's own grant resolves it."""
         def call_status(self, spec: Facade.ConnectorCallStatusRequest) -> Facade.ConnectorCallStatus:
-            """Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."""
+            """Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it."""
         @property
         def outbound(self) -> "Oneiron._ConnectorOutboundVerbs": ...
+        def answer(self, spec: Facade.ConnectorAnswerRequest) -> Facade.ConnectorCallReply:
+            """Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data."""
     class _ConnectorOutboundVerbs:
         def schedule(self, spec: Facade.OutboundScheduleRequest) -> Facade.OutboundIntentReceipt:
             """Schedules one send through a granted outbound connector, gated and held for delivery."""

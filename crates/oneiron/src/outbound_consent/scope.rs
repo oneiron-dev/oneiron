@@ -126,9 +126,16 @@ pub enum ScopedMcpEscalationReason {
     ConnectorKeyRevoked,
     ConnectorKeyCharterDrift,
     ConnectorManifestDrift,
-    StaleConnectorManifest { current_manifest_hash: [u8; 32] },
+    StaleConnectorManifest {
+        current_manifest_hash: [u8; 32],
+    },
     ConnectorKeyCharterNeverList,
     ConnectorKeyBudgetExhausted,
+    /// The tool's current setting is `always ask` (DEC-0006): the call
+    /// waits for the owner's press on exactly this call.
+    ConnectorSlateAlwaysAsk,
+    /// The tool's current setting is `never allow`: it is not callable.
+    ConnectorSlateNeverAllow,
 }
 
 /// Automated per-call consent decision.

@@ -98,6 +98,7 @@ pub(super) fn persist_review(
         };
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
+            principal_class: Some(request.actor.actor_class() as u8),
             dissent: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
@@ -184,6 +185,10 @@ pub(super) fn read_reliabilities(
 #[derive(Serialize, Deserialize)]
 struct StoredReview {
     principal: EntityId,
+    /// The class the review's actor authenticated as, the asker class of a dissent
+    /// question it keeps (FIX 1588). None on a review stored before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    principal_class: Option<u8>,
     dissent: BTreeMap<String, ReviewDissent>,
     verdict: String,
     triage: CritiqueTriage,
@@ -333,6 +338,41 @@ pub(crate) fn declared_critiques_in_txn(
     }
     Ok((found, unread))
 }
+
+/// The verdict claim of the stored review holding each in-scope critique,
+/// keyed by the critique's branch and artifact id, read in the caller's
+/// snapshot (FIX 6380): the way back from a critique found on its branch to
+/// the review that wrote it. A critique two reviews hold names the first in
+/// stored order. One line names each review whose verdict ref does not read;
+/// a review that does not decode is skipped here, as
+/// [`declared_critiques_in_txn`] names it. A storage fault fails the pass.
+pub(crate) fn critique_review_refs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<(BTreeMap<([u8; 16], String), EntityId>, Vec<String>)> {
+    let mut refs = BTreeMap::new();
+    let mut unread = Vec::new();
+    for row in RESULT.iter_raw_from(&vault.store, txn, &[])? {
+        let (_, value) = row?;
+        let Ok(stored) = RESULT.decode_value(&value) else {
+            continue;
+        };
+        let Ok(verdict) = EntityId::from_hex(&stored.verdict) else {
+            unread.push(format!(
+                "review {} keeps a verdict ref that does not read, so its critiques name no review",
+                stored.verdict
+            ));
+            continue;
+        };
+        for artifact in stored.artifacts {
+            if !artifact.out_of_scope {
+                refs.entry((*artifact.branch_attempt.as_bytes(), artifact.artifact_id))
+                    .or_insert(verdict);
+            }
+        }
+    }
+    Ok((refs, unread))
+}
 /// Calibration is node-local derived state, like the private critic artifacts it folds.
 /// A synced or raw claim is not a calibration event and cannot train this projector.
 pub(super) fn trusted_claim(
@@ -373,12 +413,19 @@ pub(super) fn persisted_artifact(
         .ok_or_else(|| invalid_critic_config("artifact is not a finding in this persisted review"))
 }
 
-/// Resume partial dissent retention without creating a second note or question.
+/// Resume partial dissent retention without creating a second note or question: the
+/// review's principal, the class it authenticated as when the review kept one, the
+/// dissent so far and the triage verdict.
 pub(super) fn dissent_state(
     vault: &Vault,
     verdict: &EntityId,
     artifact: &str,
-) -> Result<(EntityId, ReviewDissent, CritiqueVerdict)> {
+) -> Result<(
+    EntityId,
+    Option<crate::EdgeActorClass>,
+    ReviewDissent,
+    CritiqueVerdict,
+)> {
     let txn = vault.store.env.read_txn()?;
     let body = vault
         .get_claim_in_txn(&txn, verdict)?
@@ -402,7 +449,10 @@ pub(super) fn dissent_state(
             question: None,
             settled_fact: None,
         });
-    Ok((stored.principal, state, stored.triage.verdict))
+    let class = stored
+        .principal_class
+        .and_then(crate::EdgeActorClass::try_from_u8);
+    Ok((stored.principal, class, state, stored.triage.verdict))
 }
 
 pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDissent) -> Result<()> {

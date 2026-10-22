@@ -91,6 +91,7 @@ fn continuous(
                     )?;
                 }
             }
+            vault.enqueue_live_health_review_in_txn(txn, &attempt.status.attempt, now)?;
         }
         Ok(())
     })?;
@@ -120,6 +121,13 @@ fn nightly(
         }
         super::nightly::children_in_txn(vault, txn, attempt, now)?;
         super::nightly::schedule_remainder_in_txn(vault, txn, attempt, now)?;
+        super::arc_backstop::enqueue_stale_arcs_in_txn(
+            vault,
+            txn,
+            Some(parent),
+            run_id.as_deref(),
+            now,
+        )?;
         store.enqueue_vault_cleanup_in_txn(
             txn,
             EnqueueDreamerVaultCleanupAttempt {

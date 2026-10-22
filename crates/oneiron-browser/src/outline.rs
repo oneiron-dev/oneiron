@@ -8,13 +8,21 @@
 //! as the tree names them, ride beside the row, never in it or its locator:
 //! the capture joins them to its DOM read (`driver::row_metadata`, FIX
 //! 6851), and a settle poll's fingerprint hashes the row's fields as before.
+//!
+//! A read's secrets (FIX 8028) are found on its rows as the tree names
+//! them, then the rows are read again through the read's [`Masks`]: a
+//! secret field's value shows its handle, and a name or value that echoes
+//! a secret shows the same in its place, before any locator is built. A
+//! locator or scope key holds `[secret]` there, never the handle, so it
+//! stays as it was however the handle changes.
 
-use crate::Row;
+use crate::secret_fields::{SECRET_MARK, secret_echo_policy};
+use crate::{Row, RowSecret};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 /// Roles a program acts on.
-const CONTROLS: &[&str] = &[
+pub(crate) const CONTROLS: &[&str] = &[
     "button",
     "link",
     "textbox",
@@ -88,6 +96,38 @@ pub(crate) struct Line {
     pub(crate) frame: Option<String>,
     pub(crate) ax_url: Option<String>,
     pub(crate) ax_level: Option<u32>,
+    /// The accessibility node the row was read from.
+    pub(crate) ax_id: Option<String>,
+    /// The row shows a secret in place, its own or one it echoes: a
+    /// screenshot masks it.
+    pub(crate) masked: bool,
+    /// What the page holds where the row shows a secret in place, whole:
+    /// never in the row, only for the read's own comparisons.
+    pub(crate) original: Option<String>,
+}
+
+/// What a read's secrets make of its rows (FIX 8028). Empty, the rows are
+/// as the tree names them: a settle poll's, which only a hash reads.
+#[derive(Default)]
+pub(crate) struct Masks {
+    /// Each secret row's own secret, by its accessibility node.
+    pub(crate) fields: HashMap<String, Masked>,
+    /// Each secret the read found, as its page holds it, with what shows in
+    /// its place wherever a name or a value echoes it.
+    pub(crate) echoes: Vec<(String, String)>,
+}
+
+/// One secret row's secret: what its value shows, none when the secret is
+/// the row's own text (its name), and the secret it carries.
+pub(crate) struct Masked {
+    pub(crate) shown: Option<String>,
+    pub(crate) secret: RowSecret,
+}
+
+impl Masks {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.fields.is_empty() && self.echoes.is_empty()
+    }
 }
 
 /// Whether a row of `role` is a control, whose text the outline folds into
@@ -99,11 +139,23 @@ pub(crate) fn is_control(role: &str) -> bool {
 struct Node<'a> {
     raw: &'a Value,
     role: &'a str,
+    /// The name the row shows.
     name: String,
+    /// The name its locator and scope key hold, where a secret it echoes
+    /// makes it differ from `name`.
+    label: Option<String>,
 }
 
-/// Reads `Accessibility.getFullAXTree`'s `nodes` into rows, in page order.
-pub(crate) fn lines(nodes: &[Value]) -> Vec<Line> {
+impl Node<'_> {
+    /// The name the row's locator and its scope's key are built from.
+    fn key(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// Reads `Accessibility.getFullAXTree`'s `nodes` into rows, in page order,
+/// each secret in them as `masks` has it.
+pub(crate) fn lines(nodes: &[Value], masks: &Masks) -> Vec<Line> {
     let by_id: HashMap<&str, &Value> = nodes
         .iter()
         .filter_map(|n| Some((n.get("nodeId")?.as_str()?, n)))
@@ -117,6 +169,17 @@ pub(crate) fn lines(nodes: &[Value]) -> Vec<Line> {
         seen: HashMap::new(),
         out: Vec::new(),
         visited: HashSet::new(),
+        masks,
+        shown: masks
+            .echoes
+            .iter()
+            .map(|(secret, shown)| (secret.as_str(), shown.as_str()))
+            .collect(),
+        marks: masks
+            .echoes
+            .iter()
+            .map(|(secret, _)| (secret.as_str(), SECRET_MARK))
+            .collect(),
     };
     walk.visit(root, false, None);
     walk.out
@@ -128,6 +191,11 @@ struct Walk<'a> {
     seen: HashMap<String, u32>,
     out: Vec<Line>,
     visited: HashSet<&'a str>,
+    masks: &'a Masks,
+    /// Each secret with what a row shows in its place, and with what a
+    /// locator holds there.
+    shown: Vec<(&'a str, &'a str)>,
+    marks: Vec<(&'a str, &'a str)>,
 }
 
 impl<'a> Walk<'a> {
@@ -141,10 +209,12 @@ impl<'a> Walk<'a> {
         }
         let frame = raw.get("frameId").and_then(Value::as_str).or(frame);
         let ignored = raw.get("ignored").and_then(Value::as_bool).unwrap_or(false);
+        let (name, label) = self.names(field(raw, "name").unwrap_or(""));
         let node = Node {
             raw,
             role: field(raw, "role").unwrap_or(""),
-            name: clip(field(raw, "name").unwrap_or("")),
+            name,
+            label,
         };
         let control = CONTROLS.contains(&node.role);
         let mut scoped = false;
@@ -157,7 +227,7 @@ impl<'a> Walk<'a> {
                 self.emit(&node, frame);
             }
             if SCOPES.contains(&node.role) && !node.name.is_empty() {
-                self.scope.push(format!("{} \"{}\"", node.role, node.name));
+                self.scope.push(format!("{} \"{}\"", node.role, node.key()));
                 scoped = true;
             }
         }
@@ -179,9 +249,21 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// A node's name as its row shows it, and, where a secret it echoes
+    /// shows in its place, as its locator holds it.
+    fn names(&self, raw: &str) -> (String, Option<String>) {
+        match secret_echo_policy(raw, &self.shown) {
+            Some(shown) => {
+                let label = secret_echo_policy(raw, &self.marks).unwrap_or_default();
+                (clip(&shown), Some(clip(&label)))
+            }
+            None => (clip(raw), None),
+        }
+    }
+
     fn emit(&mut self, node: &Node<'_>, frame: Option<&str>) {
         let mut key = self.scope.join(" > ");
-        key.push_str(&format!(" > {} \"{}\"", node.role, node.name));
+        key.push_str(&format!(" > {} \"{}\"", node.role, node.key()));
         // Identical twins (same role, name and named ancestors) are told apart
         // by their order among themselves alone.
         let twin = self.seen.entry(key.clone()).or_insert(0);
@@ -198,7 +280,24 @@ impl<'a> Walk<'a> {
                 Some(other) => Some(format!("{name}={other}")),
             })
             .collect();
-        let value = field(node.raw, "value").filter(|v| !v.is_empty()).map(clip);
+        let ax_id = node.raw.get("nodeId").and_then(Value::as_str);
+        let raw_value = field(node.raw, "value").filter(|v| !v.is_empty());
+        let own = ax_id.and_then(|id| self.masks.fields.get(id));
+        let (value, secret, echoed) = match own {
+            Some(masked) => (masked.shown.clone(), Some(masked.secret.clone()), false),
+            None => match raw_value.and_then(|raw| secret_echo_policy(raw, &self.shown)) {
+                Some(shown) => (Some(clip(&shown)), None, true),
+                None => (raw_value.map(clip), None, false),
+            },
+        };
+        let masked = secret.is_some() || echoed || node.label.is_some();
+        // A secret that is the row's own text is its name, as the page
+        // holds it.
+        let original = match own {
+            _ if !masked => None,
+            Some(own) if own.shown.is_none() => field(node.raw, "name").map(str::to_owned),
+            _ => raw_value.map(str::to_owned),
+        };
         let row = Row {
             target: String::new(),
             locator: format!("e{}", &hash[..12]),
@@ -211,6 +310,7 @@ impl<'a> Walk<'a> {
             level: None,
             datetimes: Vec::new(),
             unavailable: Vec::new(),
+            secret,
         };
         let backend_node = node.raw.get("backendDOMNodeId").and_then(Value::as_u64);
         // Only a link's `url` is its destination and only a heading's
@@ -232,12 +332,28 @@ impl<'a> Walk<'a> {
             frame: frame.map(str::to_owned),
             ax_url,
             ax_level,
+            ax_id: ax_id.map(str::to_owned),
+            masked,
+            original,
         });
     }
 }
 
-fn field<'v>(node: &'v Value, name: &str) -> Option<&'v str> {
+/// An accessibility node's `name`, `value`, `description` or `role` text,
+/// as the tree names it.
+pub(crate) fn field<'v>(node: &'v Value, name: &str) -> Option<&'v str> {
     node.get(name)?.get("value")?.as_str()
+}
+
+/// Whether the tree marks the node `protected`, as it marks a concealed
+/// field's.
+pub(crate) fn protected(node: &Value) -> bool {
+    state(node, "protected").as_deref() == Some("true")
+}
+
+/// Whether a row of `role` reads text, whose text is its name.
+pub(crate) fn is_read(role: &str) -> bool {
+    READS.contains(&role)
 }
 
 fn state(node: &Value, name: &str) -> Option<String> {
@@ -252,7 +368,7 @@ fn state(node: &Value, name: &str) -> Option<String> {
     }
 }
 
-fn clip(text: &str) -> String {
+pub(crate) fn clip(text: &str) -> String {
     let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match text.char_indices().nth(NAME_CHARS) {
         Some((end, _)) => format!("{}…", &text[..end]),

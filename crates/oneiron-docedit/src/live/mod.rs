@@ -31,12 +31,15 @@ pub use deck_export::{
 };
 pub use points::{Coord, GeomPath, PathCommand, PathFill, PathPoint};
 pub use pptx::{
-    ApproveScope, AttributionIndex, ChangeKind, ChartEdit, ChartKind, ChartSeries, ChartSource,
-    Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, HeldMedia,
-    Landing, LandingReceipt, LiveDeck, MergeFault, NodeBinding, NodeId, NodeKind, NodePayload,
-    Paragraph, PreflightReport, RelationshipChange, RenderPair, RenderSide, Run, SeriesBinding,
-    SeriesField, SlideRender, SmartArtNode, StampedOp, TableBinding, TableBody, TableEdit,
-    TableMerge, TextBody, diff, land, preflight, preflight_merged,
+    ApproveScope, AttributionIndex, BarDirection, BarShape, CategoryField, ChangeKind,
+    ChartCategories, ChartCategory, ChartEdit, ChartKind, ChartPlot, ChartSeries, ChartSource,
+    ChartView, Conflict, ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps,
+    HeldMedia, Landing, LandingReceipt, LiveDeck, MergeFault, NodeBinding, NodeId, NodeKind,
+    NodePayload, OfPieType, Paragraph, PlotGrouping, PreflightReport, RelationshipChange,
+    RenderPair, RenderSide, Run, SeriesBinding, SeriesField, SizeRepresents, SlideRender,
+    SmartArtNode, SplitType, StampedOp, StockOrder, StockRoles, SurfaceBand, TableBinding,
+    TableBody, TableEdit, TableMerge, TextBody, diff, effective_categories, land, preflight,
+    preflight_merged,
 };
 
 use crate::deck::DeckError;
@@ -74,4 +77,26 @@ pub enum LiveError {
     UnboundNodes(Vec<NodeId>),
     #[error("live deck encoding: {0}")]
     Encoding(String),
+    /// A size the input declares, measured before anything that size is
+    /// allocated, that this host cannot hold now: more bytes than its free
+    /// memory (`needed` against `available`), more than its address space
+    /// reaches, or an allocation its allocator refused (FIX 8589). A
+    /// resource floor, never a count limit.
+    #[error("memory floor: {reason}{}", floor_detail(.needed, .available))]
+    MemoryFloor {
+        reason: &'static str,
+        needed: Option<u64>,
+        available: Option<u64>,
+    },
+}
+
+/// A memory floor's measured bytes, where known.
+fn floor_detail(needed: &Option<u64>, available: &Option<u64>) -> String {
+    match (needed, available) {
+        (Some(needed), Some(available)) => {
+            format!(" ({needed} bytes needed, {available} bytes free)")
+        }
+        (Some(needed), None) => format!(" ({needed} bytes needed)"),
+        _ => String::new(),
+    }
 }

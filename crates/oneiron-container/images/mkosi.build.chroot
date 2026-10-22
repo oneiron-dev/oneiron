@@ -1,0 +1,79 @@
+#!/bin/bash
+# Builds the plan's native binaries inside the image's own pinned userspace:
+# mkosi runs this chrooted into the image plus its build overlay (the
+# BuildPackages compilers from the same frozen snapshot), so every binary
+# links against the glibc it ships with. No host build and no ldd check.
+#
+# Mounted by build.py under /work/src: engine/ (git archive of
+# inputs.engine.commit), rust/ (the pinned Rust dist components), cargo-home/
+# (the mirror's clean CARGO_HOME), plan/ (native.tsv). Sources are ephemeral:
+# writes land in an overlay mkosi discards. Network is off (and the whole
+# build runs in a namespace with none).
+set -euo pipefail
+
+if [ "${ONEIRON_IMAGES_PHASE:-}" = fetch ]; then
+  echo "fetch phase: packages are cached, nothing is built"
+  exit 0
+fi
+
+src=/work/src
+plan=$src/plan/native.tsv
+: "${SOURCE_DATE_EPOCH:?mkosi sets SOURCE_DATE_EPOCH from release.toml}"
+: "${BUILDDIR:?build.py configures BuildDirectory}"
+if [ ! -s "$plan" ]; then
+  echo "no native targets in this plan"
+  exit 0
+fi
+
+unset RUSTUP_TOOLCHAIN RUSTC_WRAPPER CARGO_BUILD_RUSTC_WRAPPER RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
+export PATH="$src/rust/bin:/usr/bin:/bin"
+export CARGO_HOME="$src/cargo-home"
+export CARGO_TARGET_DIR="$BUILDDIR/target"
+export CARGO_NET_OFFLINE=true CARGO_INCREMENTAL=0 CARGO_TERM_COLOR=never
+# No build-machine path survives in the binaries: sources, the Cargo home,
+# the toolchain and the target dir (build-script output) map to fixed names.
+export RUSTFLAGS="--remap-path-prefix=$src/engine=/oneiron --remap-path-prefix=$CARGO_HOME=/cargo-home --remap-path-prefix=$src/rust=/rust --remap-path-prefix=$CARGO_TARGET_DIR=/target"
+
+record="$BUILDDIR/native-record.tsv"
+printf 'rustc\t%s\n' "$(rustc -V)" > "$record"
+printf 'cargo\t%s\n' "$(cargo -V)" >> "$record"
+rustc -vV
+
+# One cargo invocation per package, its bins together, in plan order: the
+# same feature unification the old build.sh recipes had.
+declare -A seen=()
+order=()
+declare -A bins=()
+while IFS=$'\t' read -r package bin dest mode; do
+  if [ -z "${seen[$package]:-}" ]; then
+    seen[$package]=1
+    order+=("$package")
+  fi
+  bins[$package]="${bins[$package]:-} --bin $bin"
+done < "$plan"
+
+cd "$src/engine"
+for package in "${order[@]}"; do
+  # shellcheck disable=SC2086
+  cargo build --release --locked --offline -p "$package" ${bins[$package]}
+done
+
+# The SBOM's Cargo side, with the features this build resolved: the crates
+# each package's binaries link (normal edges) and the crates its build also
+# compiled (normal plus build edges). Same lock, same store, offline.
+for package in "${order[@]}"; do
+  for edges in normal normal,build; do
+    out="$BUILDDIR/sbom-cargo-$package-${edges/,/+}.txt"
+    # A failure here leaves no file: the SBOM step then refuses, after the image is built.
+    cargo tree --locked --offline -p "$package" --target x86_64-unknown-linux-gnu -e "$edges" \
+      --prefix none --format '{p}|{l}' > "$out.part" && mv "$out.part" "$out" \
+      || echo "cargo tree -p $package -e $edges failed" >&2
+  done
+done
+
+while IFS=$'\t' read -r package bin dest mode; do
+  install -D -m "$mode" "$CARGO_TARGET_DIR/release/$bin" "$DESTDIR$dest"
+  sum=$(sha256sum "$DESTDIR$dest" | cut -d' ' -f1)
+  printf 'bin\t%s\t%s\n' "$dest" "$sum" >> "$record"
+done < "$plan"
+cat "$record"

@@ -62,7 +62,7 @@ load was sampled for *each trial*, not once for each device. The NVMe trials
 had 1-minute start load 1.42–6.16; HDD trials 5.06–11.67 on 16 logical CPUs.
 
 - Host: `arch`, Linux x86_64; AMD Ryzen 7 8745HS (8 cores, 16 logical CPUs).
-- **Primary NVMe baseline**: `/home/lexi/w8-opus/swarm-temp-nvme`,
+- **Primary NVMe baseline**: `/srv/bench/swarm-temp-nvme`,
   `/dev/nvme0n1p2`, `ROTA=0`, `ext4` (`/`), verified with `df -T` and `lsblk`.
   Raw results: [`results/swarm-nvme-2026-09-26.jsonl`](results/swarm-nvme-2026-09-26.jsonl).
 - **Secondary HDD sensitivity run**: `/mnt/wd16/w8-build/swarm-temp`,
@@ -251,8 +251,8 @@ No engine behavior, writer policy, telemetry policy, or group commit was changed
 
 ```sh
 CARGO_TARGET_DIR=/mnt/wd16/w8-build/bench-target cargo build -p oneiron-bench --release -j 8
-mkdir -p /home/lexi/w8-opus/swarm-temp-nvme
-TMPDIR=/home/lexi/w8-opus/swarm-temp-nvme SWARM_DISK_DEVICE=/dev/nvme0n1p2 SWARM_DISK_ROTATIONAL=0 SWARM_DISK_FILESYSTEM=ext4 /mnt/wd16/w8-build/bench-target/release/oneiron-bench swarm --matrix > swarm-nvme.jsonl 2> swarm-progress.log
+mkdir -p /srv/bench/swarm-temp-nvme
+TMPDIR=/srv/bench/swarm-temp-nvme SWARM_DISK_DEVICE=/dev/nvme0n1p2 SWARM_DISK_ROTATIONAL=0 SWARM_DISK_FILESYSTEM=ext4 /mnt/wd16/w8-build/bench-target/release/oneiron-bench swarm --matrix > swarm-nvme.jsonl 2> swarm-progress.log
 ```
 
 Confirm `findmnt -T "$TMPDIR"` and `lsblk -o NAME,ROTA,FSTYPE,MOUNTPOINTS`
@@ -343,6 +343,24 @@ oneiron-bench infer run --arm-id ID --transport direct|own-server \
   `router().served(<engine id>)` → `RunBackend` under an undeclared run, over
   the `oneiron-llm-openai` wire, as the Dreamer's step layer calls a model.
   The named provider must build `ready`.
+- `--transport native-ipc --native-socket /ABS/worker.sock`: the same catalog
+  and OpenAI request/stream codecs, over EXL3 native codec v1 with one sealed
+  input descriptor. An existing external worker must already be running.
+  Qualification reads `hello` and full `stats` before timing. No HTTP fallback
+  or request retry occurs. Rows retain typed `inference_calls`, final cheap
+  stats, qualification stats, and worker hello separately from client TTFT.
+- `--seed N` pins the request seed on every arm; absent, requests are unchanged.
+- Native speed rows require terminal completion, valid counters, and actual
+  generated token IDs (`usage.bench_token_ids`), with separate SHA-256 hashes
+  for IDs (compact JSON) and answer text (UTF-8). The ordinary worker does not
+  export IDs: such rows are `rejected`, not averaged. For a controlled screen,
+  `deploy/house-model/exl3_executor_bench.py --serve` observes completed Job
+  sequences without changing the worker files. Its `--export-dir` saves the
+  canonical prepare request bytes. Run the same script without `--serve`, with
+  `--requests` (JSONL: `case_id`, `request_file`; first is warmup) and `--out`,
+  to measure `prepare` → scheduler submit/wait without any transport. All
+  artifacts stay outside the source tree. These observations are benchmark
+  evidence, not production artifact attestation.
 - `--transport own-server --server BIN`: a loopback `oneiron-server` (`init`,
   `token bootstrap`, `serve`) gets the same `[models]` block in its config;
   the bench redeems the owner pairing link (an owner-grade credential, which

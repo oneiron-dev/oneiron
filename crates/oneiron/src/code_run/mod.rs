@@ -13,6 +13,7 @@ pub mod live_run;
 pub mod vault_read;
 
 mod action_inputs;
+pub(crate) mod activity;
 // The guest authoring request is decoded at the typed component bridge, and
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
@@ -25,6 +26,8 @@ mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod reader;
+mod reader_brief;
+mod reader_clock;
 mod reader_fold;
 mod replay;
 mod replay_capsule;
@@ -32,6 +35,8 @@ mod repo_calls;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
+mod scoped_child;
+mod scoped_child_io;
 pub mod shadow_runner;
 mod storage;
 mod support;
@@ -149,6 +154,11 @@ pub use self::storage::{SummaryMember, SummaryRead};
 pub(crate) use self::storage::{
     canonical_wait_ids, deliver_changed_wait_in_txn, has_parked_run_in_txn, observe_wait_change,
 };
+// FIX 6588: a wait's replies in checkpoint images, as row-held responses.
+pub(crate) use self::storage::{
+    settled_reply_held_in_txn, settled_wait_key, wait_delivery_owners, wait_reply_stub,
+    wait_settled_owners,
+};
 pub(crate) use self::team_submit::TEAM_DELIVERABLE_REVIEW_PREDICATE;
 pub use self::team_submit::{TeamSubmitAnswer, TeamSubmitInput};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
@@ -163,14 +173,28 @@ pub use self::reader::{
     SUMMARY_READ_BYTES_PER_TOKEN, SUMMARY_WINDOW_DIVISOR, SelfReaderReportCall,
     SelfReaderSpawnCall, SelfSummarizeCall, SpawnHostSeat, SpawnParentBinding, SummarizeEffort,
     SummarizeRecipe, SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSet,
-    TaskWaitSetCall, TaskWaitSetResult, reader_task_brief, summary_exceeds_window,
-    summary_exceeds_window_bytes, summary_token_budget,
+    TaskWaitSetCall, TaskWaitSetResult, summary_exceeds_window, summary_exceeds_window_bytes,
+    summary_token_budget,
 };
 pub(crate) use self::reader::{
     reader_attempt_id, reader_run_id, reader_task_id, reader_wait_id, reduce_task_wait_set,
     summary_memo_key, summary_task_id, valid_reader_key, vault_ref,
 };
+pub use self::reader_brief::reader_task_brief;
+pub(crate) use self::reader_clock::{reader_job_cutoff, reader_wait_cutoff};
 pub use self::reader_fold::{summarize_input, summarize_prompt};
+pub(crate) use self::scoped_child::scoped_child_read_refusal;
+pub use self::scoped_child::{
+    SCOPED_CHILD_AUTHORITY_LAPSED, SCOPED_CHILD_PARENT_LEASE_LOST,
+    SCOPED_CHILD_PORT_EXCEEDS_PARENT, SCOPED_CHILD_PORT_NOT_LENT, SCOPED_CHILD_SERVICE_UNBOUND,
+    ScopedChildCallContext, ScopedChildLoan, ScopedChildPorts, ScopedChildSpec, ScopedInputRead,
+    scoped_child_authority,
+};
+pub use self::scoped_child_io::{
+    HostInput, ScopedChildHosts, ScopedChildProfile, ScopedChildStop, collect_scoped_child,
+    commit_host_inputs, host_run_recorded, read_host_output, read_scoped_finding,
+    scoped_child_task, stage_host_output,
+};
 pub use self::storage::ReaderJobs;
 pub(crate) use self::storage::SpendBook;
 #[cfg(test)]

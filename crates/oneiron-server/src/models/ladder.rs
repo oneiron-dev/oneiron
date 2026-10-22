@@ -20,6 +20,7 @@ pub(super) mod cache_warmth;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
+mod worker_lease;
 
 use futures_util::StreamExt;
 use oneiron::llm::SpentKind;
@@ -199,11 +200,12 @@ fn names_voice(request: &MediaRequest) -> bool {
     request.voice.is_some() || request.params.contains_key("voice")
 }
 
-/// Whether `rung`'s row serves `request` as the rung would send it.
+/// Whether `rung` takes `request` as the rung would send it: its row serves
+/// it and its offer carries every reference (FIX 8627).
 fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
     rung.media
         .as_ref()
-        .is_some_and(|media| media.row.admit_media(&rung_request(rung, request)).is_ok())
+        .is_some_and(|media| media.takes(&rung_request(rung, request)))
 }
 
 /// How a model is reached: a seat's ladder, one rung of it alone, or a
@@ -517,6 +519,11 @@ impl OfferLadder {
         if let Some(reason) = self.kept_on_device(index, call.request) {
             self.hold(call, index, walk, reason);
             return true;
+        }
+        // A managed worker's own supervisor says when it serves (FIX 8315):
+        // its calls wait for it, never pass it for a rest or a probation.
+        if self.managed_worker(index).is_some() {
+            return false;
         }
         let rung = &self.rungs[index];
         if let Some(rest) = self.rests.resting(&rung.offer.binding, &rung.wire_model) {
@@ -1192,6 +1199,14 @@ impl OfferLadder {
         walk: &mut Walk,
     ) -> LlmResult<Sent> {
         let rung = &self.rungs[index];
+        // Held through the call's settlement or cancellation (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.failed(index, error, false, walk)?;
+                return Ok(Sent::Failed);
+            }
+        };
         let (bound, permit) = self.admit(call.run, rung, call.request, call.selector, false)?;
         if !may_send() {
             // Unsent: only the gate starts a lease, so this pays nothing.
@@ -1206,7 +1221,7 @@ impl OfferLadder {
             self.hold(call, index, walk, reason);
             return Ok(Sent::Held);
         }
-        let Some(_probe) = self.probe(index, walk) else {
+        let Some(_probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Ok(Sent::Held);
         };
@@ -1349,11 +1364,20 @@ impl OfferLadder {
             };
             bound.voice = Some(voice);
         }
-        // A rung whose row does not serve the call (its inputs, its
-        // references) is passed, unsent; a call no rung serves is refused.
-        if media.row.admit_media(&bound).is_err() {
+        // A rung whose row does not serve the call (its inputs), or whose
+        // offer cannot carry all its references, is passed, unsent; a call
+        // no rung serves is refused (FIX 8627).
+        if !media.takes(&bound) {
             return Ok(None);
         }
+        // Held through the answer, or a job's submission (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                self.failed(index, error, false, walk)?;
+                return Ok(None);
+            }
+        };
         let selector = Some(call.selector.unwrap_or(self.name.as_str()));
         let permit = call
             .run
@@ -1363,7 +1387,7 @@ impl OfferLadder {
             self.hold(call, index, walk, reason);
             return Ok(None);
         }
-        let Some(probe) = self.probe(index, walk) else {
+        let Some(probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Ok(None);
         };
@@ -1377,7 +1401,7 @@ impl OfferLadder {
                 Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
                     gate,
                     permit: Some(permit),
-                    probe: Some(probe),
+                    probe,
                     receipt: self.receipt.then(|| self.served(index, walk)),
                     provider_job,
                     model: rung.model.clone(),
@@ -1395,7 +1419,10 @@ impl OfferLadder {
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
-                permit.settle_media(response.usage.token_units(operation, &media.caps))?;
+                permit.settle_media(
+                    response.usage.token_units(operation, &media.caps),
+                    response.usage.inference_calls(),
+                )?;
                 if self.receipt {
                     let raw = std::mem::take(&mut response.usage.raw_provider);
                     response.usage.raw_provider = self.served(index, walk).stamp(raw);
@@ -1692,8 +1719,22 @@ impl OfferLadder {
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) -> Flow {
         let rung = &self.rungs[index];
+        // A managed worker's lease, held as long as the probe (FIX 8315).
+        let _lease = match self.hold_worker(index).await {
+            Ok(lease) => lease,
+            Err(error) => {
+                settle_failed(permit);
+                return match self.failed(index, error, false, walk) {
+                    Ok(()) => Flow::On,
+                    Err(error) => {
+                        let _ = events.send(Err(error)).await;
+                        Flow::Ended
+                    }
+                };
+            }
+        };
         // Held until the stream ends, however it ends.
-        let Some(_probe) = self.probe(index, walk) else {
+        let Some(_probe) = self.probe_unless_managed(index, walk) else {
             settle_failed(permit);
             return Flow::On;
         };
@@ -1842,7 +1883,7 @@ impl OfferLadder {
             let mut bound = request.clone();
             bound.model = rung.model.clone();
             bound.envelope.locality = rung.offer.binding.locality;
-            if media.row.admit_media(&bound).is_err() || self.passes_over(call, index, &mut walk) {
+            if !media.takes(&bound) || self.passes_over(call, index, &mut walk) {
                 continue;
             }
             let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(

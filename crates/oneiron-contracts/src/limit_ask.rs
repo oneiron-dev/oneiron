@@ -18,6 +18,10 @@ const MEMORY_FALLBACK_BYTES: u64 = 256 << 20;
 // Every row's list, config key and default: the row tables.
 mod engine_rows;
 
+// The memory cgroup this process runs in, read from its own group up.
+#[cfg(target_os = "linux")]
+mod cgroup;
+
 /// One engine `[limits]` row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum EngineLimit {
@@ -446,6 +450,19 @@ pub enum EngineLimit {
     /// Bytes of those backups together. Past it the row asks as the pending
     /// count does, and every backup is kept.
     BackupHandoffPendingBytes,
+    /// Items one signed authority record carries for its owner: a custody
+    /// change's permitted recipients, a checkpoint choice's roots, a world's
+    /// model routes, a mesh binding's direct addresses or ALPN grants, a
+    /// machine revision's acknowledged acts (Phase2 A). Past it the row asks
+    /// whether everything is okay and the record is signed and kept whole;
+    /// only a codec's own frame bound splits it.
+    AuthorityRecordItems,
+    /// Live question sets one server holds for its connectors' callers: the
+    /// rounds of foreign MCP questions (elicitation) waiting on an answer
+    /// (FIX 3895). Past it the question registers and waits like any other
+    /// and the row asks whether everything is okay; only the memory floor
+    /// and a round's own deadline end a question.
+    ConnectorLiveQuestions,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
@@ -458,8 +475,10 @@ fn memory_share(divisor: u64) -> u64 {
 }
 
 /// The memory this process may use: the least of the machine's RAM and the
-/// limit of the container it runs in (cgroup v2 `memory.max`, or v1
-/// `memory.limit_in_bytes`). Read once. `None` when neither can be read.
+/// tightest memory limit (cgroup v2 `memory.max`, or v1
+/// `memory.limit_in_bytes`) on the cgroup this process runs in or any group
+/// above it, a container's or a systemd unit's alike (FIX 8067). Read once.
+/// `None` when neither can be read.
 pub fn machine_memory_bytes() -> Option<u64> {
     static MEMORY: OnceLock<Option<u64>> = OnceLock::new();
     *MEMORY.get_or_init(
@@ -490,15 +509,101 @@ fn physical_memory_bytes() -> Option<u64> {
     None
 }
 
-/// The container's memory limit. An unlimited group reads `max` (v2) or a
-/// number past any RAM (v1), which the minimum above discards.
+/// The tightest memory limit from this process's own cgroup up to its root
+/// (FIX 8067). An unlimited group reads `max` (v2) or a number past any RAM
+/// (v1), which the minimum above discards.
+#[cfg(target_os = "linux")]
 fn container_memory_bytes() -> Option<u64> {
-    [
-        "/sys/fs/cgroup/memory.max",
-        "/sys/fs/cgroup/memory/memory.limit_in_bytes",
-    ]
-    .iter()
-    .find_map(|path| std::fs::read_to_string(path).ok()?.trim().parse().ok())
+    cgroup::levels()
+        .iter()
+        .filter_map(|level| level.limit)
+        .min()
+}
+
+/// No cgroup holds a process off Linux.
+#[cfg(not(target_os = "linux"))]
+fn container_memory_bytes() -> Option<u64> {
+    None
+}
+
+/// The memory this process can take now without the machine paging, read
+/// live on every call and never cached (FIX 7649): a host admits work
+/// against it before the work allocates.
+///
+/// On Linux, the least of `/proc/meminfo`'s `MemAvailable` and what each
+/// limited cgroup from this process's own group up to its root leaves
+/// (FIX 8067): its limit less its usage, the inactive file pages the kernel
+/// reclaims first not counted as used (FIX 8066). That is cgroup v2
+/// `memory.max` less `memory.current` past `memory.stat` `inactive_file`,
+/// else v1 `memory.limit_in_bytes` less `memory.usage_in_bytes` past
+/// `total_inactive_file`. An unlimited group (`max`) leaves `MemAvailable`
+/// alone. On macOS, the free, inactive and purgeable pages. `None` where it
+/// cannot be read, and on every other platform.
+pub fn available_memory_bytes() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let host = std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|info| {
+                info.lines().find_map(|line| {
+                    line.strip_prefix("MemAvailable:")?
+                        .split_whitespace()
+                        .next()?
+                        .parse::<u64>()
+                        .ok()
+                })
+            })
+            .and_then(|kib| kib.checked_mul(1024));
+        let container = cgroup::levels()
+            .iter()
+            .filter_map(|level| level.headroom)
+            .min();
+        match (host, container) {
+            (Some(host), Some(container)) => Some(host.min(container)),
+            (host, container) => host.or(container),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // The host port is this task's for its life: taken once, so repeated
+        // readings add no reference to it.
+        static HOST: OnceLock<libc::mach_port_t> = OnceLock::new();
+        // SAFETY: `mach_host_self` takes no argument and answers the host
+        // port of this task.
+        #[allow(deprecated)]
+        let host = *HOST.get_or_init(|| unsafe { libc::mach_host_self() });
+        let mut stats = std::mem::MaybeUninit::<libc::vm_statistics64>::zeroed();
+        let mut count = libc::HOST_VM_INFO64_COUNT;
+        // SAFETY: `stats` holds `HOST_VM_INFO64_COUNT` integers, the count
+        // handed in; the call writes at most that many and the count it wrote
+        // back into `count`, both on this stack.
+        let answer = unsafe {
+            libc::host_statistics64(
+                host,
+                libc::HOST_VM_INFO64,
+                stats.as_mut_ptr().cast::<libc::integer_t>(),
+                &raw mut count,
+            )
+        };
+        if answer != libc::KERN_SUCCESS {
+            return None;
+        }
+        // SAFETY: the struct is plain integers, zeroed before the call, so
+        // every field the call did not write still holds a valid zero.
+        let stats = unsafe { stats.assume_init() };
+        // SAFETY: `sysconf` reads a system constant: it takes no pointer and
+        // has no precondition, and a negative answer is read as unknown.
+        let page_bytes = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        let page_bytes = u64::try_from(page_bytes).ok().filter(|bytes| *bytes > 0)?;
+        u64::from(stats.free_count)
+            .checked_add(u64::from(stats.inactive_count))?
+            .checked_add(u64::from(stats.purgeable_count))?
+            .checked_mul(page_bytes)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        None
+    }
 }
 
 /// What each engine row is set to: its default, unless set.

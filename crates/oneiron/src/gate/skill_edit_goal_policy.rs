@@ -40,7 +40,8 @@ impl SkillEditGoalPolicy {
             return None;
         }
         let raw_axes = unique_field(&entries, "axes")?.as_array()?;
-        if raw_axes.is_empty() || raw_axes.len() > 32 {
+        // Any number of valid axes: each is checked, none is refused by count.
+        if raw_axes.is_empty() {
             return None;
         }
         let mut names = BTreeSet::new();

@@ -125,8 +125,10 @@ zstd = "0.13"
 flate2 = "1"
 serde = { workspace = true }
 # `raw_value`: secret rotation borrows the value from its own wiped body
-# instead of letting the parser copy it.
-serde_json = { workspace = true, features = ["raw_value"] }
+# instead of letting the parser copy it. `float_roundtrip`: a connector's
+# kept request state is held serialized while it waits (FIX 8054), and its
+# numbers must parse back to the exact value the connector sent.
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 toml = "0.9"
 rmp-serde = { workspace = true }
 rmpv = { workspace = true }
@@ -204,7 +206,11 @@ libc = "0.2"
 [target.'cfg(unix)'.dependencies]
 # The per-user runtime folder `serve` registers in (local_servers.rs).
 dirs = "6"
-rustix = { version = "1.1", features = ["fs", "process"] }
+# `net`: the EXL3 worker's native channel passes its input region's
+# descriptor with SCM_RIGHTS (models/native_exl3).
+rustix = { version = "1.1", features = ["fs", "net", "process"] }
+# The sealed, read-only shared regions a native EXL3 call's input rides in.
+oneiron-organ-protocol = { path = "../oneiron-organ-protocol" }
 
 [target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
 candle-core = { version = "=0.11.0", features = ["metal"] }

@@ -79,7 +79,7 @@ pub(crate) use super::shared_member_doors::*;
 pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
-// The owner's voice-bank doors (DOOR-143) too.
+// The voice-bank doors (DOOR-143, FIX 4393) too.
 pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
@@ -150,6 +150,7 @@ pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
+pub(crate) use super::runner_seat_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
 pub(crate) use super::seal_doors::*;
@@ -189,6 +190,8 @@ pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
+pub(crate) use super::connector_revision_doors::*;
+pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -441,17 +444,24 @@ pub(crate) async fn vault_artifacts_review_slides(
                 .filter_map(|unit| unit.review_image_ref.as_deref()),
         ),
     );
+    // A caller who leaves stops the render its worker runs (FIX 7653).
+    let (_stop, stop) = crate::slide_render::StopOnDrop::new();
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |server, _, memory| {
             let host = server.decision_host();
+            // Its render takes a turn in the renderer line as it starts, at
+            // the caller's fair place, and gives it back before the ladder
+            // reads the units (FIX 7653).
+            let renderer =
+                crate::slide_render::AdmittedRenderer::at_render(server, Some(caller.0), stop);
             memory.artifacts_review_slides_through(
                 &input,
                 &crate::decision_artifact::HostUnitDecider::new(server, caller.1, VERB),
                 host.dial(oneiron::llm::decision::DecisionRung::Big),
                 &host.bands(),
-                crate::slide_render::host_renderer().map(|renderer| {
-                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-                }),
+                renderer
+                    .as_ref()
+                    .map(crate::slide_render::AdmittedRenderer::slides),
             )
         })
         .await;
@@ -560,12 +570,16 @@ pub(crate) async fn vault_artifacts_admit(
 /// drawn by this host's review renderer on a blocking thread, for a
 /// credential that reads the artifact. Beside it, the rows its reads listed
 /// (the package version it projects over and each live-born picture's
-/// asset, a held drawing's too, FIX 5455) and the head it draws from.
+/// asset, a held drawing's too, FIX 5455) and the head it draws from. The
+/// preview takes its turn in the renderer line before any of its work and
+/// keeps it, with the memory it leased, until its answer is encoded
+/// (FIX 7653); a refusal at the render's deadline or a machine floor is
+/// typed.
 pub(crate) async fn vault_artifacts_body_deck_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::office_body::DeckPreviewRequest,
-) -> Listed<oneiron::office_body::DeckPreview> {
+) -> Listed<crate::slide_render::RenderedPreview> {
     const VERB: &str = "vault.artifacts.body.deck.preview";
     let admitted = || -> MemoryResult<(EntityId, EdgeActorClass)> {
         let caller = super::owner_binding::facade_caller_or(server, auth, || {
@@ -588,14 +602,23 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
     };
     let beside =
         read_beside(std::iter::once(input.artifact_ref.as_str()).chain(input.fork_ref.as_deref()));
+    // The caller's fair turn in the renderer line comes before any of the
+    // preview's work, a kept drawing's included (FIX 7653); its worker keeps
+    // it until it ends, and a caller who leaves stops it.
+    let Ok(turn) = server.renderer_turns.admit(caller.0).await else {
+        return refused(crate::slide_render::RenderRefusal::Deadline.memory_error());
+    };
+    let (_stop, stop) = crate::slide_render::StopOnDrop::new();
     let (answer, mut listed) =
-        credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-            memory.artifacts_body_deck_preview(
+        credential_listing(server, auth, caller, VERB, move |server, _, memory| {
+            let renderer = crate::slide_render::AdmittedRenderer::held(server, turn, stop)?;
+            let preview = memory.artifacts_body_deck_preview(
                 &input,
-                crate::slide_render::host_renderer().map(|renderer| {
-                    renderer as &dyn oneiron::edit_roundtrip::slides_review::SlideRenderer
-                }),
-            )
+                renderer
+                    .as_ref()
+                    .map(crate::slide_render::AdmittedRenderer::slides),
+            );
+            crate::slide_render::rendered(preview, renderer)
         })
         .await;
     listed.extend(beside);
@@ -1373,7 +1396,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.list"
         | "vault.skills.archive"
         | "vault.skills.restore"
-        | "vault.skills.fork"
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
@@ -1389,8 +1411,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.optimize.goal.bind"
         | "vault.skills.optimize.preferences.get"
         | "vault.skills.optimize.preferences.set"
-        | "vault.skills.optimize.tradeoff_asks"
-        | "vault.skills.optimize.tradeoff_asks.pick"
         | "vault.skills.governance.get"
         | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
@@ -1601,6 +1621,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
         | "vault.consent.approve_once"
+        | "vault.connectors.calls.approve_once"
+        | "vault.connectors.slates.redraft"
+        | "vault.connectors.slates.scope_outcome"
+        | "vault.connectors.slates.revision_offers"
+        | "vault.connectors.slates.defer_revision"
+        | "vault.connectors.slates.accept_revision"
+        | "vault.connectors.slates.reask_issuer"
         | "vault.consent.deny"
         | "vault.consent.failure_signals_held"
         | "vault.consent.create_standing_grant"
@@ -1621,7 +1648,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.graduation.settings.unpin"
         | "vault.consent.graduation.demote"
         | "vault.gate.policy.get"
-        | "vault.gate.policy.put"
         | "vault.gate.checker.get"
         | "vault.gate.checker.set"
         | "vault.embedding_spaces.list"
@@ -1697,6 +1723,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.rsi.top_up"
         | "vault.budgets.rsi.hold"
         | "vault.budgets.rsi.hold.resume"
+        | "vault.runners.seats.quotas"
+        | "vault.runners.seats.top_up"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"
@@ -1760,8 +1788,6 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.artifacts.keep_outline"
         | "vault.artifacts.decline_outline"
         | "vault.artifacts.publish_approval"
-        | "vault.artifacts.publish"
-        | "vault.artifacts.repoint"
         | "vault.artifacts.pointer"
         | "vault.artifacts.unpublish"
         | "vault.artifacts.link_token"
@@ -1795,23 +1821,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.merge_queue.check_status"
         | "vault.code.checks.get"
         | "vault.code.merge_queue.export_green"
-        | "vault.trusted_contacts.name"
-        | "vault.trusted_contacts.dial.set"
         | "vault.trusted_contacts.tier.set"
-        | "vault.trusted_contacts.concern.asks"
-        | "vault.trusted_contacts.concern.authorize"
-        | "vault.trusted_contacts.concern.propose"
         | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
         | "vault.notes.history_purge_execute"
         | "vault.notes.history_purge_receipts"
-        | "vault.voices.packs.put"
-        | "vault.voices.render_consent"
-        | "vault.voices.targets.provision"
-        | "vault.voices.targets.evict"
-        | "vault.voices.inspect"
         | "vault.runs.program_hold.release"
         | "ai.voice.asr.open"
         | "ai.voice.asr.hypothesis"
@@ -1859,6 +1875,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        // The voice bank's rows (FIX 4393): a live person on their own proof,
+        // owner or not, or a designed voice's creator on its own credential;
+        // the bank binds each act to the voice's subject or creator.
+        "vault.voices.packs.put"
+        | "vault.voices.render_consent"
+        | "vault.voices.targets.provision"
+        | "vault.voices.targets.evict"
+        | "vault.voices.inspect"
+        | "vault.voices.lineage" => super::voice_bank_doors::voice_bank_admits(server, auth, verb),
         // The exact publish rows (FIX 6866): the owner, or a bound principal
         // whose one Grant the engine door admits in its own snapshot.
         "vault.code.origin.publish.request"
@@ -1873,6 +1898,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         // door admits the owner or the push's own standing.
         "vault.code.imports.create" | "vault.code.imports.get" => {
             super::code_import_doors::imports_admit(server, auth, verb)
+        }
+        // The exact export preview rows (FIX 6869, G4 PR3): a live Owner, or a
+        // bound principal whose one Grant the engine door admits.
+        "vault.code.export.preview" | "vault.code.export.preview.read" => {
+            super::origin_doors::preview_admits(server, auth, verb)
+        }
+        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
+        // principal whose one Grant the engine door admits.
+        "vault.code.merge_queue.review_policy.get" | "vault.code.merge_queue.review_policy.set" => {
+            super::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
         }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
@@ -1927,7 +1962,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             owner_grade(auth, MEDIA_OWNERS)
         }
         "ai.video.poll" | "ai.video.cancel" => owner_grade(auth, VIDEO_JOB_OWNERS),
-        _ => Ok(()),
+        _ => super::owner_binding::caller_bound_admits(server, auth, verb).unwrap_or(Ok(())),
     }
 }
 

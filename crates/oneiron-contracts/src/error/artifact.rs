@@ -23,6 +23,15 @@ pub enum ArtifactError {
     /// structural validation. Nothing was written.
     #[error("invalid BLOB artifact body: {0}")]
     InvalidBlobArtifactBody(&'static str),
+    /// A proposal named a made_by envelope whose `field` (its process actor,
+    /// an input or its trigger) names `row`, which does not resolve for the
+    /// writing credential (FIX 1229): a row it may not read answers as a
+    /// missing one does. Nothing was written.
+    #[error(
+        "invalid BLOB artifact body: made_by {field} {} does not resolve for the writing credential",
+        row.to_hex()
+    )]
+    MadeByRefUnreadable { field: &'static str, row: EntityId },
     /// A Git-LFS object did not match what the client declared about it: a
     /// malformed object id, or a body whose SHA-256 or length disagrees with
     /// the declared oid/size. Nothing was written.
@@ -231,6 +240,10 @@ pub enum LiveDeckRefusal {
     /// Live nodes have no retained binding to project over.
     UnboundNodes,
     Encoding,
+    /// A size the input declares, measured before it is allocated, is more
+    /// than the host can hold now: its free memory, its address space, or
+    /// its allocator. A resource floor, never a count limit.
+    MemoryFloor,
 }
 
 impl LiveDeckRefusal {
@@ -247,6 +260,7 @@ impl LiveDeckRefusal {
             Self::HeadAdvanced => "head_advanced",
             Self::UnboundNodes => "unbound_nodes",
             Self::Encoding => "encoding",
+            Self::MemoryFloor => "memory_floor",
         }
     }
 }
@@ -257,7 +271,9 @@ impl ArtifactError {
     pub(crate) fn kind(&self) -> ErrorKind {
         match self {
             Self::InvalidCodeArtifactBody(_) => ErrorKind::InvalidCodeArtifactBody,
-            Self::InvalidBlobArtifactBody(_) => ErrorKind::InvalidBlobArtifactBody,
+            Self::InvalidBlobArtifactBody(_) | Self::MadeByRefUnreadable { .. } => {
+                ErrorKind::InvalidBlobArtifactBody
+            }
             Self::InvalidLfsObject(_) => ErrorKind::InvalidLfsObject,
             Self::InvalidAnchor(_) => ErrorKind::InvalidAnchor,
             Self::AnnotationThreadNotFound => ErrorKind::AnnotationThreadNotFound,

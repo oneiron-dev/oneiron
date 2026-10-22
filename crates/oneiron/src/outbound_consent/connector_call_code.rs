@@ -176,7 +176,12 @@ impl Vault {
                             .map(|digest| *digest.as_bytes())
                     })?;
             }
-            PENDING_CALLS.put(&self.store, txn, &call_ref, &row)?;
+            super::connector_call_erase::put_pending_call_in_txn(
+                &self.store,
+                txn,
+                &call_ref,
+                &row,
+            )?;
             Ok((call_ref, row.code_consent_wait.is_some()))
         })?)
     }
@@ -364,6 +369,11 @@ impl Vault {
         host: &mut H,
         answered: bool,
     ) -> Result<(ConnectorCallOutcome, Option<Vec<EntityId>>), IntentLedgerError> {
+        // A call whose connector asked for input answers from its row; its
+        // wait settled when the questions came (FIX 3837).
+        if let Some(outcome) = pending.input_outcome(*call_ref) {
+            return Ok((outcome, pending.source_rows));
+        }
         let Some(wait_id) = pending.code_consent_wait else {
             return self.drive_connector_call(Some(*call_ref), None, pending, host);
         };
@@ -467,6 +477,8 @@ impl Vault {
                 PENDING_CALLS.get(&self.store, &txn, &call_ref)?
             };
             if let Some(pending) = pending {
+                // An off-record caller's sealed arguments open (FIX 9159).
+                let pending = pending.opened(&self.store, &call_ref)?;
                 self.resume_code_owned_connector_call(&call_ref, pending, host, true)?;
             }
         }
@@ -549,7 +561,7 @@ pub(crate) fn settle_code_owned_call_in_txn(
     let Some(mut row) = PENDING_CALLS.get(&vault.store, txn, call_ref)? else {
         return Ok(());
     };
-    if row.settled.is_some() {
+    if row.settled.is_some() || row.input.is_some() {
         return Ok(());
     }
     row.settled = Some(SettledConnectorCall::Refused {

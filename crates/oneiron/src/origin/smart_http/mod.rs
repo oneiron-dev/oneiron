@@ -98,7 +98,11 @@ mod owner_pins;
 mod paths;
 mod push_admission;
 mod push_paths;
+pub(crate) mod push_projection;
+mod read_projection;
+mod recipient_serve;
 mod retained_reasons;
+pub(in crate::origin) mod secret_marks;
 mod serve;
 mod serve_cmd;
 
@@ -127,6 +131,8 @@ pub use self::paths::{
     validate_repo_name,
 };
 pub use self::push_admission::{admit_receive_pack, serve_bounded_as};
+pub use self::recipient_serve::{RepoGitReadContext, serve_bounded_for_recipient};
+pub use self::secret_marks::ReceiveSecretMarks;
 pub use self::serve::{
     ServeReport, ServeSink, push_queue_key, serve, serve_bounded, serve_bounded_with_authority,
     serve_with_authority, serve_with_provenance,

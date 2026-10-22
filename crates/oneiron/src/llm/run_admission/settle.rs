@@ -1,7 +1,7 @@
 //! Settling a run's permits: an answer pays its usage or its reservation, a
 //! started call that failed pays its reservation, and every settlement the
 //! meter refuses goes on the receipt.
-use super::super::{BudgetSettlement, LlmUsage, answered_units_wide};
+use super::super::{BudgetSettlement, InferenceCallReceipt, LlmUsage, answered_units_wide};
 use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
@@ -23,14 +23,18 @@ pub enum CallOutcome<'a> {
 }
 
 impl RunInner {
-    /// Settles `permit` on this run, its issuer. Only [`RunPermit::settle`],
-    /// [`RunPermit::settle_stream`] and the permit's drop call this, once.
-    /// `stream` is a metered stream's audio, for the receipt.
+    /// Settles `permit` on this run, its issuer. Only
+    /// [`RunPermit::settle_with`], [`RunPermit::settle_stream`] and the
+    /// permit's drop call this, once. `stream` is a metered stream's audio,
+    /// for the receipt. `provided` is the inference receipts a call reported
+    /// beside its quantity (a media call's), listed after those an answer's
+    /// usage holds; neither changes what the call is charged.
     pub(super) fn settle(
         &self,
         permit: &RunPermit,
         outcome: CallOutcome<'_>,
         stream: Option<RunStreamUsage>,
+        provided: Vec<InferenceCallReceipt>,
     ) -> Result<BudgetSettlement, RunDenied> {
         // A settled permit never starts, so its run stops holding it.
         self.lock_paid().remove(permit.lease.id());
@@ -93,6 +97,11 @@ impl RunInner {
         let allocation_error = allocation
             .as_ref()
             .and_then(|(_, settled)| settled.as_ref().err().cloned());
+        let mut inference_calls = match outcome {
+            CallOutcome::Answered(usage) => usage.inference_calls(),
+            _ => Vec::new(),
+        };
+        inference_calls.extend(provided);
         self.record(
             permit.revision,
             RunEvent::Settled {
@@ -110,6 +119,7 @@ impl RunInner {
                     _ => None,
                 },
                 stream,
+                inference_calls,
                 units: charged,
                 unit: line_unit.clone(),
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),

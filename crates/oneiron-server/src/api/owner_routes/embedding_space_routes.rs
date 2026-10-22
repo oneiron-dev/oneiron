@@ -7,7 +7,10 @@
 //! own; `check` runs the probes now. The owner sees the documents each space's
 //! model refused and may clear one, so the backfill tries it again. Each route
 //! a `vault.embedding_spaces.*` row mirrors takes that row's input and runs its
-//! verb hooks once around the engine call (FIX 1953).
+//! verb hooks once around the engine call (FIX 1953). Each change hands the
+//! request's owner proof to its engine fn, which checks it again inside the
+//! write that commits the change, after the hooks and the blocking hop
+//! (FIX 8200).
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,6 +21,7 @@ use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::{
     EmbeddingSpace, InputKind, MediaRefused, SpaceMove, SpaceMoveOutcome, SpaceProbe, SpaceRef,
 };
@@ -33,7 +37,7 @@ use super::{OwnerReply, blocking, hooked_owner, owner};
 use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
-use crate::server::SyncServer;
+use crate::server::{MediaEmbedRefusal, SyncServer};
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -139,6 +143,15 @@ fn invalid(error: impl std::fmt::Display) -> OwnerError {
     OwnerError::Invalid(error.to_string())
 }
 
+/// An engine refusal of a space change, a bad request; an owner's proof the
+/// change's write no longer admits answers as the owner door does (FIX 8200).
+fn space_refused(error: oneiron::Error) -> OwnerError {
+    if error.kind() == oneiron::ErrorKind::ConsentOwnerNotAuthenticated {
+        return error.into();
+    }
+    invalid(error)
+}
+
 fn spaces(vault: &oneiron::Vault) -> OwnerResult<Spaces> {
     let bindings = vault.kind_slot_bindings()?;
     let slots = InputKind::ALL
@@ -184,7 +197,7 @@ async fn declare(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceDeclareRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -195,7 +208,9 @@ async fn declare(
                 "vault.embedding_spaces.declare",
                 request,
                 |request: EmbeddingSpaceDeclareRequest| {
-                    vault.declare_embedding_space(request.0).map_err(invalid)?;
+                    vault
+                        .declare_embedding_space(&owner, request.0)
+                        .map_err(space_refused)?;
                     spaces(vault)
                 },
             )
@@ -211,7 +226,7 @@ async fn bind(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceBindRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -223,10 +238,10 @@ async fn bind(
                 request,
                 |request: EmbeddingSpaceBindRequest| {
                     match &request.space {
-                        Some(space) => vault.bind_kind_slot(request.kind, space),
-                        None => vault.unbind_kind_slot(request.kind),
+                        Some(space) => vault.bind_kind_slot(&owner, request.kind, space),
+                        None => vault.unbind_kind_slot(&owner, request.kind),
                     }
-                    .map_err(invalid)?;
+                    .map_err(space_refused)?;
                     spaces(vault)
                 },
             )
@@ -241,7 +256,7 @@ async fn one_space(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -253,8 +268,8 @@ async fn one_space(
                 request,
                 |request: EmbeddingSpaceRequest| {
                     vault
-                        .bind_one_space_for_all(&request.space)
-                        .map_err(invalid)?;
+                        .bind_one_space_for_all(&owner, &request.space)
+                        .map_err(space_refused)?;
                     spaces(vault)
                 },
             )
@@ -270,7 +285,7 @@ async fn retire(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -282,8 +297,8 @@ async fn retire(
                 request,
                 |request: EmbeddingSpaceRequest| {
                     vault
-                        .retire_embedding_space(&request.space)
-                        .map_err(invalid)?;
+                        .retire_embedding_space(&owner, &request.space)
+                        .map_err(space_refused)?;
                     spaces(vault)
                 },
             )
@@ -299,7 +314,7 @@ async fn begin_move(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceMoveRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -314,8 +329,8 @@ async fn begin_move(
                         .incumbent
                         .map_or(SpaceRef::TextIndex, SpaceRef::Declared);
                     vault
-                        .begin_space_move(&request.candidate, incumbent, request.margin)
-                        .map_err(invalid)
+                        .begin_space_move(&owner, &request.candidate, incumbent, request.margin)
+                        .map_err(space_refused)
                 },
             )
         })
@@ -333,7 +348,7 @@ async fn check_move(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     let runtime = tokio::runtime::Handle::current();
     // Dropping the timed-out future detaches the blocking task; it runs on.
@@ -346,7 +361,7 @@ async fn check_move(
                 "vault.embedding_spaces.move_check",
                 request,
                 |request: EmbeddingSpaceCandidateRequest| {
-                    check_space_move(&server, &runtime, &request.candidate)
+                    check_space_move(&server, &runtime, &owner, &request.candidate)
                 },
             )
         }),
@@ -362,10 +377,13 @@ async fn check_move(
     }))
 }
 
-/// The move on `candidate`, checked now.
+/// The move on `candidate`, checked now. The owner's proof is checked again
+/// as the check concludes (FIX 8982); a proof that no longer holds answers as
+/// the owner door does.
 fn check_space_move(
     server: &SyncServer,
     runtime: &tokio::runtime::Handle,
+    owner: &AuthenticatedOwner,
     candidate: &str,
 ) -> OwnerResult<MoveChecked> {
     let moving = server
@@ -374,7 +392,12 @@ fn check_space_move(
         .into_iter()
         .find(|moving| moving.candidate == candidate)
         .ok_or_else(|| OwnerError::NotFound("embedding space move", candidate.to_owned()))?;
-    let outcome = server.check_space_move(runtime, &moving).map_err(invalid)?;
+    let (outcome, _) = server
+        .check_space_move_listing(runtime, &moving, Some(owner))
+        .map_err(|refusal| match refusal {
+            MediaEmbedRefusal::Vault(error) => space_refused(error),
+            refusal => invalid(refusal),
+        })?;
     Ok(match outcome {
         SpaceMoveOutcome::Filling => MoveChecked {
             outcome: "filling",
@@ -410,9 +433,10 @@ async fn approve_move(
         server,
         payload,
         "vault.embedding_spaces.move_approve",
-        move |vault, candidate| {
+        move |vault, owner, candidate| {
             let egress = gates.candidate_media_egress(candidate);
             vault.approve_space_move_admitted(
+                owner,
                 candidate,
                 egress
                     .as_ref()
@@ -435,7 +459,7 @@ async fn undo_move(
         server,
         payload,
         "vault.embedding_spaces.move_undo",
-        |vault, candidate| vault.undo_space_move(candidate),
+        |vault, owner, candidate| vault.undo_space_move(owner, candidate),
     )
     .await
 }
@@ -452,21 +476,25 @@ async fn abandon_move(
         server,
         payload,
         "vault.embedding_spaces.move_abandon",
-        |vault, candidate| vault.abandon_space_move(candidate),
+        |vault, owner, candidate| vault.abandon_space_move(owner, candidate),
     )
     .await
 }
 
-/// One owner step on the move `candidate` names, inside row `verb`'s hooks;
-/// it answers every space.
-async fn move_step<T, E: std::fmt::Display>(
+/// One owner step on the move `candidate` names, inside row `verb`'s hooks,
+/// with the request's owner proof for its write to check again; it answers
+/// every space.
+async fn move_step<T, F>(
     auth: CoreAuth,
     server: Arc<SyncServer>,
     payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
     verb: &'static str,
-    step: impl FnOnce(&oneiron::Vault, &str) -> Result<T, E> + Send + 'static,
-) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    step: F,
+) -> OwnerReply<Value>
+where
+    F: FnOnce(&oneiron::Vault, &AuthenticatedOwner, &str) -> oneiron::Result<T> + Send + 'static,
+{
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -477,7 +505,7 @@ async fn move_step<T, E: std::fmt::Display>(
                 verb,
                 request,
                 |request: EmbeddingSpaceCandidateRequest| {
-                    step(vault, &request.candidate).map_err(invalid)?;
+                    step(vault, &owner, &request.candidate).map_err(space_refused)?;
                     spaces(vault)
                 },
             )
@@ -522,7 +550,7 @@ async fn put_probe(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceProbePutRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -545,7 +573,9 @@ async fn put_probe(
                         written_at: vault.now_recorded_at(),
                         cohort: None,
                     };
-                    let id = vault.put_space_probe(probe.clone()).map_err(invalid)?;
+                    let id = vault
+                        .put_space_probe(&owner, probe.clone())
+                        .map_err(space_refused)?;
                     Ok(Probe {
                         id: probe_hex(id),
                         probe,
@@ -563,7 +593,7 @@ async fn delete_probe(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<EmbeddingSpaceProbeDeleteRequest>, JsonRejection>,
 ) -> OwnerReply<Value> {
-    let (_, actor) = hooked_owner(&auth, &server)?;
+    let (owner, actor) = hooked_owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
@@ -576,7 +606,7 @@ async fn delete_probe(
                 |request: EmbeddingSpaceProbeDeleteRequest| {
                     let id = probe_id(&request.id)?;
                     Ok(Done {
-                        ok: vault.delete_space_probe(&id)?,
+                        ok: vault.delete_space_probe(&owner, &id)?,
                     })
                 },
             )
@@ -605,18 +635,22 @@ async fn refused(
 }
 
 /// `POST /v1/owner/embedding-spaces/refused/clear`: forgets one refusal, so
-/// the backfill sends the same bytes to the space's model again.
+/// the backfill sends the same bytes to the space's model again. Its write
+/// checks the request's owner proof again (FIX 8200).
 async fn clear_refused(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<ClearRefused>, JsonRejection>,
 ) -> OwnerReply<Spaces> {
-    owner(&auth, &server)?;
+    let proof = owner(&auth, &server)?;
     let request = json_payload(payload)?;
     Ok(Json(
         blocking(move || {
             let id = entity_id("id", &request.id)?;
-            if !server.vault().clear_media_refusal(&request.space, &id)? {
+            if !server
+                .vault()
+                .clear_media_refusal(&proof, &request.space, &id)?
+            {
                 return Err(OwnerError::NotFound(
                     "refused document",
                     format!("{} in {}", request.id, request.space),

@@ -67,6 +67,7 @@ mod outbound;
 pub use outbound::{EsignOutboundCommand, EsignOutboundVerb};
 
 mod signature_image;
+pub use signature_image::{SignatureImagePlan, plan_signature_image};
 
 mod rate;
 pub use rate::{EsignRateCheck, EsignRateReceipt};

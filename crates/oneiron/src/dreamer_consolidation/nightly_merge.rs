@@ -1,15 +1,18 @@
 //! Nightly fan-in over child proposals. Mechanical identity links and open
 //! conflicts never ask a model to rethink a child's judgement. Narrative
 //! generation sees only the proposals, not source transcripts or prior prose.
+//! Semantic links across children are judged after the merge lands, by its
+//! own link continuations (OF-498d, `super::nightly_links`), proposals only.
 
 use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
+use super::nightly_links::NightlyLinkProposal;
 use super::roles::{DREAMER_NARRATIVE_ROLE, RoleCall};
 use super::step_charge::StepChargeTally;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    ScopedReadActorKey, claim_evidence_taint,
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead as ClaimRead,
+    ScopedReadActorKey,
 };
 use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope,
@@ -22,15 +25,20 @@ use crate::llm::{
     StepOutcome, TierPrecedence, call_as_step_checked,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::{
-    ClaimCandidate, EntityId, Error, Result, SourceLineage, TimeRange, Vault, WriteEnvelope,
-    WriteProvenance,
-};
+use crate::write_envelope::WriteActor;
+use crate::{ClaimCandidate, EntityId, Error, Result, Vault};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod chunks;
+mod write;
+use chunks::retry_chunks_in_txn;
+pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
+
 pub(crate) const ATTEMPT: &str = "dreamer.nightly.merge";
+/// The domain the merge's own claims derive their ids under.
+const MERGE_IDS: &[u8] = b"oneiron:nightly:merge:v1";
 const OUTPUT: SideTable<AttemptId, Vec<EntityId>, Named> =
     SideTable::new(&side_table::DREAMER_NIGHTLY_OUTPUT);
 const MERGED: SideTable<AttemptId, MergeResult, Named> =
@@ -44,15 +52,20 @@ struct MergeInput {
     retry_secs: u64,
 }
 
+/// What one nightly attempt landed, in the result ledger: the merge's, or
+/// one of its link continuations' (OF-498d).
 #[derive(Serialize, Deserialize)]
-struct MergeResult {
-    outputs: Vec<EntityId>,
-    completed_units: u64,
-    step_hashes: Vec<[u8; 32]>,
+pub(super) struct MergeResult {
+    pub(super) outputs: Vec<EntityId>,
+    pub(super) completed_units: u64,
+    pub(super) step_hashes: Vec<[u8; 32]>,
     /// The listed children's retry chunks this merge read (FIX 7495), so no
     /// later merge under the same parent reads them again.
     #[serde(default)]
-    chunks: Vec<AttemptId>,
+    pub(super) chunks: Vec<AttemptId>,
+    /// Every pair a link continuation judged, whatever its verdict, each
+    /// same-as with the proposal claim it wrote (OF-498d); none for a merge.
+    pub(super) links: Vec<NightlyLinkProposal>,
 }
 
 pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]) -> Result<()> {
@@ -124,10 +137,13 @@ pub(crate) fn enqueue_in_txn(
     Ok(())
 }
 
-struct Proposal {
-    id: EntityId,
-    raw: Vec<u8>,
-    body: ClaimBody,
+/// One child proposal a nightly attempt reads: its live raw bytes and body,
+/// and every child whose outputs hold it, in order (OF-498d).
+pub(super) struct Proposal {
+    pub(super) id: EntityId,
+    pub(super) raw: Vec<u8>,
+    pub(super) body: ClaimBody,
+    pub(super) children: Vec<AttemptId>,
 }
 
 impl ConsolidationExecutor<'_> {
@@ -142,88 +158,41 @@ impl ConsolidationExecutor<'_> {
         let input: MergeInput =
             serde_json::from_str(attempt.status.payload.input.as_str().ok_or_else(invalid)?)
                 .map_err(|_| invalid())?;
-        let key = ScopedReadActorKey::with_actor_class(
-            self.actor.entity_ref().to_hex(),
-            self.actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(invalid)?;
-        ctx.vault.store.authorization_now()?;
-        let read = ctx.vault.scoped_read(key);
+        let read = merge_read(ctx.vault, self.actor)?;
         let (proposals, chunks) = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(result) = MERGED.get(&ctx.vault.store, &txn, &attempt.status.attempt.id)? {
-                let mut paid = !result.step_hashes.is_empty();
-                for hash in &result.step_hashes {
-                    paid &= DreamerRunnerStore::new(ctx.vault)
-                        .checkpoint_step_charged(attempt.status.attempt.id, hash)?;
-                }
-                return Ok(DreamerAttemptExecution::Completed {
-                    completed_units: if paid { 0 } else { result.completed_units },
-                });
+            if let Some(completed_units) =
+                landed_units_in_txn(ctx.vault, &txn, attempt.status.attempt.id)?
+            {
+                return Ok(DreamerAttemptExecution::Completed { completed_units });
             }
             // A listed child's retry chunks fan in beside it (FIX 7495).
             let chunks = retry_chunks_in_txn(ctx.vault, &txn, &attempt.status, &input.children);
-            let mut ids = BTreeSet::new();
-            for id in input.children.iter().chain(&chunks) {
-                let child = AttemptQueue::new(ctx.vault)
-                    .get_in_txn(&txn, *id)?
-                    .ok_or_else(invalid)?;
-                if !child.state.is_terminal() {
-                    return Ok(DreamerAttemptExecution::Deferred {
-                        completed_units: 0,
-                        retry_at: (ctx.now_ms / 1_000).saturating_add(input.retry_secs),
-                    });
-                }
-                ids.extend(OUTPUT.get(&ctx.vault.store, &txn, id)?.unwrap_or_default());
-            }
-            let mut proposals = Vec::new();
-            for id in ids {
-                let Some(raw) = read.entity_raw_live_in(&txn, &id)? else {
-                    continue;
-                };
-                let Some(body) = ctx.vault.get_claim_in_txn(&txn, &id)? else {
-                    continue;
-                };
-                if body.lifecycle == ClaimLifecycleStatus::Active
-                    && body.approval != ClaimApprovalStatus::Rejected
-                    && !body.stale
-                {
-                    proposals.push(Proposal { id, raw, body });
-                }
-            }
+            let fan_in: Vec<AttemptId> = input.children.iter().chain(&chunks).copied().collect();
+            let Some(proposals) = proposals_in_txn(ctx.vault, &txn, &read, &fan_in)? else {
+                return Ok(DreamerAttemptExecution::Deferred {
+                    completed_units: 0,
+                    retry_at: (ctx.now_ms / 1_000).saturating_add(input.retry_secs),
+                });
+            };
             (proposals, chunks)
         };
         // Exposure axes never merge. Each narrative is a bounded summary of
         // this scope's proposal set, not evidence for any new belief.
-        let mut groups = BTreeMap::new();
-        for proposal in &proposals {
-            let body = &proposal.body;
-            let scope_key =
-                super::support::encode_value(body.scope.as_ref().unwrap_or(&Value::Nil))?;
-            groups
-                .entry((
-                    body.world,
-                    body.scope_facet,
-                    body.rel,
-                    body.scope_project,
-                    scope_key,
-                ))
-                .or_insert_with(Vec::new)
-                .push(proposal);
-        }
+        let groups = exposure_groups(&proposals)?;
+        // The proposals that lead a cross-child pair: each one's pairs are
+        // judged after this merge lands, by a link continuation (OF-498d).
+        let anchors = super::nightly_links::anchors(&groups)?;
         let mut drafts = Vec::new();
         let mut charges = StepChargeTally::default();
-        for members in groups.values() {
+        for members in &groups {
             let first = &members[0].body;
             let mut identity: BTreeMap<Vec<u8>, Vec<&Proposal>> = BTreeMap::new();
             for member in members {
-                let topic = super::conflict::topic_key(member.body.scope.as_ref())?;
-                let encoded = super::support::encode_value(&Value::Array(vec![
-                    Value::Binary(member.body.subject.encode()),
-                    member.body.predicate.clone().into(),
-                    topic.map_or(Value::Nil, Value::Binary),
-                ]))?;
-                identity.entry(encoded).or_default().push(member);
+                identity
+                    .entry(identity_key(&member.body)?)
+                    .or_default()
+                    .push(member);
             }
             for cohort in identity.values().filter(|cohort| cohort.len() > 1) {
                 let same = cohort
@@ -446,84 +415,30 @@ impl ConsolidationExecutor<'_> {
             drafts.push(scoped_draft(candidate, first, members));
         }
         let now = ctx.now_ms / 1_000;
+        let writer = NightlyWrite {
+            vault: ctx.vault,
+            actor: self.actor,
+            attempt: &attempt.status,
+            ids: MERGE_IDS,
+            now,
+        };
+        let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
-            for proposal in &proposals {
-                if read.entity_raw_live_in(txn, &proposal.id)?.as_ref() != Some(&proposal.raw) {
-                    return Err(Error::ConcurrentWrite(
-                        "nightly proposal changed before merge",
-                    ));
-                }
-            }
-            let mut outputs = Vec::new();
-            for (index, draft) in drafts.into_iter().enumerate() {
-                let (candidate, meet) = draft?;
-                let id = crate::codebase::entity_id_from_hash_material(
-                    b"oneiron:nightly:merge:v1",
-                    &[
-                        attempt.status.attempt.id.as_bytes(),
-                        &(index as u64).to_be_bytes(),
-                    ],
-                )?;
-                let requested = if candidate.predicate() == crate::claim::PREDICATE_CONFLICT_OPEN {
-                    ClaimApprovalStatus::Proposed
-                } else {
-                    ClaimApprovalStatus::Auto
-                };
-                let mut envelope = WriteEnvelope::with_lineage(
-                    self.actor,
-                    meet,
-                    WriteProvenance::new(Value::Map(vec![
-                        ("surface".into(), "dreamer".into()),
-                        (
-                            "run".into(),
-                            attempt
-                                .status
-                                .attempt
-                                .run_id
-                                .clone()
-                                .unwrap_or_else(|| {
-                                    crate::entity_id::bytes_to_hex_lower(
-                                        attempt.status.attempt.id.as_bytes(),
-                                    )
-                                })
-                                .into(),
-                        ),
-                    ]))?,
-                    requested,
-                    SourceLineage::of(ClaimSource::Generated).with(meet),
-                );
-                ctx.vault.sign_retained_machine_claim_in_txn(
-                    txn,
-                    &id,
-                    &candidate,
-                    &mut envelope,
-                )?;
-                ctx.vault
-                    .batch_in()
-                    .claim_candidate(
-                        &id,
-                        candidate,
-                        &envelope,
-                        TimeRange {
-                            start: now,
-                            end: now,
-                        },
-                        now,
-                    )
-                    .apply_recording_gate_decisions(txn)?;
-                outputs.push(id);
-            }
-            MERGED.put(
-                &ctx.vault.store,
+            recheck_in_txn(&read, txn, &read_back)?;
+            let outputs = writer.claims_in_txn(txn, drafts)?;
+            writer.result_in_txn(
                 txn,
-                &attempt.status.attempt.id,
                 &MergeResult {
                     outputs,
                     completed_units: charges.units,
                     step_hashes: charges.step_hashes.clone(),
                     chunks,
+                    links: Vec::new(),
                 },
-            )
+            )?;
+            // Each cross-child pair is judged after these outputs land, by a
+            // continuation the night's wake never waits on (OF-498d).
+            super::nightly_links::enqueue_in_txn(ctx.vault, txn, &attempt.status, &anchors, now)
         });
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
@@ -536,119 +451,126 @@ impl ConsolidationExecutor<'_> {
     }
 }
 
-fn scoped_draft(
-    candidate: ClaimCandidate,
-    body: &ClaimBody,
-    members: &[&Proposal],
-) -> Result<(ClaimCandidate, ClaimSource)> {
-    let meet = members.iter().fold(ClaimSource::Generated, |meet, member| {
-        super::source_meet(
-            meet,
-            claim_evidence_taint(&member.body)
-                .or(member.body.source)
-                .unwrap_or(ClaimSource::Generated),
-        )
-    });
-    let mut candidate = candidate
-        .with_scope_stamps(body.scope_facet, body.scope_project)
-        .with_evidence(Value::Map(vec![(
-            "refs".into(),
-            Value::Array(
-                members
-                    .iter()
-                    .map(|member| Value::Binary(member.id.as_bytes().to_vec()))
-                    .collect(),
-            ),
-        )]));
-    if let Some(world) = body.world {
-        candidate = candidate.with_world(world);
-    }
-    if let Some(rel) = body.rel {
-        candidate = candidate.with_relationship(rel);
-    }
-    if let Some(scope) = crate::claim::without_initial_weight(body.scope.clone()) {
-        candidate = candidate.with_scope(scope);
-    }
-    Ok((candidate.with_evidence_taint(meet)?, meet))
+/// The Dreamer's own scoped read, as a nightly attempt reads its proposals.
+pub(super) fn merge_read(vault: &Vault, actor: WriteActor) -> Result<ClaimRead<'_>> {
+    let key = ScopedReadActorKey::with_actor_class(
+        actor.entity_ref().to_hex(),
+        actor.actor_class().gate_actor_class(),
+    )
+    .ok_or_else(invalid)?;
+    vault.store.authorization_now()?;
+    Ok(vault.scoped_read(key))
 }
 
-/// The retry chunks of `listed` (FIX 7495): the partition attempts a listed
-/// child's selection retry owed as its siblings (`wake_plan/chunks.rs`),
-/// under this merge's parent and in a listed child's partition. One that
-/// another merge under that parent lists, or has read, is that merge's. A
-/// lineage that does not read leaves the listed children alone, as before:
-/// nothing here refuses a merge.
-fn retry_chunks_in_txn(
+/// Each proposal the `children` output that the Dreamer reads live and that
+/// stands (active, not rejected, not stale), in id order, with every child
+/// whose outputs hold it: what a merge fans in, and what its link
+/// continuations pair (OF-498d). None while one of the children is not
+/// finished.
+pub(super) fn proposals_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    merge: &DreamerAttemptStatus,
-    listed: &[AttemptId],
-) -> Vec<AttemptId> {
-    let Some(parent) = merge.payload.parent_attempt else {
-        return Vec::new();
-    };
-    chunks_under_in_txn(vault, txn, merge.attempt.id, parent, listed).unwrap_or_else(|error| {
-        tracing::warn!(
-            merge = %crate::entity_id::bytes_to_hex_lower(merge.attempt.id.as_bytes()),
-            kind = ?error.kind(),
-            "nightly merge retry chunks did not read; it fans in its listed children"
-        );
-        Vec::new()
-    })
+    read: &ClaimRead<'_>,
+    children: &[AttemptId],
+) -> Result<Option<Vec<Proposal>>> {
+    let mut ids: BTreeMap<EntityId, BTreeSet<AttemptId>> = BTreeMap::new();
+    for id in children {
+        let child = AttemptQueue::new(vault)
+            .get_in_txn(txn, *id)?
+            .ok_or_else(invalid)?;
+        if !child.state.is_terminal() {
+            return Ok(None);
+        }
+        for output in OUTPUT.get(&vault.store, txn, id)?.unwrap_or_default() {
+            ids.entry(output).or_default().insert(*id);
+        }
+    }
+    let mut proposals = Vec::new();
+    for (id, origins) in ids {
+        let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
+            continue;
+        };
+        let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
+            continue;
+        };
+        if body.lifecycle == ClaimLifecycleStatus::Active
+            && body.approval != ClaimApprovalStatus::Rejected
+            && !body.stale
+        {
+            proposals.push(Proposal {
+                id,
+                raw,
+                body,
+                children: origins.into_iter().collect(),
+            });
+        }
+    }
+    Ok(Some(proposals))
 }
 
-/// [`retry_chunks_in_txn`] over `parent`'s run-tree children.
-fn chunks_under_in_txn(
+/// `proposals` by exposure, in key order: world, facet, relationship,
+/// project and scope. Exposure axes never merge.
+pub(super) fn exposure_groups(proposals: &[Proposal]) -> Result<Vec<Vec<&Proposal>>> {
+    let mut groups: BTreeMap<_, Vec<&Proposal>> = BTreeMap::new();
+    for proposal in proposals {
+        let body = &proposal.body;
+        let scope_key = super::support::encode_value(body.scope.as_ref().unwrap_or(&Value::Nil))?;
+        groups
+            .entry((
+                body.world,
+                body.scope_facet,
+                body.rel,
+                body.scope_project,
+                scope_key,
+            ))
+            .or_default()
+            .push(proposal);
+    }
+    Ok(groups.into_values().collect())
+}
+
+/// A proposal's exact identity: its subject, predicate and topic. The merge
+/// compares the proposals of one identity mechanically.
+pub(super) fn identity_key(body: &ClaimBody) -> Result<Vec<u8>> {
+    let topic = super::conflict::topic_key(body.scope.as_ref())?;
+    super::support::encode_value(&Value::Array(vec![
+        Value::Binary(body.subject.encode()),
+        body.predicate.clone().into(),
+        topic.map_or(Value::Nil, Value::Binary),
+    ]))
+}
+
+/// What a landed merge read (OF-498d): its listed children with the retry
+/// chunks it fanned in beside them, and its retry delay. Its link
+/// continuations read the same children.
+pub(super) struct MergedSnapshot {
+    pub(super) children: Vec<AttemptId>,
+    pub(super) retry_secs: u64,
+}
+
+/// The [`MergedSnapshot`] of the landed merge `merge`, from its queued input
+/// and its result.
+pub(super) fn merged_snapshot_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     merge: AttemptId,
-    parent: AttemptId,
-    listed: &[AttemptId],
-) -> Result<Vec<AttemptId>> {
-    let queue = AttemptQueue::new(vault);
-    let mut partitions = BTreeSet::new();
-    for id in listed {
-        if let Some(record) = queue.get_in_txn(txn, *id)?
-            && let Ok(payload) =
-                crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
-            && let Ok((key, _, _)) = super::partition::decode_partition_payload(&payload.input)
-        {
-            partitions.insert(key);
-        }
+) -> Result<MergedSnapshot> {
+    let record = AttemptQueue::new(vault)
+        .get_in_txn(txn, merge)?
+        .ok_or_else(invalid)?;
+    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)?;
+    if payload.attempt_type != ATTEMPT {
+        return Err(invalid());
     }
-    let mut claimed: BTreeSet<AttemptId> = listed.iter().copied().collect();
-    let mut candidates = Vec::new();
-    for sibling in DreamerRunnerStore::new(vault).child_attempts_in_txn(txn, parent)? {
-        if sibling == merge {
-            continue;
-        }
-        let Some(record) = queue.get_in_txn(txn, sibling)? else {
-            continue;
-        };
-        let Ok(payload) = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)
-        else {
-            continue;
-        };
-        if payload.attempt_type == ATTEMPT {
-            if let Some(input) = payload
-                .input
-                .as_str()
-                .and_then(|raw| serde_json::from_str::<MergeInput>(raw).ok())
-            {
-                claimed.extend(input.children);
-            }
-            if let Some(result) = MERGED.get(&vault.store, txn, &sibling)? {
-                claimed.extend(result.chunks);
-            }
-        } else if payload.attempt_type == DreamerConsolidationScope::Macro.as_str()
-            && super::partition::decode_partition_payload(&payload.input)
-                .is_ok_and(|(key, _, _)| partitions.contains(&key))
-        {
-            candidates.push(sibling);
-        }
-    }
-    candidates.retain(|id| !claimed.contains(id));
-    Ok(candidates)
+    let input: MergeInput =
+        serde_json::from_str(payload.input.as_str().ok_or_else(invalid)?).map_err(|_| invalid())?;
+    let result = MERGED.get(&vault.store, txn, &merge)?.ok_or_else(invalid)?;
+    let mut children = input.children;
+    children.extend(result.chunks);
+    Ok(MergedSnapshot {
+        children,
+        retry_secs: input.retry_secs,
+    })
 }
 
 fn invalid() -> Error {
@@ -688,7 +610,7 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
 /// A proposal's subject as its narrative call names it: an entity by its
 /// label (a proposal's own `C<n>` when it is one, else `P<n>`), an edge as
 /// `<kind>(<source>,<target>)` over its endpoints' labels.
-fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
+pub(super) fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
     let mut label = |id: EntityId| -> CallLabel {
         labels
             .label(LabelKind::Claim, id)

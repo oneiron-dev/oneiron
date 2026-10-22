@@ -78,9 +78,15 @@ pub struct Vault {
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
+    /// What the runtime witnesses of each leased attempt it runs now (OF-568
+    /// L5). In memory only: never persisted, never restored.
+    pub(crate) attempt_activity: crate::code_run::activity::AttemptActivityRuntime,
     /// Task work's one fair line on this vault, whichever door the work came
     /// in by ([`Vault::admit_task_work`]).
     pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
+    /// Linear mutations waiting for a full Rate window, one turn at a time,
+    /// fair across their verified writers (FIX 8788).
+    pub(crate) linear_rate_line: crate::work_line::WorkLine<crate::EntityId>,
     /// World privacy P6b: this install's this-device-only keystore, the world
     /// keys this machine opened, and their OF-520 questions. In memory only,
     /// never persisted, and never shared across vaults.
@@ -171,6 +177,10 @@ pub struct Vault {
     /// ([`Vault::lend_host_net_floor`]); none until it lends one.
     pub(crate) host_net_floor:
         std::sync::OnceLock<std::sync::Arc<dyn oneiron_container::HostNetFloor>>,
+    /// The measured disk floor a host lends its guests' proposal spools
+    /// ([`Vault::lend_proposal_spool`], FIX 7650); none until it lends one.
+    pub(crate) proposal_spool:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::code_sandbox::ProposalSpoolFloor>>,
     /// The result bodies this handle's readers hold, which the body
     /// collector leaves alone (OF-597).
     pub(crate) result_body_pins: crate::result_body::ResultBodyPins,

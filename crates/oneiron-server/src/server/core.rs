@@ -84,6 +84,13 @@ pub struct SyncServer {
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
     pub(crate) transfers: crate::api::Transfers,
+    /// The machine's memory, leased to work before it allocates (FIX 7649):
+    /// the e-sign doors' spooled bodies read whole take their lease here.
+    pub(crate) memory: crate::machine::MachineMemory,
+    /// The host's renderer line (`limits.renderer_work`, FIX 7653): every
+    /// deck and slide render takes its turn here, round robin across the
+    /// callers it is for, the host's own wakes behind them.
+    pub(crate) renderer_turns: crate::admission::Admission<oneiron::EntityId>,
     /// OF-520 questions retrieval queries past `config.limits` raised.
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
@@ -134,6 +141,9 @@ pub struct SyncServer {
     /// The `[browser]` guest each code run starts for its own browser verbs.
     /// `None` answers every browser call `browser_unbound`.
     pub(crate) browser_guest: Option<oneiron_browser::BrowserGuest>,
+    /// How this process's browser stands (FIX 7670), which each browser
+    /// guest start moves and `Ping` and the owner's status read.
+    pub(crate) browser_readiness: crate::config::browser::BrowserReadinessCell,
     /// The `[desktop]` guest each code run starts for its own desktop verbs.
     /// `None` answers every desktop call `browser_unbound`.
     pub(crate) desktop_guest: Option<oneiron_browser::DesktopGuest>,
@@ -144,7 +154,7 @@ pub struct SyncServer {
     /// Host-injected acquisition ladder, initialized to native readability on first use.
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
-    pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
+    pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
     pub(crate) self_brief_sessions:
         Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
@@ -400,10 +410,21 @@ impl SyncServer {
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
+        // Provider media replies are booked on their own line (FIX 8615).
+        crate::models::install_media_reply_line(
+            config.limits.media_reply_bytes,
+            Arc::clone(wire_telemetry.limit_questions()),
+        );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
             config.limits.decision_reads,
+            config.limits.queue_wait(),
+        );
+        let renderer_turns = crate::admission::Admission::new(
+            crate::wire_telemetry::LimitRow::RendererWork,
+            Arc::clone(wire_telemetry.limit_questions()),
+            config.limits.renderer_work,
             config.limits.queue_wait(),
         );
         // Task work waits in the vault's own line, which the embedded SDK, a
@@ -431,8 +452,22 @@ impl SyncServer {
         // OF-181: a live run that ends closes the lens cards it created.
         let live_runs: Arc<super::LiveRuns> = Arc::default();
         live_runs.close_cards_with(Arc::clone(&lens_frames));
+        // FIX 8143: a live run that ends closes its board sessions.
+        let memories_cursors = Arc::new(Mutex::new(crate::api::MemoriesCursorStore::default()));
+        live_runs.close_sessions_with(crate::api::run_session_closer(Arc::clone(
+            &memories_cursors,
+        )));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
+        // FIX 3837: no connector's live exchange outlives a restart, so the
+        // rounds of questions kept on its calls' rows stand with their
+        // delivery uncertain.
+        if let Err(error) = vault.mark_connector_inputs_uncertain() {
+            tracing::warn!(%error, "connector call questions not marked uncertain");
+        }
+        // One machine memory line for the server's work and its organs'
+        // own buffers alike (FIX 7649, FIX 7654).
+        let memory = crate::machine::MachineMemory::new();
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
@@ -449,6 +484,8 @@ impl SyncServer {
                 Arc::clone(wire_telemetry.limit_questions()),
                 &vault,
             )?,
+            memory: memory.clone(),
+            renderer_turns,
             wire_telemetry,
             vault,
             root_doc,
@@ -477,11 +514,12 @@ impl SyncServer {
             secret_destinations: Default::default(),
             connector_elicitations: Arc::default(),
             browser_guest: None,
+            browser_readiness: Default::default(),
             desktop_guest: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
-            memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
+            memories_cursors,
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,
@@ -495,8 +533,9 @@ impl SyncServer {
             mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
             #[cfg(unix)]
-            organs: Arc::new(oneiron_organ_host::OrganHost::new(
+            organs: Arc::new(oneiron_organ_host::OrganHost::with_floor(
                 oneiron_organ_host::HostConfig::default(),
+                Arc::new(crate::machine::OrganFloor(memory.clone())),
             )),
             #[cfg(unix)]
             organ_dir: None,
@@ -597,6 +636,12 @@ impl SyncServer {
 
     pub(crate) fn browser_guest(&self) -> Option<&oneiron_browser::BrowserGuest> {
         self.browser_guest.as_ref()
+    }
+
+    /// This process's browser readiness: seeded at start, then moved by
+    /// each browser guest start, and read as it stands.
+    pub(crate) fn browser_readiness(&self) -> &crate::config::browser::BrowserReadinessCell {
+        &self.browser_readiness
     }
 
     /// Gives code runs a desktop guest, from the `[desktop]` section.

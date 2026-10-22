@@ -8,9 +8,9 @@
 //! installed, with the connector key's credential presented only inside the
 //! credential door. One send is one `tools/call`: `initialize` at the key's
 //! pinned protocol revision, `notifications/initialized`, then the call
-//! itself. No proxy, no redirects, a bounded reply and short timeouts.
+//! itself. No proxy, no redirects, a complete reply and short timeouts.
 //!
-//! The reply is foreign data. The host keeps its own bounded copy of the
+//! The reply is foreign data. The host keeps its own copy of the
 //! `tools/call` result for the caller; the ledger's scrub still destroys the
 //! raw bytes before anything durable is written. Sampling and roots are not
 //! served: any such server request on the reply stream is refused.
@@ -18,9 +18,9 @@
 //! A connector may ask for input mid-call (elicitation). `initialize`
 //! declares the capability only when the governing key's elicitation setting,
 //! read before the exchange starts, is not `never allow`, the engine bound
-//! the call's caller and grant, the send presents no custody record, and the
-//! pinned revision has an elicitation shape: 2025-06-18 declares `{}`,
-//! 2025-11-25 and 2026-07-28 form mode alone. A question is a form-mode
+//! the call's caller and grant, and the pinned revision has an elicitation
+//! shape: 2025-06-18 declares `{}`, 2025-11-25 and 2026-07-28 form mode
+//! alone. A question is a form-mode
 //! `elicitation/create` request on the reply stream (2025-06-18,
 //! 2025-11-25), or a 2026-07-28 `tools/call` result that asks for input,
 //! each of its requests a form `elicitation/create`. Either way the call
@@ -29,13 +29,17 @@
 //! the open exchange, registered in the server's
 //! [`ConnectorElicitationRegistry`]. It sends the caller's checked answer,
 //! reads what the connector says next, and ends the session when the call
-//! ends or its questions lapse. Any other server request is refused as
+//! ends or its exchange does. Any other server request is refused as
 //! before, and any other result is the tool's.
 //!
 //! A `self.use` call (OF-560) presents the custody record its handle names
 //! in place of the route's own secret, through the same door for the same
 //! effector; the door rechecks the record's binding at each send. A call under
 //! a secret grant (FIX 4313) redeems the grant at its door at each send.
+//! Whatever selected it, everything the connector says is cleared of the
+//! value a send presented inside its door, with those bytes (`presenting`):
+//! a `self.use` send declares elicitation as any other does, and its
+//! questions and every later reply are cleared the same way (FIX 3843).
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read};
@@ -44,13 +48,14 @@ use std::time::{Duration, Instant};
 
 use oneiron::connector_key::{ConnectorCallRoute, SlateDisposition};
 use oneiron::outbound_consent::{
-    CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
-    ConnectorQuestion, FrozenToolCallView, OutboundResultSender, OutboundTransportResult,
-    RawOutboundResult, UntrustedToolResult,
+    ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorQuestion,
+    FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
+    UntrustedToolResult,
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
 };
+use oneiron::secret_custody::{KeptSentValue, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use oneiron::task_verb::sdk::ConnectorAnswerAction;
 use oneiron::{EntityId, Vault};
@@ -65,9 +70,11 @@ use crate::connector_elicitation::{
 use crate::server::SyncServer;
 
 mod live_exchange;
-use live_exchange::{
-    Continuation, LiveSession, Reply, StreamEvent, hand_over, open_reply, post_json, read_reply,
-};
+mod presenting;
+mod reply_read;
+use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
+use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
+use reply_read::{Reply, StreamEvent, open_reply, read_reply};
 
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -127,6 +134,8 @@ pub struct ServedConnectorCallHost {
     awaiting: Option<ConnectorAwaitingInput>,
     /// The custody record the last send presented, as its door resolved it.
     presented: Option<EntityId>,
+    /// The last send's custody presentation, until taken (FIX 7646).
+    presentation: Option<SentPresentation>,
 }
 
 impl ServedConnectorCallHost {
@@ -173,10 +182,15 @@ impl ServedConnectorCallHost {
             caller: None,
             awaiting: None,
             presented: None,
+            presentation: None,
         })
     }
 
-    fn send_call(&self, call: &FrozenOutboundCall, presented: &mut Option<EntityId>) -> Sent {
+    fn send_call(
+        &self,
+        call: &FrozenOutboundCall,
+        presented: &mut Option<SentPresentation>,
+    ) -> Sent {
         let Ok(view) = FrozenToolCallView::read(call) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
@@ -189,60 +203,36 @@ impl ServedConnectorCallHost {
         // The grant admitted the frozen endpoint; this host sends only to
         // the one it installed under the same name.
         if connector.endpoint != view.endpoint() {
-            return Sent::not_sent(OutboundFailureKind::Rejected, None);
+            return Sent::not_sent(OutboundFailureKind::EndpointChanged, None);
         }
+        // The route and the credential its send presents are known before
+        // the exchange is declared (FIX 7646); a failure answers as before.
+        let presenting = match self.vault.route_connector_call(view.server()) {
+            Ok(Some(route)) => Some(self.presenting(route)),
+            _ => None,
+        };
         // The setting is read before the exchange starts.
         let elicitation = self.declared(call, &view);
         let Some(exchange) = Exchange::new(&self.client, &view, elicitation) else {
             return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
         };
-        let route = match self.vault.route_connector_call(view.server()) {
-            Ok(Some(route)) => route,
-            _ => return Sent::not_sent(OutboundFailureKind::Rejected, None),
+        let Some(presenting) = presenting else {
+            return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
-        let effector = format!("connector:{}", route.connector);
-        let mut sent = None;
-        let mut present = |value: &[u8]| -> oneiron::Result<()> {
-            let header = authorization_header(value)?;
-            sent = Some(exchange.run(Some(header)));
-            Ok(())
-        };
-        let door = match (self.grant, self.credential, route.secret_ref.as_deref()) {
-            (Some(grant), _, _) => {
-                let target = SecretGrantTarget::Connector { name: route.name };
-                self.vault
-                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                    .map(|_| self.credential)
-            }
-            (None, Some(custody), _) => self
-                .vault
-                .inject_secret_record_at_door(&custody, &effector, &mut present)
-                .map(|_| Some(custody)),
-            (None, None, Some(secret_ref)) => self
-                .vault
-                .inject_secret_at_door_resolved(secret_ref, &effector, &mut present)
-                .map(|(custody, _)| Some(custody)),
-            (None, None, None) => return exchange.run(None),
-        };
-        // The record a door that presented its value resolved (FIX 5455).
-        *presented = door.ok().flatten();
-        // Once the exchange ran, what the connector said is the delivery
-        // fact, whatever the door reports after it.
-        sent.unwrap_or_else(|| Sent::not_sent(OutboundFailureKind::TransportNotStarted, None))
+        presenting.send(&self.vault, &exchange, presented)
     }
 
-    /// The elicitation this send declares, or `None`: a send that presents
-    /// a custody record, one the engine bound no caller to, a revision with
-    /// no elicitation shape, an unreadable key ref or setting, and a key set
-    /// to `never allow` all declare none.
-    fn declared(
-        &self,
-        call: &FrozenOutboundCall,
+    /// The elicitation this send declares, or `None`: a call the engine
+    /// bound no caller to, a revision with no elicitation shape, an
+    /// unreadable key ref or setting, and a key set to `never allow` all
+    /// declare none. A call that names a custody record declares it too: its
+    /// door clears the presented value from each question and every later
+    /// reply (FIX 3843).
+    fn declared<'a>(
+        &'a self,
+        call: &'a FrozenOutboundCall,
         view: &FrozenToolCallView,
-    ) -> Option<Declared<'_>> {
-        if self.credential.is_some() {
-            return None;
-        }
+    ) -> Option<Declared<'a>> {
         let caller = self.caller.as_ref()?;
         let revision = view.protocol_revision()?;
         let capability = elicitation_capability(revision)?;
@@ -256,6 +246,8 @@ impl ServedConnectorCallHost {
         Some(Declared {
             capability,
             intake,
+            call,
+            vault: &self.vault,
             registry: &self.elicitations,
             binding: QuestionBinding {
                 principal,
@@ -272,13 +264,30 @@ impl ServedConnectorCallHost {
     }
 }
 
+impl ServedConnectorCallHost {
+    /// Ends the questions the last send kept that nobody took: no caller
+    /// holds their handle, so their worker cancels them now (FIX 3844).
+    fn abandon_untaken(&mut self) {
+        if let Some(left) = self.awaiting.take() {
+            self.elicitations.finish(Some(&*self.vault), &left.handle);
+        }
+    }
+}
+
+impl Drop for ServedConnectorCallHost {
+    fn drop(&mut self) {
+        self.abandon_untaken();
+    }
+}
+
 impl OutboundResultSender for ServedConnectorCallHost {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult {
         self.reply = None;
-        self.awaiting = None;
+        self.abandon_untaken();
         let mut presented = None;
         let sent = self.send_call(call, &mut presented);
-        self.presented = presented;
+        self.presented = presented.map(|presented| presented.custody);
+        self.presentation = presented;
         self.reply = sent.reply;
         self.awaiting = sent.awaiting;
         OutboundTransportResult {
@@ -317,27 +326,25 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         Some(self.presented.take().into_iter().collect())
     }
 
+    fn clears_at_door(&self) -> bool {
+        true
+    }
+
+    fn take_sent_presentation(&mut self) -> Option<SentPresentation> {
+        self.presentation.take()
+    }
+
     fn take_awaiting_input(&mut self) -> Option<ConnectorAwaitingInput> {
         self.awaiting.take()
     }
-}
 
-/// The stored value is a whole `Authorization` header (`Basic ...` or
-/// `Bearer ...`) or a bare bearer token, as the native mail check reads it.
-fn authorization_header(value: &[u8]) -> oneiron::Result<HeaderValue> {
-    let value = std::str::from_utf8(value)
-        .map_err(|_| oneiron::Error::InvalidConfig("the stored credential is not text".to_owned()))?
-        .trim();
-    let header = if value.starts_with("Basic ") || value.starts_with("Bearer ") {
-        value.to_owned()
-    } else {
-        format!("Bearer {value}")
-    };
-    let mut header = HeaderValue::from_str(&header).map_err(|_| {
-        oneiron::Error::InvalidConfig("the stored credential is not a header value".to_owned())
-    })?;
-    header.set_sensitive(true);
-    Ok(header)
+    fn abandon_awaiting_input(&mut self, handle: &str) {
+        self.elicitations.finish(Some(&*self.vault), handle);
+    }
+
+    fn bind_awaiting_call(&mut self, handle: &str, call_ref: EntityId) {
+        self.elicitations.bind_call(&self.vault, handle, call_ref);
+    }
 }
 
 /// The client capability one pinned revision declares for elicitation:
@@ -423,10 +430,10 @@ fn stream_question(request: &Value) -> Option<ConnectorQuestion> {
 }
 
 /// The questions of a `tools/call` result that asks for input, each a form
-/// `elicitation/create`, and its opaque request state. `None` when the
-/// result asks for none, or for anything else: then it is the tool's
-/// terminal result.
-fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Value>)> {
+/// `elicitation/create`, and its opaque request state, kept zeroized
+/// (FIX 8054). `None` when the result asks for none, or for anything else:
+/// then it is the tool's terminal result.
+fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<KeptWire>)> {
     let result = message.get("result")?;
     if result.get(wire::RESULT_TYPE).and_then(Value::as_str) != Some(wire::INPUT_REQUIRED) {
         return None;
@@ -444,7 +451,10 @@ fn retry_questions(message: &Value) -> Option<(Vec<ConnectorQuestion>, Option<Va
             form_question(key, request.get("params")?)
         })
         .collect::<Option<Vec<_>>>()?;
-    Some((questions, result.get(wire::REQUEST_STATE).cloned()))
+    Some((
+        questions,
+        result.get(wire::REQUEST_STATE).map(KeptWire::keep),
+    ))
 }
 
 /// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
@@ -519,7 +529,12 @@ impl Sent {
 struct Declared<'a> {
     capability: Value,
     intake: Intake,
+    /// The authenticated call, which every re-send of its payload rechecks.
+    call: &'a FrozenOutboundCall,
     binding: QuestionBinding,
+    /// The vault whose `[limits]` row measures the live question sets, and
+    /// whose gate ledger keeps each answer's receipt (FIX 3840).
+    vault: &'a Arc<Vault>,
     registry: &'a Arc<ConnectorElicitationRegistry>,
 }
 
@@ -582,7 +597,8 @@ impl<'a> Exchange<'a> {
         }
     }
 
-    fn run(&self, auth: Option<HeaderValue>) -> Sent {
+    /// One send, its answer cleared of `value` when it presents one.
+    fn run(&self, auth: Option<HeaderValue>, value: Option<&SentValue<'_>>) -> Sent {
         // Everything before `tools/call` leaves is certain non-delivery.
         let initialize = json!({
             "jsonrpc": "2.0",
@@ -666,7 +682,7 @@ impl<'a> Exchange<'a> {
             .send();
         let mut live = Some(live);
         let sent = match posted {
-            Ok(response) => self.read_call_reply(response, &mut live, asks_on_stream),
+            Ok(response) => self.read_call_reply(response, &mut live, asks_on_stream, value),
             // A refused connection never reached the connector.
             Err(error) if error.is_connect() || error.is_builder() => {
                 Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
@@ -689,6 +705,7 @@ impl<'a> Exchange<'a> {
         response: reqwest::blocking::Response,
         live: &mut Option<LiveSession>,
         asks_on_stream: bool,
+        value: Option<&SentValue<'_>>,
     ) -> Sent {
         let status = response.status();
         if status.is_server_error() {
@@ -702,7 +719,7 @@ impl<'a> Exchange<'a> {
         let deadline = asks_on_stream.then(|| Instant::now() + CALL_TIMEOUT);
         let mut stream = match open_reply(response, CALL_ID, deadline) {
             Ok(Reply::Json(Some((message, body)))) => {
-                return self.call_answered(&message, body, live);
+                return self.call_answered(&message, body, live, value);
             }
             Ok(Reply::Json(None)) | Err(()) => {
                 return Sent::ambiguous("connector_reply_unreadable");
@@ -712,7 +729,7 @@ impl<'a> Exchange<'a> {
         loop {
             match stream.next(CALL_ID) {
                 Ok(StreamEvent::Answer(message, body)) => {
-                    return self.call_answered(&message, body, live);
+                    return self.call_answered(&message, body, live, value);
                 }
                 Ok(StreamEvent::Request(request)) => {
                     let declared = self
@@ -726,29 +743,13 @@ impl<'a> Exchange<'a> {
                         }
                         continue;
                     };
-                    let request_id = request.get("id").cloned().unwrap_or(Value::Null);
-                    let questions = vec![question];
-                    if let Some(registered) = declared
-                        .registry
-                        .register(declared.binding.clone(), &questions)
-                    {
-                        let continuation = Continuation::Stream { stream, request_id };
-                        let body = request.to_string().into_bytes();
-                        return hand_over(
-                            declared,
-                            registered,
-                            questions,
-                            continuation,
-                            live,
-                            body,
-                        );
-                    }
-                    // A full registry: the question is cancelled at once,
-                    // and the call goes on without it.
-                    if let Some(live) = live.as_ref() {
-                        let cancel = elicitation_response(ConnectorAnswerAction::Cancel, None);
-                        let _ = live.respond(&request_id, "result", cancel);
-                    }
+                    let round = declared.keep_questions(vec![question], value);
+                    // The request's id waits zeroized (FIX 8054).
+                    let request_id = KeptWire::keep(request.get("id").unwrap_or(&Value::Null));
+                    let continuation = Continuation::Stream { stream, request_id };
+                    let body = request.to_string().into_bytes();
+                    let kept = value.map(SentValue::keep);
+                    return hand_over(declared, round, continuation, live, body, kept);
                 }
                 Ok(StreamEvent::End) | Err(()) => {
                     return Sent::ambiguous("connector_reply_unreadable");
@@ -759,31 +760,31 @@ impl<'a> Exchange<'a> {
 
     /// The connector's answer to `tools/call`. A 2026-07-28 result that asks
     /// for input, on a send that declared it, hands `live` to a worker; any
-    /// other result is the tool's, and so is that one when the registry is
-    /// full.
+    /// other result is the tool's.
     fn call_answered(
         &self,
         message: &Value,
         body: Vec<u8>,
         live: &mut Option<LiveSession>,
+        value: Option<&SentValue<'_>>,
     ) -> Sent {
         if let Some(declared) = self
             .elicitation
             .as_ref()
             .filter(|declared| declared.intake == Intake::Retry)
             && let Some((questions, request_state)) = retry_questions(message)
-            && let Some(registered) = declared
-                .registry
-                .register(declared.binding.clone(), &questions)
         {
+            let round = declared.keep_questions(questions, value);
             let continuation = Continuation::Retry {
                 tool: self.tool.to_owned(),
                 arguments: self.arguments.clone(),
                 tool_headers: self.tool_headers.clone(),
                 request_state,
                 next_id: CALL_ID + 1,
+                original: declared.call.clone(),
             };
-            return hand_over(declared, registered, questions, continuation, live, body);
+            let kept = value.map(SentValue::keep);
+            return hand_over(declared, round, continuation, live, body, kept);
         }
         match tool_result(message) {
             Some(reply) => Sent::acked(Some(reply), body),

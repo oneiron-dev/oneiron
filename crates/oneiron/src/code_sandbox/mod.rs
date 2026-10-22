@@ -26,6 +26,9 @@ pub mod egress;
 pub mod foreign;
 mod paths;
 mod proposal;
+/// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
+/// in process, JavaScript passed through byte for byte (FIX 8276).
+pub mod source;
 
 /// Firecracker-backed microVM lane (Linux; feature-gated).
 #[cfg(feature = "microvm-firecracker")]
@@ -48,10 +51,11 @@ pub use self::paths::{
     SANDBOX_WORKSPACE_ROOT, SandboxMount, SandboxMountTable, SandboxVirtualPath,
 };
 pub use self::proposal::{
-    SandboxClaimProposal, SandboxDirectoryOpaqueProposal, SandboxFileDeleteProposal,
-    SandboxFileEditProposal, SandboxFileRenameProposal, SandboxFileWriteProposal,
-    SandboxProposalBody, SandboxProposalBodyReader, SandboxProposalBodyWriter,
-    SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
+    ProposalSpoolClaim, ProposalSpoolFloor, SandboxClaimProposal, SandboxDirectoryOpaqueProposal,
+    SandboxFileDeleteProposal, SandboxFileEditProposal, SandboxFileRenameProposal,
+    SandboxFileWriteProposal, SandboxProposalBody, SandboxProposalBodyReader,
+    SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalWrite,
+    SpoolAtFloor, SpoolFloorRefusal,
 };
 
 #[cfg(test)]

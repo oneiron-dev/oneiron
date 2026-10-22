@@ -16,7 +16,7 @@ use super::dtos::{
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 use super::pairing::{NapiCheckpointPin, pin_from_engine};
-use crate::vault::host_device_class;
+use crate::boundary::host_device_class;
 
 // ── ONE-1441 WIRE-P1: the shared-backend client behind the `oneiron` npm
 //    package ───────────────────────────────────────────────────────────────
@@ -365,6 +365,7 @@ fn js_safe_integer(number: &serde_json::Number) -> Option<serde_json::Number> {
     Some(u64::try_from(whole).map_or_else(|_| whole.into(), serde_json::Number::from))
 }
 
+#[path = "client/generated/agent_verbs.rs"]
 mod agent_verbs;
 // The engine-backed served client (OF-237), only in an `engine` build.
 #[cfg(feature = "engine")]

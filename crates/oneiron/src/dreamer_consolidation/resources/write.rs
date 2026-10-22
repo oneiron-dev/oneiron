@@ -3,7 +3,7 @@
 use super::{BranchResources, FallbackOutputPin, SourcePin, document_version};
 #[cfg(test)]
 use crate::claim::ClaimSource;
-use crate::claim::{ScopedReadActorKey, ScopedReadReceipt};
+use crate::claim::{ScopedRead, ScopedReadActorKey, ScopedReadReceipt};
 use crate::dreamer_consolidation::PromotionCandidate;
 use crate::dreamer_consolidation::evidence::{
     ResolvedConflictOutput, VerifiedCandidate, VerifiedEvidenceSet,
@@ -12,7 +12,7 @@ use crate::dreamer_consolidation::support::invalid_consolidation;
 use crate::dreamer_consolidation::turn_text::TurnText;
 use crate::llm::Scope;
 use crate::{EntityId, Result, Vault, WriteActor};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 pub struct ScopedConsolidationWrite {
     pub(crate) candidates: Vec<PromotionCandidate>,
@@ -22,6 +22,10 @@ pub struct ScopedConsolidationWrite {
     /// The open markers this write's outputs answer, each output named by
     /// the head it stands at (FIX 7325).
     pub(crate) answers: Vec<ResolvedConflictOutput>,
+    /// When the wake pass that sealed this write stops: every checker turn
+    /// and consult its promotion makes spends it (FIX 8701). `None` outside a
+    /// wake pass, where a direct call's own bound applies.
+    pub(crate) checker_deadline: Option<std::time::Instant>,
     read_receipt: ScopedReadReceipt,
 }
 
@@ -37,6 +41,13 @@ impl ScopedConsolidationWrite {
     pub fn read_receipt(&self) -> &ScopedReadReceipt {
         &self.read_receipt
     }
+
+    /// This write as a wake pass hands it over, its promotion's checker bound
+    /// to the pass's `deadline` (FIX 8701).
+    pub(crate) fn with_checker_deadline(mut self, deadline: std::time::Instant) -> Self {
+        self.checker_deadline = Some(deadline);
+        self
+    }
 }
 
 pub(crate) struct ConsolidationFence {
@@ -44,9 +55,10 @@ pub(crate) struct ConsolidationFence {
     attempt: crate::attempt_queue::AttemptId,
     fallback_binding: Option<FallbackOutputPin>,
     sources: BTreeMap<EntityId, SourcePin>,
-    turns: BTreeSet<EntityId>,
+    /// Each fenced TURN with the conversation of its declared part: every
+    /// binding is fenced exactly (FIX 7524).
+    turns: BTreeMap<EntityId, EntityId>,
     texts: BTreeMap<EntityId, TurnText>,
-    conversation: EntityId,
     rules: crate::dreamer_consolidation::routing::PredicateKeyRules,
     /// Priors a correction in this same handoff closed with its grant, at
     /// the revision that grant wrote: the handoff's later writes hold them to
@@ -207,6 +219,7 @@ impl BranchResources<'_> {
             attachments,
             answers,
             fence: self.write_fence(),
+            checker_deadline: None,
             read_receipt: self.read_receipt()?,
         })
     }
@@ -219,7 +232,6 @@ impl BranchResources<'_> {
             sources: self.sources.clone(),
             turns: self.turns.clone(),
             texts: self.texts.clone(),
-            conversation: self.partition.conversation_ref,
             rules: self.rules.clone(),
             closed: std::sync::Mutex::default(),
             standing: std::sync::Mutex::default(),
@@ -240,16 +252,23 @@ impl ConsolidationFence {
         Ok(())
     }
 
-    pub(crate) fn validate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+    /// The pinned Dreamer actor's own scoped read: the read every pin is held
+    /// to, and the writer's read a record its write names must resolve under
+    /// (OF-063, FIX 1218).
+    pub(crate) fn reader<'v>(&self, vault: &'v Vault) -> Result<ScopedRead<'v>> {
         let actor = ScopedReadActorKey::with_actor_class(
             self.actor.entity_ref().to_hex(),
             self.actor.actor_class().gate_actor_class(),
         )
         .ok_or_else(|| invalid_consolidation("invalid pinned actor"))?;
-        let recorded = vault
-            .scoped_read(actor.clone())
+        Ok(vault.scoped_read(actor))
+    }
+
+    pub(crate) fn validate_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let recorded = self
+            .reader(vault)?
             .with_claim_status(crate::claim::ClaimReadStatus::Recorded);
-        let read = vault.scoped_read(actor);
+        let read = self.reader(vault)?;
         let rules: crate::dreamer_consolidation::routing::PredicateKeyRules =
             match crate::dreamer_consolidation::routing::KEY_RULES.get(&vault.store, txn, &())? {
                 Some(rules) => rules,
@@ -334,7 +353,7 @@ impl ConsolidationFence {
                 return Err(invalid_consolidation("a replacement no longer stands"));
             }
         }
-        for turn in &self.turns {
+        for (turn, conversation) in &self.turns {
             let peers = crate::ports::EdgeStoreRead::port_edge_peers(
                 &vault.store,
                 txn,
@@ -343,7 +362,7 @@ impl ConsolidationFence {
                 crate::edge::EdgeKind::ChildOf,
             )?
             .collect::<Result<Vec<_>>>()?;
-            if peers != [self.conversation] {
+            if peers != [*conversation] {
                 return Err(invalid_consolidation("pinned source partition changed"));
             }
         }
@@ -384,7 +403,7 @@ impl ConsolidationFence {
                 .evidence_turn_refs
                 .iter()
                 .try_fold(ClaimSource::Generated, |meet, id| {
-                    if !self.turns.contains(id) {
+                    if !self.turns.contains_key(id) {
                         return Err(invalid_consolidation("unadmitted consolidation evidence"));
                     }
                     let trust = self
@@ -449,9 +468,8 @@ impl ConsolidationFence {
             attempt: crate::attempt_queue::AttemptId::now(),
             fallback_binding: None,
             sources,
-            turns: BTreeSet::new(),
+            turns: BTreeMap::new(),
             texts: BTreeMap::new(),
-            conversation: actor.entity_ref(),
             rules,
             closed: std::sync::Mutex::default(),
             standing: std::sync::Mutex::default(),

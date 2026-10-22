@@ -12,13 +12,23 @@ this one reuses its pinning, ELF and kernel-archive checks.
               /usr/bin/oneiron-broker, /usr/bin/oneiron-vm-init and
               /usr/bin/oneiron-vm-outbox (the outbox carrier's companion), the
               shell tools the init runs and their explicit library closure, and
-              the empty /etc/resolv.conf the guest network's resolver covers
+              the empty /etc/resolv.conf the guest network's resolver covers;
+              with the three guest runtime inputs, the guests' rootless
+              container runtime too (FIX 7671): its pinned closure, each file
+              with its own mode, both guests' image archives, the descriptor
+              naming them and the empty /etc/subuid and /etc/subgid the
+              bootstrap's rows cover
   vault-disk  an empty ext4 vault disk with its encrypt feature and a fixed
               UUID: the vault_disk_uuid of the VM profile's provision binding
+  config-disk a fresh read-only ext4 config drive holding an operator's tree
+              as it is, its trusted-organ-builds list among the files (FIX
+              7889): the VM profile's config_disk
   manifest    every artifact's SHA256 and the engine revision, for the host's
               image pin (the provision prelude's, the outbox carrier's with its
               backup-label registration, the restore channel's, the custody
-              anchor channels' and the guest network's build floors)
+              anchor channels' and the guest network's build floors), the
+              guest runtime's revision and descriptor, and the trusted organ
+              builds file's revision
 """
 from __future__ import annotations
 
@@ -76,9 +86,42 @@ VM_NETWORK_REVISION = 1
 # passes the engine their flags, so a host stages them only for an image whose
 # manifest names it.
 VM_MANAGED_PROFILE_REVISION = 1
+# The trusted organ builds file's revision
+# (oneiron_vault_contract::vm::VM_TRUSTED_ORGAN_BUILDS_REVISION, FIX 7889):
+# this image's init passes each line of the config drive's trusted-organ-builds
+# to the engine as its own --trusted-organ-build, so an operator's list is
+# applied only by an image whose manifest names it. It never says a list was
+# staged or an organ started.
+VM_TRUSTED_ORGAN_BUILDS_REVISION = 1
 # The resolver file's mountpoint: empty and 0644 in the image, and covered by
 # oneiron-vm-init's bind mount when the guest's network plan names nameservers.
 RESOLV_CONF = "etc/resolv.conf"
+# The guest runtime's revision
+# (oneiron_vault_contract::vm::VM_GUEST_RUNTIME_REVISION, FIX 7671): an image
+# that stages the whole guest runtime, its descriptor beside it, names it; one
+# built without names 0 and a null descriptor. It never says a guest started.
+VM_GUEST_RUNTIME_REVISION = 1
+# The guest runtime's fixed paths (oneiron_vault_contract::vm): its
+# directory, the descriptor in it, and each guest's image archive.
+GUEST_RUNTIMES = "usr/lib/oneiron/guest-runtimes"
+GUEST_RUNTIME_DESCRIPTOR = GUEST_RUNTIMES + "/manifest.json"
+IMAGE_ARCHIVES = {"browser": GUEST_RUNTIMES + "/images/browser.tar",
+                  "desktop": GUEST_RUNTIMES + "/images/desktop.tar"}
+# The subordinate ID files' mountpoints: empty and 0644 in the image, covered
+# by oneiron-vm-init's bind mounts of the vault UID's rows.
+SUBID_FILES = ("etc/subuid", "etc/subgid")
+# The mapping helpers the container CLI runs from its PATH (/usr/bin:/bin),
+# the distro's own, set-user-ID root.
+MAPPING_HELPERS = ("newuidmap", "newgidmap")
+# The most a staged runtime file's mode holds: set-user-ID and 0755, never a
+# group's or others' write (oneiron_vault_contract::vm::VmGuestRuntimeFile).
+RUNTIME_MODE_BITS = 0o4755
+# Where no runtime file goes: a mountpoint a boot covers, the UID table's
+# directory, and the guest runtime's own directory.
+RESERVED = ("proc", "sys", "dev", "run", "tmp", "vault", "config", "restore", "etc/oneiron",
+            GUEST_RUNTIMES)
+# Where the image's dynamic loader finds a library (microvm.library_spec).
+LIBRARY_DESTINATION = re.compile(r"(?:lib64|lib|usr/lib)/[A-Za-z0-9_.+-]+")
 
 
 def build_kernel(args):
@@ -133,6 +176,100 @@ def validate_closure(executables, libraries):
                 raise ValueError("ELF dependency was not explicitly supplied: " + name)
 
 
+def guest_path(value):
+    """An absolute guest path, as its path below the image's root."""
+    if not isinstance(value, str) or not value.startswith("/"):
+        raise ValueError("a guest runtime path must be absolute")
+    parts = value[1:].split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("a guest runtime path must have no empty, . or .. part")
+    return "/".join(parts)
+
+
+def archive_image(path):
+    """The image id a `docker save` archive's own manifest names: its config's
+    SHA256, checked against the config's bytes. Nothing is pulled."""
+    with tarfile.open(path) as tar:
+        listed = tar.extractfile("manifest.json")
+        manifest = json.load(listed) if listed else None
+        if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
+            raise ValueError("an image archive's manifest must name exactly one image")
+        config = manifest[0].get("Config")
+        member = tar.extractfile(config) if isinstance(config, str) else None
+        if member is None:
+            raise ValueError("an image archive holds no config its manifest names")
+        digest = hashlib.file_digest(member, "sha256").hexdigest()
+    if PurePosixPath(config).name.removesuffix(".json") != digest:
+        raise ValueError("an image archive's config is not the bytes its name says")
+    return "sha256:" + digest
+
+
+def guest_runtime_inputs(args, staged, libraries):
+    """The pinned closure and both archives, all three or none: each closure
+    file's guest path, source, mode and SHA256, the CLI and the fence among
+    them, the mapping helpers set-user-ID root on the CLI's PATH, every ELF's
+    libraries supplied; and each archive's source, SHA256 and image id."""
+    given = (args.guest_runtime_closure, args.browser_image_archive, args.desktop_image_archive)
+    if not any(given):
+        return None
+    if not all(given):
+        raise ValueError("a guest runtime needs --guest-runtime-closure, --browser-image-archive "
+                         "and --desktop-image-archive together")
+    closure = json.loads(Path(args.guest_runtime_closure).read_text())
+    if (not isinstance(closure, dict) or set(closure) != {"cli", "fence", "members"}
+            or not isinstance(closure["members"], list)):
+        raise ValueError("the guest runtime closure is exactly cli, fence and members")
+    members = {}
+    for member in closure["members"]:
+        if not isinstance(member, dict) or set(member) != {"src", "guest_path", "mode", "sha256"}:
+            raise ValueError("each closure member is exactly src, guest_path, mode and sha256")
+        destination = guest_path(member["guest_path"])
+        mode = member["mode"]
+        if type(mode) is not int or mode < 0 or mode & ~RUNTIME_MODE_BITS:
+            raise ValueError("a closure member's mode is beyond set-user-ID and 0755: " + destination)
+        if destination in members or destination in staged or any(
+                destination == reserved or destination.startswith(reserved + "/") for reserved in RESERVED):
+            raise ValueError("a closure member's guest path is taken or reserved: " + destination)
+        source = Path(member["src"]).resolve(strict=True)
+        if not source.is_file():
+            raise ValueError("a closure member is not a regular file: " + destination)
+        microvm.pin(source, member["sha256"])
+        members[destination] = (source, mode, member["sha256"])
+    cli, fence = guest_path(closure["cli"]), guest_path(closure["fence"])
+    for program in (cli, fence):
+        if program not in members or not members[program][1] & 0o001:
+            raise ValueError("the CLI and the fence must be closure members every UID may run")
+    for helper in MAPPING_HELPERS:
+        found = [path for path in ("usr/bin/" + helper, "bin/" + helper) if path in members]
+        if not found or members[found[0]][1] != 0o4755:
+            raise ValueError(f"the closure needs {helper} in usr/bin or bin, mode 04755")
+    elves = {}
+    for destination, (source, _, _) in members.items():
+        with source.open("rb") as stream:
+            if stream.read(4) == b"\x7fELF":
+                elves[destination] = source
+    runtime_libraries = {**libraries, **{destination: source for destination, source in elves.items()
+                                         if LIBRARY_DESTINATION.fullmatch(destination)}}
+    validate_closure({source for destination, source in elves.items() if destination not in runtime_libraries},
+                     runtime_libraries)
+    archives = {}
+    for name in IMAGE_ARCHIVES:
+        source = Path(getattr(args, name + "_image_archive")).resolve(strict=True)
+        archives[name] = (source, microvm.sha256(source), archive_image(source))
+    return {"cli": cli, "fence": fence, "members": members, "archives": archives}
+
+
+def guest_runtime_descriptor(runtime):
+    """The descriptor oneiron_vault_contract::vm::VmGuestRuntimeDescriptor reads."""
+    return {
+        "cli": "/" + runtime["cli"], "fence": "/" + runtime["fence"],
+        "closure": [{"guest_path": "/" + destination, "sha256": digest, "mode": mode}
+                    for destination, (_, mode, digest) in sorted(runtime["members"].items())],
+        **{name + "_image": {"guest_path": "/" + IMAGE_ARCHIVES[name], "sha256": digest, "image_id": image_id}
+           for name, (_, digest, image_id) in runtime["archives"].items()},
+    }
+
+
 def build_rootfs(args):
     binaries = dict(pinned(item, BINARIES) for item in args.binary)
     tools = dict(pinned(item, TOOLS) for item in args.tool)
@@ -147,6 +284,9 @@ def build_rootfs(args):
             raise ValueError("duplicate library destination")
         libraries[destination] = source
     validate_closure({*binaries.values(), *tools.values()}, libraries)
+    staged = {"sbin/oneiron-vault-init", RESOLV_CONF, *SUBID_FILES, *libraries,
+              *("usr/bin/" + name for name in BINARIES), *("bin/" + name for name in TOOLS)}
+    runtime = guest_runtime_inputs(args, staged, libraries)
     output = microvm.new_output(args.output)
     stage = output / "tree"
     stage.mkdir()
@@ -160,13 +300,30 @@ def build_rootfs(args):
     for destination, source in libraries.items():
         shutil.copyfile(source, stage / destination)
     (stage / RESOLV_CONF).write_bytes(b"")
+    # The resolver mountpoint is read, never run.
+    modes = {stage / RESOLV_CONF: 0o644}
+    descriptor = None
+    if runtime:
+        for destination, (source, mode, _) in runtime["members"].items():
+            (stage / destination).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, stage / destination)
+            modes[stage / destination] = mode
+        for name, (source, _, _) in runtime["archives"].items():
+            (stage / IMAGE_ARCHIVES[name]).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, stage / IMAGE_ARCHIVES[name])
+            modes[stage / IMAGE_ARCHIVES[name]] = 0o444
+        descriptor = guest_runtime_descriptor(runtime)
+        (stage / GUEST_RUNTIME_DESCRIPTOR).write_text(json.dumps(descriptor, indent=2, sort_keys=True) + "\n")
+        modes[stage / GUEST_RUNTIME_DESCRIPTOR] = 0o444
+        for mountpoint in SUBID_FILES:
+            (stage / mountpoint).write_bytes(b"")
+            modes[stage / mountpoint] = 0o644
     entries = [stage, *sorted(stage.rglob("*"))]
     for path in entries:
-        # Directories, ELF files and the init script all need search or exec.
-        path.chmod(0o755)
+        # Directories, ELF files and the init script all need search or exec;
+        # the files above take the modes their rows name.
+        path.chmod(modes.get(path, 0o755))
         os.utime(path, (args.epoch, args.epoch))
-    # The resolver mountpoint is read, never run.
-    (stage / RESOLV_CONF).chmod(0o644)
     inventory = {str(path.relative_to(stage)): microvm.sha256(path) for path in entries if path.is_file()}
     seed = hashlib.sha256(json.dumps(inventory, sort_keys=True).encode()).hexdigest()
     fs_uuid = str(uuid.UUID(seed[:32]))
@@ -189,6 +346,10 @@ def build_rootfs(args):
         "schema": 1, "architecture": "x86_64", "files": inventory,
         "rootfs_sha256": microvm.sha256(image), "uuid": fs_uuid,
         "source_date_epoch": args.epoch, "size_mib": args.size_mib,
+        "vm_guest_runtime_revision": VM_GUEST_RUNTIME_REVISION if descriptor else 0,
+        "guest_runtime": descriptor,
+        # The init copied above reads the config drive's trusted-organ-builds.
+        "vm_trusted_organ_builds_revision": VM_TRUSTED_ORGAN_BUILDS_REVISION,
     })
 
 
@@ -210,6 +371,27 @@ def build_vault_disk(args):
     })
 
 
+def build_config_disk(args):
+    """A fresh config drive from the operator's tree, offline: every file in it
+    lands at the drive's root as it is, so <tree>/trusted-organ-builds is the
+    guest's /config/trusted-organ-builds (FIX 7889). No list is derived or
+    checked here: the engine's --trusted-organ-build parser judges each line on
+    boot. Never writes to a drive a VM has attached."""
+    source = Path(args.source_dir).resolve(strict=True)
+    if not source.is_dir():
+        raise ValueError("the config drive's source is not a directory")
+    output = microvm.new_output(args.output)
+    image = output / "config.ext4"
+    with image.open("xb") as stream:
+        stream.truncate(args.size_mib * 1024 * 1024)
+    microvm.run("mke2fs", "-q", "-F", "-t", "ext4", "-d", source,
+                "-E", "root_owner=0:0,lazy_itable_init=0,lazy_journal_init=0", image)
+    image.chmod(0o444)
+    microvm.json_write(output / "config-disk-receipt.json", {
+        "schema": 1, "size_mib": args.size_mib, "config_sha256": microvm.sha256(image),
+    })
+
+
 def make_manifest(args):
     if not re.fullmatch(r"[0-9a-f]{40}", args.engine_revision):
         raise ValueError("the engine revision is a full 40-hex commit")
@@ -218,6 +400,14 @@ def make_manifest(args):
         path = Path(getattr(args, kind)).resolve(strict=True)
         artifacts[kind] = {"path": str(path), "bytes": path.stat().st_size, "sha256": microvm.sha256(path)}
     receipt = json.loads(Path(args.rootfs_receipt).read_text())
+    runtime_revision, descriptor = receipt["vm_guest_runtime_revision"], receipt["guest_runtime"]
+    if type(runtime_revision) is not int or not (
+            (runtime_revision == 0 and descriptor is None)
+            or (runtime_revision == VM_GUEST_RUNTIME_REVISION and isinstance(descriptor, dict))):
+        raise ValueError("the rootfs receipt's guest runtime revision and descriptor disagree")
+    trusted_revision = receipt["vm_trusted_organ_builds_revision"]
+    if type(trusted_revision) is not int or trusted_revision != VM_TRUSTED_ORGAN_BUILDS_REVISION:
+        raise ValueError("the rootfs receipt names another trusted organ builds revision")
     output = Path(args.output)
     with output.open("x") as stream:
         json.dump({"schema": 1, "engine_revision": args.engine_revision,
@@ -228,6 +418,8 @@ def make_manifest(args):
                    "anchor_proxy_revision": ANCHOR_PROXY_REVISION,
                    "vm_network_revision": VM_NETWORK_REVISION,
                    "vm_managed_profile_revision": VM_MANAGED_PROFILE_REVISION,
+                   "vm_guest_runtime_revision": runtime_revision, "guest_runtime": descriptor,
+                   "vm_trusted_organ_builds_revision": trusted_revision,
                    "artifacts": artifacts, "rootfs_files": receipt["files"]},
                   stream, indent=2, sort_keys=True)
         stream.write("\n")
@@ -247,7 +439,12 @@ def main():
     rootfs.add_argument("--binary", action="append", default=[], help="NAME=SHA256=HOST_FILE for " + ", ".join(BINARIES))
     rootfs.add_argument("--tool", action="append", default=[], help="NAME=SHA256=HOST_FILE for " + ", ".join(TOOLS))
     rootfs.add_argument("--library", action="append", default=[])
-    rootfs.add_argument("--size-mib", type=int, choices=range(64, 4097), default=512)
+    rootfs.add_argument("--guest-runtime-closure",
+                        help="JSON {cli, fence, members: [{src, guest_path, mode, sha256}]}: the guests' pinned "
+                             "rootless container runtime (FIX 7671), with both image archives")
+    rootfs.add_argument("--browser-image-archive", help="the browser guest's `docker save` archive")
+    rootfs.add_argument("--desktop-image-archive", help="the desktop guest's `docker save` archive")
+    rootfs.add_argument("--size-mib", type=int, choices=range(64, 16385), default=512)
     rootfs.add_argument("--epoch", type=int, required=True)
     rootfs.add_argument("--output", required=True)
     rootfs.set_defaults(action=build_rootfs)
@@ -256,6 +453,12 @@ def main():
     disk.add_argument("--size-mib", type=int, required=True)
     disk.add_argument("--output", required=True)
     disk.set_defaults(action=build_vault_disk)
+    config = commands.add_parser("config-disk", help="make a fresh read-only ext4 config drive from an operator's tree")
+    config.add_argument("--source-dir", required=True,
+                        help="the operator's tree: settings.toml, seal/, trusted-organ-builds and the other files")
+    config.add_argument("--size-mib", type=int, required=True)
+    config.add_argument("--output", required=True)
+    config.set_defaults(action=build_config_disk)
     manifest = commands.add_parser("manifest", help="record the kernel and rootfs hashes and the engine revision for host pinning")
     for name in ("kernel", "rootfs", "rootfs-receipt", "engine-revision", "output"):
         manifest.add_argument("--" + name, required=True)

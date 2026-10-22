@@ -4,7 +4,8 @@
 //! Parent; RepliesTo is the semantic reply target, so a thread reply may
 //! answer or quote a trunk message. HEAD and canonical marks are
 //! device-local sidecars, not replicated authority. Every topology walk
-//! fails closed at the shared ancestor cap.
+//! reads its whole path in its caller's snapshot, however long, and counts
+//! it (rule 5); a cycle fails closed.
 
 mod admission;
 mod graph;
@@ -29,7 +30,9 @@ mod branch_scope;
 mod participation;
 mod policy;
 mod quote;
+mod quote_birth;
 mod quote_strips;
+mod record_admission;
 mod redacted;
 mod reply;
 pub(crate) mod retained_path;
@@ -40,9 +43,9 @@ mod writes;
 
 pub(crate) use branch_scope::{prove_branch_anchor, prove_branch_span};
 pub(crate) use graph::{
-    actor_in_txn, chain as retained_chain, conversation_of, edge_ids, is_sub_session_record,
-    is_thread_record, keeps_dag_topology, parent as retained_parent, record_has_dag_topology,
-    require_type,
+    actor_in_txn, chain as retained_chain, conversation_of, counted_edge_ids, edge_ids,
+    is_sub_session_record, is_thread_record, keeps_dag_topology, parent as retained_parent,
+    record_has_dag_topology, require_type,
 };
 pub(crate) use participation::{erased_thread_room_in_txn, offer_turns_in_txn};
 pub(crate) use policy::{

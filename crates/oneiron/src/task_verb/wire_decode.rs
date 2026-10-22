@@ -149,6 +149,17 @@ pub(crate) fn task_text_with_source_in(
     Ok(task_text_in(vault, txn, task_ref)?.map(|text| (text, task_ref)))
 }
 
+/// The typed brief one TASK holds in `txn`, with its revision and digest:
+/// the Coach's agent-health review pins the brief it observed (OF-568).
+/// `None` when the row is no TASK or holds no typed brief.
+pub(crate) fn task_stored_brief_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<super::brief::StoredBrief>> {
+    Ok(task_verb_body_in(vault, txn, task)?.and_then(|body| body.brief))
+}
+
 /// Transaction-scoped body read. The custody seal `get_raw` applies is not
 /// needed here: a non-TASK type byte returns `None` two lines below, so a
 /// SECRET_CUSTODY row can never be decoded through this door.

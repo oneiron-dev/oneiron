@@ -42,10 +42,10 @@ pub use self::authority_audit::{
     ColdAuthorityAuditRow, authority_audit_embedded,
 };
 pub use self::call::{
-    ActionInputs, CALL_RECEIPT_REF_PREFIX, CONNECTION_CALL_ACTOR_CLASS, CallOutcome, CallReceipt,
-    CallReceiptInput, CallReceiptRequest, CallTransport, ERASED_CALL_IDENTITY,
-    MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
-    call_reads_world, call_refusal_digest, json_entity_refs,
+    ActionInputs, CALL_RECEIPT_REF_PREFIX, CONNECTION_CALL_ACTOR_CLASS, CallAttemptRef,
+    CallAttemptWitness, CallOutcome, CallReceipt, CallReceiptInput, CallReceiptRequest,
+    CallTransport, ERASED_CALL_IDENTITY, MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED,
+    call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
 pub use self::context_emit::ContextEmitReceipt;
 pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
@@ -88,11 +88,11 @@ pub use self::projection::{
 };
 pub use self::questions::{
     GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersRequest,
-    QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes,
-    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
-    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
-    QuestionScheduleRequest,
+    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
+    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
+    QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
+    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
+    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
     ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals, receipt_refusal,

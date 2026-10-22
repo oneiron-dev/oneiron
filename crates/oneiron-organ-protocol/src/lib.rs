@@ -14,7 +14,10 @@
 //! - `runtime`: the organ side, [`serve`] and the [`Organ`] trait (Unix).
 //! - [`seal`]: the seal organ's revision classification, which its verdicts
 //!   carry to the engine.
+//! - [`memory`]: the `memory.grow` ask, an organ's own buffers reserved
+//!   before it allocates them.
 
+pub mod memory;
 pub mod seal;
 pub mod wire;
 
@@ -29,10 +32,12 @@ mod shape;
 #[cfg(unix)]
 pub mod spin;
 
+pub use memory::{ASK_MEMORY_GROW, MemoryAnswer, MemoryAsk};
+
 #[cfg(unix)]
 pub use frame::{
     FrameError, recv_frame, recv_frame_polled, recv_frame_polled_len, recv_frame_polled_reserved,
-    recv_frame_until, send_frame, send_frame_if, send_frame_until,
+    recv_frame_until, recv_frame_until_reserved, send_frame, send_frame_if, send_frame_until,
 };
 #[cfg(unix)]
 pub use region::{MappedRegion, SharedRegion};

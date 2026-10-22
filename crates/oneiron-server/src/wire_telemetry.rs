@@ -44,6 +44,9 @@ pub enum WireQuestionKind {
     /// Work crossed a `[limits]` row and waited for its turn, or, for a byte
     /// row, carried on past it.
     InspectLimitCrossing,
+    /// A socket waits for the shared connection pool: the live check on
+    /// the owner's wire-health read (FIX 7656).
+    InspectConnectionPoolPressure,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireQuestion {
@@ -51,7 +54,12 @@ pub struct WireQuestion {
     pub evidence: WireWindowReceipt,
 }
 
+mod connection_pressure;
 mod rows;
+pub(crate) use connection_pressure::{
+    BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolPressure,
+    PressureCredentialKey, SocketHold, attach_body_credential, with_body_credential,
+};
 pub use rows::LimitRow;
 /// The question a crossed row asks: what it is set to, the most it saw, and
 /// how many times it was crossed in its window.
@@ -75,6 +83,9 @@ pub struct LimitQuestions {
     /// Each row's questions, oldest first: those not kept yet, and always the
     /// latest.
     asked: Mutex<BTreeMap<LimitRow, VecDeque<Asked>>>,
+    /// The shared connection pool's live pressure check (FIX 7656), on a
+    /// vault server's own sink only.
+    pool_pressure: Option<Arc<PoolPressure>>,
 }
 /// A row keeps at most this many windows' questions waiting to be kept; past
 /// it the oldest goes.
@@ -89,6 +100,33 @@ struct Asked {
     restored: bool,
 }
 impl LimitQuestions {
+    /// A vault server's sink, which keeps its connection pool's pressure
+    /// check too: a sink no vault keeps observes no pool.
+    fn with_pool_pressure() -> Self {
+        Self {
+            pool_pressure: Some(Arc::default()),
+            ..Self::default()
+        }
+    }
+    /// The connection pool's pressure check this sink keeps, if any.
+    pub(crate) fn pool_pressure(&self) -> Option<&Arc<PoolPressure>> {
+        self.pool_pressure.as_ref()
+    }
+    /// The connection pool's pressure as it stands; clear where none is kept.
+    pub(crate) fn connection_pool_pressure(&self) -> ConnectionPoolPressure {
+        match &self.pool_pressure {
+            Some(pressure) => pressure.snapshot(),
+            None => ConnectionPoolPressure::Clear,
+        }
+    }
+    /// Nobody waits in `row`'s line since its crossing `epoch`.
+    pub(crate) fn drained(&self, row: LimitRow, epoch: u64) {
+        if row == LimitRow::Connections
+            && let Some(pressure) = &self.pool_pressure
+        {
+            pressure.drain(epoch);
+        }
+    }
     /// `row`, set to `bound`, saw `observed`. Nothing waits on the answer.
     pub(crate) fn ask(&self, row: LimitRow, bound: u64, observed: u64) {
         self.ask_at(row, bound, observed, oneiron_vault_contract::now_ts());
@@ -257,7 +295,7 @@ impl WireTelemetry {
             active: Mutex::new(Active::default()),
             saving: Mutex::new(()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
-            limits: Arc::default(),
+            limits: Arc::new(LimitQuestions::with_pool_pressure()),
         }
     }
     /// Where this server's `[limits]` rows ask when they are crossed.

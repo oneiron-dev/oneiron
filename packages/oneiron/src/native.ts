@@ -105,11 +105,14 @@ vaultBudgetsRsi(input: unknown): unknown
 vaultBudgetsRsiTopUp(input: unknown): unknown
 vaultBudgetsRsiHold(input: unknown): unknown
 vaultBudgetsRsiHoldResume(input: unknown): unknown
+vaultRunnersSeatsQuotas(input: unknown): unknown
+vaultRunnersSeatsTopUp(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 tasksAccept(input: unknown): unknown
+tasksRedo(input: unknown): unknown
 vaultCommitMessage(input: unknown): unknown
 vaultBeginMessageStream(input: unknown): unknown
 vaultAppendToStream(input: unknown): unknown
@@ -292,6 +295,13 @@ vaultPacksSectionsSuggestionsSet(input: unknown): unknown
 aiChatCompletions(input: unknown): unknown
 vaultConnectorsProxyAdmit(input: unknown): unknown
 vaultConnectorsProxyRevokeWrite(input: unknown): unknown
+vaultConnectorsSlatesRedraft(input: unknown): unknown
+vaultConnectorsSlatesNarrow(input: unknown): unknown
+vaultConnectorsSlatesScopeOutcome(input: unknown): unknown
+vaultConnectorsSlatesRevisionOffers(input: unknown): unknown
+vaultConnectorsSlatesDeferRevision(input: unknown): unknown
+vaultConnectorsSlatesAcceptRevision(input: unknown): unknown
+vaultConnectorsSlatesReaskIssuer(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
@@ -469,6 +479,8 @@ vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
+vaultArchiveDeletePreview(input: unknown): unknown
+vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
@@ -500,6 +512,7 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
+vaultConnectorsCallsApproveOnce(input: unknown): unknown
 vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
@@ -635,6 +648,8 @@ vaultResultsRead(input: unknown): unknown
 vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
+vaultCodeExportPreview(input: unknown): unknown
+vaultCodeExportPreviewRead(input: unknown): unknown
 vaultCodeImport(input: unknown): unknown
 vaultCodeReposGet(input: unknown): unknown
 vaultCodeForksGet(input: unknown): unknown
@@ -688,6 +703,8 @@ vaultCodeMergeQueueCheck(input: unknown): unknown
 vaultCodeMergeQueueDiagnose(input: unknown): unknown
 vaultCodeMergeQueueCheckStatus(input: unknown): unknown
 vaultCodeChecksGet(input: unknown): unknown
+vaultCodeMergeQueueReviewPolicyGet(input: unknown): unknown
+vaultCodeMergeQueueReviewPolicySet(input: unknown): unknown
 vaultCodeMergeQueueExportGreen(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
@@ -878,6 +895,7 @@ vaultVoicesRenderConsent(input: unknown): unknown
 vaultVoicesTargetsProvision(input: unknown): unknown
 vaultVoicesTargetsEvict(input: unknown): unknown
 vaultVoicesInspect(input: unknown): unknown
+vaultVoicesLineage(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
@@ -1125,6 +1143,7 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown
@@ -1140,6 +1159,9 @@ selfBrowserCrop(input: unknown): unknown
 selfBrowserZoom(input: unknown): unknown
 selfBrowserBatch(input: unknown): unknown
 selfBrowserLibraryFind(input: unknown): unknown
+selfBrowserLibraryDraft(input: unknown): unknown
+selfBrowserDemonstrationStart(input: unknown): unknown
+selfBrowserDemonstrationStop(input: unknown): unknown
 selfBrowserLibraryPropose(input: unknown): unknown
 selfBrowserLibraryRetire(input: unknown): unknown
 selfBrowserLibraryRetired(input: unknown): unknown

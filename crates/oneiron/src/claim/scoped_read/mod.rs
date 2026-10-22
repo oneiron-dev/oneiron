@@ -62,9 +62,11 @@ pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
+pub use weave_report::sieve_score::RedactedSieveDecision;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
+pub use weave_serve::sieve_audit::{WeaveSieveDiscoveryView, WeaveSieveFindingView};
 pub use weave_serve::{
     WeaveDigestFramed, WeaveDigestRequest, WeaveDigestView, WeaveItemCorrectionView, WeaveItemView,
     WeaveLinkCorrectionView, WeaveReaderKind, WeaveReaderRef, WeaveReportRequest, WeaveReportView,
@@ -77,10 +79,14 @@ mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;
 mod agent_grants;
+mod guest_bound;
 mod owner_authority;
+mod records_cover;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
+#[cfg(feature = "sync")]
+mod residence_page;
 #[cfg(feature = "sync")]
 mod selected_search;
 pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};
@@ -122,6 +128,11 @@ pub struct ScopedRead<'a> {
     /// admission and its reader's own Grants refuse is judged again, whole,
     /// under that reader's live owner authority.
     own_owner_authority: bool,
+    /// The artifacts whose own version rows a records caveat naming them
+    /// covers, for the records check alone (FIX 8245;
+    /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
+    /// artifact door opts in.
+    records_cover: records_cover::ArtifactRecordsCover,
 }
 
 mod admission;

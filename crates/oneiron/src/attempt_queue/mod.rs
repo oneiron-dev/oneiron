@@ -13,6 +13,7 @@
 //! counters and span emission.
 
 mod annotation_hold;
+mod borrowed_lease;
 mod budget_hold;
 mod cancel;
 mod completion;
@@ -36,6 +37,7 @@ pub(crate) use validate::validate_lease_owner;
 mod tests;
 
 pub use annotation_hold::{ANNOTATION_HOLD_ACTOR, AnnotationHold, AnnotationHoldSweep};
+pub use borrowed_lease::BorrowedAttemptLease;
 pub use budget_hold::{BUDGET_HOLD_ACTOR, HoldAttemptForBudget};
 pub use cancel::{
     ATTEMPT_RUNTIME_ACTOR, AcceptAttemptLanding, AttemptCancelPressure, AttemptCancelReceipt,
@@ -61,12 +63,14 @@ pub use types::{
     AttemptQueueRetryReasonCount, AttemptRecord, AttemptResultRef, AttemptState, ClaimAttempt,
     ClaimOutcome, CleanupAttemptLeases, CompleteAttempt, CompleteOutcome, EnqueueAttempt,
     EnqueueOutcome, FailAttempt, FailOutcome, InterveneAttempt, InterveneOutcome, ManifestEntry,
-    ManifestKind, RetryAttempt, RetryOutcome, SetAttemptResult,
+    ManifestKind, PlannedBinding, PlannedExactness, RetryAttempt, RetryOutcome, SetAttemptResult,
 };
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use payload_erase::{
+    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
+    retire_attempt_payload_in_txn,
 };
 #[cfg(test)]
 pub(crate) fn encode_signal_record(record: &AttemptRecord) -> crate::Result<Vec<u8>> {

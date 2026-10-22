@@ -33,6 +33,9 @@ mod attachment;
 mod budget_ids;
 mod config;
 mod factory;
+mod inference;
+mod inference_device;
+mod inference_worker;
 mod pass;
 mod program_factory;
 #[path = "loop.rs"]
@@ -45,6 +48,15 @@ pub use self::attachment::{
 pub use self::config::{NowSeconds, RestartBackoffConfig, WakeSupervisorConfig};
 pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
+};
+pub use self::inference::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
+pub use self::inference_device::{
+    DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource,
+};
+pub use self::inference_worker::{
+    DEFAULT_WORKER_IDLE_STOP, InferenceWorker, LaunchFailure, LauncherFuture, RunningWorker,
+    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
+    WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerUnavailable,
 };
 pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};

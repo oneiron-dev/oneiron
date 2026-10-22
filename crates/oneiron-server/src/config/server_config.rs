@@ -142,6 +142,21 @@ pub struct SyncServerConfig {
     /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
     /// isolated and unconfigured.
     pub merge_queue: Option<super::MergeQueueCheckerConfig>,
+    /// The organ builds this server runs as first party, by blake3 (64 lowercase
+    /// hex), from `--trusted-organ-build` alone (FIX 7644), which a vault VM's
+    /// init passes from its config drive's list (FIX 7889). Listing a digest is
+    /// the operator's statement that the build is reviewed first-party code
+    /// (ARCH-0075: first party means reviewed repo code). A pack organ build not
+    /// listed here installs as third party, which the organ host refuses to start
+    /// until filesystem confinement for organs lands. No config file, settings
+    /// file or environment sets it, and nothing a pack carries (manifest, facet,
+    /// receipt, publisher, hub or name) adds to it. Empty: every pack organ build
+    /// is third party; a seal organ program the host names stays first party.
+    pub trusted_organ_builds: std::collections::BTreeSet<String>,
+    /// The private origins a managed node's egress guard admits, from
+    /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
+    /// everywhere else, and no config file, settings file or environment sets it.
+    pub hosted_private_origins: std::collections::BTreeSet<oneiron::web_fetch::HostedPrivateOrigin>,
 }
 
 /// Who authenticates the requests a server takes, as its serve entry
@@ -198,6 +213,8 @@ impl Default for SyncServerConfig {
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
+            trusted_organ_builds: std::collections::BTreeSet::new(),
+            hosted_private_origins: std::collections::BTreeSet::new(),
         }
     }
 }
@@ -282,6 +299,8 @@ impl fmt::Debug for SyncServerConfig {
             .field("linear", &self.linear)
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
+            .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field("hosted_private_origins", &self.hosted_private_origins)
             .finish()
     }
 }
@@ -446,6 +465,9 @@ pub struct ServeConfig {
     /// on a plain serve, and where the supervisor declared none or its
     /// check ignored the one declared.
     pub shared_model_root: Option<oneiron_vault_contract::settings_paths::SharedModelRoot>,
+    /// `--trusted-organ-build`, argv only, plain or managed: the organ builds
+    /// this server runs as first party, as on [`SyncServerConfig`].
+    pub trusted_organ_builds: std::collections::BTreeSet<String>,
 }
 
 impl Default for ServeConfig {
@@ -528,6 +550,7 @@ impl Default for ServeConfig {
             publisher_training_intake_origin: crate::conversation_training::DEFAULT_INTAKE_ORIGIN
                 .to_owned(),
             shared_model_root: None,
+            trusted_organ_builds: server.trusted_organ_builds,
         }
     }
 }
@@ -627,6 +650,7 @@ impl fmt::Debug for ServeConfig {
                 &self.publisher_training_intake_origin,
             )
             .field("shared_model_root", &self.shared_model_root)
+            .field("trusted_organ_builds", &self.trusted_organ_builds)
             .finish()
     }
 }
@@ -678,6 +702,9 @@ impl ServeConfig {
             // supervisor's.
             ingress: IngressAuth::Configured,
             merge_queue: self.merge_queue.clone(),
+            trusted_organ_builds: self.trusted_organ_builds.clone(),
+            // Managed boot alone sets it (FIX 7657).
+            hosted_private_origins: std::collections::BTreeSet::new(),
         };
         if let Err(error) = crate::oauth_relay::warm_if_configured(&sync) {
             tracing::warn!(

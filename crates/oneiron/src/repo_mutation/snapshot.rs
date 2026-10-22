@@ -1,3 +1,7 @@
+//! Capture, validation and restore of repository working-tree snapshots.
+//! The restore entry is `restore_repo_snapshot`.
+//! `pinned` owns the re-exported `RepoPinnedBase`; snapshot row definitions are local.
+
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;

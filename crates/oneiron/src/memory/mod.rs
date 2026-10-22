@@ -25,6 +25,7 @@
 
 pub mod affect;
 mod answer_boundary;
+mod archive_delete_wire;
 mod archive_purge;
 mod artifact_hosting_doors;
 mod asset_doors;
@@ -104,6 +105,7 @@ mod read_selection;
 mod reads;
 mod recall;
 pub mod repo_doors;
+pub(crate) mod repo_secret_reads;
 mod report;
 mod result_attachment;
 pub mod result_doors;
@@ -130,6 +132,13 @@ mod tests;
 mod tests_regressions;
 
 pub use answer_boundary::AnswerAdmission;
+pub use archive_delete_wire::{
+    ArchiveDeleteBatchResult, ArchiveDeleteConfirmEntry, ArchiveDeleteConfirmOutcome,
+    ArchiveDeleteConfirmRequest, ArchiveDeleteError, ArchiveDeleteExpectation, ArchiveDeleteItem,
+    ArchiveDeletePreviewEntry, ArchiveDeletePreviewOutcome, ArchiveDeletePreviewRequest,
+    ArchiveDeletePreviewRow, ArchiveDeletePreviewView, ArchiveDeleteReceiptView,
+    confirm_archive_delete_wire, preview_archive_delete_wire,
+};
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_doors::{AssetIngestReceipt, AssetIngestRequest, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
@@ -244,6 +253,8 @@ pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
+/// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
+pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,

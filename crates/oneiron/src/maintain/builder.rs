@@ -1,5 +1,6 @@
 //! Builder flags, run() dispatch, and the aggregate maintenance report.
 
+use crate::deletion::CorruptClaimRepair;
 use crate::error::Result;
 use crate::{EntityId, Vault};
 
@@ -26,6 +27,7 @@ pub struct MaintenanceBuilder<'a> {
     attempt_queue_lease_timeout_secs: u64,
     do_backfill_gate_claim_index: bool,
     do_migrate_conversation_dags: bool,
+    corrupt_claim_ids: Vec<EntityId>,
 }
 
 /// Aggregate counters for maintenance operations.
@@ -89,15 +91,15 @@ pub struct MaintenanceReport {
     /// row their compaction would destroy (OF-470). SIBLING of the live and
     /// raced deferrals.
     pub sweep_windows_deferred_held: u64,
-    /// REDACTION_AUDIT receipts whose `sweep_complete_at` was finalized.
+    /// Initial REDACTION_AUDIT receipts given a linked signed sweep-completion row.
     pub sweep_receipts_finalized: u64,
     /// Pending jobs observed past their `deadline_at` (queued_at + 30 d,
     /// GDPR Art. 12(3)) — each is also a `tracing::error`.
     pub sweep_deadline_breaches: u64,
     /// Stale `x:` quarantine rows evicted by the on-demand retention pass.
     pub sweep_quarantine_rows_expired: u64,
-    /// ONE-1091 audit: receipts with `sweep_queued_at` set, no
-    /// `sweep_complete_at`, and NO covering pending `h:` row — a dropped
+    /// ONE-1091 audit: initial receipts with `sweep_queued_at` set, no valid
+    /// linked sweep-completion row, and NO covering pending `h:` row — a dropped
     /// erasure obligation (each is also a `tracing::error`).
     pub sweep_obligations_missing: u64,
     /// Audit: REDACTION_AUDIT receipts whose stored body could not be
@@ -127,6 +129,10 @@ pub struct MaintenanceReport {
     /// Federated facet stamps held ahead of their rows that this run retired:
     /// held 30 days or more, or held under a grant that no longer confers.
     pub held_facet_stamps_retired: u64,
+    /// Each record `reclassify_corrupt_claims` selected, in order: classified
+    /// by this run with its signed repair event, classified already at the
+    /// header it has now, or no corrupt CLAIM and left as it is (FIX 7800).
+    pub corrupt_claim_repairs: Vec<CorruptClaimRepair>,
 }
 
 impl<'a> MaintenanceBuilder<'a> {
@@ -146,6 +152,7 @@ impl<'a> MaintenanceBuilder<'a> {
             attempt_queue_lease_timeout_secs: 0,
             do_backfill_gate_claim_index: false,
             do_migrate_conversation_dags: false,
+            corrupt_claim_ids: Vec::new(),
         }
     }
 
@@ -215,8 +222,8 @@ impl<'a> MaintenanceBuilder<'a> {
     /// obligations, shallow-compacts every CLOSED persisted window doc
     /// (dropping the pre-delete Loro op history — the dominant residual
     /// byte carrier — while preserving live state, doc identity and VV),
-    /// scrubs live-map residue for `dt:`-marked ids, finalizes matching
-    /// receipts' `sweep_complete_at`, expires stale `x:` quarantine rows,
+    /// scrubs live-map residue for `dt:`-marked ids, appends matching signed
+    /// sweep-completion rows, expires stale `x:` quarantine rows,
     /// and audits for dropped obligations. Fail closed throughout: open
     /// windows defer, failed windows keep the obligation rows with
     /// `retry_state` rewritten in place, and delete semantics are never
@@ -247,6 +254,19 @@ impl<'a> MaintenanceBuilder<'a> {
     /// Migrates legacy conversations into local DAG chains, once each.
     pub fn migrate_conversation_dags(mut self) -> Self {
         self.do_migrate_conversation_dags = true;
+        self
+    }
+
+    /// ARCH-0038's audited repair for a corrupt CLAIM (FIX 7800), for the
+    /// records `ids` names: each that is a stored CLAIM whose non-empty body
+    /// fails its strict capture decode is classified, its bytes unchanged,
+    /// with one signed REDACTION_AUDIT repair event, so its hard erase can
+    /// finish. That erase records `capture_failed` on its receipt and its
+    /// sweep, which then takes every carrier. Any other record is reported and
+    /// left as it is. Off unless asked: it authorizes no erase and reads no
+    /// body to anyone, and runs before a sweep asked of the same run.
+    pub fn reclassify_corrupt_claims(mut self, ids: impl IntoIterator<Item = EntityId>) -> Self {
+        self.corrupt_claim_ids.extend(ids);
         self
     }
 
@@ -316,6 +336,12 @@ impl<'a> MaintenanceBuilder<'a> {
             report.text_doc_field_lengths_removed = counts.doc_field_lengths;
             report.text_bm25_field_stats_removed = counts.field_stats;
             report.text_documents_reindexed = counts.reindexed;
+        }
+
+        if !self.corrupt_claim_ids.is_empty() {
+            report.corrupt_claim_repairs = self
+                .vault
+                .reclassify_corrupt_claims(&self.corrupt_claim_ids)?;
         }
 
         if self.do_hard_erase_sweep {

@@ -25,8 +25,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use oneiron::embed::{
-    EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingSpace, InputKind, MediaEmbedReport,
-    MediaEmbedder, MediaEmbeddingInput, PendingEmbeddingInput, SessionMediaRefusals,
+    EgressDecision, EgressPredicate, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance,
+    EmbeddingSpace, InputKind, MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome,
+    PendingEmbeddingInput, SessionMediaRefusals,
 };
 use oneiron::llm::ExtractionEgressPredicate;
 use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest, Modality};
@@ -167,6 +168,12 @@ fn llm_code(error: &LlmError) -> &'static str {
         LlmError::Fatal(_) => "invalid_request",
         LlmError::Retryable(_) => "provider_unavailable",
     }
+}
+
+/// `key` in an answer's provider metadata `raw`, or beneath the ladder's
+/// receipt when one is stamped.
+fn answer_meta<'a>(raw: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    raw.get(key).or_else(|| raw.get("usage")?.get(key))
 }
 
 /// One declared space's embedder: the `ai.embed` rung its id pins, on the
@@ -498,14 +505,19 @@ impl RuntimeMediaEmbedder {
                 kind,
             });
         }
-        self.embed_one(media_part(kind, media_type, bytes)?).await
+        let (vector, _) = self.embed_one(media_part(kind, media_type, bytes)?).await?;
+        Ok(vector)
     }
 
     /// One part to its vector, as an `ai.embed` call: the vault's inference
     /// policy admits it for this rung, and the rung's ladder sends and
     /// settles it on the media meter. A vector wider than the space asks
-    /// once more, naming the space's width.
-    async fn embed_one(&self, part: MediaPart) -> Result<Vec<f32>, MediaEmbedRefusal> {
+    /// once more, naming the space's width; the answer kept brings its own
+    /// device and runtime mark (FIX 7796).
+    async fn embed_one(
+        &self,
+        part: MediaPart,
+    ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let modality = part.modality();
         if !self.inputs.contains(&modality) {
             return Err(MediaEmbedRefusal::NoInput {
@@ -514,10 +526,10 @@ impl RuntimeMediaEmbedder {
             });
         }
         let named = self.names_width.load(Ordering::Relaxed);
-        let mut vector = self.embed_call(part.clone(), named).await?;
+        let (mut vector, mut mark) = self.embed_call(part.clone(), named).await?;
         if !named && vector.len() > self.space.dimensions {
             self.names_width.store(true, Ordering::Relaxed);
-            vector = self.embed_call(part, true).await?;
+            (vector, mark) = self.embed_call(part, true).await?;
         }
         if vector.len() != self.space.dimensions {
             return Err(MediaEmbedRefusal::Width {
@@ -529,15 +541,15 @@ impl RuntimeMediaEmbedder {
         if vector.iter().any(|value| !value.is_finite()) {
             return Err(MediaEmbedRefusal::Malformed);
         }
-        Ok(vector)
+        Ok((vector, mark))
     }
 
-    /// One admitted call's single vector.
+    /// One admitted call's single vector, with the mark its answer names.
     async fn embed_call(
         &self,
         part: MediaPart,
         name_width: bool,
-    ) -> Result<Vec<f32>, MediaEmbedRefusal> {
+    ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let request = self.admit(part, name_width)?;
         let response = self
             .ai
@@ -546,6 +558,7 @@ impl RuntimeMediaEmbedder {
             .run(request, self.payer.clone())
             .await
             .map_err(MediaEmbedRefusal::Call)?;
+        let mark = self.answer_mark(&response.usage.raw_provider);
         let mut vectors = response.parts.into_iter().filter_map(|part| match part {
             MediaPart::Embedding { vector } => Some(vector),
             _ => None,
@@ -553,7 +566,26 @@ impl RuntimeMediaEmbedder {
         let (Some(vector), None) = (vectors.next(), vectors.next()) else {
             return Err(MediaEmbedRefusal::Malformed);
         };
-        Ok(vector)
+        Ok((vector, mark))
+    }
+
+    /// The device and runtime that computed one answer (FIX 7796): the mark
+    /// its endpoint reported in the answer's provider metadata (beneath the
+    /// ladder's receipt when one is stamped), held to the text endpoint's
+    /// rule; otherwise a remote mark, since the endpoint did not say which
+    /// device ran it. That mark names `<model>@<endpoint>` as the text
+    /// endpoint's does when the media client says where it sent the call
+    /// (FIX 8984), and the rung's model when it does not.
+    fn answer_mark(&self, raw: &serde_json::Value) -> EmbeddingProvenance {
+        answer_meta(raw, "provenance")
+            .and_then(crate::embedder::reported_mark)
+            .unwrap_or_else(|| {
+                let runtime = answer_meta(raw, "remote_runtime")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|runtime| !runtime.is_empty())
+                    .unwrap_or(self.model.as_str());
+                EmbeddingProvenance::new(EmbeddingDevice::Remote, runtime)
+            })
     }
 
     /// The host's media egress gate for this rung (FIX 382): there only
@@ -647,16 +679,13 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
     fn embed_media(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<Vec<f32>>> {
         inputs
             .iter()
-            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input)?) })
+            .map(|input| -> oneiron::Result<Vec<f32>> { Ok(self.embed_input(input)?.0) })
             .collect()
     }
 
     /// [`Self::embed_media`], with a refusal of one document by its content
     /// ([`MediaEmbedRefusal::is_document_refusal`]) as that input's outcome.
-    fn embed_each(
-        &self,
-        inputs: &[MediaEmbeddingInput<'_>],
-    ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
+    fn embed_each(&self, inputs: &[MediaEmbeddingInput<'_>]) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
             .map(|input| self.embed_outcome(input))
@@ -669,7 +698,7 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
         &self,
         inputs: &[MediaEmbeddingInput<'_>],
         release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
-    ) -> oneiron::Result<Vec<Result<Vec<f32>, String>>> {
+    ) -> oneiron::Result<Vec<MediaOutcome>> {
         inputs
             .iter()
             .map(|input| {
@@ -681,21 +710,23 @@ impl MediaEmbedder for RuntimeMediaEmbedder {
 }
 
 impl RuntimeMediaEmbedder {
-    /// One stored input's outcome: its vector, or a refusal of that one
-    /// document by its content ([`MediaEmbedRefusal::is_document_refusal`]).
-    fn embed_outcome(
-        &self,
-        input: &MediaEmbeddingInput<'_>,
-    ) -> oneiron::Result<Result<Vec<f32>, String>> {
+    /// One stored input's outcome: its vector with its answer's mark, or a
+    /// refusal of that one document by its content
+    /// ([`MediaEmbedRefusal::is_document_refusal`]).
+    fn embed_outcome(&self, input: &MediaEmbeddingInput<'_>) -> oneiron::Result<MediaOutcome> {
         match self.embed_input(input) {
-            Ok(vector) => Ok(Ok(vector)),
+            Ok(answer) => Ok(Ok(answer)),
             Err(refusal) if refusal.is_document_refusal() => Ok(Err(refusal.to_string())),
             Err(refusal) => Err(refusal.into()),
         }
     }
 
-    /// One stored input to its vector, driven on the embedder's runtime.
-    fn embed_input(&self, input: &MediaEmbeddingInput<'_>) -> Result<Vec<f32>, MediaEmbedRefusal> {
+    /// One stored input to its vector and mark, driven on the embedder's
+    /// runtime.
+    fn embed_input(
+        &self,
+        input: &MediaEmbeddingInput<'_>,
+    ) -> Result<(Vec<f32>, EmbeddingProvenance), MediaEmbedRefusal> {
         let runtime = self
             .runtime
             .as_ref()

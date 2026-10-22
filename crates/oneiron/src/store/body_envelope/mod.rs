@@ -33,10 +33,12 @@
 
 mod custody;
 mod frames;
+mod opaque_response;
 mod plan;
 mod reader;
 mod response;
 mod retention;
+mod retention_policy;
 mod rows;
 mod spill;
 
@@ -49,6 +51,7 @@ pub(crate) use self::custody::{
     BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
+pub(crate) use self::opaque_response::{ResponseRead, ResponseScan};
 pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };
@@ -56,11 +59,16 @@ pub(crate) use self::reader::BodyFile;
 pub(crate) use self::response::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
     bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
-    response_binding_in_txn, response_carrier,
+    response_binding_in_txn, response_carrier, response_owed_to_all_in_txn,
+    settle_shared_response_in_txn,
 };
-pub(crate) use self::retention::{INLINE_ASSETS, erase_bodies_in_txn, release_body_in_txn};
+pub(crate) use self::retention::{
+    INLINE_ASSETS, erase_bodies_for_owner_in_txn, erase_bodies_in_txn, note_settled_inline_in_txn,
+    release_body_in_txn, settle_inline_asset_in_txn,
+};
 pub(crate) use self::rows::{
-    BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn, retire_body_key_in_txn,
+    BODY_KEYS, BodyKeyRow, bind_body_key_in_txn, body_key_row_in_txn,
+    remember_body_instances_in_txn, retire_body_key_in_txn,
 };
 pub(crate) use self::spill::{
     BodySpill, SpilledBody, StagedBodyKey, keep_promoted_body_key_in_txn,
@@ -210,6 +218,8 @@ impl Store {
     ///
     /// Storage and filesystem errors, and a key that does not open.
     pub(crate) fn body_file_present(&self, digest: &[u8; 32], len: u64) -> Result<bool> {
+        // Before the snapshot, through the key's use (FIX 6019).
+        let _custody = self.core.key_custody.read_guard()?;
         let row = {
             let rtxn = self.env.read_txn()?;
             body_key_row_in_txn(self, &rtxn, digest)?

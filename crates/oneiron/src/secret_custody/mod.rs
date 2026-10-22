@@ -76,6 +76,7 @@ mod known_values;
 mod masked_files;
 mod owner_door;
 mod reveal;
+mod run_bound;
 mod sighted_file;
 mod storage_seal;
 mod transition;
@@ -138,27 +139,36 @@ pub use self::owner_door::{
 };
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
-    REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RevealAskErase,
-    RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER, SecretHandleCard,
-    SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,
+    RevealAskErase, RevealTarget, SECRET_REVEAL_REASON_ASKED, SECRET_REVEAL_REASON_OWNER,
+    SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
     SecretRevealDecision, SecretRevealReceipt, SecretRevealState, UNKNOWN_PROVIDER_DISCLOSURE,
 };
 pub(crate) use self::reveal::{
-    RevealAsker, RevealAuthority, erase_reveal_actor_in_txn, parse_secret_handle,
-    reveal_value_in_txn,
+    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
+    RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, erase_reveal_actor_in_txn,
+    parse_secret_handle, reveal_value_in_txn,
+};
+pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
+pub(crate) use self::storage_seal::{
+    ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
+    StoredValue, archive_custody_body, archive_custody_guard, archive_same_custody_in_txn,
+    credentials_eligible_for_heads, image_credential_row, plan_archived_credentials,
+    put_stored_custody_in_txn, read_secret_custody_meta_in_txn, read_stored_custody_in_txn,
+    stored_value_held_in_txn, stored_value_opens_in_txn,
 };
 pub(crate) use self::storage_seal::{
-    StoredValue, archive_custody_body, credentials_eligible_for_heads, image_credential_carrier,
-    plan_archived_credentials, put_stored_custody_in_txn, read_secret_custody_meta_in_txn,
-    read_stored_custody_in_txn, stored_value_held_in_txn,
+    open_connector_resume_in_txn, retire_connector_resume_in_txn, seal_connector_resume_in_txn,
 };
-#[cfg(feature = "sync")]
-pub(crate) use self::transition::holds_custody_carrier_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::transition::moves_custody_floor;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
-    custody_transitions, remember_custody_transition_in_txn,
+    custody_row_key, custody_transitions, parse_custody_row_key,
+};
+#[cfg(feature = "sync")]
+pub(crate) use self::transition::{
+    completed_custody_groups_in_txn, holds_custody_carrier_in_txn, keep_custody_piece_in_txn,
 };
 pub use self::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
@@ -166,9 +176,11 @@ pub use self::types::{
     SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 pub use self::use_handle::{
-    SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS,
-    SECRET_USE_REASON, SecretBindRequest, SecretBound, SecretUseDecision, SecretUseOperation,
-    SecretUseOutcome, SecretUseReceipt, SecretUseSend,
+    KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
+    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
+    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
+    SentValue,
 };
 pub(crate) use self::use_handle::{SecretUseConsumed, SecretUser, handle_record_in_txn};
 // The holder's manifest judgment an enacted register's result signs (FIX

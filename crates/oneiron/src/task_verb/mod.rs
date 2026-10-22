@@ -24,6 +24,9 @@ mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
+mod brief_history;
+pub(crate) use brief_history::settled_brief_in;
+mod browser_workflow;
 mod checkout_facts;
 mod code_consent_word;
 pub(crate) use checkout_facts::CheckoutTaskAccess;
@@ -56,6 +59,7 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
 mod highway_status;
@@ -87,6 +91,7 @@ pub(crate) use report_journal::{
 pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
+pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;
 mod runner_done;
@@ -115,7 +120,7 @@ pub(crate) use training_swap_ask::{
 pub use training_swap_ask::{SwapAskState, TrainingSwapAskView, training_swap_asks};
 pub(crate) use wire_decode::{
     TaskBinding, done_task_evidence_in, leader_task_body_in, leader_task_brief_in, task_binding,
-    task_is_blocked_in, task_text_with_source_in,
+    task_is_blocked_in, task_stored_brief_in, task_text_with_source_in,
 };
 mod wire_encode;
 mod world_privacy_wait;
@@ -168,16 +173,25 @@ pub use verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 pub use brief::{
     BriefConstraints, BriefContext, BriefIntent, BriefStamp, Care, ComposerStamp, Criterion,
     DoneMeans, EscalationRule, EscalationTrigger, PinnedPack, PinnedRef, QueueTaskBrief, SpawnPins,
-    StoredBrief, TypeRef, brief_digest,
+    StoredBrief, TypeRef, WorkflowBinding, brief_digest,
+};
+pub(crate) use browser_workflow::erase_task_workflows_in_txn;
+pub use browser_workflow::{
+    TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
+    TaskWorkflowUnavailable, mark_task_workflow_started, record_task_workflow_outcome,
+    task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
 pub use highway_types::{
     AttemptHandle, AttemptView, HostBinding, TaskAccept, TaskCall, TaskCallReceipt, TaskHandle,
-    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskReport, TaskReportBody,
-    TaskStatusQuery, TaskStatusView, TaskVia,
+    TaskLifecycleRecord, TaskOutcome, TaskPhase, TaskPost, TaskRedo, TaskReport, TaskReportBody,
+    TaskStatusQuery, TaskStatusView, TaskVia, TaskWorkflowHandoff, TaskWorkflowOutcome,
+    TaskWorkflowStatus,
 };
-pub use runner_done::{RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question};
+pub use runner_done::{
+    RunnerDoneAnswer, RunnerDoneQuestion, runner_done_question, runner_workflow_done_answer,
+};
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
@@ -286,6 +300,66 @@ pub(crate) fn open_thread_task_holder_in(
     }
 }
 
+/// The PERSON a typed TASK is assigned to as a human, in the caller's
+/// snapshot: [`task_human_assignee`] for a reader that already holds one.
+/// `None` for any other assignee, for none, and for a row that is no typed
+/// TASK.
+pub(crate) fn task_human_assignee_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    task: crate::EntityId,
+) -> crate::Result<Option<crate::EntityId>> {
+    Ok(
+        wire_decode::task_verb_body_in(vault, txn, task)?.and_then(|body| match body.assignee {
+            Some(TaskAssignee::Human { actor_ref }) => Some(actor_ref),
+            None
+            | Some(
+                TaskAssignee::Dreamer
+                | TaskAssignee::AgentDef { .. }
+                | TaskAssignee::Peer { .. }
+                | TaskAssignee::Child { .. },
+            ) => None,
+        }),
+    )
+}
+
+/// Whether a device-local world in `kept` keeps one of the rows the ask
+/// `task` is a member of answers from (FIX 7209): each member TASK, the TASK
+/// its class came from, its question and its context, the cut its handle's
+/// verbs read the group under. Each such row is listed as a producer of the
+/// read. `false` when `task` is no member of a stored ask group.
+pub(crate) fn ask_rows_kept_in(
+    memory: &crate::memory::Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    kept: &std::collections::BTreeSet<crate::EntityId>,
+    task: crate::EntityId,
+) -> crate::Result<bool> {
+    let vault = memory.vault();
+    let Some(consult) =
+        wire_decode::task_verb_body_in(vault, txn, task)?.and_then(|body| body.consult)
+    else {
+        return Ok(false);
+    };
+    let Some(group) = ask_record::read_group(vault, txn, consult.correlation_ref)? else {
+        return Ok(false);
+    };
+    if !group
+        .members
+        .iter()
+        .any(|member| member.task == task.to_hex())
+    {
+        return Ok(false);
+    }
+    let rows = group.answer_rows();
+    memory.produced_from(rows.iter().copied());
+    for row in rows {
+        if crate::settings::device_local_keeps_among(&vault.store, txn, kept, &row)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) use owner_index::{index_owner_fact, indexed_tasks_of_in};
 pub(crate) use policy_change_followup::{
     enqueue_policy_change_digest_followup_in_txn, enqueue_policy_change_followup_in_txn,
@@ -320,82 +394,19 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
-mod fanout_batch;
-mod recall_door;
-pub mod sdk;
-mod sdk_act_answer;
-mod sdk_agent_grant;
-mod sdk_agents;
-mod sdk_anonymous_chat;
-mod sdk_asr;
-mod sdk_authority_history;
-mod sdk_browser;
-mod sdk_calendar;
-mod sdk_campaign_archive;
-mod sdk_campaign_split;
-mod sdk_catalog_fragment;
-mod sdk_connector;
-mod sdk_connector_call;
-mod sdk_connector_pack;
-mod sdk_coreference;
-mod sdk_courtesy_delete;
-mod sdk_credential;
-mod sdk_describe;
-mod sdk_diary;
-mod sdk_disclosure;
-mod sdk_embedding_space;
-mod sdk_eval_cohort;
-mod sdk_explain;
-mod sdk_fanout_launch;
-mod sdk_federation;
-mod sdk_federation_burst;
-mod sdk_feedback;
-mod sdk_git_push_grant;
-mod sdk_goal_optimize;
-mod sdk_guest_document;
-mod sdk_guest_revoke;
-mod sdk_host;
-mod sdk_hub;
-mod sdk_identity_topology;
-mod sdk_legal_hold;
-mod sdk_live_run;
-mod sdk_live_voice;
-mod sdk_mesh;
-mod sdk_model_manifest;
-mod sdk_note_history;
-mod sdk_off_record;
-mod sdk_off_record_rooms;
-mod sdk_pack_preview;
-mod sdk_persona;
-mod sdk_proxy;
-mod sdk_record_erase;
-mod sdk_reply;
-mod sdk_research;
-mod sdk_residence;
-mod sdk_retrieval;
-mod sdk_root_requests;
-mod sdk_scratchpad;
-mod sdk_secret;
-mod sdk_secret_grant;
-mod sdk_secret_use;
-mod sdk_self;
-mod sdk_share;
-mod sdk_shared;
-mod sdk_shared_admin;
-mod sdk_shared_members;
-mod sdk_shared_policy;
-mod sdk_skill_attribution;
-mod sdk_skill_defaults;
-mod sdk_skill_execution;
-mod sdk_skills;
-mod sdk_standing;
-mod sdk_support_grant;
-mod sdk_trusted_contact;
-mod sdk_voice_bank;
-mod sdk_weave;
-mod sdk_wire_health;
-mod sdk_workflows;
-mod sdk_workspace;
+pub(crate) mod fanout_batch;
+pub(crate) mod recall_door;
+// FIX 8907: the agent SDK lives at `crate::verbs`; `task_verb::sdk` is its
+// public path, and the task-owned items its files reach are re-exported
+// here for it.
+pub use crate::verbs as sdk;
+pub(crate) use ask_world_hold::admit_ask_references;
+pub(crate) use brief::{decode_hex, hex32};
+pub(crate) use create_origin::task_create_origin_in_txn;
+pub(crate) use highway::forbidden;
+pub(crate) use presence_scan::superseded_attempt_ids;
+pub(crate) use rate_limit::task_create_owner_in;
+
 pub mod verb_hook_boundary;
 
 #[cfg(test)]
@@ -404,7 +415,7 @@ mod ask_outcome_tests;
 mod ask_tests;
 
 pub(crate) use ask_facade::settle_waiting_asks;
-pub(crate) use ask_guest::ask_guest_grant_in;
+pub(crate) use ask_guest::{ask_guest_grant_in, ask_member_task_in};
 pub(crate) use ask_option_link::deliver_ask_change_in_txn;
 pub(crate) use ask_option_link::{
     ack_option_void_generation, has_option_link_void, option_void_generation,

@@ -1,3 +1,7 @@
+//! Code revisions, tested forks and reviewed import promotion.
+//! The revision value is `CodeRevision`.
+//! Child modules own the types, codecs and promotion definitions re-exported here.
+
 mod commit_metadata;
 pub use commit_metadata::CodeCommitMetadata;
 mod promotion;
@@ -45,7 +49,9 @@ pub(crate) use self::import_anchor::import_snapshot_custody_in_txn;
 pub use self::import_anchor::materialize_code_revision_tree;
 pub(crate) use self::import_promotion::CodeImportHold;
 pub use self::import_types::{CodeImportAcceptance, CodeImportAnchor, CodePathRetirement};
-pub(crate) use self::import_types::{CodeImportManifest, manifest_digest, manifest_id};
+pub(crate) use self::import_types::{
+    CodeImportManifest, IMPORT_MANIFEST_PREDICATE, manifest_digest, manifest_id,
+};
 
 #[cfg(test)]
 mod tests;

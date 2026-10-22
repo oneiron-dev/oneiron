@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use crate::wave_dispatch::{WaveDispatchCandidate, WaveHandoffOutcome};
 use oneiron::dreamer_consolidation::{
-    DREAMER_NARRATIVE_ROLE, PersonAboutExecutor, RoleBackends, RoleCall, ScopeSummaryExecutor,
+    DREAMER_EXTRACTION_ROLE, DREAMER_NARRATIVE_ROLE, ExtractionPorts, PersonAboutExecutor,
+    RoleBackends, RoleCall, ScopeSummaryExecutor, ThingChildHost,
 };
 use oneiron::dreamer_runner::connector_event::{ConnectorEventExecutor, ConnectorEventResponder};
 use oneiron::dreamer_runner::maintenance::{
     CoachLiveSlice, CoachSkillOptimizer, ContributionReplayHost,
 };
-use oneiron::dreamer_wake::{WeaveRecipeExecutor, WeaveRecipeRuntime};
+use oneiron::dreamer_wake::{ClaimAuthoringSelection, WeaveRecipeExecutor, WeaveRecipeRuntime};
 use oneiron::edge::EdgeActorClass;
 use oneiron::llm::{ExtractionEgressPredicate, HostInferenceBinding, HostInferenceContext};
 use oneiron::skill_optimize::{HeldOutReplayNotes, SkillOptimizeAuthor};
@@ -139,6 +140,14 @@ pub trait PassExecutorFactory {
         Ok(None)
     }
 
+    /// The claim-authoring campaign this pass's consolidation admissions
+    /// re-read (FIX 897), asked before the pass borrows its executors. The
+    /// default binds none: with no promoted default the pass authors
+    /// single-pass, and with one its consolidation admission refuses.
+    fn claim_authoring_selector(&self, _vault: &Vault) -> Result<ClaimAuthoringSelection> {
+        Ok(ClaimAuthoringSelection::None)
+    }
+
     /// The attachment host's lifecycle signal, not another shutdown owner.
     fn linked_shutdown(&self) -> Option<Arc<dyn LinkedShutdown>> {
         None
@@ -169,6 +178,13 @@ pub struct ConsolidationExecutorFactory {
     /// The backend each Dreamer role calls out on; a role it does not name
     /// calls `backend`.
     roles: RoleBackends,
+    /// The host's sieve and child-extraction ports (OF-498a). `None` keeps
+    /// whatever `roles` carries, by default the role ports.
+    extraction_ports: Option<ExtractionPorts>,
+    /// The host a thing's branch runs its scoped code-mode agent on (FIX
+    /// 7508). `None` keeps every thing branch on the per-slice path, as a
+    /// host with no code runtime does.
+    thing_child: Option<Arc<dyn ThingChildHost>>,
     sink: Box<dyn ConsolidationSink>,
     parallel_sinks: Vec<Box<dyn ConsolidationSink>>,
     /// CMT-3 (ONE-1540). `None` by DEFAULT, and the wrapper is installed
@@ -220,6 +236,8 @@ impl ConsolidationExecutorFactory {
             binding,
             extraction_egress,
             roles: RoleBackends::default(),
+            extraction_ports: None,
+            thing_child: None,
             sink,
             parallel_sinks: Vec::new(),
             commitment_wake_planner: None,
@@ -258,6 +276,23 @@ impl ConsolidationExecutorFactory {
     #[must_use]
     pub fn with_role_backends(mut self, roles: RoleBackends) -> Self {
         self.roles = roles;
+        self
+    }
+
+    /// The sieve's and a child extraction's ports (OF-498a) in place of the
+    /// role defaults, whatever `with_role_backends` routes.
+    #[must_use]
+    pub fn with_extraction_ports(mut self, ports: ExtractionPorts) -> Self {
+        self.extraction_ports = Some(ports);
+        self
+    }
+
+    /// The host a thing's branch runs its scoped code-mode agent on (FIX
+    /// 7508), beside the extraction ports, whatever `with_role_backends`
+    /// carries.
+    #[must_use]
+    pub fn with_thing_child_host(mut self, host: Arc<dyn ThingChildHost>) -> Self {
+        self.thing_child = Some(host);
         self
     }
 
@@ -424,6 +459,31 @@ impl ConsolidationExecutorFactory {
             Some(decisions) => decisions.clone(),
             None => ConsolidationDecisions::shipped()?,
         };
+        // The sieve's follower calls the extraction role: it borrows that
+        // model's input window, when the host counts one (FIX 7510).
+        let follower_window = self
+            .model_windows
+            .get(
+                RoleCall::resolve(
+                    &self.roles,
+                    DREAMER_EXTRACTION_ROLE,
+                    self.backend.as_ref(),
+                    &self.model,
+                    &self.binding,
+                    self.extraction_egress.as_deref(),
+                )
+                .model,
+            )
+            .copied();
+        let roles = match &self.extraction_ports {
+            Some(ports) => self.roles.clone().with_extraction_ports(ports.clone()),
+            None => self.roles.clone(),
+        }
+        .with_follower_window(follower_window);
+        let roles = match &self.thing_child {
+            Some(host) => roles.with_thing_child_host(Arc::clone(host)),
+            None => roles,
+        };
         let mut executors = Vec::new();
         for sink in std::iter::once(&mut self.sink).chain(self.parallel_sinks.iter_mut()) {
             let inner = ConsolidationExecutor {
@@ -436,7 +496,7 @@ impl ConsolidationExecutorFactory {
                     binding: self.binding.clone(),
                     extraction_egress: self.extraction_egress.as_deref(),
                 },
-                roles: self.roles.clone(),
+                roles: roles.clone(),
                 sink: sink.as_mut(),
                 scope: None,
                 decisions: decisions.clone(),

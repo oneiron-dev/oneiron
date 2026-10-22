@@ -40,6 +40,7 @@ mod merge;
 mod preview;
 mod verbs;
 
+pub(crate) use doc::deck_log_ops;
 pub(super) use doc::{birth, validate};
 pub use preview::{DeckPreview, DeckPreviewRequest, DeckPreviewSlide};
 pub use verbs::{
@@ -65,6 +66,7 @@ use crate::typed_body::{
 };
 use crate::write_envelope::WriteActor;
 use heed::{RoTxn, RwTxn};
+use loro::LoroDoc;
 use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
@@ -138,20 +140,34 @@ pub(super) fn import_deck(bytes: &[u8], limits: Limits) -> Result<LiveDeck> {
     LiveDeck::import(&package).map_err(live)
 }
 
+/// [`Vault::read_pptx_body`] of `doc`, `artifact`'s deck body at `frontier`,
+/// read in `txn`: a read that holds its document projects it in the
+/// snapshot it reads its lifted keys in (FIX 2939).
+pub(super) fn body_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    artifact: &EntityId,
+    doc: &LoroDoc,
+    frontier: Vec<u8>,
+) -> Result<PptxBody> {
+    let body = doc::read(doc)?;
+    let log = log::stamped(store, txn, artifact, &body.log)?;
+    Ok(PptxBody {
+        attribution: AttributionIndex::build(&body.deck, &log),
+        frontier,
+        deck: body.deck,
+        log,
+    })
+}
+
 impl Vault {
     /// The deck body at its head, or at an earlier frontier `at` of its
     /// history, with who made each visible thing.
     pub fn read_pptx_body(&self, artifact: &EntityId, at: Option<&[u8]>) -> Result<PptxBody> {
         let txn = self.store.env.read_txn()?;
         let (head, doc) = self.loro_body(&txn, artifact, OfficeBodyKind::Pptx, at)?;
-        let body = doc::read(&doc)?;
-        let log = log::stamped(&self.store, &txn, artifact, &body.log)?;
-        Ok(PptxBody {
-            attribution: AttributionIndex::build(&body.deck, &log),
-            frontier: at.map_or(head.frontier, <[u8]>::to_vec),
-            deck: body.deck,
-            log,
-        })
+        let frontier = at.map_or(head.frontier, <[u8]>::to_vec);
+        body_in_txn(&self.store, &txn, artifact, &doc, frontier)
     }
 
     /// A person's operations on the live deck, each stamped with the actor.
@@ -697,6 +713,7 @@ pub(crate) fn live_refused(error: LiveError) -> Error {
         LiveError::HeadAdvanced => LiveDeckRefusal::HeadAdvanced,
         LiveError::UnboundNodes(_) => LiveDeckRefusal::UnboundNodes,
         LiveError::Encoding(_) => LiveDeckRefusal::Encoding,
+        LiveError::MemoryFloor { .. } => LiveDeckRefusal::MemoryFloor,
     };
     let nodes = match &error {
         LiveError::UnboundNodes(nodes) => nodes.iter().map(|node| node.0).collect(),

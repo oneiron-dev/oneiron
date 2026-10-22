@@ -38,6 +38,7 @@ use oneiron_llm_openai::{
 use serde_json::Value as JsonValue;
 use zeroize::Zeroizing;
 
+use super::llama_identity::AnsweringIdentity;
 use super::output_cap::OutputCap;
 use crate::config::models::{BrokerConfig, ProviderConfig, ProviderKind, ResponseFormatWire};
 
@@ -306,8 +307,19 @@ impl BrokerBackend {
         call_with_key(&self.client, &self.keys, &self.secret, header, body).await
     }
 
-    /// The provider's answer as the adapter reads it.
-    fn answer(&self, outcome: Outcome, body: &[u8]) -> LlmResult<LlmResponse> {
+    /// The provider's answer as the adapter reads it, its model labelled as
+    /// one of the call's configured `wire_model`, through the same reading
+    /// as a plain reply's: a house llama.cpp launch alias gives its receipt,
+    /// with the launch's epoch alone, since a brokered reply comes from no
+    /// origin this server fetches a manifest from (FIX 8314). Its receipts
+    /// name `model`, the model the call was admitted for.
+    fn answer(
+        &self,
+        outcome: Outcome,
+        body: &[u8],
+        wire_model: &str,
+        model: &ModelId,
+    ) -> LlmResult<LlmResponse> {
         let (status, headers) = answered(outcome)?;
         let parsed = serde_json::from_slice::<JsonValue>(body);
         if !(200..300).contains(&status) {
@@ -324,8 +336,19 @@ impl BrokerBackend {
         let mut body = parsed.map_err(|_| LlmError::from(RetryableLlmError::ServerError))?;
         match &self.wire {
             Wire::OpenAi(_) => {
-                super::openai::carry_served_model(status, &mut body);
-                parse_openai_chat_response(&body)
+                let answering = body
+                    .get("model")
+                    .and_then(JsonValue::as_str)
+                    .and_then(AnsweringIdentity::epoch_only);
+                super::openai::carry_reply_evidence(
+                    status,
+                    &mut body,
+                    Some(wire_model),
+                    answering.as_ref(),
+                );
+                let mut answer = parse_openai_chat_response(&body)?;
+                answer.usage.bind_inference_model(model);
+                Ok(answer)
             }
             Wire::Anthropic(_) => {
                 super::anthropic::carry_served_model(&mut body);
@@ -471,7 +494,12 @@ impl LlmBackend for BrokerBackend {
         Box::pin(async move {
             let (header, body) = self.build(&request, false, lease.id())?;
             let reply = self.send(&header, &body).await?;
-            self.answer(reply.outcome, &reply.body)
+            self.answer(
+                reply.outcome,
+                &reply.body,
+                &header.wire_model,
+                &request.model,
+            )
         })
     }
 

@@ -11,7 +11,8 @@ use crate::deletion::{
     WITHDRAWN_GENERATION_SWEEP_PREFIX, WithdrawnGenerationSweepJob,
     append_redaction_sweep_completion_in_txn, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
-    encode_withdrawn_generation_job_value, raise_withdrawn_generation_fence_in_txn,
+    encode_withdrawn_generation_job_value, finish_redaction_erase_in_txn,
+    is_corrupt_claim_repair_event, raise_withdrawn_generation_fence_in_txn,
     redaction_sweep_completion_in_txn, validate_redaction_receipt_body,
 };
 use crate::entity_id::EntityId;
@@ -24,10 +25,13 @@ use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::sync::window_rows::WINDOW_UPDATE;
 
 /// Finalizes one job: append a signed linked completion row (OF-470,
-/// ARCH-0038 step 10) for every matching pending receipt and delete the `h:`
-/// row — in ONE transaction, row deletion last (a crash before the commit
-/// keeps the obligation; the re-run is idempotent). A receipt is never
-/// rewritten; one whose completion row exists is no longer pending.
+/// ARCH-0038 step 10) for every matching pending receipt, then its erase's
+/// overall final row when every custody retirement the receipt binds has
+/// finished too (FIX 5844), and delete the `h:` row — in ONE transaction,
+/// row deletion last (a crash before the commit keeps the obligation; the
+/// re-run is idempotent). The job goes even while custody is pending: the
+/// final row's later retries read the receipts, never the job. A receipt is
+/// never rewritten; one whose completion row exists is no longer pending.
 ///
 /// Receipt↔job correlation is scope-set equality: origin and replay both
 /// write the receipt and its job in the same transaction with the same
@@ -103,6 +107,11 @@ pub(super) fn finalize_job(
             if raw.len() < header_len {
                 return Err(Error::CorruptedIndex("entity metadata"));
             }
+            // A valid corrupt-CLAIM repair event is no erase receipt and owes
+            // no sweep (FIX 7800); any other body still meets the check below.
+            if is_corrupt_claim_repair_event(&raw[header_len..]) {
+                continue;
+            }
             // Finding 2 (fail closed): a REDACTION_AUDIT entity
             // whose body cannot be decoded is on-disk accountability
             // corruption, NOT a foreign shape — we cannot prove it is
@@ -126,7 +135,9 @@ pub(super) fn finalize_job(
             validate_redaction_receipt_body(&raw[header_len..])
                 .map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))?;
             let receipt = decode_redaction_audit_receipt(&raw[header_len..])?;
-            if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
+            // An initial receipt alone owes a sweep: its appended sweep and
+            // final rows owe none.
+            if receipt.sweep_queued_at.is_none() || !receipt.is_initial() {
                 continue;
             }
             let receipt_ids: BTreeSet<&str> = receipt
@@ -147,11 +158,14 @@ pub(super) fn finalize_job(
             completed.push((id, receipt));
         }
         // Append, never update: each pending receipt gets its signed linked
-        // completion row, and a legal hold's "erase completed" with it.
+        // completion row. Its final row, and a legal hold's "erase
+        // completed" with it, follow here once the receipt's custody
+        // retirements have finished as well; a custody fault keeps it owed.
         for (id, receipt) in &completed {
             if append_redaction_sweep_completion_in_txn(vault, wtxn, id, receipt, now)? {
                 finalized += 1;
             }
+            finish_redaction_erase_in_txn(vault, wtxn, id, receipt, now)?;
         }
         // An erased epoch summary's words have left every window now, and
         // what it was withdrawn for retires with them.
@@ -313,10 +327,11 @@ fn retry_later(state: &mut HardEraseRetryState, now: u64, error_code: &str) {
     state.last_error_code = Some(error_code.to_owned());
 }
 
-/// ONE-1091 audit: a receipt whose sweep was queued but never completed
-/// must be covered by a pending `h:` row — a dropped obligation is
+/// ONE-1091 audit: an initial receipt whose sweep was queued but never
+/// completed must be covered by a pending `h:` row — a dropped obligation is
 /// DETECTABLE, loud, and counted. Runs after job processing so receipts
 /// completed this run (their linked completion row) are no longer pending.
+/// A sweep complete while custody is pending is complete here.
 pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
     let rtxn = vault.store.env.read_txn()?;
 
@@ -351,6 +366,11 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         if raw.len() < header_len {
             return Err(Error::CorruptedIndex("entity metadata"));
         }
+        // A valid corrupt-CLAIM repair event is no erase receipt: neither
+        // undecodable nor an obligation (FIX 7800).
+        if is_corrupt_claim_repair_event(&raw[header_len..]) {
+            continue;
+        }
         // Undecodable count is SCOPED to the audit's own iteration over
         // LOCAL REDACTION_AUDIT obligations (the same predicate scope the covering
         // check already runs) — never a blanket scan over every REDACTION_AUDIT
@@ -369,7 +389,7 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
                 continue;
             }
         };
-        if receipt.sweep_queued_at.is_none() || receipt.sweep_complete_at.is_some() {
+        if receipt.sweep_queued_at.is_none() || !receipt.is_initial() {
             continue;
         }
         // A valid linked completion row discharges it. A different occupant

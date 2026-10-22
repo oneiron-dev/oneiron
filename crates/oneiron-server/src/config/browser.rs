@@ -3,21 +3,38 @@
 //! File-only, like `[models]`. Absent means no run has a browser, and every
 //! browser verb answers `browser_unbound`. Each bound below is a manifest
 //! row for one guest; none of them counts or refuses a program's calls.
+//! A section with no `runtime` is configured and unbound (FIX 7670): the
+//! server serves without a guest, as with no section, and its browser
+//! readiness names the image it would run.
 //!
 //! On a managed node the same guest also renders the web fetch's headless
 //! rung, one guest per render (FIX 7122); absent, that node's fetch keeps
 //! its readability rung only.
+//!
+//! `bench_fixture_forward` (FIX 8061) is an operator's: a run browser's
+//! fixture origin, `http://127.0.0.1:8080`, then forwards to that one
+//! numeric IPv4 `host:port`, host-side; the guest stays on no network and
+//! every other address keeps its refusal. Absent, as by default, no
+//! request answers differently.
 
 use oneiron_browser::{BrowserEngine, BrowserGuest, GuestLimits, ImageRef};
 use serde::Deserialize;
+use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// The server's one browser readiness, which each guest start moves.
+mod readiness;
+
+pub(crate) use readiness::BrowserReadinessCell;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct BrowserConfig {
-    /// A Docker-compatible container CLI, as an absolute path.
-    pub runtime: PathBuf,
+    /// A Docker-compatible container CLI, as an absolute path: the
+    /// owner's, or the one a managed node's supervisor binds
+    /// (`--browser-runtime`). None is bound: no guest starts.
+    pub runtime: Option<PathBuf>,
     /// The guest image, pinned: `name@sha256:<digest>` or a local
     /// `sha256:<id>`, built from `crates/oneiron-container/guest/browser`.
     pub image: String,
@@ -36,6 +53,11 @@ pub struct BrowserConfig {
     /// start on when the file names none, or `chromium`.
     #[serde(default = "BrowserEngine::agent_default")]
     pub engine: BrowserEngine,
+    /// The upstream a run browser's fixture origin forwards to, as a
+    /// numeric IPv4 `host:port` off the host's loopback (FIX 8061): a
+    /// bench's state server. None forwards nothing.
+    #[serde(default)]
+    pub bench_fixture_forward: Option<SocketAddrV4>,
 }
 
 const fn default_memory_mib() -> u32 {
@@ -68,7 +90,11 @@ impl BrowserConfig {
                 "the browser guest never runs on this host; serve from a fleet Linux host"
             );
         }
-        if !self.runtime.is_absolute() {
+        if self
+            .runtime
+            .as_deref()
+            .is_some_and(|runtime| !runtime.is_absolute())
+        {
             anyhow::bail!("browser.runtime must be an absolute path to a container CLI");
         }
         ImageRef::pinned(&self.image).map_err(|_| {
@@ -85,13 +111,19 @@ impl BrowserConfig {
                 anyhow::bail!("browser.{key} must be greater than zero");
             }
         }
+        if let Some(target) = self.bench_fixture_forward {
+            oneiron::code_sandbox::egress::FixtureForward::new(target).map_err(|reason| {
+                anyhow::anyhow!("browser.bench_fixture_forward {target}: {reason}")
+            })?;
+        }
         Ok(())
     }
 
+    /// The guest this section starts, once its runtime is bound.
     #[must_use]
-    pub fn guest(&self) -> BrowserGuest {
-        BrowserGuest {
-            runtime: self.runtime.clone(),
+    pub fn guest(&self) -> Option<BrowserGuest> {
+        Some(BrowserGuest {
+            runtime: self.runtime.clone()?,
             image: self.image.clone(),
             limits: GuestLimits {
                 memory_mib: self.memory_mib,
@@ -104,7 +136,8 @@ impl BrowserConfig {
             // policy from the vault's standing grants before any call.
             policy: oneiron_browser::SendPolicy::default(),
             fixture: None,
+            fixture_forward: self.bench_fixture_forward,
             engine: self.engine,
-        }
+        })
     }
 }

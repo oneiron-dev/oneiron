@@ -198,25 +198,66 @@ pub(crate) fn act_heads(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<Aut
     heads
 }
 
+/// The acknowledged acts a profile revision listed before Phase2 A: what it
+/// still lists when the whole set would not ride one frame.
+const ACKNOWLEDGED_CLIP: usize = 4096;
+
+/// The frame floor a profile revision's signed row rides whole under: the
+/// WindowSync frame and the residence touch blob bound
+/// (`sync::MAX_DECODED_PAYLOAD_BYTES`), unchanged.
+const ACKNOWLEDGMENT_FRAME_FLOOR: usize = 8 * 1024 * 1024;
+#[cfg(feature = "sync")]
+const _: () = assert!(ACKNOWLEDGMENT_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
+
+/// What the rest of that row, its entity header and its frame envelope may
+/// take beside the acknowledged list (CALLS `Phase2 acknowledgment frame
+/// fallback`).
+const ACKNOWLEDGMENT_ROW_ALLOWANCE: usize = 64 * 1024;
+
 /// What a new profile revision of `machine` lists as seen (FIX 2998, FIX
 /// 4649): the acts in the log it carried ([`super::world_privacy::live_edits_by`]),
-/// then the topology decisions it carried, by token, within the codec's one
-/// cap. A decision the cap leaves out counts as one its removal raced: the
-/// removal retires it (CALLS "FIX 4649 seal causal envelope").
+/// then every topology decision it carried, by token, measured against the
+/// `authority_record_items` row, which asks past it. The whole set is listed
+/// when, encoded, it rides one frame with its row (FIX 7911: a removal
+/// retires none it saw). One that would not keeps today's path whole: the
+/// first [`ACKNOWLEDGED_CLIP`] acts, then tokens in the room left, and a
+/// decision left out counts as one its removal raced (CALLS "FIX 4649 seal
+/// causal envelope"); never a refusal.
 pub(super) fn acknowledged_by_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     machine: EntityId,
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
-    let mut seen = super::world_privacy::live_edits_by(fold, machine);
-    let room = MACHINE_SEEN_WORLD_EDITS_MAX.saturating_sub(seen.len());
-    seen.extend(
-        crate::identity_topology::carried_seal_tokens_in_txn(store, txn, machine)?
-            .into_iter()
-            .take(room),
-    );
-    Ok(seen)
+    let acts = super::world_privacy::live_edits_by(fold, machine);
+    let tokens = crate::identity_topology::carried_seal_tokens_in_txn(store, txn, machine)?;
+    let mut seen: BTreeSet<AuthorityEntryHash> = acts.iter().copied().collect();
+    seen.extend(tokens.iter().copied());
+    super::measure_authority_work(&store.limit_watch, seen.len());
+    if acknowledgment_rides_whole(&seen)? {
+        return Ok(seen);
+    }
+    let mut clipped: BTreeSet<AuthorityEntryHash> =
+        acts.into_iter().take(ACKNOWLEDGED_CLIP).collect();
+    let room = ACKNOWLEDGED_CLIP.saturating_sub(clipped.len());
+    clipped.extend(tokens.into_iter().take(room));
+    Ok(clipped)
+}
+
+/// Whether `seen`, encoded as a profile revision lists it, rides one frame
+/// with the rest of its signed row.
+fn acknowledgment_rides_whole(seen: &BTreeSet<AuthorityEntryHash>) -> Result<bool> {
+    let room = ACKNOWLEDGMENT_FRAME_FLOOR - ACKNOWLEDGMENT_ROW_ALLOWANCE;
+    // Each hash encodes in more than its 32 bytes.
+    if seen.len() > room / 32 {
+        return Ok(false);
+    }
+    let list = seen
+        .iter()
+        .map(|hash| oneiron_authority::authority::binary_value(*hash))
+        .collect();
+    let encoded = oneiron_authority::authority::encode_value(&rmpv::Value::Array(list))?;
+    Ok(encoded.len() <= room)
 }
 
 fn points_in_txn(
@@ -326,6 +367,18 @@ fn parent_state(
         });
     }
     merged
+}
+
+/// The fold state at each of `heads`, from the capture the causal points
+/// read: where a frontier join finds its admission tip (FIX 7908). `None`
+/// where history the fold needs is not held here.
+pub(super) fn head_states_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    heads: &BTreeSet<AuthorityEntryHash>,
+) -> Result<Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>>> {
+    let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
+    Ok(capture_in_txn(store, txn, heads, pin.as_ref())?.map(|(image, _)| image.per_parent))
 }
 
 /// The stored log's fold keeping the state at each of `heads`, with no clock,

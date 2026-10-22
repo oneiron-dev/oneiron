@@ -11,12 +11,15 @@ use std::time::Instant;
 use super::bounds::ScanBounds;
 use super::door::{DoorAdmissionStamp, DoorHook, DoorSeam};
 use super::evidence::{RefUpdate, receive_pack_provenance_refused};
+use super::exchange_idle::Progress;
+use super::held::SpillFloor;
 use super::hooks::DoorHooksDir;
 use super::paths::{
     DOOR_BLOB_TOO_LARGE, DOOR_REFUSAL_NAME_CHARS, DOOR_VERDICT_OK, DOOR_WINDOW_POLL,
     ORIGIN_REFUSED_REF_PREFIX, serve_failed,
 };
 use super::retained_reasons::{RetainedReasons, bounded_verdict_line};
+use super::secret_marks::{ReceiveSecretMarks, ReceiveSecretMarksBuilder, ReceiveSeen};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::credential_door::{CredentialDoorService, DoorScanVerdict, PushedBlob};
@@ -31,6 +34,14 @@ pub enum DoorWindowVerdict {
     NotInvoked,
     /// Every added line scanned, nothing matched.
     Clean,
+    /// Every blob scanned, and the push admitted with each key the scan
+    /// found marked in its intent's transaction, its bytes kept (FIX 7608).
+    /// Only the disposition's later flip makes this verdict: until then
+    /// every hit is [`Self::Rejected`].
+    AdmitMarked {
+        /// The push's marks, carried to its intent's writer.
+        marks: ReceiveSecretMarks,
+    },
     /// The push was refused. Each reason names one offending path and its
     /// detector code, or one proposed ref name this origin will not land; no
     /// matched line and no value bytes ever appear here.
@@ -81,10 +92,13 @@ impl DoorWindowReport {
         }
     }
 
-    /// Whether the door admitted the push.
+    /// Whether the door admitted the push, clean or with its keys marked.
     #[must_use]
     pub fn admitted(&self) -> bool {
-        matches!(self.verdict, DoorWindowVerdict::Clean)
+        matches!(
+            self.verdict,
+            DoorWindowVerdict::Clean | DoorWindowVerdict::AdmitMarked { .. }
+        )
     }
 }
 
@@ -94,6 +108,8 @@ pub(super) struct DoorWindowContext<'a> {
     pub(super) admission: Option<&'a DoorAdmissionStamp>,
     /// The bounds the hook was written with, held again here.
     pub(super) scan: ScanBounds,
+    /// The host's disk floor, which a marked push's spool keeps too.
+    pub(super) spill_floor: Option<&'a Arc<dyn SpillFloor>>,
 }
 
 pub(super) struct DoorWindowRequest {
@@ -107,12 +123,18 @@ pub(super) struct DoorWindowRequest {
 /// Fail-closed on every axis. A window that times out, a request that cannot be
 /// parsed, and a scan that cannot run all publish a refusal, so the hook exits
 /// non-zero and the objects never leave quarantine.
+///
+/// From the request's arrival to the verdict's publication the exchange's idle
+/// clock is held still (FIX 8034): no byte moves while the door scans, marks
+/// and records, and that work is the server's, not an idle client's. The hold
+/// ends however this returns or unwinds.
 pub(super) fn serve_door_window(
     vault: &Arc<Vault>,
     repo: &RepoRef,
     hooks: &DoorHooksDir,
     finished: &AtomicBool,
     deadline: Instant,
+    clock: &Progress,
     context: DoorWindowContext<'_>,
 ) -> Result<DoorWindowReport> {
     let request_path = hooks.request_path();
@@ -137,6 +159,7 @@ pub(super) fn serve_door_window(
         }
         std::thread::sleep(DOOR_WINDOW_POLL);
     }
+    let _still = clock.hold_still();
 
     // Everything past the request file is fail-closed and ANSWERED: a request
     // that cannot be parsed and an extraction that cannot be read whole are
@@ -247,8 +270,13 @@ fn scan_window(
     // goes unscanned; nothing about a legal batch changes.
     let mut unlandable = unlandable_ref_reasons(&request.ref_updates);
     let door = CredentialDoorService::new(Arc::clone(vault));
+    let marks = ReceiveSecretMarksBuilder::new(
+        vault,
+        context.admission.map(DoorAdmissionStamp::operation_id),
+        context.spill_floor,
+    );
     let mut scan = (unlandable.is_empty() && context.seam == DoorSeam::Landed)
-        .then(|| BlobScan::new(&door, repo));
+        .then(|| BlobScan::new(&door, repo, marks));
     let mut lfs_pointers = Vec::new();
     let mut pointer_moves = Vec::new();
     read_framed_stream(
@@ -263,7 +291,7 @@ fn scan_window(
                 pointer_moves.push(at.cloned());
             }
             if let Some(scan) = scan.as_mut() {
-                scan.blob(&blob);
+                scan.blob(&blob, Framed::Tip(at));
             }
         },
     )?;
@@ -286,7 +314,7 @@ fn scan_window(
         context.scan,
         &mut |blob| {
             if let Some(scan) = scan.as_mut() {
-                scan.blob(&blob);
+                scan.blob(&blob, Framed::History);
             }
         },
     )?;
@@ -429,6 +457,30 @@ fn read_framed_stream(
     }
 }
 
+/// Which of the hook's streams framed a blob.
+#[derive(Clone, Copy)]
+enum Framed<'m> {
+    /// The tip stream, after the move its record was diffed for (none
+    /// before any `move` line).
+    Tip(Option<&'m FramedMove>),
+    /// The history stream: no ref, and no exact path.
+    History,
+}
+
+impl Framed<'_> {
+    /// Where a marked blob was seen: a move names its refs, nothing else
+    /// does.
+    fn seen(self) -> ReceiveSeen {
+        match self {
+            Self::Tip(Some(at)) => ReceiveSeen::RefMove {
+                old: at.old.clone(),
+                new: at.new.clone(),
+            },
+            Self::Tip(None) | Self::History => ReceiveSeen::Quarantine,
+        }
+    }
+}
+
 /// The door's verdict over a push's blobs, scanned one at a time as they are
 /// read. A blob the scan cannot run on refuses the push, never passes it; the
 /// blobs after it are read but not scanned.
@@ -437,19 +489,26 @@ struct BlobScan<'a> {
     repo: &'a RepoRef,
     reasons: RetainedReasons,
     failed: bool,
+    /// The push's marks: nothing until the disposition admits a hit.
+    marks: ReceiveSecretMarksBuilder<'a>,
 }
 
 impl<'a> BlobScan<'a> {
-    fn new(hook: &'a dyn DoorHook, repo: &'a RepoRef) -> Self {
+    fn new(
+        hook: &'a dyn DoorHook,
+        repo: &'a RepoRef,
+        marks: ReceiveSecretMarksBuilder<'a>,
+    ) -> Self {
         Self {
             hook,
             repo,
             reasons: RetainedReasons::default(),
             failed: false,
+            marks,
         }
     }
 
-    fn blob(&mut self, blob: &PushedBlob) {
+    fn blob(&mut self, blob: &PushedBlob, framed: Framed<'_>) {
         if self.failed {
             return;
         }
@@ -458,34 +517,48 @@ impl<'a> BlobScan<'a> {
             .pre_receive_scan(self.repo, std::slice::from_ref(blob))
         {
             Ok(DoorScanVerdict::Clean) => {}
-            Ok(DoorScanVerdict::Rejected { proposals }) => {
+            // A refused hit keeps today's reasons and prepares no mark.
+            Ok(DoorScanVerdict::Rejected { proposals, hits }) => {
+                debug_assert_eq!(proposals.len(), hits.len());
                 for proposal in &proposals {
                     let reason = || format!("{}: {}", proposal.path, proposal.reason);
                     self.reasons.push_with(reason);
                 }
+            }
+            // A failed plan or spool write is a scan that could not
+            // complete; its error is not echoed.
+            Ok(DoorScanVerdict::AdmitMarked { hits }) => {
+                self.failed = self.marks.observe(blob, &hits, framed.seen()).is_err();
             }
             Err(_) => self.failed = true,
         }
     }
 
     fn verdict(self) -> DoorWindowVerdict {
+        let failed = || DoorWindowVerdict::Rejected {
+            reasons: vec!["receive-pack scan could not complete".to_owned()],
+        };
         if self.failed {
-            DoorWindowVerdict::Rejected {
-                reasons: vec!["receive-pack scan could not complete".to_owned()],
-            }
-        } else if self.reasons.is_empty() {
-            DoorWindowVerdict::Clean
-        } else {
-            DoorWindowVerdict::Rejected {
+            return failed();
+        }
+        if !self.reasons.is_empty() {
+            return DoorWindowVerdict::Rejected {
                 reasons: self.reasons.into_reasons(),
-            }
+            };
+        }
+        match self.marks.finish() {
+            Ok(Some(marks)) => DoorWindowVerdict::AdmitMarked { marks },
+            Ok(None) => DoorWindowVerdict::Clean,
+            Err(_) => failed(),
         }
     }
 }
 
 fn verdict_line(verdict: &DoorWindowVerdict) -> String {
     match verdict {
-        DoorWindowVerdict::Clean => DOOR_VERDICT_OK.to_owned(),
+        DoorWindowVerdict::Clean | DoorWindowVerdict::AdmitMarked { .. } => {
+            DOOR_VERDICT_OK.to_owned()
+        }
         DoorWindowVerdict::NotInvoked => "oneiron door: no request".to_owned(),
         DoorWindowVerdict::Rejected { reasons } => {
             bounded_verdict_line("oneiron door refused this push: ", reasons)

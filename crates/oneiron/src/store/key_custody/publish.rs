@@ -25,6 +25,8 @@
 //! target answers covered, and the pass acks nothing for its older position,
 //! moves no watermark, advances no anchor and records no status.
 
+mod pending;
+
 use crate::error::Result;
 use crate::store::Store;
 
@@ -298,25 +300,27 @@ impl Store {
                     EntryState::Live => entries.extend(head_entry(&custody, id)?),
                     // KS-6: a credential key kept off this member keeps its
                     // retirement fact off too; an owner-only compartment
-                    // seals to the root alone.
-                    EntryState::Retired
-                        if crate::store::credential_kind(id.kind())
-                            && recipients.keeps_local(id) => {}
+                    // seals to the root alone. So does a pad no world
+                    // compartment receives (FIX 6706).
+                    EntryState::Retired if recipients.keeps_fact_local(id) => {}
                     EntryState::Retired => retired.push(id.clone()),
                     EntryState::Missing => {}
                 }
             }
             let released = journal.recipient_facts()?;
+            let history = journal.head_history(&control, &position, &census)?;
             sealed.push(Some(
-                seal_head(&position, &control, entries, retired, released, recipients)
-                    .map(|head| CustodyBatch {
-                        position,
-                        head,
-                        set_revision: revision,
-                        journal: journal.dir().to_path_buf(),
-                        data_key: recipients.data_key.is_some(),
-                    })
-                    .map_err(|error| error.to_string()),
+                seal_head(
+                    &position, &control, entries, retired, released, &history, recipients,
+                )
+                .map(|head| CustodyBatch {
+                    position,
+                    head,
+                    set_revision: revision,
+                    journal: journal.dir().to_path_buf(),
+                    data_key: recipients.data_key.is_some(),
+                })
+                .map_err(|error| error.to_string()),
             ));
         }
         Ok(Sealed::At(position, sealed))

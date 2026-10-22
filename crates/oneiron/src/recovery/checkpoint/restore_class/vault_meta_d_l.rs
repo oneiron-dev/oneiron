@@ -13,6 +13,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DECK_DESIGN_SPEC, CONTENT),
     (&t::DECK_OUTLINE_KEEP, CONTENT),
     (&t::DELETION_ROW_FENCE_BACKFILLED, CONTENT),
+    (&t::DELETION_CORRUPT_CAPTURE, LIVE),
     (&t::DERIVATION_OWNER, LIVE),
     (&t::DIARY_READ_LOG, LIVE),
     (&t::DIARY_READ_REQUEST, LIVE),
@@ -39,6 +40,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_CONSOLIDATION_STRENGTH_POLICY, LIVE),
     (&t::CRITIC_ARTIFACT, CONTENT),
     (&t::DREAMER_CURSOR, CONTENT),
+    (&t::DREAMER_FOLLOWER_FRAME, CONTENT),
+    (&t::DREAMER_FOLLOWER_RESULT, CONTENT),
+    (&t::DREAMER_FOLLOWER_STATE, CONTENT),
     // FIX 4453: the owner's free-time policy and the boundary its last cycle
     // opened at stand as the live vault holds them, so no image restores a
     // spent allowance; cycles, bindings and receipts are history.
@@ -96,6 +100,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_SIEVE_SPANS, CONTENT),
     (&t::DREAMER_SIEVE_TURN, CONTENT),
     (&t::DREAMER_SIEVE_WITHHELD, CONTENT),
+    (&t::DREAMER_STEP_RESPONSE_PIN, CONTENT),
     (&t::DREAMER_STEP_STATE, CONTENT),
     (&t::DREAMER_STEWARDSHIP_DRAFTED, CONTENT),
     (&t::DREAMER_TOURNAMENT_EVIDENCE, CONTENT),
@@ -146,6 +151,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::EDIT_SETTLE_UNDO, CONTENT),
     (&t::EDIT_SETTLE_UNIT_WITHDRAWAL, CONTENT),
     (&t::EMBEDDING_LOCALITY, CONTENT),
+    (&t::EMBEDDING_MEDIA_DEVICE, CONTENT),
     (&t::EMBEDDING_MEDIA_REFUSED, LIVE),
     (&t::EMBEDDING_MEDIA_VECTOR, CONTENT),
     (&t::EMBEDDING_MOVE, CONTENT),

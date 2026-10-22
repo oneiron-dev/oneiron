@@ -30,6 +30,13 @@ pub enum LlmCapability {
     /// The model hears input audio clips in a chat message
     /// ([`super::ContentPart::Audio`]).
     AudioInput,
+    /// The offer reads an assistant message's reasoning back as the
+    /// OpenAI-chat `reasoning_content` field, apart from its ordinary
+    /// content. It declares how history is sent to this offer, never a
+    /// request to reason; it grants no tools and does not replace
+    /// [`Self::Reasoning`]. On that wire an offer without it gets its
+    /// assistant reasoning as ordinary text content.
+    ReasoningContentHistory,
 }
 
 impl LlmCapability {
@@ -45,6 +52,7 @@ impl LlmCapability {
             Self::Voice => "voice",
             Self::AssistantPrefill => "assistant_prefill",
             Self::AudioInput => "audio_input",
+            Self::ReasoningContentHistory => "reasoning_content_history",
         }
     }
 }
@@ -187,8 +195,10 @@ impl LlmCatalogEntry {
     }
 
     /// Shared admission for one media call on this row: its model and
-    /// locality, no route selector, an operation and inputs the row serves,
-    /// and no more reference images than it takes.
+    /// locality, no route selector, and an operation and inputs the row
+    /// serves. A call's reference count is no part of it: the row's
+    /// `max_references` is a hint, and whether an offer's wire carries the
+    /// whole set is the offer's own answer (FIX 8627).
     pub fn admit_media(&self, request: &MediaRequest) -> super::LlmResult<()> {
         if self.model != request.model
             || self.locality != request.envelope.locality
@@ -200,9 +210,7 @@ impl LlmCatalogEntry {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let caps = self.media();
-        if !caps.serves(request.operation, &request.inputs())
-            || request.references.len() > caps.max_references
-        {
+        if !caps.serves(request.operation, &request.inputs()) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())

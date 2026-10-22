@@ -4,23 +4,19 @@ use std::ops::Bound;
 use std::path::Path;
 
 use super::cgi_finish::realized_updates;
-use super::door::DoorAdmissionStamp;
-use super::door_window::{
-    DoorWindowReport, DoorWindowVerdict, held_by_ref, printable_ref_name, unlandable_ref_reasons,
-};
+use super::door_window::{DoorWindowReport, DoorWindowVerdict, held_by_ref, printable_ref_name};
 use super::evidence::{
-    PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, RefUpdate, receive_pack_field,
-    receive_pack_provenance_refused,
+    PackStats, RECEIVE_PACK_ADMISSION_PREDICATE, ReceivePackOutcome, ReceivePackScanSummary,
+    RefUpdate, receive_pack_field, receive_pack_provenance_refused,
 };
 use super::landing::ReceivePackLanding;
 use super::paths::ORIGIN_REF_UPDATE_BATCH;
 use super::retained_reasons::RetainedReasons;
-use super::serve_cmd::path_arg;
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, ErrorKind, Result};
-use crate::federation::git_push::{GitPushRefChange, GitPushStamp};
+use crate::federation::git_push::GitPushStamp;
 use crate::git_wire::{GitOid, GitRefName, GitWire, lock_repository};
 use crate::origin::lfs::{
     DefaultRepositoryLargeLfsPathPolicy, LfsAdmission, LfsOid, LfsPushedPointer, lfs_repo_id,
@@ -34,6 +30,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 mod push_admission;
+mod record;
 
 // A local operation journal, not an exported claim or caller-supplied authority.
 // Its initial row is committed while pre-receive still blocks every ref effect.
@@ -182,6 +179,14 @@ pub(super) struct ReceivePackIntent {
     pointers: Vec<(String, String, u64)>,
     #[serde(default)]
     push: Option<GitPushStamp>,
+    // What the scan came to, written with the push's marks (FIX 8032): the
+    // only source its outcomes' `scan` reads.
+    scan: ReceivePackScanSummary,
+    // The ingress proof record a projection-bound push was accepted under
+    // (FIX 7608 2b-ii), lower hex; absent, and unwritten, on every
+    // ordinary intent, whose bytes stay as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ingress_proof: Option<String>,
 }
 
 impl ReceivePackIntent {
@@ -308,99 +313,6 @@ impl Vault {
             }
         }
         Ok(reasons)
-    }
-
-    pub(super) fn record_receive_pack_intent(
-        &self,
-        repo: &RepoRef,
-        stamp: &DoorAdmissionStamp,
-        door: &DoorWindowReport,
-        changes: Option<&[GitPushRefChange]>,
-    ) -> Result<()> {
-        let RepoRef::LocalFolder { path, .. } = repo else {
-            return Err(receive_pack_provenance_refused("intent is not local"));
-        };
-        let root = Path::new(path).canonicalize()?;
-        let root_text = path_arg(&root)?;
-        let admission = {
-            let rtxn = self.store.env.read_txn()?;
-            self.receive_pack_evidence_in_txn(
-                &rtxn,
-                stamp.operation_id,
-                RECEIVE_PACK_ADMISSION_PREDICATE,
-            )?
-        };
-        if !door.admitted()
-            || !unlandable_ref_reasons(&door.ref_updates).is_empty()
-            || receive_pack_field(&admission, "door_seam")?.as_str() != Some("landed")
-            || receive_pack_field(&admission, "effector_check")?.as_str() != Some("admitted")
-            || receive_pack_field(&admission, "actor_id")?.as_str() != Some(stamp.principal_ref())
-            || receive_pack_field(&admission, "repo_root")?.as_str() != Some(root_text.as_str())
-            || receive_pack_field(&admission, "origin_authority")?
-                != &OriginAuthorityStamp::evidence_value(stamp.origin_authority.as_ref())
-        {
-            return Err(receive_pack_provenance_refused(
-                "intent was not admitted and scanned",
-            ));
-        }
-        let push = push_admission::admitted_push(&admission, stamp)?;
-        // The serving thread holds the coordinator while this hook runs.
-        // Do not acquire that thread's lock here; only verify its epoch.
-        self.require_receive_pack_host_at(&root, stamp.origin_authority.as_ref())?;
-        let intent = ReceivePackIntent {
-            operation_id: stamp.operation_id.to_hex(),
-            actor_id: stamp.principal_ref().to_owned(),
-            repo_root: root_text,
-            admitted_at: stamp.admitted_at(),
-            origin_authority: stamp.origin_authority.clone(),
-            transport_bytes: None,
-            refs: door
-                .ref_updates
-                .iter()
-                .enumerate()
-                .map(|(index, update)| {
-                    let pointers = door.ref_lfs_pointers.get(index).cloned();
-                    held_by_ref(&door.lfs_pointers, pointers.as_deref())
-                        .ok_or_else(|| receive_pack_provenance_refused("pointer out of range"))?;
-                    Ok(ReceivePackIntentRef {
-                        name: update.name.clone(),
-                        old_oid: update.old_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                        new_oid: update.new_oid.as_ref().map(|oid| oid.as_str().to_owned()),
-                        outcome_id: self.store.clock.entity_id()?.to_hex(),
-                        observed: false,
-                        status: ReceivePackRefStatus::Pending,
-                        pointers,
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?,
-            pointers: door
-                .lfs_pointers
-                .iter()
-                .map(|pointer| {
-                    (
-                        pointer.path.clone(),
-                        pointer.oid.to_hex(),
-                        pointer.size_bytes,
-                    )
-                })
-                .collect(),
-            push: stamp.push.clone(),
-        };
-        let key = ReceivePackIntentKey {
-            repo_identity_hex: receive_pack_repo_identity_hex(self, &root)?,
-            operation_id: stamp.operation_id,
-        };
-        INTENTS.encode_value(&intent)?;
-        #[cfg(test)]
-        count_journal_bytes(INTENTS.encode_value(&intent));
-        self.with_write_txn_grouped(|wtxn| {
-            if INTENTS.contains(&self.store, wtxn, &key)? {
-                return Err(receive_pack_provenance_refused("intent already exists"));
-            }
-            self.recheck_git_push_in_txn(wtxn, push, repo, changes)?;
-            INTENTS.put(&self.store, wtxn, &key, &intent)?;
-            Ok(())
-        })
     }
 
     /// Saves an intent's progress. The save that settles it prunes it
@@ -731,6 +643,8 @@ impl Vault {
                         ref_update_count: 1,
                     },
                 };
+                // An admitted carrier, never the scan's evidence: the outcome
+                // reads the scan from the intent's own summary.
                 let door = DoorWindowReport {
                     verdict: DoorWindowVerdict::Clean,
                     ref_updates: vec![update],
@@ -746,6 +660,7 @@ impl Vault {
                         0,
                         EntityId::from_hex(&intent.refs[index].outcome_id)
                             .map_err(|_| Error::CorruptedIndex("receive-pack outcome id"))?,
+                        intent.scan,
                     )?;
                     if replay_outcome.is_none() {
                         replay_outcome = Some(outcome.clone());

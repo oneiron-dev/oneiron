@@ -1,8 +1,13 @@
+//! Repository snapshot ingestion, storage and file access.
+//! The snapshot value is `CodebaseSnapshot`.
+//! Child modules own the repo references, snapshot types and ingest definitions forwarded here.
+
 mod file_mode;
 mod ingest;
 mod instructions;
 mod repo_ref;
 mod residue;
+mod secret_projection;
 mod serve_lookup;
 mod snapshot;
 mod store;

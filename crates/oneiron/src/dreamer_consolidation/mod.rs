@@ -25,6 +25,7 @@
 //! exactly the carrier identity its queued round selected.
 
 mod assembly;
+mod branch;
 pub(crate) mod branch_scope;
 mod call_labels;
 pub mod confession;
@@ -33,6 +34,7 @@ pub(crate) mod evidence;
 mod executor;
 mod extracted_people;
 mod failure_rules;
+mod follower_attempt;
 #[cfg(test)]
 pub(crate) use failure_rules::PREDICATE as DREAMER_FAILURE_RULES_PREDICATE;
 pub(crate) use failure_rules::{
@@ -43,6 +45,7 @@ mod gap;
 mod judge_context;
 mod kept_ask;
 mod neighbourhood;
+mod nightly_links;
 pub(crate) mod nightly_merge;
 mod note_classification;
 mod note_parts;
@@ -73,10 +76,13 @@ mod scope_summary_attempt;
 pub mod selection;
 mod settle;
 mod sieve_attempt;
+mod sieve_decisions;
+mod sieve_ports;
 mod step_charge;
 pub mod strength;
 mod support;
 mod task_realize;
+mod thing_agent;
 mod turn_text;
 mod wake_plan;
 mod watermark;
@@ -85,6 +91,7 @@ mod weave_lens;
 #[cfg(test)]
 mod tests;
 
+pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
@@ -125,7 +132,10 @@ pub use roles::{
     RoleBackend, RoleBackends, RoleCall,
 };
 pub use scope_summary_attempt::ScopeSummaryExecutor;
-pub(crate) use scope_summary_attempt::{ScopeSummaryEvidence, scope_summary_evidence_in_txn};
+pub(crate) use scope_summary_attempt::{
+    ScopeSummaryEvidence, arc_evidence_in_txn, note_source_pins_in_txn,
+    scope_summary_evidence_in_txn,
+};
 pub(crate) use settle::keep_approval::{KeepApproval, KeepAs};
 pub use settle::{
     CONFLICT_SETTLE_DIAL, ConflictRevertReceipt, ConflictReviewScope, ConflictSettleDecisions,
@@ -137,9 +147,25 @@ pub(crate) use settle::{
     apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
     revert_settlement_in_txn, settled_answers_in_txn,
 };
+pub use sieve_ports::{
+    ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,
+    RoleNeighbourhoodExtractionPort, RoleSieveNoveltyPort, SieveNoveltyPort, SieveRungCall,
+    SieveRungOutcome, SieveRungRead, SliceStep,
+};
 pub use support::*;
 pub use task_realize::{TASK_REALIZE_UNLENT_PARK_REASON, TaskRealizeModel, run_task_realize};
 pub(crate) use task_realize::{seal_task_realize_confession_in_txn, task_realize_confession};
+pub use thing_agent::{
+    THING_CHILD_CHECKPOINT, THING_CHILD_CODE_MODE_OFF, THING_CHILD_HOST_ABSENT,
+    THING_CHILD_LAUNCH_FAILED, THING_CHILD_LOAN_REFUSED, THING_CHILD_LOW_TRUST,
+    THING_CHILD_PARENT_FAILED, THING_CHILD_PARENT_GONE, THING_CHILD_REFUSED,
+    THING_CHILD_RUNTIME_UNBOUND, THING_CHILD_SPAWN_REFUSED, THING_CHILD_TRAPPED,
+    THING_CHILD_UNCOVERED, THING_DECIDE_PORT, THING_EXTRACT_PORT, THING_PORT_INPUT_INVALID,
+    THING_PORT_INPUT_UNKNOWN, THING_SLICE_REFUSED, ThingChildEvent, ThingChildHost,
+    ThingChildLaunch, ThingChildSession, ThingChildSettled, ThingChildStart, ThingDecideInput,
+    ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingPortCall, ThingPortReply,
+    ThingPortRequest, ThingProposalRef,
+};
 pub(crate) use turn_text::compaction_span::{
     ConversationSpanRead, conversation_span_text, conversation_span_text_in,
 };

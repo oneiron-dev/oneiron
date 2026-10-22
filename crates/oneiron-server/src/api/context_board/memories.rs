@@ -379,22 +379,12 @@ pub(crate) fn board_pins_projection<'a>(
     if pins.refs.is_empty() && !pins.manifest && pins.hooks.is_empty() {
         return Ok(None);
     }
-    let (room_members, room) = super::super::resolve_core_room(vault, auth, &read, room_id)?;
-    let interlocutors =
-        super::super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
-    let read = super::super::narrow_to_core_audience(
-        vault,
-        auth,
+    let super::super::CoreAudience {
         read,
-        room_members.as_deref(),
-        room.as_ref(),
-        interlocutors.as_ref(),
-    )?;
-    let disclosure = super::super::resolve_core_disclosure(
-        vault,
-        interlocutors.as_ref(),
-        room.as_ref().map(|room| room.reader.is_some()),
-    )?;
+        interlocutors,
+        disclosure,
+        ..
+    } = super::super::resolve_core_audience(vault, auth, read, room_id)?;
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
     section

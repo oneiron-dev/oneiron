@@ -14,6 +14,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
     (&t::MERGE_QUEUE_CHECK_WORK, CONTENT),
+    // A restore never revives a cleared review policy: the live one stands.
+    (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
@@ -173,6 +175,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROVENANCE_BODY_ERASE, LIVE),
     (&t::PROVENANCE_BODY_ERASED, LIVE),
     (&t::PROVENANCE_BODY_INLINE, CONTENT),
+    // A digest's instance history is custody state (FIX 6023): the current vault's is kept.
+    (&t::PROVENANCE_BODY_INSTANCE, LIVE),
     (&t::PROVENANCE_BODY_KEY, CONTENT),
     (&t::PROVENANCE_BODY_RELEASED, LIVE),
     // A row-held response's binding follows its row (KS-2B1); the obligations are custody

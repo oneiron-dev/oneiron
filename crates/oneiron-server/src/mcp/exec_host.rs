@@ -14,17 +14,17 @@ use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
-use oneiron::llm::run_admission::PayerPerson;
+use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::task_type::TaskTypeRef;
-use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
+use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelLocality, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod off_record_run;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
@@ -243,6 +243,23 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn reader_window_tokens(&self) -> Option<u64> {
         None
     }
+    /// The ports scoped child `job` (FIX 7507) runs its lent verbs on: the
+    /// host's registered adapters, each serving exact verbs. The default
+    /// registers none, so a job that lends a port reports it unbound and
+    /// never runs as a read child in its place.
+    fn scoped_child_ports(
+        &self,
+        _job: &oneiron::code_run::ReaderJob,
+    ) -> Option<Arc<dyn oneiron::code_run::ScopedChildPorts>> {
+        None
+    }
+    /// The per-job profiles a host's own scoped children run on (FIX
+    /// 7508): a host that queues one registers its backend, meter, model and
+    /// ports here by its task before it queues it. The default keeps none,
+    /// and every scoped child runs as before.
+    fn scoped_child_hosts(&self) -> Option<&oneiron::code_run::ScopedChildHosts> {
+        None
+    }
     /// The executor configuration for this run, in the vault it lives in.
     fn executor_config(
         &self,
@@ -304,7 +321,81 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn planner(&self) -> Option<&crate::config::models::PlannerSettings> {
         None
     }
+    /// The runs' browser planner states (CUA E5): one per run, beside its
+    /// browser seat, which the run's guest door binds and feeds and this
+    /// provider's backend routes each step's call by, on the same meter and
+    /// payer. `None`: every step's call takes the chat role, as before.
+    fn browser_planner(&self) -> Option<&crate::ai_host::browser_planner::BrowserPlannerRuns> {
+        None
+    }
+    /// Where this provider's own backend serves `pick`, a planned child's
+    /// model, when it lists that model and can route it exactly now (FIX
+    /// 2310, Engine C1/C2). `None`, as for a provider with no list: the child
+    /// runs as it would today.
+    fn planned_route(&self, _vault: &Vault, _pick: &oneiron::ModelId) -> Option<ModelLocality> {
+        None
+    }
+    /// The backend a planned child's own calls go through, on `meter` and
+    /// billed to `payer` as [`Self::reader_backend`]'s are, bound to
+    /// `planned`: its pick exactly when its host pinned it, else the
+    /// provider's own model with the substitution on its receipts (FIX
+    /// 2310). `None`: the provider has none, and the child takes the backend
+    /// it would take today.
+    fn planned_backend(
+        &self,
+        _meter: BudgetGuard,
+        _payer: Option<PayerPerson>,
+        _planned: &PlannedModel,
+    ) -> Option<Arc<dyn LlmBackend>> {
+        None
+    }
+    /// [`Self::compaction`] for a planned child (FIX 2310, Engine C5): its
+    /// live admission sees the same binding its calls do. The default is
+    /// [`Self::compaction`]'s.
+    fn planned_compaction(
+        &self,
+        host: CompactionHostBinding,
+        credential: &str,
+        spend: Option<&SpendScopeId>,
+        _planned: &PlannedModel,
+    ) -> Option<RunCompaction> {
+        self.compaction(host, credential, spend)
+    }
 }
+
+/// A planned child that no seat binds (FIX 2310, OF-541): the run, the
+/// model its frozen plan picked, and whether its host pinned the run to it
+/// at the run's first entry. A pinned child runs its pick exactly; any
+/// other runs the provider's own model, and each call another model
+/// answers is marked on its receipts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedModel {
+    pub child: EntityId,
+    pub pick: oneiron::ModelId,
+    pub exact: bool,
+}
+
+impl PlannedModel {
+    /// Marks the call `run` admitted when `ran`, the model that answered
+    /// it, is not the pick: nothing substitutes silently.
+    pub(crate) fn answered(&self, run: &RunAdmission, ran: oneiron::ModelId) {
+        if ran != self.pick {
+            run.record_plan_model_substituted(self.child, self.pick.clone(), ran);
+        }
+    }
+}
+
+/// Where a provider's backend serves a planned child's pick, when it can
+/// route it exactly (`McpCodeModeProvider::planned_route`).
+pub type PlannedRoute =
+    Arc<dyn Fn(&Vault, &oneiron::ModelId) -> Option<ModelLocality> + Send + Sync>;
+
+/// Builds a planned child's backend over the host's model, on the guard it
+/// is given and billed to the payer, when one is given, bound to its plan
+/// (`McpCodeModeProvider::planned_backend`).
+pub type PlannedMeter = Arc<
+    dyn Fn(BudgetGuard, Option<PayerPerson>, &PlannedModel) -> Arc<dyn LlmBackend> + Send + Sync,
+>;
 
 /// Builds one run's compaction seat from the run's authenticated host
 /// binding (its write actor, its caller's place and its proof), the
@@ -603,6 +694,8 @@ fn run_engine_native_code_mode(
         &reactor,
         None,
         seat.as_ref(),
+        // An `execute_code` run is no planned child.
+        None,
     )
     .map_err(|error| match error.provider_outage() {
         Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
@@ -701,6 +794,11 @@ impl<'a> ScopeMeter<'a> {
 /// makes its model calls on the meter its host opened for the entry, and
 /// what that meter used is booked on the scope once the entry ends, whatever
 /// it answered. With none, the calls run on the provider's own meter.
+///
+/// A planned child no seat binds (`planned`, FIX 2310) makes its calls
+/// through the provider's planned backend on that same meter and payer,
+/// bound to its plan; with a provider that has none, through the backend it
+/// takes today.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -711,6 +809,7 @@ pub(crate) fn enter_engine_native_run(
     reactor: &tokio::runtime::Runtime,
     spend: Option<ScopeMeter<'_>>,
     seat: Option<&ModelSeat>,
+    planned: Option<&PlannedModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
         scope,
@@ -718,19 +817,21 @@ pub(crate) fn enter_engine_native_run(
         payer,
     }) = spend
     else {
+        let own = planned
+            .and_then(|planned| provider.planned_backend(provider.host_meter()?, None, planned));
+        let backend: &dyn LlmBackend = match &own {
+            Some(backend) => backend.as_ref(),
+            None => provider.backend(),
+        };
         return enter_on(
-            vault,
-            provider,
-            provider.backend(),
-            bound,
-            config,
-            compaction,
-            reactor,
-            seat,
+            vault, provider, backend, bound, config, compaction, reactor, seat,
         );
     };
-    // The backend a reader child's calls take, on this scope's guard.
-    let backend = provider.reader_backend(guard.clone(), payer);
+    // The backend a reader child's calls take, on this scope's guard; a
+    // planned child's is bound to its plan as well.
+    let backend = planned
+        .and_then(|planned| provider.planned_backend(guard.clone(), payer.clone(), planned))
+        .or_else(|| provider.reader_backend(guard.clone(), payer));
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
@@ -764,14 +865,24 @@ fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
 /// manifest-backed vault, or the one it was born on; `None` on a vault with
 /// neither, whose run takes its configured model. `task` builds the birth's
 /// task from the host's capability profile. A run, a reader child and a
-/// summary job are each born on one this way.
+/// summary job are each born on one this way. `parent_at`, the cutoff of the
+/// parent a child is born under, bounds a fresh pick (FIX 8230); `None`, the
+/// seat budget alone.
 pub(crate) fn run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
+    parent_at: Option<Instant>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, SeatPin::Base(None), task)
+    seat_for(
+        vault,
+        provider,
+        run_id,
+        SeatPin::Base(None),
+        parent_at,
+        task,
+    )
 }
 
 impl dyn McpCodeModeProvider + '_ {
@@ -786,9 +897,10 @@ impl dyn McpCodeModeProvider + '_ {
         vault: &Vault,
         bound: &GatedActorWrite<'_>,
         run_id: EntityId,
+        parent_at: Option<Instant>,
         task: impl FnOnce(&str) -> SeatTask,
     ) -> Result<Option<ModelSeat>, String> {
-        seat_for(vault, self, run_id, SeatPin::Routed(bound), task)
+        seat_for(vault, self, run_id, SeatPin::Routed(bound), parent_at, task)
     }
 }
 
@@ -802,7 +914,8 @@ pub(crate) fn task_run_seat(
     type_ref: &TaskTypeRef,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
-    seat_for(vault, provider, run_id, SeatPin::Base(Some(type_ref)), task)
+    let pin = SeatPin::Base(Some(type_ref));
+    seat_for(vault, provider, run_id, pin, None, task)
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -821,6 +934,7 @@ fn seat_for(
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
+    parent_at: Option<Instant>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
@@ -845,10 +959,12 @@ fn seat_for(
     let task = task(facet);
     match pin {
         SeatPin::Base(Some(type_ref)) => {
-            vault.birth_task_model_seat(run_id, type_ref, &task, decisions)
+            vault.birth_task_model_seat(run_id, type_ref, &task, decisions, parent_at)
         }
-        SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions),
-        SeatPin::Routed(bound) => bound.birth_model_seat(vault, run_id, &task, decisions),
+        SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions, parent_at),
+        SeatPin::Routed(bound) => {
+            bound.birth_model_seat(vault, run_id, &task, decisions, parent_at)
+        }
     }
     .map(Some)
     .map_err(|error| error.to_string())
@@ -870,7 +986,7 @@ pub(crate) fn engine_run_seat(
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    run_seat(vault, provider, config.run_id, |facet| {
+    run_seat(vault, provider, config.run_id, None, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }

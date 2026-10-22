@@ -103,8 +103,11 @@ saved workflows), `local_reasoner`, `checker`, `dreamer_current`,
 `dreamer_target`, `extraction_encoder` (a tagger, `kind = "oneironer"`), and the
 rest of the manifest list. `coach` is the Coach's own seat (agent-health asks,
 code-fix drafts, session-end distill); HIGH and MID leave it unset, and with no
-`[models.roles.coach]` the Coach rides `generative_reasoner`. The retrieval
-embedder stays in `[embedder]`, where
+`[models.roles.coach]` the Coach rides `generative_reasoner`. `browser_planner`
+is the mid planner code mode hands a stuck browser subgoal to (section 6,
+"Browser subgoals"); HIGH and MID leave it unset too, and with no
+`[models.roles.browser_planner]` those steps stay on `generative_reasoner`.
+The retrieval embedder stays in `[embedder]`, where
 `provider = "endpoint"` takes any OpenAI-compatible `/v1/embeddings` server.
 
 Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
@@ -114,7 +117,15 @@ Provider fields: `kind` (`openai-compat`, `anthropic-compat`,
 `max_output_tokens`, `output_limit_field`, `response_format` (`schema`, the
 default, or `none`; OpenAI-compatible providers only), `capabilities` (`streaming`,
 `json_response`, `tool_calling`, `tool_results`, `image_input`, `audio_input`,
-`assistant_prefill`, `reasoning`; `assistant_prefill` lets Continue send the
+`assistant_prefill`, `reasoning`, `reasoning_content_history`;
+`reasoning_content_history` sends an earlier assistant turn's reasoning back
+on the OpenAI chat wire as that message's `reasoning_content` field, apart
+from its content, instead of as ordinary text. It is a declaration about the
+server and its template, not a request to reason, and it grants no tools. No
+provider has it by default; a house server's model gets it in
+`model_capabilities` only after that exact server, weights and template pass
+`deploy/house-model/probe_reasoning_history.py` (`deploy/house-model/README.md`);
+`assistant_prefill` lets Continue send the
 saved reply as an open trailing assistant message instead of an instruction to
 go on, and only counts when every rung of the ladder has it: list it only for a
 model whose endpoint and serving template continue a trailing assistant message
@@ -252,18 +263,25 @@ names the field and never its value:
   the like). An import queue with no `claude_code_root` and `codex_root` of
   its own would read the defaults under HOME, so it stops the vault too.
 
-The supervisor binds eight more settings on argv alone; a settings file that
+The supervisor binds ten more settings on argv alone; a settings file that
 names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
-`mesh_relays`, `shared_model_root`, `container_home` or
-`container_runtime_dir` is refused `SupervisorOwned`:
+`mesh_relays`, `shared_model_root`, `container_home`,
+`container_runtime_dir`, `guest_runtime_fact` or `hosted_private_origins` is
+refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
-  root filesystem. Each stands as the `runtime` of the owner's `[browser]` or
-  `[desktop]` section, which may then leave `runtime` out. The owner's section
-  still turns the guest on and picks its image and bounds; the flag alone turns
-  on no guest, and the guest still needs an isolating host. An owner's own
-  `runtime` inside the vault's storage works as before without the flag.
+  root filesystem. Each sets `runtime` only in the owner's existing
+  `[browser]` or `[desktop]` section; neither flag makes a section or starts
+  a guest by itself. A `[browser]` section that is otherwise valid may leave
+  `runtime` out even without the flag: the vault then serves it configured
+  and unbound, with no browser guest, and reports the image it would run.
+  With no `[browser]` section it reports not configured. With a runtime bound
+  it reports bound, which is not a verified start; a guest still needs an
+  isolating host. The owner's section still picks the image and bounds, and
+  an owner's own `runtime` inside the vault's storage works as before.
+  `[desktop]` is unchanged: its section needs `runtime`, from the owner or
+  `--desktop-runtime`, and has no configured-unbound mode.
 - `--organ-dir <path>`: where pack organ builds, the seal's among them, are
   written, on the tenant's own storage; without it, `<data_dir>/organs`. It is
   made private at start. A managed vault never reads `ONEIRON_ORGAN_DIR` and
@@ -290,6 +308,47 @@ names `browser_runtime`, `desktop_runtime`, `organ_dir`, `mesh_bind`,
   `not_owned`, `unreadable` or `unsupported`), never a refused start. An
   engine from before these flags refuses them, so a supervisor passes them
   only to engines at or after the merge that added them.
+- `--guest-runtime-fact <fact>` (managed only): the trusted supervisor's one
+  observation of the guest runtime it provisioned for the vault's UID, for
+  this engine spawn. Its exact spellings are `guest_runtime_provisioned`,
+  `guest_runtime_disabled`, `guest_runtime_nss_unavailable`,
+  `guest_runtime_subids_conflict`, `guest_runtime_userns_unavailable`,
+  `guest_runtime_userspace_missing`, `guest_runtime_limits_unavailable`,
+  `guest_runtime_dirs_unavailable`, `guest_runtime_image_import_failed` and
+  `guest_runtime_image_id_mismatch`. Provisioned means the image was imported
+  and the observed preconditions held, not that a guest started. A known
+  fact moves only the browser's readiness and never refuses the start; a
+  spelling not among these ten is refused. Without the flag there is no
+  observation, neither provisioned nor disabled. The flag binds no runtime
+  and starts or probes no guest. An engine from before this flag refuses it,
+  so a supervisor passes it only to engines at or after the merge that added
+  it (`version.rs`, guest runtime fact).
+- `--hosted-private-origin <origin>` (managed only, repeatable): a private
+  origin the hosted node's web fetch may reach (FIX 7657). A managed node's
+  fetch refuses hosted infrastructure (loopback, "this host", link-local,
+  cloud metadata endpoints and the node's own addresses, typed
+  `hosted_infrastructure`) and private networks (RFC1918 `10.0.0.0/8`,
+  `172.16.0.0/12` and `192.168.0.0/16`, CGNAT `100.64.0.0/10` and IPv6 ULA
+  `fc00::/7`, typed `hosted_private_network`), both answered 403
+  `FORBIDDEN`. An IPv4 address spelled inside IPv6 (mapped, compatible,
+  NAT64) is judged as itself, and infrastructure anywhere in a name's
+  answers refuses the whole name. An origin is `http://<name>[:port]` or
+  `https://<name>[:port]`, the port the scheme's own by default; the name
+  has two or more labels of letters, digits and hyphens, and is never an
+  address in any spelling or a wildcard; a path other than `/`, a query, a
+  fragment or credentials refuse the entry, and an entry that does not parse
+  stops the start. A listed name's private addresses are fetched only at a
+  listed origin: its resolved answers pass, and a URL at that name with a
+  scheme or port no entry lists is refused. A listed origin never admits
+  infrastructure, an address-literal URL or a raw connection: a headless
+  render's relay (WebSocket, worker and other raw TCP or UDP traffic) knows
+  only addresses and refuses every private one. The host's DNS (its own
+  lookups and the guest's port-53 datagrams to the host's resolvers) stays
+  unchecked. Without the flag the list is empty and every private address is
+  refused. Plain serve and self-hosted nodes carry no guard and fetch as
+  before. A vault VM has no config-drive file for it. An engine from before
+  this flag refuses it, so a supervisor passes it only to engines at or
+  after the merge that added it (`version.rs`, hosted private origins).
 
 The container CLI gets `HOME` and `XDG_RUNTIME_DIR` from these two flags
 alone. Every call the engine makes to it for a guest (run, inspect and
@@ -300,6 +359,24 @@ out. The engine itself still reads no HOME or XDG directory.
 A vault VM reads the guest runtimes and the mesh settings from the one-line
 files `/config/browser-runtime`, `/config/desktop-runtime`, `/config/mesh-bind`
 and `/config/mesh-relays` on its config drive.
+
+`--trusted-organ-build <blake3>` (plain or managed serve, repeatable) names a
+pack organ build this server runs as first party, by its 64-hex blake3 as the
+pack's `ORGAN.json` names it. Listing one is the operator's statement that the
+build is reviewed first-party code. Every other pack organ build, the seal's
+among them, installs as third party, and the organ host refuses to start a
+third-party organ on any platform until filesystem confinement for organs
+lands. The log names the pack, organ, build and platform once per install, and
+e-sign seals wait, said once, until the seal build is listed or a seal organ
+program is named (`--seal-organ`, `ONEIRON_SEAL_ORGAN`), which stays first
+party. No config file, settings file or environment sets the list: a settings
+file that names it is refused as an unknown field. A vault VM takes the list
+from its config drive's `/config/trusted-organ-builds`, one blake3 per line:
+its init passes each line on as its own `--trusted-organ-build`, so the drive
+carries the flag and is not another source (FIX 7889). Only an image whose
+manifest names `vm_trusted_organ_builds_revision: 1` reads that file. An engine
+from before this flag refuses it, so a supervisor passes it only to engines at
+or after the merge that added it.
 
 A `local` embedder names its files with `model_dir` or `models_dir`, because
 the XDG data root is never read. A keystore lives in the supervisor's
@@ -326,6 +403,44 @@ vault reports ready, with the reason `managed_facility_missing`. A degraded
 vault still serves and sends the same ready byte: reads and sync go on, and
 the signing and world-key doors refuse as they do without a keystore. An owner
 who set `backend = "off"` gets `ready`.
+
+Beside it, a managed vault's ctl `Ping` carries `browser`, and the
+authenticated `GET /v1/owner/status` reply requires it: both read the same
+live browser readiness (FIX 7670). It starts again at each engine spawn from
+the `[browser]` section, its runtime binding and the supervisor's runtime
+fact, and moves only when a browser guest start this process makes
+completes: a `browser.session` check, a run's browser (an engine switch or a
+replay included) or a web fetch's headless render. The last completed start
+stands. Reading it starts or probes nothing, it has no expiry and is not
+kept, and a desktop start never moves it. The boot-only `readiness` above
+stays as it is.
+
+Its `state` and the keys each state requires:
+
+- `not_configured`: no `[browser]` section; `state` alone.
+- `configured_unbound`: a section with no runtime bound, so no guest can
+  start; `image` and `runtime_fact`.
+- `bound`: a runtime is bound and no start has completed; `image` and
+  `runtime_fact`. The binding proves no start.
+- `verified_start`: the last start ran in a proved sandbox and its browser
+  driver attached; `image`, `runtime_fact`, `tier` (`firecracker` or
+  `fenced_oci`) and `last_observed_at`. It proves that start, not a seat live
+  now.
+- `unavailable`: the last start failed; `image`, `runtime_fact`,
+  `last_observed_at` and `reason` (`sandbox_unavailable`, `guest_start_failed`,
+  `driver_attach_failed` or `session_receipt_failed`).
+
+`runtime_fact` is present as `null` in each state that has it when the
+supervisor observed none; that is not a provisioned or disabled fact. No
+browser state fails the ready handshake, turns `Ping`'s `ok` false or asks
+for a restart: the vault serves in each, and only its browser acts refuse
+while it has no browser. Each reply carries a build floor at the engine
+revision it merged in, with contract v3 unchanged and no `Ping` revision
+field. A `Ping` with no `browser` says its engine offers no browser, as one
+built before that floor sends none, and no browser state stands in for it.
+A client that reads the owner's status `browser` runs against an engine at
+or after the floor; no reply without it is read and no default stands in
+for it. Public `/api/health` carries none of it.
 
 The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
 my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
@@ -467,6 +582,18 @@ login prefix, say). The answer is kept, and the receipt records both names under
 `failed_rungs`). `rung` is the answering rung's place in the role's ladder as
 configured, counted from 0, the same numbering `GET /v1/ai/status` lists;
 `failed_rungs` counts the rungs that were tried and failed before it.
+
+A call's settled run receipt also lists what its backend reported, under
+`usage.inference_calls` (FIX 6567, FIX 8314), one record per physical backend
+request: the worker that answered (its kind, the digests of what answered and
+how its build was evidenced), and each pass's input, cache-read and computed
+tokens, its times and an outcome (`hit`, `recompute` or `unknown`). The
+settled run event carries the same records as `inference_calls`. The house
+EXL3 server and llama.cpp report them (deploy/house-model/README.md, "Cache
+evidence in `usage`"); a call to any other provider keeps its standard
+cached-read count and lists none. A count a backend did not report stays
+absent and its pass is `unknown`, never a hit. The usage ledger records the
+standard cached-read count only; the records ride the receipt.
 
 ## 3. Let the Dreamer work
 
@@ -693,7 +820,9 @@ manifest and route, and spends from `budget_units`: the tokens the reply
 reports, or one call's 8000-unit reservation when it reports none, plus one
 reservation for each rung that failed before it. A call that failed spends one
 reservation for each provider call it made: every rung of the seat, or the one
-model the vault's manifest pins. A run's clock and config are saved when it
+model the vault's manifest pins. A browser subgoal's step may run on
+`browser_planner` instead, on the same meter ("Browser subgoals", below).
+A run's clock and config are saved when it
 starts, so a run resumed after a restart keeps its clock and refuses another
 task. A vault with a model
 manifest needs a seat judge this server does not bind yet, so its runs are
@@ -1051,14 +1180,15 @@ back with it.
 
 ### Type check (shadow mode)
 
-Each generated program can be type-checked before it runs, against the same
+Each generated program can be type-checked as it runs: the check runs on its
+own thread beside the program, which never waits on it, against the same
 declarations the executor prompt teaches (`allowJs` + `checkJs`, strict,
 ES2022, no DOM or Node globals). It is off by default:
 
 ```toml
 [models.code_mode.check]
 mode = "shadow"              # "off" (default) or "shadow"; "enforce" is reserved and refused
-backend = "tsc-rs"           # "tsc-rs" in process (default) or "microsoft"
+backend = "tsrs"             # "tsrs" in process (default), "tsc-rs" in process or "microsoft"
 microsoft_tsc = "/opt/typescript-7.1.0-dev.20261010.1/package/lib/tsc"  # optional
 ```
 
@@ -1071,8 +1201,11 @@ running counts. A step that fails keeps no report, and neither does a run in an
 off-record session, whose overlay is quota-bounded; their checks are only in
 the log.
 
-`tsc-rs` is the pinned Wasm module in `components/tsc-rs`, compiled once at
-startup (a few seconds) and run in a fresh instance per check, two at a time.
+`tsrs` (the default) is oxc's Rust port of TypeScript 7, the pinned Wasm
+module in `crates/oneiron-code-check/vendor/tsrs`; `tsc-rs` is the pinned Wasm
+module in `components/tsc-rs`. Either is compiled once at startup (a few
+seconds) and runs each check in a fresh instance. Checks queue in arrival
+order for one of 2 slots, each until its deadline (10 s).
 `microsoft` runs Microsoft's native `tsc` (`@typescript/typescript-<platform>`,
 version `7.1.0-dev.20261010.1` only) as a process per check, in its own
 process group and temporary directory but with this host's file system. Since
@@ -1080,11 +1213,84 @@ resolving a module would read or probe the path it names, it leaves unchecked
 (`code_check_unsupported`) any program that could name one: one containing
 `import`, `export`, `require`, `reference`, `module` or a `\u` escape, in any
 case.
-With `tsc-rs` selected, a set `microsoft_tsc` is the fallback for any check
-tsc-rs cannot finish, a busy one included. A step's report names the checker
-whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
+With `tsrs` or `tsc-rs` selected, a set `microsoft_tsc` is the fallback for
+any check the in-process backend cannot finish, and for every check when its
+module does not load. A check that cannot get a slot by its deadline times out
+(`code_check_timeout`) and falls back like any other. A step's report names
+the checker whose answer or failure it holds. When no checker loads, code mode runs unchecked and the
 server logs why. The checker binary is trusted configuration, like any path
 in this file; the programs it checks are not.
+
+tsrs is the default because it won the backend direction screen
+(`crates/oneiron-code-check/examples/backend_screen.rs`, FIX 8255): fastest on
+all five programs, with every diagnostic equal to Microsoft's. To rerun it, run
+`python3 crates/oneiron-code-check/scripts/screen.py --output <dir>` from an
+engine checkout on a Linux x64 fleet host with Rust; it fetches the pinned
+Microsoft `tsc`, builds the example in release and writes `screen.md` to
+`<dir>`.
+
+### Browser subgoals (`[models.roles.browser_planner]`)
+
+A run that drives its browser can hand a stuck subgoal to a mid planner of
+its own (CUA E5). Bind the planner as its own role. No model is built in;
+any generating model this server serves can take it:
+
+```toml
+[models.roles.browser_planner]
+rungs = ["exl3:qwen3.8-27b"]   # or model = "<provider>:<model>", with an optional prompt
+```
+
+HIGH and MID never fill it. Without it, every step runs on
+`generative_reasoner` as above.
+
+The server reads each `self.browser.batch` and `self.browser.library.run` the
+run executes, as it executes it. The call's subgoal is the batch's `subgoal`
+label, or the library program's subgoal, exactly as written; unnamed batches
+in a row share one subgoal until it ends. A batch or library run that ends
+`NEEDS_AGENT` sends that subgoal's next step to `browser_planner`. The
+subgoal's second `NEEDS_AGENT` sends its steps to `generative_reasoner`,
+which keeps them until the subgoal ends: a `done`, or a batch of another
+subgoal. A `NEEDS_AGENT` whose `stop_cause` is `no_progress` (steps went on
+and the page did not change; the browser reports it from CUA E3) sends the
+subgoal's steps there at once, even on its first miss; that escalates and
+never refuses, and every other cause keeps the two-miss rule. A library run
+counts once, never again for its own batch.
+`NEEDS_YOU` goes to a person and is no miss, and neither a proposal's
+admission replays nor an answer the run already holds counts. Every other
+step, the run's first steps and its discovery among them, stays on
+`generative_reasoner`: the planner takes only a subgoal the server saw miss.
+
+With no rung for `browser_planner`, or a vault model manifest with no
+`browser_planner` row, the step takes `generative_reasoner` at admission,
+before anything is sent; any other refusal stands. None of this refuses or
+caps a run: both roles spend from the run's own meter (`budget_units`, or the
+scope it spends under) and bill the same payer. A run born on a durable seat
+keeps that seat's model and effort; its planner steps are calls of
+`browser_planner` beside the seat, and when `generative_reasoner` takes the
+subgoal back its steps return to the seat. A planned child pinned to its pick
+keeps every step on that pick.
+
+Each `NEEDS_AGENT` reaches the next step's model call, whichever role takes
+it, as one host data message after the executor's own: the verb, the input
+the server admitted, the browser's whole answer (status, `failed_step`,
+`error`, `stop_cause`, `observation`, receipts, decisions, rebindings, and a
+library run's `unmet` indices beside its batch), and beside it the failed
+step's `receipt` (CUA E2), all uncut, until a call that carries it answers.
+The receipt is the browser's `failed_receipt`, a batch's own or a library
+run's batch's, carried as the browser wrote it: the step's index (none for a
+library run's final checks), its `stop_cause`, each check it missed with
+what its read of the page found, the page as read at the stop, and the
+stop's `error` code; `null` when the browser wrote none. The answer's
+observation is the newest page a step read, which may come before the failed
+step; the receipt's is the page at the stop. `needs_agent` counts the
+subgoal's misses, and a `no_progress` stop raises it at once to the count
+that hands the subgoal to `generative_reasoner`. The count lives in memory
+beside the run's browser: the run's later entries keep it, and it ends with
+that browser, when the run ends or its browser sits idle. A restart starts
+every subgoal fresh.
+
+`browser_planner` is not `[models.planner]` (next), which picks a leased
+agent's spawn shapes.
 
 ### Planned spawns (`[models.planner]`)
 
@@ -1272,7 +1478,10 @@ one prompt per question, with `id_slot` -1: llama.cpp gives each prompt a
 free slot (run `llama-server` with one slot per question, `-np`, to read a
 pack side by side) and each slot's prompt cache keeps what it last read. The
 request reads the state once; it is not a promise that the shared prefix is
-evaluated once. decide()'s pack is the call's questions in order, each joint
+evaluated once. Each answer's cache read is llama.cpp's own `timings.cache_n`,
+counted on the read's usage when it agrees with the answer's other counts,
+and each answer, a retry included, lists its own record in
+`usage.inference_calls`. decide()'s pack is the call's questions in order, each joint
 with "does this need more thinking?", then "ask a person?" when the surface
 asks it. A call past the decision policy's questions-per-call row (16 by
 default) goes as several packs in turn, each with its own "ask a person?"
@@ -2867,3 +3076,59 @@ Each call names what ran it in an `execution` receipt: `runtime` (`candle` or
 on every tagging trace the `vault.tagging.*` reads return, on the tag door's
 `tagged` result, and on a shadow trace. The receipt never enters the answer:
 parity and digests compare the spans, links and mood alone.
+
+## 15. Question-head training (`[models.training]`)
+
+An owner-authorized training run is dispatched through a trainer connector
+this host names. There is none by default: with no
+`[models.training.connectors]`, every authorized run holds with
+`training.no_connector` and nothing trains. The one trainer is the
+question-head worker, `scripts/training_pack/worker.py`, run as a local
+process on this server's own host. It trains one two-logit head for one
+exact detector question on the frozen Oneironer encoder, on this host's CUDA
+GPU, as `scripts/training_pack/README.md` describes.
+
+```toml
+[models.training.connectors.gpu-box]
+python = "/opt/oneiron/training-venv/bin/python"   # the pinned interpreter
+worker = "/opt/oneiron/checkout/scripts/training_pack/worker.py"
+jobs_root = "/var/lib/oneiron/training-jobs"       # private job directories
+revision = "<commit of that checkout>"             # immutable, never a branch
+unit_cost = 1                                      # per GPU wall second, in cost_unit
+cost_unit = "gpu_wall_second"                      # the run's budget-line unit
+service_unit = "gpu_wall_second"                   # the only unit the worker reports
+```
+
+`python`, `worker` and `jobs_root` are absolute paths. `service_unit` must be
+`gpu_wall_second`, the GPU wall seconds the worker measures, and a run's
+service quantity is the receipt's count of them. The connector's binding is
+keyless, local to this host and paid by no one per call (`payer = local`,
+`locality = own_server`, route `training-pack-worker` at `host`); `revision`
+is its catalog revision. A run pins that binding when it is prepared, so a
+changed entry refuses its dispatch (`training.refused`).
+
+Only a question run on the worker's recipe
+(`settings.recipe = "oneiron.frozen-encoder-binary-head/1"`) is sent to the
+worker. A role run, another recipe or a connector this host does not name
+holds with `training.no_connector`. The run's starting checkpoint must be an
+Oneironer bundle of exactly `oneironer.json`, `config.json`, `tokenizer.json`
+and `trunk.safetensors` from one source, and its corpus must carry the
+detector split and consent receipts; otherwise the run fails
+(`connector_failed`) before any process starts.
+
+Each run gets `jobs_root/<run hex>-<spec hex>/` (mode 0700). It holds the
+starting files read from custody, the run's training rows (no held-out row),
+`request.json`, `worker.stderr` and the worker's `output/`, whose
+`receipt.json` the engine reads. The worker runs
+`<python> -I <worker> --request <job>/request.json --output <job>/output`
+with no shell and no time limit. A directory that already holds a terminal
+receipt is read again; one without is an outstanding or unknown job, and no
+second GPU job starts for it. Job directories are kept whatever the outcome.
+
+A complete result returns both load sets and the probe measurements: the run
+is `Returned`. A finite export-parity failure returns too, with failed checks,
+so it is kept and never eligible. A failed or refused receipt, a non-finite
+one, or one that names another run, request or model fails the run
+(`connector_failed`). `Returned` is where a question run stops for now: no
+evaluator scores it and no loader serves its head, so it holds with
+`training.no_evaluator`, and a question head never binds a role.

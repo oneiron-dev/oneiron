@@ -29,7 +29,11 @@
 //! guest's outbound IPv4 (FIX 6808, [`VmTapAttachment`] and
 //! [`VmGuestNetworkConfig`]); every host surface stays on vsock. Its config
 //! drive may carry the vault's managed profile too, as five typed files
-//! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]).
+//! (FIX 6809, [`VM_MANAGED_PROFILE_REVISION`]), and the guests' container
+//! runtime bindings, which the root bootstrap checks against the image's
+//! guest runtime descriptor (FIX 7671, [`VM_GUEST_RUNTIME_REVISION`],
+//! [`VmGuestRuntimeDescriptor`]), and the operator's trusted organ builds
+//! (FIX 7889, [`VM_TRUSTED_ORGAN_BUILDS_REVISION`]).
 //!
 //! The provision connection rides contract version 3 with a build floor, the
 //! first engine revision that ships `oneiron-vm-init`: a host speaks it only
@@ -37,8 +41,10 @@
 //! An older image's engine would read the provision frame as its credential
 //! frame and refuse it, so it never starts.
 
+mod guest_runtime;
 mod network;
 
+pub use self::guest_runtime::{VmGuestImageArchive, VmGuestRuntimeDescriptor, VmGuestRuntimeFile};
 pub use self::network::{VmGuestNetworkConfig, VmTapAttachment, parse_vm_guest_mac};
 
 use crate::UnixTs;
@@ -125,6 +131,60 @@ pub const VM_GUEST_FAST_DIMS_FILE: &str = "/config/fast-dims";
 /// bootstrap reads the five files and passes the engine their flags names it
 /// as its manifest's `vm_managed_profile_revision`.
 pub const VM_MANAGED_PROFILE_REVISION: u32 = 1;
+/// The operator's trusted organ builds on the config drive (FIX 7889): one
+/// organ build's blake3 per line. The image's init passes each line, as
+/// written, to the engine as its own `--trusted-organ-build`, the flag a
+/// node's serve takes, so the engine's parser judges every entry and one it
+/// refuses refuses the boot. Blank lines pass nothing; a drive without the
+/// file, or with an empty one, lists none, and every pack organ build runs
+/// as third party. It is a transport for that flag, not another source.
+pub const VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE: &str = "/config/trusted-organ-builds";
+/// The trusted organ builds file's revision (FIX 7889): an image whose init
+/// passes [`VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE`]'s lines on names 1 as its
+/// manifest's `vm_trusted_organ_builds_revision`. It says the image reads the
+/// file, never that a list was staged or an organ started.
+pub const VM_TRUSTED_ORGAN_BUILDS_REVISION: u32 = 1;
+/// The guest runtime's revision (FIX 7671): an image that stages the whole
+/// guest runtime its descriptor ([`VM_GUEST_RUNTIME_DESCRIPTOR`]) names,
+/// whose root bootstrap prepares it for the vault's UID and binds it to the
+/// engine, names 1 as its manifest's `vm_guest_runtime_revision`, beside the
+/// descriptor itself as its manifest's `guest_runtime`. An image built
+/// without one names 0, with a `null` descriptor. Neither says a browser
+/// started or that a deployment turned the guests on.
+pub const VM_GUEST_RUNTIME_REVISION: u32 = 1;
+/// The image's guest runtime descriptor ([`VmGuestRuntimeDescriptor`]), one
+/// JSON object in the read-only root filesystem, the same one the manifest's
+/// `guest_runtime` holds.
+pub const VM_GUEST_RUNTIME_DESCRIPTOR: &str = "/usr/lib/oneiron/guest-runtimes/manifest.json";
+/// The browser guest's image archive in the read-only root filesystem.
+pub const VM_GUEST_BROWSER_IMAGE_ARCHIVE: &str =
+    "/usr/lib/oneiron/guest-runtimes/images/browser.tar";
+/// The desktop guest's image archive in the read-only root filesystem.
+pub const VM_GUEST_DESKTOP_IMAGE_ARCHIVE: &str =
+    "/usr/lib/oneiron/guest-runtimes/images/desktop.tar";
+/// The supervisor's binding of the browser guest's container CLI on the
+/// config drive (FIX 7671): the descriptor's `cli`, with at most one final
+/// LF and nothing else. The root bootstrap reads it, and passes it to the
+/// engine as `--browser-runtime` only once the runtime is prepared. Without
+/// it, and without [`VM_GUEST_DESKTOP_RUNTIME_FILE`], the guests stay dark.
+pub const VM_GUEST_BROWSER_RUNTIME_FILE: &str = "/config/browser-runtime";
+/// The desktop guest's binding, as [`VM_GUEST_BROWSER_RUNTIME_FILE`] is the
+/// browser's, passed as `--desktop-runtime`.
+pub const VM_GUEST_DESKTOP_RUNTIME_FILE: &str = "/config/desktop-runtime";
+/// The container CLI's `HOME` in a vault VM (`--container-home`), holding
+/// the vault UID's own image store: the vault UID's, mode 0700, in the
+/// encrypted storage beside the data directory, never in it.
+pub const VM_GUEST_CONTAINER_HOME: &str = "/vault/storage/container/home";
+/// The container CLI's `XDG_RUNTIME_DIR` in a vault VM
+/// (`--container-runtime-dir`), beside [`VM_GUEST_CONTAINER_HOME`] and as it
+/// is.
+pub const VM_GUEST_CONTAINER_RUNTIME_DIR: &str = "/vault/storage/container/runtime";
+/// The first subordinate UID and GID the vault UID maps in its guests'
+/// user namespaces, local to the VM: the one vault UID's one row in each of
+/// `/etc/subuid` and `/etc/subgid`.
+pub const VM_GUEST_SUBID_BASE: u32 = 100_000;
+/// How many subordinate IDs that row holds.
+pub const VM_GUEST_SUBID_COUNT: u32 = 65_536;
 /// The vault's fscrypt v2 storage on its own disk: owned by the vault's UID,
 /// mode 0700, encrypted under the provisioned key. It holds the data
 /// directory and the engine's siblings of it (backups, rehearsals).

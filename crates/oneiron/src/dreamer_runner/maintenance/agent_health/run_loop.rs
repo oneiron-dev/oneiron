@@ -90,6 +90,8 @@ pub(super) fn run_loop_findings(
                 counter,
                 confession: None,
                 blocked: false,
+                observed_brief: None,
+                silence: None,
             });
         }
     }

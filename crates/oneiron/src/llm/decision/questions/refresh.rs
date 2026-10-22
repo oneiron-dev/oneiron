@@ -1,6 +1,10 @@
 //! Host-driven answer work: observe under principal, invoke provider outside a write transaction,
 //! then atomically recheck source, authority, version and pause before settling claims.
 
+mod asker;
+
+pub(crate) use self::asker::{standing_asker, standing_asker_for_question};
+
 use super::backfill::{BackfillAtKey, QUESTION_BACKFILL_AT};
 use super::graph_ask::{self, GraphAnswerer, GraphDecision, GraphUnitContext};
 use super::reader_authority::question_lane;
@@ -68,7 +72,7 @@ pub fn refresh_question(
 ) -> Result<Vec<AnswerRecord>> {
     refresh_with(
         vault,
-        actor,
+        asker::RefreshWriter::Caller(actor),
         principal,
         question,
         trigger,
@@ -101,7 +105,7 @@ pub fn refresh_question_with<A: GraphAnswerer>(
     let mut answerer: Option<A> = None;
     refresh_with(
         vault,
-        actor,
+        asker::RefreshWriter::Caller(actor),
         principal,
         question,
         RefreshTrigger::Manual,
@@ -118,7 +122,7 @@ pub fn refresh_question_with<A: GraphAnswerer>(
 
 fn refresh_with(
     vault: &Vault,
-    actor: WriteActor,
+    writer: asker::RefreshWriter,
     principal: EntityId,
     question: EntityId,
     trigger: RefreshTrigger,
@@ -196,11 +200,14 @@ fn refresh_with(
         };
         (record, head, units, arrival_marker, backfill_marker)
     };
+    // The answers are written under the record's class; the reads keep the
+    // runner's own, as before (FIX 1588: no read narrows).
+    let (actor, reader) = (writer.for_record(&record), writer.reader());
     let mut prepared = Vec::new();
     for unit in units {
         let snapshot = {
             let txn = vault.store.env.read_txn()?;
-            source(vault, &txn, principal, actor, unit)?
+            source(vault, &txn, principal, reader, unit)?
         };
         let Some(SourceRow {
             kind,
@@ -261,7 +268,7 @@ fn refresh_with(
         };
         let mut inputs = Vec::new();
         for p in &prepared {
-            let Some(row) = source(vault, txn, principal, actor, p.unit)? else {
+            let Some(row) = source(vault, txn, principal, reader, p.unit)? else {
                 return Err(Error::ConcurrentWrite("standing question source changed"));
             };
             if row.frontier != p.frontier {
@@ -352,15 +359,7 @@ fn refresh_with(
                 answer.unit,
                 &answer.decision.evidence,
             )?;
-            QUESTION_ANSWER.put(
-                &vault.store,
-                txn,
-                &AnswerKey {
-                    question,
-                    claim: answer.claim,
-                },
-                &answer,
-            )?;
+            super::ask_history::put_graph_answer_in_txn(vault, txn, question, principal, &answer)?;
             answers.push(answer);
         }
         if matches!(trigger, RefreshTrigger::Schedule) {
@@ -466,7 +465,8 @@ pub fn refresh_due_questions(
 
 /// [`refresh_due_questions`] through graph answerers, one per question:
 /// `answerer_for` makes it from the question's record and its principal,
-/// who also writes the answers as itself. Each unit is shown with its
+/// who also writes the answers as itself, under the class the question's
+/// version keeps (FIX 1588). Each unit is shown with its
 /// eligible neighbours, as a one-off graph ask shows it, and with the images
 /// those sources hold when the record's media take images and the answerer
 /// reads them; a full decision keeps its own receipt. A question whose
@@ -489,8 +489,9 @@ pub fn refresh_due_questions_with<A: GraphAnswerer>(
 /// [`refresh_due_questions_with`] under the responsible-role chain (OF-516).
 /// Each due question's person ask goes to its principal as the responsible
 /// actor ([`standing_ask_route`]) and climbs to the vault's owners. The run
-/// is written by the first live holder of the first role on that chain, so a
-/// question whose principal is gone runs as an owner, while its ladder call
+/// is written by the first live holder of the first role on that chain (the
+/// principal itself under the class its question's version keeps, FIX 1588),
+/// so a question whose principal is gone runs as an owner, while its ladder call
 /// and answers stay the principal's. With no live holder up to the owners the
 /// question is held, unanswered, and tried again after
 /// [`FAILED_REFRESH_HOLD_SECS`]. `answerer_for` makes each question's
@@ -571,18 +572,19 @@ fn refresh_due_as<A: GraphAnswerer>(
         if !may_start() {
             break;
         }
-        let answered = runner(principal).and_then(|actor| {
+        let answered = runner(principal).and_then(|chosen| {
             let mut answerer: Option<A> = None;
+            let writer = asker::RefreshWriter::Runner(chosen);
             refresh_with(
                 vault,
-                actor,
+                writer,
                 principal,
                 question,
                 trigger,
                 now,
                 &mut |record, unit, kind, body| {
                     if answerer.is_none() {
-                        answerer = Some(answerer_for(record, actor)?);
+                        answerer = Some(answerer_for(record, writer.for_record(record))?);
                     }
                     let answerer = answerer.as_mut().expect("made above");
                     graph_proposal(vault, record, answerer, unit, kind, body)
@@ -797,6 +799,21 @@ pub(crate) fn principal_actor(vault: &Vault, principal: EntityId) -> Result<Writ
         _ => return Err(Error::EntityNotFound),
     };
     Ok(WriteActor::new(principal, class))
+}
+
+/// The read `principal`'s own question work reads under (FIX 1229): its key
+/// as a question's reads build it, with its own live owner authority. A
+/// withdrawal wake's carried made_by is admitted through it when the fresh
+/// proposal waits.
+pub(crate) fn principal_lane(
+    vault: &Vault,
+    principal: EntityId,
+) -> Result<crate::claim::ScopedRead<'_>> {
+    let key = {
+        let txn = vault.store.env.read_txn()?;
+        source_actor_key(vault, &txn, principal, None)?.require_access_grants(Some(principal))
+    };
+    Ok(question_lane(vault, key))
 }
 
 /// The scheduled, backfill and materialized-arrival work due at `now`, with

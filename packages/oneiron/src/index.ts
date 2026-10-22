@@ -543,6 +543,14 @@ export class Oneiron {
         }),
       }),
     },
+    runners: {
+      seats: {
+        /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
+        quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
+        /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
+        top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+      },
+    },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
     commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
     /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
@@ -921,7 +929,7 @@ export class Oneiron {
       archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
       /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
       restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
-      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      /** The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
       fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
       rules: {
         /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
@@ -1133,6 +1141,22 @@ export class Oneiron {
         /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
         revoke_write: (input: Facade.ProxyConnectorRevokeWriteRequest): Facade.ProxyConnectorRegistration => this.#call(() => this.#client.vaultConnectorsProxyRevokeWrite(input) as Facade.ProxyConnectorRegistration),
       },
+      slates: {
+        /** The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable. */
+        redraft: (input: Facade.ConnectorSlateRedraftRequest): Facade.ConnectorSlateRedraftReply => this.#call(() => this.#client.vaultConnectorsSlatesRedraft(input) as Facade.ConnectorSlateRedraftReply),
+        /** The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it. */
+        narrow: (input: Facade.ConnectorSlateNarrowRequest): Facade.ConnectorSlateNarrowView => this.#call(() => this.#client.vaultConnectorsSlatesNarrow(input) as Facade.ConnectorSlateNarrowView),
+        /** The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted. */
+        scope_outcome: (input: Facade.ConnectorScopeOutcomeRequest): Facade.ConnectorScopeOutcomeView => this.#call(() => this.#client.vaultConnectorsSlatesScopeOutcome(input) as Facade.ConnectorScopeOutcomeView),
+        /** Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing. */
+        revision_offers: (input: Facade.ConnectorSlateRevisionOffersRequest): Facade.ConnectorSlateRevisionOffersView => this.#call(() => this.#client.vaultConnectorsSlatesRevisionOffers(input) as Facade.ConnectorSlateRevisionOffersView),
+        /** The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant. */
+        defer_revision: (input: Facade.ConnectorSlateRevisionDeferRequest): Facade.ConnectorRevisionSnoozeView => this.#call(() => this.#client.vaultConnectorsSlatesDeferRevision(input) as Facade.ConnectorRevisionSnoozeView),
+        /** The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again. */
+        accept_revision: (input: Facade.ConnectorSlateRevisionAcceptRequest): Facade.ConnectorSlateRevisionAcceptedView => this.#call(() => this.#client.vaultConnectorsSlatesAcceptRevision(input) as Facade.ConnectorSlateRevisionAcceptedView),
+        /** The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask. */
+        reask_issuer: (input: Facade.ConnectorIssuerReaskRequest): Facade.ConnectorCredentialBindingView => this.#call(() => this.#client.vaultConnectorsSlatesReaskIssuer(input) as Facade.ConnectorCredentialBindingView),
+      },
       subscriptions: {
         /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
         put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
@@ -1140,6 +1164,10 @@ export class Oneiron {
         list: (input: Facade.ChannelSubscriptionsRequest): Facade.ChannelSubscriptions => this.#call(() => this.#client.vaultConnectorsSubscriptionsList(input) as Facade.ChannelSubscriptions),
         /** The owner stops one connector event subscription; the agent's key for the channel stays. */
         revoke: (input: Facade.ChannelSubscriptionRevokeRequest): Facade.ChannelSubscriptionRevoked => this.#call(() => this.#client.vaultConnectorsSubscriptionsRevoke(input) as Facade.ChannelSubscriptionRevoked),
+      },
+      calls: {
+        /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
+        approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
       },
     },
     authority: {
@@ -1328,7 +1356,7 @@ export class Oneiron {
       },
     },
     trusted_contacts: {
-      /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+      /** A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
       /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
       list: (input: Facade.TrustedContactsRequest): Facade.TrustedContact[] => this.#call(() => this.#client.vaultTrustedContactsList(input) as Facade.TrustedContact[]),
@@ -1337,7 +1365,7 @@ export class Oneiron {
       /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
       revoke: (input: Facade.TrustedContactRevokeRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsRevoke(input) as Facade.TrustedContact),
       dial: {
-        /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+        /** A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
         set: (input: Facade.TrustedContactDialRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsDialSet(input) as Facade.TrustedContact),
       },
       tier: {
@@ -1345,9 +1373,9 @@ export class Oneiron {
         set: (input: Facade.TrustedContactTierRequest): Facade.TrustedContactTierSet => this.#call(() => this.#client.vaultTrustedContactsTierSet(input) as Facade.TrustedContactTierSet),
       },
       concern: {
-        /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+        /** A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
         asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
-        /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+        /** A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
         authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
         /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
         propose: (input: Facade.TrustedContactConcernRequest): Facade.TrustedContactConcernProposal => this.#call(() => this.#client.vaultTrustedContactsConcernPropose(input) as Facade.TrustedContactConcernProposal),
@@ -1416,7 +1444,7 @@ export class Oneiron {
         save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomSaved => this.#call(() => this.#client.vaultOffRecordRoomsSave(input) as Facade.OffRecordRoomSaved),
         /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
         save_from_here: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSaveFromHere(input) as Facade.OffRecordRoomView),
-        /** A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in. */
+        /** A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in. */
         export: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomExport => this.#call(() => this.#client.vaultOffRecordRoomsExport(input) as Facade.OffRecordRoomExport),
         /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
         suggest_save: (input: Facade.OffRecordRoomRequest): Facade.OffRecordRoomView => this.#call(() => this.#client.vaultOffRecordRoomsSuggestSave(input) as Facade.OffRecordRoomView),
@@ -1535,6 +1563,14 @@ export class Oneiron {
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
       run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+    },
+    archive: {
+      delete: {
+        /** Previews explicit archived records under the caller's delete authority. */
+        preview: (input: Facade.ArchiveDeletePreviewRequest): Facade.ArchiveDeletePreviewView => this.#call(() => this.#client.vaultArchiveDeletePreview(input) as Facade.ArchiveDeletePreviewView),
+        /** Deletes explicit archived records under the caller's current delete authority and returns each receipt. */
+        confirm: (input: Facade.ArchiveDeleteConfirmRequest): Facade.ArchiveDeleteBatchResult => this.#call(() => this.#client.vaultArchiveDeleteConfirm(input) as Facade.ArchiveDeleteBatchResult),
+      },
     },
     usage: {
       events: {
@@ -1667,7 +1703,7 @@ export class Oneiron {
       policy: {
         /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
         get: (input: Facade.PolicyManifestRead): Facade.PolicyManifestsView => this.#call(() => this.#client.vaultGatePolicyGet(input) as Facade.PolicyManifestsView),
-        /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+        /** The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
         put: (input: Facade.PolicyManifestPut): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPut(input) as Facade.PolicyManifestReceipt),
         /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
         propose: (input: Facade.PolicyManifestPropose): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPropose(input) as Facade.PolicyManifestReceipt),
@@ -1953,7 +1989,7 @@ export class Oneiron {
         /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
         definitions: (input: Facade.CodeSnapshotDefinitionsRequest): Facade.CodeSnapshotDefinitionsView => this.#call(() => this.#client.vaultCodeSymbolsDefinitions(input) as Facade.CodeSnapshotDefinitionsView),
       },
-      /** Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed. */
+      /** Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed. */
       proposal_submit: (input: Facade.CodeProposalSubmitRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalSubmit(input) as Facade.CodeProposalSubmitted),
       /** Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves. */
       conflict_record: (input: Facade.CodeConflictRecordRequest): Facade.CodeConflictView => this.#call(() => this.#client.vaultCodeConflictRecord(input) as Facade.CodeConflictView),
@@ -1963,7 +1999,7 @@ export class Oneiron {
       proposal_resolve: (input: Facade.CodeProposalResolveRequest): Facade.CodeProposalSubmitted => this.#call(() => this.#client.vaultCodeProposalResolve(input) as Facade.CodeProposalSubmitted),
       /** Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt. */
       proposal_review: (input: Facade.CodeProposalReviewRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalReview(input) as Facade.CodeProposalSettlementView),
-      /** Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it. */
+      /** Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it. */
       proposal_settle: (input: Facade.CodeProposalSettleRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalSettle(input) as Facade.CodeProposalSettlementView),
       /** Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only. */
       proposal_settlement: (input: Facade.CodeProposalSettlementRequest): Facade.CodeProposalSettlementView => this.#call(() => this.#client.vaultCodeProposalSettlement(input) as Facade.CodeProposalSettlementView),
@@ -1980,7 +2016,13 @@ export class Oneiron {
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
       /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
-      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      export: Object.assign((input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult), {
+        /** Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written. */
+        preview: Object.assign((input: Facade.CodeExportPreviewRequest): Facade.CodeExportPreviewAnswer => this.#call(() => this.#client.vaultCodeExportPreview(input) as Facade.CodeExportPreviewAnswer), {
+          /** Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read. */
+          read: (input: Facade.CodeExportFileReadRequest): Facade.CodeExportFileReadAnswer => this.#call(() => this.#client.vaultCodeExportPreviewRead(input) as Facade.CodeExportFileReadAnswer),
+        }),
+      }),
       /** Finalize an already-doored chosen Git commit into a complete mode-preserving snapshot and import manifest; optionally promote its exact checked baseline under the owner's selected manifest-review catalog. Owner only. */
       import: (input: Facade.CodeRepoImportRequest): Facade.CodeRepoImportView => this.#call(() => this.#client.vaultCodeImport(input) as Facade.CodeRepoImportView),
       repos: {
@@ -2094,7 +2136,7 @@ export class Oneiron {
         observe: (input: Facade.MergeQueueObserveRequest): Facade.MergeQueueObservation => this.#call(() => this.#client.vaultCodeMergeQueueObserve(input) as Facade.MergeQueueObservation),
         /** Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written. */
         requeue_survivors: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueRequeueView => this.#call(() => this.#client.vaultCodeMergeQueueRequeueSurvivors(input) as Facade.MergeQueueRequeueView),
-        /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing. */
+        /** Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing. */
         land_reviewed: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueLandReviewed(input) as Facade.MergeQueueBatchView),
         /** Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result. */
         settle_slow: (input: Facade.MergeQueueRepoRequest): Facade.MergeQueuePointersView => this.#call(() => this.#client.vaultCodeMergeQueueSettleSlow(input) as Facade.MergeQueuePointersView),
@@ -2108,6 +2150,12 @@ export class Oneiron {
         diagnose: (input: Facade.MergeQueueDiagnoseRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueDiagnose(input) as Facade.MergeQueueCheckWorkView),
         /** Read the owner-requested checker work, configuration needs and receipt references, including initialization before a queue exists. Owner only. */
         check_status: (input: Facade.MergeQueueCheckStatusRequest): Facade.MergeQueueCheckWorkView => this.#call(() => this.#client.vaultCodeMergeQueueCheckStatus(input) as Facade.MergeQueueCheckWorkView),
+        review_policy: {
+          /** Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant. */
+          get: (input: Facade.EmptyRequest = {}): Facade.QueueReviewPolicyView => this.#call(() => this.#client.vaultCodeMergeQueueReviewPolicyGet(input) as Facade.QueueReviewPolicyView),
+          /** Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant. */
+          set: (input: Facade.QueueReviewPolicySetRequest): Facade.QueueReviewPolicyView => this.#call(() => this.#client.vaultCodeMergeQueueReviewPolicySet(input) as Facade.QueueReviewPolicyView),
+        },
         /** Export the current queue-issued tested revision through the existing reviewed origin export path. Owner only; no caller-supplied revision or check result. */
         export_green: (input: Facade.MergeQueueGreenExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeMergeQueueExportGreen(input) as Facade.CodeExportResult),
       },
@@ -2200,7 +2248,7 @@ export class Oneiron {
         /** Opens a fresh private working set of an admitted repo at its queue's green commit for the attached run, readable paths only. */
         open: (input: Facade.LiveRunRequest<Facade.RepoWorkOpenInput>): Facade.RepoWorkOpenOutput => this.#call(() => this.#client.vaultRepoWorkOpen(input) as Facade.RepoWorkOpenOutput),
       },
-      /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept. */
+      /** Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept. */
       proposal_submit: (input: Facade.LiveRunRequest<Facade.RepoProposalSubmitInput>): Facade.RepoProposalSubmitOutput => this.#call(() => this.#client.vaultRepoProposalSubmit(input) as Facade.RepoProposalSubmitOutput),
       checkout: {
         /** Materializes the attached run's own live checkout lease of an admitted served repo, for its TASK, with its lease-route remote when a door base is named; no lease is minted and no host path is shown. */
@@ -2458,19 +2506,21 @@ export class Oneiron {
     },
     voices: {
       packs: {
-        /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+        /** A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op. */
         put: (input: Facade.VoiceBankPackPutRequest): Facade.VoiceBankPackReceipt => this.#call(() => this.#client.vaultVoicesPacksPut(input) as Facade.VoiceBankPackReceipt),
       },
-      /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+      /** A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history. */
       render_consent: (input: Facade.VoiceRenderConsentRequest): Facade.VoiceRenderConsentReceipt => this.#call(() => this.#client.vaultVoicesRenderConsent(input) as Facade.VoiceRenderConsentReceipt),
       targets: {
-        /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+        /** The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first. */
         provision: (input: Facade.VoiceTargetProvisionRequest): Facade.VoiceTargetReceipt => this.#call(() => this.#client.vaultVoicesTargetsProvision(input) as Facade.VoiceTargetReceipt),
-        /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+        /** A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay. */
         evict: (input: Facade.VoiceTargetEvictRequest): Facade.VoiceTargetEvictReceipt => this.#call(() => this.#client.vaultVoicesTargetsEvict(input) as Facade.VoiceTargetEvictReceipt),
       },
-      /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+      /** A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone. */
       inspect: (input: Facade.VoiceBankInspectRequest): Facade.VoiceBankInspection => this.#call(() => this.#client.vaultVoicesInspect(input) as Facade.VoiceBankInspection),
+      /** A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call. */
+      lineage: (input: Facade.VoiceRenderLineageRequest): Facade.VoiceRenderEventView[] => this.#call(() => this.#client.vaultVoicesLineage(input) as Facade.VoiceRenderEventView[]),
     },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
@@ -2483,7 +2533,8 @@ export class Oneiron {
       pause: (input: Facade.QuestionPauseRequest): Facade.QuestionPaused => this.#call(() => this.#client.vaultQuestionsPause(input) as Facade.QuestionPaused),
       backfill: (input: Facade.QuestionBackfillRequest): Facade.ScheduledBackfill => this.#call(() => this.#client.vaultQuestionsBackfill(input) as Facade.ScheduledBackfill),
       read: (input: Facade.QuestionReadRequest): Facade.QuestionRecord | null => this.#call(() => this.#client.vaultQuestionsRead(input) as Facade.QuestionRecord | null),
-      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswer[]),
+      /** Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each. */
+      answers: (input: Facade.QuestionAnswersRequest): Facade.QuestionAnswersReply => this.#call(() => this.#client.vaultQuestionsAnswers(input) as Facade.QuestionAnswersReply),
       /** Refreshes the caller's standing question by hand, now, over every unit or artifact its current version covers, on the host's ladder as the standing pump answers it. */
       refresh: (input: Facade.QuestionRefreshRequest): Facade.QuestionAnswer[] => this.#call(() => this.#client.vaultQuestionsRefresh(input) as Facade.QuestionAnswer[]),
       /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
@@ -3021,7 +3072,7 @@ export class Oneiron {
     browser: {
       /** Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
       open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.BrowserObservationPage),
-      /** Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched. */
+      /** Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle. */
       observe: (input: Facade.LiveRunRequest<Facade.ObserveInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserObserve(input) as Facade.BrowserObservationPage),
       /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
       find: (input: Facade.LiveRunRequest<Facade.FindInput>): Facade.BrowserFindOutput => this.#call(() => this.#client.selfBrowserFind(input) as Facade.BrowserFindOutput),
@@ -3029,13 +3080,13 @@ export class Oneiron {
       click: (input: Facade.LiveRunRequest<Facade.ClickInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserClick(input) as Facade.BrowserObservationPage),
       /** Clicks a point of a held screenshot, mapped onto the viewport, and observes the result as an ordered edit of the caller's base; a long page's observation comes in pages, read on with observe and its next cursor. */
       click_at: (input: Facade.LiveRunRequest<Facade.PointInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserClickAt(input) as Facade.BrowserObservationPage),
-      /** Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next. */
+      /** Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page. */
       type: (input: Facade.LiveRunRequest<Facade.TypeInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserType(input) as Facade.BrowserObservationPage),
       /** Picks the option of a select element by live ref or locator, by its label, text or value, and observes the result as an edit of the caller's base; a long observation comes in pages, read on with observe and its next cursor. */
       select: (input: Facade.LiveRunRequest<Facade.SelectInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserSelect(input) as Facade.BrowserObservationPage),
       /** Waits until a page row its live refs or locators name, or else a row matching a role and name, is there; a ref whose node is gone matches its locator's row, listed in rebindings; many rows come in pages, read on with find and next. */
       wait_for: (input: Facade.LiveRunRequest<Facade.WaitForInput>): Facade.BrowserWaitForOutput => this.#call(() => this.#client.selfBrowserWaitFor(input) as Facade.BrowserWaitForOutput),
-      /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
+      /** Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings. */
       expect: (input: Facade.LiveRunRequest<Facade.ExpectInput>): Facade.BrowserExpectOutput => this.#call(() => this.#client.selfBrowserExpect(input) as Facade.BrowserExpectOutput),
       /** Takes a screenshot the session holds, by image ref and never captioned, under its own capture_id; with since_capture, unchanged_from names that earlier capture when this one is the same masked PNG taken in the same scope. */
       screenshot: (input: Facade.LiveRunRequest<Facade.ScreenshotInput>): Facade.BrowserScreenshotOutput => this.#call(() => this.#client.selfBrowserScreenshot(input) as Facade.BrowserScreenshotOutput),
@@ -3045,19 +3096,27 @@ export class Oneiron {
       crop: (input: Facade.LiveRunRequest<Facade.CropInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserCrop(input) as Facade.BrowserImageOutput),
       /** Zooms into a rectangle of a held image. */
       zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.BrowserImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.BrowserImageOutput),
-      /** Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one. */
+      /** Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
-        /** The replay library's programs for a site, or for the attached run's open page's site. */
+        /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
-        /** Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition. */
+        /** Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
+        draft: (input: Facade.LiveRunRequest<Facade.DraftInput>): Facade.BrowserLibraryDraftOutput => this.#call(() => this.#client.selfBrowserLibraryDraft(input) as Facade.BrowserLibraryDraftOutput),
+        /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
         retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
         /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
         retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.BrowserLibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.BrowserLibraryRetiredOutput),
-        /** Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner. */
+        /** Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift. */
         run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.BrowserLibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.BrowserLibraryRunOutput),
+      },
+      demonstration: {
+        /** Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running. */
+        start: (input: Facade.LiveRunRequest<Facade.DemonstrationStartInput>): Facade.BrowserDemonstrationStartOutput => this.#call(() => this.#client.selfBrowserDemonstrationStart(input) as Facade.BrowserDemonstrationStartOutput),
+        /** Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given. */
+        stop: (input: Facade.LiveRunRequest<Facade.DemonstrationStopInput>): Facade.BrowserDemonstrationStopOutput => this.#call(() => this.#client.selfBrowserDemonstrationStop(input) as Facade.BrowserDemonstrationStopOutput),
       },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
       handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.BrowserHandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.BrowserHandoverOutput),
@@ -3088,14 +3147,16 @@ export class Oneiron {
   /** Describes one task's card, or the whole TASKS section when no task is named. */
   describe(taskRef?: string): TaskDescription { return this.#call(() => this.#client.describe({task_ref: taskRef}) as TaskDescription) }
   readonly tasks = {
-    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
+    /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`). */
     create: (input: Facade.TaskCreateRequest): Facade.TaskCreateReceipt => this.#call(() => this.#client.tasksCreate(input) as Facade.TaskCreateReceipt),
     /** Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave. */
     wave: (input: Facade.TaskWaveRequest): Facade.TaskWaveReceipt => this.#call(() => this.#client.tasksWave(input) as Facade.TaskWaveReceipt),
-    /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. */
+    /** Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries. */
     update: (input: Facade.TaskUpdateRequest): Facade.TaskUpdateReceipt => this.#call(() => this.#client.tasksUpdate(input) as Facade.TaskUpdateReceipt),
     /** Accepts one TASK addressed to the caller through the task highway under the caller's intent key; the attempt handle it answers fences the caller's reports. */
     accept: (input: Facade.TaskAccept): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksAccept(input) as Facade.TaskCallReceipt),
+    /** Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written. */
+    redo: (input: Facade.TaskRedo): Facade.TaskCallReceipt => this.#call(() => this.#client.tasksRedo(input) as Facade.TaskCallReceipt),
     /** Admits one person's word on an ask; the word is evidence, never approval. */
     answer: (handle: TaskAskHandle, word: TaskAskWord): Facade.TaskAskAnswer => this.#call(() => this.#client.tasksAnswer({handle, word}) as Facade.TaskAskAnswer),
     /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
@@ -3238,12 +3299,14 @@ export class Oneiron {
     call: (input: Facade.ConnectorCallRequest): Facade.ActAnswer<Facade.ConnectorCallReply> => this.#call(() => this.#client.connectorCall(input) as Facade.ActAnswer<Facade.ConnectorCallReply>),
     /** One catalogued connector tool's approved input schema, as the caller's own grant resolves it. */
     schema: (input: Facade.ConnectorSchemaRequest): Facade.ConnectorSchemaReply => this.#call(() => this.#client.connectorSchema(input) as Facade.ConnectorSchemaReply),
-    /** Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it. */
+    /** Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it. */
     call_status: (input: Facade.ConnectorCallStatusRequest): Facade.ConnectorCallStatus => this.#call(() => this.#client.connectorCallStatus(input) as Facade.ConnectorCallStatus),
     outbound: {
       /** Schedules one send through a granted outbound connector, gated and held for delivery. */
       schedule: (input: Facade.OutboundScheduleRequest): Facade.OutboundIntentReceipt => this.#call(() => this.#client.connectorOutboundSchedule(input) as Facade.OutboundIntentReceipt),
     },
+    /** Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data. */
+    answer: (input: Facade.ConnectorAnswerRequest): Facade.ConnectorCallReply => this.#call(() => this.#client.connectorAnswer(input) as Facade.ConnectorCallReply),
   }
   readonly calendar = {
     /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */

@@ -226,6 +226,74 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// engine no flag, never a `false`; one that is there holds its one value and
 /// at most one final LF, or the boot is refused, with no reader of another
 /// form kept. No `Ping` field is added and this version stays 3.
+///
+/// VM trusted organ builds (FIX 7889): the config drive's
+/// `/config/trusted-organ-builds`
+/// ([`VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE`](crate::vm::VM_GUEST_TRUSTED_ORGAN_BUILDS_FILE)),
+/// one organ build's blake3 per line, which the image's init passes to an
+/// open's or a cold restore's engine as one `--trusted-organ-build` each,
+/// carries a build floor, at the engine revision it merged in, proven by the
+/// image manifest's required `vm_trusted_organ_builds_revision` 1
+/// ([`VM_TRUSTED_ORGAN_BUILDS_REVISION`](crate::vm::VM_TRUSTED_ORGAN_BUILDS_REVISION)).
+/// An image before the floor ignores the file, so every pack organ build in
+/// its vault runs as third party: a supervisor checks the revision, the
+/// manifest's hashes and the merge floor before it stages a list, and counts
+/// a list applied only on an image at or after the floor. No file, or an
+/// empty one, lists none; a line the flag's parser refuses refuses the boot,
+/// as the flag does on a node, with no reader of another form kept. No
+/// `Ping` field is added and this version stays 3.
+///
+/// Guest runtime fact (FIX 7670): `--guest-runtime-fact`
+/// ([`GUEST_RUNTIME_FACT_ARG`](crate::GUEST_RUNTIME_FACT_ARG)) carries the
+/// trusted supervisor's one observation of the guest runtime it provisioned
+/// for the vault's UID, in [`GuestRuntimeFact`](crate::GuestRuntimeFact)'s
+/// ten closed spellings, one value per spawn. It carries a build floor, at
+/// the engine revision it merged in, with no `Ping` revision field: an
+/// engine before it refuses the flag before it touches anything, and one at
+/// or after it refuses a spelling not among the ten, so a supervisor passes
+/// it only with installed engines at or after the floor. An engine never
+/// requires it: no flag means no observation, never provisioned or disabled.
+/// Provisioned means the image was imported and the observed preconditions
+/// held, never that a guest started, and no fact refuses the vault's start.
+/// This version stays 3.
+///
+/// Hosted private origins (FIX 7657): `--hosted-private-origin`, repeatable,
+/// managed only, names one private origin a hosted node's web fetch may
+/// reach, `http|https://<dns-name>[:port]` (the port the scheme's own by
+/// default; a name of two or more labels, never an address or a wildcard;
+/// no path, query, fragment or credentials). At and after the engine
+/// revision it merged in, a managed node's fetch refuses RFC1918, CGNAT
+/// 100.64.0.0/10 and ULA fc00::/7 addresses typed `hosted_private_network`
+/// except at a listed origin, and never admits infrastructure. It carries a
+/// build floor, at that revision, with no `Ping` revision field: an engine
+/// before it refuses the flag before it touches anything, and one at or
+/// after it refuses an entry that does not parse, so a supervisor passes it
+/// only with installed engines at or after the floor. No flag means no
+/// private origin. A vault VM has no config-drive file for it. This version
+/// stays 3.
+///
+/// Browser readiness on `Ping` (FIX 7670): a
+/// [`CtlResponse::Ping`](crate::CtlResponse::Ping) carries an optional
+/// `browser` ([`BrowserReadiness`](crate::BrowserReadiness)), how the
+/// vault's browser stands now, beside the boot-only `readiness`, which does
+/// not change. It carries a build floor, at the engine revision it merged
+/// in. Absent, it says this engine offers no browser, as an engine built
+/// before the floor sends none; that line is still a `Ping`, and no browser
+/// state stands in for it. Present, its `state` and each state's keys are
+/// required: `image`, `runtime_fact` (present as `null` when the supervisor
+/// observed none) and, where the state has them, `tier`, `reason` and
+/// `last_observed_at`. No browser state, and no absent `browser`, fails the
+/// ready handshake, turns `ok` false or asks for a restart. This version
+/// stays 3.
+///
+/// Browser readiness on the owner's status (FIX 7670): the authenticated
+/// `GET /v1/owner/status` reply requires `browser`, the same
+/// [`BrowserReadiness`](crate::BrowserReadiness) a managed `Ping` carries,
+/// read from the same value, with the same required keys. It carries a build
+/// floor, at the engine revision it merged in: a client that reads it runs
+/// against an engine at or after the floor, no reader of a status reply
+/// without it is kept, and no default stands in for it. Public `/api/health`
+/// carries none of it. No SDK row is added and this version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

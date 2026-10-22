@@ -23,16 +23,25 @@ pub enum Conversion {
     /// The categories became the scatter series' x values, numbered 1 to n
     /// when they are text (`numbered`).
     CategoriesBecameX { numbered: bool },
-    /// The first category series' x values became the categories.
+    /// The first category series' x values became the chart's categories.
     XBecameCategories,
+    /// A category series' own x values became its own categories: the
+    /// chart's were another series' x values, or it held its own.
+    XBecameSeriesCategories { series: String },
+    /// A series turned scatter takes its categories' leaf labels as its x
+    /// values; this many higher levels are not drawn.
+    CategoryLevelsDropped { series: String, levels: usize },
     /// These category series carried x values a category plot does not
     /// draw; they were dropped.
     XDropped { series: Vec<String> },
     /// A chart of scatter plots only takes no categories.
     CategoriesDropped,
-    /// The categories were padded with empty labels to `count`, the longest
-    /// category series.
+    /// The chart's categories were padded with empty labels to `count`, the
+    /// longest category series that draws them.
     CategoriesPadded { count: usize },
+    /// A series' own categories were padded with empty labels to `count`,
+    /// its values.
+    SeriesCategoriesPadded { series: String, count: usize },
     /// The chart's link to external data was dropped, and its data embedded
     /// in a workbook of its own, as PowerPoint's Edit Data does.
     ExternalDataEmbedded,
@@ -49,6 +58,37 @@ pub enum Conversion {
         kept: ChartSource,
         asked: ChartSource,
     },
+    /// A plot changed family and dropped these settings (as its chart part
+    /// names them) the new family does not hold; its points' data is
+    /// untouched.
+    PlotSettingsDropped {
+        family: ChartKind,
+        settings: Vec<String>,
+    },
+    /// The chart turned 3D with no 3D view, and takes a plot of `family`'s
+    /// default view (CALLS, D9b fresh 3D view).
+    ViewAdded { family: ChartKind },
+    /// A series turned bubble with no sizes: each of its `count` points
+    /// takes size 1 (Engine ruling 10-22).
+    BubbleSizesDefaulted { series: String, count: usize },
+    /// These series left a bubble plot; their bubble sizes are not drawn
+    /// and went.
+    BubbleSizesDropped { series: Vec<String> },
+    /// The nth stock plot draws no series for these prices: they stay
+    /// empty, no value made up (Engine ruling 10-22).
+    StockRolesMissing { nth: u32, roles: Vec<String> },
+    /// These series found no price in their stock plot, which has a series
+    /// for each: they are drawn as lines on its axes, nothing dropped
+    /// (Engine ruling 10-22).
+    StockSeriesToLine { series: Vec<String> },
+    /// The surface series' heights stand on one category set of `count`
+    /// points, joined by point identity (by place for a series drawing its
+    /// points by index): a point a series holds no value for is a missing
+    /// height, never zero.
+    SurfaceAligned { count: usize },
+    /// The nth of-pie plot's custom split lost `count` point(s) the set its
+    /// first series draws no longer holds.
+    SplitPointsDropped { nth: u32, count: usize },
     /// A title or label linked to a cell keeps its text, unlinked.
     TitleLinkDropped,
     /// This many SmartArt nodes' text was written into the data part and
@@ -96,10 +136,16 @@ pub enum Conversion {
     /// cells now carry that text themselves.
     LabelRangesUnlinked { labels: u32 },
     /// The chart's embedded workbook could not be edited in place, so the
-    /// chart's data went into one rebuilt from the live chart data: what
-    /// else the original held (other sheets, formulas, formats, names,
-    /// tables) is not in it.
-    WorkbookRebuilt { part: String, reason: RebuildReason },
+    /// chart's data was rebuilt from the live chart data: on `sheet`, a new
+    /// sheet of the original workbook, which shows it first and keeps every
+    /// other sheet, name and table it held (FIX 6714); or, `None`, in a new
+    /// workbook, when the original could not be read.
+    WorkbookRebuilt {
+        part: String,
+        reason: RebuildReason,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sheet: Option<String>,
+    },
     /// The edited workbook holds formulas that may read the cells the edit
     /// wrote: they keep their expressions and their stale results, and the
     /// opening application recalculates them.
@@ -133,6 +179,8 @@ pub enum RebuildReason {
     Projection,
     /// The edited workbook did not read back as the live data.
     ReadBack,
+    /// A series' categories changed how many levels they hold.
+    LevelsChanged,
 }
 
 impl RebuildReason {
@@ -147,6 +195,7 @@ impl RebuildReason {
             Self::NoRoom => "a range has no room to grow or to be placed",
             Self::Projection => "the workbook editor refused the edit",
             Self::ReadBack => "the edited workbook did not read back as the live data",
+            Self::LevelsChanged => "a series' categories changed how many levels they hold",
         }
     }
 }
@@ -160,6 +209,15 @@ fn family_name(kind: ChartKind) -> &'static str {
         ChartKind::Scatter => "scatter",
         ChartKind::Doughnut => "doughnut",
         ChartKind::Radar => "radar",
+        ChartKind::Bar3D => "3D bar",
+        ChartKind::Line3D => "3D line",
+        ChartKind::Pie3D => "3D pie",
+        ChartKind::Area3D => "3D area",
+        ChartKind::Bubble => "bubble",
+        ChartKind::Stock => "stock",
+        ChartKind::Surface => "surface",
+        ChartKind::Surface3D => "3D surface",
+        ChartKind::OfPie => "of-pie",
     }
 }
 
@@ -193,6 +251,12 @@ impl Conversion {
                 "text categories became x values 1 to n".to_owned()
             }
             Self::XBecameCategories => "x values became categories".to_owned(),
+            Self::XBecameSeriesCategories { series } => {
+                format!("x values of series {series} became its own categories")
+            }
+            Self::CategoryLevelsDropped { series, levels } => format!(
+                "series {series} plots its categories' leaf labels as x values; {levels} higher level(s) not drawn"
+            ),
             Self::XDropped { series } => {
                 format!(
                     "x values dropped from category series {}",
@@ -205,6 +269,9 @@ impl Conversion {
             Self::CategoriesPadded { count } => {
                 format!("categories padded with empty labels to {count}")
             }
+            Self::SeriesCategoriesPadded { series, count } => {
+                format!("series {series}'s own categories padded with empty labels to {count}")
+            }
             Self::ExternalDataEmbedded => "link to external data dropped; data embedded".to_owned(),
             Self::WorkbookUnshared => "chart data moved to a workbook of its own".to_owned(),
             Self::LiteralDataEmbedded => "literal chart data embedded in a workbook".to_owned(),
@@ -215,6 +282,38 @@ impl Conversion {
                 "chart data stays {}: an edit makes no {} data",
                 source_name(*kept),
                 source_name(*asked)
+            ),
+            Self::PlotSettingsDropped { family, settings } => format!(
+                "the {} plot drops settings it does not hold: {}",
+                family_name(*family),
+                settings.join(", ")
+            ),
+            Self::ViewAdded { family } => format!(
+                "the chart takes a {} chart's default 3D view",
+                family_name(*family)
+            ),
+            Self::BubbleSizesDefaulted { series, count } => format!(
+                "series {series} turned bubble with no sizes: its {count} point(s) take size 1"
+            ),
+            Self::BubbleSizesDropped { series } => format!(
+                "bubble sizes dropped from series {}: they are no longer drawn as bubbles",
+                series.join(", ")
+            ),
+            Self::StockRolesMissing { nth, roles } => format!(
+                "stock plot {} draws no series for {}: left empty",
+                nth + 1,
+                roles.join(", ")
+            ),
+            Self::StockSeriesToLine { series } => format!(
+                "series {} drawn as lines on the stock plot's axes: it has a series for each price",
+                series.join(", ")
+            ),
+            Self::SurfaceAligned { count } => format!(
+                "surface series aligned on one set of {count} categories; a height a series lacks stays missing"
+            ),
+            Self::SplitPointsDropped { nth, count } => format!(
+                "of-pie plot {} drops {count} custom split point(s) its categories no longer hold",
+                nth + 1
             ),
             Self::TitleLinkDropped => {
                 "a title linked to a cell keeps its text, unlinked".to_owned()
@@ -262,7 +361,19 @@ impl Conversion {
             Self::LabelRangesUnlinked { labels } => {
                 format!("{labels} data label(s) keep their cell-range text, unlinked")
             }
-            Self::WorkbookRebuilt { part, reason } => format!(
+            Self::WorkbookRebuilt {
+                part,
+                reason,
+                sheet: Some(sheet),
+            } => format!(
+                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its new sheet {sheet}, shown first; its other sheets, names and tables kept",
+                reason.describe()
+            ),
+            Self::WorkbookRebuilt {
+                part,
+                reason,
+                sheet: None,
+            } => format!(
                 "chart workbook {part} not edited in place ({}): rebuilt from the live chart data, without its other sheets, formulas and formats",
                 reason.describe()
             ),

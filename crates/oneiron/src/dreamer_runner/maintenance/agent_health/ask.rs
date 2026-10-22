@@ -1,10 +1,12 @@
 //! Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach`
 //! move, and a `coach.agent_health_ask` attempt on the `coach.heal` queue
 //! answers it. The host Coach reads the card, the skills its run loaded
-//! (`loaded.rs`), the agent's TASK and, as the Coach, the agent's sealed pads
-//! (never its diary), and its model drafts one proposal: a whole replacement
-//! of one loaded skill's instructions, bound to that revision, or a prompt to
-//! inject before a fork-resume. The answer lands on the card for its reader.
+//! (`loaded.rs`), the brief the review observed as the ask froze it
+//! (`brief.rs`), the agent's TASK as it reads now and, as the Coach, the
+//! agent's sealed pads (never its diary), and its model drafts one proposal:
+//! a whole replacement of one loaded skill's instructions, bound to that
+//! revision, or a prompt to inject before a fork-resume. The answer lands on
+//! the card for its reader.
 //! Nothing is edited or resumed here, and no judge grades the draft in v1:
 //! the owner applies a skill edit through `apply.rs`, where the held-out gate
 //! rules on it.
@@ -13,16 +15,19 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::apply::{AgentHealthApplicationState, AgentHealthCoachApplication};
+use super::brief::{HealthBriefPin, HealthObservedBrief, observed_brief_in};
 use super::loaded::{
     AgentHealthLoadedSkill, AgentHealthSkillTarget, bind_target, run_skills_sourced,
 };
-use super::{AgentHealthCard, AgentHealthMove, CARDS, card_ref, may_read, parse_card_ref};
+use super::{
+    AgentHealthCard, AgentHealthMove, CARDS, ConcernMoveOutcome, card_ref, parse_card_ref,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::{
     COACH_HEAL_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore,
     EnqueueDreamerAttemptOutcome,
 };
-use crate::memory::{DiaryEntry, DiaryReadOutcome, Memory, MemoryError, MemoryResult};
+use crate::memory::{DiaryEntry, DiaryReadOutcome};
 use crate::skill_optimize::union_source_rows;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -40,6 +45,9 @@ pub struct AgentHealthCoachAsk {
     pub diagnostic: Option<EntityId>,
     /// The `coach.agent_health_ask` attempt that answers, as 32 hex.
     pub attempt: String,
+    /// The brief the card's newest finding observed when asked, frozen for
+    /// this ask and its answer: a later review never rewrites what it saw.
+    pub observed_brief: Option<HealthBriefPin>,
     pub answer: Option<AgentHealthCoachAnswer>,
     /// The owner's approval of the answer's skill edit, once given, and where
     /// the gate took it.
@@ -62,8 +70,14 @@ pub struct AgentHealthCoachAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentHealthPadRead {
-    /// The pads were read; `read` is the agent's read-log row.
-    Read { read: Option<EntityId>, pads: usize },
+    /// The pads were read; `read` is the agent's read-log row. `pads` counts
+    /// the pads the read returned and `pad_ids` names them, in its order
+    /// (FIX 5457).
+    Read {
+        read: Option<EntityId>,
+        pads: usize,
+        pad_ids: Vec<EntityId>,
+    },
     /// The agent reviews reads first; `request` waits for its answer.
     PendingReview { request: EntityId },
     /// The agent said no to the Coach's reason.
@@ -110,8 +124,12 @@ pub struct CoachHealthBrief {
     pub card: AgentHealthCard,
     /// The skills the card's run loaded, at their pinned revisions, whole.
     pub skills: Vec<AgentHealthLoadedSkill>,
-    /// The TASK's label, spec and brief, as text.
-    pub task: Option<String>,
+    /// The brief the ask froze, with its text only while it is still the
+    /// TASK's current brief. `None` when no typed brief was observed.
+    pub observed_brief: Option<HealthObservedBrief>,
+    /// The TASK's label, spec and brief as they read now, as text: today's
+    /// TASK, never the observed brief.
+    pub current_task: Option<String>,
     /// The sealed pads the Coach read; empty when the read was held.
     pub pads: Vec<DiaryEntry>,
     /// The rows the brief was read from (FIX 6997); `None`, unknown, while
@@ -130,32 +148,6 @@ pub trait CoachHealthHost {
     fn draft(&self, brief: &CoachHealthBrief) -> Result<Option<AgentHealthCoachDraft>>;
 }
 
-/// A move a card's reader takes through `self.inbox.concern.move`. The other
-/// moves have their own verbs: a note is `self.message`, a steer `self.steer`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConcernMove {
-    AskCoach,
-}
-
-/// `self.inbox.concern.move`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConcernMoveRequest {
-    /// The card's `health:` handle: the concern row's `payload_ref`.
-    pub card: String,
-    pub r#move: ConcernMove,
-}
-
-/// The card's ask after the move: a new one, or the one already standing
-/// for the same evidence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ConcernMoveOutcome {
-    /// The card's `health:` handle.
-    pub card: String,
-    pub ask: AgentHealthCoachAsk,
-}
-
 fn hex(id: crate::attempt_queue::AttemptId) -> String {
     crate::entity_id::bytes_to_hex_lower(id.as_bytes())
 }
@@ -165,7 +157,7 @@ fn hex(id: crate::attempt_queue::AttemptId) -> String {
 /// An answer with no draft (no seat served the Coach) may be asked again. An
 /// ask whose approved edit waits on the gate stands whatever the evidence, so
 /// the approval keeps its candidate.
-fn ask_coach_in_txn(
+pub(super) fn ask_coach_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     key: &([u8; 16], [u8; 1], [u8; 16]),
@@ -186,7 +178,7 @@ fn ask_coach_in_txn(
                 Some(answer) => answer.draft.is_some() && ask.diagnostic == newest,
             }
     }) {
-        return Ok(ConcernMoveOutcome {
+        return Ok(ConcernMoveOutcome::AskCoach {
             card: handle,
             ask: ask.clone(),
         });
@@ -216,6 +208,7 @@ fn ask_coach_in_txn(
         asked_at: at,
         diagnostic: newest,
         attempt: hex(status.attempt.id),
+        observed_brief: card.observed_brief.clone(),
         answer: None,
         application: None,
     };
@@ -224,7 +217,7 @@ fn ask_coach_in_txn(
     CARDS.put(&vault.store, txn, key, &card)?;
     // A touched card can arm the digest on its own (FIX 1979).
     crate::batch::queue_proactivity_change(vault, txn);
-    Ok(ConcernMoveOutcome { card: handle, ask })
+    Ok(ConcernMoveOutcome::AskCoach { card: handle, ask })
 }
 
 impl Vault {
@@ -289,7 +282,7 @@ impl Vault {
                 .as_ref()
                 .is_some_and(|ask| ask.attempt == mine && ask.answer.is_none())
         };
-        let (card, task) = {
+        let (card, task, observed_brief) = {
             let rtxn = self.store.env.read_txn()?;
             let Some(card) = CARDS.get(&self.store, &rtxn, &key)? else {
                 return Ok(());
@@ -301,7 +294,13 @@ impl Vault {
                 Some(task) => crate::task_verb::task_text_with_source_in(self, &rtxn, task)?,
                 None => None,
             };
-            (card, task)
+            // The ask's frozen pin, never the card's newer one.
+            let frozen = card
+                .coach
+                .as_ref()
+                .and_then(|ask| ask.observed_brief.as_ref());
+            let observed_brief = observed_brief_in(self, &rtxn, frozen)?;
+            (card, task, observed_brief)
         };
         let (task, task_rows) = match task {
             Some((text, row)) => (Some(text), vec![row]),
@@ -321,6 +320,7 @@ impl Vault {
                 AgentHealthPadRead::Read {
                     read,
                     pads: entries.len(),
+                    pad_ids: entries.iter().map(|pad| pad.id).collect(),
                 },
                 entries,
             ),
@@ -345,7 +345,8 @@ impl Vault {
         let brief = CoachHealthBrief {
             card,
             skills,
-            task,
+            observed_brief,
+            current_task: task,
             pads: entries,
             source_rows,
         };
@@ -377,43 +378,5 @@ impl Vault {
             Ok(())
         })?;
         drafted.map(|_| ())
-    }
-}
-
-impl Memory<'_> {
-    /// `self.inbox.concern.move`: a card's recipient (its leader or spawner)
-    /// or a vault owner takes one of its moves. `ask_coach` queues the
-    /// Coach's answer, which lands on the card; asking again on the same
-    /// evidence returns the standing ask.
-    pub fn concern_move(&self, input: &ConcernMoveRequest) -> MemoryResult<ConcernMoveOutcome> {
-        let key = parse_card_ref(&input.card).ok_or_else(|| {
-            MemoryError::bad_request("card is a health: handle from a concern row")
-        })?;
-        let at = self.vault().store.clock.now_recorded_at();
-        self.with_verified_actor_write_txn(|txn| {
-            let card = CARDS
-                .get(&self.vault().store, txn, &key)?
-                .ok_or_else(|| MemoryError::not_found("no such concern card"))?;
-            if !may_read(self.vault(), txn, &card, self.actor())? {
-                return Err(super::forbidden());
-            }
-            match input.r#move {
-                ConcernMove::AskCoach => {
-                    if !card.moves.contains(&AgentHealthMove::AskCoach) {
-                        return Err(MemoryError::bad_request(
-                            "this concern card proposes no ask_coach move",
-                        ));
-                    }
-                    Ok(ask_coach_in_txn(
-                        self.vault(),
-                        txn,
-                        &key,
-                        card,
-                        self.actor(),
-                        at,
-                    )?)
-                }
-            }
-        })
     }
 }

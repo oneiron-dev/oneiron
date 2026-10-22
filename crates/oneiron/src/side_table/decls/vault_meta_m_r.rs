@@ -18,6 +18,9 @@ side_tables! {
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
+    /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
+    /// 8268). Key: ().
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
@@ -233,8 +236,10 @@ side_tables! {
     /// Best-effort de-duplication lease for one authorized-outbound recovery sweep. Key: ().
     OUTBOUND_AUTHORIZED_RECOVERY_LEASE: VaultMeta b"outbound:authorized_recovery_lease:v1" Raw;
     /// One connector call held for consent or governance, or waiting on its delivery: the exact
-    /// request a resume re-enters with (ONE-2510). Key: id16 (call ref).
-    OUTBOUND_CONNECTOR_CALL_PENDING: VaultMeta b"outbound:connector_call:v1:" Named;
+    /// request a resume re-enters with (ONE-2510). An actor's erase drops the actor's rows (FIX
+    /// 9159). Key: id16 (call ref).
+    OUTBOUND_CONNECTOR_CALL_PENDING: VaultMeta b"outbound:connector_call:v1:" Named
+        => crate::outbound_consent::erase_connector_call_actor_in_txn;
     /// Who called one connector call a settler answered and acknowledged, and what it calls, so
     /// its status read stays the caller's once the held row is gone (ONE-2510, FIX 2279). Key:
     /// id16 (call ref).
@@ -486,6 +491,10 @@ side_tables! {
     /// KS-2A: an inline ASSET body's instance, bound by the first checkpoint that carries it.
     /// Key: id16 (entity); value: bytes16 (instance).
     PROVENANCE_BODY_INLINE: VaultMeta b"provenance:body_inline:v1:" Raw;
+    /// KS-2A (FIX 6023): every instance a body digest was ever bound under, its current one and
+    /// each one an inline/file switch displaced, so a last-holder erase retires every image's
+    /// copy. Ids only. Key: bytes32 (BLAKE3) + bytes16 (instance); value: empty.
+    PROVENANCE_BODY_INSTANCE: VaultMeta b"provenance:body_instance:v1:" Raw;
     /// A body's instance row (FIX 5348, KS-2A): its instance, format and logical length, and
     /// whether it rests inline; never a key or a wrap of one. Key: bytes32 (BLAKE3).
     PROVENANCE_BODY_KEY: VaultMeta b"provenance:body_key:v1:" Named;

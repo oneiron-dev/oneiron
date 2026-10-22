@@ -86,6 +86,10 @@ pub enum GateDenialReason {
     /// target is outside the sender's reach, or a live dispatch of the target
     /// hears only its parent and its children.
     DenyMessageAddress,
+    /// OF-063 (FIX 1220): a claim named a record that does not resolve under
+    /// its writer's own read. Invented, missing and unreadable are this one
+    /// refusal; it is never retried as a proposal.
+    DenyUnresolvedRecordReference,
 }
 
 impl GateDenialReason {
@@ -116,6 +120,7 @@ impl GateDenialReason {
                 "gate.deny.witness_message.author_not_authorized"
             }
             Self::DenyMessageAddress => "gate.deny.message_address",
+            Self::DenyUnresolvedRecordReference => "gate.deny.unresolved_record_reference",
         }
     }
 
@@ -148,6 +153,7 @@ impl GateDenialReason {
                 Some(Self::DenyWitnessMessageAuthorNotAuthorized)
             }
             "gate.deny.message_address" => Some(Self::DenyMessageAddress),
+            "gate.deny.unresolved_record_reference" => Some(Self::DenyUnresolvedRecordReference),
             _ => None,
         }
     }
@@ -165,7 +171,8 @@ impl GateDenialReason {
             | Self::DenyDreamerPrecommitNoEvidence
             | Self::DenyWitnessMessageMalformedEnvelope
             | Self::DenyWitnessMessageAuthorNotAuthorized
-            | Self::DenyMessageAddress => GateDenialOutcome::Deny,
+            | Self::DenyMessageAddress
+            | Self::DenyUnresolvedRecordReference => GateDenialOutcome::Deny,
             Self::PendingActorCeiling
             | Self::PendingSourceTrust
             | Self::PendingCriticalityFloor

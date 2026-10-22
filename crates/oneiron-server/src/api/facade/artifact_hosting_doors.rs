@@ -35,6 +35,55 @@ async fn as_owner<T: Send + 'static>(
     .await
 }
 
+/// Who publishes or repoints an artifact (FIX 8161): the owner under its
+/// proof, as before (`Some`), or any other caller on a verified slip of its
+/// own, as itself (`None`): its export is read under its own key and the
+/// existing outbound Gate judges its actor, a per-artifact standing grant
+/// included. Approval and widening stay the owner's.
+pub(super) fn publisher(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<Option<AuthenticatedOwner>> {
+    match owner_proof(auth, server, verb) {
+        Ok(owner) => Ok(Some(owner)),
+        Err(_) if auth.verified_slip().is_some() => super::facade_actor(server, auth)
+            .map(|_| None)
+            .map_err(FacadeApiError::into_memory_error),
+        Err(refusal) => Err(refusal),
+    }
+}
+
+/// A publish or repoint as [`publisher`] admits it.
+async fn as_publisher(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    input: ArtifactPublishRequest,
+) -> Listed<ArtifactPublishView> {
+    let admitted = || {
+        let owner = publisher(server, auth, verb)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        Ok::<_, MemoryError>((owner, caller))
+    };
+    let (owner, caller) = match admitted() {
+        Ok(admitted) => admitted,
+        Err(error) => return refused(error),
+    };
+    credential_listing(
+        server,
+        auth,
+        caller,
+        verb,
+        move |_, _, memory| match &owner {
+            Some(owner) => memory.artifact_publish_as(owner, input),
+            None => memory.artifact_publish_by_caller(input),
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_artifacts_publish_approval(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -54,13 +103,7 @@ pub(crate) async fn vault_artifacts_publish(
     auth: &CoreAuth,
     input: ArtifactPublishRequest,
 ) -> Listed<ArtifactPublishView> {
-    as_owner(
-        server,
-        auth,
-        "vault.artifacts.publish",
-        move |memory, owner| memory.artifact_publish_as(owner, input),
-    )
-    .await
+    as_publisher(server, auth, "vault.artifacts.publish", input).await
 }
 
 pub(crate) async fn vault_artifacts_repoint(
@@ -68,13 +111,7 @@ pub(crate) async fn vault_artifacts_repoint(
     auth: &CoreAuth,
     input: ArtifactPublishRequest,
 ) -> Listed<ArtifactPublishView> {
-    as_owner(
-        server,
-        auth,
-        "vault.artifacts.repoint",
-        move |memory, owner| memory.artifact_publish_as(owner, input),
-    )
-    .await
+    as_publisher(server, auth, "vault.artifacts.repoint", input).await
 }
 
 pub(crate) async fn vault_artifacts_pointer(

@@ -26,13 +26,14 @@ use serde::{Deserialize, Serialize};
 use super::EgressPredicate;
 use super::media::{MediaEgressGate, MediaEmbeddingInput, PendingMedia};
 use super::space::{
-    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, drop_space_rows_in_txn,
+    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, SetupDoor, drop_space_rows_in_txn,
     embedding_space_in_txn, kind_slot_bindings_in_txn, search_media_space_in_txn,
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
 use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
 use super::space_probe::{ProbeCohortLedger, SpaceProbe, media_query_in, space_probes_in_txn};
 use crate::Vault;
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
@@ -591,9 +592,11 @@ impl Vault {
     ///
     /// [`Error::InvalidConfig`] when a space is undeclared, the incumbent serves no slot, the
     /// candidate cannot serve one of its kinds, a kind already moves elsewhere, the candidate
-    /// already has an open move, or the margin is not finite.
+    /// already has an open move, or the margin is not finite; the owner-auth refusal when the
+    /// owner's proof no longer holds as the move is written (FIX 8200).
     pub fn begin_space_move(
         &self,
+        owner: &AuthenticatedOwner,
         candidate: &str,
         incumbent: SpaceRef,
         margin: Option<f32>,
@@ -609,6 +612,7 @@ impl Vault {
             )));
         }
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         let Some(space) = embedding_space_in_txn(&self.store, &wtxn, candidate)? else {
             return Err(Error::InvalidConfig(format!(
                 "embedding space {candidate} is not declared"
@@ -676,9 +680,11 @@ impl Vault {
 
     /// Ends an open move without a swap: the incumbent keeps serving, and the candidate's rows
     /// of the moving kinds go (its declaration too, when no slot binds it). The owner's door:
-    /// a retirement of the candidate names the owner (FIX 6697).
-    pub fn abandon_space_move(&self, candidate: &str) -> Result<()> {
+    /// a retirement of the candidate names the owner (FIX 6697), and the write checks the
+    /// owner's proof again (FIX 8200).
+    pub fn abandon_space_move(&self, owner: &AuthenticatedOwner, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         let moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         EMBEDDING_MOVE.delete(&self.store, &mut wtxn, &moving.candidate)?;
         drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
@@ -727,6 +733,33 @@ impl Vault {
         &self,
         candidate: &str,
         encoder: &dyn SpaceProbeEncoder,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
+        self.check_space_move_listing_by(candidate, encoder, SetupDoor::System)
+    }
+
+    /// [`Self::check_space_move_listing`] at the owner's request (FIX 8982): the owner's proof
+    /// is checked again in the write that records the reading and acts on it. The reading
+    /// still decides, as a scheduled check's does; a swap it makes is not the owner's yes.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::check_space_move`]; the owner-auth refusal when the owner's proof no longer
+    /// holds as the check concludes.
+    pub fn check_space_move_listing_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        candidate: &str,
+        encoder: &dyn SpaceProbeEncoder,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
+        self.check_space_move_listing_by(candidate, encoder, SetupDoor::OwnerCheck(owner))
+    }
+
+    /// The check, its conclusion written through `by`.
+    fn check_space_move_listing_by(
+        &self,
+        candidate: &str,
+        encoder: &dyn SpaceProbeEncoder,
+        by: SetupDoor<'_>,
     ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes, versions) = {
             let rtxn = self.store.env.read_txn()?;
@@ -933,7 +966,7 @@ impl Vault {
         let checked_at = check.checked_at;
         rows.sort_unstable();
         rows.dedup();
-        let outcome = self.conclude_space_move(candidate, Some(check), false)?;
+        let outcome = self.conclude_space_move(candidate, Some(check), by)?;
         let retests: Vec<ProbeRetest> = runs
             .iter()
             .map(|run| ProbeRetest {
@@ -957,9 +990,10 @@ impl Vault {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when no move to `candidate` is open, the candidate is still
-    /// filling, or a slot it moves was rebound since it began.
-    pub fn approve_space_move(&self, candidate: &str) -> Result<()> {
-        self.approve_space_move_admitted(candidate, None)
+    /// filling, or a slot it moves was rebound since it began; the owner-auth refusal when the
+    /// owner's proof no longer holds as the swap is written (FIX 8200).
+    pub fn approve_space_move(&self, owner: &AuthenticatedOwner, candidate: &str) -> Result<()> {
+        self.approve_space_move_admitted(owner, candidate, None)
     }
 
     /// [`Self::approve_space_move`] for a candidate whose model runs at a third party behind the
@@ -971,6 +1005,7 @@ impl Vault {
     /// As [`Self::approve_space_move`].
     pub fn approve_space_move_admitted(
         &self,
+        owner: &AuthenticatedOwner,
         candidate: &str,
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<()> {
@@ -1006,7 +1041,7 @@ impl Vault {
         // The swap counts on the cohorts the check it acts on ran, after its write committed
         // and best effort, as a passing check's does (FIX 7040).
         if let SpaceMoveOutcome::SwappedIn(check) =
-            self.conclude_space_move(candidate, check, true)?
+            self.conclude_space_move(candidate, check, SetupDoor::Owner(owner))?
         {
             ProbeCohortLedger::promoted_from(self, candidate, &check);
         }
@@ -1022,9 +1057,11 @@ impl Vault {
     ///
     /// [`Error::InvalidConfig`] when the move to `candidate` has not swapped in, a slot it moved
     /// no longer binds the candidate, or the incumbent space is retired
-    /// ([`Self::retire_swapped_incumbents`]).
-    pub fn undo_space_move(&self, candidate: &str) -> Result<()> {
+    /// ([`Self::retire_swapped_incumbents`]); the owner-auth refusal when the owner's proof no
+    /// longer holds as the undo is written (FIX 8200).
+    pub fn undo_space_move(&self, owner: &AuthenticatedOwner, candidate: &str) -> Result<()> {
         let mut wtxn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &wtxn)?;
         let Some(mut moving) = EMBEDDING_MOVE
             .get(&self.store, &wtxn, &candidate.to_owned())?
             .filter(|row| matches!(row.state, SpaceMoveState::SwappedIn { .. }))
@@ -1099,7 +1136,7 @@ impl Vault {
         let mut retired = Vec::new();
         for id in due {
             // The swap's backfill retires it: a system move's retirement (FIX 6697).
-            match self.retire_embedding_space_as(&id, SetupActor::System) {
+            match self.retire_embedding_space_as(&id, SetupDoor::System) {
                 Ok(()) => retired.push(id),
                 // Bound again, or named by an open move: it still serves.
                 Err(Error::InvalidConfig(_)) => {}
@@ -1158,14 +1195,18 @@ impl Vault {
     /// Records `check` on the open move to `candidate` and acts on it: a passing check, or the
     /// owner's yes, binds the candidate for every moving kind; a worse one closes the move and
     /// drops the candidate's rows; an unknown one leaves the move open. The owner's yes names
-    /// the owner on the slot rows it binds; a check's rows are a system move's (FIX 6697).
+    /// the owner on the slot rows it binds, and its proof is checked again in this write
+    /// (FIX 8200); a check's rows are a system move's (FIX 6697), with the owner's proof checked
+    /// again here when the owner asked for the check (FIX 8982).
     fn conclude_space_move(
         &self,
         candidate: &str,
         check: Option<SpaceMoveCheck>,
-        by_owner: bool,
+        by: SetupDoor<'_>,
     ) -> Result<SpaceMoveOutcome> {
+        let by_owner = by.actor() == SetupActor::Owner;
         let mut wtxn = self.store.env.write_txn()?;
+        by.admit_in_txn(self, &wtxn)?;
         let mut moving = open_move_in_txn(&self.store, &wtxn, candidate)?;
         check_bindings(&moving, &kind_slot_bindings_in_txn(&self.store, &wtxn)?)?;
         // A check's reading is read again on its card against the probes stored now; the

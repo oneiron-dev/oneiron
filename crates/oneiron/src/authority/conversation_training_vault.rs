@@ -286,9 +286,44 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
         let mut txn = self.store.env.write_txn()?;
-        let person = owner.revalidate_person_in_txn(self, &txn)?;
-        self.require_learning_admin_in_txn(&txn, person)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let (_, view) = self.set_conversation_learning_in_txn(
+            &mut txn,
+            owner,
+            surface,
+            on,
+            allow_opt_out,
+            seen,
+        )?;
+        txn.commit()?;
+        // Its watchers re-read it now: a managed host reports it to its
+        // supervisor (FIX 5575).
+        self.store.notify_proactivity_changes();
+        Ok(view)
+    }
+
+    /// [`Vault::set_conversation_learning`] in the caller's writing
+    /// transaction, with every one of its checks: the proof's person
+    /// revalidated, the admin rule, `seen`, the carrier, the signature and
+    /// the fold counting the choice. It returns the signed choice's authority
+    /// entry and the setting's view after it, and commits nothing: the
+    /// caller commits, then tells the setting's watchers
+    /// (`notify_proactivity_changes`).
+    ///
+    /// # Errors
+    /// As [`Vault::set_conversation_learning`]; the caller drops the
+    /// transaction on any of them.
+    pub(crate) fn set_conversation_learning_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        on: bool,
+        allow_opt_out: bool,
+        seen: Option<PolicyRevision>,
+    ) -> Result<(AuthorityEntryHash, ConversationLearningView)> {
+        let person = owner.revalidate_person_in_txn(self, txn)?;
+        self.require_learning_admin_in_txn(txn, person)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         // Revision integrity (mesh contract §4): the admin chose on what the
         // surface showed them.
@@ -296,14 +331,19 @@ impl Vault {
         if seen.is_some_and(|seen| seen != current) {
             return Err(Error::ConcurrentWrite(STALE));
         }
-        let machine = crate::identity::read_machine_id_in_txn(self, &txn)?
+        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
-        let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
+        let key = crate::identity::read_machine_signing_key_in_txn(self, txn)?
             .ok_or_else(|| authority_refused(NO_CARRIER))?;
         let public_key = key.verifying_key().to_bytes();
         if !owner_act_signer_admits(fold.machine(machine), &fold.roster, &public_key) {
             return Err(authority_refused(NO_CARRIER));
         }
+        // FIX 7908: join a frontier wider than one entry names, else today's path.
+        let joiner = FrontierSigner::Install(machine, &key);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
         let signer = AuthorityKey::Ed25519(public_key);
         let seq = next_sequence(&fold, &signer)?;
         let parents = fold.append_heads.clone();
@@ -317,7 +357,7 @@ impl Vault {
             surface,
             current.0,
         );
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.instant_in_txn(txn)?.secs();
         let entry = sign_side_entry(
             &fold,
             &key,
@@ -336,8 +376,8 @@ impl Vault {
             start: now,
             end: now,
         };
-        self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
-        let after = self.authority_view_readonly_in_txn(&txn)?;
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
         if !after
             .conversation_training_vault
             .choices
@@ -347,12 +387,8 @@ impl Vault {
         {
             return Err(authority_refused(NOT_COUNTED));
         }
-        let view = self.setting_view_in_txn(&txn, &after)?;
-        txn.commit()?;
-        // Its watchers re-read it now: a managed host reports it to its
-        // supervisor (FIX 5575).
-        self.store.notify_proactivity_changes();
-        Ok(view)
+        let view = self.setting_view_in_txn(txn, &after)?;
+        Ok((entry_hash, view))
     }
 
     /// The admin's PERSON whose act the setting choice in force on `fold` is,
@@ -456,7 +492,11 @@ impl Vault {
     /// The setting's admin rule, in the writing transaction: `person` is the
     /// vault's live owner, or, in a shared vault, holds the
     /// workspace-settings power over it as an Owner or Admin.
-    fn require_learning_admin_in_txn(&self, txn: &heed::RoTxn<'_>, person: EntityId) -> Result<()> {
+    pub(crate) fn require_learning_admin_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        person: EntityId,
+    ) -> Result<()> {
         if crate::policy_model::is_live_vault_owner_in_txn(self, txn, &person)? {
             return Ok(());
         }

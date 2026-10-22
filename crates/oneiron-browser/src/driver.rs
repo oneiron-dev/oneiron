@@ -29,27 +29,35 @@
 //! stores right before each act's input, with the change check's mark, and
 //! once its page settled; a Chromium tab reads itself as it is left
 //! (`storage`).
+//!
+//! A read's secret fields become run-bound handles where they are found,
+//! before its rows are built (`secrets`, FIX 8028): a type or expect that
+//! names a handle asks the session's custody for its bytes at the send or
+//! the comparison, and a screenshot masks the same fields.
 
 mod change;
 mod document;
 mod handles;
 mod lightpanda;
 pub(crate) mod pages;
+pub(crate) mod recorder;
 mod row_metadata;
+mod secrets;
 pub(crate) mod state;
 pub(crate) mod storage;
 
 use crate::capture::{self, Capture, Captures};
 use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
-use crate::outline::{self, Line};
+use crate::outline::{self, Line, Masks};
 use crate::retention::HandleRetention;
+use crate::secret::{Entry, Secrets, bare_handle, entry};
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput,
     CropInput, ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation,
     ObservationPage, ObserveInput, OpenInput, PointInput, Row, ScreenshotInput, ScreenshotOutput,
-    SelectInput, StoragePhase, TabSwitch, TabSwitchCause, TypeInput, ViewInput, WaitForInput,
-    WaitForOutput, ZoomInput,
+    SecretKind, SelectInput, StoragePhase, TabSwitch, TabSwitchCause, TypeInput, ViewInput,
+    WaitForInput, WaitForOutput, ZoomInput,
 };
 use base64::Engine as _;
 use change::Watch;
@@ -111,6 +119,14 @@ pub(crate) struct CdpDriver {
     /// The tabs the agent's verbs knew at their last look: a tab found
     /// since is one opened for them, even when an owner's look attached it.
     agent_known: HashSet<String>,
+    /// The session's hold on its host's secret custody (FIX 8028).
+    secrets: Secrets,
+    /// The fields a type entered a secret into, by DOM node, with its
+    /// kind: each reads as that secret from then on.
+    typed: HashMap<u64, SecretKind>,
+    /// The DOM nodes the last read showed a secret in, for a screenshot
+    /// to mask.
+    secret_nodes: Vec<u64>,
 }
 
 /// One page target the driver follows, with its session on it, and the
@@ -181,12 +197,14 @@ impl CdpDriver {
     /// attaches to it. With the host's proxy, every page the guest opens
     /// after it (a popup, a tab a link opens) reaches the network only
     /// through the proxy, as it does. The live-handle registry is charged
-    /// through `retention`.
+    /// through `retention`; the secrets its reads find are held through
+    /// the session's `secrets`.
     pub(crate) fn attach(
         pipe: Pipe,
         engine: BrowserEngine,
         wait_cap: Duration,
         retention: Box<dyn HandleRetention>,
+        secrets: Secrets,
     ) -> Result<Self, BrowserError> {
         let ignored = page_targets(&pipe)?
             .iter()
@@ -221,6 +239,9 @@ impl CdpDriver {
             wait_cap,
             switched: None,
             agent_known: HashSet::from([target.clone()]),
+            secrets,
+            typed: HashMap::new(),
+            secret_nodes: Vec::new(),
         };
         if driver.pipe.mediated() {
             let deadline = Instant::now() + CALL;
@@ -430,9 +451,9 @@ impl CdpDriver {
     }
 
     /// The outline as it is now, unminted: a settle poll's read, which
-    /// mints no handle.
+    /// mints no handle and holds no secret, as only its hash is read.
     fn lines(&self) -> Result<Vec<Line>, BrowserError> {
-        Ok(outline::lines(&self.ax_nodes()?))
+        Ok(outline::lines(&self.ax_nodes()?, &Masks::default()))
     }
 
     /// The outline's rows, hashed for a settle poll: their href, level,
@@ -748,16 +769,25 @@ impl CdpDriver {
         Ok(observation)
     }
 
-    /// Types `text` into resolved `target` (replacing its text with
-    /// `clear`), then returns the settled page, as `click_target` does.
+    /// Types `entry` into resolved `target` (replacing its text with
+    /// `clear`), then returns the settled page, as `click_target` does. A
+    /// secret's bytes come from the session's custody at the send itself;
+    /// the field reads as that secret from then on.
     pub(crate) fn type_target(
         &mut self,
         target: &Target,
-        text: &str,
+        entry: Entry<'_>,
         clear: bool,
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
+        if let Entry::Secret(handle) = entry
+            && let Some(backend) = node["backendNodeId"].as_u64()
+        {
+            let kind = self.secrets.kind_of(bare_handle(handle));
+            self.typed
+                .insert(backend, kind.unwrap_or(SecretKind::Password));
+        }
         let watch = Watch::Entry(change::row_target(&target.row), node);
         let mut observation = self.act(
             base,
@@ -773,9 +803,15 @@ impl CdpDriver {
                 }
                 Ok(())
             },
-            |driver| {
-                driver.page("Input.insertText", json!({"text": text}))?;
-                Ok(())
+            |driver| match entry {
+                Entry::Text(text) => driver
+                    .page("Input.insertText", json!({"text": text}))
+                    .map(drop),
+                Entry::Secret(handle) => driver.secrets.with_value(handle, &mut |text: &str| {
+                    driver
+                        .page("Input.insertText", json!({"text": text}))
+                        .map(drop)
+                }),
             },
         )?;
         observation.rebound.clone_from(&target.rebound);
@@ -814,22 +850,6 @@ impl CdpDriver {
         })?;
         observation.rebound.clone_from(&target.rebound);
         Ok(observation)
-    }
-
-    /// Blacks out password, card and one-time-code fields, or restores them.
-    /// A stored screenshot is masked like an observation: no secret field's
-    /// value reaches the image.
-    fn mask_secrets(&self, mask: bool) -> Result<(), BrowserError> {
-        let script = if mask {
-            "document.querySelectorAll('input[type=password],input[autocomplete^=\"cc-\"],input[autocomplete=\"one-time-code\"]').forEach(e => { e.dataset.oneironMask = e.style.cssText; e.style.setProperty('background', '#000', 'important'); e.style.setProperty('color', '#000', 'important'); e.style.setProperty('-webkit-text-security', 'disc', 'important'); })"
-        } else {
-            "document.querySelectorAll('[data-oneiron-mask]').forEach(e => { e.style.cssText = e.dataset.oneironMask; delete e.dataset.oneironMask; })"
-        };
-        self.page(
-            "Runtime.evaluate",
-            json!({"expression": script, "returnByValue": true}),
-        )?;
-        Ok(())
     }
 
     fn call_on(&self, node: &Value, function: &str, args: Value) -> Result<Value, BrowserError> {
@@ -1247,6 +1267,8 @@ fn attach_tab(pipe: &Pipe, target: &str, engine: BrowserEngine) -> Result<String
     if enabled.is_ok() {
         pipe.watch_navigations(&session, target);
         storage::hook_exits(pipe, &session, engine);
+        // A tab found while a demonstration records is recorded too.
+        pipe.record_on(&session, target, target, Instant::now() + CALL);
     }
     Ok(session)
 }
@@ -1332,8 +1354,9 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
+        let entry = entry(input.text.as_deref(), input.secret.as_deref())?;
         let target = self.resolve_target(&input.target)?;
-        self.type_target(&target, &input.text, input.clear, &Base::of(input.base))
+        self.type_target(&target, entry, input.clear, &Base::of(input.base))
     }
 
     fn select(&mut self, input: SelectInput) -> Result<Observation, BrowserError> {
@@ -1395,36 +1418,40 @@ impl BrowserDriver for CdpDriver {
     }
 
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError> {
+        if input.value.is_some() && input.secret.is_some() {
+            return Err(BrowserError::Input(
+                "an expect names a value or a secret, never both".to_owned(),
+            ));
+        }
         let capture = self.capture()?;
-        let (row, rebindings) = match &input.target {
+        let (at, rebindings) = match &input.target {
             // The named handle's own row, or once its node is gone the row
             // its locator names now: an old handle is never met silently.
             Some(target) => {
                 let known = self.handles.info(target);
                 match match_target(target, &capture.rows, &capture.scope, known.as_ref()) {
-                    Some((at, rebound)) => (
-                        Some(capture.rows[at].clone()),
-                        rebound.into_iter().collect(),
-                    ),
+                    Some((at, rebound)) => (Some(at), rebound.into_iter().collect()),
                     None => (None, Vec::new()),
                 }
             }
             None => {
                 let query = input.query();
-                (
-                    capture.rows.into_iter().find(|row| query.matches(row)),
-                    Vec::new(),
-                )
+                let at = capture.rows.iter().position(|row| query.matches(row));
+                (at, Vec::new())
             }
         };
-        let met = match (&row, input.absent) {
+        // A secret is compared with what the page holds, never its handle.
+        let met = match (at, input.absent) {
             (None, absent) => absent,
             (Some(_), true) => false,
-            (Some(row), false) => input
-                .value
-                .as_ref()
-                .is_none_or(|want| row.value.as_ref() == Some(want)),
+            (Some(at), false) => self.secrets.holds(
+                capture.rows[at].value.as_deref(),
+                capture.originals[at].as_deref(),
+                input.value.as_deref(),
+                input.secret.as_deref(),
+            )?,
         };
+        let row = at.map(|at| capture.rows[at].clone());
         Ok(ExpectOutput {
             met,
             row,
@@ -1440,9 +1467,10 @@ impl BrowserDriver for CdpDriver {
         // The documents shown before and after: a capture the page moved
         // under never compares. A sample that fails costs only that.
         let before = self.shown_documents().ok();
-        self.mask_secrets(true)?;
-        let captured = self.page("Page.captureScreenshot", json!({"format": "png"}));
-        let restored = self.mask_secrets(false);
+        let (masked, masking) = self.mask_secrets();
+        let captured =
+            masking.and_then(|()| self.page("Page.captureScreenshot", json!({"format": "png"})));
+        let restored = self.unmask_secrets(&masked);
         let shot = captured?;
         restored?;
         let after = self.shown_documents().ok();

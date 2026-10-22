@@ -12,6 +12,12 @@
 //! is swapped by editing one string and no vendor appears in code. Absent
 //! `[models]`, the server runs every model-free path and reports each seat
 //! as unconfigured.
+//!
+//! Some roles are DETAILED only, so no shorthand fills them: the Coach's, the
+//! Local-vision seat's, and the browser planner's
+//! (`[models.roles.browser_planner]`, [`BROWSER_PLANNER_ROLE`]), which takes a
+//! code-mode browser subgoal's next step once a batch or library run of it
+//! ends `NEEDS_AGENT`. Without it those steps stay on `generative_reasoner`.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -19,17 +25,22 @@ use oneiron::llm::manifest::ModelRole;
 use oneiron_code_check::{BackendKind, CheckMode};
 use serde::Deserialize;
 
+mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod dreamer_wording;
 mod levels;
 mod media;
 mod planner;
 mod provider;
 #[cfg(test)]
 mod tests;
+mod training;
 mod voice;
+mod workers;
 
+pub use browser_planner::{BROWSER_PLANNER_ROLE, NEEDS_AGENT_BEFORE_CHAT, unbound_row_is_no_seat};
 pub use compaction::CompactionSettings;
 pub use decision_read::{
     DecisionReadRecipe, DecisionReadSettings, ProbeQuestions, ReadPrompt, RenderRefusal,
@@ -38,6 +49,7 @@ pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
     ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
+pub use dreamer_wording::DreamerWording;
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};
 pub use planner::{PlannerSeatSetting, PlannerSettings};
@@ -45,7 +57,11 @@ pub use provider::{
     OutputLimitField, ProviderConfig, ProviderKind, RequestCodec, RequestCompression,
     ResponseFormatWire, ResponsesSocket,
 };
+pub use training::{TRAINING_SERVICE_UNIT, TrainingConnectorSettings, TrainingSettings};
 pub use voice::VoiceSettings;
+pub use workers::{
+    ArtifactSource, ManagedLaunch, NativeServer, WorkerArtifact, WorkerConfig, WorkerEnvelope,
+};
 
 use levels::{RoleFile, Shorthand};
 use provider::ProviderFile;
@@ -87,6 +103,10 @@ pub(crate) struct ModelsFile {
     voice: voice::VoiceFile,
     #[serde(default)]
     planner: planner::PlannerFile,
+    #[serde(default)]
+    training: training::TrainingFile,
+    #[serde(default)]
+    workers: BTreeMap<String, workers::WorkerFile>,
 }
 
 /// `[models.broker]`: where the credential broker listens and the OS user it
@@ -116,6 +136,11 @@ struct DreamerFile {
     task_prompt_file: Option<PathBuf>,
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
+    urgent_digest_question: Option<String>,
+    /// `[models.dreamer.wording]`: the host's wording of the engine's asks
+    /// (FIX 8696); each piece unset keeps its shipped default.
+    #[serde(default)]
+    wording: dreamer_wording::DreamerWordingFile,
     /// The owner's BYO runner seats (OF-137): ordered named runners, the
     /// official seats registered as named providers, and what a spent seat
     /// does. Labels and custody handles only; no vendor login can be
@@ -202,6 +227,12 @@ pub struct ModelsConfig {
     /// The seats a leased agent's planned spawns choose among
     /// (`[models.planner]`); none lends no planner.
     pub planner: PlannerSettings,
+    /// The trainer connectors an authorized training run dispatches through
+    /// (`[models.training]`); none by default.
+    pub training: TrainingSettings,
+    /// The model workers this server supervises or probes
+    /// (`[models.workers]`), in id order; none by default.
+    pub workers: Vec<WorkerConfig>,
 }
 
 /// The credential broker (ARCH-0069 `#broker-design`): a separate process
@@ -262,6 +293,12 @@ pub struct DreamerSettings {
     /// The wording a PERSON's `about` lines are written with (ARCH-0067).
     /// Without one, the engine's own (`PERSON_ABOUT_INSTRUCTION`).
     pub person_about_instruction: Option<String>,
+    /// The wording of the urgent digest's harm question (OF-194). Without
+    /// one, the host's shipped wording.
+    pub urgent_digest_question: Option<String>,
+    /// The wording the engine's own asks go out in (FIX 8696): the shipped
+    /// default for each piece the owner left unset.
+    pub wording: DreamerWording,
     /// The owner's BYO runner-seat policy (OF-137), validated at load: the
     /// ordered named runners Dreamer work may be dispatched to and where
     /// the work goes when a seat's quota is spent. Without one, the
@@ -310,16 +347,16 @@ pub struct CodeModeSettings {
 }
 
 /// `[models.code_mode.check]`: an optional type check of each generated
-/// program before it runs.
+/// program, run beside it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodeCheckSettings {
     /// `off` (the default), or `shadow`: check every program and record what
     /// the check found, blocking nothing. `enforce` is reserved.
     pub mode: CheckMode,
-    /// `tsc-rs` in process (the default), or `microsoft`.
+    /// `tsrs` in process (the default), `tsc-rs` in process, or `microsoft`.
     pub backend: BackendKind,
     /// Microsoft's native `tsc` at the pinned version: the `microsoft`
-    /// backend, and tsc-rs's fallback when it is set.
+    /// backend, and the in-process backends' fallback when it is set.
     pub microsoft_tsc: Option<PathBuf>,
 }
 
@@ -396,6 +433,11 @@ impl ModelsFile {
                 self.dreamer.person_about_prompt_file,
                 base,
             )?,
+            urgent_digest_question: self
+                .dreamer
+                .urgent_digest_question
+                .filter(|text| !text.trim().is_empty()),
+            wording: self.dreamer.wording.resolve(base)?,
             runner_seats: self.dreamer.runner_seats,
         };
         if let Some(runner_seats) = &dreamer.runner_seats {
@@ -478,6 +520,8 @@ impl ModelsFile {
         let decisions = self.decisions.resolve()?;
         let voice = self.voice.resolve(base)?;
         let planner = self.planner.resolve()?;
+        let training = self.training.resolve()?;
+        let workers = workers::resolve(self.workers, &providers, base)?;
         let mut models = ModelsConfig {
             providers,
             roles,
@@ -496,6 +540,8 @@ impl ModelsFile {
             media,
             voice,
             planner,
+            training,
+            workers,
         };
         if let Some(file) = self.decision_read {
             models.decision_read = Some(file.resolve(base, &models)?);
@@ -550,7 +596,7 @@ impl CodeCheckFile {
                 .map_err(|error| anyhow::anyhow!("models.code_mode.check.mode: {error}"))?,
         };
         let backend = match self.backend.as_deref() {
-            None => BackendKind::TscRs,
+            None => BackendKind::Tsrs,
             Some(backend) => backend
                 .parse()
                 .map_err(|error| anyhow::anyhow!("models.code_mode.check.backend: {error}"))?,

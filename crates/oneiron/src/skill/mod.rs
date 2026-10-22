@@ -8,7 +8,6 @@
 mod call;
 mod codec;
 mod doors;
-mod exploration_trial;
 mod graph;
 pub mod helper;
 mod identity;
@@ -18,6 +17,7 @@ mod pack_load;
 mod record;
 pub(crate) mod resident;
 mod role;
+mod saved_prose;
 mod validate;
 
 #[cfg(test)]
@@ -27,11 +27,6 @@ pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub(crate) use self::call::{execute_callable_skill_cancellable, matches_shape};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
-pub(crate) use self::exploration_trial::{
-    EXPLORATION_ASK_CLIMB_HOURS, EXPLORATION_ASK_LAPSE_HOURS, ExplorationTrialClose,
-    ExplorationTrialStatus, close_exploration_trial_in_txn, drive_exploration_trial,
-    settle_exploration_route_in_txn,
-};
 pub use self::graph::{
     GraphSkillAnswerRef, GraphSkillFailure, GraphSkillInput, GraphSkillProgram, GraphSkillResult,
     GraphSkillStage, execute_graph_workflow_skill,
@@ -50,7 +45,12 @@ pub use self::record::{
 };
 pub(crate) use self::resident::resident_of;
 pub use self::role::{SkillCallContract, SkillRole};
+pub(crate) use self::saved_prose::{forked_skill_prose_links, saved_skill_prose_links};
 pub(crate) use self::validate::{validate_hub_sync_skill_update, validate_skill_update};
+pub(crate) use crate::skill_optimize::exploration_trial::{
+    EXPLORATION_ASK_CLIMB_HOURS, EXPLORATION_ASK_LAPSE_HOURS, ExplorationTrialStatus,
+    drive_exploration_trial, settle_exploration_route_in_txn,
+};
 
 // The flat skill.rs module provided these names to the sibling test module
 // through `use super::*`: its own private crate/std import header, and every

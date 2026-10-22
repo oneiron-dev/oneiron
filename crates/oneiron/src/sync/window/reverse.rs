@@ -628,15 +628,14 @@ fn reverse_rematerialize_scan(
     // every revision learned since (Astra #1434 F2).
     wrote_any |= super::project_history::carry_project_history(vault, doc)?;
 
-    // OF-422: the owner-signed custody transitions this vault wrote that ride
-    // this window, never a custody row.
-    wrote_any |= crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
-
     // Commit all bridge writes with origin tag
     if wrote_any {
         let origin = bridge::origin_for_mirrors(&mirror_sources)?;
         doc.commit_with(CommitOptions::new().origin(&origin));
     }
+    // OF-422: the owner-signed custody transitions this vault wrote that ride
+    // this window, never a custody row, each piece in a commit of its own.
+    crate::sync::custody::mirror_custody_transitions(vault, doc, window_key)?;
     // FIX 853: each document and pin commits on its own, a part to a
     // commit, so no one update outgrows a frame.
     for id in &messages {
@@ -902,10 +901,12 @@ pub(super) fn crdt_carrier_is_admissible_authority_row(id: &EntityId, carrier: &
     crate::authority::authority_log_entity_id(&entry).is_ok_and(|derived| derived == *id)
 }
 
-/// REDACTION_AUDIT finalization is local-LMDB-only. Reverse remat is the
-/// outgoing replay door, so it must not copy finalized receipt bytes into the
-/// CRDT mirror. Undecodable REDACTION_AUDIT bodies also stay local: fail closed
-/// rather than replicate raw accountability bytes whose shape is unknown.
+/// Appended REDACTION_AUDIT rows stay local: an erase's sweep-completion row
+/// and its overall final row (FIX 5844). Reverse remat must not copy those
+/// rows into the CRDT mirror; the initial receipt is never mutated and
+/// replicates as before. Undecodable REDACTION_AUDIT bodies also stay local:
+/// fail closed rather than replicate raw accountability bytes whose shape is
+/// unknown.
 pub(super) fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
     let Some(header) = EntityMetadataHeader::parse(raw) else {
         return raw.first().copied() == Some(crate::registry::ENTITY_TYPE_REDACTION_AUDIT);
@@ -919,7 +920,7 @@ pub(super) fn reverse_remat_skip_redaction_receipt_mirror(raw: &[u8]) -> bool {
         &[]
     };
     match crate::deletion::decode_redaction_audit_receipt(body) {
-        Ok(receipt) => receipt.sweep_complete_at.is_some(),
+        Ok(receipt) => !receipt.is_initial(),
         Err(_) => true,
     }
 }

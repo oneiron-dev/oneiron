@@ -11,14 +11,17 @@
 mod assembly;
 pub use assembly::StreamAssembly;
 mod backend;
+mod backend_identity;
 mod bus;
 mod subscribers;
 pub use bus::{LlmEventBus, StreamSubscription, TerminalSink};
 pub use subscribers::{ProgressSnapshot, ProgressSubscriber, VoiceChunkPolicy, VoiceChunker};
 mod budget;
 mod burst_inputs;
+mod cache;
 mod call;
 mod defaults;
+mod inference;
 pub use defaults::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -71,6 +74,19 @@ pub use budget::{BudgetPolicyRow, BudgetPolicySelector, BudgetPolicyTable};
 
 pub use self::burst_inputs::{NormalizedBurstInputs, normalized_burst_inputs};
 
+// FIX 6567: the cache evidence a backend reports on a physical call.
+pub use self::cache::{
+    CacheBackend, CacheCallUsage, CacheCounterSource, CacheDigest, CacheEpoch, CacheEvidenceError,
+    CacheIdentity, CacheOutcome, CachePassReport, CachePassUsage, CachePhase,
+};
+// FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
+pub use self::inference::{
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
+    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
+};
+// FIX 7895: the answering llama.cpp process's launch alias, read in one place.
+pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
+
 pub use self::backend::{
     BrokerIsolation, BudgetLease, LlmBackend, LlmGenerateFuture, LlmResult, LlmStream,
     LlmStreamResult, SingleRouteBackend, SingleSend,
@@ -95,8 +111,8 @@ pub use self::model_id::{ModelId, ModelIdError};
 // JSON bytes across the crate line.
 pub use self::protocol::canonical_json_bytes;
 pub use self::protocol::{
-    ContentPart, FinishReason, ImageContent, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
+    ContentPart, FinishReason, ImageContent, IncompleteReason, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmStreamEvent, LlmToolSpec, LlmUsage,
 };
 pub use self::safeguard::{
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, SafeguardModelBinding,

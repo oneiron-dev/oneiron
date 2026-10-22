@@ -15,7 +15,7 @@ use super::super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
     DreamerRunnerStore,
 };
-use super::{MAINTENANCE_QUEUE_KIND, invalid, proposals};
+use super::{MAINTENANCE_QUEUE_KIND, invalid};
 use crate::actor_claims::{
     SessionActorDistiller, SessionDistillDrain, drain_pending_session_actor_distills,
 };
@@ -29,6 +29,9 @@ use crate::skill_attribution::{
 };
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
+
+// Q3 tuning's read, policy call and proposal (FIX 8708).
+mod person_threshold;
 
 /// Host-run Coach queue kind. The payload `job_type` names the facet.
 pub const COACH_HOST_QUEUE_KIND: &str = "coach.host";
@@ -172,7 +175,7 @@ const HOST_FACETS: [&str; 16] = [
     COACH_FEEDBACK_DELIVERY_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
-const MAINTENANCE_FACETS: [&str; 9] = [
+const MAINTENANCE_FACETS: [&str; 10] = [
     COACH_READ_HARDENING_FACET,
     COACH_TRIPWIRES_FACET,
     COACH_TRADEOFF_ESCALATION_FACET,
@@ -180,11 +183,12 @@ const MAINTENANCE_FACETS: [&str; 9] = [
     COACH_LEARNING_SWEEP_FACET,
     COACH_CONTRIBUTION_CHECK_FACET,
     super::agent_health::COACH_AGENT_HEALTH_FACET,
+    // The daily trend pass (OF-568 L3), its own job beside the review.
+    super::agent_health::COACH_HEALTH_TRENDS_FACET,
     super::calibration_asks::COACH_CALIBRATION_ASKS_FACET,
     COACH_ROOM_UPKEEP_FACET,
 ];
 const READ_HARDENING_SCOPE: &str = "retrieval";
-const MAX_PERSON_THRESHOLD_BATCH: usize = 1024;
 /// Hours a pending tradeoff ask waits on one rung before it climbs, a learned
 /// setting the owner seeds or pins (FIX 707). Canon names no window; the
 /// shipped seed is one night apart, less an hour of wake jitter, so a nightly
@@ -296,7 +300,7 @@ impl Vault {
         distiller: &dyn SessionActorDistiller,
     ) -> Result<SessionDistillDrain> {
         self.require_coach_attempt(attempt, COACH_SKILL_DISTILL_FACET)?;
-        drain_pending_session_actor_distills(self, limit, distiller)
+        drain_pending_session_actor_distills(self, limit, distiller, self.coach_authority()?)
     }
 
     /// Skill discovery as the Coach: one bounded page of the task-attribution
@@ -358,98 +362,6 @@ impl Vault {
                 )),
                 None => PERSON_CHANGED.put(&self.store, txn, &source, record),
             }
-        })
-    }
-
-    /// Q3 tuning as the Coach, under a leased `coach.person_threshold` attempt:
-    /// reads up to `limit` unread override records once, asks `policy` for a
-    /// threshold and files it as a Proposed row. The Coach never sets the live
-    /// row; an accepted proposal does. Returns the proposal, if the policy made
-    /// one.
-    pub fn run_coach_person_threshold(
-        &self,
-        attempt: &DreamerAdmittedAttempt,
-        current: Option<PersonThreshold>,
-        policy: &dyn PersonThresholdPolicy,
-        limit: usize,
-        now: u64,
-    ) -> Result<Option<EntityId>> {
-        self.require_coach_attempt(attempt, COACH_PERSON_THRESHOLD_FACET)?;
-        if !(1..=MAX_PERSON_THRESHOLD_BATCH).contains(&limit) {
-            return Err(Error::InvalidConfig(
-                "person threshold batch must be in 1..=1024".into(),
-            ));
-        }
-        let unread: Vec<(EntityId, PersonChangedAnswer)> = {
-            let txn = self.store.env.read_txn()?;
-            PERSON_CHANGED
-                .scan(&self.store, &txn)?
-                .into_iter()
-                .take(limit)
-                .collect()
-        };
-        if unread.is_empty() {
-            return Ok(None);
-        }
-        let records: Vec<PersonChangedAnswer> =
-            unread.iter().map(|(_, record)| record.clone()).collect();
-        let value = match policy.revise(current, &records)? {
-            Some(threshold) if threshold.is_finite() && threshold > 0.0 && threshold <= 1.0 => {
-                Some(serde_json::json!({
-                    "previous": current.map(|row| serde_json::json!({
-                        "threshold": row.threshold,
-                        "version": row.version,
-                    })),
-                    "proposed": {
-                        "threshold": threshold,
-                        "version": current.map_or(1, |row| row.version.saturating_add(1)),
-                    },
-                    "changed": records.len(),
-                    "sources": unread.iter().map(|(source, _)| source.to_hex()).collect::<Vec<_>>(),
-                }))
-            }
-            Some(_) => {
-                return Err(Error::InvalidConfig(
-                    "the person threshold policy returned an invalid threshold".into(),
-                ));
-            }
-            None => None,
-        };
-        // The run tray's keys, so the owner's run review can accept it.
-        let envelope = proposals::run_tray_envelope(
-            self,
-            COACH_PERSON_THRESHOLD_FACET,
-            attempt.status.attempt.id,
-        )?;
-        let subject = envelope.actor().entity_ref();
-        self.with_write_txn_grouped(|txn| {
-            // A second run that read the same records first has already
-            // proposed from them.
-            for (source, _) in &unread {
-                if PERSON_CHANGED_READ.contains(&self.store, &*txn, source)? {
-                    return Ok(None);
-                }
-            }
-            let proposal = value
-                .as_ref()
-                .map(|value| {
-                    proposals::emit_in_txn(
-                        self,
-                        txn,
-                        subject,
-                        COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE,
-                        value,
-                        &unread.iter().map(|(source, _)| *source).collect::<Vec<_>>(),
-                        &envelope,
-                        now,
-                    )
-                })
-                .transpose()?;
-            for (source, _) in &unread {
-                PERSON_CHANGED.delete(&self.store, txn, source)?;
-                PERSON_CHANGED_READ.put(&self.store, txn, source, &now)?;
-            }
-            Ok(proposal)
         })
     }
 

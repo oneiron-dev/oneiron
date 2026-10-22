@@ -20,6 +20,11 @@
 //! lays out nothing: it only reads the control directory's record.
 //! - `/run/oneiron` and [`VM_VOICE_DIR`], the engine's socket directories:
 //!   the vault UID's, 0700.
+//! - When the guests' container runtime is prepared (FIX 7671, the sibling
+//!   `guest_runtime`), `/vault/storage/container` and the container CLI's
+//!   [`VM_GUEST_CONTAINER_HOME`] and [`VM_GUEST_CONTAINER_RUNTIME_DIR`] in
+//!   it: the vault UID's, 0700, beside the data directory and never in it.
+//!   The runtime directory is emptied on each of those boots (FIX 8936).
 //!
 //! A directory that already holds content keeps its policy, owner and mode
 //! or is refused: nothing is re-encrypted or re-owned. Every look below the
@@ -31,10 +36,11 @@ use super::Refusal;
 use super::fscrypt::{self, KeyIdentifier, Policy};
 use oneiron_vault_contract::vault_uids::{self, VaultUidRow};
 use oneiron_vault_contract::vm::{
-    VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR, VM_GUEST_STORAGE_DIR, VM_VOICE_DIR,
+    VM_GUEST_CONTAINER_HOME, VM_GUEST_CONTAINER_RUNTIME_DIR, VM_GUEST_DATA_DIR, VM_GUEST_KEYS_DIR,
+    VM_GUEST_STORAGE_DIR, VM_VOICE_DIR,
 };
 use oneiron_vault_contract::vm_provision::{VM_PROVISION_RECORD, VmProvision, VmProvisionFailure};
-use rustix::fs::{AtFlags, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, Mode, OFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, Permissions};
@@ -52,6 +58,13 @@ pub(super) const DATA_LEAF: &str = "data";
 const KEYS_LEAF: &str = "keys";
 const CONTROL_LEAF: &str = "control";
 const RECORD_LEAF: &str = "vm-provision.json";
+/// The container CLI directories' parent in the storage, and the leaves
+/// of [`VM_GUEST_CONTAINER_HOME`] and [`VM_GUEST_CONTAINER_RUNTIME_DIR`] in
+/// it.
+const CONTAINER_LEAF: &str = "container";
+const CONTAINER_DIR: &str = "/vault/storage/container";
+const HOME_LEAF: &str = "home";
+const RUNTIME_LEAF: &str = "runtime";
 /// The engine's socket directory, the parent of [`VM_VOICE_DIR`].
 const RUN_DIR: &str = "/run/oneiron";
 /// The longest provision record read back: it is a few short fields.
@@ -322,6 +335,12 @@ fn encrypted_dir(
         }
         Err(error) => return Err(failed(path)(error)),
     }
+    uid_owned(dir, empty, path, uid)
+}
+
+/// `dir` given to `uid` with mode 0700 when it is `empty`; else refused
+/// unless it is already so. Nothing in it is re-owned.
+fn uid_owned(dir: File, empty: bool, path: &str, uid: u32) -> Result<File, Refusal> {
     if empty {
         fchown(&dir, Some(uid), Some(uid)).map_err(failed(path))?;
         dir.set_permissions(private(0o700)).map_err(failed(path))?;
@@ -351,6 +370,58 @@ pub(super) fn lay_out_storage(
     }
     encrypted_dir(root, KEYS_LEAF, VM_GUEST_KEYS_DIR, uid, identifier)?;
     Ok(())
+}
+
+/// Makes the guests' container CLI directories (FIX 7671) in the encrypted
+/// storage, outside the data directory: their parent, then
+/// [`VM_GUEST_CONTAINER_HOME`] and [`VM_GUEST_CONTAINER_RUNTIME_DIR`] in it,
+/// each the vault UID's with mode 0700 and under the storage's inherited
+/// policy. An empty one is made so; one with content must already be so.
+/// The runtime directory is then emptied, itself kept with its owner and
+/// mode: the CLI's pause process id, locks and sockets are this boot's own,
+/// never an earlier boot's (FIX 8936). `HOME` and the image store in it are
+/// kept.
+pub(super) fn own_container_dirs(uid: u32) -> Result<(), Refusal> {
+    let root = open_vault_root()?;
+    let storage = open_dir(&root, STORAGE_LEAF, VM_GUEST_STORAGE_DIR, 0o700)?;
+    let parent = owned_child(&storage, CONTAINER_LEAF, CONTAINER_DIR, uid)?;
+    owned_child(&parent, HOME_LEAF, VM_GUEST_CONTAINER_HOME, uid)?;
+    let runtime = owned_child(&parent, RUNTIME_LEAF, VM_GUEST_CONTAINER_RUNTIME_DIR, uid)?;
+    empty_dir(&runtime).map_err(failed(VM_GUEST_CONTAINER_RUNTIME_DIR))?;
+    Ok(())
+}
+
+/// Removes everything in the held `dir` and keeps `dir`: each entry is
+/// unlinked without following a link, a directory once it is emptied the
+/// same way through its own held handle.
+fn empty_dir(dir: &File) -> std::io::Result<()> {
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(dir)? {
+        let entry = entry?;
+        if !matches!(entry.file_name().to_bytes(), b"." | b"..") {
+            names.push(entry.file_name().to_owned());
+        }
+    }
+    for name in &names {
+        let stat = rustix::fs::statat(dir, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW)?;
+        if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+            let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+            let child = rustix::fs::openat(dir, name.as_c_str(), flags, Mode::empty())?;
+            empty_dir(&File::from(child))?;
+            rustix::fs::unlinkat(dir, name.as_c_str(), AtFlags::REMOVEDIR)?;
+        } else {
+            rustix::fs::unlinkat(dir, name.as_c_str(), AtFlags::empty())?;
+        }
+    }
+    Ok(())
+}
+
+/// The child directory `leaf` of `parent`, made when absent, as
+/// [`uid_owned`] leaves it.
+fn owned_child(parent: &File, leaf: &str, path: &str, uid: u32) -> Result<File, Refusal> {
+    let dir = open_dir(parent, leaf, path, 0o700)?;
+    let empty = is_empty(&dir).map_err(failed(path))?;
+    uid_owned(dir, empty, path, uid)
 }
 
 /// Installs the guest's UID table: one row allocating `uid` to `vault` at

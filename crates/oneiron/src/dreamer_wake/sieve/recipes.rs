@@ -3,12 +3,10 @@
 use std::collections::BTreeSet;
 
 use crate::attempt_queue::AttemptId;
-use crate::claim::ScopedReadActorKey;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerAttemptStatus, DreamerConsolidationScope, DreamerRunnerStore,
 };
 use crate::llm::{Scope, ScopeResource};
-use crate::registry::{ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, ENTITY_TYPE_PLACE};
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -16,19 +14,25 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::super::recipes::WakeRecipePolicy;
-use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, SpanBand, chunks, policy};
+use super::{QUEUE, QueueKey, READ, SPANS, SieveSpan, chunks};
+use crate::dreamer_consolidation::KeptDecision;
+use crate::llm::decision::EvidenceVersion;
+
+mod consumption;
+pub(crate) use consumption::{consumed_carriers, retarget_consumed_in_txn};
 
 pub(crate) const RUNG_ATTEMPT: &str = "dreamer.sieve.rungs";
 /// Original cheap reading survives spending for later expensive-path audits.
 const HISTORY: SideTable<(EntityId, [u8; 32]), SieveSpan, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_HISTORY);
-const AUDIT: SideTable<AttemptId, SieveAudit, Named> =
+const AUDIT: SideTable<AttemptId, SieveAuditRecord, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_AUDIT);
 const CONSUMED: SideTable<(AttemptId, [u8; 32]), SieveConsumeReceipt, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_CONSUMED);
 
-/// One span the nightly spending consumed: its ref, the attempt that spent
-/// it and when. The original reading stays in the retained history.
+/// One span the nightly spending consumed: its ref, the child attempt that
+/// carries its TURN's work (FIX 7498) and when. The original reading stays
+/// in the retained history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SieveConsumeReceipt {
     pub span: [u8; 32],
@@ -51,7 +55,7 @@ pub(crate) struct RungInput {
 }
 
 /// A sampled rule reading and the expensive path's label, kept by receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SieveAudit {
     pub sampled: bool,
     pub span: [u8; 32],
@@ -68,6 +72,67 @@ pub struct SieveAudit {
     pub at: u64,
     pub completed_units: u64,
     pub step_hashes: Vec<[u8; 32]>,
+    /// Every owed rung's typed decisions, rung by rung in pack order
+    /// (OF-498a): what the reading was read from.
+    pub decisions: Vec<KeptDecision>,
+}
+
+/// One audit receipt as kept: a flagged span's reading, sampled or owed,
+/// exactly as before, or an unflagged window's finding (OF-498f). The enum
+/// adds no tag, so a flagged receipt keeps its own bytes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SieveAuditRecord {
+    Flagged(SieveAudit),
+    Window(super::SieveWindowAudit),
+}
+
+impl SieveAuditRecord {
+    /// Whether the receipt is a sampled audit, not an owed rung's reading.
+    pub fn sampled(&self) -> bool {
+        match self {
+            Self::Flagged(audit) => audit.sampled,
+            Self::Window(_) => true,
+        }
+    }
+
+    pub fn turn(&self) -> EntityId {
+        match self {
+            Self::Flagged(audit) => audit.turn,
+            Self::Window(audit) => audit.finding.window.turn,
+        }
+    }
+
+    pub fn source(&self) -> EntityId {
+        match self {
+            Self::Flagged(audit) => audit.source,
+            Self::Window(audit) => audit.finding.window.source,
+        }
+    }
+
+    /// Whether the expensive path agrees with the rules: a flagged span's
+    /// kind and entity, or nothing found in a window the rules left
+    /// unflagged.
+    pub fn agrees(&self) -> bool {
+        match self {
+            Self::Flagged(audit) => audit.agrees,
+            Self::Window(audit) => audit.finding.discovered.is_empty(),
+        }
+    }
+
+    fn completed_units(&self) -> u64 {
+        match self {
+            Self::Flagged(audit) => audit.completed_units,
+            Self::Window(audit) => audit.completed_units,
+        }
+    }
+
+    fn step_hashes(&self) -> &[[u8; 32]] {
+        match self {
+            Self::Flagged(audit) => &audit.step_hashes,
+            Self::Window(audit) => &audit.step_hashes,
+        }
+    }
 }
 
 pub(crate) fn queue_key(span: &SieveSpan) -> QueueKey {
@@ -94,7 +159,7 @@ pub(super) fn forget_in_txn(
     let audits = AUDIT
         .iter_from(store, txn, &[])?
         .filter_map(|row| match row {
-            Ok((id, audit)) if audit.turn == *turn => Some(Ok(id)),
+            Ok((id, audit)) if audit.turn() == *turn => Some(Ok(id)),
             Ok(_) => None,
             Err(e) => Some(Err(e)),
         })
@@ -150,9 +215,10 @@ pub(crate) fn spend_in_txn(
     Ok(())
 }
 
-/// Spends `span` as consumed work: its receipt lands in the same
-/// transaction that takes it out of the queue, so a span is never both
-/// queued and receipted, and never spent twice.
+/// Spends `span` as consumed work carried by `attempt`, the child that owes
+/// its TURN: its receipt lands in the same transaction that takes it out of
+/// the queue, so a span is never both queued and receipted, and never spent
+/// twice.
 pub(crate) fn spend_consumed_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -188,6 +254,29 @@ pub(crate) fn enqueue_rungs_in_txn(
     now: u64,
 ) -> Result<()> {
     let policy = super::super::recipes::policy_in_txn(store.vault(), txn)?;
+    // The follower reads an owed novelty rung in its batch (FIX 7510); a span
+    // it cannot frame stays on its own rung, as before.
+    if !audit
+        && policy.follower_enabled
+        && span.owed.contains(&super::SieveRung::Novelty)
+        && crate::dreamer_wake::follower::route_in_txn(store, txn, Some(parent), span, now)?
+    {
+        return Ok(());
+    }
+    per_span_in_txn(store, txn, parent, span, audit, policy, now)
+}
+
+/// Queues `span`'s own rung attempt under `parent`, with the recipe policy
+/// it reads by: the per-span path, and every audit.
+pub(crate) fn per_span_in_txn(
+    store: &DreamerRunnerStore<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    parent: &DreamerAttemptStatus,
+    span: &SieveSpan,
+    audit: bool,
+    policy: WakeRecipePolicy,
+    now: u64,
+) -> Result<()> {
     let input = serde_json::to_string(&RungInput {
         span: span.clone(),
         audit,
@@ -294,6 +383,9 @@ pub(crate) struct RungEvidence {
     pub(crate) text: String,
     pub(crate) entities: Vec<EntityId>,
     pub(crate) scope: Scope,
+    /// The body version of each source the scope grants: the TURN, its
+    /// source and each candidate, as a rung's decisions pin them.
+    pub(crate) versions: Vec<EvidenceVersion>,
 }
 
 pub(crate) fn rung_evidence(vault: &Vault, input: &RungInput) -> Result<Option<RungEvidence>> {
@@ -328,69 +420,45 @@ fn rung_evidence_in_txn(
     let Some(quote) = text.get(start..end) else {
         return Ok(None);
     };
-    let actor = crate::WriteActor::new(
-        crate::dreamer_runner::authority::dreamer_actor_id()?,
-        crate::EdgeActorClass::System,
-    );
-    let key = ScopedReadActorKey::with_actor_class(
-        actor.entity_ref().to_hex(),
-        actor.actor_class().gate_actor_class(),
-    )
-    .ok_or(Error::InvalidConfig("sieve read actor".into()))?;
-    let read = vault.scoped_read(key);
     let mut scope = Scope::default();
-    for id in BTreeSet::from([span.turn, span.source]) {
-        let Some(raw) = read.entity_raw_live_in(txn, &id)? else {
-            return Ok(None);
-        };
-        scope.readable.insert(ScopeResource::DocumentVersion {
-            document: id,
-            version: format!(
-                "blake3:{}",
-                crate::entity_id::bytes_to_hex_lower(
-                    &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                    )
-                )
-            ),
-        });
-    }
-    let mut ids = BTreeSet::new();
-    for kind in [ENTITY_TYPE_PERSON, ENTITY_TYPE_ORG, ENTITY_TYPE_PLACE] {
-        ids.extend(vault.lookup_identity_key_in_txn(txn, kind, quote)?);
-    }
-    if let super::SpanOrigin::SavedTag { envelope, index } = span.origin {
-        if let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, &span.turn)?
-            && super::read::envelope_digest(&tags.envelope) == envelope
-            && let Some(mention) = usize::try_from(index)
-                .ok()
-                .and_then(|index| tags.mentions.get(index))
-        {
-            ids.extend(mention.link.entities());
-        }
-    }
-    let mut entities = Vec::new();
-    for id in ids {
-        if let Some(raw) = read.entity_raw_live_in(txn, &id)? {
-            scope.readable.insert(ScopeResource::DocumentVersion {
-                document: id,
-                version: format!(
-                    "blake3:{}",
-                    crate::entity_id::bytes_to_hex_lower(
-                        &crate::dreamer_consolidation::swarm_evidence_content_hash(
-                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..]
-                        )
-                    )
-                ),
-            });
-            entities.push(id);
-        }
-    }
+    let mut versions = Vec::new();
+    let Some(entities) = super::follower::candidates_pinned_in_txn(
+        vault,
+        txn,
+        span,
+        quote,
+        &mut scope,
+        &mut versions,
+    )?
+    else {
+        return Ok(None);
+    };
     Ok(Some(RungEvidence {
         text,
         entities,
         scope,
+        versions,
     }))
+}
+
+/// Grants `id`'s body as read in `raw` to `scope`, and pins its version.
+pub(super) fn pin_version(
+    scope: &mut Scope,
+    versions: &mut Vec<EvidenceVersion>,
+    id: EntityId,
+    raw: &[u8],
+) {
+    let body_hash = crate::dreamer_consolidation::swarm_evidence_content_hash(
+        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+    );
+    scope.readable.insert(ScopeResource::DocumentVersion {
+        document: id,
+        version: format!(
+            "blake3:{}",
+            crate::entity_id::bytes_to_hex_lower(&body_hash)
+        ),
+    });
+    versions.push(EvidenceVersion { id, body_hash });
 }
 
 pub(crate) fn finish_rungs(
@@ -405,6 +473,7 @@ pub(crate) fn finish_rungs(
     typing_owed: bool,
     completed_units: u64,
     step_hashes: Vec<[u8; 32]>,
+    decisions: Vec<KeptDecision>,
     now: u64,
 ) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
@@ -422,7 +491,7 @@ pub(crate) fn finish_rungs(
             &vault.store,
             txn,
             &attempt,
-            &SieveAudit {
+            &SieveAuditRecord::Flagged(SieveAudit {
                 sampled: input.audit,
                 span: input.span.id,
                 turn: input.span.turn,
@@ -438,40 +507,17 @@ pub(crate) fn finish_rungs(
                 at: now,
                 completed_units,
                 step_hashes,
-            },
+                decisions,
+            }),
         )?;
         if !input.audit {
-            let policy = policy::policy_in_txn(vault, txn)?;
-            let mut updated = input.span.clone();
-            updated.kind = kind;
-            updated.entity = entity;
-            updated.novel = Some(novel);
-            updated.confidence = confidence;
-            updated.band = if confidence < policy.uncertain_low {
-                SpanBand::Low
-            } else if confidence < policy.uncertain_high {
-                SpanBand::Uncertain
-            } else {
-                SpanBand::Sure
+            let reading = super::follower::SpanReading {
+                kind,
+                entity,
+                novel,
+                confidence,
             };
-            updated.score = match kind {
-                super::SpanKind::Date => policy.date_interest,
-                super::SpanKind::Name => policy.name_interest,
-            }
-            .saturating_mul(u32::from(confidence));
-            if !novel {
-                updated.score = 0;
-            }
-            updated.policy_digest = policy.digest()?;
-            updated.owed = if typing_owed {
-                vec![super::SieveRung::Typing]
-            } else {
-                Vec::new()
-            };
-            spend_in_txn(&vault.store, txn, &input.span)?;
-            let key = queue_key(&updated);
-            QUEUE.put(&vault.store, txn, &key, &updated)?;
-            SPANS.put(&vault.store, txn, &(updated.turn, key), &())?;
+            super::follower::apply_reading_in_txn(vault, txn, &input.span, reading, typing_owed)?;
         }
         Ok(true)
     })
@@ -513,7 +559,9 @@ impl Vault {
         Ok(receipts)
     }
 
-    pub fn sieve_audits(&self, limit: usize) -> Result<Vec<SieveAudit>> {
+    /// The sampled audits, in attempt order: flagged spans' and unflagged
+    /// windows' alike (OF-498f).
+    pub fn sieve_audits(&self, limit: usize) -> Result<Vec<SieveAuditRecord>> {
         let txn = self.store.env.read_txn()?;
         let mut audits = Vec::new();
         if limit == 0 {
@@ -521,7 +569,7 @@ impl Vault {
         }
         for row in AUDIT.iter_from(&self.store, &txn, &[])? {
             let (_, audit) = row?;
-            if audit.sampled {
+            if audit.sampled() {
                 audits.push(audit);
             }
             if audits.len() >= limit {
@@ -543,7 +591,7 @@ impl Vault {
 pub(crate) fn sieve_audits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<Vec<Result<(AttemptId, SieveAudit)>>> {
+) -> Result<Vec<Result<(AttemptId, SieveAuditRecord)>>> {
     let scan = EngineScan::SieveAuditRows;
     let mut count = match ScanCount::start(&vault.store, txn, scan, &[]) {
         Ok(count) => Some(count),
@@ -563,7 +611,7 @@ pub(crate) fn sieve_audits_in_txn(
                 count.row();
             }
         })
-        .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled))
+        .filter(|row| !matches!(row, Ok((_, audit)) if !audit.sampled()))
         .collect();
     if let Some(count) = count {
         count.finish(vault);
@@ -576,8 +624,31 @@ pub(crate) fn sieve_audit_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,
-) -> Result<Option<SieveAudit>> {
+) -> Result<Option<SieveAuditRecord>> {
     AUDIT.get(store, txn, attempt)
+}
+
+/// Keeps an unflagged window's finding as `attempt`'s audit receipt.
+pub(super) fn put_audit_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempt: &AttemptId,
+    record: &SieveAuditRecord,
+) -> Result<()> {
+    AUDIT.put(store, txn, attempt, record)
+}
+
+/// The spans of `turn`'s current reading, its rules' and its saved tags'.
+pub(super) fn history_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<Vec<SieveSpan>> {
+    Ok(HISTORY
+        .scan_from(store, txn, turn.as_bytes())?
+        .into_iter()
+        .map(|(_, span)| span)
+        .collect())
 }
 
 pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Option<u64>> {
@@ -589,11 +660,11 @@ pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Opt
         return Ok(None);
     };
     let store = DreamerRunnerStore::new(vault);
-    let mut paid = !result.step_hashes.is_empty();
-    for hash in &result.step_hashes {
+    let mut paid = !result.step_hashes().is_empty();
+    for hash in result.step_hashes() {
         paid &= store.checkpoint_step_charged(attempt, hash)?;
     }
-    Ok(Some(if paid { 0 } else { result.completed_units }))
+    Ok(Some(if paid { 0 } else { result.completed_units() }))
 }
 
 pub(crate) fn rung_superseded(vault: &Vault, input: &RungInput) -> Result<bool> {

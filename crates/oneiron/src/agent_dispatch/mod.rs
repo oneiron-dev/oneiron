@@ -68,6 +68,8 @@ mod project_proposal;
 mod resident;
 mod room_join;
 mod run_objectives;
+mod scope;
+pub(crate) use scope::project_descends_from_in_txn;
 mod spend_calibration;
 #[cfg(feature = "sync")]
 pub(crate) mod spend_handoff;

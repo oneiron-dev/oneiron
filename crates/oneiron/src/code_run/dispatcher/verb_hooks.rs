@@ -436,6 +436,9 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
             proposal_ref,
             ..
         }) => json!({"kind": "agent_spawn", "state": "proposed_widen", "proposal": proposal_ref}),
+        SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::TargetErased) => {
+            json!({"kind": "agent_spawn", "state": "target_erased"})
+        }
         // The bare `ask` and `wait` answer their rows' outputs.
         SelfDispatchOutcome::TaskAsk(receipt) => json!({"output": receipt}),
         SelfDispatchOutcome::TaskAskStatus(TaskAskStatus::Pending { .. }) => return None,

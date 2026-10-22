@@ -20,6 +20,12 @@
 //!
 //! The prompt, the label wording and the verbalizer tokens are the host's
 //! recipe (`[models.decision_read]`); nothing here is prompt text.
+//!
+//! Each answer names the process that answered it as its `model`, the house
+//! launch alias (FIX 7895): each answer of a pack and each retry carries its
+//! own into its inference receipt, never one read once for the read (FIX
+//! 8314: one receipt per physical answer, in order). The alias is never
+//! compared with the read's model, which stays the engine id.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -33,8 +39,10 @@ use oneiron::llm::{
 };
 use serde_json::{Value as JsonValue, json};
 
+use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
 use super::http::{HttpFailure, KeyStyle, ProviderHttp};
+use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
 use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
     ReadPrompt, RenderRefusal,
@@ -42,9 +50,11 @@ use crate::config::models::{
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
-/// The fields each answer carries: as measured, and the prompt it answers.
-const RESPONSE_FIELDS: [&str; 8] = [
+/// The fields each answer carries: as measured, the prompt it answers, and
+/// the model that answered it (its launch alias, FIX 7895).
+const RESPONSE_FIELDS: [&str; 9] = [
     "index",
+    "model",
     "content",
     "completion_probabilities",
     "timings",
@@ -162,11 +172,13 @@ impl DecisionReadDoor {
     }
 }
 
-/// The door `config` describes, its reads sent on `runtime`. `None` without
+/// The door `config` describes, its reads sent on `runtime`, its answers'
+/// launch aliases resolved through `identities`. `None` without
 /// `[models.decision_read]`.
 pub(super) fn bind(
     config: &ModelsConfig,
     runtime: tokio::runtime::Handle,
+    identities: &Arc<LlamaIdentityResolver>,
 ) -> anyhow::Result<Option<DecisionReadDoor>> {
     let Some(settings) = &config.decision_read else {
         return Ok(None);
@@ -182,7 +194,14 @@ pub(super) fn bind(
         .get(&rung.model.provider)
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
-    let reader = DecisionReader::new(model.as_str(), provider, settings, runtime)?;
+    let reader = DecisionReader::new(
+        model.as_str(),
+        &rung.model.model,
+        provider,
+        settings,
+        runtime,
+        Arc::clone(identities),
+    )?;
     let mut door = DecisionReadDoor::new(
         Arc::new(reader),
         connector(provider, model.as_str())?,
@@ -229,6 +248,9 @@ struct TokenIds {
 
 struct DecisionReader {
     model: String,
+    /// The rung's configured wire id: what a launch alias in an answer stands
+    /// for. Never compared with an answer.
+    wire_model: String,
     /// The provider's revision and the recipe's fingerprint: a new recipe is
     /// a new revision, so an escalation pin names the exact read.
     revision: String,
@@ -239,17 +261,21 @@ struct DecisionReader {
     /// Looked up on the first read: one reader serves one recipe at one
     /// revision, so the ids hold for its life.
     ids: Mutex<Option<Arc<TokenIds>>>,
+    identities: Arc<LlamaIdentityResolver>,
 }
 
 impl DecisionReader {
     fn new(
         model: &str,
+        wire_model: &str,
         provider: &ProviderConfig,
         settings: &DecisionReadSettings,
         runtime: tokio::runtime::Handle,
+        identities: Arc<LlamaIdentityResolver>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
             model: model.to_owned(),
+            wire_model: wire_model.to_owned(),
             revision: format!(
                 "{}+recipe.{}",
                 provider.revision,
@@ -260,7 +286,17 @@ impl DecisionReader {
             max_response_bytes: usize::try_from(settings.max_response_bytes).unwrap_or(usize::MAX),
             runtime,
             ids: Mutex::new(None),
+            identities,
         })
+    }
+
+    /// The identity `answer`'s own `model` names: its launch alias's epoch
+    /// and verified manifest, or `None` for an answer without one.
+    async fn answering(&self, answer: &JsonValue) -> Option<AnsweringIdentity> {
+        let returned = answer.get("model").and_then(JsonValue::as_str);
+        self.identities
+            .resolve(&self.http, returned, Some(self.wire_model.as_str()))
+            .await
     }
 
     async fn ids(&self) -> LlmResult<Arc<TokenIds>> {
@@ -367,7 +403,7 @@ impl DecisionReader {
             if let Some(full) = self.recipe.n_probs_full()
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
-                spent = Some(usage(&reply)?);
+                spent = Some(usage(&reply, self.answering(&reply).await.as_ref())?);
                 reply = self.complete(json!(prompt), ids.eos, full).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
@@ -381,7 +417,7 @@ impl DecisionReader {
                 readout.reverse();
             }
             readouts.push(readout);
-            let usage = usage(&reply)?;
+            let usage = usage(&reply, self.answering(&reply).await.as_ref())?;
             reads.push(match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
@@ -560,16 +596,21 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
 
 /// Prompt tokens in, and at least the one position read out: a read that
 /// generates no text still costs its forward pass. An answer without both
-/// counts is refused, so its caller charges the read's reservation.
-fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
+/// counts is refused, so its caller charges the read's reservation. Its
+/// cache read is llama.cpp's own `timings.cache_n` when the answer's counts
+/// agree, beside the answer's inference receipt (FIX 6567, 8314) with the
+/// identity its own alias names, `answering`.
+fn usage(body: &JsonValue, answering: Option<&AnsweringIdentity>) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
+    let (cache_read, raw_provider) = label_read(body, answering);
     Ok(LlmUsage {
         input: LlmInputUsage {
             total: count("tokens_evaluated")?,
+            cache_read,
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -577,17 +618,22 @@ fn usage(body: &JsonValue) -> LlmResult<LlmUsage> {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: body
-            .get("timings")
-            .map_or(JsonValue::Null, |timings| json!({ "timings": timings })),
+        raw_provider,
     })
 }
 
-/// A retried read's cost: both calls' tokens, and each call's timings.
+/// A retried read's cost: both calls' tokens and cache reads, each call's
+/// timings, and both calls' receipts, in order, listed once at the top.
 fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
+    let (mut top_k_raw, mut full_raw) = (top_k.raw_provider, full.raw_provider);
+    let mut calls = take_inference_calls(&mut top_k_raw);
+    calls.extend(take_inference_calls(&mut full_raw));
+    let mut raw_provider = json!({"top_k": top_k_raw, "full": full_raw});
+    put_inference_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: top_k.input.total.saturating_add(full.input.total),
+            cache_read: top_k.input.cache_read.saturating_add(full.input.cache_read),
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -595,24 +641,31 @@ fn retried(top_k: LlmUsage, full: LlmUsage) -> LlmUsage {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: json!({"top_k": top_k.raw_provider, "full": full.raw_provider}),
+        raw_provider,
     }
 }
 
-/// A pack's cost: every question's tokens, retries included, and each
-/// question's own timings. The answers ran side by side, so their times
-/// overlap and are kept apart, not summed.
+/// A pack's cost: every question's tokens and cache reads, retries included,
+/// each question's own timings, and every answer's receipt, listed once at
+/// the top. The answers ran side by side, so their times overlap and are
+/// kept apart, not summed.
 fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
-    let (mut input, mut output) = (0_u64, 0_u64);
+    let (mut input, mut cache_read, mut output) = (0_u64, 0_u64, 0_u64);
     let mut timings = Vec::with_capacity(reads.len());
-    for read in reads {
+    let mut calls = Vec::new();
+    for mut read in reads {
         input = input.saturating_add(read.input.total);
+        cache_read = cache_read.saturating_add(read.input.cache_read);
         output = output.saturating_add(read.output.total);
+        calls.extend(take_inference_calls(&mut read.raw_provider));
         timings.push(read.raw_provider);
     }
+    let mut raw_provider = json!({ "questions": timings });
+    put_inference_calls(&mut raw_provider, calls);
     LlmUsage {
         input: LlmInputUsage {
             total: input,
+            cache_read,
             ..LlmInputUsage::default()
         },
         output: LlmOutputUsage {
@@ -620,7 +673,7 @@ fn pack_usage(reads: Vec<LlmUsage>) -> LlmUsage {
             text: 0,
             reasoning: 0,
         },
-        raw_provider: json!({ "questions": timings }),
+        raw_provider,
     }
 }
 
@@ -649,7 +702,9 @@ fn status(code: u16) -> LlmResult<()> {
 fn transport(failure: HttpFailure) -> LlmError {
     match failure {
         HttpFailure::Timeout => RetryableLlmError::Timeout.into(),
-        HttpFailure::Connection | HttpFailure::StreamCut => RetryableLlmError::ServerError.into(),
+        HttpFailure::Connection | HttpFailure::StreamCut | HttpFailure::OutOfMemory => {
+            RetryableLlmError::ServerError.into()
+        }
         HttpFailure::Malformed | HttpFailure::EventTooLarge | HttpFailure::BodyTooLarge => {
             failed(LabelReadFailure::Malformed)
         }

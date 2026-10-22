@@ -19,8 +19,13 @@ mod initialize;
 mod landing;
 mod mirror_green;
 mod plan;
+mod received_enqueue;
+mod review_policy;
 mod reviewed;
 mod run;
+mod source;
+mod source_materialize;
+mod source_types;
 mod staging;
 mod storage;
 mod tested;
@@ -57,14 +62,27 @@ pub use driver_types::{
     QueueSurvivorLink, QueueWork,
 };
 pub use plan::{FrozenCheckPlan, REPO_CHECK_PLAN_PATH, RepoCheckPlan};
+// The vault's opt-in review policy (FIX 8268).
+pub(crate) use review_policy::{
+    ActiveQueueReviewPolicy, DEFAULT_QUEUE_REVIEW_CRITICS, DEFAULT_QUEUE_REVIEW_VOTES,
+    QueueReviewRequirement, StoredQueueReviewPolicy, queue_review_requirement_in_txn,
+    review_policy_unreadable_hold,
+};
+pub use review_policy::{
+    QueueReviewDefault, QueueReviewPolicy, QueueReviewThresholds, REVIEW_POLICY_DEFAULT,
+    REVIEW_POLICY_UNREADABLE,
+};
 pub use reviewed::ReviewedProposalLanding;
 pub use run::{RepoQueueOrder, RepoQueuePredecessor};
+// The served import's queue source (FIX 6869).
+pub use source_types::ServedQueueSource;
 // The tested-revision seal at green (FIX 6868, G2 PR3).
 pub(crate) use tested_types::QueueRevisionSeal;
 pub use tested_types::{
-    CodePushSourceLink, GreenQueueRevision, QueueAppliedSource, QueueExportHold,
-    QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink, QueueRevisionIntent,
-    QueueRevisionLink, QueueSealTarget, QueueTestedRevision, QueueTestedTarget,
+    CodePushProjectionSourceLink, CodePushSourceLink, GreenQueueRevision, QueueAppliedSource,
+    QueueExportHold, QueueExportHoldReason, QueueGreenExportView, QueueReceiptLink,
+    QueueRevisionIntent, QueueRevisionLink, QueueSealTarget, QueueTestedRevision,
+    QueueTestedTarget,
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,

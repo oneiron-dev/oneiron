@@ -112,8 +112,8 @@ pub use owner_rows::{
     policy_row_grant_target,
 };
 pub(crate) use owner_rows::{
-    is_live_vault_owner_for_store_in_txn, is_live_vault_owner_in_txn, owners_for_store_in_txn,
-    owners_in_txn,
+    holds_vault_policy_power_in_txn, is_live_vault_owner_for_store_in_txn,
+    is_live_vault_owner_in_txn, owners_for_store_in_txn, owners_in_txn,
 };
 mod notes;
 mod notice;
@@ -134,8 +134,7 @@ pub use enforce::{
     PolicyModelEnforcement,
 };
 pub use pattern::{
-    POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, POLICY_PATTERN_RULES_MAX, PolicyPatternRole,
-    PolicyPatternRule,
+    POLICY_PATTERN_ID_MAX_LEN, POLICY_PATTERN_MAX_LEN, PolicyPatternRole, PolicyPatternRule,
 };
 pub use planes::{
     HostedLegalAction, HostedLegalPolicy, HostedLegalRow, POLICY_DOCUMENT_MAX_LEN,

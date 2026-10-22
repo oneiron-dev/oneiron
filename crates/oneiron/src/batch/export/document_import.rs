@@ -26,10 +26,10 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SKILL,
-    ENTITY_TYPE_WORKFLOW,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION,
+    ENTITY_TYPE_SKILL, ENTITY_TYPE_WORKFLOW,
 };
-use crate::serialize::ExportBody;
+use crate::serialize::{ExportBody, ExportBodyFile};
 use crate::temporal::TimeRange;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
@@ -148,7 +148,17 @@ impl Vault {
         // The custody values a result body's sweep replaces, and the body
         // instances it spills into, read and minted before the writer opens.
         let known = super::result_reserve::staged_result_sinks(self, &archive)?;
+        // FIX 3677: every body file stays pinned until the import commits or
+        // aborts, so the collector takes none a row here is compared with or
+        // staged into. The File ASSETs' instances are minted now, as the
+        // results' are; the values custody holds are read in the writer.
+        let _bodies = self.pin_all_result_bodies();
+        let mint = super::asset_reserve::reserved_asset_mint(self, &archive)?;
         let mut wtxn = self.store.env.write_txn()?;
+        let assets = super::asset_reserve::ArchiveAssets {
+            mint,
+            known: self.asset_stream_known_in_txn(&mut wtxn)?,
+        };
         if let Some(actor) = actor {
             super::expression_import::validate_local_actor(self, &wtxn, actor)?;
         }
@@ -185,7 +195,19 @@ impl Vault {
                 return Err(invalid("import ID belongs to an off-record overlay"));
             }
             let row = imported_row(self, &wtxn, &archive, &at, projects.as_ref())?;
-            let existing = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &wtxn, &id)?;
+            let existing = match &row.body {
+                // OF-222, FIX 3677: a file body meets no lossy form and no
+                // copy of the row stored under its id.
+                ExportBody::File(file) => {
+                    if file_row_stored(self, &wtxn, &id, &row, file, &archive.files)? {
+                        validate_existing_source(self, &wtxn, &row, &archive, &at)?;
+                        unchanged_entities += 1;
+                        continue;
+                    }
+                    None
+                }
+                _ => crate::ports::EntityStoreRead::port_entity_raw(&self.store, &wtxn, &id)?,
+            };
             if let Some(existing) = existing {
                 if !live_entity_row_in_txn(&self.store, &wtxn, &id)?.is_live() {
                     return Err(invalid("import ID collides with a deleted entity"));
@@ -193,7 +215,7 @@ impl Vault {
                 // A file-plane ASSET compares as its body, never the manifest
                 // its row keeps (FIX 3677).
                 let existing = self.materialized_row_in_txn(&wtxn, &id, existing)?;
-                if matches_archived_row(&row, &existing, &archive.files)? {
+                if matches_row(&row, &existing, &row.body) {
                     validate_existing_source(self, &wtxn, &row, &archive, &at)?;
                     unchanged_entities += 1;
                     continue;
@@ -255,7 +277,8 @@ impl Vault {
                         super::expression_import::restore(id, self, &mut wtxn, actor, &mut archive)?
                     }
                     _ => {
-                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects.as_ref())?;
+                        let projects = projects.as_ref();
+                        insert_ready_row(self, &mut wtxn, &mut archive, id, projects, &assets)?;
                         (Vec::new(), 0)
                     }
                 };
@@ -408,6 +431,7 @@ fn insert_ready_row<R: Read + Seek>(
     archive: &mut IndexedArchive<'_, R>,
     id: EntityId,
     projects: Option<&ProjectRootMap>,
+    assets: &super::asset_reserve::ArchiveAssets,
 ) -> Result<()> {
     if !archive.index.remove(Tag::Pending, id.as_bytes())? {
         return Err(Error::InvariantViolation("import queue lost row"));
@@ -417,11 +441,26 @@ fn insert_ready_row<R: Read + Seek>(
         .entity_at(&id)?
         .ok_or(Error::InvariantViolation("import queue lost row"))?;
     let row = imported_row(vault, wtxn, archive, &at, projects)?;
-    let body = imported_body(&row, &archive.index, &archive.files)?;
     let occurred = TimeRange {
         start: row.occurred_start,
         end: row.occurred_end,
     };
+    // OF-222, FIX 3677: an ASSET's file body streams from the archive into
+    // the ASSET stager, checked to its end, and its put takes the batch door
+    // every ASSET put takes, in this writer: a body the stager publishes as
+    // a file goes as its manifest, any other as its bytes, as a slice put
+    // holds them.
+    if let ExportBody::File(file) = &row.body {
+        let mut staged = None;
+        file.with_reader(&archive.files, &mut |body| {
+            let known = assets.known.clone();
+            staged = Some(vault.stage_asset_body(body, None, known, assets.mint.as_ref())?);
+            Ok(())
+        })?;
+        let staged = staged.ok_or(Error::InvariantViolation("archive file body not staged"))?;
+        return vault.put_asset_body_in_txn(wtxn, &id, occurred, row.learned_at, &staged);
+    }
+    let body = imported_body(&row, &archive.index, &archive.files)?;
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
@@ -634,8 +673,10 @@ fn parse_digest(text: &str) -> Result<[u8; 32]> {
 
 /// The owner's own archive's custody records, each restored under its own id
 /// through the custody registration door, in the import's transaction. A
-/// record already here byte for byte is unchanged; any other collision is
-/// refused, never overwritten. A record the archive carried as its handle
+/// record already here, its value opened, the same as the archive's is
+/// unchanged; any other collision is refused, never overwritten; one the
+/// comparison cannot read stays as it is, skipped, warned (CALLS `KS-6
+/// archive same id`). A record the archive carried as its handle
 /// only is returned as a missing secret to re-enter; one an admitted revoke
 /// ended is counted as skipped (FIX 4852).
 fn restore_secrets_in_txn<R: Read + Seek>(
@@ -679,17 +720,21 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         {
-            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
-                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
-                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                })
-            {
-                unchanged += 1;
-                continue;
+            match crate::secret_custody::archive_same_custody_in_txn(
+                &vault.store,
+                &id,
+                &existing,
+                &record,
+            ) {
+                crate::secret_custody::ArchiveSameId::Same => unchanged += 1,
+                crate::secret_custody::ArchiveSameId::Pending => skipped += 1,
+                crate::secret_custody::ArchiveSameId::Different => {
+                    return Err(invalid(
+                        "import ID collides with a different custody record",
+                    ));
+                }
             }
-            return Err(invalid(
-                "import ID collides with a different custody record",
-            ));
+            continue;
         }
         if crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)? {
             restored += 1;
@@ -937,20 +982,87 @@ pub(super) fn matches_row(row: &ExportEntity, raw: &[u8], expected: &ExportBody)
         && ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], row.entity_type) == *expected
 }
 
-/// [`matches_row`] for the row as the archive carries it. A file body
-/// (OF-222) matches only the very bytes it names; any other stored row under
-/// its id is a collision, never read through a lossy form.
-fn matches_archived_row(row: &ExportEntity, raw: &[u8], files: &dyn ArchiveFiles) -> Result<bool> {
-    let ExportBody::File(file) = &row.body else {
-        return Ok(matches_row(row, raw, &row.body));
-    };
-    if matches_header(row, raw)
-        && raw.len() as u64 == ENTITY_METADATA_HEADER_LEN as u64 + file.bytes()
-        && raw.get(ENTITY_METADATA_HEADER_LEN..) == Some(file.read(files)?.as_slice())
-    {
-        return Ok(true);
+/// Whether the row this vault stores under `id` is the archived `row`, whose
+/// body is the archive file `file` (OF-222, FIX 3677): `false` when it
+/// stores none. A file body matches only the very bytes it names, read a
+/// chunk at a time from the archive and from the stored row where it lies
+/// (a file-plane ASSET's stored file read and checked as it streams), never
+/// copied; any other stored row under its id, a deleted one included, is a
+/// collision, never read through a lossy form.
+fn file_row_stored(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    row: &ExportEntity,
+    file: &ExportBodyFile,
+    files: &dyn ArchiveFiles,
+) -> Result<bool> {
+    let store = &vault.store;
+    let stored = crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, id, |raw| {
+        // `live_entity_row_in_txn`'s verdict, without its copy of the body.
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, id)?;
+        if state.deleted || state.stale {
+            return Err(invalid("import ID collides with a deleted entity"));
+        }
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        let manifest = match header.entity_type {
+            ENTITY_TYPE_ASSET => crate::store::asset_file_in_txn(store, txn, id, body)?,
+            _ => None,
+        };
+        let len = match &manifest {
+            Some(manifest) => manifest.facts.len,
+            None => body.len() as u64,
+        };
+        let mut same = false;
+        if matches_header(row, raw) && len == file.bytes() {
+            file.with_reader(files, &mut |archived| {
+                same = match &manifest {
+                    None => same_bytes(&mut &*body, archived)?,
+                    Some(manifest) => {
+                        let read = |stored: &mut dyn Read| same_bytes(stored, archived);
+                        vault.with_admitted_asset_file_in_txn(txn, manifest, read)?
+                    }
+                };
+                Ok(())
+            })?;
+        }
+        if !same {
+            return Err(invalid("import ID collides with different entity data"));
+        }
+        Ok(())
+    })?;
+    Ok(stored.is_some())
+}
+
+/// Whether `ours` and `theirs` read as the same bytes, a chunk at a time;
+/// `false` at their first difference.
+fn same_bytes(ours: &mut dyn Read, theirs: &mut dyn Read) -> Result<bool> {
+    let (mut mine, mut other) = (vec![0_u8; 64 * 1024], vec![0_u8; 64 * 1024]);
+    loop {
+        let read = fill(ours, &mut mine)?;
+        if read == 0 {
+            return Ok(fill(theirs, &mut other[..1])? == 0);
+        }
+        if fill(theirs, &mut other[..read])? != read || mine[..read] != other[..read] {
+            return Ok(false);
+        }
     }
-    Err(invalid("import ID collides with different entity data"))
+}
+
+/// Reads into `buf` until it is full or `read` ends; how much it read.
+fn fill(read: &mut dyn Read, buf: &mut [u8]) -> Result<usize> {
+    let mut at = 0;
+    while at < buf.len() {
+        match read.read(&mut buf[at..]) {
+            Ok(0) => break,
+            Ok(count) => at += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(at)
 }
 
 /// The stored row's type and times are the archived row's.

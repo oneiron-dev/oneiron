@@ -34,6 +34,9 @@ side_tables! {
     /// Birth-position scope stamp (kind, birth facet, worlds/facets/bands/audience/sensitivity) for
     /// one stored record, used by scoped read/export/delete. Key: id16.
     SCOPE_RECORD: VaultMeta b"scope:record:v2:" LegacyJson;
+    /// One row of an Arc's durable work generation (FIX 7509 PR3): its manifest, a part's progress or
+    /// its assembly, as refs, pins, ranges and step refs only. Key: string (work id hex + typed suffix).
+    SCOPE_SUMMARY_ARC_WORK: VaultMeta b"scope_summary:arc_work:v1:" Named;
     /// Active scope-summary projection and its last observed input hash. Key: hash32.
     SCOPE_SUMMARY_PROJECTION: VaultMeta b"scope_summary:projection:v1:" Named;
     /// Owner-approved summary-purpose descriptor. Key: string (descriptor id).
@@ -334,6 +337,12 @@ side_tables! {
     /// Persisted audit report of a judge run against the held-out fixture set, keyed by run time then
     /// evidence sequence. Key: u64be + u64be.
     SKILL_ATTRIBUTION_AUDIT: VaultMeta b"skill_attribution:audit:v1:" Raw;
+    /// One label the attribution judge settled on a terminal attempt's outcome evidence, kept
+    /// whatever its subject routing (OF-568 L10): source id, evidence sequence, receipt, actor
+    /// and skill (each nil once erased), label, share, judge revision, time. Key: hash32 (blake3
+    /// of the terminal pack receipt id) + u64be (evidence sequence).
+    SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
+        => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
     /// One matched-fork contribution check: the verdict and the pair it was read from (both fork
     /// receipts and results, the anchor, the axis). Key: string (attempt receipt "\0" skill hex
     /// "\0" axis).
@@ -349,15 +358,18 @@ side_tables! {
     /// One minted skill-edit proposal awaiting gated apply, keyed by judgment sequence. Key: u64be.
     SKILL_ATTRIBUTION_EDIT_PROPOSAL: VaultMeta b"skill_attribution:edit_proposal:v1:" Raw;
     /// One recorded outcome-evidence row (hand-rolled MessagePack map) awaiting attribution routing,
-    /// keyed by sequence. Key: u64be.
-    SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw;
+    /// keyed by sequence; its skill is nil once erased. Key: u64be.
+    SKILL_ATTRIBUTION_EVIDENCE: VaultMeta b"skill_attribution:evidence:v1:" Raw
+        => crate::skill_attribution::erase_attribution_evidence_skill_in_txn;
     /// Monotonic counter (u64be) minting the next evidence sequence number. Key: ().
     SKILL_ATTRIBUTION_EVIDENCE_SEQUENCE: VaultMeta b"skill_attribution:evidence_sequence:v1" Raw;
     /// Judge revision (UTF-8) that routed one judgment, stamped once. Key: u64be (evidence
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
-    /// One durable attribution verdict routed from evidence, keyed by evidence sequence. Key: u64be.
-    SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw;
+    /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
+    /// charges an erased skill goes, with the edit proposals naming it. Key: u64be.
+    SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
+        => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares. Key: credit receipt id.
     SKILL_ATTRIBUTION_LATE_CREDIT: VaultMeta b"skill_attribution:late_credit:v1:" Named;
     /// The highest attribution evidence sequence the positive lane has read. Key: ().
@@ -554,8 +566,9 @@ side_tables! {
     /// A planned spawn under one asker's intent key (DOOR-111): the asker, the original ask and
     /// its digest, the custody phase and fence, the placed stamp and plan receipt or the kept
     /// refusal, and a launched team's frozen start and pack and its leader runs' exposures. An
-    /// actor's erase forgets the asker and keeps the row. Key: blake3 (32) of the framed asker,
-    /// parent and intent key.
+    /// actor's scrub forgets the asker and keeps the row; behind the hard-delete marker, an erase
+    /// of the asker or of the AGENT_DEF its plan seats leaves the row's erased form: its ids,
+    /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
     SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64

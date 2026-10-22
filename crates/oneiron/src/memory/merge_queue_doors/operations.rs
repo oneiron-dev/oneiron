@@ -1,3 +1,7 @@
+//! Merge queue operations: enqueue, stage, requeue, land, settle slow batches and recover.
+//! `Memory::merge_queue_enqueue_as` is its call surface.
+//! `memory::merge_queue_doors::types` defines the records these take and return.
+
 use super::*;
 use crate::merge_queue::{MergeFile, MergeProposal};
 use crate::repo_mutation::mount::RepoMountRef;
@@ -100,7 +104,10 @@ impl Memory<'_> {
     ) -> MemoryResult<MergeQueuePointersView> {
         self.merge_queue_owner(owner)?;
         let repo = self.merge_queue_repo(input.repo)?;
-        let queue = self.merge_queue_of(&repo)?;
+        // A served source's missing projection is put back first (FIX 6869).
+        let queue = self
+            .vault
+            .open_queue_for_recovery(repo.repo, &repo.repo_ref)?;
         let pointers = queue.recover()?;
         // A no-op recovery wakes the queue driver too (FIX 6868).
         self.vault.store.notify_attempt_observers();

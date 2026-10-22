@@ -1,7 +1,8 @@
 //! Budgeted interest-queue spending, one thing per entity or topic (OF-498c,
 //! see `things`): its world, facet and private thread, and the entity a
 //! span's reading bound, else the structural topic. A thing may span
-//! conversations; its children are cut by conversation.
+//! conversations, and its child in each project reads it across them (FIX
+//! 7524, 8724).
 //!
 //! A Timer wake that names no partition (FIX 336) plans the same spending
 //! at its enqueue: a typed parent, its children and the remainder land in
@@ -11,7 +12,7 @@ use std::collections::BTreeSet;
 
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::{
-    ConsolidationWatermark, enqueue_parented_partition_plans_in_txn, partition_turns_in_txn,
+    ConsolidationWatermark, enqueue_parented_branch_plans_in_txn, partition_turns_in_txn,
     read_partition_turns_in_txn,
 };
 use crate::dreamer_runner::{
@@ -22,6 +23,7 @@ use crate::{Result, Vault};
 
 use super::{recipes, sieve};
 
+mod exposure;
 mod things;
 
 pub(crate) const CONTINUE_ATTEMPT: &str = "dreamer.nightly.continue";
@@ -195,16 +197,11 @@ fn plan_children_in_txn(
     // gets its children, so the night spends the spans it spent before.
     plans.truncate(policy.nightly_children as usize);
     let audiences = things::audiences_in_txn(vault, txn, &plans)?;
-    let thing_plans = things::plan_things(&plans, &spans, &audiences);
+    let exposures = exposure::exposures_in_txn(vault, txn, &plans);
+    let thing_plans = things::plan_things(&plans, &spans, &audiences, &exposures);
     let child_plans: Vec<_> = thing_plans
         .iter()
-        .flat_map(|thing| {
-            let payload = thing.key.payload();
-            thing
-                .children
-                .iter()
-                .map(move |child| (child.clone(), payload))
-        })
+        .flat_map(|thing| thing.children.iter().cloned())
         .collect();
     tracing::debug!(
         partitions = plans.len(),
@@ -214,9 +211,13 @@ fn plan_children_in_txn(
             .filter(|thing| thing.key.entity.is_some())
             .count(),
         children = child_plans.len(),
-        "nightly children planned one per thing"
+        spanning = child_plans
+            .iter()
+            .filter(|child| child.parts.len() > 1)
+            .count(),
+        "nightly children planned, one per thing and project"
     );
-    let outcomes = enqueue_parented_partition_plans_in_txn(
+    let outcomes = enqueue_parented_branch_plans_in_txn(
         vault,
         txn,
         scope,
@@ -225,9 +226,14 @@ fn plan_children_in_txn(
         attempt.attempt.run_id.as_deref(),
         now,
     )?;
+    if outcomes.len() != child_plans.len() {
+        return Err(crate::Error::InvariantViolation(
+            "nightly children and their enqueue outcomes differ in count",
+        ));
+    }
     let children = outcomes
-        .into_iter()
-        .map(|(_, outcome)| match outcome {
+        .iter()
+        .map(|outcome| match outcome {
             crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Enqueued(status)
             | crate::dreamer_runner::EnqueueDreamerAttemptOutcome::Existing(status) => {
                 status.attempt.id
@@ -237,8 +243,26 @@ fn plan_children_in_txn(
     crate::dreamer_consolidation::nightly_merge::enqueue_in_txn(
         vault, txn, attempt, children, now,
     )?;
-    for span in thing_plans.iter().flat_map(|thing| &thing.spans) {
-        sieve::spend_consumed_in_txn(&vault.store, txn, span, attempt.attempt.id, now)?;
+    // Each spent span names its own thing's child that carries its TURN,
+    // enqueued now or standing, never this parent (FIX 7498, 8723): a TURN
+    // several things hold is carried by each, and each span by its own.
+    let mut at = 0_usize;
+    for thing in &thing_plans {
+        let end = at + thing.children.len();
+        let carriers = sieve::consumed_carriers(&child_plans[at..end], &outcomes[at..end])?;
+        at = end;
+        for span in &thing.spans {
+            // A spent span rides with its own thing, one of whose children
+            // holds its TURN: a missing carrier is a fault.
+            let carrier =
+                carriers
+                    .get(&span.turn)
+                    .copied()
+                    .ok_or(crate::Error::InvariantViolation(
+                        "a spent sieve span's TURN has no carrying child",
+                    ))?;
+            sieve::spend_consumed_in_txn(&vault.store, txn, span, carrier, now)?;
+        }
     }
     Ok(())
 }

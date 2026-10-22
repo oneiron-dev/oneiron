@@ -30,14 +30,17 @@ mod compaction;
 #[cfg(all(test, feature = "code-sandbox-wasmtime"))]
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
+pub mod browser_planner;
 pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
+mod confession_wording;
 mod connector_event;
 mod contribution;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
+mod dreamer_thing;
 mod eval_authoring;
 pub(crate) mod failure_signals;
 mod feedback_report_delivery;
@@ -52,6 +55,7 @@ pub(crate) mod payer_funding;
 mod policy;
 mod question_timer;
 pub(crate) mod resident_craft;
+pub mod scoped_child;
 pub(crate) mod self_heal_detectors;
 pub mod shadow_runner;
 mod skill_author;
@@ -80,7 +84,8 @@ pub(crate) use lens_callbacks::{LensCallback, queue_lens_callback};
 pub(crate) use local_vision::LocalVisionModel;
 pub(crate) use policy::route_dreamer_extraction;
 pub use status::{
-    AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
+    AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, UnservedNote,
+    UnservedReason, WorkState, WorkStatus,
 };
 pub(crate) use weave_lens::{
     WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,
@@ -145,6 +150,8 @@ pub struct AiHandle {
     /// The compaction writer factory chat and code mode share, settled when
     /// the host attaches (FIX 4465 D).
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
+    /// The wording runs are asked for their confession in (FIX 8696).
+    confession: Arc<str>,
 }
 
 impl AiHandle {
@@ -202,6 +209,7 @@ impl AiHandle {
             host_compaction: Arc::default(),
             device: false,
             writer_compaction: Arc::default(),
+            confession: confession_wording::of(models),
         }
     }
 
@@ -1144,6 +1152,7 @@ fn start_workflows(
             retry_backoff_secs: models.workflows.retry_backoff_secs,
             spent: Default::default(),
             host,
+            confession: confession_wording::of(Some(models)),
         },
         Arc::clone(status),
         decisions,

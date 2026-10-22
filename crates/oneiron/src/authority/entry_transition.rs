@@ -16,6 +16,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
+pub(super) use super::entry_transition_predicates::{
+    active_participant_keys, entry_is_retired, has_authority_consent, lands_restriction_only,
+    op_is_retired_device_op,
+};
+
 #[expect(clippy::large_enum_variant, reason = "transient per-entry fold value")]
 pub(in crate::authority) enum EntryFold {
     Ready(FoldState),
@@ -176,6 +181,17 @@ pub(super) fn fold_entry_state(
 
     if entry.vault_id != Some(state.vault_id) {
         return EntryFold::Invalid(AuthorityFoldIssue::WrongVault(hash));
+    }
+    // A frontier join stands for its parents' merge, signed by the key that
+    // signs the act it leads to (FIX 7908): only its signer's sequence moves.
+    if let AuthorityOp::FrontierJoin(join) = &entry.op {
+        let standing = (context.pin, context.machine_standing);
+        if let Err(issue) =
+            super::frontier_join::apply_frontier_join(&mut state, entry, join, hash, standing)
+        {
+            return EntryFold::Invalid(issue);
+        }
+        return EntryFold::Ready(state);
     }
     // Signed by the carrier's install key, never a roster key: any live
     // linked machine carries the owner's authenticated say-so (mesh contract
@@ -459,7 +475,9 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     if let AuthorityOp::FederationLifecycle(action) = &entry.op {
-        if let Err(reason) = apply_federation_lifecycle(&mut state, action, context) {
+        if let Err(reason) =
+            apply_federation_lifecycle(&mut state, action, context, (hash, &signer))
+        {
             return EntryFold::Invalid(AuthorityFoldIssue::FederationLifecycleRejected {
                 entry: hash,
                 reason,
@@ -492,8 +510,9 @@ pub(super) fn fold_entry_state(
 }
 
 /// Whether a residence result's signer is the install key of the machine it
-/// names under a chain that says "yours" in the result's parent state, past
-/// that key's last sequence there.
+/// names under a chain that says "yours" in the result's parent state, or
+/// under that machine's live, answered roster revision there, mine or not
+/// (FIX 8888), past that key's last sequence there.
 fn residence_result_stands(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -507,6 +526,11 @@ fn residence_result_stands(
         machine
             .chains()
             .any(|(_, chain)| chain.says_yours() && chain.profile.machine_key == *signer)
+            || machine.roster.as_ref().is_some_and(|roster| {
+                roster.is_live()
+                    && roster.profile.role.answered()
+                    && roster.profile.machine_key == *signer
+            })
     }) {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
@@ -518,85 +542,6 @@ fn residence_result_stands(
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     Ok(())
-}
-
-/// A row a sequence floor refuses only to restriction (Astra #1430): a world
-/// edit, a grant travel choice, a checkpoint policy choice, a home pick, a
-/// person's conversation training choice, or a machine revision. The roster rule reads each as a replica with no floor
-/// does; this install never counts what it grants.
-pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::WorldPrivacy(_)
-            | AuthorityOp::GrantTravelSet(_)
-            | AuthorityOp::CheckpointPolicySet(_)
-            | AuthorityOp::HomeNodePick(_)
-            | AuthorityOp::ConversationTrainingSet(_)
-            | AuthorityOp::ConversationTrainingVaultSet(_)
-            | AuthorityOp::MachineProfile(_)
-    )
-}
-
-/// A device-key op the host-rooted redesign retired (identity canon,
-/// op-vocabulary amendment 2026-08-05): client enrollment is pairing-only,
-/// and `RotateKey` became the re-root. An agent-only enrollment is not one of
-/// them: it is the host enrolling an engine MACHINE writer (ARCH-0053 seeds
-/// system actors through the authority registry at bootstrap), and an agent
-/// key holds no consent, so it widens no authority.
-pub(super) fn op_is_retired_device_op(op: &AuthorityOp) -> bool {
-    match op {
-        AuthorityOp::EnrollDevice { device } => device.roles != ROLE_AGENT,
-        AuthorityOp::RotateKey { .. } => true,
-        _ => false,
-    }
-}
-
-/// Whether the vault door refuses `entry` as a retired device-key op. Only a
-/// verified re-root's pre-handoff ancestry may still use one; the legacy
-/// reference fold (no handoff set) keeps the historical rule.
-pub(super) fn entry_is_retired(
-    entry: &AuthorityLogEntry,
-    hash: AuthorityEntryHash,
-    context: FoldContext<'_>,
-) -> bool {
-    op_is_retired_device_op(&entry.op)
-        && context
-            .pre_handoff_entries
-            .is_some_and(|permitted| !permitted.contains(&hash))
-}
-
-pub(super) fn active_participant_keys(
-    state: &FoldState,
-    entry: &AuthorityLogEntry,
-) -> std::result::Result<BTreeSet<AuthorityKey>, AuthorityFoldIssue> {
-    let mut participants = BTreeSet::new();
-    for signature in std::iter::once(&entry.signer).chain(entry.cosigns.iter()) {
-        let key = &signature.public_key;
-        if state
-            .roster
-            .get(key)
-            .is_none_or(|device| device.revoked || device.roles == 0)
-        {
-            return Err(AuthorityFoldIssue::SignerNotInAncestry(
-                authority_entry_hash(entry).unwrap_or([0; 32]),
-            ));
-        }
-        participants.insert(key.clone());
-    }
-    Ok(participants)
-}
-
-pub(super) fn has_authority_consent(
-    state: &FoldState,
-    participants: &BTreeSet<AuthorityKey>,
-    context: FoldContext<'_>,
-) -> bool {
-    participants.iter().any(|key| {
-        state
-            .roster
-            .get(key)
-            .is_some_and(|device| context.device_can_consent(device))
-    })
 }
 
 fn state_has_authority_consent(state: &FoldState, context: FoldContext<'_>) -> bool {
@@ -645,6 +590,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
-        | AuthorityOp::OwnerWorkCancel(_) => false,
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::FrontierJoin(_) => false,
     }
 }

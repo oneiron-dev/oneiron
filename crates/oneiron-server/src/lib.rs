@@ -69,6 +69,7 @@ pub mod logging;
 mod machine;
 pub mod managed;
 pub mod mcp;
+mod model_artifacts;
 pub mod models;
 mod oauth_relay;
 mod oneironer;

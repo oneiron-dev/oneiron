@@ -16,13 +16,15 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit", world: "guest" });
 }
 
+use super::source::{PreparedSource, prepare_source, split_guest_error};
 use super::{SandboxBoundaryAdapter, SandboxBoundaryContract, SandboxGuestTier};
 use crate::engine_executor::{
     CANCEL_POLL_SLICE, JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep,
     JsCodeModeStepOutcome, JsCodeModeStream, StepCancellation,
 };
 use crate::{Error, Result};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
@@ -30,16 +32,24 @@ use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder};
 /// Component ABI shipped for hosts building the plain-JS interpreter artifact.
 pub const GUEST_WIT: &str = include_str!("../../../wit/code-run.wit");
 
-/// Per-step ceilings. Zero ceilings are never interpreted as unlimited.
+/// Per-step ceilings, and one advisory threshold (`host_calls`). Zero
+/// ceilings are never interpreted as unlimited.
 #[derive(Debug, Clone, Copy)]
 pub struct ComponentBudget {
     pub fuel: u64,
     pub memory_bytes: usize,
-    /// Cutoff for guest execution and new host calls, not cancellation of host code.
-    /// An admitted synchronous host callback runs to completion. Its elapsed time
-    /// counts, so an overrun refuses further guest work once it returns. Hosts must
-    /// bound their own callbacks; this is not a hard end-to-end RPC timeout.
+    /// The step's time allowance for guest execution and new host calls, not
+    /// cancellation of host code. An admitted synchronous host callback runs to
+    /// completion, and its elapsed time counts. Once the allowance is spent the
+    /// step stops at its next safe point (before another host call or output, or
+    /// at the guest's epoch check) and answers the typed `step_deadline` stop: not
+    /// done, not failed, its finished host calls kept (FIX 7665). This is not a
+    /// hard end-to-end RPC timeout.
     pub wall_time: Duration,
+    /// An advisory observation threshold, never a ceiling (FIX 8676): each
+    /// step counts its host calls, and a count past it only marks the
+    /// step's tracing observation. No count refuses a call or ends a step.
+    /// Zero turns the marker off.
     pub host_calls: u32,
     pub message_bytes: usize,
     pub foreign_budget: super::microvm::ExecutionBudget,
@@ -70,6 +80,9 @@ pub struct WasmtimeComponentRuntime {
     component: Component,
     component_bytes: std::sync::Arc<[u8]>,
     foreign_egress: Option<std::sync::Arc<dyn oneiron_container::EgressRelay>>,
+    /// The host's measured disk floor foreign steps' proposed files spool on
+    /// (FIX 7650); none spools them as before.
+    proposal_spool: Option<std::sync::Arc<dyn super::ProposalSpoolFloor>>,
     budget: ComponentBudget,
     adapter: Option<Box<dyn SandboxBoundaryAdapter + Send>>,
 }
@@ -84,7 +97,6 @@ impl WasmtimeComponentRuntime {
         if budget.fuel == 0
             || budget.memory_bytes == 0
             || budget.wall_time.is_zero()
-            || budget.host_calls == 0
             || budget.message_bytes == 0
             || !budget.foreign_budget.is_bounded()
             || budget.foreign_budget.pids > 4096
@@ -104,6 +116,7 @@ impl WasmtimeComponentRuntime {
             component,
             component_bytes: std::sync::Arc::from(bytes),
             foreign_egress: None,
+            proposal_spool: None,
             budget,
             adapter: None,
         })
@@ -118,6 +131,7 @@ impl WasmtimeComponentRuntime {
             component: self.component.clone(),
             component_bytes: std::sync::Arc::clone(&self.component_bytes),
             foreign_egress: self.foreign_egress.clone(),
+            proposal_spool: self.proposal_spool.clone(),
             budget: self.budget,
             adapter: None,
         }
@@ -146,17 +160,24 @@ impl WasmtimeComponentRuntime {
         step: JsCodeModeStep<'_>,
         host: &mut dyn JsCodeModeHost,
     ) -> Result<JsCodeModeStepOutcome> {
-        self.execute_cancellable(step, host, &StepCancellation::never())
+        let prepared = prepare_source(step.script);
+        let step = JsCodeModeStep {
+            script: prepared.executed(),
+            ..step
+        };
+        self.execute_cancellable(step, &prepared, host, &StepCancellation::never())
     }
 
     /// Runs one first-party step in process, until it finishes, fails, meets
     /// its deadline or is cancelled (FIX 600). A cancel stops the guest
     /// between host operations: the host loop returns at its next slice, and
     /// the store's epoch callback traps the guest on its own token. The
-    /// worker is joined before this returns.
+    /// worker is joined before this returns. `step.script` is what
+    /// `prepared` executes; a guest failure names its TypeScript position.
     fn execute_cancellable(
         &mut self,
         step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
         host: &mut dyn JsCodeModeHost,
         cancel: &StepCancellation,
     ) -> Result<JsCodeModeStepOutcome> {
@@ -199,6 +220,7 @@ impl WasmtimeComponentRuntime {
                     &component,
                     budget,
                     step.script,
+                    prepared,
                     step.boundary,
                     events.clone(),
                     deadline,
@@ -223,8 +245,52 @@ impl WasmtimeComponentRuntime {
         // A cancel seen by the end wins over whatever else the step ended
         // with: a cancelled step never counts as run.
         cancel.check()?;
-        bridge.held.into_outcome(outcome?)
+        match outcome? {
+            Stepped::Ended(outcome) => bridge.held.into_outcome(outcome),
+            Stepped::Deadline(calls) => bridge.held.into_deadline_outcome(&calls),
+        }
     }
+}
+
+/// How a step's run ended: the guest's own end, or its time allowance reached
+/// at a safe point, with the host calls that finished before it (FIX 7665).
+enum Stepped {
+    Ended(JsCodeModeStepOutcome),
+    Deadline(Vec<&'static str>),
+}
+
+/// The typed stop a step answers when its time allowance is spent.
+const STEP_DEADLINE: &str = "step_deadline";
+
+/// The model's observation of a `step_deadline` stop: the step is not done
+/// and did not fail, and every host call that finished in it took effect.
+fn step_deadline_observation(calls: &[&'static str]) -> String {
+    let mut counted: Vec<(&str, usize)> = Vec::new();
+    for &name in calls {
+        let seen = counted.iter().position(|(seen, _)| *seen == name);
+        match seen {
+            Some(at) => counted[at].1 += 1,
+            None => counted.push((name, 1)),
+        }
+    }
+    let finished = if counted.is_empty() {
+        "none".to_owned()
+    } else {
+        counted
+            .iter()
+            .map(|(name, count)| match count {
+                1 => (*name).to_owned(),
+                n => format!("{name} x{n}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "{STEP_DEADLINE}: this step used its time allowance and stopped at a safe point; it did \
+         not fail. Host calls that finished in it took effect and keep their answers in this \
+         run: {finished}. Continue from them in the next step without repeating a write that \
+         finished, and keep each step's host work short."
+    )
 }
 
 #[expect(
@@ -236,11 +302,12 @@ fn execute_component(
     component: &Component,
     budget: ComponentBudget,
     script: &str,
+    prepared: &PreparedSource<'_>,
     boundary: SandboxBoundaryContract,
     events: mpsc::SyncSender<HostEvent>,
     deadline: Instant,
     cancel: StepCancellation,
-) -> Result<JsCodeModeStepOutcome> {
+) -> Result<Stepped> {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
         .memories(1)
@@ -254,7 +321,7 @@ fn execute_component(
         State {
             events,
             limits,
-            remaining_calls: budget.host_calls,
+            calls: typed::ComponentCallObservation::new(budget.host_calls),
             message_bytes: budget.message_bytes,
         },
     );
@@ -267,10 +334,15 @@ fn execute_component(
     // this store, but must not cancel it before its own host-owned deadline.
     // Its own step's cancel, read from its own token first, traps it.
     let stop = cancel.clone();
+    // Set only by the deadline's own trap, so a spent allowance reads as the
+    // typed stop and every other trap stays a failure.
+    let spent = Arc::new(AtomicBool::new(false));
+    let latch = Arc::clone(&spent);
     store.epoch_deadline_callback(move |_| {
         if stop.is_cancelled() {
             Err(wasmtime::Error::msg("component step cancelled"))
         } else if Instant::now() >= deadline {
+            latch.store(true, Ordering::Relaxed);
             Err(wasmtime::Error::msg("component deadline exceeded"))
         } else {
             Ok(wasmtime::UpdateDeadline::Continue(1))
@@ -280,29 +352,35 @@ fn execute_component(
     // followed by an epoch bump this store sees.
     cancel.check()?;
     if Instant::now() >= deadline {
-        return Err(failure("component deadline exceeded before execution"));
+        // No guest code has run: the whole step is still to do.
+        return Ok(Stepped::Deadline(Vec::new()));
     }
     let mut linker = Linker::new(engine);
     typed::link_imports(&mut linker, boundary)?;
-    let instance = linker
-        .instantiate(&mut store, component)
-        .map_err(|_| failure("component imports or instantiation refused"))?;
+    let instance = match linker.instantiate(&mut store, component) {
+        Ok(instance) => instance,
+        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) => return Err(failure("component imports or instantiation refused")),
+    };
     let run = instance
         .get_typed_func::<(String,), (std::result::Result<bindings::StepResult, String>,)>(
             &mut store, "run-step",
         )
         .map_err(|_| failure("component run-step ABI mismatch"))?;
-    // Wasmtime performs canonical post-return inside call; either trap refuses the step.
-    let (output,) = run
-        .call(&mut store, (script.to_owned(),))
-        .map_err(|_| failure("component execution trapped"))?;
-    let output = output.map_err(|message| guest_failure(&message))?;
+    // Wasmtime performs canonical post-return inside call; a trap refuses the
+    // step, except the deadline's own, which stops it.
+    let (output,) = match run.call(&mut store, (script.to_owned(),)) {
+        Ok(output) => output,
+        Err(_) if spent.load(Ordering::Relaxed) => return Ok(Stepped::Deadline(Vec::new())),
+        Err(_) => return Err(failure("component execution trapped")),
+    };
+    let output = output.map_err(|message| guest_failure(&message, prepared))?;
     // This runtime is the first-party lane. Proposal-only execution belongs to
     // the microVM guest; never silently turn a returned proposal into a write.
     if !output.proposals.is_empty() {
         return Err(failure("in-process tier does not admit proposal deltas"));
     }
-    wire::decode_output(&output.result_json, budget.message_bytes)
+    wire::decode_output(&output.result_json, budget.message_bytes).map(Stepped::Ended)
 }
 
 /// Answers the worker's host events until its step ends. It waits in
@@ -310,23 +388,31 @@ fn execute_component(
 /// after each host operation it admits and before it accepts the step's
 /// end: a cancel it sees wins over the deadline, an output failure or a
 /// worker failure that lands with it. An operation already admitted
-/// settles first.
+/// settles first; once the deadline has passed it admits no new one, and the
+/// step ends with the typed `step_deadline` stop (FIX 7665).
 fn drive_host(
     requests: mpsc::Receiver<HostEvent>,
     bridge: &mut Bridge<'_>,
     deadline: Instant,
-) -> Result<JsCodeModeStepOutcome> {
+) -> Result<Stepped> {
+    let mut finished = Vec::new();
     loop {
         bridge.cancel.check()?;
-        let remaining = deadline
+        let Some(remaining) = deadline
             .checked_duration_since(Instant::now())
             .filter(|d| !d.is_zero())
-            .ok_or(failure("component deadline exceeded"))?;
+        else {
+            return Ok(Stepped::Deadline(finished));
+        };
         match requests.recv_timeout(remaining.min(CANCEL_POLL_SLICE)) {
             Ok(HostEvent::Call { name, input, reply }) => {
                 bridge.cancel.check()?;
+                if Instant::now() >= deadline {
+                    return Ok(Stepped::Deadline(finished));
+                }
                 let response = wire::dispatch(bridge, name, &input);
                 bridge.cancel.check()?;
+                finished.push(name);
                 let _ = reply.send(response);
             }
             Ok(HostEvent::Output {
@@ -335,6 +421,9 @@ fn drive_host(
                 reply,
             }) => {
                 bridge.cancel.check()?;
+                if Instant::now() >= deadline {
+                    return Ok(Stepped::Deadline(finished));
+                }
                 // A refused frame traps the guest, so no step goes on with
                 // part of its result missing; the host's reason is the step's.
                 let response = wire::output(bridge, target, frame).map_err(|error| {
@@ -348,7 +437,10 @@ fn drive_host(
                 bridge.cancel.check()?;
                 return match bridge.output_failure.take() {
                     Some(error) => Err(error),
-                    None => result,
+                    None => match result {
+                        Ok(Stepped::Deadline(_)) => Ok(Stepped::Deadline(finished)),
+                        other => other,
+                    },
                 };
             }
             // A slice ended with no event: read the token and the deadline
@@ -371,6 +463,10 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
         Ok(())
     }
 
+    fn bind_proposal_spool(&mut self, spool: std::sync::Arc<dyn super::ProposalSpoolFloor>) {
+        self.proposal_spool = Some(spool);
+    }
+
     fn run_step(
         &mut self,
         step: JsCodeModeStep<'_>,
@@ -387,9 +483,28 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
     ) -> Result<JsCodeModeStepOutcome> {
         // A step cancelled before it starts stages no guest at all.
         cancel.check()?;
+        // Every source that reaches this runtime is prepared once, here,
+        // before its backend is chosen (FIX 8276).
+        let prepared = prepare_source(step.script);
+        self.run_prepared_step_cancellable(step, &prepared, host, cancel)
+    }
+
+    fn run_prepared_step_cancellable(
+        &mut self,
+        step: JsCodeModeStep<'_>,
+        prepared: &PreparedSource<'_>,
+        host: &mut dyn JsCodeModeHost,
+        cancel: &StepCancellation,
+    ) -> Result<JsCodeModeStepOutcome> {
+        // A step cancelled before it starts stages no guest at all.
+        cancel.check()?;
+        let step = JsCodeModeStep {
+            script: prepared.executed(),
+            ..step
+        };
         let outcome = match super::microvm::select_backend_for_tier(step.boundary.tier())? {
             Some(backend) => isolated::run(self, step, backend, cancel),
-            None => self.execute_cancellable(step, host, cancel),
+            None => self.execute_cancellable(step, prepared, host, cancel),
         };
         cancel.check()?;
         outcome
@@ -464,6 +579,27 @@ impl HeldOutput {
         Ok(())
     }
 
+    /// A step stopped by its deadline: its console lines so far, then the
+    /// typed `step_deadline` stop naming its finished host calls, and its
+    /// files. Not done, and not a failure (FIX 7665).
+    fn into_deadline_outcome(self, calls: &[&'static str]) -> Result<JsCodeModeStepOutcome> {
+        let mut observation = String::from_utf8(self.console)
+            .map_err(|_| failure("streamed observation is not UTF-8"))?;
+        if !observation.is_empty() && !observation.ends_with('\n') {
+            observation.push('\n');
+        }
+        observation.push_str(&step_deadline_observation(calls));
+        Ok(JsCodeModeStepOutcome {
+            done: false,
+            observation,
+            outputs: self
+                .files
+                .into_iter()
+                .map(|(path, bytes)| JsCodeModeOutput::new(path, bytes))
+                .collect(),
+        })
+    }
+
     /// The step's outcome with what was held: the answer of a finished
     /// step, else its console lines, and its files.
     fn into_outcome(self, mut outcome: JsCodeModeStepOutcome) -> Result<JsCodeModeStepOutcome> {
@@ -488,7 +624,8 @@ impl HeldOutput {
 struct State {
     events: mpsc::SyncSender<HostEvent>,
     limits: StoreLimits,
-    remaining_calls: u32,
+    /// The step's host calls, observed when its store drops (FIX 8676).
+    calls: typed::ComponentCallObservation,
     message_bytes: usize,
 }
 
@@ -503,7 +640,7 @@ enum HostEvent {
         frame: Vec<u8>,
         reply: mpsc::SyncSender<Result<u64>>,
     },
-    Finished(Result<JsCodeModeStepOutcome>),
+    Finished(Result<Stepped>),
 }
 
 /// Characters of a guest's error text a failed step keeps. A program can
@@ -511,11 +648,17 @@ enum HostEvent {
 const GUEST_ERROR_CHARS: usize = 2048;
 
 /// The guest's own error text for a failed step, so the model learns why its
-/// program stopped.
-fn guest_failure(message: &str) -> Error {
+/// program stopped. The guest's position header never reaches it; a
+/// TypeScript program's error ends with where it threw in the TypeScript
+/// source, past the text's cut, and a JavaScript program's is as it was.
+fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
+    let (message, at) = split_guest_error(message);
     let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
     if text.len() < message.len() {
         text.push_str(&format!(" … ({} bytes in all)", message.len()));
+    }
+    if let Some(position) = prepared.failure_position(at) {
+        text.push_str(&position);
     }
     Error::InvalidConfig(format!("guest reported step failure: {text}"))
 }

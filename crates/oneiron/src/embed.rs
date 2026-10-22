@@ -22,7 +22,7 @@ pub(crate) use eligibility::{
 };
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
-pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput};
+pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{
@@ -46,8 +46,8 @@ pub use space_move::{
     SpaceProbeEncoder, SpaceRef,
 };
 pub use space_probe::{
-    SPACE_PROBE_COHORT_SECS, SPACE_PROBE_MAX_TARGETS, SPACE_PROBE_QUERY_MAX_LEN,
-    SPACE_PROBES_PER_KIND, SpaceProbe, SpaceProbeAuthor, SpaceProbeReport,
+    SPACE_PROBE_COHORT_SECS, SPACE_PROBE_QUERY_MAX_LEN, SPACE_PROBES_PER_KIND, SpaceProbe,
+    SpaceProbeAuthor, SpaceProbeReport,
 };
 pub(crate) use turn::{
     erase_turn_vectors_in_txn, erased_message_turns_in_txn, mark_on_publication_in_txn,

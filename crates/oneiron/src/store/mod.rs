@@ -119,6 +119,7 @@ pub mod ports {
 mod archive_scratch;
 #[cfg(unix)]
 mod asset_body;
+mod backup_change;
 #[cfg(unix)]
 mod body_envelope;
 #[cfg(unix)]
@@ -167,8 +168,9 @@ mod tests;
 pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
-    ASSET_FILE_PLANE, AssetBodyFacts, AssetFileKind, AssetFileManifest, asset_body_file_of_row,
-    asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
+    ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
+    asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
+    stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 #[allow(
@@ -176,6 +178,10 @@ pub(crate) use asset_body::{
     reason = "FIX 5489 PR2 and PR3 receive bodies through these"
 )]
 pub(crate) use asset_body::{AssetBodySpool, StagedAssetBody};
+// FIX 6730: what a commit changes for the backup watermark.
+#[cfg(feature = "sync")]
+pub(crate) use backup_change::telemetry_batch_class;
+pub(crate) use backup_change::{BackupWriteClass, backup_content_txn_in_txn};
 #[cfg(unix)]
 pub(crate) use body_envelope::{
     BODY_FILE_SHRED_SCOPE, BODY_FILE_WRAP_CONTEXT, BODY_KEYS, BodyFile, BodyKeyRow, BodyMint,
@@ -183,15 +189,22 @@ pub(crate) use body_envelope::{
     SealingStream, SpilledBody, StagedBodyKey, bind_body_key_in_txn, body_instances_in_rows,
     body_key_in, body_key_row_in_txn, body_mint_in, custody_unavailable, erase_bodies_in_txn,
     instance_id, keep_promoted_body_key_in_txn, pin_body_custody_in_txn,
-    prune_retired_bodies_in_rows, release_body_in_txn, require_body_instances,
-    retire_body_key_in_txn, sealed_body_file_name,
+    prune_retired_bodies_in_rows, release_body_in_txn, remember_body_instances_in_txn,
+    require_body_instances, retire_body_key_in_txn, sealed_body_file_name,
+};
+// FIX 6225: a step response's ASSET under its claim's erase, and the debt
+// a shared one's final teardown settles.
+#[cfg(unix)]
+pub(crate) use body_envelope::{
+    erase_bodies_for_owner_in_txn, note_settled_inline_in_txn, settle_inline_asset_in_txn,
 };
 // KS-2B1: row-held responses under body custody.
 #[cfg(unix)]
 pub(crate) use body_envelope::{
-    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily,
-    bind_response_in_txn, carrier_row, erase_response_owner_in_txn, release_response_in_txn,
-    response_binding_in_txn, response_carrier,
+    RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, ResponseRead,
+    ResponseScan, bind_response_in_txn, carrier_row, erase_response_owner_in_txn,
+    release_response_in_txn, response_binding_in_txn, response_carrier,
+    response_owed_to_all_in_txn, settle_shared_response_in_txn,
 };
 #[cfg(unix)]
 pub(crate) use body_store::{
@@ -202,7 +215,10 @@ pub use channel_identity_receipts::*;
 #[cfg(test)]
 pub(crate) use commitment_due::*;
 // KS-6: credential values and carriers in typed custody.
-pub(crate) use credential_custody::{CredentialLeaf, credential_kind, plan_credential_values};
+pub(crate) use credential_custody::{
+    CredentialLeaf, PlannedCredential, credential_kind, credential_value_leaf_in,
+    plan_credential_value,
+};
 pub(crate) use deadline_jobs::DeadlineJobs;
 pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
@@ -220,6 +236,15 @@ pub(crate) use key_custody::{
     PublicationState, ROLLBACK_NOT_PROVEN, RecipientRetirement, RetirementProgress,
     TargetRecipients, refuse_foreign_binding, retirement_in_txn, route_custody,
     standing_retirements_in_txn, unbind_in_txn as unbind_custody_in_txn,
+};
+// FIX 6706 (L04 half): world pad compartments, for L03's pad hydration.
+#[allow(
+    unused_imports,
+    reason = "L03 02A's pad hydration (FIX 6706) calls these"
+)]
+pub(crate) use key_custody::{
+    OpenedWorldPads, PadRecipients, SealedWorldPads, WorldPadScope, open_world_pad_compartment,
+    seal_world_pad_compartment,
 };
 pub(crate) use key_encoding::*;
 // KS-3: the known-value index's master and history in typed custody.
@@ -253,8 +278,8 @@ pub(crate) use sync_responses::media_job_put_fenced_in_txn;
 #[doc(hidden)]
 pub use sync_responses::{IdempotencyEntry, ResponseStamps, media_job_erased_state};
 pub(crate) use sync_responses::{
-    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_owners, media_job_carriage,
-    media_job_owners, media_key, media_part_carriage,
+    MediaKey, erase_sync_response_owner_in_txn, http_carriage, http_erase_drop_caller, http_owners,
+    media_job_carriage, media_job_owners, media_key, media_part_carriage,
 };
 #[cfg(test)]
 pub(crate) use test_hooks::TestHooks;

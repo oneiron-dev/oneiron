@@ -15,7 +15,10 @@
 //! only on a fresh verification of the whole output (C032, the `verify`
 //! child): anything after that revision must be what the requested profile
 //! adds, classified as such. Each verification is one `seal.verify` call in
-//! a process of its own, with no handlers.
+//! a process of its own, whose one handler is memory: it never signs or
+//! fetches. Both verbs reserve the memory their PDF decodes take before
+//! they allocate it (`memory.grow`, FIX 7654): the host's own handler leases
+//! it from the machine's memory floor and holds it until the call ends.
 //!
 //! No size or count refuses a seal (Rule 5). Each call runs in a process of
 //! its own, booked and granted memory by what it lends, and grows past
@@ -46,7 +49,9 @@ use oneiron::blob_artifact::esign::{
 };
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::seal::SealRevisionClassification;
-use oneiron_organ_protocol::{ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32};
+use oneiron_organ_protocol::{
+    ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -58,7 +63,8 @@ use crate::error::{HostError, Unavailable};
 use crate::handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 use crate::host::OrganHost;
 use crate::receipt::AskReceipt;
-use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec};
+use crate::resource_memory::MemoryGrow;
+use crate::spec::{AskGrant, CallClass, FetchGrant, LentInput, OrganCall, OrganSpec, OrganTier};
 
 /// The name the seal organ is installed under.
 pub const SEAL_ORGAN: &str = "seal";
@@ -179,8 +185,8 @@ impl SealSettings {
 
 /// The seal organ's install grant: both verbs over PDFs and the engine's
 /// revisions, the identity, signatures (one at most for each revision the
-/// engine wrote, which [`SealCall`] holds it to) and fetches only inside
-/// `fetch`, and room for the sealed PDF. No count or size of its own
+/// engine wrote, which [`SealCall`] holds it to), fetches only inside
+/// `fetch`, memory for its decodes, and room for the sealed PDF. No count or size of its own
 /// refuses an ask: the seal's `[limits]` rows (`seal_identity_asks`,
 /// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`)
 /// measure them, so the grant's generic thresholds are the wire's own. Its
@@ -196,6 +202,7 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
         AskGrant::new(ASK_IDENTITY, u32::MAX),
         AskGrant::new(ASK_SIGN, u32::MAX),
         AskGrant::new(ASK_NET_FETCH, u32::MAX),
+        AskGrant::new(ASK_MEMORY_GROW, u32::MAX),
     ];
     spec.max_asks = u32::MAX;
     // Answers draw on the call's booking beside the sealed output, which
@@ -214,17 +221,22 @@ pub fn seal_spec(program: impl Into<PathBuf>, fetch: FetchGrant) -> OrganSpec {
 
 /// The seal organ from a pack's build for this host (OF-575 pinned
 /// install): the build written under `dir` by its blake3, and
-/// [`seal_spec`] pinned to that binary and to the version the pack names.
+/// [`seal_spec`] pinned to that binary and to the version the pack names,
+/// at `tier`, which the caller classifies from the build's verified
+/// provenance as it does every pack organ's (FIX 7644): a pack named for
+/// the seal is no proof of who built it.
 ///
 /// # Errors
 /// The build could not be written.
 pub fn seal_spec_from_pack(
     binary: &PackOrganBinary,
     dir: &Path,
+    tier: OrganTier,
     fetch: FetchGrant,
 ) -> Result<OrganSpec, HostError> {
     let program = binary.materialize(dir)?;
     let mut spec = seal_spec(program, fetch);
+    spec.tier = tier;
     spec.program_hash = Some(Hash32::of(&binary.bytes));
     spec.version_pin = binary.organ.version.clone();
     Ok(spec)
@@ -474,10 +486,12 @@ impl EsignSealer for HostedSealer<'_> {
             timeout: self.settings.fetch_timeout,
             vault: self.vault,
         };
+        let memory = MemoryGrow;
         let handlers = AskHandlers::none()
             .with(ASK_IDENTITY, &identity)
             .with(ASK_SIGN, &sign)
-            .with(ASK_NET_FETCH, &fetch);
+            .with(ASK_NET_FETCH, &fetch)
+            .with(ASK_MEMORY_GROW, &memory);
         let _publish = Publish {
             asked: &self.asked,
             handlers: &handlers,

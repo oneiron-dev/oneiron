@@ -62,24 +62,35 @@ impl Vault {
         let mut had_vector = false;
         for shell in &shells {
             // Same pre-scrub capture every SoftErase door pays: the subject
-            // EdgeRef is only readable while the body is.
-            let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell)?;
+            // EdgeRef is only readable while the body is. A classified corrupt
+            // shell takes the audited exception: its debt rides the head's
+            // receipt and sweep, the shell in their scope (FIX 7800).
+            let captured = self.capture_provenance_delete_in_txn(&*wtxn, shell, true)?;
             changed.extend(crate::note::erase_citations_in_txn(self, wtxn, shell)?);
             let (existed, shell_had_vector, _ledger_changed) =
                 self.soft_erase_active_store_in_txn(wtxn, shell, true)?;
             had_vector |= shell_had_vector;
             // D16 in the SAME transaction as the scrub, exactly as the local
             // and replayed SoftErase arms do it.
-            if existed && let Some(captured) = &captured {
+            if existed && let Some(captured) = captured.refs() {
                 changed.extend(self.refresh_subject_edge_after_claim_delete_in_txn(
                     wtxn,
                     shell,
                     &captured.subject,
                 )?);
             }
+            if existed && let Some(corrupt) = captured.corrupt() {
+                changed.extend(self.scrub_corrupt_capture_in_txn(wtxn, corrupt, true)?);
+            }
         }
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
+        }
+        // Each shell takes the actor scrub its head's erase runs, so no side
+        // row stamped with a shell's id keeps it (FIX 6709). The head's own
+        // provenance erase stays the one that retires keys.
+        for shell in &shells {
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, shell)?;
         }
         let mut touched = shells.clone();
         touched.insert(*head);

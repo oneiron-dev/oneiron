@@ -11,6 +11,7 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod parts;
 mod pins;
 mod prior;
 pub(super) use pins::{BranchPins, OwnedPins};
@@ -18,8 +19,8 @@ pub(super) use prior::standing;
 pub(super) mod signals;
 pub(crate) use signals::facet as claim_facet;
 mod slices;
+pub(super) use slices::ExtractionSlice;
 mod write;
-use super::partition::ConsolidationPartitionKey;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
 use super::turn_text::{MessageSpan, TurnText};
@@ -28,8 +29,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{
     PointRead, ReadRow, ScopedRead, ScopedReadActorKey, ScopedReadReceipt, ScopedReadResult,
 };
-use crate::dreamer_runner::{dreamer_extraction_role_admissible, dreamer_turn_role};
-use crate::edge::EdgeKind;
+use crate::dreamer_runner::dreamer_turn_role;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::federation::record_scope::disclosure_scope_for_stored_row;
 use crate::llm::{LlmResponse, Scope, ScopeResource, StepEffectBinding};
@@ -76,12 +76,15 @@ pub(super) struct BranchResources<'a> {
     actor: WriteActor,
     read: ScopedRead<'a>,
     prepared_wake: Option<&'a PreparedWake>,
-    partition: ConsolidationPartitionKey,
+    /// The queued branch: its axes, thing and every conversation part.
+    branch: super::branch::QueuedBranch,
     sources: BTreeMap<EntityId, SourcePin>,
-    turns: BTreeSet<EntityId>,
+    /// Each queued TURN's declared part, by that part's conversation.
+    turns: BTreeMap<EntityId, EntityId>,
     /// Each turn's frozen text and the MESSAGE pins behind it.
     texts: BTreeMap<EntityId, TurnText>,
-    bucket: ScopeResource,
+    /// One logical bucket per part (its partition hash).
+    buckets: BTreeSet<ScopeResource>,
     output: ScopeResource,
     scope: Scope,
     attempt: AttemptId,
@@ -106,7 +109,7 @@ impl<'a> BranchResources<'a> {
     pub(super) fn open(
         vault: &'a Vault,
         actor: WriteActor,
-        partition: ConsolidationPartitionKey,
+        partition: super::ConsolidationPartitionKey,
         turns: &[EntityId],
         attempt: AttemptId,
         requested: Option<&Scope>,
@@ -125,11 +128,10 @@ impl<'a> BranchResources<'a> {
         plan: &super::PreparedConsolidationAttempt,
         wake: &'a PreparedWake,
     ) -> Result<Self> {
-        let resources = Self::open_at_pin(
+        let resources = Self::open_branch(
             vault,
             actor,
-            plan.partition(),
-            plan.turn_ids(),
+            plan.branch(),
             plan.attempt_id(),
             plan.scope(),
             Some(wake),
@@ -151,6 +153,9 @@ impl<'a> BranchResources<'a> {
         Ok(resources)
     }
 
+    /// [`Self::open_branch`] over one partition's queued TURNs: the
+    /// one-part branch a Micro or Meso round queues as.
+    #[cfg(test)]
     #[expect(
         clippy::too_many_arguments,
         reason = "one branch's pinned inputs, each from its own wake or queue source"
@@ -158,158 +163,33 @@ impl<'a> BranchResources<'a> {
     pub(super) fn open_at_pin(
         vault: &'a Vault,
         actor: WriteActor,
-        partition: ConsolidationPartitionKey,
+        partition: super::ConsolidationPartitionKey,
         turns: &[EntityId],
         attempt: AttemptId,
         requested: Option<&Scope>,
         prepared_wake: Option<&'a PreparedWake>,
         known: Option<&super::neighbourhood::Neighbourhood>,
     ) -> Result<Self> {
-        let actor_key = ScopedReadActorKey::with_actor_class(
-            actor.entity_ref().to_hex(),
-            actor.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| invalid_consolidation("invalid consolidation read actor"))?;
-        let read = vault.scoped_read(actor_key);
-        let bucket = ScopeResource::Bucket {
-            key: bytes_to_hex_lower(&partition.partition_hash()),
+        let branch = super::branch::QueuedBranch {
+            world_ref: partition.world_ref,
+            facet_ref: partition.facet_ref,
+            thing: None,
+            parts: vec![super::ConversationPart {
+                conversation_ref: partition.conversation_ref,
+                turns: turns.to_vec(),
+                watermark_last_learned_at: 0,
+                line: 0,
+            }],
         };
-        // Real sink boundary over the queued TURN slice. Its key is available
-        // before enqueue; the future queue id is not permission a parent can
-        // guess. Candidate/vector identities remain bound to the actual attempt.
-        let output = output_projection(&partition, turns);
-        let mut sources = BTreeMap::new();
-        let mut readable = BTreeSet::from([bucket.clone()]);
-        // One LMDB read transaction pins all branch sources at one ledger
-        // revision. Later reads and the write fence must match these pins.
-        let source_ids: Vec<_> = std::iter::once(partition.conversation_ref)
-            .chain(turns.iter().copied())
-            .collect();
-        let (source_rows, read_receipt, texts): (Vec<_>, _, _) = if let Some(pin) = prepared_wake {
-            // The wake's one scoped read supplied these bytes; its receipt
-            // travels with the branch.
-            let mut read_receipt = read.read_receipt(None, 0)?;
-            if let Some(wake_receipt) = pin.read_receipt() {
-                read_receipt.restrict_with(wake_receipt);
-            }
-            (
-                source_ids.iter().map(|id| pin.source(id)).collect(),
-                read_receipt,
-                None,
-            )
-        } else {
-            let ScopedReadResult {
-                value: (rows, texts),
-                receipt,
-            } = super::turn_text::read_sources(&read, &source_ids)?;
-            (rows, receipt, Some(texts))
-        };
-        let position_txn = vault.store.env.read_txn()?;
-        for (id, row) in source_ids.iter().zip(source_rows) {
-            let (entity_type, learned_at, body) =
-                row.ok_or_else(|| invalid_consolidation("branch source is not readable"))?;
-            if (*id == partition.conversation_ref
-                && !matches!(entity_type, ENTITY_TYPE_SESSION | ENTITY_TYPE_CONVERSATION))
-                || (*id != partition.conversation_ref && entity_type != ENTITY_TYPE_TURN)
-            {
-                return Err(invalid_consolidation("invalid branch source type"));
-            }
-            let resource = document_version(*id, &body);
-            readable.insert(resource.clone());
-            let project = stored_project(&vault.store, &position_txn, *id, entity_type, &body)?;
-            #[cfg(test)]
-            let trust_class = (entity_type == ENTITY_TYPE_TURN)
-                .then(|| {
-                    let facts = decode_turn_body(&body);
-                    turn_trust_class(
-                        dreamer_turn_role(
-                            facts.speaker.as_deref(),
-                            &vault.config.assistant_display_names,
-                        ),
-                        facts.imported,
-                    )
-                })
-                .flatten();
-            sources.insert(
-                *id,
-                SourcePin {
-                    resource,
-                    entity_type,
-                    learned_at,
-                    project,
-                    body_hash: *blake3::hash(&body).as_bytes(),
-                    #[cfg(test)]
-                    trust_class,
-                },
-            );
-        }
-        // One read txn per thread: the admission reads below open their own.
-        drop(position_txn);
-        let texts = match (texts, prepared_wake) {
-            (Some(texts), _) => texts,
-            (None, Some(pin)) => pin.turn_texts(turns)?,
-            (None, None) => return Err(invalid_consolidation("branch turn text not read")),
-        };
-        let messages = texts.values().flat_map(TurnText::versions);
-        readable.extend(messages.map(|(_, version)| version.clone()));
-        // The queued/caller scope is an actual upper bound supplied by the
-        // trusted host. It binds TURNs to relationship/project slices through
-        // exact versions: neither axis is a conversation column. A TURN's own
-        // project stamp (pinned above) still bounds what it may support.
-        let mut granted = Scope {
-            world: partition.world_ref,
-            facet: partition.facet_ref,
-            relationship: requested.and_then(|scope| scope.relationship),
-            project: requested.and_then(|scope| scope.project),
-            readable,
-            writable: BTreeSet::from([output.clone()]),
-        };
-        let signals = signals_projection(&partition, turns);
-        granted.readable.insert(signals.clone());
-        granted
-            .writable
-            .insert(super::gap::branch_gap_projection(&partition, &granted));
-        // An unscoped branch holds the heads its neighbourhood lists as exact
-        // priors, read through this actor's scoped read at the wake's pin.
-        for (_, version) in known
-            .into_iter()
-            .flat_map(super::neighbourhood::Neighbourhood::claim_versions)
-        {
-            granted.readable.insert(version.clone());
-            granted.writable.insert(version.clone());
-        }
-        // Never replace explicit missing rights with generated defaults. Extra
-        // exact documents are the caller's graph/project slice, not source TURNs.
-        // A supplied scope is authority, not a request to infer more authority.
-        let scope = requested.cloned().unwrap_or(granted);
-        let mut resources = Self {
+        Self::open_branch(
+            vault,
             actor,
-            read,
-            prepared_wake,
-            partition,
-            sources,
-            turns: turns.iter().copied().collect(),
-            texts,
-            bucket,
-            output,
-            scope,
+            &branch,
             attempt,
-            fallback_binding: Cell::new(None),
-            signals,
-            priors: BTreeMap::new(),
-            provisional: BTreeSet::new(),
-            known: known.cloned().unwrap_or_default(),
-            rules: vault.consolidation_key_rules()?,
-            read_receipt: std::sync::Mutex::new(read_receipt),
-        };
-        resources.check_axes(&resources.scope)?;
-        resources.source(&resources.scope, &partition.conversation_ref)?;
-        // Membership and coordinates are structural admission, not prompt text.
-        for turn in turns {
-            resources.turn(&resources.scope, turn)?;
-        }
-        resources.admit_priors()?;
-        Ok(resources)
+            requested,
+            prepared_wake,
+            known,
+        )
     }
 
     /// The one PROJECT a claim drawn from these sources may land in: a
@@ -388,8 +268,8 @@ impl<'a> BranchResources<'a> {
     fn check_axes(&self, scope: &Scope) -> Result<()> {
         if !scope.readable.is_subset(&self.scope.readable)
             || !scope.writable.is_subset(&self.scope.writable)
-            || scope.world != self.partition.world_ref
-            || scope.facet != self.partition.facet_ref
+            || scope.world != self.branch.world_ref
+            || scope.facet != self.branch.facet_ref
             || scope.relationship != self.scope.relationship
             || scope.project != self.scope.project
         {
@@ -404,7 +284,7 @@ impl<'a> BranchResources<'a> {
             .sources
             .get(id)
             .ok_or_else(|| invalid_consolidation("unlisted branch document"))?;
-        if !scope.allows_read(&self.bucket) || !scope.allows_read(&pin.resource) {
+        if !self.buckets_readable(scope) || !scope.allows_read(&pin.resource) {
             return Err(invalid_consolidation("branch document read refused"));
         }
         let (entity_type, learned_at, body) = if pin.entity_type == ENTITY_TYPE_CLAIM {
@@ -425,47 +305,6 @@ impl<'a> BranchResources<'a> {
             return Err(invalid_consolidation("branch source revision changed"));
         }
         Ok((learned_at, body))
-    }
-
-    pub(super) fn turn(&self, scope: &Scope, id: &EntityId) -> Result<TurnBodyFacts> {
-        if !self.turns.contains(id) {
-            return Err(invalid_consolidation("unlisted branch turn"));
-        }
-        let (_, body) = self.source(scope, id)?;
-        let (_, conversation) = self.source(scope, &self.partition.conversation_ref)?;
-        let mut facts = decode_turn_body(&body);
-        let text = self.texts.get(id);
-        facts.text = text
-            .ok_or_else(|| invalid_consolidation("unlisted branch turn"))?
-            .recheck(scope, &self.read, id)?;
-        let parent = decode_turn_body(&conversation);
-        // Membership is the TURN's ChildOf edge alone. An edge of another
-        // kind may reach a row the Dreamer no longer reads, as a head an
-        // earlier branch of the pass closed, which never refuses the turn.
-        let edges = self.read.edges_out_of_kind(id, EdgeKind::ChildOf)?;
-        self.fold_read_receipt(&edges.receipt)?;
-        if edges.receipt.suppressed_count != 0 {
-            return Err(invalid_consolidation("branch turn graph is incomplete"));
-        }
-        let edges = edges
-            .value
-            .ok_or_else(|| invalid_consolidation("branch turn is not readable"))?;
-        let parents: Vec<_> = edges
-            .iter()
-            .filter(|edge| edge.kind == EdgeKind::ChildOf)
-            .collect();
-        if parents.len() != 1
-            || parents[0].target != self.partition.conversation_ref
-            || facts.world_ref.or(parent.world_ref) != self.partition.world_ref
-            || facts.facet_ref.or(parent.facet_ref) != self.partition.facet_ref
-            || !dreamer_extraction_role_admissible(dreamer_turn_role(
-                facts.speaker.as_deref(),
-                &self.read.vault().config.assistant_display_names,
-            ))
-        {
-            return Err(invalid_consolidation("branch turn crossed its partition"));
-        }
-        Ok(facts)
     }
 
     /// The known entities this branch lists.
@@ -540,14 +379,14 @@ impl<'a> BranchResources<'a> {
                 {
                     return Err(invalid_consolidation("unadmitted branch claim evidence"));
                 }
-            } else if !self.turns.contains(&entry.source_id) {
+            } else if !self.turns.contains_key(&entry.source_id) {
                 return Err(invalid_consolidation("unlisted branch evidence"));
             }
             let pin = self
                 .sources
                 .get(&entry.source_id)
                 .ok_or_else(|| invalid_consolidation("unlisted branch evidence"))?;
-            if !self.scope.allows_read(&self.bucket) || !self.scope.allows_read(&pin.resource) {
+            if !self.buckets_readable(&self.scope) || !self.scope.allows_read(&pin.resource) {
                 return Err(invalid_consolidation("branch evidence read refused"));
             }
         }
@@ -604,7 +443,7 @@ impl<'a> BranchResources<'a> {
     }
 
     pub(super) fn evidence_time(&self, scope: &Scope, id: &EntityId) -> Result<u64> {
-        if self.turns.contains(id) {
+        if self.turns.contains_key(id) {
             self.turn(scope, id)?;
         } else {
             self.prior(*id)?;
@@ -654,7 +493,7 @@ impl<'a> BranchResources<'a> {
                 ));
             }
             for id in &candidate.evidence_turn_refs {
-                if self.turns.contains(id) {
+                if self.turns.contains_key(id) {
                     self.turn(scope, id)?;
                 } else {
                     self.prior(*id)?;
@@ -687,7 +526,7 @@ impl<'a> BranchResources<'a> {
             gap.evidence_refs = evidence.locators();
             gap.verified_evidence = Some(evidence.envelope(Vec::new()));
             for id in &gap.evidence_turn_refs {
-                if self.turns.contains(id) {
+                if self.turns.contains_key(id) {
                     self.turn(scope, id)?;
                 } else {
                     self.prior(*id)?;
@@ -699,7 +538,7 @@ impl<'a> BranchResources<'a> {
         super::gap::upsert_branch_gap_queue(
             self.read.vault(),
             scope,
-            &self.partition,
+            &self.branch,
             &self.write_fence(),
             persisted,
             now,
@@ -732,7 +571,7 @@ impl<'a> BranchResources<'a> {
                 }
                 self.verify_evidence_refs(&gap.evidence_refs)?;
                 for source in projected {
-                    if self.turns.contains(&source) {
+                    if self.turns.contains_key(&source) {
                         self.turn(scope, &source)?;
                     } else {
                         self.prior(source)?;
@@ -744,13 +583,16 @@ impl<'a> BranchResources<'a> {
         super::gap::upsert_branch_gap_queue(
             self.read.vault(),
             scope,
-            &self.partition,
+            &self.branch,
             &self.write_fence(),
             gaps,
             now,
         )
     }
 
+    /// A sealed write of `candidates` with no wake deadline; a wake pass
+    /// hands its own over through [`Self::accept_until`].
+    #[cfg(test)]
     pub(super) fn accept_verified(
         &self,
         scope: &Scope,
@@ -759,6 +601,22 @@ impl<'a> BranchResources<'a> {
     ) -> Result<()> {
         let write = self.prepare_write_verified(scope, candidates)?;
         sink.accept_scoped(write)
+    }
+
+    /// The verified `candidates` sealed into one write for `sink`, carrying
+    /// the wake pass's `deadline`, which its promotion's checker turns and
+    /// consults spend (FIX 8701).
+    pub(super) fn accept_until(
+        &self,
+        scope: &Scope,
+        sink: &mut dyn ConsolidationSink,
+        candidates: Vec<super::evidence::VerifiedCandidate>,
+        deadline: &crate::WakePassDeadline,
+    ) -> Result<()> {
+        let due =
+            std::time::Instant::now() + std::time::Duration::from_millis(deadline.remaining_ms());
+        let write = self.prepare_write_verified(scope, candidates)?;
+        sink.accept_scoped(write.with_checker_deadline(due))
     }
 
     #[cfg(test)]
@@ -861,35 +719,4 @@ pub(crate) fn stored_project(
         }
         Some(_) => None,
     })
-}
-
-/// Named mechanical projection for the real queued TURN slice. Its scope
-/// supplies axis bounds and exact document pins; queries bind to branch output.
-pub(super) fn signals_projection(
-    partition: &ConsolidationPartitionKey,
-    turns: &[EntityId],
-) -> ScopeResource {
-    ScopeResource::Projection {
-        key: format!("dreamer:signals:v1:{}", branch_key(partition, turns)),
-    }
-}
-
-pub(super) fn output_projection(
-    partition: &ConsolidationPartitionKey,
-    turns: &[EntityId],
-) -> ScopeResource {
-    ScopeResource::Projection {
-        key: format!("dreamer:consolidation:v1:{}", branch_key(partition, turns)),
-    }
-}
-
-fn branch_key(partition: &ConsolidationPartitionKey, turns: &[EntityId]) -> String {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron:dreamer-branch-resources:v1");
-    hasher.update(&partition.partition_hash());
-    hasher.update(&(turns.len() as u64).to_be_bytes());
-    for turn in turns {
-        hasher.update(turn.as_bytes());
-    }
-    bytes_to_hex_lower(hasher.finalize().as_bytes())
 }

@@ -171,25 +171,24 @@ pub(super) fn rebind_held_in_txn(
     Ok(applied)
 }
 
-/// Whether `transition`, a carrier this vault keeps as its latest, brings a
-/// record pending here that the live floor now admits (CALLS
-/// CUSTODY_CARRIER_PENDING_FLOOR): live, standing on `fold`, sealed to
-/// `this` machine, of a portable record this vault does not hold or holds
-/// live at an earlier generation and status, under a name the apply would
-/// bind to it (FIX 5408). Reads no value.
+/// Whether `pieces`, those of the carrier this vault keeps as its
+/// latest, brings a record pending here that the live floor now admits
+/// (CALLS CUSTODY_CARRIER_PENDING_FLOOR): whole and live, standing on
+/// `fold`, sealed to `this` machine, of a portable record this vault does
+/// not hold or holds live at an earlier generation and status, under a name
+/// the apply would bind to it (FIX 5408). Reads no value.
 #[cfg(feature = "sync")]
 fn pending_carrier_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     fold: &AuthorityFold,
     this: Option<EntityId>,
-    transition: &CustodyTransition,
+    pieces: &super::CustodyPieces,
 ) -> Result<bool> {
+    let transition = pieces.lead();
     if transition.status == crate::secret_custody::SecretCustodyStatus::Revoked
         || fold.custody_revoked(&transition.id)
-        || !transition
-            .permits()
-            .any(|permit| Some(permit.machine) == this)
+        || !pieces.permits().any(|permit| Some(permit.machine) == this)
     {
         return Ok(false);
     }
@@ -208,7 +207,7 @@ fn pending_carrier_in_txn(
         CustodyCarrierPendingFloor::ApplyWhenFloorAdmits => Ok(
             super::super::refuse_bindings_wider_than_live_floor(&vault.store, txn, &carried)
                 .is_ok()
-                && transition.verify(fold).is_ok()
+                && pieces.verify(fold).is_ok()
                 && super::super::doors::can_bind_synced_name_in_txn(
                     &vault.store,
                     txn,
@@ -265,27 +264,29 @@ impl Vault {
     /// transaction, and the keystore is read only when one waits on it: a
     /// carrier whose name another record here holds stays pending unopened,
     /// and is judged again on the next pass (FIX 5408). The custody pass
-    /// after an authority catch-up and on the served tick runs it, and it
-    /// first seals again each restored credential row still pending (KS-6,
-    /// `CUSTODY_RESEAL_PENDING`), warned, never stopping on one. Returns how
-    /// many records it wrote.
+    /// after an authority catch-up and on the served tick runs it. Returns
+    /// how many records it wrote.
     #[cfg(feature = "sync")]
     pub(crate) fn apply_pending_rebinds(&self) -> Result<usize> {
-        self.reseal_credential_carriers_warned();
         let (rebinds, carriers, vault_id) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let this = crate::identity::read_machine_id_in_txn(self, &txn)?;
             let mut rebinds = Vec::new();
             let mut carriers = Vec::new();
-            for (_, carrier) in super::TRANSITIONS.scan(&self.store, &txn)? {
-                let Ok(transition) = CustodyTransition::decode(&carrier) else {
-                    continue;
-                };
-                if pending_rebind_in_txn(self, &txn, &fold, this, &transition)? {
-                    rebinds.push(transition);
-                } else if pending_carrier_in_txn(self, &txn, &fold, this, &transition)? {
-                    carriers.push(transition);
+            // Only a whole group of pieces, standing as one, is pending: a
+            // piece alone has no custody effect, and its siblings are owed.
+            let kept = super::TRANSITIONS
+                .scan(&self.store, &txn)?
+                .into_iter()
+                .filter_map(|(_, carrier)| super::CustodyPieces::decode(&carrier));
+            for held in kept {
+                if pending_rebind_in_txn(self, &txn, &fold, this, held.lead())? {
+                    if held.verify(&fold).is_ok() {
+                        rebinds.push(held);
+                    }
+                } else if pending_carrier_in_txn(self, &txn, &fold, this, &held)? {
+                    carriers.push(held);
                 }
             }
             (rebinds, carriers, fold.vault_id)
@@ -295,10 +296,9 @@ impl Vault {
             (false, Some(vault_id)) => match self.machine_secret_outside_txn() {
                 Ok(secret) => carriers
                     .into_iter()
-                    .filter_map(|transition| {
-                        let value =
-                            transition.open_value(&vault_id, secret.machine, &secret.secret)?;
-                        Some((transition, value))
+                    .filter_map(|held| {
+                        let value = held.open_value(&vault_id, secret.machine, &secret.secret)?;
+                        Some((held, value))
                     })
                     .collect(),
                 Err(_) => Vec::new(),
@@ -311,19 +311,14 @@ impl Vault {
         self.with_write_txn(|wtxn| {
             let mut written = 0;
             // A rebind carries no value: the record keeps the one held.
-            let due = rebinds.iter().map(|transition| (transition, None)).chain(
+            let due = rebinds.iter().map(|held| (held, None)).chain(
                 opened
                     .iter()
-                    .map(|(transition, value)| (transition, Some(value.as_slice()))),
+                    .map(|(held, value)| (held, Some(value.as_slice()))),
             );
-            for (transition, value) in due {
-                let applied = super::apply_custody_transition_in_txn(
-                    self,
-                    wtxn,
-                    transition,
-                    value,
-                    transition.signed_at,
-                )?;
+            for (held, value) in due {
+                let at = held.lead().signed_at;
+                let applied = super::apply_custody_transition_in_txn(self, wtxn, held, value, at)?;
                 if applied == CustodyApplied::Written {
                     written += 1;
                 }

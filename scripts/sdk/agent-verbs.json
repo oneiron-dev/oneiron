@@ -525,6 +525,7 @@
       "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
       "call": "memory.concern_move(&input)?",
       "scope": "Write",
+      "lands_turn": true,
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -839,7 +840,7 @@
     },
     {
       "name": "describe",
-      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named.",
+      "description": "Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it; `workflow`: its bound try), or the whole TASKS section when nothing is named.",
       "input": "DescribeRequest",
       "output": "crate::task_verb::TaskDescription",
       "outputs_by_input": {
@@ -889,7 +890,7 @@
     },
     {
       "name": "tasks.create",
-      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway.",
+      "description": "Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway, and may bind an agent TASK to a library program (`context.workflow`).",
       "prose_links": [
         "/label",
         "/spec/title",
@@ -1202,6 +1203,36 @@
       "openapi": true
     },
     {
+      "name": "vault.runners.seats.quotas",
+      "description": "The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from.",
+      "input": "crate::dispatch_byoa::RunnerSeatQuotasRequest",
+      "output": "crate::dispatch_byoa::RunnerSeatQuotasView",
+      "call": "memory.vault().runner_seat_quotas_as_owner(&memory.embedded_owner(\"vault.runners.seats.quotas\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runners.seats.top_up",
+      "description": "The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so.",
+      "input": "crate::dispatch_byoa::RunnerSeatCreditTopUpRequest",
+      "output": "crate::dispatch_byoa::RunnerSeatTopUpReceipt",
+      "call": "memory.vault().top_up_runner_seat_as_owner(&memory.embedded_owner(\"vault.runners.seats.top_up\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",
@@ -1245,7 +1276,7 @@
     },
     {
       "name": "tasks.update",
-      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK.",
+      "description": "Reports task progress, blocked work or a durable result through the task highway; without a report, acknowledges a failed TASK. A revised workflow binding reaches only later tries.",
       "refs": [
         "/task_ref"
       ],
@@ -1287,6 +1318,24 @@
         "spec": "$",
         "task_ref": "=task_ref"
       },
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "task_ref"
+        ]
+      },
+      "section": true
+    },
+    {
+      "name": "tasks.redo",
+      "description": "Posts a new TASK and its try from one TASK's current brief, assignee, spec, label and parent through the task highway, under the caller's intent key; the redone TASK, its result and its receipts are never written.",
+      "input": "crate::task_verb::TaskRedo",
+      "output": "crate::task_verb::TaskCallReceipt",
+      "mcp_served": "[input.task_ref]",
+      "call": "memory.tasks_redo(input)?",
+      "scope": "Write",
+      "task_decisions": true,
+      "proposes": true,
       "admission": {
         "unrestricted_record_scope": true,
         "readable": [
@@ -3516,7 +3565,7 @@
     },
     {
       "name": "vault.skills.fork",
-      "description": "The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
+      "description": "The owner, or a person or agent on its own slip within its write Grant, forks a stored skill it can read under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable.",
       "input": "SkillLibraryForkRequest",
       "output": "crate::task_verb::sdk::SkillLibraryView",
       "call": "crate::task_verb::sdk::skill_library_fork_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.fork\")?, &input)?",
@@ -4193,6 +4242,109 @@
         "unrestricted_record_scope": true
       },
       "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.redraft",
+      "description": "The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable.",
+      "input": "ConnectorSlateRedraftRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRedraftReply",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.slates.redraft\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.narrow",
+      "description": "The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it.",
+      "input": "ConnectorSlateNarrowRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateNarrowView",
+      "call": "crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.scope_outcome",
+      "description": "The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted.",
+      "input": "ConnectorScopeOutcomeRequest",
+      "output": "crate::task_verb::sdk::ConnectorScopeOutcomeView",
+      "call": "crate::task_verb::sdk::record_connector_scope_outcome(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.scope_outcome\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.revision_offers",
+      "description": "Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing.",
+      "input": "ConnectorSlateRevisionOffersRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRevisionOffersView",
+      "call": "crate::task_verb::sdk::connector_slate_revision_offers(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.revision_offers\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.defer_revision",
+      "description": "The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant.",
+      "input": "ConnectorSlateRevisionDeferRequest",
+      "output": "crate::task_verb::sdk::ConnectorRevisionSnoozeView",
+      "call": "crate::task_verb::sdk::defer_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.defer_revision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.accept_revision",
+      "description": "The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again.",
+      "input": "ConnectorSlateRevisionAcceptRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRevisionAcceptedView",
+      "call": "crate::task_verb::sdk::accept_connector_slate_revision(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.accept_revision\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.reask_issuer",
+      "description": "The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask.",
+      "input": "ConnectorIssuerReaskRequest",
+      "output": "crate::task_verb::sdk::ConnectorCredentialBindingView",
+      "call": "crate::task_verb::sdk::reask_connector_issuer(memory.vault(), &memory.embedded_owner(\"vault.connectors.slates.reask_issuer\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
       "openapi": true
     },
     {
@@ -5349,7 +5501,7 @@
     },
     {
       "name": "vault.trusted_contacts.name",
-      "description": "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
+      "description": "A live person names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
       "input": "crate::task_verb::sdk::TrustedContactNameRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::name_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.name\")?, input)?",
@@ -5409,7 +5561,7 @@
     },
     {
       "name": "vault.trusted_contacts.dial.set",
-      "description": "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
+      "description": "A person changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
       "input": "crate::task_verb::sdk::TrustedContactDialRequest",
       "output": "crate::counterparty_contact::TrustedContact",
       "call": "crate::task_verb::sdk::set_trusted_contact_dial(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.dial.set\")?, input)?",
@@ -5439,7 +5591,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.asks",
-      "description": "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
+      "description": "A person reads their own open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
       "input": "crate::task_verb::sdk::TrustedContactAsksRequest",
       "output": "Vec<crate::counterparty_contact::TrustedContactAsk>",
       "call": "crate::task_verb::sdk::read_trusted_contact_asks(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.asks\")?, input)?",
@@ -5454,7 +5606,7 @@
     },
     {
       "name": "vault.trusted_contacts.concern.authorize",
-      "description": "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
+      "description": "A person answers one of their own open asks, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
       "input": "crate::task_verb::sdk::TrustedContactAuthorizeRequest",
       "output": "crate::task_verb::sdk::TrustedContactAuthorization",
       "call": "crate::task_verb::sdk::authorize_trusted_contact_ask(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.authorize\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
@@ -5894,7 +6046,7 @@
     },
     {
       "name": "vault.off_record.rooms.export",
-      "description": "A person exports only their visible room talk as a JSON attachment and posts a content-free notice; an Owner's export also writes one export audit row and tells the members of each private thread it carries that the Owner is not in.",
+      "description": "A person or an agent on its own slip exports only its visible room talk as a JSON attachment with a content-free notice; an Owner's export also writes an audit row and tells members of each private thread it holds that the Owner is not in.",
       "input": "crate::task_verb::sdk::OffRecordRoomRequest",
       "output": "crate::task_verb::sdk::OffRecordRoomExport",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
@@ -6759,6 +6911,39 @@
       "openapi": true
     },
     {
+      "name": "vault.archive.delete.preview",
+      "description": "Previews explicit archived records under the caller's delete authority.",
+      "input": "crate::memory::ArchiveDeletePreviewRequest",
+      "output": "crate::memory::ArchiveDeletePreviewView",
+      "call": "crate::memory::preview_archive_delete_wire(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.archive.delete.confirm",
+      "description": "Deletes explicit archived records under the caller's current delete authority and returns each receipt.",
+      "input": "crate::memory::ArchiveDeleteConfirmRequest",
+      "output": "crate::memory::ArchiveDeleteBatchResult",
+      "call": "crate::memory::confirm_archive_delete_wire(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true,
+        "require_granted_scope": true
+      },
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.usage.events.undecodable",
       "description": "Lists the stored usage events of this server's metering scope that no longer decode, each by an opaque row ref, its byte length and the BLAKE3 hash of its bytes, for the owner or an agent whose own Grant names this verb.",
       "input": "crate::memory::usage_repair::UsageRepairListRequest",
@@ -7211,6 +7396,21 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.calls.approve_once",
+      "description": "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent.",
+      "input": "ConnectorCallApproveOnceRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::task_verb::sdk::approve_connector_call_once(memory.vault(), &memory.embedded_owner(\"vault.connectors.calls.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.consent.deny",
       "description": "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority.",
       "input": "crate::consent::lifecycle::DenyConsentRequest",
@@ -7522,7 +7722,7 @@
     },
     {
       "name": "vault.gate.policy.put",
-      "description": "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
+      "description": "The owner, or an Admin or Delegate holding the policy power, installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestPut",
       "output": "crate::policy_manifest_doors::PolicyManifestReceipt",
       "call": "crate::policy_manifest_doors::put_policy_manifest_as_owner(memory.vault(), &memory.embedded_owner(\"vault.gate.policy.put\")?, input).map_err(crate::memory::MemoryError::from)?",
@@ -9014,7 +9214,7 @@
     },
     {
       "name": "vault.code.proposal_submit",
-      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed.",
+      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the owner's lens catalog or, with none, the vault's review policy. Owner only. Nothing is approved, queued or landed.",
       "input": "crate::memory::code_doors::CodeProposalSubmitRequest",
       "output": "crate::memory::code_doors::CodeProposalSubmitted",
       "call": "memory.code_proposal_submit_as(&memory.embedded_owner(\"vault.code.proposal_submit\")?, input)?",
@@ -9089,7 +9289,7 @@
     },
     {
       "name": "vault.code.proposal_settle",
-      "description": "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it.",
+      "description": "Approve or reject one code proposal as an independent owner, keeping a receipt. Its own catalog still needs unanimous critics; Approve satisfies the vault's review policy. Only the tested merge queue lands it.",
       "input": "crate::memory::code_doors::CodeProposalSettleRequest",
       "output": "crate::memory::code_doors::CodeProposalSettlementView",
       "call": "memory.code_proposal_settle_as(&memory.embedded_owner(\"vault.code.proposal_settle\")?, input)?",
@@ -9292,6 +9492,40 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.export.preview",
+      "description": "Read the complete raw-byte and Git-mode delta for one explicit sealed export revision and ref expectation. Live owner or a caller under one covering Grant. Missing, withheld or masked sources return a typed hold; no export or ref is written.",
+      "input": "crate::memory::origin_doors::CodeExportPreviewRequest",
+      "output": "crate::memory::origin_doors::CodeExportPreviewAnswer",
+      "call": "memory.code_export_preview_as(&memory.code_export_preview_proof(\"vault.code.export.preview\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.export.preview.read",
+      "description": "Read the exact bytes and mode of one changed preview side by its recomputed handle. Live owner or a caller under one covering preview Grant. Missing, withheld or masked sources return a typed hold; no caller-selected host file is read.",
+      "input": "crate::memory::origin_doors::CodeExportFileReadRequest",
+      "output": "crate::memory::origin_doors::CodeExportFileReadAnswer",
+      "call": "memory.code_export_preview_read_as(&memory.code_export_preview_proof(\"vault.code.export.preview.read\"), input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
       "openapi": true
     },
     {
@@ -9962,7 +10196,7 @@
     },
     {
       "name": "vault.code.merge_queue.land_reviewed",
-      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing.",
+      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs the review it is held to and exact bytes and base; the owner proof approves nothing.",
       "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
       "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
       "call": "memory.merge_queue_land_reviewed_as(&memory.embedded_owner(\"vault.code.merge_queue.land_reviewed\")?, input)?",
@@ -10071,6 +10305,41 @@
       "section": false,
       "host_door": true,
       "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.review_policy.get",
+      "description": "Read the vault's opt-in review policy for merge queue work and the mode inherited work is in: none set lands on green through the same checks; an unreadable row holds. A live Owner, or one covering Grant.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+      "call": "memory.merge_queue_review_policy_get_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.get\"))?",
+      "scope": "Read",
+      "mcp_fields": {},
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.merge_queue.review_policy.set",
+      "description": "Set the vault's opt-in review policy for merge queue work, a lens catalog with overridable limits, or clear it with null. While set, work naming no catalog waits for critics or Approve. Owner, or one covering Grant.",
+      "input": "crate::memory::merge_queue_doors::QueueReviewPolicySetRequest",
+      "output": "crate::memory::merge_queue_doors::QueueReviewPolicyView",
+      "call": "memory.merge_queue_review_policy_set_as(&memory.merge_queue_review_policy_proof(\"vault.code.merge_queue.review_policy.set\"), input)?",
+      "scope": "Write",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "openapi": true
     },
     {
       "name": "vault.code.merge_queue.export_green",
@@ -10472,7 +10741,7 @@
     },
     {
       "name": "vault.repo.proposal_submit",
-      "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal, under the owner's review catalog and a host-witnessed provenance; until both exist it holds with a typed code and the work is kept.",
+      "description": "Keeps one whole-file change against the attached run's own work as an immutable Proposed proposal under the vault's review policy and a host-witnessed provenance; without that witness it holds typed, work kept.",
       "input": "crate::task_verb::sdk::LiveRunRequest<crate::memory::repo_doors::RepoProposalSubmitInput>",
       "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.repo.proposal_submit\", &input)?",
@@ -11397,7 +11666,7 @@
         "/what/context_refs/*/claim",
         "/what/context_refs/*/turn"
       ],
-      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
+      "refs_check": "crate::task_verb::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAskRequest",
       "output": "crate::task_verb::TaskAskReceipt",
       "call": "memory.tasks_ask(&input.into_spec()?)?",
@@ -11445,7 +11714,7 @@
         "/word/provenance_refs/*/claim",
         "/word/provenance_refs/*/turn"
       ],
-      "refs_check": "crate::task_verb::ask_world_hold::admit_ask_references",
+      "refs_check": "crate::task_verb::admit_ask_references",
       "input": "crate::task_verb::sdk::TaskAnswerRequest",
       "output": "crate::task_verb::TaskAskAnswer",
       "mcp_served": "[input.handle.group_ref]",
@@ -13195,10 +13464,10 @@
     },
     {
       "name": "vault.voices.packs.put",
-      "description": "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op.",
+      "description": "A person banks one immutable reference pack of their own voice, or a designed voice's creator of that voice: the first source pack makes its identity, a captured pack cites the subject's current render grant, and a retry is a no-op.",
       "input": "crate::task_verb::sdk::VoiceBankPackPutRequest",
       "output": "crate::task_verb::sdk::VoiceBankPackReceipt",
-      "call": "crate::task_verb::sdk::put_voice_bank_pack_as(memory.vault(), &memory.embedded_owner(\"vault.voices.packs.put\")?, input)?",
+      "call": "crate::task_verb::sdk::put_voice_bank_pack(memory, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -13210,7 +13479,7 @@
     },
     {
       "name": "vault.voices.render_consent",
-      "description": "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs.",
+      "description": "A person records the render decision on their own voice, or a designed voice's creator on that voice with no basis: a grant names the farthest locality its refs reach; a withdrawal drops each target clone. It joins the render history.",
       "input": "crate::task_verb::sdk::VoiceRenderConsentRequest",
       "output": "crate::task_verb::sdk::VoiceRenderConsentReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.render_consent\", &input)?",
@@ -13225,7 +13494,7 @@
     },
     {
       "name": "vault.voices.targets.provision",
-      "description": "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call.",
+      "description": "The caller's own voice, a person's or a designed voice its creator made, cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality first.",
       "input": "crate::task_verb::sdk::VoiceTargetProvisionRequest",
       "output": "crate::task_verb::sdk::VoiceTargetReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.provision\", &input)?",
@@ -13240,7 +13509,7 @@
     },
     {
       "name": "vault.voices.targets.evict",
-      "description": "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay.",
+      "description": "A voice's subject, or a designed voice's creator, drops a target's clone of that voice, deleted at its vendor best effort. The identity and its packs stay.",
       "input": "crate::task_verb::sdk::VoiceTargetEvictRequest",
       "output": "crate::task_verb::sdk::VoiceTargetEvictReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.evict\", &input)?",
@@ -13255,10 +13524,25 @@
     },
     {
       "name": "vault.voices.inspect",
-      "description": "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone.",
+      "description": "A voice's subject, or a designed voice's creator, inspects that voice as the bank holds it for one configured hosted target: identity, pack metadata without audio, the current render decision and the target's current clone.",
       "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
       "output": "crate::task_verb::sdk::VoiceBankInspection",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.lineage",
+      "description": "A voice's subject, or a designed voice's creator, reads that voice's render history: every render decision recorded for it, in order, with the target clones each dropped. Metadata only, with no provider call.",
+      "input": "crate::task_verb::sdk::VoiceRenderLineageRequest",
+      "output": "Vec<crate::task_verb::sdk::VoiceRenderEventView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.lineage\", &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -13450,8 +13734,9 @@
     },
     {
       "name": "vault.questions.answers",
+      "description": "Reads every graph answer and artifact ask of the caller's standing question, across its versions, as one bare list; a cursor opts into pages, an empty one reading the first and each next_cursor the next, page_size bounding each.",
       "input": "crate::receipt::QuestionAnswersRequest",
-      "output": "Vec<crate::receipt::QuestionAnswer>",
+      "output": "crate::receipt::QuestionAnswersReply",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -13657,7 +13942,7 @@
     },
     {
       "name": "connector.call_status",
-      "description": "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it.",
+      "description": "Where one connector.call stands, by the call_ref its held, pending_delivery or awaiting_input reply named: pending, the questions it waits on, or its settled reply. Only its caller and the vault's owner read it.",
       "input": "crate::task_verb::sdk::ConnectorCallStatusRequest",
       "output": "crate::task_verb::sdk::ConnectorCallStatus",
       "call": "crate::task_verb::sdk::connector_call_status_read(memory, input)?",
@@ -13670,7 +13955,14 @@
       "output": "crate::task_verb::sdk::ConnectorCallReply",
       "scope": "Write",
       "context": "run",
-      "effect": "ConnectorAnswer"
+      "effect": "ConnectorAnswer",
+      "host": {
+        "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
+        "description": "Answers the questions one of the caller's own connector calls waits on, by the handle its awaiting_input reply named, under that call's grant and principal; the connector's next questions or its result come back as foreign data.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "host_door_lists": true
+      }
     },
     {
       "name": "vault.worlds.privacy.set",
@@ -13699,7 +13991,7 @@
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched.",
+      "description": "Observes the run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its run-bound handle.",
       "input": "crate::task_verb::sdk::BrowserObserveInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::BrowserAnswer::of(driver.observe_page(input)?)",
@@ -13709,7 +14001,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserObserveInput>",
-        "description": "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or whole with full), in pages read on with observe and next; acts follow new tabs and name the move as switched.",
+        "description": "Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13767,7 +14059,7 @@
     },
     {
       "name": "self.browser.type",
-      "description": "Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
+      "description": "Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page.",
       "input": "crate::task_verb::sdk::BrowserTypeInput",
       "output": "crate::task_verb::sdk::BrowserObservationPage",
       "call": "oneiron_browser::BrowserAnswer::of(oneiron_browser::paged(driver, |driver| driver.type_text(input))?)",
@@ -13777,7 +14069,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserTypeInput>",
-        "description": "Types text into one page target by live ref or locator and observes the result as an edit of the caller's base; a ref whose node is gone acts on its locator's row as rebound; a long observation comes in pages, read on with observe and next.",
+        "description": "Types text, or the value a run-bound secret handle names, into one page target by live ref or locator, observing the result as an edit of the caller's base; a gone ref acts on its locator's row as rebound; long observations page.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13818,7 +14110,7 @@
     },
     {
       "name": "self.browser.expect",
-      "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
+      "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
       "input": "crate::task_verb::sdk::BrowserExpectInput",
       "output": "crate::task_verb::sdk::BrowserExpectOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.expect(input)?)",
@@ -13828,7 +14120,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserExpectInput>",
-        "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
+        "description": "Checks that a page row, by live ref or locator, is present or absent, and holds a given value or, compared unread, the secret a run-bound handle names; a ref whose node is gone is checked on its locator's row and listed in rebindings.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13903,7 +14195,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
+      "description": "Runs one batched browser program for a subgoal; type and expect take a secret by handle, fill types supplied, reference, template or checked written text (text_source, text_ref); a failing or no_progress stop names its stop_cause.",
       "input": "crate::task_verb::sdk::BrowserBatchInput",
       "output": "crate::task_verb::sdk::BrowserBatchOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.batch(input)?)",
@@ -13913,14 +14205,14 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>",
-        "description": "Runs one batched program of one or more browser steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, rebindings list refs resolved by locator, and next pages a long one.",
+        "description": "Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.library.find",
-      "description": "The replay library's programs for a site, or for the open page's site.",
+      "description": "The replay library's programs for a site, or the open page's; type_ref (node_id@tree_version) keeps that exact task type. Each card: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
       "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
       "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_find(input)?)",
@@ -13930,14 +14222,65 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
-        "description": "The replay library's programs for a site, or for the attached run's open page's site.",
+        "description": "The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.library.draft",
+      "description": "Drafts a proposal from this session's receipts and stops on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+      "input": "crate::task_verb::sdk::BrowserLibraryDraftInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryDraftOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.library_draft(input)?)",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryDraftInput>",
+        "description": "Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.demonstration.start",
+      "description": "Starts recording a demonstration in the session's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStartInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStartOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_start(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStartInput>",
+        "description": "Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running.",
+        "host_door_caller": true,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.browser.demonstration.stop",
+      "description": "Stops a demonstration, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given; it ends before a send, pay, publish, destructive or unknown press.",
+      "input": "crate::task_verb::sdk::BrowserDemonstrationStopInput",
+      "output": "crate::task_verb::sdk::BrowserDemonstrationStopOutput",
+      "call": "oneiron_browser::BrowserAnswer::of(driver.demonstration_stop(input)?)",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserDemonstrationStopInput>",
+        "description": "Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given.",
         "host_door_caller": true,
         "openapi": true
       }
     },
     {
       "name": "self.browser.library.propose",
-      "description": "Offers a solved run's program to the replay library, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
+      "description": "Offers a solved run's program, fill steps too, to the replay library, refs as locators, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
       "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
       "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_propose(input)?)",
@@ -13947,7 +14290,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
-        "description": "Offers a solved run's program to the replay library of the attached run's browser session, its live refs stored as their locators; it joins only once a no-model replay meets its postcondition.",
+        "description": "Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -13988,7 +14331,7 @@
     },
     {
       "name": "self.browser.library.run",
-      "description": "Runs a replay library program live with its arguments, resolving its locators as each step runs; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
+      "description": "Runs a replay library program live, strict (rules only; model steps and fill generation ask up at zero tokens) or assisted; secret slots take handles; receipts name fill text_source; misses return a failed_receipt; 3 strict misses: drift.",
       "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
       "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "oneiron_browser::BrowserAnswer::of(driver.library_run(input)?)",
@@ -13998,7 +14341,7 @@
       "section": false,
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
-        "description": "Runs a replay library program live with its arguments in the attached run's browser session, resolving locators step by step; its last observation edits the caller's base, and a missed postcondition goes back to the planner.",
+        "description": "Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift.",
         "host_door_caller": true,
         "openapi": true
       }
@@ -14215,7 +14558,7 @@
     },
     {
       "name": "self.desktop.batch",
-      "description": "Runs one batched program of one or more desktop steps for a subgoal, stopping at the first failing step; its last observation edits the caller's base, and a long one comes in pages, read on with observe and the batch's next cursor.",
+      "description": "Runs one batched program of desktop steps for a subgoal, stopping at the first failing step or after 3 acting steps leave the window unchanged; its last observation edits the caller's base, a long one paged, read on with observe and next.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::DesktopAnswer<oneiron_browser::BatchOutput>",
       "call": "oneiron_browser::DesktopAnswer::of(driver.batch(input)?)",
@@ -14254,6 +14597,28 @@
       "call": "oneiron_browser::DesktopAnswer::of(driver.handover(input)?)",
       "scope": "Write",
       "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.extract",
+      "description": "Runs one lent slice's extraction on the parent's own wake and stages its draft, answering one engine-issued proposal ref per drafted candidate.",
+      "input": "crate::dreamer_consolidation::ThingExtractInput",
+      "output": "crate::dreamer_consolidation::ThingExtractOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.extract\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.dreamer.thing.decide",
+      "description": "Runs the lent pack's typed decisions over every staged slice draft on the parent's own wake, keeping each answer's full receipt.",
+      "input": "crate::dreamer_consolidation::ThingDecideInput",
+      "output": "crate::dreamer_consolidation::ThingDecideOutput",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.dreamer.thing.decide\", &input)?",
+      "scope": "Write",
+      "context": "scoped_child",
       "mcp": "none",
       "section": false
     },

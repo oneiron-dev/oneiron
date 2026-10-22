@@ -13,6 +13,12 @@ mod agent_grant;
 pub(crate) use agent_grant::{
     AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, agent_grants_for_store_in_txn,
 };
+// Who may delete one record the cleanup archived (OF-449 L4).
+mod archive_delete;
+pub(crate) use archive_delete::{
+    ArchiveDeleteAuthority, ArchiveDeleteCaller, ArchiveDeleteRefusal, ArchiveDeleteRole,
+    require_archive_delete_in_txn,
+};
 mod connect_grant;
 pub use connect_grant::ConnectGrantMinted;
 pub(crate) use connect_grant::{
@@ -68,15 +74,18 @@ pub(crate) use rulings::RULING_PREDICATE;
 pub use rulings::{AdminRuling, AdminRulingReceipt, fold_admin_rulings};
 pub use shared_act::{
     DELETED_VAULT_BACKUP_RETENTION_SECS, DeleteVaultPlan, EraseAskKind, EraseAskStatus,
-    NOTIFICATION_PRODUCER_ERASE_ASK, REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy,
-    RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
+    NOTIFICATION_PRODUCER_ERASE_ASK, OwnerRecoveryAuthorization, REMOVAL_EXPORT_RETAIN_SECS,
+    RemovalExportCopy, RemovalExportDelivery, RemoveOwnerPlan, SHARED_ACT_OUTCOME_NOTICE_DOMAIN,
     SHARED_INVITATION_TTL_SECS, SharedActExecution, SharedActExecutionReceipt, SharedActExport,
     SharedActKind, SharedActOutcome, SharedEraseAsk, SharedInvitation, SharedInvitationState,
     SharedVaultChange, SharedVaultDeletion, SignedSharedActOutcome, TransferOwnershipPlan,
     shared_act_outcome_transcript,
 };
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;
-pub use shared_creation::{InitialSharedMember, SharedVaultCreation, SharedVaultPreset};
+pub use shared_creation::{
+    InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
+    SharedTrainingSetupQuestion, SharedVaultCreation, SharedVaultPreset,
+};
 mod foreign_world;
 pub(crate) use foreign_world::PactDelivery;
 pub use foreign_world::pact_foreign_world;

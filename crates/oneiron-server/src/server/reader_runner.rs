@@ -25,7 +25,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::agent_def::{birth_under_inherited_list, ensure_inherited_model_list};
 use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
@@ -33,9 +33,9 @@ use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, ClaimOutcome, DEFAULT_READER_WINDOW_TOKENS, HostSelfDispatcher, ReaderJob,
     ReaderJobKind, ReaderJobRunner, ReaderJobWake, ReaderJobs, ReaderRunEnd, ReaderSpend,
-    RunDeadline, SUMMARY_READ_BYTES_PER_TOKEN, SpawnHostSeat, SummarizeRecipe, SummaryRead,
-    reader_task_brief, summarize_input, summarize_prompt, summary_exceeds_window,
-    summary_token_budget,
+    RunDeadline, SCOPED_CHILD_PARENT_LEASE_LOST, SUMMARY_READ_BYTES_PER_TOKEN, ScopedChildPorts,
+    ScopedChildProfile, SpawnHostSeat, SummarizeRecipe, SummaryRead, reader_task_brief,
+    summarize_input, summarize_prompt, summary_exceeds_window, summary_token_budget,
 };
 use oneiron::engine_executor::{
     ENGINE_EXECUTOR_PURPOSE_NAME, EngineExecutorError, EngineExecutorStatus, EngineNativeExecutor,
@@ -54,7 +54,12 @@ use oneiron::{
 
 use crate::admission::Permit;
 use crate::ai_host::payer_funding::scope_funding;
+use crate::ai_host::scoped_child::{
+    ReaderParentClock, ReaderParentHost, ScopedChildDoor, scoped_child_service,
+};
 use crate::mcp::{McpCodeExecutionHost, McpCodeModeProvider, run_seat};
+
+mod scoped;
 
 /// The window a run with no decision clock gives its children: one, fixed
 /// at its first spawn.
@@ -82,6 +87,10 @@ pub(crate) const READER_CHILD_READ_ONLY: &str = "reader_child_read_only";
 /// entry: its locality, with the machine its connection proved (FIX 4937).
 pub(crate) struct ReaderSeats {
     callers: Mutex<HashMap<EntityId, (ReadDestination, u64)>>,
+    /// Each parent run's live clock, as its host last lent it (FIX 1839):
+    /// it bounds the parent's children's work beside the clock its first
+    /// spawn froze, and is forgotten with the parent's caller.
+    clocks: Mutex<HashMap<EntityId, ReaderParentClock>>,
     /// The memory one running child may hold: its run's memory share over
     /// the children one parent runs at once.
     child_memory_bytes: u64,
@@ -91,6 +100,7 @@ impl ReaderSeats {
     fn new(child_memory_bytes: u64) -> Self {
         Self {
             callers: Mutex::default(),
+            clocks: Mutex::default(),
             child_memory_bytes,
         }
     }
@@ -103,7 +113,8 @@ impl ReaderSeats {
     /// one window from now, which the run's first spawn fixes. `caller` is
     /// where the run's caller sits, noted for its children's reads.
     /// `window_tokens` is the input window of the model its children and
-    /// summaries run on, when its host knows it.
+    /// summaries run on, when its host knows it. A clockless, leaseless
+    /// parent's: [`Self::seat_with_parent`] with none.
     pub(crate) fn seat(
         &self,
         run: EntityId,
@@ -111,14 +122,33 @@ impl ReaderSeats {
         caller: impl Into<ReadDestination>,
         window_tokens: Option<u64>,
     ) -> SpawnHostSeat {
+        self.seat_with_parent(run, scope, caller, window_tokens, None)
+    }
+
+    /// [`Self::seat`] for a parent its host lends `parent` (FIX 1839, FIX
+    /// 7507 PR3): the live clock it runs under, which the run's first spawn
+    /// freezes into its parent row once (`reader_parent_deadline`) and which
+    /// bounds its children's model and port work beside that row, and the
+    /// lease of the attempt it runs as, which a scoped child queued under
+    /// this seat borrows. With none, the run's clock is one window from now
+    /// and its children outlive it, as before.
+    pub(crate) fn seat_with_parent(
+        &self,
+        run: EntityId,
+        scope: Option<SpendScopeId>,
+        caller: impl Into<ReadDestination>,
+        window_tokens: Option<u64>,
+        parent: Option<&ReaderParentHost>,
+    ) -> SpawnHostSeat {
         let now = unix_millis_now();
         lock(&self.callers).insert(run, (caller.into(), now));
+        let clock = parent.and_then(ReaderParentHost::clock);
+        if let Some(clock) = clock {
+            lock(&self.clocks).insert(run, clock);
+        }
         SpawnHostSeat {
             spend: ReaderSpend::for_run_scope(scope),
-            deadline: RunDeadline::with_default_reserve(
-                now.saturating_add(DEFAULT_READER_WINDOW_MS),
-                now,
-            ),
+            deadline: reader_parent_deadline(clock, now),
             // A child holds nothing at its claim: it tops up from its
             // parent's chain as it spends, the cap enforced at each spend.
             hold_units: 0,
@@ -127,7 +157,13 @@ impl ReaderSeats {
             // Any eligible model: an agent's run lends its own list
             // (`run_bound`, and a session run's `parent_model_list`).
             listed: Vec::new(),
+            parent_lease: parent.and_then(ReaderParentHost::lease).cloned(),
         }
+    }
+
+    /// The live clock `parent`'s host last lent it, if any.
+    fn clock(&self, parent: EntityId) -> Option<ReaderParentClock> {
+        lock(&self.clocks).get(&parent).copied()
     }
 
     /// Where `parent`'s caller's rows go: as its host last noted it, else a
@@ -140,11 +176,27 @@ impl ReaderSeats {
         )
     }
 
-    /// Forgets every parent last noted more than two windows before `now`.
+    /// Forgets every parent last noted more than two windows before `now`,
+    /// with its live clock.
     fn forget_before(&self, now: u64) {
         let horizon = now.saturating_sub(DEFAULT_READER_WINDOW_MS.saturating_mul(2));
-        lock(&self.callers).retain(|_, (_, noted)| *noted >= horizon);
+        let mut callers = lock(&self.callers);
+        callers.retain(|_, (_, noted)| *noted >= horizon);
+        lock(&self.clocks).retain(|run, _| callers.contains_key(run));
     }
+}
+
+/// `reader_parent_deadline` (CALLS, open): the clock a parent's first spawn
+/// freezes at `now_ms` from the live `clock` its host lends. With none, one
+/// window from now (`DEFAULT_READER_WINDOW_MS`), unchanged. A present clock
+/// is projected once to what is left of it, an expired one to now (it is
+/// expired, never given the window), and its children stop at the existing
+/// fold reserve before it (`RunDeadline::with_default_reserve`), taken once.
+/// A parent under a wake and a decision clock at once lends the earlier
+/// (`ReaderParentClock::earlier`).
+fn reader_parent_deadline(clock: Option<ReaderParentClock>, now_ms: u64) -> RunDeadline {
+    let window = clock.map_or(DEFAULT_READER_WINDOW_MS, ReaderParentClock::remaining_ms);
+    RunDeadline::with_default_reserve(now_ms.saturating_add(window), now_ms)
 }
 
 /// What reaches the worker: a child queued, or a running one gone, which
@@ -386,6 +438,7 @@ impl Worker {
                 match jobs.claim(job.task, now) {
                     Ok(ClaimOutcome::Claimed(job)) => {
                         let child = Child {
+                            clock: self.shared.seats.clock(job.binding.parent_run),
                             job: *job,
                             session: session.cloned(),
                             provider: Arc::clone(native.provider()),
@@ -440,21 +493,87 @@ impl Worker {
     }
 }
 
-/// One claimed child, as its thread runs it.
+/// One claimed child, as its thread runs it, with its parent's live clock
+/// when its host lent one.
 struct Child {
     job: ReaderJob,
     session: Option<SessionSeat>,
     provider: Arc<dyn McpCodeModeProvider>,
+    clock: Option<ReaderParentClock>,
 }
 
 impl Child {
+    /// What is left of this job's time at `now_ms`, in milliseconds: to the
+    /// cutoff its first spawn fixed (`reader_job_cutoff`) and, while its
+    /// parent's host lends a live clock, to that clock too, less the fold
+    /// reserve fixed at that spawn for a read or a scoped child. A summary is
+    /// the fold the reserve is kept for, so it runs to the whole clock. No
+    /// reserve is taken twice and no time is added.
+    fn left_ms(&self, now_ms: u64) -> u64 {
+        let binding = &self.job.binding;
+        let left = binding.child_cutoff_unix_ms.saturating_sub(now_ms);
+        let Some(clock) = self.clock else {
+            return left;
+        };
+        let reserve = match self.job.kind {
+            ReaderJobKind::Summarize { .. } => 0,
+            ReaderJobKind::Read | ReaderJobKind::ScopedAgent { .. } => {
+                binding.deadline.fold_reserve_ms
+            }
+        };
+        left.min(clock.remaining_ms().saturating_sub(reserve))
+    }
+
+    /// How a scoped child that borrowed its parent attempt's lease ends when
+    /// that lease no longer holds (`ReaderJobs::scoped_parent_holds`),
+    /// checked before its seat and each model entry, as its dispatcher
+    /// checks it before each read and port; `None` while it holds, and for
+    /// every job that borrowed none. Its settle checks the lease again.
+    fn parent_lease_lost(
+        &self,
+        vault: &Vault,
+        session: Option<&OffRecordSession<'_>>,
+    ) -> Option<ReaderRunEnd> {
+        let job = &self.job;
+        if job.scoped_parent_lease().is_none() {
+            return None;
+        }
+        let holds = match (session, self.session.as_ref()) {
+            (Some(session), Some((_, participant))) => {
+                ReaderJobs::for_session(session, *participant)
+                    .and_then(|jobs| jobs.scoped_parent_holds(job.task, job.generation))
+            }
+            (Some(_), None) => Ok(false),
+            (None, _) => ReaderJobs::canonical(vault).scoped_parent_holds(job.task, job.generation),
+        };
+        match holds {
+            Ok(true) => None,
+            Ok(false) => Some(ReaderRunEnd::Failed(
+                SCOPED_CHILD_PARENT_LEASE_LOST.to_owned(),
+            )),
+            Err(error) => {
+                tracing::warn!(%error, task = %job.task.to_hex(), "a scoped child's parent lease was not read");
+                Some(ReaderRunEnd::Failed("reader_binding_failed".to_owned()))
+            }
+        }
+    }
+
     /// Runs the child and settles it as its run ended.
     fn run_and_settle(&self, shared: &Shared, vault: &Arc<Vault>) {
         let job = &self.job;
-        let door: Arc<dyn AgentVerbDoor> = Arc::new(crate::api::ReaderChildDoor::new(
-            Arc::clone(vault),
-            shared.seats.caller(job.binding.parent_run),
-        ));
+        // A scoped child's door is its loan, Grant-checked at each call
+        // (FIX 7507); the read child's door never stands in for it.
+        let door: Arc<dyn AgentVerbDoor> = match &job.kind {
+            ReaderJobKind::ScopedAgent { .. } => {
+                Arc::new(ScopedChildDoor::new(Arc::clone(vault), job.clone()))
+            }
+            ReaderJobKind::Read | ReaderJobKind::Summarize { .. } => {
+                Arc::new(crate::api::ReaderChildDoor::new(
+                    Arc::clone(vault),
+                    shared.seats.caller(job.binding.parent_run),
+                ))
+            }
+        };
         let settled = match &self.session {
             None => {
                 let end = self.metered(vault, None, door);
@@ -492,6 +611,11 @@ impl Child {
         door: Arc<dyn AgentVerbDoor>,
     ) -> ReaderRunEnd {
         let job = &self.job;
+        // A scoped child its own host profiled (FIX 7508) runs on that
+        // profile's backend and its parent's meter, never the host's.
+        if let Some(profile) = self.profile() {
+            return self.metered_on_profile(vault, session, door, &profile);
+        }
         let (guard, recorded) = match self.meter(vault) {
             Ok(meter) => meter,
             Err(end) => return end,
@@ -511,7 +635,20 @@ impl Child {
             return ReaderRunEnd::Failed("reader_meter_unbound".to_owned());
         };
         let end = match &job.kind {
-            ReaderJobKind::Read => self.run(vault, session, backend.as_ref(), &guard, door),
+            ReaderJobKind::Read => {
+                self.run(vault, session, backend.as_ref(), &guard, door, None, None)
+            }
+            // A scoped child runs as a read child's run does, with its lent
+            // ports bound; one whose authority or ports do not hold ends
+            // before any call, never as a read child.
+            ReaderJobKind::ScopedAgent { .. } => {
+                match scoped_child_service(vault, self.provider.as_ref(), job) {
+                    Ok(ports) => {
+                        self.run(vault, session, backend.as_ref(), &guard, door, ports, None)
+                    }
+                    Err(end) => end,
+                }
+            }
             ReaderJobKind::Summarize {
                 recipe,
                 window_tokens,
@@ -588,7 +725,10 @@ impl Child {
     /// (`session_seat_or_seatless`). A read and a summary alike are held to
     /// the list their spawning run froze (`birth_under_inherited_list`, FIX
     /// 4539), and so is a seatless one's configured model
-    /// ([`Child::held_to_list`]).
+    /// ([`Child::held_to_list`]). Its pick runs inside its parent's clock
+    /// where that clock binds ([`Child::seat_parent_at`], FIX 8230), and a
+    /// canonical job whose birth fails under it ends at its cutoff
+    /// ([`Child::unseated`]).
     fn seat(
         &self,
         vault: &Vault,
@@ -597,8 +737,9 @@ impl Child {
         purpose: CallPurpose,
         min_context_tokens: u64,
         locality: ModelLocality,
-    ) -> Result<Option<ModelSeat>, String> {
+    ) -> Result<Option<ModelSeat>, Unseated> {
         let job = &self.job;
+        let parent_at = self.seat_parent_at();
         let born = || -> Result<Option<ModelSeat>, String> {
             let inherited = &job.binding.listed;
             let prior = if inherited.is_empty() {
@@ -626,17 +767,54 @@ impl Child {
                         override_effort: None,
                         listed,
                     };
+                    let provider = self.provider.as_ref();
                     match self.session {
-                        None => run_seat(vault, self.provider.as_ref(), job.run, seat_task),
-                        Some(_) => self.provider.run_seat_on(vault, bound, job.run, seat_task),
+                        None => run_seat(vault, provider, job.run, parent_at, seat_task),
+                        Some(_) => {
+                            provider.run_seat_on(vault, bound, job.run, parent_at, seat_task)
+                        }
                     }
                 },
             )
         };
         match self.session {
-            None => born(),
+            None => born().map_err(|error| self.unseated(parent_at.is_some(), error)),
             Some(_) => Ok(session_seat_or_seatless(job.task, born())),
         }
+    }
+
+    /// `seat_parent_at` (CALLS, open, FIX 8230): the cutoff a child's seat
+    /// pick runs inside, projected once per birth from what is left of its
+    /// time ([`Child::left_ms`]: its job's cutoff and its parent's live
+    /// clock, the fold reserve taken once, no new window), the monotonic
+    /// sample before the wall one. Only a parent due before one seat budget
+    /// ends lends it, so the pick's budget is min(seat budget, parent time
+    /// left) and the cap binds whenever it is lent; one already due lends
+    /// now. With more left, the pick runs on its own budget, as before. The
+    /// cutoff bounds how long the pick deliberates; no candidate is
+    /// filtered by it.
+    fn seat_parent_at(&self) -> Option<Instant> {
+        let origin = Instant::now();
+        let left = Duration::from_millis(self.left_ms(unix_millis_now()));
+        let budget = self.provider.seat_decisions()?.budget;
+        if left < budget {
+            Some(origin + left)
+        } else {
+            None
+        }
+    }
+
+    /// How a canonical job whose seat was not born ends (CALLS, open, FIX
+    /// 8230): at its cutoff when its parent's clock bound the pick
+    /// (`capped`: [`Child::seat_parent_at`] lent it) or is spent now, as its
+    /// run would end at its first entry; otherwise `reader_seat_failed`, as
+    /// before. A birth the parent's clock did not bind ends as it does today.
+    fn unseated(&self, capped: bool, error: String) -> Unseated {
+        if capped || self.left_ms(unix_millis_now()) == 0 {
+            tracing::info!(%error, task = %self.job.task.to_hex(), "a reader child's seat was not born inside its parent's clock; it ends at its cutoff");
+            return Unseated::Cutoff;
+        }
+        Unseated::Failed(error)
     }
 
     /// A seatless job runs its configured `model` only when the list its
@@ -652,9 +830,15 @@ impl Child {
     }
 
     /// The child's run: a fresh sandbox and a dispatcher bound to its job
-    /// and door, entered again after each yielded slice until it ends or its
-    /// cutoff comes. The cutoff stops the run at its next await; a running
-    /// step is not cut.
+    /// and door, and a scoped child's to its lent `ports`, entered again
+    /// after each yielded slice until it ends or its cutoff comes. The
+    /// cutoff stops the run at its next await; a running step is not cut.
+    /// A profiled child's config takes its `profile`'s model before its
+    /// seat is born (FIX 7508).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per axis the runner binds a child's run to"
+    )]
     fn run(
         &self,
         vault: &Vault,
@@ -662,6 +846,8 @@ impl Child {
         backend: &dyn LlmBackend,
         guard: &BudgetGuard,
         door: Arc<dyn AgentVerbDoor>,
+        ports: Option<Arc<dyn ScopedChildPorts>>,
+        profile: Option<&ScopedChildProfile>,
     ) -> ReaderRunEnd {
         let job = &self.job;
         let provider = self.provider.as_ref();
@@ -669,10 +855,20 @@ impl Child {
             tracing::warn!(%error, task = %job.task.to_hex(), reason, "a reader child did not run");
             ReaderRunEnd::Failed(reason.to_owned())
         };
-        let dispatcher = match self.bind(vault, session) {
+        let bound = self
+            .bind(vault, session)
+            .and_then(|dispatcher| match ports {
+                Some(ports) => dispatcher.with_scoped_child_ports(ports),
+                None => Ok(dispatcher),
+            });
+        let dispatcher = match bound {
             Ok(dispatcher) => dispatcher.with_agent_verb_door(door),
             Err(error) => return failed("reader_binding_failed", &error),
         };
+        // A scoped child whose borrowed parent lease is gone takes no seat.
+        if let Some(end) = self.parent_lease_lost(vault, session) {
+            return end;
+        }
         // Read on the job's route: a session child's first start is its
         // room's record's.
         let brief = reader_task_brief(job);
@@ -680,6 +876,9 @@ impl Child {
             Ok(config) => config,
             Err(error) => return failed("reader_config_failed", &error),
         };
+        if let Some(profile) = profile {
+            profile.bind_config(&mut config);
+        }
         let purpose = CallPurpose::Other {
             name: ENGINE_EXECUTOR_PURPOSE_NAME.into(),
         };
@@ -692,7 +891,8 @@ impl Child {
             config.model_locality,
         ) {
             Ok(seat) => seat,
-            Err(error) => return failed("reader_seat_failed", &error),
+            Err(Unseated::Cutoff) => return ReaderRunEnd::Cutoff,
+            Err(Unseated::Failed(error)) => return failed("reader_seat_failed", &error),
         };
         // The seat binds its model and effort into the config and the
         // executor alike; a seatless child runs its configured model, held
@@ -736,11 +936,15 @@ impl Child {
         if let Some(seat) = &seat {
             executor = executor.with_model_seat(seat);
         }
-        let cutoff = job.binding.child_cutoff_unix_ms;
         loop {
-            let left = cutoff.saturating_sub(unix_millis_now());
+            // Its cutoff and its parent's live clock bound each entry, and a
+            // lost parent lease admits none.
+            let left = self.left_ms(unix_millis_now());
             if left == 0 {
                 return ReaderRunEnd::Cutoff;
+            }
+            if let Some(end) = self.parent_lease_lost(vault, session) {
+                return end;
             }
             let ran = reactor.block_on(async {
                 tokio::time::timeout(Duration::from_millis(left), executor.run(&config)).await
@@ -868,7 +1072,8 @@ impl Child {
             config.model_locality,
         ) {
             Ok(seat) => seat,
-            Err(error) => {
+            Err(Unseated::Cutoff) => return ReaderRunEnd::Cutoff,
+            Err(Unseated::Failed(error)) => {
                 tracing::warn!(%error, task = %job.task.to_hex(), "a summary's seat was not born");
                 return failed("reader_seat_failed");
             }
@@ -921,10 +1126,9 @@ impl Child {
             Ok(reactor) => reactor,
             Err(_) => return failed("reader_reactor_failed"),
         };
-        let left = job
-            .binding
-            .child_cutoff_unix_ms
-            .saturating_sub(unix_millis_now());
+        // A summary runs to its parent's outer cutoff, into the fold
+        // reserve, and to its live clock when its host lent one.
+        let left = self.left_ms(unix_millis_now());
         if left == 0 {
             return ReaderRunEnd::Cutoff;
         }
@@ -968,6 +1172,15 @@ impl Child {
             }
         }
     }
+}
+
+/// Why a canonical job's seat was not born ([`Child::seat`]).
+enum Unseated {
+    /// Its parent's clock bound the pick, or is spent: the job ends at its
+    /// cutoff, as its run would ([`Child::unseated`], FIX 8230).
+    Cutoff,
+    /// Any other birth error: the job fails `reader_seat_failed`, as before.
+    Failed(String),
 }
 
 /// Default A (FIX 7507, Engine 10-21): a job in an off-record session whose

@@ -1,12 +1,14 @@
 //! Managed argv group: validation, the argv allowlist, and unmanaged-layer refusals.
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::os::fd::RawFd;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use oneiron::federation::derivation::DerivationOwner;
-use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
+use oneiron::web_fetch::HostedPrivateOrigin;
+use oneiron_vault_contract::{CONTRACT_VERSION, GuestRuntimeFact, valid_vault_name};
 
 use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
 
@@ -291,6 +293,12 @@ pub struct ManagedArgs {
     pub container_home: Option<PathBuf>,
     /// Its `XDG_RUNTIME_DIR` (`--container-runtime-dir`), checked the same way.
     pub container_runtime_dir: Option<PathBuf>,
+    /// The supervisor's guest runtime fact for the vault's UID
+    /// (`--guest-runtime-fact`), which seeds the browser's readiness.
+    pub guest_runtime_fact: Option<GuestRuntimeFact>,
+    /// The private origins the operator lets the hosted egress guard admit
+    /// (`--hosted-private-origin`, FIX 7657); none without it.
+    pub hosted_private_origins: BTreeSet<HostedPrivateOrigin>,
 }
 
 impl ManagedArgs {
@@ -421,6 +429,8 @@ impl ManagedArgs {
             // Nor are the container CLI's directories (FIX 6876).
             container_home: args.container_home.clone(),
             container_runtime_dir: args.container_runtime_dir.clone(),
+            guest_runtime_fact: args.guest_runtime_fact,
+            hosted_private_origins: args.hosted_private_origins.iter().cloned().collect(),
         };
         if managed
             .artifact_socket
@@ -573,10 +583,10 @@ impl ManagedArgs {
     /// roots, log level, `--no-hooks`, the maximum tier and the owner's
     /// failure-signal export and training choices. Each of them, given,
     /// stands over the settings file's own value. The supervisor's own
-    /// bindings read here too (browser origins, the host's public origin and
-    /// the kit fetch URLs) are ones the settings file never sets. Everything
-    /// else on `ServeArgs` is refused before this runs, so nothing reaches
-    /// here to be quietly dropped.
+    /// bindings read here too (browser origins, the host's public origin,
+    /// the kit fetch URLs and the trusted organ builds) are ones the settings
+    /// file never sets. Everything else on `ServeArgs` is refused before this
+    /// runs, so nothing reaches here to be quietly dropped.
     ///
     /// `auth_secret` stays `None`: bearer auth terminates at the supervisor,
     /// which owns the listening socket inside an owner-only directory.
@@ -603,6 +613,9 @@ impl ManagedArgs {
             kit_bundle_public_urls: crate::config::normalize_list(
                 args.kit_bundle_public_urls.clone().unwrap_or_default(),
             ),
+            // The organ builds the supervisor vouches for as first party
+            // (FIX 7644); the settings file never names one.
+            trusted_organ_builds: args.trusted_organ_builds.iter().cloned().collect(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             fast_dims: args.fast_dims,
             map_size: args.map_size.unwrap_or(defaults.map_size),

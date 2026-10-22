@@ -38,7 +38,7 @@ use super::{
 };
 use crate::store::custody_protocol::{
     AckRecord, AnchorAdvance, AnchorStore, CustodyBatch, CustodyNamespace, CustodyTarget,
-    CustodyVaultId, HostedKind, TargetId, TargetKind, TargetPending, TargetSpec,
+    CustodyVaultId, HostedKind, PendingCode, TargetId, TargetKind, TargetPending, TargetSpec,
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
@@ -129,21 +129,54 @@ impl CustodyOutbox {
     }
 }
 
+/// Why a custody publication pass stays pending before its policy is noted,
+/// any head sealed or anything shipped (FIX 8825). Local writes and content
+/// backups go on; the next pass reads the policy then current again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CustodyPublicationPending {
+    /// The worlds whose pads stay off a head did not read: no head is sealed
+    /// under a guessed, stale or empty exclusion set.
+    PadEligibilityUnreadable { error_kind: crate::ErrorKind },
+}
+
+impl CustodyPublicationPending {
+    /// The status read's words for it, naming no secret: what failed, its
+    /// kind, and the owner's repair and retry.
+    fn detail(self) -> String {
+        match self {
+            Self::PadEligibilityUnreadable { error_kind } => format!(
+                "custody_pad_eligibility_unreadable ({error_kind:?}): which worlds' pads stay \
+                 off a head did not read, so no head was sealed; repair the world policy, and \
+                 the next publication pass retries under the policy then current"
+            ),
+        }
+    }
+}
+
 impl Vault {
     /// Who this vault's custody heads are wrapped to: its pinned recovery
     /// root (the kit keeps only its seed), and its data key's custody
     /// subkey while the key is held. Neither is a reason to refuse: a pass
     /// with neither stays pending. `hosted`: the head goes to a hosted
     /// member, which the pads of some worlds stay off (KS-5); a lookup of
-    /// those worlds that faults is warned and leaves every pad in the head.
-    pub(crate) fn custody_recipients(&self, hosted: bool) -> Result<CustodyRecipients> {
-        let pad_worlds_kept_local = self.pad_worlds_kept_local(hosted).unwrap_or_else(|error| {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "a custody head's pad eligibility could not be read; every pad rides it"
-            );
-            Default::default()
-        });
+    /// those worlds that faults leaves the pass pending (FIX 8825), never an
+    /// empty exclusion set.
+    pub(crate) fn custody_recipients(
+        &self,
+        hosted: bool,
+    ) -> Result<std::result::Result<CustodyRecipients, CustodyPublicationPending>> {
+        let pad_worlds_kept_local = match self.pad_worlds_kept_local(hosted) {
+            Ok(kept) => kept,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a custody head's pad eligibility could not be read; the pass stays pending"
+                );
+                return Ok(Err(CustodyPublicationPending::PadEligibilityUnreadable {
+                    error_kind: error.kind(),
+                }));
+            }
+        };
         // KS-6: the credentials whose keys may ride a head; a lookup that
         // faults keeps every credential's in this machine's custody, where
         // they all stay today.
@@ -165,22 +198,33 @@ impl Vault {
         let root = self
             .pinned_root_recipient_in_txn(&txn, &fold)?
             .map(|root| (root.id.0, root.key));
-        Ok(CustodyRecipients {
+        Ok(Ok(CustodyRecipients {
             root,
             data_key,
             pad_worlds_kept_local,
             credentials_eligible,
-        })
+            // Each world's admitted machines and roots (FIX 6706): filled
+            // from L03's `world_pad_recipients_in_txn` when the head's world
+            // compartments switch on; empty, the head's pads stay
+            // host-readable as today.
+            pad_worlds: Default::default(),
+        }))
     }
 
     /// [`Self::custody_recipients`] for each kind of member (KS-5, FIX
     /// 7191): a hosted member's head apart from a folder's or the residence
-    /// home's, so a hosted head never strips a pad a folder may keep.
-    fn custody_target_recipients(&self) -> Result<TargetRecipients> {
-        Ok(TargetRecipients {
-            own: self.custody_recipients(false)?,
-            hosted: self.custody_recipients(true)?,
-        })
+    /// home's, so a hosted head never strips a pad a folder may keep. Either
+    /// kind's pending leaves the whole pass pending (FIX 8825).
+    fn custody_target_recipients(
+        &self,
+    ) -> Result<std::result::Result<TargetRecipients, CustodyPublicationPending>> {
+        let own = match self.custody_recipients(false)? {
+            Ok(own) => own,
+            Err(pending) => return Ok(Err(pending)),
+        };
+        Ok(self
+            .custody_recipients(true)?
+            .map(|hosted| TargetRecipients { own, hosted }))
     }
 
     /// One publication pass of this vault's custody: its keyless log and
@@ -231,7 +275,22 @@ impl Vault {
         self.publish_custody_claiming(folder, declared, Some(outbox), anchor)
     }
 
+    /// One publication pass, then, once its locks are released, the final
+    /// receipt row of every erase whose last custody retirement it completed
+    /// (FIX 5844): the pass never fails for that row.
     fn publish_custody_claiming(
+        &self,
+        folder: FolderTarget,
+        declared: &[TargetSpec],
+        outbox: Option<&CustodyOutbox>,
+        anchor: Option<&dyn AnchorStore>,
+    ) -> Result<CustodyStatus> {
+        let status = self.publish_custody_pass(folder, declared, outbox, anchor)?;
+        self.finish_redaction_erases_logged();
+        Ok(status)
+    }
+
+    fn publish_custody_pass(
         &self,
         folder: FolderTarget,
         declared: &[TargetSpec],
@@ -242,7 +301,15 @@ impl Vault {
         // and sealed under one lock held for the pass: no pass seals an
         // older policy at a newer log position (KS-5, FIX 7191).
         let _policy = self.store.custody_policy_guard()?;
-        let recipients = self.custody_target_recipients()?;
+        let recipients = match self.custody_target_recipients()? {
+            Ok(recipients) => recipients,
+            // Nothing is noted, sealed or shipped under a policy this pass
+            // could not read: it stays pending by name (FIX 8825).
+            Err(pending) => {
+                let publication = self.store.note_publication_pending(&pending.detail())?;
+                return self.custody_status_of(publication);
+            }
+        };
         self.store.note_custody_policy(&recipients)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
@@ -323,12 +390,24 @@ impl Vault {
     /// For a member that publishes on its own channel (a hosted adapter):
     /// registers `spec` in the required set before its first exposure and,
     /// when it is behind the local log position, seals a batch for it.
-    /// `None` when it is current or nothing is in custody.
+    /// `None` when it is current or nothing is in custody, and when the
+    /// policy did not read (FIX 8825): then nothing is sealed, the member is
+    /// noted pending by name and the next call reads the policy again.
     pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
         // As a publication pass: the policy read, journaled when it changed
         // and sealed under the policy lock (KS-5, FIX 7191).
         let _policy = self.store.custody_policy_guard()?;
-        let recipients = self.custody_target_recipients()?;
+        let recipients = match self.custody_target_recipients()? {
+            Ok(recipients) => recipients,
+            Err(pending) => {
+                let why = TargetPending {
+                    code: PendingCode::Failed,
+                    detail: pending.detail(),
+                };
+                self.store.note_custody_pending(spec.id(), &why)?;
+                return Ok(None);
+            }
+        };
         self.store.note_custody_policy(&recipients)?;
         self.store.custody_batch_for(spec, recipients.of(spec))
     }
@@ -478,7 +557,7 @@ impl Vault {
         )?;
         let (custody, landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
-            CustodyRoute::Landed(landing) => (Custody::Keep, Some(landing)),
+            CustodyRoute::Landed(landing) => (Custody::Landed, Some(landing)),
             CustodyRoute::Absent => (Custody::NewHost, None),
         };
         let (made, forked, mut vault, mut report) = Self::restore_image(

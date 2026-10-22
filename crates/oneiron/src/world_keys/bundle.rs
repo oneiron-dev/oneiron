@@ -49,6 +49,8 @@
 #[cfg(feature = "sync")]
 mod admission;
 mod authority;
+mod holder_policy;
+mod key_erase;
 mod publication;
 
 use std::collections::BTreeSet;
@@ -68,9 +70,7 @@ use super::{
     WrapRecipient, base_world, open_counted, os_fill, recipients, refused,
 };
 use crate::Vault;
-use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, Destination, EffectiveRead, SealedCopies,
-};
+use crate::authority::{AuthorityEntryHash, AuthorityFold, Destination, EffectiveRead};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::TombstoneStoreRead;
@@ -79,6 +79,7 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
+pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 pub(crate) use self::publication::bundle_publish_executor;
 
 /// The bundle's size step: every bundle is a positive multiple of it.
@@ -1156,19 +1157,12 @@ fn known_worlds(fold: &AuthorityFold) -> impl Iterator<Item = EntityId> + '_ {
 /// a private world whose sealed copies go to "Cloud + my machines", or to "My
 /// machines" when the holder is a machine trusted as the owner's here. Any other
 /// holder (unknown, hosted, not mine) gets only the first. Base reality and
-/// worlds read everywhere ride the base section; "Off" stays out everywhere.
+/// worlds read everywhere ride the base section, the latter under the same
+/// setting (FIX 8886); "Off" stays out everywhere.
 fn bundle_carries(fold: &AuthorityFold, world: EntityId, holder: Destination) -> bool {
-    let privacy = fold.world_privacy(world);
     world != base_world()
-        && privacy.read != EffectiveRead::Everywhere
-        && match privacy.sealed {
-            SealedCopies::Off => false,
-            SealedCopies::MyMachines => matches!(
-                holder,
-                Destination::Machine(machine) if fold.trusted_machine(machine).is_some()
-            ),
-            SealedCopies::CloudAndMyMachines => true,
-        }
+        && fold.world_privacy(world).read != EffectiveRead::Everywhere
+        && fold.holder_keeps_sealed_copies(world, holder)
 }
 
 /// Whether a new pad object holds `world`'s pads, by its deletion state in `txn`

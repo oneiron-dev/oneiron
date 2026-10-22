@@ -899,6 +899,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // process attests the owner on each route: a request with no credential
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
+    server_config.hosted_private_origins = managed.hosted_private_origins.clone();
     // Stable, domain-separated custody from the verified vault DEK, not the
     // per-spawn callback token or caller-controlled HTTP identity headers.
     // A fresh spawn with the same DEK must recover the same logged host root.
@@ -969,7 +970,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             config
                 .browser
                 .as_ref()
-                .map(crate::config::BrowserConfig::guest),
+                .and_then(crate::config::BrowserConfig::guest),
         )
         .with_desktop_guest(
             config
@@ -984,6 +985,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone());
+    // Its browser readiness starts from the `[browser]` section, its runtime
+    // binding and the runtime fact the supervisor observed for this vault's
+    // UID (FIX 7670). No state of it stops this start.
+    sync_server
+        .browser_readiness()
+        .seed(config.browser.as_ref(), managed.guest_runtime_fact);
     // The owner's `[models] extraction_egress` opt-in, as plain serve
     // installs it (FIX 6621): off, nonlocal extraction stays refused.
     if config
@@ -1332,8 +1339,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         }
         // The managed surface, not the bare one: the reap freeze has to be
         // enforceable by the socket the supervisor routes traffic to, or
-        // `quiescent: true` is a claim about a gate that nothing reaches.
-        let app = build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors);
+        // `quiescent: true` is a claim about a gate that nothing reaches. Each
+        // socket upgraded on it or the mesh sees the shutdown, and is waited
+        // for with the calls it admitted before any worker stops (FIX 4757).
+        let (app, upgrades) = crate::embedded::upgrade_lifetime(
+            build_managed_app(Arc::clone(&sync_server), Arc::clone(&state)).layer(cors),
+            shutdown.0.subscribe(),
+        );
         // The paired-machine mesh listener (OF-535), as `serve` starts it: off
         // unless the supervisor names its bind address on argv (WILL-PLAN L14
         // row 14); managed mode never reads `ONEIRON_MESH_*`.
@@ -1368,6 +1380,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // listener closes the moment SIGTERM lands, and this resolves once the
         // requests already in the runtime have finished.
         let result = http.serve_until(app, shutdown.triggered()).await;
+        // The mesh's sync streams end where they are, so an upgrade none
+        // finished gives back its place; then every upgraded socket ends,
+        // with no deadline, once the calls it admitted have.
+        if let Some(mesh) = &mesh {
+            mesh.end_streams().await;
+        }
+        upgrades.await;
         // Its channel detaches before the mesh it rides closes.
         if let Some(device_sync) = device_sync {
             device_sync.stop().await;

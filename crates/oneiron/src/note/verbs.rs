@@ -65,6 +65,65 @@ impl Vault {
             })
     }
 
+    /// [`Self::create_note`] in the caller's write transaction, under the id
+    /// the caller names, so a NOTE that must commit with other rows (a
+    /// durable step's result, FIX 1334) lands in that same commit. The actor
+    /// binding is checked in this transaction, as `create_note` checks it.
+    /// The caller checks the id is free first.
+    pub(crate) fn create_note_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        kind: &str,
+        markdown: &str,
+        actor: WriteActor,
+    ) -> MemoryResult<EntityId> {
+        let kind = self.note_kind(kind)?;
+        let at = self.store.clock.now_recorded_at();
+        let body = encode_note_body(&NoteBody {
+            source_revision_ref: *self.store.clock.entity_id()?.as_bytes(),
+            kind,
+            author_ref: super::NoteActor::Actor(actor.entity_ref()),
+            markdown: markdown.to_owned(),
+        })?;
+        crate::memory::verify_actor_binding_in_txn(
+            self,
+            txn,
+            actor.entity_ref(),
+            actor.actor_class(),
+        )?;
+        let mut content = crate::federation::ActorContentTxn::new(self, txn, actor)?;
+        content.apply_batch(
+            self.batch_in()
+                .put_authored_note(
+                    &id,
+                    &actor.entity_ref(),
+                    TimeRange { start: at, end: at },
+                    at,
+                    &body,
+                )
+                .edge(&id, EdgeKind::AuthoredBy, &actor.entity_ref(), 1.0)
+                .made_by(
+                    &id,
+                    RowBirth::written(
+                        actor,
+                        MadeByClass::of_writer(actor.actor_class()),
+                        "note.create",
+                        &[],
+                        &[],
+                        at,
+                    ),
+                ),
+        )?;
+        content.update_note(id, |txn| -> MemoryResult<()> {
+            let doc = super::document_store::load(self, txn, id)?;
+            super::document_store::persist_authoritative(self, txn, &doc)?;
+            Ok(())
+        })?;
+        content.finish()?;
+        Ok(id)
+    }
+
     /// Moves a NOTE, ASSET or CLAIM to another facet the only way a facet
     /// moves: a birth under `facet` with the origin's current content and a
     /// `DerivedFrom` edge to it. With `supersede` the fork also supersedes the

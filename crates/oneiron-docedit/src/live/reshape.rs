@@ -12,26 +12,35 @@
 //! series' formatting, the chart's titles, axes and legend, and the
 //! workbook's other cells; a new series is formatted after a held one.
 
+mod axes;
+mod chart;
+mod dataset;
+mod families;
 mod layout;
+mod points;
+mod retained;
 mod series;
+mod special;
 mod table;
 mod workbook;
 
-pub(super) use layout::plot_plan;
+pub(super) use chart::{chart, reseed};
+pub(super) use families::same_settings;
+pub(super) use layout::{PlotTarget, plot_plan};
 pub(super) use table::table;
 
 use super::LiveError;
-use super::conversion::{Conversion, RebuildReason};
-use super::convert;
-use super::held::{self, C, children};
-use super::pptx::{ChartKind, ChartSource, NodeId, NodePayload, WRITTEN_FRAME};
-use crate::design_plan::{Cell, Column, ColumnKind, Dataset};
+use super::held::{self, C};
+use super::pptx::{ChartKind, NodePayload, draws_categories, effective_categories};
+use crate::design_plan::Cell;
 use crate::edit::xml::{self, P, R};
-use crate::native_patch::{Target, chart_data, chart_workbook, number};
+use crate::native_patch::{Target, chart_data, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
-use layout::{Data, Layout, Resolved, Wanted, first_category, number_cells, wanted};
-use std::collections::{BTreeMap, BTreeSet};
+use axes::retyped_axis;
+use families::{fresh_plot, kept_plot};
+use layout::number_cells;
+use points::{Points, carried, remap};
 
 /// The one sheet of a rewritten chart's embedded workbook.
 const SHEET: &str = "Sheet1";
@@ -54,25 +63,6 @@ pub(super) fn frame_of(tree: &XmlTree, native: u32) -> Option<usize> {
             && xml::path(tree, at, &[(P, "nvGraphicFramePr"), (P, "cNvPr")])
                 .is_some_and(|c_nv_pr| tree.nodes[c_nv_pr].attr("id") == Some(id.as_str()))
     })
-}
-
-fn letters(mut col: u32) -> String {
-    let mut out = Vec::new();
-    while col > 0 {
-        out.push(b'A' + ((col - 1) % 26) as u8);
-        col = (col - 1) / 26;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
-fn formula(col: u32, first: usize, last: usize) -> String {
-    let col = letters(col);
-    if first == last {
-        format!("'{SHEET}'!${col}${first}")
-    } else {
-        format!("'{SHEET}'!${col}${first}:${col}${last}")
-    }
 }
 
 /// The chart-side writer: the part's chart prefix.
@@ -161,33 +151,6 @@ impl Writer {
     }
 }
 
-/// The references one rewritten series writes: its name, its categories
-/// or x values, its values. `None` writes a literal.
-#[derive(Debug, Clone, Default)]
-struct Refs {
-    name: Option<String>,
-    first: Option<String>,
-    values: Option<String>,
-}
-
-impl Refs {
-    /// A series' references into a rebuilt workbook: its name in row 1 over
-    /// its values column, and its x values column (a scatter series') or
-    /// the categories in A.
-    fn rebuilt(line: &Data, categories: usize) -> Self {
-        let first = match (&line.x, line.x_col) {
-            (Some(x), Some(col)) => Some(formula(col, 2, x.len() + 1)),
-            _ if categories > 0 => Some(formula(1, 2, categories + 1)),
-            _ => None,
-        };
-        Self {
-            name: Some(formula(line.y_col, 1, 1)),
-            first,
-            values: Some(formula(line.y_col, 2, line.values.len() + 1)),
-        }
-    }
-}
-
 /// A sequence slot's kept `c:formatCode` element, if any.
 fn format_code(bytes: &[u8], tree: &XmlTree, slot: Option<usize>) -> String {
     slot.and_then(|slot| held::within(tree, slot).find(|&at| tree.nodes[at].is(C, "formatCode")))
@@ -248,824 +211,6 @@ fn is_axis(node: &Node) -> bool {
     node.namespace == C && matches!(node.name.as_str(), "catAx" | "valAx" | "dateAx" | "serAx")
 }
 
-/// The rebuilt workbook's one sheet: categories in A, then each series' x
-/// column (a scatter series') and values column, under a header row.
-fn workbook_dataset(categories: &[String], wanted: &Wanted) -> Dataset {
-    let Wanted {
-        numeric_cats,
-        category_cells,
-        data,
-        ..
-    } = wanted;
-    let mut columns = Vec::new();
-    let mut cells: Vec<Vec<Cell>> = Vec::new();
-    let column = |name: String, kind| Column {
-        name,
-        kind,
-        unit: None,
-        format: None,
-    };
-    if !categories.is_empty() {
-        let kind = if *numeric_cats {
-            ColumnKind::Number
-        } else {
-            ColumnKind::Text
-        };
-        columns.push(column(String::new(), kind));
-        cells.push(category_cells.to_vec());
-    }
-    for line in data {
-        if let Some(x) = &line.x {
-            columns.push(column(format!("{} (x)", line.name), ColumnKind::Number));
-            cells.push(x.clone());
-        }
-        columns.push(column(line.name.clone(), ColumnKind::Number));
-        cells.push(line.values.clone());
-    }
-    let height = cells.iter().map(Vec::len).max().unwrap_or(0);
-    let rows: Vec<Vec<Cell>> = (0..height)
-        .map(|row| {
-            cells
-                .iter()
-                .map(|col| col.get(row).cloned().unwrap_or(Cell::Missing))
-                .collect()
-        })
-        .collect();
-    Dataset {
-        id: String::new(),
-        columns,
-        rows,
-        missing: None,
-        sources: Vec::new(),
-        merges: Vec::new(),
-    }
-}
-
-/// Rewrite a written chart's part to `payload`: its plots as [`plot_plan`]
-/// lays them out (a kept plot's series in place with their formatting, a
-/// new series formatted after a held one as [`series::fresh`] writes it, a
-/// converted or new plot in its family's defaults), its axes as the plots
-/// need them (kept, shared, turned between category and value axes when a
-/// plot changes between a category and a scatter family, added, or
-/// dropped), and every sequence as a reference into the chart's own
-/// embedded workbook. That workbook is edited in place where it can be:
-/// only the cells the series read are written, and its other sheets,
-/// formulas, formats, names and tables keep their bytes
-/// ([`workbook::in_place`]). Where it cannot be, it is rebuilt from the
-/// live data as before, and `done` names why
-/// ([`Conversion::WorkbookRebuilt`]). A chart whose data lived elsewhere (a
-/// link, a shared workbook) gets a new embedded workbook, as PowerPoint's
-/// Edit Data does; so does a literal chart the payload moves to a
-/// workbook, and any other literal chart stays literal. Each live series is
-/// written over its own held series, found by its identity through
-/// `bound`, the identity each `c:ser` of the part holds in its own order;
-/// one resolution of the live series over the held ones drives both the
-/// workbook edit and the rewrite ([`layout::resolve`]). The rewrite reads
-/// back as the live data, and every cache equals its cells, or it refuses.
-/// The parts it changed and the series identities in the order the part
-/// now holds them; `done` gets what it did PowerPoint's way.
-pub(super) fn chart(
-    package: &mut Package,
-    chart: &str,
-    payload: &NodePayload,
-    bound: &[NodeId],
-    done: &mut Vec<Conversion>,
-) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
-    let (part, reason) = match workbook::original(package, chart, payload)? {
-        workbook::Original::Absent => return rewrite(package, chart, payload, bound, done, None),
-        workbook::Original::Replaced(part, reason) => (part, reason),
-        workbook::Original::Own(part) => {
-            // The edit runs on a copy: whatever stops it, the rebuild below
-            // starts from the package as it was.
-            let mut candidate = package.clone();
-            let mut kept = Vec::new();
-            let reason = match layout::resolve(&candidate, chart, payload, bound, None) {
-                Err(_) => RebuildReason::Unreadable,
-                Ok(read) => match workbook::in_place(&candidate, &part, &read) {
-                    Err(reason) => reason,
-                    Ok(edit) => {
-                        let planned = Some((edit, read));
-                        match rewrite(&mut candidate, chart, payload, bound, &mut kept, planned) {
-                            Ok(written) => {
-                                *package = candidate;
-                                done.extend(kept);
-                                return Ok(written);
-                            }
-                            Err(_) => RebuildReason::ReadBack,
-                        }
-                    }
-                },
-            };
-            (part, reason)
-        }
-    };
-    let written = rewrite(package, chart, payload, bound, done, None)?;
-    done.push(Conversion::WorkbookRebuilt { part, reason });
-    Ok(written)
-}
-
-/// Rewrite a live-born chart's native seed to `payload`, its workbook
-/// rebuilt from the live data: the seed's is the engine's own, holding
-/// nothing a deck kept, and holds one series per live series, in the live
-/// order. The parts it changed and the series identities in the order the
-/// part now holds them.
-pub(super) fn reseed(
-    package: &mut Package,
-    chart: &str,
-    payload: &NodePayload,
-) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
-    let seeded: Vec<NodeId> = match payload {
-        NodePayload::Chart { series, .. } => series.iter().filter_map(|line| line.id).collect(),
-        _ => Vec::new(),
-    };
-    rewrite(package, chart, payload, &seeded, &mut Vec::new(), None)
-}
-
-/// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
-/// it, over the resolution that edit read, or, without an edit, into one
-/// rebuilt from the live data.
-fn rewrite(
-    package: &mut Package,
-    chart: &str,
-    payload: &NodePayload,
-    bound: &[NodeId],
-    done: &mut Vec<Conversion>,
-    in_place: Option<(workbook::InPlace, Resolved)>,
-) -> Result<(Vec<String>, Vec<NodeId>), LiveError> {
-    let NodePayload::Chart {
-        family,
-        categories,
-        series,
-        source,
-    } = payload
-    else {
-        return Err(LiveError::Invalid(WRITTEN_FRAME));
-    };
-    let mut changed = vec![chart.to_owned()];
-    let (edit, read, book) = match in_place {
-        Some((edit, read)) => {
-            let book = Some(edit.part.clone());
-            (Some(edit), read, book)
-        }
-        None => {
-            let (_, first) = xml::read(package, chart)?;
-            let wanted = wanted(&first, *family, categories, series);
-            let book = match own_workbook(package, chart, &first)? {
-                Some(book) => Some(book),
-                None if *source == ChartSource::Literal => None,
-                None => {
-                    let dataset = workbook_dataset(categories, &wanted);
-                    let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
-                    let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
-                    done.extend(embedded);
-                    Some(book)
-                }
-            };
-            let read = layout::resolve(package, chart, payload, bound, Some(wanted))?;
-            (None, read, book)
-        }
-    };
-    let dataset = workbook_dataset(categories, &read.wanted);
-    let Resolved {
-        bytes,
-        tree,
-        wanted:
-            Wanted {
-                numeric_cats,
-                category_cells,
-                data,
-                ..
-            },
-        layout:
-            Layout {
-                area,
-                plots,
-                targets,
-                assigned,
-                seats,
-            },
-    } = read;
-    for target in &targets {
-        match target.held {
-            Some(at) if plots[at].0 != target.kind => done.push(Conversion::ChartTypeChanged {
-                from: plots[at].0,
-                to: target.kind,
-            }),
-            Some(_) => {}
-            None => done.push(Conversion::PlotAdded {
-                family: target.kind,
-            }),
-        }
-    }
-    for (at, &(kind, _)) in plots.iter().enumerate() {
-        if !targets.iter().any(|target| target.held == Some(at)) {
-            done.push(Conversion::PlotDropped { family: kind });
-        }
-    }
-    let first_cat = first_category(&tree);
-    let c = match xml::prefix(&tree.nodes[area]) {
-        "" => String::new(),
-        prefix => format!("{prefix}:"),
-    };
-    let writer = Writer { c };
-    let mut next_idx = tree
-        .nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, node)| node.is(C, "ser"))
-        .filter_map(|(at, _)| int(&tree, at, "idx").max(int(&tree, at, "order")))
-        .max()
-        .map_or(0, |top| top.saturating_add(1));
-    // The axes each plot plots on: a held plot's own, another plot's of the
-    // same kind, or a new pair, each id above every id the chart holds. A
-    // held x axis turns between a category and a value axis with its plot.
-    let held_axes: Vec<(u32, usize)> = tree.nodes[area]
-        .children
-        .iter()
-        .copied()
-        .filter(|&at| is_axis(&tree.nodes[at]))
-        .filter_map(|at| Some((int(&tree, at, "axId")?, at)))
-        .collect();
-    let mut fresh = tree
-        .nodes
-        .iter()
-        .filter(|node| node.is(C, "axId"))
-        .filter_map(|node| node.attr("val")?.trim().parse::<u32>().ok())
-        .max()
-        .map_or(1, |top| top.saturating_add(1));
-    let mut value_x: BTreeMap<u32, bool> = held_axes
-        .iter()
-        .map(|&(id, at)| (id, tree.nodes[at].name == "valAx"))
-        .collect();
-    let mut retyped: BTreeMap<u32, bool> = BTreeMap::new();
-    let mut new_axes = String::new();
-    let mut ids_of: Vec<Vec<u32>> = Vec::with_capacity(targets.len());
-    for target in &targets {
-        let wants_value = target.kind == ChartKind::Scatter;
-        let kept: Vec<u32> = target
-            .held
-            .filter(|&at| plots[at].0.has_axes())
-            .map(|at| {
-                children(&tree, plots[at].1, C, "axId")
-                    .filter_map(|id| tree.nodes[id].attr("val")?.trim().parse().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-        let shared = ids_of
-            .iter()
-            .find(|ids| {
-                ids.len() >= 2 && value_x.get(&ids[0]).copied().unwrap_or(false) == wants_value
-            })
-            .cloned();
-        let ids = if !target.kind.has_axes() {
-            Vec::new()
-        } else if let Some(&x) = kept.first() {
-            if value_x.get(&x).copied().unwrap_or(false) != wants_value {
-                retyped.insert(x, wants_value);
-                value_x.insert(x, wants_value);
-            }
-            kept
-        } else if let Some(ids) = shared {
-            ids
-        } else {
-            let secondary = ids_of.iter().any(|ids| !ids.is_empty());
-            new_axes.push_str(&axes(&writer, fresh, wants_value, secondary));
-            value_x.insert(fresh, wants_value);
-            let ids = vec![fresh, fresh.saturating_add(1)];
-            fresh = fresh.saturating_add(2);
-            ids
-        };
-        ids_of.push(ids);
-    }
-    // The display order follows the live order. Each survivor keeps its own
-    // `c:order` while the survivors keep the order the part holds them in
-    // (no series moved) and every new series follows them; else each series
-    // takes its place in the live order. A survivor's `c:idx` is its own.
-    let keep_order = {
-        let (mut last, mut born) = (None, false);
-        seats.iter().all(|seat| match seat.held {
-            None => {
-                born = true;
-                true
-            }
-            Some(ser) => {
-                let kept = !born && Some(ser) > last;
-                last = Some(ser);
-                kept
-            }
-        })
-    };
-    let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(targets.len());
-    let mut emitted: Vec<usize> = Vec::with_capacity(seats.len());
-    for (at_target, target) in targets.iter().enumerate() {
-        let kind = target.kind;
-        let kept = target.held.filter(|&at| plots[at].0 == kind);
-        let mut sers = Vec::new();
-        for &index in &assigned[at_target] {
-            emitted.push(index);
-            let seat = seats[index];
-            let place = u32::try_from(index).unwrap_or(u32::MAX);
-            let (idx, order) = match seat.held {
-                Some(ser) => (
-                    int(&tree, ser, "idx").unwrap_or(next_idx),
-                    if keep_order {
-                        int(&tree, ser, "order").unwrap_or(next_idx)
-                    } else {
-                        place
-                    },
-                ),
-                None => {
-                    let minted = next_idx;
-                    next_idx = next_idx.saturating_add(1);
-                    (minted, if keep_order { minted } else { place })
-                }
-            };
-            let line = &data[index];
-            let rebuilt;
-            let refs = match &edit {
-                Some(edit) => &edit.refs[index],
-                None => {
-                    rebuilt = if book.is_some() {
-                        Refs::rebuilt(line, categories.len())
-                    } else {
-                        Refs::default()
-                    };
-                    &rebuilt
-                }
-            };
-            let scatter = kind == ChartKind::Scatter;
-            let (cat_name, val_name) = if scatter {
-                ("xVal", "yVal")
-            } else {
-                ("cat", "val")
-            };
-            let cat_slot = seat
-                .template
-                .and_then(|ser| xml::child(&tree, ser, C, cat_name));
-            let val_slot = seat
-                .template
-                .and_then(|ser| xml::child(&tree, ser, C, val_name));
-            let cat_xml = match (&line.x, scatter) {
-                (Some(x), true) => writer.slot(
-                    cat_name,
-                    true,
-                    refs.first.as_deref(),
-                    x,
-                    &format_code(&bytes, &tree, cat_slot),
-                ),
-                (None, false) if !categories.is_empty() => writer.slot(
-                    cat_name,
-                    numeric_cats,
-                    refs.first.as_deref(),
-                    &category_cells,
-                    &format_code(&bytes, &tree, cat_slot.or(first_cat)),
-                ),
-                _ => String::new(),
-            };
-            let val_xml = writer.slot(
-                val_name,
-                true,
-                refs.values.as_deref(),
-                &line.values,
-                &format_code(&bytes, &tree, val_slot),
-            );
-            let tx = writer.tx(&line.name, refs.name.as_deref());
-            let count = line.values.len();
-            // A survivor keeps its own series' bytes in the plot that held
-            // it; drawn in another plot, it is formatted after its own.
-            let own_plot = seat.held.and_then(|ser| tree.nodes[ser].parent);
-            let in_kept = kept.is_some_and(|at| own_plot == Some(plots[at].1));
-            sers.extend(match seat.held.filter(|_| in_kept) {
-                Some(ser) => kept_ser(
-                    &bytes,
-                    &tree,
-                    ser,
-                    (idx, order),
-                    &writer,
-                    [&tx, &cat_xml, &val_xml],
-                    count,
-                )?,
-                None => series::fresh(
-                    &bytes,
-                    &tree,
-                    seat.template,
-                    kind,
-                    &writer,
-                    (idx, order),
-                    [&tx, &cat_xml, &val_xml],
-                ),
-            });
-        }
-        plot_xml.push(match kept {
-            Some(at) => kept_plot(&bytes, &tree, plots[at].1, &sers),
-            None => fresh_plot(kind, &writer, &sers, &ids_of[at_target]),
-        });
-    }
-    // The axes: each held axis a plot still plots on (turned where its plot
-    // changed kind), then the new ones.
-    let referenced: BTreeSet<u32> = ids_of.iter().flatten().copied().collect();
-    let mut axes_xml = Vec::new();
-    for &(id, at) in &held_axes {
-        if !referenced.contains(&id) {
-            continue;
-        }
-        match retyped.get(&id) {
-            Some(&value) => axes_xml.extend(retyped_axis(&bytes, &tree, at, value, &writer)),
-            None => axes_xml.extend_from_slice(piece(&bytes, &tree, at)),
-        }
-    }
-    axes_xml.extend(new_axes.into_bytes());
-    // The plot area: the plots where the held ones stood, then the axes
-    // before anything that follows them.
-    let held_at: BTreeSet<usize> = plots.iter().map(|&(_, at)| at).collect();
-    let mut out = xml::open_tag(&bytes, &tree.nodes[area]);
-    let mut plots_xml = Some(plot_xml.concat());
-    let mut axes_xml = Some(axes_xml);
-    for &child in &tree.nodes[area].children {
-        let node = &tree.nodes[child];
-        if held_at.contains(&child) {
-            if let Some(xml) = plots_xml.take() {
-                out.extend(xml);
-            }
-            continue;
-        }
-        let after =
-            node.namespace == C && matches!(node.name.as_str(), "dTable" | "spPr" | "extLst");
-        if is_axis(node) || (after && plots_xml.is_none()) {
-            if let Some(xml) = axes_xml.take() {
-                out.extend(xml);
-            }
-            if is_axis(node) {
-                continue;
-            }
-        }
-        out.extend_from_slice(piece(&bytes, &tree, child));
-    }
-    if let Some(xml) = axes_xml.take() {
-        out.extend(xml);
-    }
-    out.extend(close(&tree.nodes[area]));
-    let next = xml::splice(&bytes, vec![(tree.nodes[area].span.clone(), out)])?;
-    package.replace_xml_part(chart, next)?;
-    if let Some(book) = &book {
-        let (workbook, notes) = match edit {
-            Some(edit) => (edit.bytes, edit.notes),
-            None => (
-                Some(chart_workbook(&dataset, SHEET, package.limits())?),
-                Vec::new(),
-            ),
-        };
-        if let Some(workbook) = workbook {
-            package.replace_nested_package(book, workbook)?;
-            changed.push(book.clone());
-        }
-        let read = chart_data(package, chart)?;
-        let agree = read
-            .series
-            .iter()
-            .flat_map(|line| [&line.name, &line.categories, &line.values])
-            .flatten()
-            .all(|sequence| {
-                sequence
-                    .cache
-                    .iter()
-                    .map(held::label)
-                    .eq(sequence.workbook.iter().map(held::label))
-            });
-        if !agree {
-            return Err(LiveError::Invalid(READ_BACK));
-        }
-        done.extend(notes);
-    }
-    // The part reads back as the live series in the order it holds them.
-    let written = NodePayload::Chart {
-        family: *family,
-        categories: categories.clone(),
-        series: emitted.iter().map(|&index| series[index].clone()).collect(),
-        source: *source,
-    };
-    let read = held::chart(package, chart).ok_or(LiveError::Invalid(READ_BACK))?;
-    if !same_data(&read, &written) {
-        return Err(LiveError::Invalid(READ_BACK));
-    }
-    let order = emitted
-        .iter()
-        .filter_map(|&index| series[index].id)
-        .collect();
-    Ok((changed, order))
-}
-
-/// A kept series with its sequences replaced: `idx` and `order` as held,
-/// `tx` (inserted after `order` when it had none), the category (or x)
-/// slot before the value slot, and data points and labels past the new
-/// point count dropped. Everything else keeps its bytes.
-fn kept_ser(
-    bytes: &[u8],
-    tree: &XmlTree,
-    ser: usize,
-    (idx, order): (u32, u32),
-    writer: &Writer,
-    [tx, cat, val]: [&str; 3],
-    count: usize,
-) -> Result<Vec<u8>, LiveError> {
-    let mut out = xml::open_tag(bytes, &tree.nodes[ser]);
-    let (mut named, mut cat_done, mut data_done) = (false, false, false);
-    let push = |out: &mut Vec<u8>, text: &str| out.extend_from_slice(text.as_bytes());
-    for &child in &tree.nodes[ser].children {
-        let node = &tree.nodes[child];
-        if node.namespace != C {
-            out.extend_from_slice(piece(bytes, tree, child));
-            continue;
-        }
-        match node.name.as_str() {
-            "idx" => push(&mut out, &format!(r#"<{} val="{idx}"/>"#, writer.el("idx"))),
-            "order" => {
-                push(
-                    &mut out,
-                    &format!(r#"<{} val="{order}"/>"#, writer.el("order")),
-                );
-                if xml::child(tree, ser, C, "tx").is_none() {
-                    push(&mut out, tx);
-                    named = true;
-                }
-            }
-            "tx" if !named => {
-                push(&mut out, tx);
-                named = true;
-            }
-            "tx" => {}
-            "cat" | "xVal" => {
-                push(&mut out, cat);
-                cat_done = true;
-            }
-            "val" | "yVal" => {
-                if !cat_done {
-                    push(&mut out, cat);
-                    cat_done = true;
-                }
-                push(&mut out, val);
-                data_done = true;
-            }
-            "dPt" => {
-                if int(tree, child, "idx").is_some_and(|point| (point as usize) < count) {
-                    out.extend_from_slice(piece(bytes, tree, child));
-                }
-            }
-            "dLbls" if !node.empty => {
-                out.extend(xml::open_tag(bytes, node));
-                for &label in &node.children {
-                    let kept = !tree.nodes[label].is(C, "dLbl")
-                        || int(tree, label, "idx").is_some_and(|point| (point as usize) < count);
-                    if kept {
-                        out.extend_from_slice(piece(bytes, tree, label));
-                    }
-                }
-                out.extend(close(node));
-            }
-            "shape" | "smooth" | "extLst" | "bubbleSize" | "bubble3D" if !data_done => {
-                if !cat_done {
-                    push(&mut out, cat);
-                    cat_done = true;
-                }
-                push(&mut out, val);
-                data_done = true;
-                out.extend_from_slice(piece(bytes, tree, child));
-            }
-            _ => out.extend_from_slice(piece(bytes, tree, child)),
-        }
-    }
-    if !data_done {
-        if !cat_done {
-            push(&mut out, cat);
-        }
-        push(&mut out, val);
-    }
-    out.extend(close(&tree.nodes[ser]));
-    Ok(out)
-}
-
-/// A kept plot with its series replaced where they stood.
-fn kept_plot(bytes: &[u8], tree: &XmlTree, plot: usize, sers: &[u8]) -> Vec<u8> {
-    const AFTER: &[&str] = &[
-        "dLbls",
-        "gapWidth",
-        "overlap",
-        "serLines",
-        "axId",
-        "dropLines",
-        "hiLowLines",
-        "upDownBars",
-        "marker",
-        "smooth",
-        "firstSliceAng",
-        "holeSize",
-        "extLst",
-    ];
-    let mut out = xml::open_tag(bytes, &tree.nodes[plot]);
-    let mut placed = false;
-    for &child in &tree.nodes[plot].children {
-        let node = &tree.nodes[child];
-        if node.is(C, "ser") {
-            if !placed {
-                out.extend_from_slice(sers);
-                placed = true;
-            }
-            continue;
-        }
-        if !placed && node.namespace == C && AFTER.contains(&node.name.as_str()) {
-            out.extend_from_slice(sers);
-            placed = true;
-        }
-        out.extend_from_slice(piece(bytes, tree, child));
-    }
-    if !placed {
-        out.extend_from_slice(sers);
-    }
-    out.extend(close(&tree.nodes[plot]));
-    out
-}
-
-/// A plot written fresh in `kind`: that family's required elements, the
-/// series, and the axis ids it plots on.
-fn fresh_plot(kind: ChartKind, writer: &Writer, sers: &[u8], ids: &[u32]) -> Vec<u8> {
-    let el = |name: &str| writer.el(name);
-    let flag = |name: &str, value: &str| format!(r#"<{} val="{value}"/>"#, el(name));
-    let (head, tail) = match kind {
-        ChartKind::Bar => (
-            format!(
-                "{}{}{}",
-                flag("barDir", "col"),
-                flag("grouping", "clustered"),
-                flag("varyColors", "0")
-            ),
-            flag("gapWidth", "150"),
-        ),
-        ChartKind::Line => (
-            format!(
-                "{}{}",
-                flag("grouping", "standard"),
-                flag("varyColors", "0")
-            ),
-            flag("marker", "1"),
-        ),
-        ChartKind::Area => (
-            format!(
-                "{}{}",
-                flag("grouping", "standard"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Radar => (
-            format!(
-                "{}{}",
-                flag("radarStyle", "marker"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Scatter => (
-            format!(
-                "{}{}",
-                flag("scatterStyle", "lineMarker"),
-                flag("varyColors", "0")
-            ),
-            String::new(),
-        ),
-        ChartKind::Pie => (flag("varyColors", "1"), flag("firstSliceAng", "0")),
-        ChartKind::Doughnut => (
-            flag("varyColors", "1"),
-            format!("{}{}", flag("firstSliceAng", "0"), flag("holeSize", "50")),
-        ),
-    };
-    let ids: String = ids.iter().map(|id| flag("axId", &id.to_string())).collect();
-    let name = el(kind.element());
-    format!("<{name}>{head}")
-        .into_bytes()
-        .into_iter()
-        .chain(sers.iter().copied())
-        .chain(format!("{tail}{ids}</{name}>").into_bytes())
-        .collect()
-}
-
-/// A held x axis turned into the other kind of axis, a value axis
-/// (`value`) for a scatter plot or a category axis for a category plot, as
-/// a chart type change between them turns it: the elements both kinds hold
-/// keep their bytes, then that kind's own defaults follow.
-fn retyped_axis(
-    bytes: &[u8],
-    tree: &XmlTree,
-    axis: usize,
-    value: bool,
-    writer: &Writer,
-) -> Vec<u8> {
-    const SHARED: &[&str] = &[
-        "axId",
-        "scaling",
-        "delete",
-        "axPos",
-        "majorGridlines",
-        "minorGridlines",
-        "title",
-        "numFmt",
-        "majorTickMark",
-        "minorTickMark",
-        "tickLblPos",
-        "spPr",
-        "txPr",
-        "crossAx",
-        "crosses",
-        "crossesAt",
-    ];
-    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, writer.el(name));
-    let name = writer.el(if value { "valAx" } else { "catAx" });
-    let mut out = format!("<{name}>").into_bytes();
-    for &child in &tree.nodes[axis].children {
-        let node = &tree.nodes[child];
-        if node.namespace == C && SHARED.contains(&node.name.as_str()) {
-            out.extend_from_slice(piece(bytes, tree, child));
-        }
-    }
-    let tail = if value {
-        flag("crossBetween", "midCat")
-    } else {
-        format!(
-            "{}{}{}{}",
-            flag("auto", "1"),
-            flag("lblAlgn", "ctr"),
-            flag("lblOffset", "100"),
-            flag("noMultiLvlLbl", "0")
-        )
-    };
-    out.extend(format!("{tail}</{name}>").into_bytes());
-    out
-}
-
-/// A new pair of axes under ids `fresh` and `fresh + 1`, crossing each
-/// other: an x axis (a value axis for a scatter plot, `value`, else a
-/// category axis) and a value axis. A `secondary` pair, beside a plot that
-/// already has axes, hides its x axis and puts its value axis on the right.
-fn axes(writer: &Writer, fresh: u32, value: bool, secondary: bool) -> String {
-    let (x, y) = (fresh, fresh.saturating_add(1));
-    let el = |name: &str| writer.el(name);
-    let flag = |name: &str, val: &str| format!(r#"<{} val="{val}"/>"#, el(name));
-    let scaling = format!(
-        "<{s}>{}</{s}>",
-        flag("orientation", "minMax"),
-        s = el("scaling")
-    );
-    let format = format!(
-        r#"<{} formatCode="General" sourceLinked="1"/>"#,
-        el("numFmt")
-    );
-    let common =
-        |id: u32, deleted: &str, position: &str, gridlines: &str, cross: u32, crosses: &str| {
-            format!(
-                "{}{scaling}{}{}{gridlines}{format}{}{}{}",
-                flag("axId", &id.to_string()),
-                flag("delete", deleted),
-                flag("axPos", position),
-                flag("tickLblPos", "nextTo"),
-                flag("crossAx", &cross.to_string()),
-                flag("crosses", crosses),
-            )
-        };
-    let (hidden, side, crosses) = if secondary {
-        ("1", "r", "max")
-    } else {
-        ("0", "l", "autoZero")
-    };
-    let x_axis = if value {
-        format!(
-            "<{va}>{}{}</{va}>",
-            common(x, hidden, "b", "", y, "autoZero"),
-            flag("crossBetween", "midCat"),
-            va = el("valAx"),
-        )
-    } else {
-        format!(
-            "<{ca}>{}{}{}{}</{ca}>",
-            common(x, hidden, "b", "", y, "autoZero"),
-            flag("auto", "1"),
-            flag("lblAlgn", "ctr"),
-            flag("lblOffset", "100"),
-            ca = el("catAx"),
-        )
-    };
-    let gridlines = if secondary {
-        String::new()
-    } else {
-        format!("<{}/>", el("majorGridlines"))
-    };
-    let between = if value { "midCat" } else { "between" };
-    format!(
-        "{x_axis}<{va}>{}{}</{va}>",
-        common(y, "0", side, &gridlines, x, crosses),
-        flag("crossBetween", between),
-        va = el("valAx"),
-    )
-}
-
 /// The same-length sequence writes that make a workbook chart read as
 /// `wanted` without a rewrite: each series' name, categories (or x values)
 /// and values that differ, for the checked chart writer. `None` when the
@@ -1094,11 +239,16 @@ pub(super) fn plan(
     else {
         return None;
     };
+    // Plot settings, the 3D view and bubble sizes are written by the full
+    // rewrite.
     if family != want_family
+        || !same_settings(have, wanted)
         || held_series.len() != series.len()
         || held_series.iter().zip(series).any(|(was, now)| {
             was.family.unwrap_or(*family) != now.family.unwrap_or(*want_family)
                 || was.x.is_some() != now.x.is_some()
+                || was.bubble_size != now.bubble_size
+                || was.bubble_3d != now.bubble_3d
         })
     {
         return None;
@@ -1120,25 +270,34 @@ pub(super) fn plan(
             if held.cache != cells {
                 writes.push((index, Target::Categories, cells));
             }
-        } else if now.family.unwrap_or(*want_family) != ChartKind::Scatter
-            && held_categories != categories
-        {
-            let held = line.categories.as_ref()?;
-            if held.cache.len() != categories.len() {
-                return None;
+        } else if draws_categories(*want_family, now) {
+            let (was_set, set) = (
+                effective_categories(held_categories, was),
+                effective_categories(categories, now),
+            );
+            if was_set.depth() != set.depth() || !was_set.same_labels(set) {
+                // A hierarchy is written by the full rewrite.
+                if set.depth() > 1 || was_set.depth() > 1 {
+                    return None;
+                }
+                let held = line.categories.as_ref()?;
+                if held.cache.len() != set.len() {
+                    return None;
+                }
+                // A number category stays a number.
+                let cells = set
+                    .labels()
+                    .into_iter()
+                    .zip(&held.cache)
+                    .map(|(category, cell)| match cell {
+                        Cell::Number(_) => category
+                            .parse()
+                            .map_or_else(|_| Cell::Text(category.clone()), Cell::Number),
+                        _ => Cell::Text(category),
+                    })
+                    .collect();
+                writes.push((index, Target::Categories, cells));
             }
-            // A number category stays a number.
-            let cells = categories
-                .iter()
-                .zip(&held.cache)
-                .map(|(category, cell)| match cell {
-                    Cell::Number(_) => category
-                        .parse()
-                        .map_or_else(|_| Cell::Text(category.clone()), Cell::Number),
-                    _ => Cell::Text(category.clone()),
-                })
-                .collect();
-            writes.push((index, Target::Categories, cells));
         }
         let len = line
             .values
@@ -1160,9 +319,11 @@ pub(super) fn plan(
     Some(writes)
 }
 
-/// `read` reads as `wanted`: the same family, categories and series names,
-/// each series in the same plot family, and the same values (as numbers;
-/// a shorter wanted sequence ends in missing points).
+/// `read` reads as `wanted`: the same family and series names, each series
+/// in the same plot family drawing the same categories (by label, level by
+/// level, whatever their identities and whichever set holds them), and the
+/// same values, x values and bubble sizes (as numbers; a sequence ending in
+/// missing points reads as one without them).
 pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
     let (
         NodePayload::Chart {
@@ -1182,13 +343,12 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
         return false;
     };
     let padded = |read: &[Option<serde_json::Number>], wanted: &[Option<serde_json::Number>]| {
-        let number = |value: &Option<serde_json::Number>| value.as_ref().and_then(|n| n.as_f64());
-        read.len() >= wanted.len()
-            && read.iter().zip(wanted).all(|(a, b)| number(a) == number(b))
-            && read[wanted.len()..].iter().all(Option::is_none)
+        let number = |value: Option<&Option<serde_json::Number>>| {
+            value.and_then(|value| value.as_ref()?.as_f64())
+        };
+        (0..read.len().max(wanted.len())).all(|at| number(read.get(at)) == number(wanted.get(at)))
     };
     family == want_family
-        && categories == want_categories
         && series.len() == want_series.len()
         && series.iter().zip(want_series).all(|(a, b)| {
             a.name == b.name
@@ -1199,5 +359,17 @@ pub(super) fn same_data(read: &NodePayload, wanted: &NodePayload) -> bool {
                     (None, None) => true,
                     _ => false,
                 }
+                && match (&a.bubble_size, &b.bubble_size) {
+                    (Some(a), Some(b)) => padded(a.as_slice(), b.as_slice()),
+                    (None, None) => true,
+                    _ => false,
+                }
+                && (!draws_categories(*family, a) || {
+                    let (read, want) = (
+                        effective_categories(categories, a),
+                        effective_categories(want_categories, b),
+                    );
+                    read.depth() == want.depth() && read.same_labels(want)
+                })
         })
 }

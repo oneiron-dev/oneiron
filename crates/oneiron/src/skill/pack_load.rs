@@ -1,8 +1,11 @@
 //! Attempt-bound pack reads stamp their actual revision in the same transaction.
 
 use super::{SkillLifecycle, SkillRecord, SkillRole};
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
+use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One actual tier-2 load. Native record-only skills have no file tree.
@@ -153,8 +156,7 @@ impl Vault {
             // The requested skill is the incumbent arm. An exploration trial
             // of its open proposal may route this attempt to the proposal,
             // reserving the run's charge in this same transaction.
-            let routed =
-                super::exploration_trial::route_in_txn(self, txn, attempt, skill, &record, at)?;
+            let routed = exploration_trial::route_in_txn(self, txn, attempt, skill, &record, at)?;
             let (entity, record, source_files) = match routed.load {
                 Some(trial) => (trial.entity, trial.record, trial.source_files),
                 None => {
@@ -185,6 +187,14 @@ impl Vault {
                 attempt,
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
             )?;
+            let read =
+                self.pack_source_rows_in_txn(txn, &entity, &record, source_files.is_some())?;
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                attempt,
+                ReadSetProducer::SKILL_PACK,
+                Some(read),
+            );
             Ok((
                 LoadedSkillPack {
                     entity,
@@ -198,7 +208,7 @@ impl Vault {
         // queue opens its own. The load stands either way, and the Coach
         // queues an ask that did not land here.
         if let Some(proposal) = ask
-            && let Err(error) = super::exploration_trial::queue_trial_ask(self, &proposal)
+            && let Err(error) = exploration_trial::queue_trial_ask(self, &proposal)
         {
             tracing::warn!(%error, "an exploration trial's overrun ask is not queued yet");
         }
@@ -268,8 +278,34 @@ impl Vault {
                 at,
             );
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
+            let packaged = loaded.source_files.is_some();
+            let read = self.pack_source_rows_in_txn(txn, skill, &loaded.record, packaged)?;
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                leased.id,
+                ReadSetProducer::SKILL_PACK,
+                Some(read),
+            );
             Ok(loaded)
         })
+    }
+
+    /// The rows a pack load read `entity`'s instructions from (FIX 7017):
+    /// its SKILL row, which holds its local package, and the replicated
+    /// carrier ASSET a `packaged` load absent locally was recovered from.
+    /// Capture only: the load door reports them on its attempt's read set.
+    fn pack_source_rows_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity: &EntityId,
+        record: &SkillRecord,
+        packaged: bool,
+    ) -> Result<Vec<EntityId>> {
+        let mut rows = vec![*entity];
+        if packaged {
+            rows.extend(self.runtime_package_carrier_in_txn(txn, entity, record)?);
+        }
+        Ok(rows)
     }
 
     /// Records `entry` on the manifest of `leased`, in the caller's writer
@@ -434,9 +470,12 @@ impl Vault {
                     "actor self-model belongs to a different resident",
                 ));
             }
+            // A claim whose every cited TURN is erased has no live support,
+            // however late it replicated (FIX 8643): it is not loaded.
             if !body.predicate.starts_with("actor.")
                 || !claim_surfaceable(&body)
                 || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, claim)?
+                || !crate::claim::has_live_support_in_txn(&self.store, txn, &body)?
                 || body.valid_from.is_some_and(|start| start > at)
                 || body.valid_to.is_some_and(|end| end <= at)
             {
@@ -463,6 +502,13 @@ impl Vault {
                     at,
                 ),
             )?;
+            // Capture only (FIX 7017): the CLAIM this load read.
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                attempt,
+                ReadSetProducer::ACTOR_CLAIM,
+                Some(vec![*claim]),
+            );
             Ok(body)
         })
     }

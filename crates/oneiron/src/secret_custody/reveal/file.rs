@@ -47,8 +47,8 @@ use super::{
     RevealAuthority, RevealRow, SecretRevealState, checked_text, covering_grant, reveal_bound,
 };
 use crate::consent::{
-    ApproveOnceAuthorization, approve_once_authorization_in_txn, approve_once_decision_in_txn,
-    load_active_standing_grants, spend_approve_once_in_txn,
+    ApproveOnceAuthorization, StandingConsentGrant, approve_once_authorization_in_txn,
+    approve_once_decision_in_txn, load_active_standing_grants, spend_approve_once_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -92,6 +92,9 @@ struct KeyRead<'a> {
     /// file whose keys span more than one class, one ask per class group. A
     /// file of one class, or a sealed one, asks once under an id naming none.
     per_class: bool,
+    /// The ORIGINAL repo file and actual recipient a repo read names (FIX
+    /// 7608 2b-ii, [`repo`]): its bound, rows and digest bind them.
+    repo: Option<&'a RepoFileRevealTarget>,
 }
 
 /// The keys of one custody class a read opens: one reveal row, one grant
@@ -243,6 +246,7 @@ impl Vault {
                 hash: typed_read_hash(artifact, projection_fingerprint, &groups),
                 groups,
                 per_class: true,
+                repo: None,
             };
             self.read_sight_in_txn(txn, &read)
         })
@@ -287,6 +291,7 @@ impl Vault {
                 hash,
                 groups,
                 per_class,
+                repo: None,
             };
             self.read_sight_in_txn(txn, &read)
         })
@@ -306,8 +311,20 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         read: &KeyRead<'_>,
     ) -> Result<SecretSight> {
+        self.read_sight_core_in_txn(txn, read)
+            .map(|(sight, _)| sight)
+    }
+
+    /// [`Self::read_sight_in_txn`], with the id of each reveal row it
+    /// delivered, in its groups' order: none for a masked read. The rows are
+    /// written in `txn`; the caller hands nothing on before it commits.
+    fn read_sight_core_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        read: &KeyRead<'_>,
+    ) -> Result<(SecretSight, Vec<EntityId>)> {
         if read.groups.is_empty() {
-            return Ok(SecretSight::Masked);
+            return Ok((SecretSight::Masked, Vec::new()));
         }
         let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         let grants = load_active_standing_grants(&self.store, txn)?;
@@ -315,12 +332,7 @@ impl Vault {
         let mut asks = Vec::new();
         for group in &read.groups {
             let ask = read.ask_in_txn(self, txn, group, now)?;
-            let bound = reveal_bound(
-                &read.asker.connection(),
-                group.class,
-                read.asker.project.as_ref(),
-            )?;
-            let plan = match covering_grant(&bound, read.asker.project, &grants)? {
+            let plan = match read.covering_grant(group, &grants)? {
                 Some(grant_ref) => GroupPlan::Ready(Ready::Covered(grant_ref)),
                 None => asked_plan_in_txn(self, txn, &ask, now)?,
             };
@@ -336,8 +348,9 @@ impl Vault {
                 file_ask_in_txn(self, txn, &ask, &mut asked, now)?;
                 REVEALS.put(&self.store, txn, &ask, &asked)?;
             }
-            return Ok(SecretSight::Masked);
+            return Ok((SecretSight::Masked, Vec::new()));
         }
+        let mut delivered = Vec::with_capacity(ready.len());
         for (group, ask, plan) in ready {
             match plan {
                 Ready::Covered(grant_ref) => {
@@ -350,16 +363,18 @@ impl Vault {
                     row.answered_by = Some(standing(&grant_ref));
                     row.decision = Some(used.decision_id());
                     deliver_file_in_txn(self, txn, &reveal, row)?;
+                    delivered.push(reveal);
                 }
                 Ready::Once(mut asked, authorization) => {
                     spend_approve_once_in_txn(&self.store, txn, &authorization)?;
                     asked.decision =
                         approve_once_decision_in_txn(&self.store, txn, &authorization.digest())?;
                     deliver_file_in_txn(self, txn, &ask, *asked)?;
+                    delivered.push(ask);
                 }
             }
         }
-        Ok(SecretSight::Granted)
+        Ok((SecretSight::Granted, delivered))
     }
 }
 
@@ -380,6 +395,28 @@ impl KeyRead<'_> {
             self.per_class.then_some(group.class),
         )?;
         open_ask_id_in_txn(vault, txn, base, now)
+    }
+
+    /// The registry ref of the standing grant covering `group` of this read
+    /// now: the reveal's own bound, or a repo read's under any scope the
+    /// owner granted it ([`RepoFileRevealTarget::covering_grant`]).
+    fn covering_grant(
+        &self,
+        group: &ReadGroup,
+        grants: &[StandingConsentGrant],
+    ) -> Result<Option<String>> {
+        let connection = self.asker.connection();
+        let project = self.asker.project;
+        match self.repo {
+            Some(target) => {
+                let run = self.asker.run.as_deref();
+                target.covering_grant(&connection, group.class, project, run, grants)
+            }
+            None => {
+                let bound = reveal_bound(&connection, group.class, project.as_ref())?;
+                covering_grant(&bound, project, grants)
+            }
+        }
     }
 
     /// The reveal row `group` of this read writes, in `state`, at `now`.
@@ -411,6 +448,7 @@ impl KeyRead<'_> {
                 keys: group.keys.clone(),
                 leases: Vec::new(),
                 siblings: self.siblings(group),
+                repo: self.repo.cloned(),
             }),
         }
     }
@@ -701,3 +739,12 @@ fn deliver_file_in_txn(
     row.file = Some(file);
     REVEALS.put(&vault.store, txn, reveal, &row)
 }
+
+mod lfs;
+mod repo;
+
+pub use self::repo::RepoFileRevealScope;
+pub(crate) use self::repo::{
+    RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
+    RepoFileRevealTarget, RepoFileSight,
+};

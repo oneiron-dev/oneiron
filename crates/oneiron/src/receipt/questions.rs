@@ -2,8 +2,8 @@
 //! the standing-question verbs.
 //!
 //! The engine's own types ride inside these requests unchanged: a
-//! `DecisionQuestion` or a `QuestionDefinition` decodes through its own serde
-//! (with its `deny_unknown_fields`) and is shown to a schema as any JSON
+//! `DecisionQuestion` or a `QuestionDefinitionInput` decodes through its own
+//! serde (with its `deny_unknown_fields`) and is shown to a schema as any JSON
 //! value. No principal, actor or clock is a field here: the server's door
 //! takes the asker from the credential and the time from its own clock.
 //!
@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::EntityId;
 use crate::llm::decision::questions::{
     AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
-    OutcomeLabel, QuestionCriteria, QuestionDefinition,
+    OutcomeLabel, QuestionCriteria, QuestionDefinitionInput,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -241,8 +241,8 @@ pub enum GraphAskOutcome {
         declined: Vec<GraphAskDeclined>,
     },
     /// A unit failed and the ask stopped there. The answers and abstentions
-    /// before it are already committed and stand. The declined receipts
-    /// before it are not carried: the engine drops them on a failure.
+    /// before it are already committed and stand, and each declined receipt
+    /// before it is carried as `Done` carries it (FIX 1582).
     Failed {
         /// The unit that failed; none when the ask failed before any unit.
         failed_unit: Option<EntityId>,
@@ -251,6 +251,9 @@ pub enum GraphAskOutcome {
         message: String,
         answers: Vec<AnswerRecord>,
         abstained: Vec<EntityId>,
+        /// Each abstained unit before the failure whose answerer declined
+        /// through a full decision, in `abstained` order.
+        declined: Vec<GraphAskDeclined>,
     },
 }
 
@@ -259,13 +262,17 @@ impl From<GraphAskReceipts> for GraphAskOutcome {
         Self::Done {
             answers: receipts.result.answers,
             abstained: receipts.result.abstained,
-            declined: receipts
-                .declined
-                .into_iter()
-                .map(|(unit, decision)| GraphAskDeclined { unit, decision })
-                .collect(),
+            declined: declined_receipts(receipts.declined),
         }
     }
+}
+
+/// Each declined unit beside its decision, in the engine's order.
+fn declined_receipts(declined: Vec<(EntityId, TypedDecision)>) -> Vec<GraphAskDeclined> {
+    declined
+        .into_iter()
+        .map(|(unit, decision)| GraphAskDeclined { unit, decision })
+        .collect()
 }
 
 impl GraphAskOutcome {
@@ -278,6 +285,7 @@ impl GraphAskOutcome {
         if failure.failed_unit.is_none()
             && completed.answers.is_empty()
             && completed.abstained.is_empty()
+            && failure.declined.is_empty()
         {
             return Err(error);
         }
@@ -287,6 +295,7 @@ impl GraphAskOutcome {
             message: error.message,
             answers: completed.answers,
             abstained: completed.abstained,
+            declined: declined_receipts(failure.declined),
         })
     }
 }
@@ -296,21 +305,23 @@ impl GraphAskOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionCreateRequest {
-    /// The engine's `QuestionDefinition`: `{question, adapter, units, recipe,
-    /// profile, dial, activation, refresh, delivery, learning, binding?,
-    /// criteria?, audience?, posture?, media?, deadline_ms?}`. `criteria` is
+    /// The engine's `QuestionDefinitionInput`: `{question, adapter, units,
+    /// recipe, profile, dial, activation, refresh, delivery, learning,
+    /// binding?, criteria?, audience?, posture?, media?, deadline_ms?}`.
+    /// `question` is `{text, class, contract, accept_type}`, with no `id` or
+    /// `version`: the engine owns both and refuses either. `criteria` is
     /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each at most 16
     /// lines of 512 bytes; `audience` is `asker`; `posture` is `managed`,
     /// `relay` or `self-host` (absent: the vault's); `media` is `{images,
     /// audio}` (each absent: on); `deadline_ms` is each call's clock, 1 to
     /// 60000.
-    /// `activation` must be `standing`. The engine mints `question.id` and
-    /// sets `question.version` to 1 over what the request names. `dial`
-    /// (`{first, ceiling, band}`) must sit inside the host's dial: first at
-    /// or above the host's first rung, ceiling at most `big`, and the host's
-    /// band.
+    /// `activation` must be `standing`. The engine mints the question's id
+    /// and sets its version to 1. `dial` (`{first, ceiling, band}`) must sit
+    /// inside the host's dial: first at or above the host's first rung,
+    /// ceiling at most `big`, and a valid band inside the host's band
+    /// (`host.low <= low < high <= host.high`).
     #[schemars(with = "serde_json::Value")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionInput,
 }
 
 /// `vault.questions.edit`'s input: a whole replacement definition, minting
@@ -322,11 +333,11 @@ pub struct QuestionEditRequest {
     pub id: EntityId,
     /// The version this edit replaces; a stale one is refused.
     pub expected_version: u32,
-    /// The whole new definition, as `vault.questions.create` takes it. The
-    /// engine pins `question.id` to `id` and `question.version` to the next
-    /// version.
+    /// The whole new definition, as `vault.questions.create` takes it, its
+    /// question without an id or version. The engine pins the question's id
+    /// to `id` and its version to the next version.
     #[schemars(with = "serde_json::Value")]
-    pub definition: QuestionDefinition,
+    pub definition: QuestionDefinitionInput,
 }
 
 /// `vault.questions.pause`'s input: pause the caller's standing question,
@@ -372,11 +383,27 @@ pub struct QuestionReadRequest {
 }
 
 /// `vault.questions.answers`'s input: the caller's standing question whose
-/// answer receipts to read, across every version.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+/// answer receipts to read, across every version. Without a `cursor` the
+/// answer is every one of them, as one bare list; a `cursor` opts into pages
+/// (FIX 1585).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionAnswersRequest {
     pub id: EntityId,
+    /// Opts into pages: `""` reads the first page, and a page's `next_cursor`
+    /// the page after it. The first page fixes what the read covers: every
+    /// answer and ask committed by then, graph answers first, then artifact
+    /// asks, each in commit order; later ones are not in it. The cursor is a
+    /// position, not a grant: each page checks the question is the caller's
+    /// again, and a cursor taken before a vault restore is refused. Absent or
+    /// null: every answer, as one bare list, unpaged.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// With a `cursor`, at most this many entries on the page, counted across
+    /// graph answers and artifact asks together; absent or 0, the whole rest.
+    /// Without a `cursor` it is not read.
+    #[serde(default)]
+    pub page_size: Option<usize>,
 }
 
 /// `vault.questions.refresh`'s input: the caller's standing question to
@@ -432,7 +459,7 @@ pub struct QuestionScheduleRequest {
 }
 
 /// One entry of `vault.questions.answers`, tagged by `kind`: a graph
-/// question's answer receipt, or a standing artifact question's last ask of
+/// question's answer receipt, or one ask a standing artifact question made of
 /// one artifact, whose answers wait as a proposal for Keep
 /// (`vault.artifacts.keep` / `vault.artifacts.discard`) rather than as
 /// claims.
@@ -445,7 +472,8 @@ pub enum QuestionAnswer {
 
 impl QuestionAnswer {
     /// The answers door's one shape: every graph answer receipt in the
-    /// engine's order, then every artifact ask in artifact order.
+    /// engine's order, then every artifact ask in the order
+    /// [`crate::llm::decision::questions::artifact_ask_records`] lists them.
     #[must_use]
     pub fn union(graph: Vec<AnswerRecord>, asks: Vec<ArtifactAskRecord>) -> Vec<Self> {
         graph
@@ -454,4 +482,23 @@ impl QuestionAnswer {
             .chain(asks.into_iter().map(Self::Artifact))
             .collect()
     }
+}
+
+/// `vault.questions.answers`'s answer: without a cursor, every answer as one
+/// bare list ([`QuestionAnswer::union`]); with one, a page.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum QuestionAnswersReply {
+    All(Vec<QuestionAnswer>),
+    Page(QuestionAnswersPage),
+}
+
+/// One page of `vault.questions.answers`: its entries, graph answers before
+/// artifact asks, each in commit order, and the cursor of the page after it,
+/// none on the last.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAnswersPage {
+    pub answers: Vec<QuestionAnswer>,
+    pub next_cursor: Option<String>,
 }

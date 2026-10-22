@@ -11,7 +11,7 @@ use oneiron::{
 };
 use oneiron::{commitment_schedule, commitment_wake};
 
-use super::{CommitmentDeadline, DeadlineSource, NowMillis, system_now_ms};
+use super::{CommitmentDeadline, DeadlineSource, IdleSample, NowMillis, system_now_ms};
 
 /// [`DeadlineSource`] over the vault's advisory attempt table: the earliest due
 /// pending Dreamer consolidation attempt THIS NODE could admit. A queued attempt
@@ -38,6 +38,8 @@ pub struct AttemptQueueDeadlines<'v> {
     local_node_id: u64,
     lease_owner: Option<String>,
     commitment_now: Option<NowMillis>,
+    /// The host's liveness, read only for the Arc deadline (FIX 7509 P8).
+    idle: Option<IdleSample>,
 }
 
 impl<'v> AttemptQueueDeadlines<'v> {
@@ -50,6 +52,7 @@ impl<'v> AttemptQueueDeadlines<'v> {
             local_node_id,
             lease_owner: None,
             commitment_now: None,
+            idle: None,
         }
     }
 
@@ -73,7 +76,38 @@ impl<'v> AttemptQueueDeadlines<'v> {
             local_node_id,
             lease_owner: None,
             commitment_now: Some(now),
+            idle: None,
         }
+    }
+
+    /// The host's liveness sample, lent to the Arc deadline alone (FIX 7509
+    /// P8): an owed Arc arms none while a turn runs, background work is
+    /// live or compute is away, and none before the wake policy's idle
+    /// window after the last inbound. Every other deadline is unchanged.
+    #[must_use]
+    pub fn with_idle(mut self, idle: IdleSample) -> Self {
+        self.idle = Some(idle);
+        self
+    }
+
+    /// The earliest owed Arc's due instant (Unix seconds), once the host is
+    /// settled when its liveness is lent. The host's own pushes read it
+    /// again when live work ends.
+    fn arc_due_at(&self) -> oneiron::Result<Option<u64>> {
+        let Some(at) = self.vault.next_arc_due_at()? else {
+            return Ok(None);
+        };
+        let Some(idle) = &self.idle else {
+            return Ok(Some(at));
+        };
+        let state = idle();
+        if !state.compute_available || state.running_turns || state.live_background_work {
+            return Ok(None);
+        }
+        let idle_secs = self.vault.dreamer_wake_policy()?.idle_secs;
+        Ok(Some(
+            at.max(state.last_inbound_at.saturating_add(idle_secs)),
+        ))
     }
 
     /// Mirrors macro admission: home designation AND vault client identity
@@ -357,6 +391,28 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 let due = CommitmentDeadline {
                     due_at_ms: at.saturating_mul(1_000),
                     scope: DreamerConsolidationScope::Micro,
+                };
+                if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
+                    next = Some(due);
+                }
+            }
+            // Each owed Arc (FIX 7509 P8) arms a Macro pass on the home
+            // alone, whose Timer begin sweeps it; as independent of the rest.
+            let arc = match self.arc_due_at() {
+                Ok(arc) => arc,
+                Err(error) if next.is_some() || commitment.is_some() => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "arc deadline unavailable; keeping independent deadline"
+                    );
+                    None
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(at) = arc {
+                let due = CommitmentDeadline {
+                    due_at_ms: at.saturating_mul(1_000),
+                    scope: DreamerConsolidationScope::Macro,
                 };
                 if next.is_none_or(|current| due.due_at_ms < current.due_at_ms) {
                     next = Some(due);

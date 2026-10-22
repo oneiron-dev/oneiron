@@ -577,9 +577,13 @@ impl Vault {
             launch_usd_prices: Default::default(),
             message_streams: Default::default(),
             live_rows: Default::default(),
+            attempt_activity: Default::default(),
             task_work: crate::work_line::WorkLine::new(
                 None,
                 crate::work_line::TASK_WORK_BOUND,
+                crate::work_line::TASK_WORK_WAIT,
+            ),
+            linear_rate_line: crate::work_line::WorkLine::exclusive(
                 crate::work_line::TASK_WORK_WAIT,
             ),
             world_keys: Default::default(),
@@ -597,6 +601,7 @@ impl Vault {
             speculative_passes: Default::default(),
             lfs_read_room: Default::default(),
             host_net_floor: Default::default(),
+            proposal_spool: Default::default(),
             result_body_pins: Default::default(),
             verb_hook_state: Default::default(),
             skill_invocations: Default::default(),

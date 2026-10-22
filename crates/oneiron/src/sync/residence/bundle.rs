@@ -3,8 +3,9 @@
 //! bundle and its pad object (`world_keys::bundle`), stored in bounded parts.
 //! A machine of the owner's stages an upload in parts, then commits the
 //! generation whole, naming the newest generation it took as its parent: a
-//! parent that moved, or a slot that already has a generation, is refused, so
-//! each UTC slot gets one upload. Only the machine holding the publisher turn
+//! parent that moved is refused. A slot may take more than one generation
+//! (FIX 8885): each commit takes the next commit order (`order`), and the
+//! newest is the one committed last. Only the machine holding the publisher turn
 //! (`bundle_turn`) stages a bundle or commits. The home then retires what
 //! `retired_bundle_generations` names, each bundle with its pad object.
 //!
@@ -24,9 +25,21 @@
 //! objects, so an erase made on it sweeps them.
 
 mod commit_receipt;
+mod order;
+mod pad_objects;
 mod publication;
 
 pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
+pub use self::pad_objects::{
+    BundlePartRead, PadObjectUnavailable, SealedBundleIndex, sealed_bundle_index,
+};
+pub(crate) use self::pad_objects::{
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
+    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
+    refill_pad_object,
+};
+pub(super) use self::pad_objects::{index_in, served_index};
 pub(super) use self::publication::{Asked, asked_of};
 
 use super::bundle_turn::hold_turn_in;
@@ -35,9 +48,9 @@ use crate::authority::{AuthorityEntryHash, MachineDeviceClass, PeerMachine};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::Store;
 use crate::world_keys::{
-    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, retired_bundle_generations,
-    sealed_bundle_slot,
+    RecoveryRootId, SealedBundleGeneration, SealedKeyPads, sealed_bundle_slot,
 };
 
 /// The most object bytes one upload part carries (CALLS:
@@ -70,8 +83,9 @@ pub(super) const STAGES: SideTable<String, Vec<u8>, Raw> =
 const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE_PART);
 
-/// u64be bundle length ‖ digest ‖ u64be pad object length ‖ digest.
-const ENTRY_LEN: usize = 8 + 32 + 8 + 32;
+/// u64be commit order ‖ u64be bundle length ‖ digest ‖ u64be pad object
+/// length ‖ digest.
+const ENTRY_LEN: usize = 8 + 8 + 32 + 8 + 32;
 /// The recovery root id ‖ its anchor key, after an entry whose publisher named
 /// a root.
 const KIT_ROOT_LEN: usize = 32 + 32;
@@ -129,6 +143,9 @@ pub struct SealedBundleKitRoot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SealedBundleEntry {
     pub generation: SealedBundleGeneration,
+    /// The order the home committed it in: past every generation it kept
+    /// then (FIX 8885). The newest is the greatest.
+    pub commit_order: u64,
     pub bundle_len: u64,
     /// BLAKE3 of the bundle's bytes.
     pub bundle_digest: [u8; 32],
@@ -151,6 +168,7 @@ impl SealedBundleEntry {
 
     fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(ENTRY_LEN + KIT_ROOT_LEN);
+        out.extend_from_slice(&self.commit_order.to_be_bytes());
         out.extend_from_slice(&self.bundle_len.to_be_bytes());
         out.extend_from_slice(&self.bundle_digest);
         out.extend_from_slice(&self.pads_len.to_be_bytes());
@@ -179,10 +197,11 @@ impl SealedBundleEntry {
         };
         Ok(Self {
             generation,
-            bundle_len: be_u64(&raw[..8])?,
-            bundle_digest: raw[8..40].try_into().map_err(|_| Error::InvalidKey)?,
-            pads_len: be_u64(&raw[40..48])?,
-            pads_digest: raw[48..ENTRY_LEN]
+            commit_order: be_u64(&raw[..8])?,
+            bundle_len: be_u64(&raw[8..16])?,
+            bundle_digest: raw[16..48].try_into().map_err(|_| Error::InvalidKey)?,
+            pads_len: be_u64(&raw[48..56])?,
+            pads_digest: raw[56..ENTRY_LEN]
                 .try_into()
                 .map_err(|_| Error::InvalidKey)?,
             kit,
@@ -344,10 +363,15 @@ fn drop_stage_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, key: &str) -> Result
     Ok(())
 }
 
-/// Every kept generation, oldest first.
+/// Every kept generation, oldest committed first.
 pub(super) fn entries_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleEntry>> {
+    entries_of(&vault.store, txn)
+}
+
+/// [`entries_in`] on `store`.
+fn entries_of(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<SealedBundleEntry>> {
     let mut out = Vec::new();
-    for row in GENERATIONS.iter_raw_from(&vault.store, txn, &[])? {
+    for row in GENERATIONS.iter_raw_from(store, txn, &[])? {
         let (key, raw) = row?;
         let generation = std::str::from_utf8(&key)
             .ok()
@@ -355,6 +379,7 @@ pub(super) fn entries_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Sea
             .ok_or(Error::InvalidKey)?;
         out.push(SealedBundleEntry::decode(generation, &raw)?);
     }
+    out.sort_by_key(|entry| entry.commit_order);
     Ok(out)
 }
 
@@ -377,10 +402,21 @@ fn put_object_in(
     object: SealedBundleObject,
     bytes: &[u8],
 ) -> Result<()> {
+    put_parts_in(&vault.store, wtxn, generation, object, bytes)
+}
+
+/// [`put_object_in`] on `store`.
+fn put_parts_in(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    generation: &SealedBundleGeneration,
+    object: SealedBundleObject,
+    bytes: &[u8],
+) -> Result<()> {
     for (index, chunk) in bytes.chunks(STORED_PART).enumerate() {
         let offset = (index * STORED_PART) as u64;
         PARTS.put(
-            &vault.store,
+            store,
             wtxn,
             &part_key(generation, object, offset),
             &chunk.to_vec(),
@@ -389,14 +425,12 @@ fn put_object_in(
     Ok(())
 }
 
-/// Retires what [`retired_bundle_generations`] names in slot `now_slot`, each
-/// bundle with its pad object.
+/// Retires what the keep and age rule names in slot `now_slot`, in commit
+/// order ([`order::retired_in_commit_order`]), each bundle with its pad
+/// object.
 fn retire_in(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now_slot: u64) -> Result<()> {
-    let kept: Vec<SealedBundleGeneration> = entries_in(vault, wtxn)?
-        .into_iter()
-        .map(|entry| entry.generation)
-        .collect();
-    for generation in retired_bundle_generations(now_slot, &kept) {
+    let kept = entries_in(vault, wtxn)?;
+    for generation in order::retired_in_commit_order(now_slot, &kept) {
         let key = sealed_generation_hex(&generation);
         GENERATIONS.delete(&vault.store, wtxn, &key)?;
         PARTS.delete_from(&vault.store, wtxn, format!("{key}:").as_bytes())?;
@@ -517,11 +551,12 @@ fn staged_whole(
 /// object the machine `peer` proved staged whole for it, and drops its stages.
 /// `parent` is the newest generation that machine took, or `None` when the
 /// home kept none. Refused when the home's newest is another by now, when the
-/// generation's slot is not past the newest's (one generation per slot), for
-/// a slot not yet open on the home's clock, and for a machine not holding the
+/// generation's slot is before the newest's (a later generation of the same
+/// slot is taken, FIX 8885), for a slot not yet open on the home's clock, for
+/// a generation the home keeps already, and for a machine not holding the
 /// publisher turn. The home opens nothing: it keeps only objects that parse as
 /// the generation named. Then the machine leaves the turn's queue, and the
-/// home retires what [`retired_bundle_generations`] names.
+/// home retires what the keep and age rule names in commit order.
 ///
 /// `root` is the recovery root the machine pins, when it pins one: the home
 /// keeps it, with its anchor from the root's record here, and the kit door
@@ -623,6 +658,14 @@ pub fn sealed_bundle_generations(
     request: Option<AuthorityEntryHash>,
 ) -> Result<Vec<SealedBundleEntry>> {
     owner_machine(vault, peer, false, Asked::named(request))?;
+    let mut kept = retire_aged(vault)?;
+    kept.reverse();
+    Ok(kept)
+}
+
+/// Retires the generations aged out by now, so they go even when uploads
+/// stop, and returns the rest, oldest committed first.
+fn retire_aged(vault: &Vault) -> Result<Vec<SealedBundleEntry>> {
     let (now_slot, mut kept) = {
         let txn = vault.store.env.read_txn()?;
         (
@@ -630,14 +673,11 @@ pub fn sealed_bundle_generations(
             entries_in(vault, &txn)?,
         )
     };
-    let generations: Vec<SealedBundleGeneration> =
-        kept.iter().map(|entry| entry.generation).collect();
-    let retired = retired_bundle_generations(now_slot, &generations);
+    let retired = order::retired_in_commit_order(now_slot, &kept);
     if !retired.is_empty() {
         vault.with_write_txn_grouped(|wtxn| retire_in(vault, wtxn, now_slot))?;
         kept.retain(|entry| !retired.contains(&entry.generation));
     }
-    kept.reverse();
     Ok(kept)
 }
 
@@ -645,8 +685,9 @@ pub fn sealed_bundle_generations(
 /// [`SEALED_BUNDLE_READ_PART_MAX`] bytes from `offset`, with the generation's
 /// entry, for a machine of the owner's whose proof stands here, or the one his
 /// `request` asked to publish here: an object is read in slices. `generation`
-/// names one, or `None` the newest. `None` for a generation not kept and an
-/// offset at or past the object's end.
+/// names one, or `None` the newest. `None` for a generation not kept; the
+/// read says when the offset is at or past the object's end, and when a kept
+/// pad object's bytes there are missing (FIX 7106).
 ///
 /// # Errors
 ///
@@ -658,7 +699,7 @@ pub fn sealed_bundle_part(
     object: SealedBundleObject,
     offset: u64,
     request: Option<AuthorityEntryHash>,
-) -> Result<Option<(SealedBundleEntry, Vec<u8>)>> {
+) -> Result<Option<(SealedBundleEntry, BundlePartRead)>> {
     let bundle = object == SealedBundleObject::Bundle;
     owner_machine(vault, peer, bundle, Asked::named(request))?;
     let txn = vault.store.env.read_txn()?;
@@ -669,42 +710,65 @@ pub fn sealed_bundle_part(
     let Some(entry) = entry else {
         return Ok(None);
     };
-    Ok(read_part_in(vault, &txn, &entry, object, offset)?.map(|part| (entry, part)))
+    let read = read_part_in(vault, &txn, &entry, object, offset)?;
+    Ok(Some((entry, read)))
 }
 
 /// One slice of the kept generation `entry`'s `object`, at most
-/// [`SEALED_BUNDLE_READ_PART_MAX`] bytes from `offset`. `None` at or past the
-/// object's end.
+/// [`SEALED_BUNDLE_READ_PART_MAX`] bytes from `offset`, or the object's end
+/// at or past it. A pad object's stored part missing or short below its
+/// length is typed unavailable (FIX 7106); a bundle's stays corruption.
 pub(super) fn read_part_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     entry: &SealedBundleEntry,
     object: SealedBundleObject,
     offset: u64,
-) -> Result<Option<Vec<u8>>> {
+) -> Result<BundlePartRead> {
     let (total, _) = entry.object(object);
     if offset >= total {
-        return Ok(None);
+        return Ok(BundlePartRead::End);
     }
     let end = total.min(offset.saturating_add(SEALED_BUNDLE_READ_PART_MAX as u64));
     let stored = STORED_PART as u64;
     let mut part = Vec::new();
     let mut at = offset - offset % stored;
     while at < end {
-        let row = PARTS
-            .get_borrowed(&vault.store, txn, &part_key(&entry.generation, object, at))?
-            .ok_or(Error::CorruptedIndex("sealed bundle part"))?;
+        let Some(row) =
+            PARTS.get_borrowed(&vault.store, txn, &part_key(&entry.generation, object, at))?
+        else {
+            return part_missing(entry, object, offset);
+        };
         let from = usize::try_from(offset.saturating_sub(at)).map_err(|_| Error::InvalidKey)?;
         let to =
             usize::try_from((end - at).min(row.len() as u64)).map_err(|_| Error::InvalidKey)?;
-        part.extend_from_slice(
-            row.get(from..to)
-                .ok_or(Error::CorruptedIndex("sealed bundle part"))?,
-        );
+        let Some(slice) = row.get(from..to) else {
+            return part_missing(entry, object, offset);
+        };
+        part.extend_from_slice(slice);
         at += stored;
     }
     if part.len() as u64 != end - offset {
-        return Err(Error::CorruptedIndex("sealed bundle part"));
+        return part_missing(entry, object, offset);
     }
-    Ok(Some(part))
+    Ok(BundlePartRead::Part(part))
+}
+
+/// A read of `entry`'s `object` from `offset` whose stored bytes are missing
+/// or short: a pad object's is unavailable, a bundle's corrupt.
+fn part_missing(
+    entry: &SealedBundleEntry,
+    object: SealedBundleObject,
+    offset: u64,
+) -> Result<BundlePartRead> {
+    match object {
+        SealedBundleObject::Pads => {
+            Ok(BundlePartRead::PadObjectUnavailable(PadObjectUnavailable {
+                generation: entry.generation,
+                digest: entry.pads_digest,
+                offset,
+            }))
+        }
+        SealedBundleObject::Bundle => Err(Error::CorruptedIndex("sealed bundle part")),
+    }
 }

@@ -10,8 +10,9 @@ use crate::Vault;
 use crate::edit_roundtrip::OfficeFormat;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::lens::RecordRef;
 use crate::provenance::made_by::MadeBy;
-use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CODE_ARTIFACT};
+use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM, ENTITY_TYPE_CODE_ARTIFACT};
 
 use super::born_from::BornFromSource;
 use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
@@ -80,6 +81,9 @@ pub struct ArtifactVersionView {
     pub export_media_type: String,
     pub made_by: MadeBy,
     pub born_from: Vec<BornFromSource>,
+    /// The version's `blob.version` LEDGER claim as a typed record ref
+    /// (OF-063), built from its id with no read.
+    pub claim: RecordRef,
 }
 
 impl From<&BlobArtifactVersion> for ArtifactVersionView {
@@ -96,6 +100,7 @@ impl From<&BlobArtifactVersion> for ArtifactVersionView {
             export_media_type: version.export_media_type.clone(),
             made_by: version.made_by.clone(),
             born_from: BornFromSource::of_version(version),
+            claim: RecordRef::from_id(ENTITY_TYPE_CLAIM, &version.claim_id, None),
         }
     }
 }
@@ -170,6 +175,34 @@ impl Vault {
             return Ok(None);
         };
         let versions = self.blob_artifact_versions(id)?;
+        Ok(Some(ArtifactView {
+            artifact_id: *id,
+            kind: ArtifactKind::of_media_type(&body.media_type),
+            name: body.name,
+            media_type: body.media_type,
+            head: versions.last().map(|version| version.version),
+            versions: versions.iter().map(ArtifactVersionView::from).collect(),
+        }))
+    }
+
+    /// [`Vault::blob_artifact_view`] for a reader held to the rows it may
+    /// read (FIX 7645): `admit` is handed the artifact and every row its
+    /// version tree shows, each version's CLAIM and its content's ASSET,
+    /// before any of the view is read or projected, from the very records the
+    /// view is then made of. A tree it does not admit whole reads as absent,
+    /// as a missing artifact does.
+    pub fn blob_artifact_view_admitted(
+        &self,
+        id: &EntityId,
+        admit: impl FnOnce(&[EntityId]) -> Result<bool>,
+    ) -> Result<Option<ArtifactView>> {
+        let versions = self.blob_artifact_versions(id)?;
+        if !admit(&super::version_rows::blob_tree_rows(id, &versions)?)? {
+            return Ok(None);
+        }
+        let Some(body) = self.get_blob_artifact(id)? else {
+            return Ok(None);
+        };
         Ok(Some(ArtifactView {
             artifact_id: *id,
             kind: ArtifactKind::of_media_type(&body.media_type),

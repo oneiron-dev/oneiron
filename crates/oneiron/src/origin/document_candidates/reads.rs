@@ -1,6 +1,7 @@
 //! The candidate leaf's pure reads (G4 PR2): retained received refs, their
 //! admitting publication, a candidate's frozen resolution and its
-//! complete-push link, and the owner's projection of its progress.
+//! complete-push link, and the owner's projection of its progress, a
+//! queue batch listing its proposal included.
 use heed::RoTxn;
 
 use super::super::document_candidate_types::{
@@ -133,6 +134,7 @@ impl Vault {
                 new_commit: new_commit.clone(),
                 base_revision: resolved.base_revision,
                 candidate_digest: candidate_digest(attached)?,
+                projection: None,
             },
             resolved.new_tree.clone(),
         )))
@@ -183,7 +185,15 @@ impl Vault {
                     CodePushCandidateState::Queued
                 }
                 RepoProposalStatus::Proposed | RepoProposalStatus::Approved => {
-                    CodePushCandidateState::Proposed
+                    // A queue batch lists it before its stack binds it (FIX 8268).
+                    let batches =
+                        self.queue_batches_listing(&row.source.object_store, proposal.id)?;
+                    if batches.is_empty() {
+                        CodePushCandidateState::Proposed
+                    } else {
+                        view.batch_refs.extend(batches);
+                        CodePushCandidateState::Queued
+                    }
                 }
                 RepoProposalStatus::Applied => {
                     if let Some(batch) = &proposal.merge_stack {

@@ -6,9 +6,12 @@
 //! datagram its guest opens off its own session, a page WebSocket's and a
 //! worker's included ([`relay`], FIX 7333), by the address it goes to, with
 //! the hosted egress guard the fetch hands the render. It refuses only what
-//! that guard refuses. The guest's own loopback (the Lightpanda debugger's
-//! socket among it) never reaches the relay, and the guest's DNS goes to the
-//! host's resolvers, which are no page's destination.
+//! that guard refuses, by the guard's own reason: hosted infrastructure, or
+//! a private network (FIX 7657), which a page's request may reach at an
+//! operator's private origin and a relayed connection never does, as the
+//! relay knows only an address. The guest's own loopback (the Lightpanda
+//! debugger's socket among it) never reaches the relay, and the guest's DNS
+//! goes to the host's resolvers, which are no page's destination.
 //!
 //! A render ends its guest before it answers: once the page is read it
 //! stops taking new work, cancels the requests still in flight, drops the
@@ -16,6 +19,10 @@
 //! has returned. No request of a render runs after its answer. A refusal any
 //! of its work gave answers the render, whatever the page showed, and so
 //! ends the fetch's ladder.
+//!
+//! A render's guest start moves the server's browser readiness (FIX 7670):
+//! a start that stops, by the phase it stopped at, and a guest whose driver
+//! attached. What the page does after that moves nothing.
 
 mod handler;
 mod relay;
@@ -28,35 +35,46 @@ use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::egress::EgressConfig;
 use oneiron::code_sandbox::microvm::select_backend_for_session;
 use oneiron::web_fetch::{
-    HeadlessDocument, HeadlessRenderer, HostedEgressGuard, RendererError, RendererResult,
+    HeadlessDocument, HeadlessRenderer, HostedEgressGuard, HostedEgressRefusal, RendererError,
+    RendererResult,
 };
 use oneiron_browser::{
     BrowserDriver as _, BrowserError, BrowserGuest, BrowserRequestHandler, BrowserSession,
-    HandleRetention, OpenInput, RenderedDocument,
+    DestinationRefusal, HandleRetention, OpenInput, RenderedDocument,
 };
 use oneiron_container::{EgressRelay, GuestSeccomp, GuestSpec, ImageRef};
+use oneiron_vault_contract::BrowserUnavailableReason;
+use reqwest::Url;
 use tokio::sync::watch;
 
 use self::handler::PageRequests;
 use self::relay::HeadlessRelay;
+use crate::config::browser::BrowserReadinessCell;
 use crate::server::HandleLine;
 
 /// The host's headless browser for the fetch ladder's second rung: each
 /// render starts its own guest from `guest`, charges its live handles to
 /// `handles`, and charges its guest's network work to the floor `vault`'s
-/// host lent.
+/// host lent. Each guest start moves `readiness`.
 pub(super) struct GuestHeadless {
     guest: BrowserGuest,
     handles: HandleLine,
     vault: Arc<Vault>,
+    readiness: BrowserReadinessCell,
 }
 
 impl GuestHeadless {
-    pub(super) fn new(guest: BrowserGuest, handles: HandleLine, vault: Arc<Vault>) -> Self {
+    pub(super) fn new(
+        guest: BrowserGuest,
+        handles: HandleLine,
+        vault: Arc<Vault>,
+        readiness: BrowserReadinessCell,
+    ) -> Self {
         Self {
             guest,
             handles,
             vault,
+            readiness,
         }
     }
 
@@ -73,9 +91,7 @@ impl GuestHeadless {
         operation.end();
         operation.settle();
         if let Err(BrowserError::DestinationRefused(refused)) = &read {
-            operation.refuse(RendererError::hosted_infrastructure(
-                refused.message.clone(),
-            ));
+            operation.refuse(destination_refusal(refused));
         }
         if let Some(refused) = operation.refusal() {
             return Err(refused);
@@ -124,14 +140,20 @@ impl GuestHeadless {
         } else {
             None
         };
-        let mut session = start_guest(&self.guest, relay, self.handles.charge(), handler)?;
+        let mut session = start_guest(
+            &self.guest,
+            relay,
+            self.handles.charge(),
+            handler,
+            &self.readiness,
+        )?;
         let read = session
             .open(OpenInput {
                 url: url.to_owned(),
             })
             .and_then(|_| session.document());
         if let Some(refused) = session.take_destination_refusal() {
-            operation.refuse(RendererError::hosted_infrastructure(refused.message));
+            operation.refuse(destination_refusal(&refused));
         }
         // The page is read: nothing new of the render starts from here, its
         // requests in flight are cancelled, and dropping the session removes
@@ -159,24 +181,37 @@ impl HeadlessRenderer for GuestHeadless {
     }
 }
 
+/// The rung error a browser's destination refusal stands for: the guard
+/// refusal its reason names exactly (FIX 7657); a reason that names neither
+/// stays the hosted-infrastructure refusal every one was before.
+fn destination_refusal(refused: &DestinationRefusal) -> RendererError {
+    let reason = HostedEgressRefusal::from_reason(&refused.reason)
+        .unwrap_or(HostedEgressRefusal::Infrastructure);
+    RendererError::hosted(reason, refused.message.clone())
+}
+
 /// Starts one render's guest from the host's pinned image through the
 /// engine's tier selector, as a code run's guest starts, behind `relay`,
 /// and attaches it: with no starter, as one render switches no engine, and
 /// with `requests` where the render is guarded. The guest mounts no fixture.
+/// Each phase's outcome moves `readiness`.
 fn start_guest(
     guest: &BrowserGuest,
     relay: Arc<dyn EgressRelay>,
     retention: Box<dyn HandleRetention>,
     requests: Option<Arc<dyn BrowserRequestHandler>>,
+    readiness: &BrowserReadinessCell,
 ) -> Result<BrowserSession, BrowserError> {
     let backend = select_backend_for_session(
         SandboxGuestTier::Untrusted,
         guest.runtime.clone(),
         &guest.image,
     )
+    .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::SandboxUnavailable))
     .map_err(|error| BrowserError::Unavailable(error.to_string()))?;
     let spec = GuestSpec {
         image: ImageRef::pinned(&guest.image)
+            .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
             .map_err(|error| BrowserError::Unavailable(error.to_string()))?,
         user: (10001, 10001),
         limits: guest.limits,
@@ -190,8 +225,11 @@ fn start_guest(
     let command = guest.engine.guest_argv(egress.max_response_bytes);
     let transport = backend
         .start_session(&spec, &command, Arc::clone(&relay))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::GuestStartFailed))
         .map_err(|error| BrowserError::Unavailable(error.to_string()))?;
     BrowserSession::attach(guest, transport, relay, retention, None, requests)
+        .inspect(|session| readiness.started(session.manifest()))
+        .inspect_err(|_| readiness.unavailable(BrowserUnavailableReason::DriverAttachFailed))
 }
 
 /// One render's custody of its guest's network, shared by its request
@@ -250,14 +288,32 @@ impl Operation {
 
     /// Refuses the request or connection `destination` names, about to go
     /// to `ip`, when the render's guard refuses that address, and keeps the
-    /// refusal for the render first. An unguarded render refuses nothing.
-    fn check(&self, destination: &str, ip: IpAddr) -> RendererResult<()> {
-        let Some(guard) = &self.guard else {
+    /// refusal for the render first. No operator origin admits an address
+    /// here. An unguarded render refuses nothing.
+    fn check(&self, destination: &str, ip: IpAddr) -> Result<(), HostedEgressRefusal> {
+        self.judge(destination, |guard| guard.refuses(ip))
+    }
+
+    /// Refuses a request to `url`, a named host, when its host is an
+    /// operator's private origin name at a scheme and port no origin lists
+    /// (FIX 7657), as [`Self::check`] refuses; its resolver judges the
+    /// addresses.
+    fn check_origin(&self, url: &Url) -> Result<(), HostedEgressRefusal> {
+        self.judge(url.as_str(), |guard| guard.refuses_origin(url))
+    }
+
+    /// The render's guard's verdict on `destination`, `refuses` asked of it,
+    /// with a refusal kept for the render first.
+    fn judge(
+        &self,
+        destination: &str,
+        refuses: impl FnOnce(&HostedEgressGuard) -> Option<HostedEgressRefusal>,
+    ) -> Result<(), HostedEgressRefusal> {
+        let Some(refused) = self.guard.as_deref().and_then(refuses) else {
             return Ok(());
         };
-        guard
-            .check_request(destination, ip)
-            .inspect_err(|refused| self.refuse(refused.clone()))
+        self.refuse(refused.request_error(destination));
+        Err(refused)
     }
 
     /// Keeps `refused` for the render, unless it keeps one already.

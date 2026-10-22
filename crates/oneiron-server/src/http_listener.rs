@@ -12,12 +12,24 @@
 //! many strangers at once. A socket past that share is the anonymous surface
 //! the rate law lets the server shed: it gets a 503 and is closed. A
 //! connection leaves the share as soon as a request on it authenticates, and
-//! from then on meets only the floor. Loopback meets only the floor.
+//! from then on meets only the floor. Loopback meets only the floor. On the
+//! API listener a socket past its share takes the owner's reserve instead,
+//! while that is free (FIX 9130): its first request is served there only as
+//! the owner's proven read, and any other gets the same 503.
 //!
 //! Request headers must arrive within a deadline, which also bounds an idle
 //! keep-alive connection, and a request body that stops arriving while its
 //! route waits for it is ended at an idle limit. All of it runs before any
 //! route does, so it holds for a caller with no credential at all.
+//!
+//! A socket that finds the floor full raises the pool's live pressure check
+//! (FIX 7656): the owner reads which credentials' open request bodies hold
+//! the most connections. It only observes; nothing is cut or refused.
+//!
+//! Past the floor, the API listener's socket in hand may take the pool's one
+//! owner reserve instead of waiting (FIX 8274, [`owner_admission`]): the
+//! owner's proven read is served there, and any other request on it waits
+//! for the floor as it would have, parked beside it.
 //!
 //! The router still sees each request's peer as `ConnectInfo<SocketAddr>`,
 //! which is what the caller-locality rule reads.
@@ -44,8 +56,14 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 
-use crate::admission::{Admission, Permit};
-use crate::wire_telemetry::{LimitQuestions, LimitRow};
+use crate::admission::{Admission, Permit, WaitTimedOut};
+use crate::server::SyncServer;
+use crate::wire_telemetry::{
+    LimitQuestions, LimitRow, ObservedBody, PoolPressure, with_body_credential,
+};
+
+mod owner_admission;
+use owner_admission::{Custody, OwnerGate, OwnerReserve, ProbeShed};
 
 /// The listener's bounds.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -72,6 +90,9 @@ pub(crate) struct ConnectionLimits {
 
 /// What a stranger past its address's share reads before it is closed.
 const SHED_RESPONSE: &[u8] = b"HTTP/1.1 503 Service Unavailable\r\nretry-after: 1\r\nconnection: close\r\ncontent-length: 0\r\n\r\n";
+/// Whether an API socket past its address's share may still prove the owner
+/// on his reserve before it is shed (FIX 9130, L02's call).
+const STRANGER_SHED_OWNER_PROBE: bool = true;
 
 tokio::task_local! {
     /// The connection a request in flight arrived on.
@@ -114,11 +135,18 @@ pub(crate) async fn serve(
 pub(crate) struct ConnectionPool {
     floor: Admission<()>,
     strangers: Strangers,
+    /// The live pressure check the floor's waiters raise, where `questions`
+    /// is a vault server's (FIX 7656).
+    pressure: Option<Arc<PoolPressure>>,
+    /// The owner's reserve beside the floor, which only the API listener's
+    /// sockets take (FIX 8274).
+    reserve: Arc<OwnerReserve>,
 }
 
 impl ConnectionPool {
     pub(crate) fn new(limits: &ConnectionLimits, questions: Arc<LimitQuestions>) -> Self {
         Self {
+            pressure: questions.pool_pressure().cloned(),
             floor: Admission::<()>::new(
                 LimitRow::Connections,
                 questions,
@@ -126,6 +154,7 @@ impl ConnectionPool {
                 limits.queue_wait,
             ),
             strangers: Strangers::new(stranger_share(limits)),
+            reserve: OwnerReserve::new(limits.max_connections),
         }
     }
 
@@ -158,13 +187,51 @@ impl HostNetFloor for DescriptorFloor {
 
 /// [`serve`], taking its permits and strangers' places from `pool`.
 pub(crate) async fn serve_with_pool(
-    mut listener: TcpListener,
+    listener: TcpListener,
     app: Router,
     pool: &ConnectionPool,
     limits: ConnectionLimits,
     shutdown: impl Future<Output = ()>,
 ) {
-    let ConnectionPool { floor, strangers } = pool;
+    serve_from_pool(listener, app, pool, limits, None, shutdown).await;
+}
+
+/// [`serve_with_pool`] for the API listener: past the floor its socket in
+/// hand may take the pool's owner reserve, where `server` judges whose
+/// request each one carries (FIX 8274).
+pub(crate) async fn serve_api_with_pool(
+    listener: TcpListener,
+    app: Router,
+    pool: &ConnectionPool,
+    limits: ConnectionLimits,
+    server: Arc<SyncServer>,
+    shutdown: impl Future<Output = ()>,
+) {
+    serve_from_pool(listener, app, pool, limits, Some(server), shutdown).await;
+}
+
+async fn serve_from_pool(
+    mut listener: TcpListener,
+    app: Router,
+    pool: &ConnectionPool,
+    limits: ConnectionLimits,
+    server: Option<Arc<SyncServer>>,
+    shutdown: impl Future<Output = ()>,
+) {
+    let ConnectionPool {
+        floor,
+        strangers,
+        pressure,
+        reserve,
+    } = pool;
+    let gate = server.map(|server| {
+        OwnerGate::new(
+            server,
+            floor.clone(),
+            pressure.clone(),
+            limits.max_connections,
+        )
+    });
     let (stopping, stop) = watch::channel(false);
     let (open, open_watch) = watch::channel(());
     let mut shutdown = pin!(shutdown);
@@ -174,28 +241,48 @@ pub(crate) async fn serve_with_pool(
             () = &mut shutdown => break,
         };
         let address = peer.ip().to_canonical();
+        // Past its share, an API socket is a probe when the owner's reserve is
+        // free at once: it takes no floor permit and no share slot, and its
+        // first request proves the owner or is shed there (FIX 9130).
+        let mut probe = None;
         let stranger = if address.is_loopback() {
             None
         } else {
-            let Some(share) = strangers.take(address) else {
+            let share = strangers.take(address);
+            if share.is_none() && STRANGER_SHED_OWNER_PROBE && gate.is_some() {
+                probe = owner_admission::probe_now(reserve, pressure.as_ref());
+            }
+            if share.is_none() && probe.is_none() {
                 tracing::debug!(
                     reason = "unauthenticated_connections_per_peer",
                     "connection shed at its address's unauthenticated share"
                 );
                 shed(stream);
                 continue;
-            };
-            Some(share)
+            }
+            share
         };
         // Past the floor this socket waits for a connection to close, and
         // nothing more is accepted meanwhile: the next sockets wait in the
-        // backlog.
-        let permit = loop {
+        // backlog. The API listener's socket takes the owner's reserve
+        // instead whenever it is free (FIX 8274).
+        let custody = loop {
+            if let Some(custody) = probe.take() {
+                break custody;
+            }
+            if gate.is_some()
+                && let Some(custody) = owner_admission::take_now(floor, reserve, pressure.as_ref())
+            {
+                break custody;
+            }
             tokio::select! {
-                permit = floor.admit(()) => {
+                permit = admit_observed(floor, pressure.as_deref(), limits.max_connections) => {
                     if let Ok(permit) = permit {
-                        break permit;
+                        break Custody::floor(permit, pressure.as_ref());
                     }
+                }
+                hold = reserve.take(), if gate.is_some() => {
+                    break Custody::reserve(hold, pressure.as_ref());
                 }
                 () = &mut shutdown => break 'serving,
             }
@@ -205,22 +292,40 @@ pub(crate) async fn serve_with_pool(
         });
         let io = TokioIo::new(AdmittedStream {
             stream,
-            _permit: permit,
+            _custody: Arc::clone(&custody),
         });
         let routes = TowerToHyperService::new(app.clone());
         let body_idle = limits.body_idle_timeout;
         // The id a reply no credential attributed names this socket by
         // (FIX 811): minted here, never derived from the peer's address.
         let socket_id = crate::api::call_receipt::mint_connection_id();
+        let (held, owner_gate) = (Arc::clone(&custody), gate.clone());
         let service = hyper::service::service_fn(move |request: hyper::Request<Incoming>| {
-            let mut request = request.map(|body| idle_body(body, body_idle));
-            request.extensions_mut().insert(ConnectInfo(peer));
+            let (mut parts, body) = request.into_parts();
+            parts.extensions.insert(ConnectInfo(peer));
+            // A body with bytes still to come counts in the pool's pressure
+            // check until it ends, under the credential its request is
+            // accepted on.
+            let ended = hyper::body::Body::is_end_stream(&body);
+            let (custody, gate, routes) = (Arc::clone(&held), owner_gate.clone(), routes.clone());
             CONNECTION.scope(
                 Arc::clone(&connection),
-                crate::api::call_receipt::on_connection(
-                    socket_id,
-                    hyper::service::Service::call(&routes, request),
-                ),
+                crate::api::call_receipt::on_connection(socket_id, async move {
+                    // On the owner's reserve, each request is judged before
+                    // it is routed (FIX 8274).
+                    let counted = match gate.as_ref().filter(|_| custody.on_reserve()) {
+                        Some(gate) => match gate.admit(&custody, &mut parts, ended).await {
+                            Ok(counted) => counted,
+                            Err(ProbeShed) => return Ok(shed_reply()),
+                        },
+                        None => custody.count_body(ended),
+                    };
+                    let (counted, credential) = counted.unzip();
+                    let body = Body::new(IdleBody::new(body, body_idle, counted));
+                    let request = hyper::Request::from_parts(parts, body);
+                    let routed = hyper::service::Service::call(&routes, request);
+                    with_body_credential(credential, routed).await
+                }),
             )
         });
         let mut stop = stop.clone();
@@ -239,7 +344,12 @@ pub(crate) async fn serve_with_pool(
             };
             if stopped {
                 connection.as_mut().graceful_shutdown();
-                let _ = connection.as_mut().await;
+                // A socket parked for the floor ends unserved at the stop,
+                // as the socket the loop holds then does (FIX 8274).
+                tokio::select! {
+                    _ = connection.as_mut() => {}
+                    () = custody.parked() => {}
+                }
             }
             drop(open);
         });
@@ -248,6 +358,32 @@ pub(crate) async fn serve_with_pool(
     drop(listener);
     drop(open_watch);
     open.closed().await;
+}
+
+/// A permit from `floor` for one socket. The first time the socket finds it
+/// has to wait, the floor's crossing in progress raises the pool's pressure
+/// check, which clears when nobody waits. It only observes: the wait is the
+/// floor's own.
+async fn admit_observed(
+    floor: &Admission<()>,
+    pressure: Option<&PoolPressure>,
+    bound: usize,
+) -> Result<Permit, WaitTimedOut> {
+    let mut admitting = pin!(floor.admit(()));
+    let mut waited = false;
+    std::future::poll_fn(|cx| {
+        let polled = admitting.as_mut().poll(cx);
+        if polled.is_pending() && !waited {
+            waited = true;
+            if let Some(pressure) = pressure
+                && let Some(epoch) = floor.crossing_epoch()
+            {
+                pressure.raise(epoch, bound.max(1) as u64);
+            }
+        }
+        polled
+    })
+    .await
 }
 
 /// One accepted connection, as its requests see it.
@@ -333,6 +469,26 @@ fn shed(stream: TcpStream) {
     }
 }
 
+/// The 503 [`shed`] writes, as a reply on a connection the HTTP parser
+/// already reads, for a probe the owner did not prove (FIX 9130): the same
+/// status and fields, with the parser's own `date` beside them. The
+/// connection closes after it.
+fn shed_reply() -> axum::response::Response {
+    use axum::http::header::{CONNECTION, CONTENT_LENGTH, RETRY_AFTER};
+    let mut reply = axum::response::Response::new(Body::empty());
+    *reply.status_mut() = axum::http::StatusCode::SERVICE_UNAVAILABLE;
+    for (name, value) in [
+        (RETRY_AFTER, "1"),
+        (CONNECTION, "close"),
+        (CONTENT_LENGTH, "0"),
+    ] {
+        reply
+            .headers_mut()
+            .insert(name, axum::http::HeaderValue::from_static(value));
+    }
+    reply
+}
+
 /// A request body that fails with `TimedOut` once a reader has waited `idle`
 /// for its next frame. The clock runs only while the body is awaited and
 /// restarts with every frame, so a slow reader costs the client nothing and a
@@ -342,14 +498,29 @@ struct IdleBody {
     body: Incoming,
     idle: Duration,
     waiting: Option<Pin<Box<tokio::time::Sleep>>>,
+    /// Its record in the pool's pressure check, on this listener's own
+    /// sockets, until it ends.
+    counted: Option<ObservedBody>,
 }
 
 impl IdleBody {
-    fn new(body: Incoming, idle: Duration) -> Self {
+    fn new(body: Incoming, idle: Duration, counted: Option<ObservedBody>) -> Self {
         Self {
             body,
             idle,
             waiting: None,
+            counted,
+        }
+    }
+
+    /// Counts a frame's data in the body's record, and ends the record at
+    /// the body's last frame, its end or its error.
+    fn count(&mut self, frame: Option<&Result<Frame<Bytes>, hyper::Error>>) {
+        if let (Some(counted), Some(Ok(frame))) = (&self.counted, frame) {
+            counted.carried(frame.data_ref().map_or(0, Bytes::len));
+        }
+        if !matches!(frame, Some(Ok(_))) || hyper::body::Body::is_end_stream(&self.body) {
+            self.counted = None;
         }
     }
 }
@@ -359,7 +530,7 @@ impl IdleBody {
 /// channels an embedded engine serves (FIX 2663), which meet the same
 /// idle limit and no connection floor or stranger share.
 pub(crate) fn idle_body(body: Incoming, idle: Duration) -> Body {
-    Body::new(IdleBody::new(body, idle))
+    Body::new(IdleBody::new(body, idle, None))
 }
 
 impl hyper::body::Body for IdleBody {
@@ -373,6 +544,7 @@ impl hyper::body::Body for IdleBody {
         let this = self.get_mut();
         if let Poll::Ready(frame) = Pin::new(&mut this.body).poll_frame(cx) {
             this.waiting = None;
+            this.count(frame.as_ref());
             return Poll::Ready(frame.map(|frame| frame.map_err(BoxError::from)));
         }
         let idle = this.idle;
@@ -383,6 +555,7 @@ impl hyper::body::Body for IdleBody {
             return Poll::Pending;
         }
         this.waiting = None;
+        this.counted = None;
         Poll::Ready(Some(Err(BoxError::from(io::Error::new(
             io::ErrorKind::TimedOut,
             "request body stalled",
@@ -398,11 +571,13 @@ impl hyper::body::Body for IdleBody {
     }
 }
 
-/// An accepted socket together with the permit that admitted it. The permit
-/// goes when the socket does, whoever owns the socket by then.
+/// An accepted socket together with how it holds the pool: the floor permit
+/// that admitted it, or the owner's reserve or a place parked beside the
+/// floor ([`Custody`]), and its place in the pool's pressure check. They go
+/// when the socket does, whoever owns the socket by then.
 struct AdmittedStream {
     stream: TcpStream,
-    _permit: Permit,
+    _custody: Arc<Custody>,
 }
 
 impl AsyncRead for AdmittedStream {

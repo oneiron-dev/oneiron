@@ -21,6 +21,14 @@ mod readiness;
 
 pub use self::readiness::{FacilityNotice, FacilityReason, ManagedFacility, ManagedReadiness};
 
+/// How a managed vault's browser stands, as every `Ping` reports it.
+mod browser;
+
+pub use self::browser::{
+    BrowserReadiness, BrowserTier, BrowserUnavailableReason, GUEST_RUNTIME_FACT_ARG,
+    GuestRuntimeFact,
+};
+
 /// Wire spelling is pinned to the engine's `slim::ShedCause`; the contract
 /// crate must not depend on `oneiron`, so the duplication is deliberate.
 /// The vault-side adapter maps with a total function, never a parse.
@@ -442,6 +450,11 @@ pub enum CtlResponse {
     },
     /// `readiness` is how the vault came up (contract v3,
     /// [`ManagedReadiness`]); a reply that carries none is no `Ping`.
+    /// `browser` is how its browser stands now ([`BrowserReadiness`], FIX
+    /// 7670), optional, with a build floor: absent means this engine offers
+    /// no browser, as an engine built before the floor sends none, and its
+    /// `Ping` is still a `Ping`. A present `browser` carries every key its
+    /// state requires; nothing stands in for an absent one.
     /// `managed_backup` is what the vault reports of its backups (Engine
     /// 10-20 row (b), [`ManagedBackupFacts`]), optional. Build floor: it
     /// rides v3 with no version move, and a vault built before it sends
@@ -475,6 +488,9 @@ pub enum CtlResponse {
         pid: u32,
         contract_version: u32,
         readiness: ManagedReadiness,
+        /// Absent: this engine offers no browser.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        browser: Option<BrowserReadiness>,
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",

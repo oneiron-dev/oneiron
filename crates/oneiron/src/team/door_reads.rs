@@ -14,7 +14,9 @@ use crate::agent_dispatch::{
     decode_agent_dispatch_input, load_team_type_tree_in_txn, team_pattern,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestKind};
-use crate::critic::review::{DeclaredCritique, declared_critiques_in_txn};
+use crate::critic::review::{
+    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
+};
 use crate::critic::{CritiqueArtifact, CritiqueArtifactStore, CritiqueVerdict};
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::{Error, Result};
@@ -22,6 +24,7 @@ use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;
 use crate::learning::{Anchor, LearningCell};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::task_type::TypeTree;
 use crate::{EntityId, Vault};
 
@@ -34,7 +37,7 @@ use super::doors::{
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
-use super::spawn_intent::SpawnPhase;
+use super::spawn_intent::{SpawnErasure, SpawnPhase};
 
 /// One team start as read: what [`resolve_team`] holds against the plan.
 struct TeamRead<'a> {
@@ -72,6 +75,12 @@ pub(super) fn observe_spawn(
             ],
         ));
     };
+    // An erase of the AGENT_DEF it runs as took its text (Engine 10-22): its
+    // permanent hard-delete marker, read in this snapshot.
+    let target = input.target.agent_definition_ref()?;
+    let erased = vault
+        .store
+        .port_deletion_marked(&txn, DeletionMarker::HardDelete, &target)?;
     let stamp = TypeStamp::from(&input.type_ref);
     let mut issues = Vec::new();
     let plan = input.plan.as_ref().map(plan_view);
@@ -135,7 +144,12 @@ pub(super) fn observe_spawn(
     let critics = critiques(vault, &txn, &launched, &mut issues)?;
     Ok(PlannedSpawnObservation {
         spawn_ref,
-        phase: SpawnPhase::Launched,
+        phase: if erased {
+            SpawnPhase::Erased
+        } else {
+            SpawnPhase::Launched
+        },
+        erasure: erased.then_some(SpawnErasure::TargetErased),
         type_ref: stamp,
         plan,
         launched,
@@ -534,12 +548,13 @@ fn seat_routes(
 /// The critiques found for each launched run: those keyed under its own
 /// attempt, those of a review whose run reference is the run's canonical id
 /// (`vault.critic.review` keys a review's branch by its run reference's
-/// hash), and those of a review its caller declared for the run, each beside
-/// that review's verdict claim (FIX 5252). A review under a run reference
-/// the caller chose, declared for no run, is not found from an attempt, so
-/// the list is not exhaustive. A critique or stored review that does not
-/// read is an issue on the read, and every other one is still listed (FIX
-/// 4468, 4470).
+/// hash), and those of a review its caller declared for the run (FIX 5252).
+/// Each is listed once, beside the verdict claim of the review that holds
+/// it however it was found: the declared review's, else the stored review's
+/// (FIX 6380). A review under a run reference the caller chose, declared for
+/// no run, is not found from an attempt, so the list is not exhaustive. A
+/// critique or stored review that does not read is an issue on the read, and
+/// every other one is still listed (FIX 4468, 4470).
 fn critiques(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -548,8 +563,10 @@ fn critiques(
 ) -> Result<Vec<CriticObservation>> {
     let store = CritiqueArtifactStore::new(vault);
     let mut declared = declared_critiques(vault, txn, launched, issues);
-    let mut seen = BTreeSet::new();
-    let mut critics = Vec::new();
+    let reviewed = critique_reviews(vault, txn, issues);
+    // Each critique's listed index, `None` once it was passed over.
+    let mut seen: BTreeMap<([u8; 16], String), Option<usize>> = BTreeMap::new();
+    let mut critics: Vec<CriticObservation> = Vec::new();
     for member in launched {
         let run = member.attempt_ref.to_hex();
         let named_branch = blake3::hash(run.as_bytes());
@@ -582,20 +599,52 @@ fn critiques(
                         )
                     }),
             );
-        for (association, verdict_ref, artifact) in found {
-            if !seen.insert((
+        for (association, declared_ref, artifact) in found {
+            let key = (
                 *artifact.branch_attempt.as_bytes(),
                 artifact.artifact_id.clone(),
-            )) {
+            );
+            let verdict_ref = declared_ref.or_else(|| reviewed.get(&key).copied());
+            if let Some(listed) = seen.get(&key) {
+                // Listed under its first association; a later declared one
+                // still names the review the caller declared for the run.
+                if let Some(critic) = listed.and_then(|at| critics.get_mut(at))
+                    && (declared_ref.is_some() || critic.review_verdict_ref.is_none())
+                {
+                    critic.review_verdict_ref = verdict_ref;
+                }
                 continue;
             }
-            if let Some(critic) = critic_view(&artifact, association, verdict_ref, member, issues)?
-            {
-                critics.push(critic);
-            }
+            let critic = critic_view(&artifact, association, verdict_ref, member, issues)?;
+            seen.insert(key, critic.as_ref().map(|_| critics.len()));
+            critics.extend(critic);
         }
     }
     Ok(critics)
+}
+
+/// The verdict claim of the stored review holding each critique (FIX 6380),
+/// from one pass over the stored reviews. A verdict ref that does not read
+/// is an issue, and so is a pass that fails: the critiques are listed
+/// still, naming no review.
+fn critique_reviews(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    issues: &mut Vec<ObservationIssue>,
+) -> BTreeMap<([u8; 16], String), EntityId> {
+    match critique_review_refs_in_txn(vault, txn) {
+        Ok((refs, unread)) => {
+            for reason in unread {
+                issues.push(unavailable("critic", reason));
+            }
+            refs
+        }
+        Err(error) => {
+            let reason = format!("the reviews holding a critique did not read: {error}");
+            issues.push(unavailable("critic", reason));
+            BTreeMap::new()
+        }
+    }
 }
 
 /// The critiques of every stored review declared for a launched run, by run,
@@ -626,7 +675,7 @@ fn declared_critiques(
 
 /// One critique as stored, its calibration stamp held against the dispatch
 /// stamp of `member`, the run it was found for, beside the verdict claim of
-/// the review it was declared under, if any. The artifact store refuses a
+/// the review that holds it, if one reads. The artifact store refuses a
 /// calibration missing its executor, stamp or axis, so one missing them is an
 /// issue, not a default.
 fn critic_view(

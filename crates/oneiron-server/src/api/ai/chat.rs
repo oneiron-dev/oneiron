@@ -1550,13 +1550,20 @@ impl TerminalSink for AssistantMessage {
         let memory = answer_memory(&self.vault, self.agent, self.session_key);
         // The stream holds what was appended; a terminal carrying text the
         // deltas never did (a provider that sends it only at the end) is
-        // appended before the one commit.
+        // appended before the one commit. An incomplete terminal (FIX 8617)
+        // is the streamed text itself, saved once already: nothing is
+        // appended, and its reason ends the MESSAGE partial.
         let text = message_text(&terminal.message);
         let streamed = self
             .streamed
             .lock()
             .map_or_else(|_| String::new(), |text| text.clone());
-        if let Some(rest) = text.strip_prefix(streamed.as_str())
+        let partial = matches!(
+            terminal.finish_reason,
+            oneiron::FinishReason::Incomplete { .. }
+        );
+        if !partial
+            && let Some(rest) = text.strip_prefix(streamed.as_str())
             && !rest.is_empty()
         {
             memory

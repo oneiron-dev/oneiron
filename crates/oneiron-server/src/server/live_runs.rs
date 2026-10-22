@@ -159,6 +159,9 @@ pub(crate) struct LiveRuns {
     /// The lens frames whose cards a run closes when it leaves, set once by
     /// the server that holds both.
     lens: OnceLock<Arc<LensFrameStore>>,
+    /// The close a run's board sessions take when it leaves (FIX 8143), set
+    /// once by the server that holds them.
+    sessions: OnceLock<Box<dyn Fn(EntityId) + Send + Sync>>,
 }
 
 /// One registered run: its executor run, the agent it runs as, the leased
@@ -216,6 +219,12 @@ impl LiveRuns {
     /// it created in `lens`. Set once; a later call is ignored.
     pub(crate) fn close_cards_with(&self, lens: Arc<LensFrameStore>) {
         let _ = self.lens.set(lens);
+    }
+
+    /// Has each run that leaves because it ended close its board sessions
+    /// with `close` (FIX 8143). Set once; a later call is ignored.
+    pub(crate) fn close_sessions_with(&self, close: Box<dyn Fn(EntityId) + Send + Sync>) {
+        let _ = self.sessions.set(close);
     }
 
     /// Registers run `run`, which its runner enters as `actor` under the
@@ -458,6 +467,9 @@ impl LiveRuns {
         if let Some(lens) = self.lens.get() {
             lens.close_run(&run.to_hex());
         }
+        if let Some(close) = self.sessions.get() {
+            close(run);
+        }
     }
 
     fn map(&self) -> MutexGuard<'_, HashMap<EntityId, Arc<LiveRunEntry>>> {
@@ -527,7 +539,8 @@ impl ResolvedLiveRun {
     /// then rechecks that the run is still registered under its lease, which
     /// still holds, with this attachment. The guard is waited for on the
     /// runtime; the lease is read from the vault on a blocking thread, under
-    /// the guard.
+    /// the guard. A hold that succeeds publishes the try it holds to the
+    /// call in flight's receipt collector (OF-568 L4).
     pub(crate) async fn hold(
         &self,
         runs: &Arc<LiveRuns>,
@@ -547,6 +560,9 @@ impl ResolvedLiveRun {
         if lock(&self.entry.attached).as_ref() != Some(&self.binding) {
             return Ok(Err(LiveRunRefusal::Unavailable));
         }
+        // OF-568 L4: the call in flight holds this try now. Its receipt names
+        // the attempt as sealed here, even once the call settles the lease.
+        crate::api::call_receipt::witness_attempt(self.entry.proof.call_attempt_witness());
         Ok(Ok(HeldLiveRun {
             proof: self.entry.proof.clone(),
             _serial: serial,

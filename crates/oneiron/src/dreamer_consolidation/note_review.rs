@@ -203,9 +203,10 @@ impl ConsolidationExecutor<'_> {
         scope.project = Some(note.project);
         scope.readable.insert(note.version.clone());
         // The people a reply declares are minted under the review's queued
-        // parent, from the NOTE's own axes (FIX 7506).
+        // parent, else its lineage's first try (FIX 7579), from the NOTE's own
+        // axes (FIX 7506).
         let namespace = MintNamespace::new(
-            run.attempt_id,
+            super::extracted_people::original_try(ctx.vault, run.attempt_id)?,
             attempt.status.payload.parent_attempt,
             None,
             Some(note.facet),
@@ -413,6 +414,11 @@ impl ConsolidationExecutor<'_> {
             now: ctx.now_ms / 1_000,
         };
         let declared = ctx.vault.with_write_txn_grouped(|txn| {
+            // The topic the NOTE's last review kept, when this review moves
+            // it to another or to none: that group is declared again
+            // without it (FIX 7459).
+            let left =
+                topic_of_in_txn(ctx.vault, txn, &note.id).filter(|kept| topic != Some(*kept));
             SEEN.put(
                 &ctx.vault.store,
                 txn,
@@ -430,10 +436,14 @@ impl ConsolidationExecutor<'_> {
             // The membership and its topic's summary commit together (FIX
             // 907): a replay never finds this NOTE reviewed and the summary
             // unqueued.
-            match &topic {
-                Some(topic) => queue_note_topic_summaries_in_txn(ctx.vault, txn, topic, &lineage),
-                None => Ok(false),
+            let mut declared = match &topic {
+                Some(topic) => queue_note_topic_summaries_in_txn(ctx.vault, txn, topic, &lineage)?,
+                None => false,
+            };
+            if let Some(left) = &left {
+                declared |= queue_note_topic_summaries_in_txn(ctx.vault, txn, left, &lineage)?;
             }
+            Ok(declared)
         })?;
         if declared {
             ctx.vault.store.notify_attempt_observers();

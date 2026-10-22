@@ -1,3 +1,7 @@
+//! Codebase snapshot doors: ingest a pinned folder and read or project its snapshot.
+//! `Memory::code_snapshot_ingest_as` is its call surface.
+//! `memory::codebase_doors::types` defines the records these take and return.
+
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
@@ -7,6 +11,7 @@ use crate::codebase::{
     CodebaseFileEntry, CodebaseSnapshot, RepoIngestConfig, RepoRef, snapshot_asset_entity_id,
     validate_project_id,
 };
+use crate::origin::secret_projection::reveal::RepoReadDoor;
 use crate::temporal::TimeRange;
 
 /// The CALL behind the import whitelist: this import claims no editable
@@ -92,6 +97,109 @@ impl Memory<'_> {
         }))
     }
 
+    /// [`Self::code_snapshot_get_as`] for a caller the host knows is a tool
+    /// or a run (FIX 7608, ASK 1): the same owner proof and manifest, each
+    /// marked file naming the copy a masked reader reads.
+    pub fn code_snapshot_get_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotRequest,
+    ) -> MemoryResult<Option<CodeSnapshotView>> {
+        self.codebase_owner(owner)?;
+        let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
+            return Ok(None);
+        };
+        let mut views = mount.projected_file_views(|_| true)?;
+        let mut view = snapshot_view(mount.code_artifact_id(), mount.snapshot());
+        for file in &mut view.files {
+            file.projection = views.remove(&file.path);
+        }
+        Ok(Some(view))
+    }
+
+    /// [`Self::code_snapshot_read_as`] for a caller the host knows is a tool
+    /// or a run (FIX 7608, ASK 1): the same owner proof, mount, withheld
+    /// paths and ASSET admission; a marked file reads as its projection,
+    /// found before its stored bytes are read.
+    pub fn code_snapshot_read_projected_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: CodeSnapshotReadRequest,
+    ) -> MemoryResult<Option<CodeSnapshotPinnedFile>> {
+        self.codebase_owner(owner)?;
+        let Some(mount) = self.codebase_pinned(input.repo, &input.snapshot)? else {
+            return Ok(None);
+        };
+        // A read that says why asks only after the ASSET is admitted (FIX
+        // 8960); one with none reads as before.
+        let early = match input.why {
+            None => match mount.read_file_projected(&input.path)? {
+                Some(read) => Some(read),
+                None => return Ok(None),
+            },
+            Some(_) => None,
+        };
+        let Some(entry) = mount
+            .snapshot()
+            .files
+            .iter()
+            .find(|entry| entry.path == input.path)
+        else {
+            return Ok(None);
+        };
+        let asset = snapshot_asset_entity_id(&entry.content_hash)?;
+        if !self.codebase_readable(asset)? {
+            return Ok(None);
+        }
+        let (read, byte_route) = match early {
+            Some(read) => (read, None),
+            None => {
+                let changed =
+                    || crate::Error::ConcurrentWrite("the snapshot read's admission changed");
+                let artifact = mount.code_artifact_id();
+                let readmit = || -> crate::error::Result<()> {
+                    self.codebase_owner(owner).map_err(|_| changed())?;
+                    let pinned = self
+                        .codebase_pinned(input.repo, &input.snapshot)
+                        .map_err(|_| changed())?;
+                    if pinned.is_none_or(|pinned| pinned.code_artifact_id() != artifact)
+                        || !self.codebase_readable(asset).map_err(|_| changed())?
+                    {
+                        return Err(changed());
+                    }
+                    Ok(())
+                };
+                let Some(read) = self.snapshot_file_read_with_why(
+                    &mount,
+                    input.repo,
+                    &input.path,
+                    input.why.as_deref(),
+                    RepoReadDoor::Text,
+                    readmit,
+                )?
+                else {
+                    return Ok(None);
+                };
+                (read.projection, read.byte_route)
+            }
+        };
+        let mut file = snapshot_file(entry);
+        file.projection = read.view();
+        // CALL 4: granted bytes that are not text keep the masked reply,
+        // which names the byte route.
+        if let (Some(route), Some(view)) = (byte_route, file.projection.as_mut()) {
+            route.clone_into(&mut view.way_out);
+        }
+        let (content, text_sha256) = pinned_text(read.into_bytes())?;
+        Ok(Some(CodeSnapshotPinnedFile {
+            repo: input.repo,
+            snapshot: input.snapshot,
+            file,
+            content,
+            text_sha256,
+        }))
+    }
+
     /// The CALL behind import timing: the vault clock stamps both when the
     /// import occurred and when it was learned. No caller clock is read.
     fn codebase_import_time(&self) -> (TimeRange, u64) {
@@ -157,5 +265,6 @@ fn snapshot_file(entry: &CodebaseFileEntry) -> CodeSnapshotFile {
         content_hash_blake3: bytes_to_hex_lower(&entry.content_hash),
         size_bytes: entry.size_bytes,
         mode: entry.mode,
+        projection: None,
     }
 }

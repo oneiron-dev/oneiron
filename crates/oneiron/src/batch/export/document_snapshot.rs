@@ -6,10 +6,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use super::snapshot_body::{asset_folded, row_body, row_live_in_txn};
 use super::{
     ArchiveSecretCustody, ExportAdapterDescriptor, ExportCut, ExportDiaryLedger, ExportEdge,
-    ExportManifest, ExportScope, ExportSecretsNulledManifest, WholeVaultExport,
-    WholeVaultExportReceipt, carries_embedding_setup, whole_vault_export_excludes_entity,
+    ExportManifest, ExportScope, ExportSecretsNulledManifest, ExportSnapshotEntityBody,
+    WholeVaultExport, WholeVaultExportReceipt, carries_embedding_setup,
+    whole_vault_export_excludes_entity,
 };
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -43,11 +45,11 @@ pub(crate) struct ExportSnapshotBody<'t> {
 }
 
 /// One live row as the snapshot reads it, with what it carries beside it.
-pub(crate) struct ExportSnapshotEntity {
+pub(crate) struct ExportSnapshotEntity<'t> {
     pub(crate) id: EntityId,
     pub(crate) short_ref: Option<String>,
     pub(crate) header: EntityMetadataHeader,
-    pub(crate) body: Vec<u8>,
+    pub(crate) body: ExportSnapshotEntityBody<'t>,
     pub(crate) tainted: bool,
     /// A SKILL's stored source package.
     pub(crate) skill_package: Option<crate::skill_hub::HubPackage>,
@@ -233,6 +235,13 @@ impl Vault {
         )?;
         let storage = ExportManifest::from_json_for_import(artifact.bytes())?;
         let _bodies = self.pin_all_result_bodies();
+        // An archive that opens credential values holds the custody read
+        // guard from before its snapshot through its last open (KS-6); one
+        // that does not take goes on, each value whose key goes mid-read as
+        // its handle.
+        let _custody = (include_secrets && only.is_none() && cut == ExportCut::Archive)
+            .then(|| crate::secret_custody::archive_custody_guard(&self.store))
+            .flatten();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         admit(&rtxn)?;
         let scope = match (only, cut) {
@@ -273,10 +282,13 @@ impl Vault {
         let device_only = crate::settings::device_local_worlds_for(self, &rtxn, &destination)?;
         let mut included = BTreeSet::new();
         // The root of each thread a carried TURN is of (FIX 6427).
-        let mut thread_roots = BTreeSet::new();
+        let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
-        for entry in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &rtxn)? {
+        let attaches_files = cut == ExportCut::Archive;
+        for entry in
+            crate::ports::EntityStoreRead::port_entity_raw_records_borrowed(&self.store, &rtxn)?
+        {
             let (id, raw) = entry?;
             if only.is_some_and(|only| !only.contains(&id))
                 || whole_vault_export_excludes_entity(self, &id)?
@@ -331,31 +343,18 @@ impl Vault {
                 &rtxn,
                 &id,
                 header.entity_type,
-            )? || !live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+            )? || !row_live_in_txn(&self.store, &rtxn, &id)?
             {
                 continue;
             }
             sources.insert(id);
             // A file-plane ASSET goes out as its body, never the manifest its
-            // row keeps; read whole here, as every body was (FIX 3677).
-            let raw = self.materialized_row_in_txn(&rtxn, &id, raw)?;
+            // row keeps, and any other row as the snapshot holds it, never
+            // copied (FIX 3677). A stored file the archive attaches as it is
+            // streams out; one a probe below needs whole is read whole.
+            let body = row_body(self, &rtxn, &id, header.entity_type, raw, attaches_files)?;
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
-                && crate::receipt::is_receipt_archive_source(&raw[ENTITY_METADATA_HEADER_LEN..])
-            {
-                continue;
-            }
-            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
-                && crate::skill_hub::decode_source_carrier(&raw[ENTITY_METADATA_HEADER_LEN..])?
-                    .is_some()
-            {
-                continue;
-            }
-            if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
-                && !crate::agent_def::birth_source_exportable(
-                    &self.store,
-                    &rtxn,
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                )?
+                && asset_folded(self, &rtxn, &body)?
             {
                 continue;
             }
@@ -363,17 +362,18 @@ impl Vault {
             // covers and its agent has not asked to review first. A diary
             // whose author was erased is still a diary: the ledger holds it.
             if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && let Some(author) =
-                    note_diary_author(self, &rtxn, &id, &raw[ENTITY_METADATA_HEADER_LEN..])?
+                && let Some(note) = body.bytes()
+                && let Some(author) = note_diary_author(self, &rtxn, &id, note)?
                 && !diaries.admit(self, &rtxn, author, id)?
             {
                 continue;
             }
             let mut skill_package = None;
             if header.entity_type == crate::registry::ENTITY_TYPE_SKILL
+                && let Some(record) = body.bytes()
                 && let Some(package) = self.export_hub_package_in_txn(&rtxn, &id)?
             {
-                let record = crate::skill::decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+                let record = crate::skill::decode_skill_record(record)?;
                 if record.content_hash != Some(package.content_hash()?) {
                     return Err(Error::CorruptedIndex("stored skill package identity drift").into());
                 }
@@ -390,9 +390,8 @@ impl Vault {
             // catalog reads it.
             let mut pack_source = None;
             if header.entity_type == crate::registry::ENTITY_TYPE_ASSET
-                && let Some(source) = crate::skill_hub::pack_catalog::decode_source_body(
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                )?
+                && let Some(asset) = body.bytes()
+                && let Some(source) = crate::skill_hub::pack_catalog::decode_source_body(asset)?
             {
                 if source.entity_id()? != id {
                     return Err(Error::InvalidConfig(
@@ -415,8 +414,8 @@ impl Vault {
             let mut archived_receipts = None;
             if !tainted
                 && header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-                && let Ok(claim) =
-                    crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+                && let Some(claim) = body.bytes()
+                && let Ok(claim) = crate::claim::decode_claim_body(claim, true)
             {
                 // SCAN C022: each receipt source is folded from its carrier
                 // only when the carrier passes the same filter, and the
@@ -445,37 +444,18 @@ impl Vault {
             let short_ref =
                 crate::ports::ShortIdStoreRead::port_short_id_reference(&self.store, &rtxn, &id)?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
-            // The entity-document head owns committed text after migration or
-            // stream finalization; the row then holds only a pointer. Project
-            // it under this snapshot transaction before the NOTE-specific
-            // document and the serializer's unconditional credential nulling.
-            // In base mode there are no EntityDoc heads to resolve.
-            #[cfg(feature = "sync")]
-            let resolved = crate::entity_doc::resolve_record_body(
-                &self.store,
-                &rtxn,
-                &id,
-                &raw[ENTITY_METADATA_HEADER_LEN..],
-            )?;
-            #[cfg(feature = "sync")]
-            let body = resolved.as_slice();
-            #[cfg(not(feature = "sync"))]
-            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-            // Historical/archive-only NOTE rows may intentionally carry a
-            // different body. Only the NOTE codec's live rows use its editor.
-            let body = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
-                && crate::note::decode_note_body_using(body, crate::note::NoteKind::wire).is_ok()
-            {
-                crate::note::live_body_in_txn(&self.store, &rtxn, &id, header.entity_type, body)?
-            } else {
-                std::borrow::Cow::Borrowed(body)
-            };
-            thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, &body));
+            // The entity-document head's projection, then the NOTE-specific
+            // document, under this snapshot transaction, before the
+            // serializer's unconditional credential nulling.
+            let body = body.projected(self, &rtxn, &id, header.entity_type)?;
+            if let ExportSnapshotEntityBody::Bytes(body) = &body {
+                thread_roots.extend(crate::memory::turn_thread_root(header.entity_type, body));
+            }
             writer.entity(ExportSnapshotEntity {
                 id,
                 short_ref,
                 header,
-                body: body.into_owned(),
+                body,
                 tainted,
                 skill_package,
                 pack_source,
@@ -557,6 +537,9 @@ impl Vault {
             }
             writer.side_rows_withheld(withheld);
         }
+        // Each carried thread's binding, read in this snapshot, so its
+        // members are told should its root go before the audit (FIX 6681).
+        thread_roots.capture_in(&self.store.read(), &rtxn);
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read
         // could not be logged leaves the archive, with its edges.

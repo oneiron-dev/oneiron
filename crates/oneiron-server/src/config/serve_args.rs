@@ -322,6 +322,17 @@ pub struct ServeArgs {
     #[arg(long = "organ-dir", requires = "managed_by_hypnos")]
     pub organ_dir: Option<PathBuf>,
 
+    /// An organ build this server runs as first party, by its blake3 (64
+    /// hex); repeat it for each (FIX 7644). Listing one is the operator's
+    /// statement that the build is reviewed first-party code. A pack organ
+    /// build not listed runs as third party, which the organ host refuses to
+    /// start until filesystem confinement for organs lands. Plain or managed
+    /// serve; no config file, settings file or environment sets it. A vault
+    /// VM's init passes one per line of its config drive's
+    /// `trusted-organ-builds` (FIX 7889), argv as on a node.
+    #[arg(long = "trusted-organ-build", value_parser = blake3_hex)]
+    pub trusted_organ_builds: Vec<String>,
+
     /// Managed mode: where the paired-machine mesh listener binds
     /// (`ip:port`), in place of `ONEIRON_MESH_BIND`, which managed mode never
     /// reads. Without it the mesh is off.
@@ -361,6 +372,22 @@ pub struct ServeArgs {
     /// `--container-home` is its `HOME`.
     #[arg(long = "container-runtime-dir", requires = "managed_by_hypnos")]
     pub container_runtime_dir: Option<PathBuf>,
+
+    /// Managed mode: what the supervisor observed of the guest runtime it
+    /// provisioned for the vault's UID, one of the ten closed spellings
+    /// (`oneiron_vault_contract::GUEST_RUNTIME_FACT_ARG`, FIX 7670). It
+    /// moves only the browser's readiness, and no fact refuses the start;
+    /// without it the supervisor observed none.
+    #[arg(long = "guest-runtime-fact", requires = "managed_by_hypnos")]
+    pub guest_runtime_fact: Option<oneiron_vault_contract::GuestRuntimeFact>,
+
+    /// Managed mode: a private origin the hosted node's web fetch may reach,
+    /// `http|https://<dns-name>[:port]`; repeat it for each (FIX 7657). A
+    /// hosted node refuses RFC1918, CGNAT and ULA addresses except at a
+    /// listed origin, and never infrastructure. Without it, none; an entry
+    /// that does not parse stops the start.
+    #[arg(long = "hosted-private-origin", requires = "managed_by_hypnos")]
+    pub hosted_private_origins: Vec<oneiron::web_fetch::HostedPrivateOrigin>,
 
     /// Host address to bind to.
     #[arg(long)]
@@ -609,6 +636,17 @@ fn parse_runtime_provider_kind(value: &str) -> Result<RuntimeProviderKind, Strin
 /// closed instead of resolving to a default.
 fn parse_privacy_posture(value: &str) -> Result<HostingPrivacyPosture, String> {
     value.parse()
+}
+
+/// Clap value parser for `--trusted-organ-build`: a blake3 digest, 64 hex,
+/// kept in lowercase as a pack's `ORGAN.json` names its builds, so a typo
+/// stops the start instead of trusting nothing.
+fn blake3_hex(value: &str) -> Result<String, String> {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        Ok(value.to_ascii_lowercase())
+    } else {
+        Err("a blake3 digest is 64 hex characters".to_owned())
+    }
 }
 
 pub(super) fn runtime_override_from_args(args: &ServeArgs) -> Option<RuntimeConfigOverride> {

@@ -10,7 +10,8 @@ use super::variants::{COMMENT_REL, P, P188, PC, PROBE_NS, part_text, presentatio
 use crate::deck::{DeckView, SlideView};
 use crate::edit::NoAssets;
 use crate::live::deck_export::{ExportOutcome, ExportProfile, StepOutcome, project};
-use crate::live::{DeckNode, LiveDeck, NodeId, NodeKind, NodePayload};
+use crate::live::pptx::draws_categories;
+use crate::live::{DeckNode, LiveDeck, NodeId, NodeKind, NodePayload, effective_categories};
 use crate::ooxml::{CONTENT_TYPES, DOCUMENT_RELATIONSHIPS};
 use crate::retained_opc::{Limits, Package};
 use std::collections::{BTreeMap, BTreeSet};
@@ -567,19 +568,37 @@ fn same_payload(
                 categories,
                 series,
                 source,
+                ..
             }),
             Some(NodePayload::Chart {
                 family: read_family,
                 categories: read_categories,
                 series: read_series,
                 source: read_source,
+                ..
             }),
         ) => {
+            // Each series draws the same categories by label, level by
+            // level: the import names their points afresh, and splits them
+            // between the chart and its series by what each draws.
+            let drawn = |(a, b): (&crate::live::ChartSeries, &crate::live::ChartSeries)| {
+                if !draws_categories(*family, a) {
+                    return true;
+                }
+                let (a, b) = (
+                    effective_categories(categories, a),
+                    effective_categories(read_categories, b),
+                );
+                a.depth() == b.depth() && a.same_labels(b)
+            };
             family == read_family
-                && categories == read_categories
                 && source == read_source
                 && series.len() == read_series.len()
+                && (!series.is_empty()
+                    || categories.depth() == read_categories.depth()
+                        && categories.same_labels(read_categories))
                 && series.iter().zip(read_series).all(same_series)
+                && series.iter().zip(read_series).all(drawn)
         }
         // A table reads back as its grid and its drawn merges: the import
         // names its rows and columns afresh.
@@ -615,6 +634,11 @@ fn same_series((a, b): (&crate::live::ChartSeries, &crate::live::ChartSeries)) -
         && match (&a.x, &b.x) {
             (None, None) => true,
             (Some(xa), Some(xb)) => points(xa, xb),
+            _ => false,
+        }
+        && match (&a.bubble_size, &b.bubble_size) {
+            (None, None) => true,
+            (Some(sa), Some(sb)) => points(sa, sb),
             _ => false,
         }
 }

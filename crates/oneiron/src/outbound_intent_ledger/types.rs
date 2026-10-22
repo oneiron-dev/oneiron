@@ -183,6 +183,9 @@ pub enum IntentEscalationReason {
     /// The owner stopped the try that admitted the send (FIX 7188): the row
     /// keeps what it knew of its delivery.
     OwnerStopped,
+    /// The owner set the tool to `never allow` (DEC-0006) before this
+    /// request was sent: it stops, keeping what it knew of its delivery.
+    ConnectorSlateNeverAllow,
 }
 
 impl IntentEscalationReason {
@@ -197,6 +200,7 @@ impl IntentEscalationReason {
             Self::DedupeReservationReplaced => "dedupe_reservation_replaced",
             Self::DedupeSuppressed => "dedupe_suppressed",
             Self::OwnerStopped => "owner_stopped",
+            Self::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
         }
     }
 
@@ -211,6 +215,7 @@ impl IntentEscalationReason {
             "dedupe_reservation_replaced" => Some(Self::DedupeReservationReplaced),
             "dedupe_suppressed" => Some(Self::DedupeSuppressed),
             "owner_stopped" => Some(Self::OwnerStopped),
+            "connector_key_slate_never_allow" => Some(Self::ConnectorSlateNeverAllow),
             _ => None,
         }
     }
@@ -431,6 +436,10 @@ pub enum OutboundFailureKind {
     Rejected,
     InvalidRequest,
     TransportNotStarted,
+    /// The connector is installed at another endpoint than the one the call
+    /// froze and its grant admitted: this send never goes, and no retry of
+    /// it will (FIX 2553).
+    EndpointChanged,
 }
 
 /// Definite non-delivery result with no raw body, URL, or provider text.

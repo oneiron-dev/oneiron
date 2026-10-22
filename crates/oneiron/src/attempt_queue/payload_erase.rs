@@ -3,14 +3,15 @@
 //!
 //! An agent dispatch's payload (a Dreamer envelope whose input is an agent
 //! dispatch input) snapshots its target's AGENT_DEF body, the definition's
-//! instructions with it, and its context spec, the briefing with it. Both
-//! are the target's: the AGENT_DEF the dispatch runs as
-//! ([`agent_dispatch_actor`]), not its requester. A hard erase of that target
-//! leaves both absent in every row that carries them, in every state and
-//! retry generation, by one deterministic rewrite; every other input member,
-//! the envelope's parent and every row field stay, so each strict reader
-//! reads the erased row. Only the hard causes call in: a delete keeps the
-//! text.
+//! instructions with it, and its context spec, the briefing with it; a
+//! direct spawn's receipt and a planned launch's plan receipt hold the ask's
+//! need and notes (OF-541, FIX 7444). Each is the target's: the AGENT_DEF
+//! the dispatch runs as ([`agent_dispatch_actor`]), not its requester. A hard
+//! erase of that target leaves them absent in every row that carries them,
+//! in every state and retry generation, by one deterministic rewrite; every
+//! other input member, the envelope's parent and every row field stay, so
+//! each strict reader reads the erased row. Only the hard causes call in: a
+//! delete keeps the text.
 //!
 //! A BYOA runner attempt carries its task's copies (FIX 7502): a CLI
 //! connector's argv, and the staged job its connector or its bound work pins.
@@ -18,6 +19,10 @@
 //! the task's rows, out of the original request record a row of the task
 //! names, and out of every row that pins one of the task's staged jobs, whose
 //! artifacts go with them. Every other payload member and row field stays.
+//! The same pass drops the library-program pins of the task's tries (CUA
+//! E4), which hold its arguments and goal.
+
+mod response;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -44,6 +49,12 @@ use crate::write_envelope::WriteActor;
 use super::encoding::{decode_record, encode_record};
 use super::types::{AttemptId, AttemptRecord};
 
+// FIX 7115: the payload text in checkpoint images, a row-held response.
+pub(crate) use self::response::{
+    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
+    retire_attempt_payload_in_txn,
+};
+
 /// The input member that holds the AGENT_DEF snapshot.
 const KEY_DEFINITION: &str = AGENT_DISPATCH_INPUT_KEYS[4];
 /// The input member that holds the serialized context spec.
@@ -51,6 +62,9 @@ const KEY_CONTEXT_SPEC: &str = AGENT_DISPATCH_INPUT_KEYS[5];
 /// The input member that holds a direct spawn's receipt: its ask's need and
 /// notes text (OF-541).
 const KEY_DIRECT_SPAWN: &str = AGENT_DISPATCH_INPUT_KEYS[22];
+/// The input member that holds a planned launch's plan receipt: its ask's
+/// need and notes, and the plan's reasons (OF-541).
+const KEY_PLAN: &str = AGENT_DISPATCH_INPUT_KEYS[19];
 /// The AGENT_DEF body key of the definition's instructions.
 const KEY_INSTRUCTIONS: &str = AGENT_DEF_BODY_KEYS[3];
 /// The context spec's briefing member, as it serializes.
@@ -71,10 +85,10 @@ fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
         .map(WriteActor::entity_ref)
 }
 
-/// Leaves `record`'s dispatch instructions, briefing and direct spawn
-/// receipt absent, keeping every other input member, the envelope's parent
-/// and every row field. `false` when the row is no agent dispatch or carries
-/// none of them, so an erased row is not written again. The same payload
+/// Leaves `record`'s dispatch instructions, briefing, direct spawn receipt
+/// and plan receipt absent, keeping every other input member, the
+/// envelope's parent and every row field. `false` when the row is no agent
+/// dispatch or carries none of them, so an erased row is not written again. The same payload
 /// always comes out the same, so each retry generation of one payload is
 /// rewritten alike. `record` changes only on success.
 fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
@@ -92,13 +106,14 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
         .as_ref()
         .is_some_and(|spec| spec.briefing.is_some());
     let direct_spawn = input.direct_spawn.is_some();
-    if !instructions && !briefing && !direct_spawn {
+    let plan = input.plan.is_some();
+    if !instructions && !briefing && !direct_spawn && !plan {
         return Ok(false);
     }
     let Value::Map(entries) = &mut payload.input else {
         return Err(unrewritable());
     };
-    for (key, value) in entries {
+    for (key, value) in entries.iter_mut() {
         match key.as_str() {
             Some(KEY_DEFINITION) if instructions => {
                 *value = Value::Binary(without_instructions(value)?);
@@ -111,8 +126,11 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
             _ => {}
         }
     }
+    // The plan's key goes whole: present, it must hold a whole receipt, and
+    // absent it decodes as no plan.
+    entries.retain(|(key, _)| !plan || key.as_str() != Some(KEY_PLAN));
     // The strict decoder every reader uses reads the erased input, with
-    // all three absent.
+    // all four absent.
     let erased = decode_agent_dispatch_input(&payload.input)?;
     if erased.definition.instructions.is_some()
         || erased
@@ -120,6 +138,7 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
             .as_ref()
             .is_some_and(|spec| spec.briefing.is_some())
         || erased.direct_spawn.is_some()
+        || erased.plan.is_some()
     {
         return Err(unrewritable());
     }
@@ -177,7 +196,7 @@ pub(crate) fn erase_attempt_payload_actor_in_txn(
 }
 
 /// Leaves every attempt payload whose dispatch target is among `actors`
-/// without its instructions and briefing, and every BYOA copy of a TASK
+/// without its instructions, briefing and ask text, and every BYOA copy of a TASK
 /// among them without its task (FIX 7502), in the erase's transaction: one
 /// pass over the whole ledger, every state and retry generation, and an
 /// archived row's marker follows its row when it archived it as it stood,
@@ -227,6 +246,9 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs)?;
+    // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
+    // the TASK, archived tries' too.
+    crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
     // The erase authors nothing, so the plain encoder writes the row: the
     // side-row wall that could refuse a write does not stand in its way.
     let mut rewritten = Vec::with_capacity(rewrites.len());
@@ -430,12 +452,12 @@ fn erase_byoa_payload(
 
 /// A late write's fence (FIX 7076): when `record` is an agent dispatch
 /// whose target bears the permanent hard-delete marker, its instructions,
-/// briefing and direct spawn receipt leave it before it is encoded, so a
-/// copy read before the erase writes back the erased bytes. Only that
-/// marker counts: a soft delete, an archive or a gone actor keeps the text.
-/// Read in the writer's transaction. A marker that cannot be read, or a
-/// payload that cannot be rewritten, leaves `record` as it was and is logged
-/// without its content: the fence never fails the write it stands in.
+/// briefing, direct spawn receipt and plan receipt leave it before it is
+/// encoded, so a copy read before the erase writes back the erased bytes.
+/// Only that marker counts: a soft delete, an archive or a gone actor keeps
+/// the text. Read in the writer's transaction. A marker that cannot be read,
+/// or a payload that cannot be rewritten, leaves `record` as it was and is
+/// logged without its content: the fence never fails the write it stands in.
 pub(super) fn scrub_hard_erased_payload_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,

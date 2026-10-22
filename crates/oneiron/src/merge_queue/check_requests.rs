@@ -10,7 +10,7 @@ use super::check_store::{
     WorkUpdate,
 };
 use super::plan::FrozenCheckPlan;
-use super::{CheckPhase, MergeQueue, REPO_CHECK_PLAN_PATH};
+use super::{CheckPhase, MergeQueue, REPO_CHECK_PLAN_PATH, ServedQueueSource};
 use crate::EntityId;
 use crate::consent::QueuedCheckApproval;
 use crate::contract_oracle::invalid;
@@ -23,7 +23,9 @@ impl MergeQueue<'_> {
     /// frozen with the owner's queued approval. A missing or invalid plan
     /// keeps the work with its need. The same baseline asked again renews
     /// the approval; another baseline is no reinitialization, and an
-    /// existing unchecked queue is never adopted.
+    /// existing unchecked queue is never adopted. A served import's
+    /// `source` rides every outcome's work row and never switches on a
+    /// repeat (FIX 6869).
     ///
     /// # Errors
     /// A malformed request or a store failure.
@@ -32,6 +34,7 @@ impl MergeQueue<'_> {
         repo: EntityId,
         baseline_commit: &str,
         contract_baseline_ref: Option<String>,
+        source: Option<ServedQueueSource>,
         approve: impl FnOnce(&heed::RoTxn<'_>, &str) -> Result<QueuedCheckApproval>,
     ) -> Result<QueueCheckWork> {
         let baseline_commit = GitOid::parse_hex(baseline_commit)?.as_str().to_owned();
@@ -55,14 +58,22 @@ impl MergeQueue<'_> {
                     "this repository has a checked configuration at another baseline",
                 ));
             }
-            return self.submit_check_work(repo, request, ConfigWrite::Renew, None, approve);
+            return self.submit_check_work(
+                repo,
+                request,
+                source,
+                ConfigWrite::Renew,
+                None,
+                approve,
+            );
         }
         if self.read_queue()?.is_some() {
             let need = QueueCheckNeed::new(
                 &[],
                 "this queue was initialized without a checked configuration; its pointers and doors are unchanged",
             );
-            return self.submit_check_work(repo, request, ConfigWrite::None, Some(need), approve);
+            let (config, need) = (ConfigWrite::None, Some(need));
+            return self.submit_check_work(repo, request, source, config, need, approve);
         }
         if self.head()? != baseline_commit {
             return Err(invalid(
@@ -75,12 +86,14 @@ impl MergeQueue<'_> {
                 &[REPO_CHECK_PLAN_PATH],
                 format!("{REPO_CHECK_PLAN_PATH} is absent at the baseline commit"),
             );
-            return self.submit_check_work(repo, request, ConfigWrite::None, Some(need), approve);
+            let (config, need) = (ConfigWrite::None, Some(need));
+            return self.submit_check_work(repo, request, source, config, need, approve);
         };
         let plan = FrozenCheckPlan::freeze(bytes);
         if let Err(reason) = plan.plan() {
             let need = QueueCheckNeed::new(&[REPO_CHECK_PLAN_PATH], reason);
-            return self.submit_check_work(repo, request, ConfigWrite::None, Some(need), approve);
+            let (config, need) = (ConfigWrite::None, Some(need));
+            return self.submit_check_work(repo, request, source, config, need, approve);
         }
         let draft = QueueCheckConfigDraft {
             baseline_commit,
@@ -91,6 +104,7 @@ impl MergeQueue<'_> {
         self.submit_check_work(
             repo,
             request,
+            source,
             ConfigWrite::Create(Box::new(draft)),
             None,
             approve,
@@ -151,9 +165,10 @@ impl MergeQueue<'_> {
         approve: impl FnOnce(&heed::RoTxn<'_>, &str) -> Result<QueuedCheckApproval>,
     ) -> Result<QueueCheckWork> {
         match self.initialized_configuration()? {
-            Ok(_) => self.submit_check_work(repo, request, ConfigWrite::Renew, None, approve),
+            Ok(_) => self.submit_check_work(repo, request, None, ConfigWrite::Renew, None, approve),
             Err(need) => {
-                self.submit_check_work(repo, request, ConfigWrite::None, Some(need), approve)
+                let (config, need) = (ConfigWrite::None, Some(need));
+                self.submit_check_work(repo, request, None, config, need, approve)
             }
         }
     }

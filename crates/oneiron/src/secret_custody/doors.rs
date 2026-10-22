@@ -25,8 +25,9 @@ use crate::error::SecretError;
 // ---------------------------------------------------------------------------
 
 /// Live secret name -> custody `EntityId` and the name's generation
-/// high-water, keyed by the name itself.
-const NAME_INDEX: SideTable<String, NameEntry, Raw> =
+/// high-water, keyed by the name itself. `run_bound` reads a run's names
+/// and forgets them with their records (FIX 8028).
+pub(super) const NAME_INDEX: SideTable<String, NameEntry, Raw> =
     SideTable::new(&side_table::SECRET_CUSTODY_NAME_INDEX);
 
 /// One name's index row: the custody record the name resolves to, and the
@@ -34,8 +35,8 @@ const NAME_INDEX: SideTable<String, NameEntry, Raw> =
 /// high-water outlives its record: a name whose record is gone from the store
 /// starts its next life above it, never at the caller's number (FIX 5958).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct NameEntry {
-    id: EntityId,
+pub(super) struct NameEntry {
+    pub(super) id: EntityId,
     high_water: u32,
 }
 
@@ -453,8 +454,12 @@ pub(super) fn apply_custody_body_in_txn(
     // Every custody write lands here, so the known-value index keys each
     // value a record holds, at each generation (OF-560 C). A value newly
     // known reaches the files stored before it: a pass of the lift sweep
-    // marks them, in the writer that made it known (FIX 2781).
-    if super::known_values::remember_in_txn(write.store, wtxn, id, rec)? {
+    // marks them, in the writer that made it known (FIX 2781). A run-bound
+    // record's value is its run's alone and is never keyed (FIX 8028): a
+    // short code one run's browser found masks nothing else in the vault.
+    if !super::run_bound::is_run_bound_name(&rec.name)
+        && super::known_values::remember_in_txn(write.store, wtxn, id, rec)?
+    {
         crate::batch::secret_scan::enqueue_known_remark_in_txn(write.store, wtxn, occurred_at)?;
     }
     Ok(())
@@ -505,6 +510,13 @@ impl Vault {
     pub fn register_secret(&self, mut rec: SecretCustodyRecord) -> Result<EntityId> {
         let id = self.store.clock.entity_id()?;
         let mut wtxn = self.store.env.write_txn()?;
+        // FIX 7592: the embedded handle's live owner binds an import-fetch
+        // binding that names no actor; a fault reading it binds none.
+        if let Ok(owner) = crate::vault::embedded_owner_actor_id()
+            && let Ok(true) = crate::policy_model::is_live_vault_owner_in_txn(self, &wtxn, &owner)
+        {
+            super::owner_door::default_import_fetch_actor(&mut rec.bindings, &owner);
+        }
         register_secret_in_txn(self, &mut wtxn, &id, &mut rec)?;
         wtxn.commit()?;
         Ok(id)

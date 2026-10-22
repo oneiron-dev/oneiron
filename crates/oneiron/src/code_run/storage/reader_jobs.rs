@@ -5,6 +5,8 @@
 //! scopes are base rows, as the parent's own scope is: units and ids, no
 //! content.
 
+mod scoped;
+
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
@@ -13,12 +15,12 @@ use super::reader_folds::{MEMOS, SummaryMemo};
 use super::records::REPLAY_RECORDS;
 use super::wait_delivery::deliver_wait_in_txn;
 use crate::agent_dispatch::{AgentDispatcher, ChildSpend, SpendScope, SpendScopeId, SpendState};
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::code_run::CodeRunRawOutput;
 use crate::code_run::{
     ClaimOutcome, DelegatedSource, ExecutorStorage, ReaderActor, ReaderFindingRef, ReaderJob,
     ReaderJobKind, ReaderJobState, ReaderParent, ReaderRoute, ReaderRunEnd, SpawnHostSeat,
-    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reduce_task_wait_set,
+    SpawnParentBinding, TaskWaitSet, TaskWaitSetResult, reader_job_cutoff, reduce_task_wait_set,
 };
 use crate::side_table::{
     self, CodecError, Raw, RawValue, RoutedDbs, SideCodec, SideKey, SideTable,
@@ -492,6 +494,9 @@ pub(crate) struct NewReaderJob {
     pub(crate) route: ReaderRoute,
     pub(crate) kind: ReaderJobKind,
     pub(crate) ask: String,
+    /// The parent attempt lease a scoped child borrows; `None` for every
+    /// other job.
+    pub(crate) parent_lease: Option<BorrowedAttemptLease>,
 }
 
 /// What one spawn came to.
@@ -665,6 +670,28 @@ impl ExecutorStorage<'_> {
         self.reader_read(|txn, dbs| PARENTS.get(&dbs, txn, &run))
     }
 
+    /// The jobs among `tasks` that `parent_run` spawned itself, in one read
+    /// of the run's route: a task with no row, or another parent's, is left
+    /// out.
+    pub(crate) fn own_reader_jobs(
+        &self,
+        parent_run: EntityId,
+        tasks: &[EntityId],
+    ) -> Result<Vec<ReaderJob>> {
+        self.reader_read(|txn, dbs| {
+            let mut own = Vec::with_capacity(tasks.len());
+            for task in tasks {
+                if let Some(job) = JOBS
+                    .get(&dbs, txn, task)?
+                    .filter(|job| job.binding.parent_run == parent_run)
+                {
+                    own.push(job);
+                }
+            }
+            Ok(own)
+        })
+    }
+
     /// The child of `parent_run` whose settled finding is `handle`: the
     /// first to report it, while it is done or partial.
     pub(crate) fn reader_finding(
@@ -693,9 +720,10 @@ impl ExecutorStorage<'_> {
 
     /// Queues one child of `new.parent_run`, its parent row made from `seat`
     /// at its first spawn and read from there after: the clock, the meter
-    /// and the model list are fixed once. A child past the cutoff, or under
-    /// a scope that is gone, is refused with nothing written; one on the
-    /// host's meter is admitted with no ledger lookup.
+    /// and the model list are fixed once. A child past its cutoff (a
+    /// summary's is the outer one, `reader_job_cutoff`), or under a scope
+    /// that is gone, is refused with nothing written; one on the host's
+    /// meter is admitted with no ledger lookup.
     pub(crate) fn spawn_reader_job(
         &self,
         seat: &SpawnHostSeat,
@@ -715,8 +743,10 @@ impl ExecutorStorage<'_> {
                 queued: 0,
                 active: 0,
             });
-            let child_cutoff = parent.deadline.child_cutoff();
-            if now_ms >= child_cutoff {
+            // A summary is the fold the parent's reserve is kept for, so it
+            // may run into it; a read and a scoped child stop before it.
+            let cutoff = reader_job_cutoff(&new.kind, &parent.deadline);
+            if now_ms >= cutoff {
                 return Ok(SpawnAdmission::PastCutoff);
             }
             if let Some(scope) = parent.spend.scope()
@@ -735,11 +765,12 @@ impl ExecutorStorage<'_> {
                     route: new.route,
                     spend: parent.spend.clone(),
                     deadline: parent.deadline,
-                    child_cutoff_unix_ms: child_cutoff,
+                    child_cutoff_unix_ms: cutoff,
                     // A read and a summary alike take the list the
                     // spawning run froze at its first spawn (FIX 4539), never
                     // a later entry's in its place.
                     listed: parent.listed.clone(),
+                    parent_lease: new.parent_lease,
                 },
                 kind: new.kind,
                 ask: new.ask,
@@ -755,7 +786,7 @@ impl ExecutorStorage<'_> {
             tx.put_job(&job)?;
             tx.put_index(&child_key(new.parent_run, ordinal, job.task), &[])?;
             tx.put_index(&queued_key(now_ms, job.task), &[])?;
-            tx.put_index(&due_key(child_cutoff, job.task), DUE_JOB)?;
+            tx.put_index(&due_key(cutoff, job.task), DUE_JOB)?;
             tx.put_parent(new.parent_run, &parent)?;
             Ok(SpawnAdmission::Queued {
                 job: Box::new(job),
@@ -785,6 +816,12 @@ impl ExecutorStorage<'_> {
             }
             if now_ms >= job.binding.child_cutoff_unix_ms {
                 tx.settle_at_cutoff(job, now_ms)?;
+                return Ok(ClaimOutcome::Settled);
+            }
+            // A scoped child whose borrowed parent lease is gone settles; it
+            // is never claimed under another lease.
+            if !tx.scoped_parent_lease_holds(&job)? {
+                tx.settle_lease_lost(job, now_ms)?;
                 return Ok(ClaimOutcome::Settled);
             }
             for source in job.sources() {
@@ -834,7 +871,9 @@ impl ExecutorStorage<'_> {
 
     /// Settles active child `task` at `generation` as its run ended: done
     /// with a committed finding, failed with none, partial with one when the
-    /// run stopped short. A stale generation changes nothing.
+    /// run stopped short. A scoped child whose borrowed parent lease no
+    /// longer holds settles `scoped_child_parent_lease_lost` however its run
+    /// ended. A stale generation changes nothing.
     pub(crate) fn complete_reader_job(
         &self,
         task: EntityId,
@@ -848,6 +887,9 @@ impl ExecutorStorage<'_> {
                 .ok_or(Error::InvalidConfig("unknown reader job".to_owned()))?;
             if job.state != ReaderJobState::Active || job.generation != generation {
                 return Ok(job.state);
+            }
+            if !tx.scoped_parent_lease_holds(&job)? {
+                return Ok(tx.settle_lease_lost(job, now_ms)?.state);
             }
             let finding = tx.committed_finding(&job)?;
             let state = match (end, &finding) {
@@ -868,8 +910,9 @@ impl ExecutorStorage<'_> {
 
     /// Requeues every active child at its next generation, so a run that
     /// was cut is claimed again and a late report of the cut one is refused;
-    /// one past its cutoff at `now_ms` settles partial instead. One runner
-    /// per vault process calls it at its start.
+    /// one past its cutoff at `now_ms` settles partial instead, and a scoped
+    /// child whose borrowed parent lease is gone settles, never reparented to
+    /// another lease. One runner per vault process calls it at its start.
     pub(crate) fn recover_reader_jobs(&self, now_ms: u64) -> Result<usize> {
         self.reader_txn(|tx| {
             let active: Vec<ReaderJob> = JOBS
@@ -883,6 +926,10 @@ impl ExecutorStorage<'_> {
             for mut job in active.iter().cloned() {
                 if now_ms >= job.binding.child_cutoff_unix_ms {
                     tx.settle_at_cutoff(job, now_ms)?;
+                    continue;
+                }
+                if !tx.scoped_parent_lease_holds(&job)? {
+                    tx.settle_lease_lost(job, now_ms)?;
                     continue;
                 }
                 let parent_run = job.binding.parent_run;
@@ -919,18 +966,25 @@ impl ExecutorStorage<'_> {
 
     /// A child's finding report, fenced by its generation: it replaces the
     /// child's latest finding, and the same finding again is a replay. A
-    /// settled child, or one claimed again since, keeps what it has.
+    /// settled child, or one claimed again since, keeps what it has; a
+    /// scoped child whose borrowed parent lease is gone settles at `now_ms`
+    /// with what it had committed before, and this finding does not land.
     pub(crate) fn report_reader_finding(
         &self,
         task: EntityId,
         generation: u32,
         finding: &ReaderFindingRef,
+        now_ms: u64,
     ) -> Result<ReportOutcome> {
         self.reader_txn(|tx| {
             let Some(mut job) = tx.job(task)? else {
                 return Ok(ReportOutcome::Settled);
             };
             if job.state != ReaderJobState::Active || job.generation != generation {
+                return Ok(ReportOutcome::Settled);
+            }
+            if !tx.scoped_parent_lease_holds(&job)? {
+                tx.settle_lease_lost(job, now_ms)?;
                 return Ok(ReportOutcome::Settled);
             }
             if job.finding.as_ref() == Some(finding) {
@@ -1208,12 +1262,12 @@ impl ExecutorStorage<'_> {
             bytes: output.raw_len,
             rows,
         };
-        Ok(
-            match self.report_reader_finding(task, generation, &finding)? {
-                ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
-                ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
-            },
-        )
+        let reported =
+            self.report_reader_finding(task, generation, &finding, crate::unix_millis_now())?;
+        Ok(match reported {
+            ReportOutcome::Kept | ReportOutcome::Replay => Ok(()),
+            ReportOutcome::Settled => Err("reader_task_settled".to_owned()),
+        })
     }
 }
 

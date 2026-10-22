@@ -38,6 +38,11 @@ side_tables! {
     /// Round-robin cursor of the soft-confirm retry sweep: the last visited delivery key suffix
     /// (id16 group + id16 person). Key: ().
     TASK_ASK_SOFT_CONFIRM_DELIVERY_CURSOR: VaultMeta b"tasks.ask.soft_confirm.delivery_cursor.v1" Raw;
+    /// One bound try's library program (CUA E4): the record its first lease resolved its TASK's
+    /// handle to, with the TASK's arguments, or why there is none; the brief stamp and done-means
+    /// it was leased under; and what its strict run came to. Copied from the admitted brief, and
+    /// gone with its TASK's hard erase. Key: id16 (attempt).
+    TASK_BROWSER_WORKFLOW_ATTEMPT: VaultMeta b"tasks.browser_workflow.attempt.v1/" Named Admitted;
     /// By-owner index backfill marker. Key: ().
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
@@ -170,6 +175,11 @@ side_tables! {
     /// A standing artifact question's last ask of one artifact: the head versions it read and
     /// the proposal its answers wait under. Key: id16(question) + id16(artifact).
     TYPED_QUESTION_ARTIFACT_ASKED: VaultMeta b"typed_question:artifact_asked:v1:" Named;
+    /// A question's asks in commit order (FIX 2337): each graph answer by its claim, and
+    /// each artifact ask with the pins it read and its proposal, a failed one too. Its
+    /// high-water mark is a `TYPED_QUESTION` row. Key: id16(question) + u64be(sequence).
+    TYPED_QUESTION_ASK_HISTORY: VaultMeta b"typed_question:ask_history:v1:" Named
+        => crate::llm::decision::questions::erase_ask_history_actor_in_txn;
     /// Typed question versions, heads, answers and labels. Key: id16(question) ":version:" u32be.
     /// Pending refresh for a question/unit pair. Key: id16(question) + id16(unit).
     TYPED_QUESTION_PENDING: VaultMeta b"typed_question:pending:v1:" Raw;
@@ -259,6 +269,10 @@ side_tables! {
     /// A banked voice's current render/provisioning consent decision, apart from recognition
     /// consent. Key: string (voice id).
     VOICE_REF_RENDER_CONSENT: VaultMeta b"voice:ref_render_consent:v1:" Named;
+    /// One render decision a voice's subject or designed voice's creator made, kept once and never
+    /// rewritten (FIX 4396): the decision, its revision and sequence, and the target pointers it
+    /// dropped. Erased with the bank. Key: string (voice id) "\0" string (event id).
+    VOICE_REF_RENDER_EVENT: VaultMeta b"voice:ref_render_event:v1:" Named;
     /// Cached voice render-target pointer. Key: string (voice id) "\0" string (target).
     VOICE_REF_TARGET: VaultMeta b"voice:ref_target:v1:" Named;
     /// Voice consent decision event. Key: id16 + digest16.

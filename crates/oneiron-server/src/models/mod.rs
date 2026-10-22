@@ -33,6 +33,7 @@ mod anthropic;
 mod broker;
 mod broker_context;
 mod broker_media;
+mod cache_usage;
 mod catalog;
 mod cooldown;
 mod decision_read;
@@ -51,7 +52,10 @@ mod http;
 mod kept_on_device_tests;
 mod ladder;
 pub(crate) mod launch_price;
+mod llama_identity;
 mod media;
+#[cfg(unix)]
+mod native_exl3;
 mod offer;
 mod openai;
 pub(crate) mod outbound_wait;
@@ -70,9 +74,11 @@ mod status;
 #[cfg(test)]
 mod tests;
 mod token_ratio;
+mod training;
 mod voice;
 mod voxcpm2_speech;
 mod walk;
+mod worker_host;
 
 pub use broker::{BROKER_EFFECTOR, KeyDoor, VaultKeyDoor};
 pub(crate) use broker_context::BrokerContext;
@@ -83,7 +89,9 @@ pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
+pub(crate) use http::{
+    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
+};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
@@ -100,6 +108,7 @@ pub use status::{
     DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use worker_host::permit_worker_launch;
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
@@ -148,6 +157,8 @@ pub struct ModelRuntime {
     rests: Arc<OfferCooldowns>,
     /// Counts each catalog model's tokenizer on the fixed passage (OF-577).
     token_ratios: Option<Arc<TokenRatios>>,
+    /// The trainer connectors `[models.training]` names (FIX 7263).
+    training: crate::config::models::TrainingSettings,
 }
 
 impl ModelRuntime {
@@ -166,6 +177,7 @@ impl ModelRuntime {
             media: MediaRuntime::empty(),
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
+            training: Default::default(),
         }
     }
 
@@ -300,14 +312,21 @@ impl ModelRuntime {
                 ..Self::unconfigured()
             };
         };
-        let mut status = ModelsStatus::default();
+        let mut status = ModelsStatus {
+            // The process's supervisors for `[models.workers]` (FIX 8315).
+            workers: worker_host::configure(&config.workers, &config.providers),
+            ..ModelsStatus::default()
+        };
         let mut built = BTreeMap::new();
         // Every `key_secret` provider, chat or media, sends through the
         // context's one broker and reads its key at the context's door.
         let site = broker.map(BrokerContext::site);
         let keys = broker.map(BrokerContext::keys);
+        // One cache of house llama.cpp launch manifests, for the chat routes
+        // and the decision read alike (FIX 7895).
+        let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys) {
+            match build_provider(name, provider, config, site, keys, &identities) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -467,7 +486,7 @@ impl ModelRuntime {
         // none has no reader.
         let decision_read = tokio::runtime::Handle::try_current()
             .map_err(anyhow::Error::from)
-            .and_then(|runtime| decision_read::bind(config, runtime))
+            .and_then(|runtime| decision_read::bind(config, runtime, &identities))
             .unwrap_or_else(|error| {
                 if config.decision_read.is_some() {
                     tracing::warn!(%error, "decision read unavailable");
@@ -492,6 +511,7 @@ impl ModelRuntime {
             media,
             rests,
             token_ratios,
+            training: config.training.clone(),
         }
     }
 
@@ -615,6 +635,7 @@ impl ModelRuntime {
                 })
             })
             .collect();
+        worker_host::refresh(&mut status.workers);
         status
     }
 }
@@ -636,13 +657,15 @@ pub fn undeclared_run(
 
 /// One provider's wire backend. Each sends one request per call (its
 /// transport is `SingleSend`, or the credential broker for a `key_secret`
-/// key), so a run's gate can wrap it.
+/// key), so a run's gate can wrap it. A chat route resolves a house
+/// llama.cpp answer's launch alias through `identities`.
 fn build_provider(
     name: &str,
     provider: &ProviderConfig,
     config: &ModelsConfig,
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
+    identities: &Arc<llama_identity::LlamaIdentityResolver>,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -676,14 +699,27 @@ fn build_provider(
                 .transpose()?;
             // Only an own server reads the host's solo marker (INF 1).
             let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
-            let chat = OpenAiCompatBackend::new(
-                OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo),
-                openai::OpenAiHttp {
-                    http,
-                    cap: output_cap(provider),
-                    response_format: provider.response_format,
-                },
-            );
+            let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
+            let transport = openai::OpenAiHttp {
+                http,
+                cap: output_cap(provider),
+                response_format: provider.response_format,
+                identities: Arc::clone(identities),
+            };
+            // A provider a managed EXL3 worker of this process is bound to
+            // calls that worker over its native socket (DESIGN-V2 §8); every
+            // other call, and every other provider, stays on HTTP as before.
+            #[cfg(unix)]
+            let native = native_exl3::NativeExl3Transport::bind(name, sockets.is_some(), transport);
+            #[cfg(unix)]
+            let transport = match native {
+                Ok(native) => {
+                    let chat = OpenAiCompatBackend::new(config, native);
+                    return Ok(Some(Arc::new(chat)));
+                }
+                Err(transport) => transport,
+            };
+            let chat = OpenAiCompatBackend::new(config, transport);
             // A provider that serves Responses over a socket holds one by
             // default (ARCH-0081 §5); its chat HTTP path is the fallback.
             match sockets {

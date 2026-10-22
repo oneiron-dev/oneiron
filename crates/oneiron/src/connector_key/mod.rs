@@ -14,6 +14,7 @@ mod accounting;
 mod channel_subscription;
 mod charter;
 mod codec;
+mod credential_binding;
 pub mod events;
 mod lifecycle;
 mod manifest_drift;
@@ -23,6 +24,9 @@ mod record;
 mod setup;
 mod slate;
 mod slate_draft;
+mod slate_holder;
+mod slate_revision;
+mod slate_scope_signal;
 mod slate_setting;
 mod txn;
 
@@ -35,6 +39,10 @@ pub use self::charter::{CompiledCharter, ConnectorCharterCompileIssue, compile_c
 pub use self::codec::{
     CONNECTOR_KEY_BODY_KEYS, CONNECTOR_KEY_SCHEMA_VERSION, decode_connector_key_body,
     encode_connector_key_body,
+};
+pub use self::credential_binding::{
+    CONNECTOR_ISSUER_HOLD_REASON, ConnectorBindingDependent, ConnectorCredentialBinding,
+    ConnectorIssuerObservation, ConnectorIssuerTransition, ConnectorIssuerTransitionState,
 };
 pub use self::lifecycle::{
     ActorConnectorRegistration, CONNECTOR_CONSENT_ORIGIN_ACTION_ID,
@@ -68,10 +76,12 @@ pub(crate) use self::charter::{
     charter_block_drifted, charter_never_list_matches, charter_never_list_matches_capability,
     charter_never_list_matches_scoped_channel,
 };
+pub(crate) use self::credential_binding::connector_issuer_hold_in_txn;
 pub(crate) use self::lifecycle::{catalog_charter_in_txn, scoped_server_debits_sends_in_txn};
 pub(crate) use self::meter::{
-    EffectorBudgetChargeOutcome, budget_exhausted_reason, charge_effector_budgets,
-    charge_effector_budgets_pooled, preflight_effector_budgets_pooled, shares_budget_pool,
+    BudgetBlock, EffectorBudgetChargeOutcome, budget_block_pooled, budget_exhausted_reason,
+    charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
+    shares_budget_pool,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
@@ -116,6 +126,18 @@ pub use slate::{
 pub use slate_draft::{
     ConnectorSlateDelta, ConnectorSlateDrafter, ConnectorSlateRedraft, SlatePastRulings,
     SlateTrait, draft_connector_slate, rule_draft_row,
+};
+pub use slate_holder::ConnectorKeySlateNarrowed;
+pub use slate_revision::{
+    ConnectorRevisionDeferral, ConnectorSlateRevisionAccepted, ConnectorSlateRevisionOffer,
+    SlateRevisionCause,
+};
+pub use slate_scope_signal::{
+    CONNECTOR_SCOPE_RAMP_OP_KIND, ConnectorScopeExceed, ConnectorScopeOutcome,
+    ConnectorScopeOutcomeRecorded, ConnectorScopeRuling, ConnectorSlateScopeSignal,
+};
+pub(crate) use slate_scope_signal::{
+    ConnectorScopeEvidence, ScopeExceedCall, connector_scope_evidence, keep_connector_scope_signal,
 };
 pub(crate) use slate_setting::{
     connector_tool_setting_in_txn, effect_slate_always_allows, governing_slate_in_txn,

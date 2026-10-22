@@ -9,7 +9,10 @@ use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
     MicroVmBackend, MicroVmSandboxAdapter, select_backend_for_tier,
 };
-use super::{SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable, SandboxProposalDelta};
+use super::{
+    ProposalSpoolFloor, SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable,
+    SandboxProposalDelta,
+};
 use crate::engine_executor::StepCancellation;
 use crate::{Error, Result};
 
@@ -28,11 +31,15 @@ pub struct ForeignCodeOutcome {
 /// The adapter owns the only write exit: every file delta remains a proposal.
 /// The workspace is a caller-scoped snapshot supplied by the admitting door.
 /// No host credential or network authority is lent to a foreign program.
+/// Its proposed files spool on `spool`, the host's measured disk floor
+/// (FIX 7650). A TypeScript `source` runs as the JavaScript Oxc prints for
+/// it; JavaScript runs as written (FIX 8276).
 pub fn execute_foreign_code(
     source: &str,
     mounts: SandboxMountTable,
     artifact: ForeignCodeArtifact<'_>,
     budget: ExecutionBudget,
+    spool: Arc<dyn ProposalSpoolFloor>,
 ) -> Result<ForeignCodeOutcome> {
     if !artifact.component.starts_with(b"\0asm\x0d\0\x01\0")
         || <[u8; 32]>::from(Sha256::digest(artifact.component)) != artifact.sha256
@@ -41,21 +48,26 @@ pub fn execute_foreign_code(
     }
     let backend = select_backend_for_tier(SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
+    // Prepared once, here: the shared launch below runs what it is given,
+    // as the runtime's own isolated lane hands it an already prepared one.
+    let prepared = super::source::prepare_source(source);
     execute_foreign_code_on(
-        source,
+        prepared.executed(),
         SandboxGuestTier::Foreign,
         mounts,
         artifact.component,
         backend,
         Arc::new(NoEgress),
+        Some(spool),
         budget,
         &StepCancellation::never(),
     )
 }
 
 /// The finite foreign runtime and the public admission share one launch,
-/// cancellation, manifest and proposal path. Only their host-owned workspace
-/// and egress authority differ.
+/// cancellation, manifest and proposal path. Only their host-owned workspace,
+/// egress authority and proposal spool differ: a host that lent no spool
+/// spools proposed files as before (FIX 7650).
 #[expect(
     clippy::too_many_arguments,
     reason = "the host supplies each isolated execution axis"
@@ -67,11 +79,15 @@ pub(crate) fn execute_foreign_code_on(
     component_bytes: &[u8],
     mut backend: Box<dyn MicroVmBackend>,
     relay: Arc<dyn oneiron_container::EgressRelay>,
+    spool: Option<Arc<dyn ProposalSpoolFloor>>,
     budget: ExecutionBudget,
     cancel: &StepCancellation,
 ) -> Result<ForeignCodeOutcome> {
     cancel.check()?;
     backend.set_egress(Arc::clone(&relay));
+    if let Some(spool) = spool {
+        backend.set_proposal_spool(spool);
+    }
     let component_dir = tempfile::tempdir()?;
     let component = component_dir.path().join("component.wasm");
     std::fs::write(&component, component_bytes)?;

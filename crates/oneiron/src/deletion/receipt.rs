@@ -4,11 +4,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncError};
+#[cfg(feature = "sync")]
+use crate::error::SyncError;
+use crate::error::{Error, Result};
 
-use super::erase::take_staged_sweep_refs_in_txn;
+use super::erase::{take_corrupt_capture_in_txn, take_staged_sweep_refs_in_txn};
+use super::receipt_final::finish_redaction_erase_in_txn;
 use super::sweep_queue::{HardEraseSweepExtras, hard_erase_sweep_deadline_at};
 use super::tombstone::DeleteReason;
+
+// The audited corrupt-CLAIM classification's repair event and failure record (FIX 7800).
+mod capture;
+
+pub(crate) use capture::{
+    CAPTURE_FAILED, CaptureFailure, encode_corrupt_claim_repair_event,
+    is_corrupt_claim_repair_event,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RedactionScope {
@@ -26,9 +37,13 @@ impl RedactionScope {
 }
 
 /// The pinned REDACTION_AUDIT body shape (`rmp_serde::to_vec_named`, field
-/// order = the pinned [`RECEIPT_BODY_KEYS`] order). `Deserialize` exists for
+/// order = the pinned `RECEIPT_BODY_KEYS` order). `Deserialize` exists for
 /// the ONE-1087 sweep executor, which reads a receipt to append its linked
-/// completion row (OF-470, ARCH-0038 step 10); a stored receipt never changes.
+/// completion row (OF-470, ARCH-0038 step 10), and for the erase's overall
+/// final row (FIX 5844); a stored receipt never changes. One shape, three
+/// phases: the erase's initial receipt has neither completion time, its
+/// sweep row has `sweep_complete_at` alone, and its final row has
+/// `erase_complete_at`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct RedactionAuditReceipt {
     pub(crate) request_id: String,
@@ -48,7 +63,28 @@ pub(crate) struct RedactionAuditReceipt {
     pub(crate) room_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) room_role: Option<crate::conversation::RoomRole>,
+    /// When the erase completed overall, on its final row alone: its sweep,
+    /// if it queued one, and every custody retirement it binds had finished
+    /// (FIX 5844, C-ERASE-FINAL).
+    pub(crate) erase_complete_at: Option<u64>,
+    /// The custody retirements this erase owes, each by its value-free name
+    /// (kind tag, item id, generation), fixed when the erase ran. Empty is
+    /// the explicit `not required`: nothing it erased was in custody here.
+    pub(crate) custody_retirements: Vec<String>,
+    /// Each record whose capture took the audited corrupt-CLAIM exception, with
+    /// the repair event that classified it, ascending by id (FIX 7800); absent
+    /// when none did. Fixed when the erase ran, as its linked rows copy it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) capture_failures: Vec<CaptureFailure>,
     pub(crate) verification: BTreeMap<String, String>,
+}
+
+impl RedactionAuditReceipt {
+    /// Whether this is an erase's initial receipt, not a row appended to it
+    /// later (its sweep row or its overall final row).
+    pub(crate) fn is_initial(&self) -> bool {
+        self.sweep_complete_at.is_none() && self.erase_complete_at.is_none()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -94,12 +130,12 @@ pub(crate) struct RedactionReceiptInput {
 
 /// Attestation transcript domain separator (OD-6 literal).
 pub(crate) const RECEIPT_ATT_DOMAIN: &[u8] = b"oneiron/receipt-att/v1";
-const ATT_KEY_CLIENT: &str = "att_client";
-const ATT_KEY_PK: &str = "att_pk";
-const ATT_KEY_SIG: &str = "att_sig";
-const ATT_KEY_V: &str = "att_v";
+pub(super) const ATT_KEY_CLIENT: &str = "att_client";
+pub(super) const ATT_KEY_PK: &str = "att_pk";
+pub(super) const ATT_KEY_SIG: &str = "att_sig";
+pub(super) const ATT_KEY_V: &str = "att_v";
 /// Attestation schema version literal carried in `att_v`.
-const ATT_VERSION: &str = "1";
+pub(super) const ATT_VERSION: &str = "1";
 /// MessagePack fixmap(0) — the empty `verification` the transcript tail
 /// carries in place of the four att_ entries.
 #[cfg(feature = "sync")]
@@ -127,13 +163,19 @@ pub(crate) fn hex_lower(bytes: &[u8]) -> String {
     out
 }
 
-/// Encodes a REDACTION_AUDIT receipt body, signed by this device (OD-6).
+/// Encodes an erase's initial REDACTION_AUDIT receipt body, signed by this
+/// device (OD-6), binding `custody_retirements`, the names of the custody
+/// retirements the erase owes (FIX 5844; empty: `not required`), and
+/// `capture_failures`, its records that took the audited corrupt-CLAIM
+/// exception (FIX 7800; empty for every other erase).
 ///
 /// `receipt_id` and `input.hard_purge_complete_at` (the envelope
 /// `learned_at`) are bound into the transcript so a valid receipt cannot be
 /// transplanted under another entity id or a shifted envelope.
 pub(crate) fn encode_redaction_audit_receipt(
     input: RedactionReceiptInput,
+    custody_retirements: Vec<String>,
+    capture_failures: Vec<CaptureFailure>,
     receipt_id: &EntityId,
     identity: &crate::identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
@@ -157,6 +199,9 @@ pub(crate) fn encode_redaction_audit_receipt(
             .map(|id| id.to_hex()),
         room_ref: input.room_authority.map(|(room, _)| room.to_hex()),
         room_role: input.room_authority.map(|(_, role)| role),
+        erase_complete_at: None,
+        custody_retirements,
+        capture_failures,
         verification: BTreeMap::new(),
     };
     sign_redaction_audit_receipt(receipt, receipt_id, envelope_learned_at, identity)
@@ -172,38 +217,45 @@ pub(super) fn sign_redaction_audit_receipt(
     envelope_learned_at: u64,
     identity: &crate::identity::DeviceIdentity,
 ) -> Result<Vec<u8>> {
-    use ed25519_dalek::Signer;
-
     receipt.verification.clear();
     // Transcript tail: the body bytes with verification EMPTY.
     let body_unsigned = rmp_serde::to_vec_named(&receipt)
         .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))?;
+    receipt.verification =
+        receipt_attestation(&body_unsigned, receipt_id, envelope_learned_at, identity);
+    rmp_serde::to_vec_named(&receipt)
+        .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))
+}
+
+/// The four att_ entries (OD-6) over `body_unsigned`, a REDACTION_AUDIT body
+/// encoded with `verification` EMPTY, for entity `receipt_id` whose
+/// point-event envelope is stamped `envelope_learned_at`. Shared by the erase
+/// receipt rows and the corrupt-CLAIM repair event, one transcript for both.
+fn receipt_attestation(
+    body_unsigned: &[u8],
+    receipt_id: &EntityId,
+    envelope_learned_at: u64,
+    identity: &crate::identity::DeviceIdentity,
+) -> BTreeMap<String, String> {
+    use ed25519_dalek::Signer;
+
     let header = receipt_envelope_header(envelope_learned_at);
     let mut msg =
         Vec::with_capacity(RECEIPT_ATT_DOMAIN.len() + 16 + header.len() + body_unsigned.len());
     msg.extend_from_slice(RECEIPT_ATT_DOMAIN);
     msg.extend_from_slice(receipt_id.as_bytes());
     msg.extend_from_slice(&header);
-    msg.extend_from_slice(&body_unsigned);
+    msg.extend_from_slice(body_unsigned);
     let signature = identity.signing_key.sign(&msg);
 
-    receipt.verification.insert(
-        ATT_KEY_CLIENT.to_owned(),
-        format!("{:016x}", identity.client_id),
-    );
-    receipt.verification.insert(
-        ATT_KEY_PK.to_owned(),
-        hex_lower(&identity.signing_key.verifying_key().to_bytes()),
-    );
-    receipt
-        .verification
-        .insert(ATT_KEY_SIG.to_owned(), hex_lower(&signature.to_bytes()));
-    receipt
-        .verification
-        .insert(ATT_KEY_V.to_owned(), ATT_VERSION.to_owned());
-
-    rmp_serde::to_vec_named(&receipt)
-        .map_err(|_| Error::InvariantViolation("redaction audit receipt encode"))
+    let client = format!("{:016x}", identity.client_id);
+    let public_key = hex_lower(&identity.signing_key.verifying_key().to_bytes());
+    BTreeMap::from([
+        (ATT_KEY_CLIENT.to_owned(), client),
+        (ATT_KEY_PK.to_owned(), public_key),
+        (ATT_KEY_SIG.to_owned(), hex_lower(&signature.to_bytes())),
+        (ATT_KEY_V.to_owned(), ATT_VERSION.to_owned()),
+    ])
 }
 
 /// Decodes a REDACTION_AUDIT receipt BODY (post-envelope bytes).
@@ -211,352 +263,9 @@ pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAud
     rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))
 }
 
-/// ONE-1087 replay-door exception for the SINGLE sanctioned receipt
-/// mutation: the sweep executor's monotone `sweep_complete_at` None→Some
-/// finalization on the OWN node's receipt (LMDB-only — the CRDT mirror
-/// keeps the pre-finalization bytes by design).
-///
-/// Returns `true` iff `incoming` is the stale PRE-finalization echo of the
-/// FINALIZED `local` receipt: identical 25 B entity envelope, decodable
-/// bodies, `local.sweep_complete_at = Some(_)` vs
-/// `incoming.sweep_complete_at = None`, and every OTHER field equal. The
-/// doors treat that one shape as an idempotent skip (never quarantine,
-/// never overwrite local) — without it every boot would re-quarantine the
-/// own-receipt CRDT round-trip after a sweep. ANY other divergence —
-/// including incoming `Some` over local `None`, which only a crafted
-/// update can produce (replicas never finalize a foreign receipt) — stays
-/// on the M4-07 quarantine path. Fail closed: any decode failure → `false`.
-#[cfg_attr(not(feature = "sync"), allow(dead_code))]
-pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incoming: &[u8]) -> bool {
-    use crate::batch::ENTITY_METADATA_HEADER_LEN as H;
-    if local.len() < H || incoming.len() < H || local[..H] != incoming[..H] {
-        return false;
-    }
-    let (Ok(local_rec), Ok(incoming_rec)) = (
-        decode_redaction_audit_receipt(&local[H..]),
-        decode_redaction_audit_receipt(&incoming[H..]),
-    ) else {
-        return false;
-    };
-    if local_rec.sweep_complete_at.is_none() || incoming_rec.sweep_complete_at.is_some() {
-        return false;
-    }
-    let definalized = RedactionAuditReceipt {
-        sweep_complete_at: None,
-        ..local_rec
-    };
-    definalized == incoming_rec
-}
-
-/// Pinned contracts.ts `redactionAuditReceipt.fields` key set — the wire
-/// shape every REDACTION_AUDIT blob crossing a sync replay door must satisfy
-/// (ONE-1134). Mirrors [`RedactionAuditReceipt`]'s `to_vec_named` encoding:
-/// one string-keyed MessagePack map carrying exactly these fields.
-///
-/// Un-cfg'd since ONE-1087: the sweep executor validates every receipt body
-/// it reads, and the completion row it appends, on EVERY build.
-const RECEIPT_BODY_KEYS: [&str; 14] = [
-    "request_id",
-    "scope",
-    "reason",
-    "requested_at",
-    "soft_complete_at",
-    "hard_purge_complete_at",
-    "sweep_queued_at",
-    "sweep_deadline_at",
-    "sweep_complete_at",
-    "affected_revision_ids",
-    "actor_ref",
-    "room_ref",
-    "room_role",
-    "verification",
-];
-
-/// Structurally validates a REDACTION_AUDIT body arriving through
-/// a sync replay door against the pinned contracts.ts
-/// `redactionAuditReceipt` field set. Fail-closed rules:
-///
-/// * the body must be exactly one string-keyed MessagePack map (no
-///   positional-array encoding, no trailing bytes);
-/// * keys must be drawn from [`RECEIPT_BODY_KEYS`], no duplicates, no
-///   unknown fields (a field outside the pinned set is a divergence from
-///   the minimization contract — "opaque identifiers + timestamps only");
-/// * required: every field except the optional sweep timestamps and room
-///   authority fields; sweep timestamps may also be nil;
-/// * `request_id`, `scope.entity_ids[]`, `scope.revision_ids[]`, and
-///   `affected_revision_ids[]` must parse as opaque UUIDs (GDPR Art. 5(2)
-///   minimization: free text here would smuggle names/content into an
-///   immutable, replicated audit record);
-/// * `reason` must be one of the pinned receipt-writing DeleteReason
-///   literals `user_hard_delete | gdpr_delete | policy_delete`
-///   (`user_delete` writes no receipt, so it can never legitimately appear);
-/// * the three completion timestamps must be non-negative integers;
-/// * `verification` carries EXACTLY the four attestation entries pinned by
-///   ONE-1140 (OD-6): `att_client` (16 lowercase hex), `att_pk` (64
-///   lowercase hex), `att_sig` (128 lowercase hex), `att_v` (`"1"`) —
-///   string values only, no other keys. This VERSIONS the M4 "must be
-///   empty" pin; anything outside that grammar is still an unvalidated
-///   content channel into the immutable record ("never retains what it
-///   erased") and is rejected;
-/// * `verification` must be the FINAL map entry in bytes: the attestation
-///   transcript is the byte prefix up to the verification VALUE
-///   (tail-splice, OD-6), so a body that orders it elsewhere can never
-///   reproduce the signed bytes.
-pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
-    use rmpv::Value;
-
-    let mut cursor = std::io::Cursor::new(body);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| {
-        Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body is not valid MessagePack",
-        ))
-    })?;
-    if cursor.position() != body.len() as u64 {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "trailing bytes after body map",
-        )));
-    }
-    let Value::Map(entries) = value else {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body must be a string-keyed MessagePack map",
-        )));
-    };
-
-    // OD-6 tail-splice precondition: `verification` is the FINAL entry in
-    // bytes (decoded entry order IS byte order — the map was read from a
-    // contiguous buffer with no trailing bytes).
-    match entries.last() {
-        Some((key, _)) if key.as_str() == Some("verification") => {}
-        _ => {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "verification must be the final body map entry",
-            )));
-        }
-    }
-
-    let mut seen = [false; RECEIPT_BODY_KEYS.len()];
-    for (key, value) in entries {
-        let Some(key) = key.as_str() else {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "body keys must be strings",
-            )));
-        };
-        let Some(index) = RECEIPT_BODY_KEYS.iter().position(|known| *known == key) else {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "body key is not in the pinned redactionAuditReceipt field set",
-            )));
-        };
-        if seen[index] {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "duplicate body key",
-            )));
-        }
-        seen[index] = true;
-
-        match RECEIPT_BODY_KEYS[index] {
-            "request_id" => {
-                validate_opaque_uuid(&value, "request_id must be an opaque UUID string")?;
-            }
-            "scope" => validate_receipt_scope(value)?,
-            "reason" => match value.as_str() {
-                Some("user_hard_delete" | "gdpr_delete" | "policy_delete") => {}
-                _ => {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "reason must be user_hard_delete | gdpr_delete | policy_delete",
-                    )));
-                }
-            },
-            "requested_at" | "soft_complete_at" | "hard_purge_complete_at" => {
-                if value.as_u64().is_none() {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "timestamps must be non-negative integers",
-                    )));
-                }
-            }
-            "sweep_queued_at" | "sweep_deadline_at" | "sweep_complete_at" => {
-                if !value.is_nil() && value.as_u64().is_none() {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "optional sweep timestamps must be nil or non-negative integers",
-                    )));
-                }
-            }
-            "affected_revision_ids" => {
-                validate_opaque_uuid_array(
-                    &value,
-                    "affected_revision_ids must be an array of opaque UUID strings",
-                )?;
-            }
-            "actor_ref" | "room_ref" => {
-                validate_opaque_uuid(&value, "room authority references must be opaque UUIDs")?;
-            }
-            "room_role" => match value.as_str() {
-                Some("owner" | "admin" | "member") => {}
-                _ => {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "invalid room deletion role",
-                    )));
-                }
-            },
-            "verification" => {
-                // ONE-1140 (OD-6): the M4 "must be empty" pin is VERSIONED —
-                // verification now carries EXACTLY the four attestation
-                // entries, hex-grammar-checked. Everything else stays an
-                // unvalidated content channel into the immutable,
-                // replicated, purge-exempt REDACTION_AUDIT record — the
-                // divergence gate would then PROTECT smuggled erased
-                // content (minimization: "never retains what it erased").
-                validate_receipt_verification(value)?;
-            }
-            _ => unreachable!("index is drawn from RECEIPT_BODY_KEYS"),
-        }
-    }
-
-    let room_fields = &seen[10..13];
-    if room_fields.iter().any(|present| *present) && !room_fields.iter().all(|present| *present) {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "room authority fields must appear together",
-        )));
-    }
-    for (index, key) in RECEIPT_BODY_KEYS.iter().enumerate() {
-        let optional = matches!(
-            *key,
-            "sweep_queued_at"
-                | "sweep_deadline_at"
-                | "sweep_complete_at"
-                | "actor_ref"
-                | "room_ref"
-                | "room_role"
-        );
-        if !optional && !seen[index] {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "missing required receipt field",
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// Validates the receipt `scope` field: a map carrying exactly
-/// `entity_ids` + `revision_ids`, both arrays of opaque UUID strings
-/// (contracts.ts: "entity UUIDs / revision UUIDs … Opaque IDs only; no
-/// names or content").
-fn validate_receipt_scope(value: rmpv::Value) -> Result<()> {
-    let rmpv::Value::Map(entries) = value else {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "scope must be a map",
-        )));
-    };
-    let mut seen_entity_ids = false;
-    let mut seen_revision_ids = false;
-    for (key, value) in entries {
-        match key.as_str() {
-            Some("entity_ids") => {
-                if seen_entity_ids {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "duplicate scope key",
-                    )));
-                }
-                seen_entity_ids = true;
-                validate_opaque_uuid_array(
-                    &value,
-                    "scope.entity_ids must be an array of opaque UUID strings",
-                )?;
-            }
-            Some("revision_ids") => {
-                if seen_revision_ids {
-                    return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                        "duplicate scope key",
-                    )));
-                }
-                seen_revision_ids = true;
-                validate_opaque_uuid_array(
-                    &value,
-                    "scope.revision_ids must be an array of opaque UUID strings",
-                )?;
-            }
-            _ => {
-                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "scope key is not entity_ids | revision_ids",
-                )));
-            }
-        }
-    }
-    if !(seen_entity_ids && seen_revision_ids) {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "scope must carry entity_ids and revision_ids",
-        )));
-    }
-    Ok(())
-}
-
-/// Validates the receipt `verification` map against the ONE-1140 (OD-6)
-/// attestation grammar: EXACTLY four string entries — `att_client` str(16),
-/// `att_pk` str(64), `att_sig` str(128), all lowercase hex, plus
-/// `att_v == "1"`. No duplicates, no unknown keys, no other shapes.
-fn validate_receipt_verification(value: rmpv::Value) -> Result<()> {
-    let rmpv::Value::Map(fields) = value else {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "verification must be a map",
-        )));
-    };
-    if fields.len() != 4 {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "verification must carry exactly the four att_ entries",
-        )));
-    }
-    let mut seen = [false; 4];
-    for (key, value) in fields {
-        let Some(key) = key.as_str() else {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "verification keys must be strings",
-            )));
-        };
-        let Some(value) = value.as_str() else {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "verification values must be strings",
-            )));
-        };
-        let index = match key {
-            ATT_KEY_CLIENT => 0,
-            ATT_KEY_PK => 1,
-            ATT_KEY_SIG => 2,
-            ATT_KEY_V => 3,
-            _ => {
-                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "verification key is not in the pinned att_ set",
-                )));
-            }
-        };
-        if seen[index] {
-            return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                "duplicate verification key",
-            )));
-        }
-        seen[index] = true;
-        match key {
-            ATT_KEY_CLIENT if value.len() == 16 && is_lower_hex(value) => {}
-            ATT_KEY_PK if value.len() == 64 && is_lower_hex(value) => {}
-            ATT_KEY_SIG if value.len() == 128 && is_lower_hex(value) => {}
-            ATT_KEY_V if value == ATT_VERSION => {}
-            _ => {
-                return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "verification value fails the pinned att_ grammar",
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn is_lower_hex(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-}
-
 #[cfg(feature = "sync")]
 fn hex_decode_lower(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || !is_lower_hex(s) {
+    if !s.len().is_multiple_of(2) || !super::receipt_grammar::is_lower_hex(s) {
         return None;
     }
     (0..s.len())
@@ -616,7 +325,7 @@ fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
 }
 
 /// Cursor-parses a receipt body (already structurally validated by
-/// [`validate_redaction_receipt_body`]) and extracts the attestation
+/// [`super::receipt_grammar::validate_redaction_receipt_body`]) and extracts the attestation
 /// fields plus the verification-value byte offset. The transcript tail is
 /// then `body[..verification_value_offset] || ATT_EMPTY_MAP_BYTE` — sound
 /// because the validator pinned `verification` as the FINAL entry in bytes
@@ -683,26 +392,6 @@ pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestatio
     parts.ok_or(MALFORMED)
 }
 
-fn validate_opaque_uuid(value: &rmpv::Value, reason: &'static str) -> Result<()> {
-    let valid = value
-        .as_str()
-        .is_some_and(|s| uuid::Uuid::parse_str(s).is_ok());
-    if !valid {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(reason)));
-    }
-    Ok(())
-}
-
-fn validate_opaque_uuid_array(value: &rmpv::Value, reason: &'static str) -> Result<()> {
-    let Some(items) = value.as_array() else {
-        return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(reason)));
-    };
-    for item in items {
-        validate_opaque_uuid(item, reason)?;
-    }
-    Ok(())
-}
-
 impl Vault {
     /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
     /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
@@ -753,6 +442,23 @@ impl Vault {
             )?);
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
+        // A classified corrupt CLAIM this erase took the audited exception for
+        // leaves its classification here, as `capture_failed` on the receipt and
+        // the queued sweep, in the commit that writes both (FIX 7800).
+        if input.sweep_queued_at.is_some() {
+            for id in &ids {
+                take_corrupt_capture_in_txn(self, wtxn, id, &mut sweep_extras)?;
+            }
+        }
+        let failures = &mut sweep_extras.capture_failures;
+        failures.sort_by(|left, right| left.entity_id.cmp(&right.entity_id));
+        failures.dedup_by(|left, right| left.entity_id == right.entity_id);
+        let capture_failures = failures.clone();
+        // This erase's own custody retirements, everything it retires staged
+        // by now in this transaction, bound by name on its receipt and never
+        // changed (FIX 5844). Missing proof later reads as pending.
+        let erased: Vec<EntityId> = ids.into_iter().collect();
+        let custody_retirements = self.store.erase_custody_retirements_in_txn(wtxn, &erased)?;
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
             self.enqueue_hard_erase_sweep_in_txn(
                 wtxn,
@@ -785,8 +491,19 @@ impl Vault {
                 },
             )?;
         }
-        let body = encode_redaction_audit_receipt(input, receipt_id, &identity)?;
+        let body = encode_redaction_audit_receipt(
+            input,
+            custody_retirements,
+            capture_failures,
+            receipt_id,
+            &identity,
+        )?;
         self.put_redaction_audit_receipt_in_txn(wtxn, receipt_id, hard_purge_complete_at, &body)?;
+        // An erase that queued no sweep and owes no custody retirement is
+        // complete now: its final row lands in this transaction. Any other
+        // gets it once the last of those finishes (FIX 5844).
+        let receipt = decode_redaction_audit_receipt(&body)?;
+        finish_redaction_erase_in_txn(self, wtxn, receipt_id, &receipt, hard_purge_complete_at)?;
         Ok(sweep_key)
     }
 }
