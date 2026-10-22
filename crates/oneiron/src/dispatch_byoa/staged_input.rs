@@ -5,13 +5,17 @@
 //! The job is stored whole, once, as a version of a BLOB_ARTIFACT addressed
 //! by its BLAKE3 digest, and the run's connector carries a pin to it
 //! ([`StagedInputPin`]): that version, the job's length and digest, and the
-//! file the job is staged as. After the checkout and lease checks and before
-//! the run, the dispatcher reads the pinned version back, checks it against
-//! the pin, and hands it whole to the host's [`ByoaInputStager`], which
-//! writes it into the checkout. Completion reads the job back through the
-//! same pin. Nothing here refuses a job for its size.
+//! file the job is staged as. The job is stored and the run that stages it
+//! lands in one write ([`StagedJob`], FIX 7613), and an erase of its TASK
+//! removes the job's artifact row too (FIX 7614). After the checkout and
+//! lease checks and before the run, the dispatcher reads the pinned version
+//! back, checks it against the pin, and hands it whole to the host's
+//! [`ByoaInputStager`], which writes it into the checkout. Completion reads
+//! the job back through the same pin. Nothing here refuses a job for its
+//! size.
 
-use std::collections::BTreeSet;
+mod dispatch;
+mod erase;
 
 use serde::{Deserialize, Serialize};
 
@@ -19,26 +23,24 @@ use crate::Vault;
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
 };
-use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
 use crate::checkout::CheckoutLeaseAct;
 use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
-use crate::store::Store;
-use crate::temporal::TimeRange;
+use crate::error::Error;
 
-use super::connector::{BYOA_ATTEMPT_KIND, ByoaConnectorSpec, CliSandboxSpec};
+use super::connector::{ByoaConnectorSpec, CliSandboxSpec};
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
 use super::error::{
     ByoaError, ByoaResult, ERR_ATTEMPT_MISSING, ERR_CAPTURE_CONFLICT, ERR_EXECUTION_SHAPE,
-    ERR_STAGED_INPUT_COLLISION, ERR_STAGED_INPUT_PIN, invalid,
+    ERR_STAGED_INPUT_PIN, invalid,
 };
 use super::exhaust::{
     ByoaEgressPort, ByoaExhaust, ByoaTerminalDisposition, byoa_exhaust_artifact_id,
-    byoa_result_ref, canonical_result_version, decode_byoa_exhaust, decode_byoa_record,
-    ensure_byoa_runtime_actor,
+    canonical_result_version, decode_byoa_exhaust, decode_byoa_record,
 };
+
+pub(crate) use self::dispatch::StagedJob;
+pub(crate) use self::erase::erase_staged_input_in_txn;
 
 /// Domain separator for a staged job's artifact id, derived from the job's
 /// digest.
@@ -116,10 +118,12 @@ pub(super) fn carry_staged_input(
 /// work's CLI seat whose task first landed as its staged job gets it, and so
 /// does a dev-time Coach runner.
 pub(crate) fn staged_job_pointer(pin: &StagedInputPin) -> String {
-    format!(
-        "Your task is the JSON job in `{}` in the working directory. Read it first.",
-        pin.name
-    )
+    pointer_to(&pin.name)
+}
+
+/// The pointer task for a job staged as the file `name`.
+fn pointer_to(name: &str) -> String {
+    format!("Your task is the JSON job in `{name}` in the working directory. Read it first.")
 }
 
 /// Whether `pin`'s job still reads back whole in `rtxn`, as a run would
@@ -159,61 +163,6 @@ fn staged_input_name(digest: &[u8; 32]) -> String {
     )
 }
 
-/// Erases each staged job `jobs` names by its digest, in the erase's
-/// transaction (FIX 7502): the bodies its artifact owns retire as an
-/// erase's do, and its version chain, head and byte references go by the
-/// artifact delete's own rules, its bytes with them once nothing else holds
-/// them. The artifact row stays, so the same job staged again later stages
-/// afresh. A legal hold on the artifact keeps it whole, as every erase door
-/// keeps a held row's bodies: the refusal goes to the hold's log and the
-/// rest of the erase goes on. An id that holds no artifact here is left
-/// alone. The attempt payload pass erases the pins themselves.
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn erase_staged_input_in_txn(
-    store: &Store,
-    txn: &mut heed::RwTxn<'_>,
-    jobs: &BTreeSet<[u8; 32]>,
-) -> Result<()> {
-    for digest in jobs {
-        let artifact = entity_id_from_hash_material(
-            BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
-            &[digest.as_slice()],
-        )?;
-        let stored = EntityStoreRead::port_entity_raw(store, txn, &artifact)?
-            .as_deref()
-            .and_then(crate::batch::EntityMetadataHeader::parse)
-            .map(|header| header.entity_type);
-        if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
-            continue;
-        }
-        if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
-            if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
-                return Err(error);
-            }
-            tracing::warn!(
-                artifact = %artifact.to_hex(),
-                "staged job erase: a legal hold keeps the job's artifact; its pins are erased"
-            );
-            continue;
-        }
-        crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
-            store, txn, &artifact, true,
-        )?;
-        let cleanup =
-            crate::blob_artifact::delete_blob_artifact_lifecycle_in_txn(store, txn, &artifact)?;
-        if cleanup.had_graph_mutation {
-            crate::ppr::increment_graph_version(store, txn)?;
-        }
-        if cleanup.had_vector {
-            crate::hnsw::increment_vector_version(store, txn)?;
-        }
-    }
-    Ok(())
-}
-
 impl<'a, B, E> ByoaDispatcher<'a, B, E> {
     /// This dispatcher, staging each CLI run's pinned job in its checkout
     /// through `stager` before the run ([`Self::execute_cli`]).
@@ -232,72 +181,6 @@ where
     /// Whether a stager is installed ([`Self::with_input_stager`]).
     pub(crate) fn stages_input(&self) -> bool {
         self.stager.is_some()
-    }
-
-    /// Stores `job` whole as a version of the artifact its digest names, made
-    /// on first use, and pins it. The same job stores once: its bytes as the
-    /// head again are the head.
-    pub(crate) fn persist_staged_input(
-        &self,
-        job: &[u8],
-        run_ref: &str,
-        now: u64,
-    ) -> ByoaResult<StagedInputPin> {
-        let digest = *blake3::hash(job).as_bytes();
-        let artifact_id = staged_input_artifact_id(&digest)?;
-        let body = BlobArtifactBody::new(
-            format!("{BYOA_ATTEMPT_KIND}/staged/{}", bytes_to_hex_lower(&digest)),
-            BYOA_STAGED_INPUT_MEDIA_TYPE,
-        );
-        let provenance = BlobVersionProvenance::AgentRun {
-            run_ref: run_ref.to_owned(),
-        };
-        let occurred = TimeRange {
-            start: now,
-            end: now,
-        };
-        let vault = self.vault();
-        let version = vault.try_with_write_txn_grouped(|wtxn| -> ByoaResult<u64> {
-            // The id is the job's: anything else already there is a collision.
-            if vault.get_entity_type_in_txn(wtxn, &artifact_id)?.is_none() {
-                vault
-                    .batch_in()
-                    .put(
-                        &artifact_id,
-                        crate::registry::ENTITY_TYPE_BLOB_ARTIFACT,
-                        occurred,
-                        now,
-                        &encode_blob_artifact_body(&body)?,
-                    )
-                    .apply(wtxn)?;
-            } else if vault
-                .get_blob_artifact_in_txn(wtxn, &artifact_id)
-                .ok()
-                .flatten()
-                .as_ref()
-                != Some(&body)
-            {
-                return Err(invalid(ERR_STAGED_INPUT_COLLISION));
-            }
-            let actor = ensure_byoa_runtime_actor(vault, wtxn, occurred, now)?;
-            Ok(vault
-                .append_blob_artifact_version_in_txn(
-                    wtxn,
-                    &artifact_id,
-                    job,
-                    &provenance,
-                    actor,
-                    occurred,
-                    now,
-                )?
-                .version)
-        })?;
-        Ok(StagedInputPin {
-            artifact: byoa_result_ref(&artifact_id, version)?.as_str().to_owned(),
-            len: job.len() as u64,
-            blake3: digest,
-            name: staged_input_name(&digest),
-        })
     }
 
     /// The job `pin` names, read back from its artifact and checked against

@@ -33,8 +33,6 @@ pub(super) const ERR_BASE_URL: &str = "endpoint base_url must be a bare http(s) 
 
 pub(super) const ERR_SLUG_MAP_EMPTY: &str = "endpoint must bind at least one model slug";
 
-pub(super) const ERR_SLUG_MAP_TOO_LARGE: &str = "endpoint binds too many model slugs";
-
 pub(super) const ERR_MODEL_SLUG: &str = "model slug must be non-empty, bounded, and printable";
 
 pub(super) const ERR_SERVER_REF: &str = "protocol attach server_ref must be non-empty and bounded";
@@ -44,13 +42,8 @@ pub(super) const ERR_PROGRAM: &str =
 
 pub(super) const ERR_ARGV_ENTRY: &str = "cli sandbox argv entry must be printable";
 
-pub(super) const ERR_ARGV_TOO_LONG: &str = "cli sandbox argv has too many entries";
-
 pub(super) const ERR_EGRESS_PROFILE_REF: &str =
     "cli sandbox egress_profile_ref must be non-empty and bounded";
-
-pub(super) const ERR_CREDENTIAL_HANDLES: &str =
-    "cli sandbox references too many credential handles";
 
 pub(super) const ERR_EXHAUST_ENCODE: &str = "byoa exhaust failed to encode";
 
@@ -175,6 +168,10 @@ pub enum ByoaError {
     /// pin names (their length and BLAKE3 digest).
     #[error("byoa staged input does not resolve to the job its pin names")]
     StagedInputUnresolved,
+    /// The TASK a staged job's run names is already erased (FIX 7613): its
+    /// job is not stored and no attempt lands.
+    #[error("byoa staged input names an erased task: nothing was stored")]
+    StagedInputErased,
     /// Any crate-level refusal raised beneath this module — a queue door, a
     /// vault write, or a connector validator.
     #[error(transparent)]
