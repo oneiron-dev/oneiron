@@ -31,6 +31,7 @@ mod attempt;
 mod entries;
 mod pad_sweep;
 mod publication;
+mod refill;
 mod sweep;
 mod turn;
 
@@ -51,9 +52,9 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
 use crate::sync::residence::{
-    BundlePartRead, SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject,
-    SealedBundleTake, holds_sealed_bundle, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_from_hex, sealed_generation_hex,
+    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleObject, SealedBundleTake,
+    holds_sealed_bundle, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -606,26 +607,26 @@ impl PartSource<'_> {
 }
 
 /// Reads one kept object in slices: `generation` names one, `None` the newest.
-/// `None` when the home keeps no such generation; a kept pad object whose
-/// bytes the home lacks fails with [`PADS_UNAVAILABLE`].
+/// A kept pad object whose bytes the home lacks keeps the home's typed answer
+/// (`refill`, FIX 9362).
 async fn read_object(
     source: &mut PartSource<'_>,
     generation: Option<SealedBundleGeneration>,
     object: SealedBundleObject,
-) -> Result<Option<(SealedBundleGeneration, Vec<u8>)>, TransportError> {
+) -> Result<refill::ObjectRead, TransportError> {
     let mut named = generation;
     let mut bytes = Vec::new();
     let mut whole: Option<(u64, [u8; 32])> = None;
     loop {
         let reply = match source.get(named, object, bytes.len() as u64).await {
             Ok(reply) => reply,
-            Err(TransportError::InvalidPayload(_)) if bytes.is_empty() => return Ok(None),
+            Err(TransportError::InvalidPayload(_)) if bytes.is_empty() => {
+                return Ok(refill::ObjectRead::Missing);
+            }
             Err(error) => return Err(error),
         };
-        if reply.get("outcome").and_then(serde_json::Value::as_str)
-            == Some(BundlePartRead::PAD_OBJECT_UNAVAILABLE)
-        {
-            return Err(TransportError::InvalidPayload(PADS_UNAVAILABLE));
+        if let Some(unavailable) = refill::unavailable_of(&reply) {
+            return unavailable.map(refill::ObjectRead::PadsUnavailable);
         }
         let reply: BundleGetReply = serde_json::from_value(reply).map_err(|_| refused())?;
         let generation = sealed_generation_from_hex(&reply.generation).ok_or_else(refused)?;
@@ -656,7 +657,7 @@ async fn read_object(
             if *blake3::hash(&bytes).as_bytes() != digest {
                 return Err(refused());
             }
-            return Ok(Some((generation, bytes)));
+            return Ok(refill::ObjectRead::Whole(generation, bytes));
         }
     }
 }
@@ -667,14 +668,17 @@ pub(super) async fn fetch_generation(
     source: &mut PartSource<'_>,
     generation: Option<SealedBundleGeneration>,
 ) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
-    let Some((generation, bytes)) =
-        read_object(source, generation, SealedBundleObject::Bundle).await?
+    let Some((generation, bytes)) = read_object(source, generation, SealedBundleObject::Bundle)
+        .await?
+        .whole()?
     else {
         return Ok(None);
     };
     let bundle = SealedVaultBundle::from_bytes(&bytes).map_err(|_| refused())?;
     drop(bytes);
-    let Some((_, bytes)) = read_object(source, Some(generation), SealedBundleObject::Pads).await?
+    let Some((_, bytes)) = read_object(source, Some(generation), SealedBundleObject::Pads)
+        .await?
+        .whole()?
     else {
         return Ok(None);
     };

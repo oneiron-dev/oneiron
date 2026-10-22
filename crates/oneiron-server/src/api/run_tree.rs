@@ -1,3 +1,6 @@
+//! The run tree routes: one run's tree of attempts, its observation and the owner's interventions.
+//! `core_run_tree`, `core_run_tree_observe` and `core_run_tree_intervene` are its call surface.
+//! `crate::api::run_tree` defines these DTOs; the engine's run records feed them.
 use super::core_engine_error;
 use super::hex_bytes;
 use super::json_payload;

@@ -16,13 +16,13 @@
 use std::sync::Arc;
 
 use oneiron::EntityId;
-use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError};
 use oneiron::task_verb::sdk::{
     CourtesyDeleteAnswerRequest, CourtesyDeleteIncoming, CourtesyDeleteSendRequest,
     CourtesyDeleteSent, EmptyRequest,
 };
 
-use super::host_doors::{Listed, internal};
+use super::host_doors::support::{Listed, internal};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;

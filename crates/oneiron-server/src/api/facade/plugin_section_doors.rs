@@ -20,7 +20,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::{Listed, credential_listing, refused};
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 

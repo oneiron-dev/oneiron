@@ -12,7 +12,7 @@ use oneiron::skill_hub::pack_catalog::{PackKind, PackSource, ProbePackQualifier}
 use oneiron::task_verb::sdk::*;
 use oneiron::{EntityId, Vault};
 
-use super::host_doors::Listed;
+use super::host_doors::support::Listed;
 use super::legal_hold_doors::as_owner_naming;
 use crate::api::owner_routes::connector_admission_routes as catalog;
 use crate::api::unix_seconds_now;

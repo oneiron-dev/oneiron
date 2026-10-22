@@ -23,6 +23,7 @@ use super::vet::vet_gate_decision_record;
 
 mod custody;
 mod erasure_scan;
+mod held_scrubs;
 
 /// The stored value is plain named MessagePack or encrypted ORCB bytes;
 /// the Store door decodes with its current custody after this typed read.
@@ -244,6 +245,7 @@ impl Store {
         self.delete_gate_decision_claim_index_in_txn(wtxn, record)?;
         self.delete_gate_retention_context_in_txn(wtxn, record.decision_id)?;
         self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
+        self.forget_gate_scrubs_of_decision_in_txn(wtxn, record.decision_id)?;
         LEDGER.delete(self, wtxn, &record.decision_id)?;
         Ok(())
     }
@@ -259,85 +261,6 @@ impl Store {
             ));
         };
         self.delete_gate_decision_record_in_txn(wtxn, &record)
-    }
-
-    /// Rewrites every live row for a deleted claim to its retention skeleton
-    /// inside the caller's destructive transaction. The claim index is retained
-    /// for discovery of skeletons; the grant-ref index is removed because its
-    /// source field is scrubbed. Discovery falls back to a full scan until the
-    /// durable claim-index backfill has completed. A held key partition keeps
-    /// its rows, so every door that tears a held claim (facade, batch, cascade
-    /// or replay) is refused here, before anything is rewritten.
-    pub(crate) fn redact_gate_decisions_for_claim_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        claim_id: &[u8; 16],
-        redacted_at: u64,
-    ) -> Result<bool> {
-        self.reject_legal_hold_in_txn(&*wtxn, claim_id)?;
-        let id = crate::entity_id::EntityId::from_bytes(*claim_id)
-            .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
-        let pending = self.pending_gate_consent_in_txn(&*wtxn, &id)?.is_some();
-        let mut records = self.gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?;
-        records.extend(self.bundle_gate_decisions_for_claim_in_txn(&*wtxn, claim_id)?);
-        let mut changed = pending;
-        for mut record in records {
-            // Batch preflight stages receipts for *future* ops in this same
-            // txn. Their marker is consumed only after their op applies; a
-            // delete before that op must not scrub its future receipt.
-            if self.is_unapplied_preflight_decision_in_txn(&*wtxn, record.decision_id)? {
-                continue;
-            }
-            if record.redacted_at.is_some() {
-                if !self
-                    .gate_decision_claim_refs_in_txn(&*wtxn, record.decision_id)?
-                    .is_empty()
-                {
-                    return Err(Error::CorruptedIndex(
-                        "redacted gate decision claim references",
-                    ));
-                }
-                continue;
-            }
-            changed = true;
-            self.delete_gate_decision_grant_ref_index_in_txn(wtxn, &record)?;
-            self.delete_gate_decision_claim_refs_in_txn(wtxn, record.decision_id)?;
-            record.version = super::types::GATE_DECISION_LEDGER_VERSION_REDACTED;
-            // v0 records a caller's empty class on an auditable denial; v1
-            // requires a non-empty retention label.
-            if record.actor_class.is_empty() {
-                record.actor_class = "unspecified".to_owned();
-            }
-            record.reason_codes.clear();
-            record.receipt_reasons.clear();
-            record.system_notices.clear();
-            record.actor_ref = None;
-            record.grant_ref = None;
-            record.diff_handle.clear();
-            // An injected clock at epoch zero must still produce a valid v1 row.
-            record.redacted_at = Some(redacted_at.max(1));
-            super::vet::vet_gate_decision_record(&record)?;
-            LEDGER.put(
-                self,
-                wtxn,
-                &record.decision_id,
-                &encode_gate_decision(&record)?,
-            )?;
-        }
-        // The tray carries the original content binding and can mint a fresh
-        // live v0 resolution from a v1 skeleton. Remove it and every index
-        // inside this same destructive transaction, before verification. An
-        // erasure shows no fresh item, and the open obligation keeps no hash
-        // of the erased body.
-        self.remove_pending_gate_consent_in_txn(wtxn, &id, crate::store::TrayRemoval::Silent)?;
-        self.blank_owner_answer_obligation_item_in_txn(wtxn, &id)?;
-        for decision_id in self.verify_claim_erasure_by_scan_in_txn(&*wtxn, claim_id)? {
-            if !self.is_unapplied_preflight_decision_in_txn(&*wtxn, decision_id)? {
-                return Err(Error::CorruptedIndex("gate decision claim erasure"));
-            }
-        }
-        self.stage_erased_claim_key_retirement_in_txn(wtxn, claim_id)?;
-        Ok(changed)
     }
 
     /// Drops the rows a restore must not bring back: a checkpoint row whose
@@ -377,6 +300,7 @@ impl Store {
             self.delete_gate_retention_context_in_txn(wtxn, *decision_id)?;
             self.delete_gate_decision_claim_refs_in_txn(wtxn, *decision_id)?;
             self.discard_unapplied_preflight_marker_in_txn(wtxn, *decision_id)?;
+            self.forget_gate_scrubs_of_decision_in_txn(wtxn, *decision_id)?;
             LEDGER.delete(self, wtxn, decision_id)?;
             let id = crate::entity_id::EntityId::from_bytes(*claim_id)
                 .map_err(|_| Error::CorruptedIndex("gate decision claim id"))?;
