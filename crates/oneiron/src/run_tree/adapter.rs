@@ -105,15 +105,20 @@ pub fn mark_run_tree_failure(
     })
 }
 
+/// How many nodes under `nodes` render `attempt_id`, and whether one of them
+/// is `Failed`. Walked on a heap stack, so a deep tree never deepens the call
+/// stack (FIX 10067).
 fn count_marked_nodes(nodes: &[RunTreeNode], attempt_id: &str) -> (usize, bool) {
-    nodes.iter().fold((0, false), |(count, failed), node| {
-        let (children, failed_child) = count_marked_nodes(&node.children, attempt_id);
-        let matches = node.attempt_id == attempt_id;
-        (
-            count + usize::from(matches) + children,
-            failed || failed_child || (matches && node.status == RunTreeStatus::Failed),
-        )
-    })
+    let mut pending: Vec<&RunTreeNode> = nodes.iter().collect();
+    let (mut count, mut failed) = (0, false);
+    while let Some(node) = pending.pop() {
+        if node.attempt_id == attempt_id {
+            count += 1;
+            failed |= node.status == RunTreeStatus::Failed;
+        }
+        pending.extend(&node.children);
+    }
+    (count, failed)
 }
 
 /// The first nonempty root agent label in deterministic run-tree order.
