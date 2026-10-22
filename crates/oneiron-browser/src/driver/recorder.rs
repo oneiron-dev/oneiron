@@ -24,7 +24,7 @@ use crate::demonstration::{Edited, KeyFacts, LocatorGap, Mapped, RecordingGapKin
 use crate::driver::pages::session_token;
 use crate::outline::{self, CONTROLS, Masks, clip};
 use crate::secret_fields::page_predicate;
-use crate::session::{effect_class, receipt_class};
+use crate::session::{effect_class_on, receipt_class};
 use crate::{BrowserError, Row};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
@@ -357,7 +357,7 @@ impl CdpDriver {
         let descriptor = descriptor.ok_or(LocatorGap::NoTarget)?;
         let held = place.url.and_then(|url| self.pages.held_rows_at(url));
         if let Some(Ok(row)) = held.map(|rows| pick(rows.iter(), descriptor)) {
-            return Ok(mapped(row));
+            return Ok(mapped(row, place.url));
         }
         if place.gone || !place.read {
             return Err(LocatorGap::DocumentGone);
@@ -370,7 +370,7 @@ impl CdpDriver {
         if place.url.is_some_and(|page| page != url.as_str()) {
             return Err(LocatorGap::DocumentGone);
         }
-        pick(rows.iter(), descriptor).map(mapped)
+        pick(rows.iter(), descriptor).map(|row| mapped(row, place.url))
     }
 
     /// The front tab's URL and outline rows as a read masks them, minting
@@ -423,9 +423,10 @@ fn pick<'a>(
 }
 
 /// A matched row as a recorded target: its locator, its name, and the
-/// class its press takes (`effect_class`, unknown with no name).
-fn mapped(row: &Row) -> Mapped {
-    let class = receipt_class(effect_class(&row.name), Some(row));
+/// class its press takes on the page at `url` (`effect_class`, a send on
+/// a payment step a payment, FIX 8009; unknown with no name).
+fn mapped(row: &Row, url: Option<&str>) -> Mapped {
+    let class = receipt_class(effect_class_on(&row.name, url), Some(row));
     Mapped {
         locator: row.locator.clone(),
         name: row.name.clone(),

@@ -52,7 +52,10 @@ mod session;
 mod stop;
 mod switch;
 
-pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
+pub use answer::{
+    BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp,
+    TakeoverRecord, WindowSwitch, WindowSwitchCause,
+};
 pub use demonstration::{
     DemonstrationId, DemonstrationOutput, DemonstrationSource, DemonstrationStartInput,
     DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep,
@@ -61,7 +64,7 @@ pub use demonstration::{
 #[cfg(feature = "driver")]
 pub use desktop::{AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover};
 pub use engine::BrowserEngine;
-pub use fact::{ActionFact, ActionTarget, NoEffectReason, ViewportPoint};
+pub use fact::{ActionFact, ActionTarget, DialogAnswerFailure, NoEffectReason, ViewportPoint};
 pub use field::{
     FIELD_WRITER, FieldSpec, FieldTextReason, FieldWrite, FieldWriteError, FieldWriter,
     FieldWritten, NoWriter, TextCheck, TextCheckReply, TextProvenance, TextReference, TextSource,
@@ -72,8 +75,8 @@ pub use library::{
     DraftPage, DraftStep, FiledWorkflow, LibraryCard, LibraryFindInput, LibraryFindOutput,
     LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
     LibraryRunInput, LibraryRunMode, LibraryRunOutput, PressedThrough, ProposeInput, ProposeOutput,
-    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretParam, SlotCandidate, SlotField,
-    SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
+    RecentCounts, ReplayGuest, RetiredCard, RunOutcome, SecretArg, SecretParam, SlotCandidate,
+    SlotField, SupersedeOutcome, SupersedeRefusal, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
     WorkflowProof, WorkflowSeed, default_mode, draft_from_steps, effective_mode, model_free,
     site_of, validate_replay_args,
 };
@@ -91,10 +94,12 @@ pub use request::DestinationRefusal;
 pub use request::{BrowserRequestHandler, RenderedDocument};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
-pub use secret::SecretCustody;
+pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
-pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, StartedGuest};
+pub use session::{
+    BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, PressGrants, StartedGuest,
+};
 pub use stop::{
     AskUpReason, BatchStopCause, CheckReceipt, ClockScope, FailedStepReceipt, STRICT_DENIED,
     StrictDenial, StrictDenied,
@@ -166,6 +171,10 @@ pub struct Observation {
     /// whenever a read could not prove it did not.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fact: Option<ActionFact>,
+    /// The dialogs a page opened since the last observation whose answer
+    /// the browser refused (FIX 6768), on the first page only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dialogs: Vec<DialogAnswerFailure>,
 }
 
 /// Where a desktop window's tree walk stopped short of its end (Rule 5):
@@ -258,9 +267,9 @@ pub struct EffectReceipt {
     /// On a `switch_engine` receipt: the switch's record (FIX 6680).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine_switch: Option<EngineSwitchRecord>,
-    /// Where the text a browser's type or Fill step typed came from (CUA
-    /// E6): `supplied` for a `type`, else the Fill's source. Absent on any
-    /// other effect, and on a desktop's.
+    /// Where the text a type or Fill step typed came from (CUA E6; a
+    /// desktop's too, FIX 8899): `supplied` for a `type`, else the Fill's
+    /// source. Absent on any other effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_source: Option<TextSource>,
     /// The typed text's reference: a reference's id, a template's digest
@@ -280,6 +289,10 @@ pub struct EffectReceipt {
     /// absent on a page with no such origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_origin: Option<String>,
+    /// That page's title, as an observation shows it (FIX 8011): `url` and
+    /// `title` name the page the act left, its result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_title: Option<String>,
     /// The tab the act acted in, by the browser's stable id for it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab: Option<String>,
@@ -287,6 +300,13 @@ pub struct EffectReceipt {
     /// act opened one, or closed its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_tab: Option<String>,
+    /// The act's input was sent, then settling or reading the page it left
+    /// failed (FIX 8010): that failure's stable code, which its verb then
+    /// answered. `url` and `title` name the page as it read after, else
+    /// where the act began; no observation backs the receipt, and the
+    /// input is never sent again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_unread: Option<String>,
     /// How long the effect took, in milliseconds of the monotonic clock:
     /// from its verb's entry through its screenshot and this receipt,
     /// before the host keeps the screenshot.
@@ -1230,6 +1250,11 @@ pub enum BrowserError {
     Navigation(String),
     #[error("timed out waiting for {0}")]
     Timeout(String),
+    /// FIX 8046: a protocol call the engine did not answer in its time (a
+    /// CDP method, a desktop driver's tool), by its name. Its code is the
+    /// timeout's own; a batch names it the protocol's clock.
+    #[error("timed out waiting for {0}")]
+    CallTimeout(String),
     #[error("browser protocol: {0}")]
     Protocol(String),
     #[error("image {0} no longer shows the page as it is; take a new screenshot")]
@@ -1240,6 +1265,10 @@ pub enum BrowserError {
     Decider(String),
     #[error("the library holds no workflow {0}")]
     NoWorkflow(String),
+    /// FIX 8073: the workflow a run named was retired, as the library's
+    /// record of its retire proves; one with no record stays `NoWorkflow`.
+    #[error("the library's workflow {0} was retired")]
+    WorkflowRetired(String),
     #[error("the workflow library failed: {0}")]
     Library(String),
     #[error("this driver does not serve {0}")]
@@ -1293,6 +1322,17 @@ pub fn paged<D: BrowserDriver + ?Sized>(
 pub trait BrowserDriver: Send {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError>;
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError>;
+
+    /// A whole read of the page that no answer gives the caller (a routine
+    /// step's look, a batch's progress read): kept apart from the
+    /// observations a caller's base names, so it never ages one out (FIX
+    /// 8510). A driver that keeps no such apart reads as `observe` does.
+    fn observe_hidden(&mut self) -> Result<Observation, BrowserError> {
+        self.observe(ObserveInput {
+            full: true,
+            ..ObserveInput::default()
+        })
+    }
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError>;
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError>;
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError>;
@@ -1397,6 +1437,32 @@ pub trait BrowserDriver: Send {
     /// receipt of an effect it made first, so a draft never takes it for a
     /// step that worked. A driver that keeps no history notes nothing.
     fn note_stop(&mut self, _stop: StepStop) {}
+
+    /// The receipt of the input the last effect verb sent before it failed
+    /// (FIX 8010): its settle or its read after failed, and the effect
+    /// stands. Taken once; a driver that receipts no such input has none.
+    fn sent_receipt(&mut self) -> Option<EffectReceipt> {
+        None
+    }
+
+    /// The operand the driver's newest receipt typed into `target`, a live
+    /// handle or a locator, as it kept it for a replay (CUA E7; FIX 8344,
+    /// 8345): a secret by its handle and kind, else its text. None where no
+    /// receipt typed there, or the driver keeps no history.
+    fn typed_operand(&self, _target: &str) -> Option<TypeOperand> {
+        None
+    }
+
+    /// The viewport's scroll offset now, in CSS pixels, where the driver
+    /// reads one (FIX 8508); none elsewhere.
+    fn viewport_offset(&self) -> Option<(f64, f64)> {
+        None
+    }
+
+    /// Withdraws the newest no-progress stop the driver's history noted
+    /// (FIX 8507): the run's final checks met after all. A driver that
+    /// keeps no history withdraws nothing.
+    fn withdraw_no_progress(&mut self) {}
 
     /// Starts recording a demonstration of the attached browser (CUA E9a):
     /// only a browser session on a Chromium guest records one; any other
@@ -1544,6 +1610,12 @@ pub trait BrowserDriver: Send {
         for (index, step) in input.steps.into_iter().enumerate() {
             let counts = step.counts_for_progress();
             let name = step.name();
+            // The caller's clock is the batch's one clock (FIX 8043): past
+            // its `until_ms`, the batch hands up before the step.
+            if let Some(stop) = stop::clock_out(routine.until_ms) {
+                stop::noted(self, name, &stop);
+                return Ok(stop::stopped(self, output, index, stop, base, started));
+            }
             monitor.before(self, counts);
             // The targets this step matched by their locators.
             let mut rebindings = Vec::new();
@@ -1704,7 +1776,12 @@ pub trait BrowserDriver: Send {
                         return Ok(progress::handed_up(output, index, page, started));
                     }
                 }
-                Err(stop) => {
+                Err(mut stop) => {
+                    // An input the step sent stands with its receipt (FIX
+                    // 8010), as a Fill's does.
+                    if stop.receipt.is_none() {
+                        stop.receipt = self.sent_receipt();
+                    }
                     stop::noted(self, name, &stop);
                     return Ok(stop::stopped(self, output, index, stop, base, started));
                 }
@@ -1799,11 +1876,9 @@ impl Routine<'_> {
         let mut waited = false;
         let mut looks = 0;
         while looks < ROUTINE_LOOKS {
-            // A look the caller never sees: whole, and never its base.
-            let page = driver.observe(ObserveInput {
-                full: true,
-                ..ObserveInput::default()
-            })?;
+            // A look the caller never sees: whole, never its base, and
+            // never aging out one (FIX 8510).
+            let page = driver.observe_hidden()?;
             // A desktop window with no tree is read by its pixels: a step
             // that only clicks locates its target in a screenshot there.
             let blind = page.no_tree
@@ -2068,12 +2143,13 @@ impl BrowserError {
             Self::NoImage(_) => "browser_no_image",
             Self::Url(_) => "browser_url_refused",
             Self::Navigation(_) => "browser_navigation_failed",
-            Self::Timeout(_) => "browser_timeout",
+            Self::Timeout(_) | Self::CallTimeout(_) => "browser_timeout",
             Self::Protocol(_) => "browser_protocol",
             Self::StaleImage(_) => "browser_stale_image",
             Self::AskUp(_) => "routine_ask_up",
             Self::Decider(_) => "routine_decider_failed",
             Self::NoWorkflow(_) => "browser_no_workflow",
+            Self::WorkflowRetired(_) => "workflow_retired",
             Self::Library(_) => "browser_library_failed",
             Self::Unsupported(_) => "browser_unsupported",
             Self::TakenOver(_) => "desktop_taken_over",

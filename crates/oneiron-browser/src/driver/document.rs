@@ -7,7 +7,8 @@
 //! scripts, then answers it piece by piece, never splitting a surrogate
 //! pair, and the reference is released. The status is the one the session
 //! noted for the main frame's document request (`cdp::requests`), only
-//! while the main frame shows the URL that request asked.
+//! while the main frame shows the document that request's answer committed
+//! (across same-document moves), or, before its commit, the URL it asked.
 
 use super::{CdpDriver, POLL};
 use crate::{BrowserError, RenderedDocument};
@@ -34,8 +35,9 @@ impl CdpDriver {
         let frame = tree.pointer("/frameTree/frame").unwrap_or(&Value::Null);
         let html = self.markup()?;
         let final_url = self.page_info()?.0;
+        let loader = frame["loaderId"].as_str();
         let status = match (frame["id"].as_str(), frame["url"].as_str()) {
-            (Some(id), Some(url)) => self.pipe.document_status(&self.session, id, url),
+            (Some(id), Some(url)) => self.pipe.document_status(&self.session, id, url, loader),
             _ => None,
         };
         Ok(RenderedDocument {

@@ -118,6 +118,35 @@ impl Documents {
 }
 
 impl Handles {
+    /// Drops every binding of tab `target`, closed (FIX 6158): no lookup
+    /// reaches its nodes again. Each handle's record stays, its locator
+    /// with it, for a stale handle to rebind by on another tab.
+    pub(super) fn forget_tab(&mut self, target: &str) {
+        let prefix = format!("{target}/");
+        let mut freed = 0usize;
+        self.by_node.retain(|(document, _), handle| {
+            let closed = document.starts_with(prefix.as_str());
+            if closed {
+                freed = freed.saturating_add(document.capacity() + handle.capacity());
+            }
+            !closed
+        });
+        self.by_locator.retain(|(document, locator), handle| {
+            let closed = document.starts_with(prefix.as_str());
+            if closed {
+                freed = freed
+                    .saturating_add(document.capacity() + locator.capacity() + handle.capacity());
+            }
+            !closed
+        });
+        if freed > 0 {
+            self.strings = self.strings.saturating_sub(freed);
+            shrink(&mut self.by_node);
+            shrink(&mut self.by_locator);
+            self.settle();
+        }
+    }
+
     pub(super) fn new(token: String, retention: Box<dyn HandleRetention>) -> Self {
         Self {
             token,
@@ -198,18 +227,37 @@ impl Handles {
 
     /// Drops the bindings no lookup can reach again: those of a document a
     /// frame in this read (`read`, of tab `target`) no longer shows, those
-    /// of this tab's earlier unsettled reads, and those of the nodes of a
-    /// document in this read the page no longer has (`gone`). Another tab's
-    /// or frame's bindings stay, and so does every handle's record.
-    fn retire(&mut self, target: &str, read: &BTreeSet<&str>, gone: &BTreeSet<u64>) {
+    /// of a frame that left the tab (one of `shown`, the frames the tab
+    /// shows now, no longer; FIX 6158), those of this tab's earlier
+    /// unsettled reads, and those of the nodes of a document in this read
+    /// the page no longer has (`gone`). Another tab's bindings stay, and so
+    /// does every handle's record, its locator with it, for a stale handle
+    /// to rebind by.
+    fn retire(
+        &mut self,
+        target: &str,
+        read: &BTreeSet<&str>,
+        gone: &BTreeSet<u64>,
+        shown: Option<&HashSet<&str>>,
+    ) {
         let frames: Vec<String> = read
             .iter()
             .filter_map(|document| frame_of(target, document))
             .collect();
         let unsettled = format!("{target}/unsettled.");
+        let departed = |document: &str| {
+            shown.is_some_and(|shown| {
+                document
+                    .strip_prefix(target)
+                    .and_then(|rest| rest.strip_prefix('/'))
+                    .and_then(|rest| rest.split_once('/'))
+                    .is_some_and(|(frame, _)| frame != "unsettled" && !shown.contains(frame))
+            })
+        };
         let superseded = |document: &str| {
             !read.contains(document)
                 && (document.starts_with(unsettled.as_str())
+                    || departed(document)
                     || frames
                         .iter()
                         .any(|frame| document.starts_with(frame.as_str())))
@@ -281,7 +329,12 @@ impl Handles {
             hasher.update(document.as_bytes());
         }
         let scope = format!("page:{}", &hasher.finalize().to_hex()[..16]);
-        self.retire(target, &read, gone);
+        let frames: Option<HashSet<&str>> = documents.map(|documents| {
+            std::iter::once(documents.main.as_str())
+                .chain(documents.loaders.keys().map(String::as_str))
+                .collect()
+        });
+        self.retire(target, &read, gone, frames.as_ref());
 
         // Each row's handle: the one its node or locator is bound to, else a
         // new one, numbered in row order, that its key's later rows share.
@@ -567,7 +620,7 @@ impl CdpDriver {
         self.secret_nodes = lines
             .iter()
             .filter(|line| line.masked)
-            .filter_map(|line| line.backend_node)
+            .filter_map(|line| Some((line.frame.clone(), line.backend_node?)))
             .collect();
         let originals = lines.iter_mut().map(|line| line.original.take()).collect();
         let target = self.target.clone();

@@ -14,24 +14,48 @@
 //! locator, candidate or receipt of the session ever holds the value.
 //!
 //! A screenshot masks the same rows (each one a secret shows in, by its DOM
-//! node, in whatever frame or shadow tree the tree reached it) and, for
+//! node, in whatever frame or shadow tree the tree reached it, an
+//! out-of-process frame's on that frame's own session, FIX 8336) and, for
 //! fields no read has classified yet, every input a password, card or
-//! one-time-code autocomplete token names in the front document, before
-//! the image is taken; every mask comes off after it.
+//! one-time-code autocomplete token names in the front document and in
+//! each of its out-of-process frames, before the image is taken; every mask
+//! comes off after it.
 
-use super::CdpDriver;
 use super::row_metadata::DomRead;
+use super::{CALL, CdpDriver};
 use crate::outline::{self, Line, Masked, Masks};
-use crate::secret_fields::{FieldFacts, SECRET_MARK, classify, masked, secret_display_policy};
+use crate::secret_fields::{
+    FieldFacts, SECRET_MARK, classify, masked, prose_codes, secret_display_policy,
+    secret_echo_policy,
+};
 use crate::{BrowserError, RowSecret, SecretKind, SecretNote};
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use std::time::Instant;
 use url::Url;
 
 /// Masks every input the front document marks secret by its type or an
 /// autocomplete token (any card field, one-time code or password), keeping
 /// each one's style to restore.
 const MASK_FIELDS: &str = "document.querySelectorAll('input[type=password],[autocomplete*=\"cc-\"],[autocomplete~=\"one-time-code\"],[autocomplete~=\"current-password\"],[autocomplete~=\"new-password\"]').forEach(e => { if (e.dataset.oneironMask !== undefined) return; e.dataset.oneironMask = e.style.cssText; e.style.setProperty('background', '#000', 'important'); e.style.setProperty('color', '#000', 'important'); e.style.setProperty('-webkit-text-security', 'disc', 'important'); })";
+
+/// The query and fragment parameters whose value a URL's display shows as
+/// a one-time code's handle (FIX 8340, `url_code_policy`, CALLS row, open):
+/// a magic link's or a verification link's code, by its parameter's name.
+/// The URL itself stays the page's identity; only its display changes.
+const URL_CODE_PARAMS: &[&str] = &[
+    "otp",
+    "code",
+    "one_time_code",
+    "verification_code",
+    "passcode",
+    "magic",
+    "magic_link",
+    "login_token",
+    "auth_token",
+    "access_token",
+    "token",
+];
 
 /// Restores what [`MASK_FIELDS`] masked in the front document.
 const UNMASK_FIELDS: &str = "document.querySelectorAll('[data-oneiron-mask]').forEach(e => { e.style.cssText = e.dataset.oneironMask; delete e.dataset.oneironMask; })";
@@ -88,6 +112,24 @@ impl CdpDriver {
                 .backend_node
                 .and_then(|backend| self.typed.get(&backend).copied());
             let Some(kind) = classify(&facts).or(typed) else {
+                // A text row naming a one-time code in its prose holds that
+                // code, the rest of its text its own (FIX 8337).
+                if text {
+                    for code in prose_codes(value) {
+                        let held = taken
+                            .entry((SecretKind::Otp, code))
+                            .or_insert_with(|| {
+                                let origin = origin.get_or_insert_with(|| self.page_origin());
+                                self.secrets.acquire(SecretKind::Otp, code, origin)
+                            })
+                            .clone();
+                        let handle = held.as_ref().ok().map(String::as_str);
+                        let display = secret_display_policy(SecretKind::Otp, code, handle);
+                        if !masks.echoes.iter().any(|(secret, _)| secret == code) {
+                            masks.echoes.push((code.to_owned(), display));
+                        }
+                    }
+                }
                 continue;
             };
             let (shown, secret) = if value.trim().is_empty() {
@@ -125,7 +167,99 @@ impl CdpDriver {
             let shown = if text { None } else { shown };
             masks.fields.insert(id.to_owned(), Masked { shown, secret });
         }
+        // What earlier reads of the run took, shown again in this read's
+        // rows, shows its handle too: the run-scoped matcher (FIX 8337).
+        for line in lines {
+            let Some(node) = line.ax_id.as_deref().and_then(|id| by_id.get(id)) else {
+                continue;
+            };
+            for field in ["name", "value", "description"] {
+                let text = outline::field(node, field).unwrap_or("");
+                for (secret, shown) in self.secrets.known_in(text) {
+                    if !masks.echoes.iter().any(|(held, _)| *held == secret) {
+                        masks.echoes.push((secret, shown));
+                    }
+                }
+            }
+        }
         masks
+    }
+
+    /// The page's URL and title as an observation shows them (FIX 8340):
+    /// each secret the run's reads took shows its handle, as do the
+    /// one-time codes the title names in prose and the URL carries in a
+    /// code's parameter ([`URL_CODE_PARAMS`]). The browser's own URL stays
+    /// the page's identity everywhere else.
+    pub(super) fn shown_page(&self, url: String, title: String) -> (String, String) {
+        let origin = Url::parse(&url)
+            .map_or_else(|_| String::new(), |url| url.origin().ascii_serialization());
+        let mut echoes: Vec<(String, String)> = Vec::new();
+        for code in prose_codes(&title) {
+            let handle = self.secrets.acquire(SecretKind::Otp, code, &origin).ok();
+            let display = secret_display_policy(SecretKind::Otp, code, handle.as_deref());
+            echoes.push((code.to_owned(), display));
+        }
+        let pairs: Vec<(&str, &str)> = echoes
+            .iter()
+            .map(|(secret, shown)| (secret.as_str(), shown.as_str()))
+            .collect();
+        let title = secret_echo_policy(&title, &pairs).unwrap_or(title);
+        let title = self.secrets.mask_known(&title).unwrap_or(title);
+        let url = self.shown_url(&url, &origin);
+        let url = self.secrets.mask_known(&url).unwrap_or(url);
+        (url, title)
+    }
+
+    /// `url` with each code parameter's value, in its query and in a
+    /// fragment of parameters, shown as its handle.
+    fn shown_url(&self, url: &str, origin: &str) -> String {
+        let (head, fragment) = url
+            .split_once('#')
+            .map_or((url, None), |(h, f)| (h, Some(f)));
+        let (path, query) = head
+            .split_once('?')
+            .map_or((head, None), |(p, q)| (p, Some(q)));
+        let mut shown = path.to_owned();
+        if let Some(query) = query {
+            shown.push('?');
+            shown.push_str(&self.shown_params(query, origin));
+        }
+        if let Some(fragment) = fragment {
+            shown.push('#');
+            if fragment.contains('=') {
+                shown.push_str(&self.shown_params(fragment, origin));
+            } else {
+                shown.push_str(fragment);
+            }
+        }
+        shown
+    }
+
+    /// `params` (`name=value` pairs, `&` between) with each code
+    /// parameter's value shown as its handle.
+    fn shown_params(&self, params: &str, origin: &str) -> String {
+        let shown: Vec<String> = params
+            .split('&')
+            .map(|pair| {
+                let Some((name, _)) = pair.split_once('=') else {
+                    return pair.to_owned();
+                };
+                let decoded = url::form_urlencoded::parse(pair.as_bytes()).next();
+                let Some((key, value)) = decoded.filter(|(_, value)| !value.is_empty()) else {
+                    return pair.to_owned();
+                };
+                if !URL_CODE_PARAMS
+                    .iter()
+                    .any(|code| key.eq_ignore_ascii_case(code))
+                {
+                    return pair.to_owned();
+                }
+                let handle = self.secrets.acquire(SecretKind::Otp, &value, origin).ok();
+                let display = secret_display_policy(SecretKind::Otp, &value, handle.as_deref());
+                format!("{name}={display}")
+            })
+            .collect();
+        shown.join("&")
     }
 
     /// The front page's origin, as a secret found on it names where it
@@ -144,24 +278,28 @@ impl CdpDriver {
     /// a screenshot is taken only once they all did.
     pub(super) fn mask_secrets(&self) -> (Vec<Value>, Result<(), BrowserError>) {
         let mut masked = Vec::new();
-        let fields = self.page(
-            "Runtime.evaluate",
-            json!({"expression": MASK_FIELDS, "returnByValue": true}),
-        );
-        if let Err(error) = fields {
-            return (masked, Err(error));
+        for session in std::iter::once(self.session.clone()).chain(self.oopif_sessions()) {
+            if let Err(error) = self.evaluate_in(&session, MASK_FIELDS) {
+                return (masked, Err(error));
+            }
         }
-        for backend in &self.secret_nodes {
+        for (frame, backend) in &self.secret_nodes {
+            let session = self.frame_session(frame.as_deref());
             // A node the page no longer has shows nothing.
-            let Ok(resolved) = self.page("DOM.resolveNode", json!({"backendNodeId": backend}))
-            else {
+            let resolved = self.pipe.call(
+                Some(&session),
+                "DOM.resolveNode",
+                json!({"backendNodeId": backend}),
+                Instant::now() + CALL,
+            );
+            let Ok(resolved) = resolved else {
                 continue;
             };
             let Some(object) = resolved.pointer("/object/objectId").cloned() else {
                 continue;
             };
-            let element = json!({"objectId": object});
-            if let Err(error) = self.call_on(&element, MASK_NODE, json!([])) {
+            let element = json!({"objectId": object, "sessionId": session});
+            if let Err(error) = self.call_in(&element, MASK_NODE) {
                 return (masked, Err(error));
             }
             masked.push(element);
@@ -169,18 +307,50 @@ impl CdpDriver {
         (masked, Ok(()))
     }
 
+    /// Evaluates `expression` on page or frame `session`, by value.
+    fn evaluate_in(&self, session: &str, expression: &str) -> Result<Value, BrowserError> {
+        self.pipe.call(
+            Some(session),
+            "Runtime.evaluate",
+            json!({"expression": expression, "returnByValue": true}),
+            Instant::now() + CALL,
+        )
+    }
+
+    /// Calls `function` on `element`, on the session it was resolved on.
+    fn call_in(&self, element: &Value, function: &str) -> Result<(), BrowserError> {
+        let session = element["sessionId"].as_str().unwrap_or(&self.session);
+        let answer = self.pipe.call(
+            Some(session),
+            "Runtime.callFunctionOn",
+            json!({"objectId": element["objectId"], "functionDeclaration": function, "arguments": [], "returnByValue": true}),
+            Instant::now() + CALL,
+        )?;
+        match answer.get("exceptionDetails") {
+            Some(error) => Err(BrowserError::Protocol(
+                error
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or("script error")
+                    .to_owned(),
+            )),
+            None => Ok(()),
+        }
+    }
+
     /// Takes off every mask [`Self::mask_secrets`] put on: the front
     /// document's, then each element's it names. Every one is tried; the
     /// first failure is the answer.
     pub(super) fn unmask_secrets(&self, masked: &[Value]) -> Result<(), BrowserError> {
-        let mut restored = self
-            .page(
-                "Runtime.evaluate",
-                json!({"expression": UNMASK_FIELDS, "returnByValue": true}),
-            )
-            .map(drop);
+        let mut restored = Ok(());
+        for session in std::iter::once(self.session.clone()).chain(self.oopif_sessions()) {
+            let undone = self.evaluate_in(&session, UNMASK_FIELDS).map(drop);
+            if restored.is_ok() {
+                restored = undone;
+            }
+        }
         for element in masked {
-            let undone = self.call_on(element, UNMASK_NODE, json!([])).map(drop);
+            let undone = self.call_in(element, UNMASK_NODE);
             if restored.is_ok() {
                 restored = undone;
             }

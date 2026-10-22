@@ -26,6 +26,38 @@ pub trait SecretCustody: Send + Sync {
         handle: &str,
         use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
     ) -> Result<(), BrowserError>;
+
+    /// Lends the bytes `handle` holds to `use_` for `operation`, the
+    /// session's own type or expect, once (FIX 8342): the host's use record
+    /// names which. The default lends them as [`Self::with_value`] does.
+    fn with_value_as(
+        &self,
+        handle: &str,
+        operation: SecretUse,
+        use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
+    ) -> Result<(), BrowserError> {
+        let _ = operation;
+        self.with_value(handle, use_)
+    }
+}
+
+/// What a session asks a secret's bytes for (FIX 8342): a type sends them
+/// into a field; an expect compares them with what the page holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecretUse {
+    Type,
+    Expect,
+}
+
+impl SecretUse {
+    /// The operation's word in a use record.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Type => "type",
+            Self::Expect => "expect",
+        }
+    }
 }
 
 /// What a type enters: its literal text, or the bytes a secret handle
@@ -71,10 +103,18 @@ pub(crate) use held::Secrets;
 
 #[cfg(feature = "driver")]
 mod held {
-    use super::{SecretCustody, bare_handle};
-    use crate::secret_fields::secret_compare_policy;
+    use super::{SecretCustody, SecretUse, bare_handle};
+    use crate::secret_fields::{secret_compare_policy, secret_display_policy, secret_echo_policy};
     use crate::{BrowserError, SecretKind, SecretNote};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+
+    /// Every kind a session's reads take a value as.
+    const KINDS: [SecretKind; 4] = [
+        SecretKind::Card,
+        SecretKind::Cvv,
+        SecretKind::Otp,
+        SecretKind::Password,
+    ];
     use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
     /// A session's hold on its host's custody, shared with every driver
@@ -181,10 +221,11 @@ mod held {
         }
 
         /// Lends the bytes `named` (a handle, bare or as a row shows it)
-        /// holds to `use_`, through the host's custody.
+        /// holds to `use_` for `operation`, through the host's custody.
         pub(crate) fn with_value(
             &self,
             named: &str,
+            operation: SecretUse,
             use_: &mut dyn FnMut(&str) -> Result<(), BrowserError>,
         ) -> Result<(), BrowserError> {
             let handle = bare_handle(named);
@@ -193,7 +234,43 @@ mod held {
                     "this browser's host keeps no secrets, so {handle} names none"
                 ))
             })?;
-            custody.with_value(handle, use_)
+            custody.with_value_as(handle, operation, use_)
+        }
+
+        /// The secrets earlier reads of this session took that `text` shows
+        /// again (FIX 8337, FIX 8338, FIX 8340), each with what shows in its
+        /// place: the run-scoped matcher. Each whole token of `text` is
+        /// hashed with the session's own key and looked up among the hashes
+        /// the session already keeps of what it took; no value is kept for
+        /// it, and nothing this run's reads did not take is matched.
+        pub(crate) fn known_in(&self, text: &str) -> Vec<(String, String)> {
+            let held = self.held();
+            let Some(key) = held.key.filter(|_| !held.taken.is_empty()) else {
+                return Vec::new();
+            };
+            let mut found = Vec::new();
+            for token in tokens(text) {
+                let print = *blake3::keyed_hash(&key, token.as_bytes()).as_bytes();
+                let named = KINDS
+                    .iter()
+                    .find_map(|kind| Some((*kind, held.taken.get(&(*kind, print))?)));
+                if let Some((kind, handle)) = named {
+                    let shown = secret_display_policy(kind, token, Some(handle.as_str()));
+                    found.push((token.to_owned(), shown));
+                }
+            }
+            found
+        }
+
+        /// `text` with each secret an earlier read of this session took
+        /// shown as its handle, or none where it shows none.
+        pub(crate) fn mask_known(&self, text: &str) -> Option<String> {
+            let known = self.known_in(text);
+            let pairs: Vec<(&str, &str)> = known
+                .iter()
+                .map(|(secret, shown)| (secret.as_str(), shown.as_str()))
+                .collect();
+            secret_echo_policy(text, &pairs)
         }
 
         /// The kind of secret `handle` holds, when a read of this session
@@ -224,7 +301,7 @@ mod held {
                     };
                     let kind = self.kind_of(named);
                     let mut met = false;
-                    self.with_value(named, &mut |held: &str| {
+                    self.with_value(named, SecretUse::Expect, &mut |held: &str| {
                         met = secret_compare_policy(kind, held, page);
                         Ok(())
                     })?;
@@ -232,5 +309,25 @@ mod held {
                 }
             }
         }
+    }
+
+    /// The whole tokens of `text` a secret may be: each run between blanks,
+    /// that run without the punctuation prose puts around it, and each run
+    /// of letters, digits and hyphens in it; each once.
+    fn tokens(text: &str) -> Vec<&str> {
+        let mut seen = HashSet::new();
+        let mut tokens = Vec::new();
+        for run in text.split_whitespace() {
+            let bare = run.trim_matches(|c: char| ".,;:!?\"'()[]{}<>".contains(c));
+            let parts = run
+                .split(|c: char| !(c.is_alphanumeric() || c == '-'))
+                .map(|part| part.trim_matches('-'));
+            for token in [run, bare].into_iter().chain(parts) {
+                if !token.is_empty() && seen.insert(token) {
+                    tokens.push(token);
+                }
+            }
+        }
+        tokens
     }
 }

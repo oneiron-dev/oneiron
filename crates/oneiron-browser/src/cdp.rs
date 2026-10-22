@@ -10,12 +10,19 @@
 //! and an engine switch's one-shot seed document ride the same routing
 //! (`state`), as do the storage reads a Chromium document sends as it is
 //! left, kept in the session's snapshots (`storage`). A message past the
-//! pipe's bound, or a reply it cannot parse, fails only its own call, and
-//! the pipe reads on (`overrun`, FIX 6851). Each paused request goes to the
-//! host's request handler where the session has one, in place of the relay
-//! (`requests`, FIX 7122).
+//! pipe's framing threshold reads on, charged to the host's memory floor;
+//! one the floor cannot hold, or a reply the pipe cannot parse, is cut and
+//! answers alone, and the pipe reads on (`overrun`, FIX 6851, FIX 7988). A
+//! message nested past serde_json's limit reads by an explicit stack
+//! (`deep`, FIX 6963). Each paused request goes to the host's request
+//! handler where the session has one, in place of the relay (`requests`,
+//! FIX 7122), on a host worker the relay's floor admits (`paused`, FIX
+//! 7651). A dialog answer that fails is kept for the next observation (FIX
+//! 6768).
 
+pub(crate) mod deep;
 mod overrun;
+mod paused;
 pub(crate) mod recorder;
 mod requests;
 mod state;
@@ -26,7 +33,7 @@ pub(crate) use state::{Visits, web_origin};
 
 use crate::request::Custody;
 use crate::session::storage::Sink;
-use crate::{BrowserEngine, BrowserError};
+use crate::{BrowserEngine, BrowserError, DialogAnswerFailure};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -35,9 +42,11 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
-/// The largest message the pipe reads. A 1,366 px PNG screenshot in base64
-/// is a few MiB; a message past this fails only its own call, or is
-/// dropped as an event, and the pipe reads on (`overrun`).
+/// The pipe's framing threshold: the most of a message it reads inline,
+/// uncharged. A 1,366 px PNG screenshot in base64 is a few MiB; a message
+/// past this reads on, charged to the host's memory floor, and is cut only
+/// where the floor admits no more of it (`overrun`). Never a bound on what
+/// a message may be.
 const MAX_MESSAGE: u64 = 32 << 20;
 
 /// The Page events that start or make a navigation, of any frame of a
@@ -95,6 +104,13 @@ pub(crate) struct Pipe {
     documents: requests::Documents,
     /// The running demonstration's capture, if one records (`recorder`).
     recorder: Arc<Mutex<Option<recorder::Live>>>,
+    /// The charge on the host's memory floor for a message read past the
+    /// framing threshold (`overrun`).
+    inbound: Arc<Mutex<overrun::Inbound>>,
+    /// The paused requests waiting for a host worker (`paused`).
+    paused: paused::Waiting,
+    /// The dialog answers that failed, not yet observed (FIX 6768).
+    dialogs: Arc<Mutex<Vec<DialogAnswerFailure>>>,
 }
 
 impl Pipe {
@@ -145,6 +161,9 @@ impl Pipe {
             custody,
             documents: Arc::default(),
             recorder: Arc::default(),
+            inbound: Arc::default(),
+            paused: Arc::default(),
+            dialogs: Arc::default(),
         }
     }
 
@@ -185,6 +204,14 @@ impl Pipe {
         self.navigations.lock().ok()?.get(session).copied()
     }
 
+    /// The dialog answers that failed since the last take, taken.
+    pub(crate) fn take_dialog_failures(&self) -> Vec<DialogAnswerFailure> {
+        self.dialogs
+            .lock()
+            .map(|mut dialogs| std::mem::take(&mut *dialogs))
+            .unwrap_or_default()
+    }
+
     /// Sends one command and waits for its reply until `deadline`.
     pub(crate) fn call(
         &self,
@@ -223,7 +250,7 @@ impl Pipe {
                 {
                     routes.remove(&id);
                 }
-                Err(BrowserError::Timeout(method.to_owned()))
+                Err(BrowserError::CallTimeout(method.to_owned()))
             }
         }
     }
@@ -237,43 +264,36 @@ fn read_replies(
     let mut buf = Vec::new();
     loop {
         buf.clear();
+        let mut charged = false;
         match (&mut reader).take(MAX_MESSAGE).read_until(0, &mut buf) {
             Ok(0) | Err(_) => return,
             Ok(_) if buf.last() == Some(&0) => {}
-            // A message that reached the bound before its end fails only its
-            // own call, and the pipe reads on past it.
+            // A message that reached the framing threshold before its end
+            // reads on, charged; one the floor cannot hold answers alone, and
+            // the pipe reads on past it.
             Ok(read) if u64::try_from(read) == Ok(MAX_MESSAGE) => {
-                let prefix = &buf[..buf.len().min(overrun::PREFIX)];
-                if !overrun::oversize_message_policy(pipe, prefix) || !skip_message(&mut reader) {
-                    return;
+                match overrun::read_on(pipe, &mut reader, &mut buf) {
+                    overrun::ReadOn::Whole => charged = true,
+                    overrun::ReadOn::Cut(cut) => {
+                        if !cut.answer(pipe) {
+                            return;
+                        }
+                        continue;
+                    }
+                    overrun::ReadOn::Ended => return,
                 }
-                continue;
             }
             Ok(_) => return,
         }
         buf.pop();
-        if !route(pipe, relay, &buf) {
-            return;
+        let routed = route(pipe, relay, &buf);
+        if charged {
+            // Its room goes back with its charge.
+            buf = Vec::new();
+            pipe.release_inbound();
         }
-    }
-}
-
-/// Reads past the rest of a message, through its NUL end, keeping none of
-/// it: false once the pipe ended first.
-fn skip_message(reader: &mut impl BufRead) -> bool {
-    loop {
-        let (used, ended) = match reader.fill_buf() {
-            Ok([]) => return false,
-            Ok(bytes) => match bytes.iter().position(|byte| *byte == 0) {
-                Some(at) => (at + 1, true),
-                None => (bytes.len(), false),
-            },
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return false,
-        };
-        reader.consume(used);
-        if ended {
-            return true;
+        if !routed {
+            return;
         }
     }
 }
@@ -285,34 +305,51 @@ fn route(
     relay: Option<&Arc<dyn oneiron_container::EgressRelay>>,
     bytes: &[u8],
 ) -> bool {
-    let message = match serde_json::from_slice::<Value>(bytes) {
+    pipe.drain_paused();
+    let mut message = match serde_json::from_slice::<Value>(bytes) {
         Ok(message) => message,
-        Err(error) => return overrun::unreadable(pipe, bytes, &error),
+        Err(error) if deep::nested_past_limit(&error) => match deep::parse(bytes) {
+            Ok(message) => message,
+            Err(why) => return overrun::unreadable(pipe, bytes, &why),
+        },
+        Err(error) => return overrun::unreadable(pipe, bytes, &error.to_string()),
     };
     let Some(id) = message.get("id").and_then(Value::as_u64) else {
         count_navigation(&pipe.navigations, &message);
         pipe.note_page(&message);
+        pipe.note_commit(&message);
         pipe.note_storage(&message);
         pipe.note_recording(&message);
         answer_dialog(pipe, &message);
-        if let Some(relay) = relay {
-            network_event(pipe.clone(), Arc::clone(relay), message);
+        match relay {
+            Some(relay) => network_event(pipe.clone(), Arc::clone(relay), message),
+            None => deep::dismantle(message),
         }
         return true;
     };
+    // The result is moved to its call, never copied: it may nest deep.
     let reply = match message.get("error") {
         Some(error) => Err(error
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("error")
             .to_owned()),
-        None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+        None => Ok(message
+            .as_object_mut()
+            .and_then(|message| message.remove("result"))
+            .unwrap_or(Value::Null)),
     };
     let Ok(mut routes) = pipe.pending.lock() else {
         return false;
     };
-    if let Some(tx) = routes.as_mut().and_then(|routes| routes.remove(&id)) {
-        let _ = tx.send(reply);
+    let undelivered = match routes.as_mut().and_then(|routes| routes.remove(&id)) {
+        Some(tx) => tx.send(reply).err().map(|unsent| unsent.0),
+        None => Some(reply),
+    };
+    drop(routes);
+    // A reply no call waits for any more is taken apart as a deep one is.
+    if let Some(Ok(result)) = undelivered {
+        deep::dismantle(result);
     }
     true
 }
@@ -338,8 +375,9 @@ fn count_navigation(navigations: &Navigations, event: &Value) {
 /// answers one when no client holds the page's Page domain: an alert,
 /// confirm or prompt is dismissed (`accept: false`), and a beforeunload is
 /// accepted, so the page is left. Called on the pipe reader, which must
-/// never wait for its own CDP reply: the answer goes from its own thread,
-/// and one that fails changes nothing.
+/// never wait for its own CDP reply: the answer goes from its own thread.
+/// One that fails is kept, typed, for the next observation to name (FIX
+/// 6768); the page is answered nothing else.
 fn answer_dialog(pipe: &Pipe, event: &Value) {
     if event["method"].as_str() != Some("Page.javascriptDialogOpening") {
         return;
@@ -347,15 +385,30 @@ fn answer_dialog(pipe: &Pipe, event: &Value) {
     let Some(session) = event["sessionId"].as_str().map(str::to_owned) else {
         return;
     };
-    let accept = event.pointer("/params/type").and_then(Value::as_str) == Some("beforeunload");
+    let kind = event
+        .pointer("/params/type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let accept = kind == "beforeunload";
     let pipe = pipe.clone();
     std::thread::spawn(move || {
-        let _ = pipe.call(
+        let answered = pipe.call(
             Some(&session),
             "Page.handleJavaScriptDialog",
             json!({"accept": accept}),
             Instant::now() + std::time::Duration::from_secs(30),
         );
+        if let Err(error) = answered
+            && let Ok(mut dialogs) = pipe.dialogs.lock()
+        {
+            dialogs.push(DialogAnswerFailure {
+                tab: pipe.page_of(&session),
+                kind,
+                accept,
+                error: error.to_string(),
+            });
+        }
     });
 }
 
@@ -405,112 +458,9 @@ fn network_event(pipe: Pipe, relay: Arc<dyn oneiron_container::EgressRelay>, eve
             state::fulfill_seed(pipe, session, id, seed, &event);
             return;
         }
-        std::thread::spawn(move || {
-            let request = &event["params"]["request"];
-            let headers = request["headers"]
-                .as_object()
-                .map(|h| {
-                    h.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_owned())))
-                        .collect()
-                })
-                .unwrap_or_default();
-            use base64::Engine as _;
-            let body = if let Some(entries) = request["postDataEntries"].as_array() {
-                let mut body = Vec::new();
-                for entry in entries {
-                    if let Some(bytes) = entry["bytes"].as_str() {
-                        match base64::engine::general_purpose::STANDARD.decode(bytes) {
-                            Ok(bytes) => body.extend(bytes),
-                            Err(_) => {
-                                let _ = pipe.call(
-                                    Some(&session),
-                                    "Fetch.failRequest",
-                                    json!({"requestId": id, "errorReason": "Failed"}),
-                                    Instant::now() + std::time::Duration::from_secs(30),
-                                );
-                                return;
-                            }
-                        }
-                    } else {
-                        let _ = pipe.call(
-                            Some(&session),
-                            "Fetch.failRequest",
-                            json!({"requestId": id, "errorReason": "Failed"}),
-                            Instant::now() + std::time::Duration::from_secs(30),
-                        );
-                        return;
-                    }
-                }
-                body
-            } else if let Some(data) = request["postData"].as_str() {
-                data.as_bytes().to_vec()
-            } else if request["hasPostData"].as_bool() == Some(true) {
-                let network_id = event.pointer("/params/networkId").and_then(Value::as_str);
-                match network_id
-                    .and_then(|network_id| {
-                        pipe.call(
-                            Some(&session),
-                            "Network.getRequestPostData",
-                            json!({"requestId": network_id}),
-                            Instant::now() + std::time::Duration::from_secs(30),
-                        )
-                        .ok()
-                    })
-                    .and_then(|data| data["postData"].as_str().map(|s| s.as_bytes().to_vec()))
-                {
-                    Some(bytes) => bytes,
-                    None => {
-                        let _ = pipe.call(
-                            Some(&session),
-                            "Fetch.failRequest",
-                            json!({"requestId": id, "errorReason": "Failed"}),
-                            Instant::now() + std::time::Duration::from_secs(30),
-                        );
-                        return;
-                    }
-                }
-            } else {
-                Vec::new()
-            };
-            let asked = oneiron_container::HttpRequest {
-                url: request["url"].as_str().unwrap_or("").to_owned(),
-                method: request["method"].as_str().unwrap_or("GET").to_owned(),
-                headers,
-                body,
-                follow_redirects: false,
-            };
-            // The host's handler takes it where the session has one, else the
-            // relay; a refusal it gave is kept before the request fails.
-            let response = pipe.fetch_paused(&relay, &session, &event, asked);
-            let deadline = Instant::now() + std::time::Duration::from_secs(30);
-            match response {
-                Some(response) => {
-                    use base64::Engine as _;
-                    let headers: Vec<_> = response
-                        .headers
-                        .into_iter()
-                        .map(|(name, value)| json!({"name": name, "value": value}))
-                        .collect();
-                    let _ = pipe.call(
-                        Some(&session),
-                        "Fetch.fulfillRequest",
-                        json!({"requestId": id,
-                        "responseCode": response.status, "responseHeaders": headers,
-                        "body": base64::engine::general_purpose::STANDARD.encode(response.body)}),
-                        deadline,
-                    );
-                }
-                None => {
-                    let _ = pipe.call(
-                        Some(&session),
-                        "Fetch.failRequest",
-                        json!({"requestId": id, "errorReason": "BlockedByClient"}),
-                        deadline,
-                    );
-                }
-            }
-        });
+        pipe.admit_paused(relay, session, id, event);
+    } else {
+        deep::dismantle(event);
     }
 }
 

@@ -189,6 +189,10 @@ pub enum RecordingGapKind {
     /// The pages' events stopped reaching the host before the end: acts
     /// after the last step are not recorded.
     CaptureLost,
+    /// A tab's page navigated with no act recorded since its last page (a
+    /// typed URL, a script's history move, a navigation outside the run's
+    /// verbs): a step may be missing (FIX 9413).
+    UnrecordedNavigation,
 }
 
 /// Why an act's target has no replay locator.
@@ -327,6 +331,9 @@ pub(crate) struct Recording {
     awaiting_submit: Option<(String, Option<String>)>,
     /// Each tab's top page, as last seen.
     pages: BTreeMap<String, String>,
+    /// Whether an act was recorded since the last page loaded (FIX 9413);
+    /// the page the recording began on counts as acted on.
+    acted: bool,
 }
 
 impl Recording {
@@ -348,6 +355,7 @@ impl Recording {
             pending: None,
             awaiting_submit: None,
             pages: BTreeMap::new(),
+            acted: true,
         }
     }
 
@@ -387,6 +395,9 @@ impl Recording {
         if let Some(url) = &url {
             self.pages.insert(tab.clone(), url.clone());
         }
+        if !matches!(saw, Saw::Document | Saw::Gap(_)) {
+            self.acted = true;
+        }
         // A form field's change, and the submit, follow its Enter.
         if !matches!(saw, Saw::Submit(_) | Saw::Commit { .. }) {
             self.unsubmitted();
@@ -424,6 +435,11 @@ impl Recording {
             }
             Saw::Document => {
                 self.flush();
+                // A page no recorded act led to (FIX 9413).
+                if !std::mem::take(&mut self.acted) {
+                    let gap = RecordingGapKind::UnrecordedNavigation;
+                    self.gap(None, Some(tab.clone()), gap);
+                }
                 if let Some(url) = url {
                     self.settle(&tab, &url);
                 }
@@ -489,6 +505,7 @@ impl Recording {
     pub(crate) fn own(&mut self, mut step: RecordedStep, edited: Option<Edited>) {
         self.unsubmitted();
         self.flush();
+        self.acted = true;
         step.seq = self.next_seq();
         if let Some(action) = step.action.take() {
             step.action = Some(demonstration_own_act_policy(action, edited));

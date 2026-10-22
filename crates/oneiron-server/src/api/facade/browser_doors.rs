@@ -558,6 +558,8 @@ pub(super) fn browser_refusal_status(code: &str) -> Option<StatusCode> {
         "browser_timeout" => StatusCode::GATEWAY_TIMEOUT,
         "browser_url_refused" | "browser_destination_refused" => StatusCode::FORBIDDEN,
         "browser_input_invalid" => StatusCode::UNPROCESSABLE_ENTITY,
+        // The host refused the secret a call named (FIX 8341).
+        "browser_secret_refused" => StatusCode::FORBIDDEN,
         "browser_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
         _ => return None,
     })

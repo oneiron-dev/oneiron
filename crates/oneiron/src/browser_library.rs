@@ -46,6 +46,9 @@ use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::task_type::{PlacementDecisions, PlacementRequest, TaskTypeRef, place_type_ref};
 
+mod erase;
+pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
+
 /// The library's programs. Key: the site's BLAKE3 hash, then the program's id.
 const WORKFLOWS: SideTable<([u8; 32], EntityId), WorkflowRecord, Named> =
     SideTable::new(&side_table::BROWSER_WORKFLOW);
@@ -384,6 +387,30 @@ fn predecessor_in_txn(
         .map(Predecessor::Retired))
 }
 
+/// The refusal a `supersedes` link to `old` would meet when `by` files a
+/// program for `site` (FIX 7876), read before its replay: no program of
+/// the site, or a live one `by` may not retire ([`RETIRE_FILER_ONLY`]).
+/// [`file_workflow`] checks it again in its own write.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn supersedes_refusal(
+    vault: &Vault,
+    by: EntityId,
+    site: &str,
+    old: EntityId,
+) -> Result<Option<SupersedeRefusal>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(match predecessor_in_txn(vault, &rtxn, site, old)? {
+        None => Some(SupersedeRefusal::NotOnSite),
+        Some(Predecessor::Live(record)) if RETIRE_FILER_ONLY && !record.filed_by.is(by) => {
+            Some(SupersedeRefusal::NotFiler)
+        }
+        Some(_) => None,
+    })
+}
+
 /// Files `program` for `site` once both checks passed (`proof`), from
 /// `by`'s run, stamped with the task type the host's placement ladder
 /// (`decisions`) reads; without one the rule rung reads alone. The same
@@ -454,6 +481,9 @@ pub fn file_workflow(
                 },
                 filed_by: LibraryActor::Actor(by),
                 filed_at: at,
+                // A passing re-admission starts the miss streak again, as
+                // a strict pass does (FIX 8048).
+                strict_misses: 0,
                 ..record
             };
             WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)?;
@@ -697,86 +727,4 @@ pub fn retired_workflows(vault: &Vault, site: &str) -> Result<Vec<RetiredWorkflo
         .collect();
     retired.sort_by_key(|trace| Reverse(trace.retired_at));
     Ok(retired)
-}
-
-/// Whether `actor` names an entity that is no actor, so erasing it scans
-/// nothing. An id with no record, or one whose header does not parse, still
-/// scans.
-fn is_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, actor)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
-
-/// Erasing `actor` from the filed programs: every program its run filed
-/// keeps its row and its times, and states [`ERASED_CALL_IDENTITY`] for the
-/// actor. One-way, in the erase's own transaction. An id whose entity is no
-/// actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a library row that cannot be read.
-pub(crate) fn erase_workflow_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if is_no_actor(vault, wtxn, actor)? {
-        return Ok(());
-    }
-    let mut filed = Vec::new();
-    for (key, mut record) in WORKFLOWS.scan(&vault.store, wtxn)? {
-        if record.filed_by.is(*actor) {
-            record.filed_by = LibraryActor::Erased;
-            filed.push((key, record));
-        }
-    }
-    for (key, record) in filed {
-        WORKFLOWS.put(vault, wtxn, &key, &record)?;
-    }
-    Ok(())
-}
-
-/// Erasing `actor` from what retires took out: every retire at its word, and
-/// every retired program its run filed, keeps its row, its times and its
-/// reason, and states [`ERASED_CALL_IDENTITY`] for the actor. One-way, in the
-/// erase's own transaction. An id whose entity is no actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a library row that cannot be read.
-pub(crate) fn erase_retired_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if is_no_actor(vault, wtxn, actor)? {
-        return Ok(());
-    }
-    let mut retired = Vec::new();
-    for (id, mut trace) in RETIRED.scan(&vault.store, wtxn)? {
-        let by = trace.retired_by.is(*actor);
-        let filer = trace.record.filed_by.is(*actor);
-        if by {
-            trace.retired_by = LibraryActor::Erased;
-        }
-        if filer {
-            trace.record.filed_by = LibraryActor::Erased;
-        }
-        if by || filer {
-            retired.push((id, trace));
-        }
-    }
-    for (id, trace) in retired {
-        RETIRED.put(vault, wtxn, &id, &trace)?;
-    }
-    Ok(())
 }

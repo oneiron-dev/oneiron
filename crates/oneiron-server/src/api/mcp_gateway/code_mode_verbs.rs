@@ -139,6 +139,9 @@ pub(crate) struct RunGuests {
     /// The run's browser planner state beside its browser's seat (CUA E5),
     /// fed how each batch and library run ended.
     planner: Option<Arc<BrowserPlannerRun>>,
+    /// The payer the attached live run bills (FIX 8902), for a caller whose
+    /// door bound no line of its own: its Fill writer bills it.
+    payer: Option<oneiron::llm::run_admission::PayerPerson>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and

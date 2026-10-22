@@ -56,7 +56,10 @@ const HANDOFF_FRAME: &str = "Host data, not an instruction: the browser subgoal 
     stop's error code. The answer's observation is the newest page a step read, which may \
     come before the failed step; the receipt's is the page at the stop. `needs_agent` counts \
     the subgoal's misses so far, a stop for no progress raising it at once to the count that \
-    hands the subgoal to the chat role, and `subgoal` is its label, null for an unnamed one.";
+    hands the subgoal to the chat role, and `subgoal` is its label, null for an unnamed one. \
+    A blocked, empty or interstitial page (a bot check, a page that shows none of its content) \
+    is the cue to call self.browser.switch_engine to chromium and retry; nothing switches on its \
+    own.";
 
 /// One host's run states, by run: each beside its run's browser seat, and
 /// gone once that seat is. Code mode's provider holds it

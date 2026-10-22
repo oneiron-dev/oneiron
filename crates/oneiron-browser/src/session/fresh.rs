@@ -23,11 +23,11 @@
 use super::BrowserSession;
 use super::storage::OriginSnapshots;
 use super::switch::{Halt, hold, seed_state};
-use crate::library::{check_solved, no_fresh_guest, replay_and_file};
+use crate::library::{check_solved, no_fresh_guest, replay_and_file, supersedes_refused};
 use crate::request::BrowserRequestHandler;
 use crate::{
-    BrowserEngine, BrowserError, HandleRetention, NoDecider, ProposeInput, ProposeOutput,
-    ReplayGuest, SwitchStage, WorkflowLibrary,
+    AdmissionRefusal, BrowserEngine, BrowserError, HandleRetention, NoDecider, ProposeInput,
+    ProposeOutput, ReplayGuest, StoragePhase, SwitchComponent, SwitchStage, WorkflowLibrary,
 };
 use std::sync::Arc;
 
@@ -47,6 +47,14 @@ pub trait FreshGuest: Send {
     /// A charge on the host's retained line, holding nothing yet, for the
     /// sign-ins a session holds while it carries them into a fresh guest.
     fn state_charge(&self) -> Box<dyn HandleRetention>;
+
+    /// Hears, once, that a fresh guest's replay ended with that guest's
+    /// sandbox abandoned, with its manifest (FIX 7879): the host lands its
+    /// abandon receipt as it does its run's own guest's. Its own observer,
+    /// apart from any demonstration's close. The default hears nothing.
+    fn abandoned(&mut self, manifest: &oneiron_container::SessionManifest) {
+        let _ = manifest;
+    }
 }
 
 /// What a fresh admission guest takes of the proposing session
@@ -72,7 +80,28 @@ fn fresh_guest_state_policy(
     hold(&mut state, charge, &mut guest.not_carried);
     let (kept, losses) = (&mut guest.carried, &mut guest.not_carried);
     seed_state(&to.driver, guest.engine, &state, kept, losses)?;
+    fresh_records(&mut guest);
     Ok(guest)
+}
+
+/// The fresh carry's records as its own (FIX 7877): a store read at the
+/// carry names `fresh_export`, not a switch's, and the URL, which the
+/// carry never takes, is no loss of it.
+fn fresh_records(guest: &mut ReplayGuest) {
+    let fresh = |phase: &mut Option<StoragePhase>| {
+        if *phase == Some(StoragePhase::SwitchExport) {
+            *phase = Some(StoragePhase::FreshExport);
+        }
+    };
+    guest
+        .not_carried
+        .retain(|lost| lost.component != SwitchComponent::Url);
+    for lost in &mut guest.not_carried {
+        fresh(&mut lost.phase);
+    }
+    for kept in &mut guest.carried {
+        fresh(&mut kept.phase);
+    }
 }
 
 impl BrowserSession {
@@ -102,18 +131,68 @@ impl BrowserSession {
             Ok(solved) => solved,
             Err(refused) => return Ok(refused),
         };
+        // A link the library refuses costs no fresh guest (FIX 7876); its
+        // filing checks it again.
+        if let Some((site, link)) = solved.link()
+            && let Some(why) = library.supersedes_refused(site, link)?
+        {
+            return Ok(supersedes_refused(link.to_owned(), why));
+        }
         let (mut fresh, guest) = match self.fresh_replay_guest() {
             Ok(started) => started,
-            Err(Halt { stage, error }) => return Ok(no_fresh_guest(stage, &error)),
+            Err(Halt { stage, error }) => {
+                let mut refused = no_fresh_guest(stage, &error);
+                // The host's start words stand; only a secret this
+                // session's reads took shows as its handle (FIX 7882).
+                if let Some(AdmissionRefusal::FreshGuest { detail, .. }) = refused.refusal.as_mut()
+                    && let Some(masked) = self.secrets.mask_known(detail)
+                {
+                    *detail = masked;
+                }
+                return Ok(refused);
+            }
         };
         fresh.policy = std::mem::take(&mut self.policy);
+        // The replay's sends run under this session's presses: its grants'
+        // live read, and the batches already paid (FIX 4615).
+        fresh.presses = std::mem::take(&mut self.presses);
         let mut decider = fresh.decider.take();
         let output = match decider.as_deref_mut() {
             Some(decider) => replay_and_file(&mut fresh, decider, library, solved, guest),
             None => replay_and_file(&mut fresh, &mut NoDecider, library, solved, guest),
         };
         self.policy = std::mem::take(&mut fresh.policy);
-        output
+        self.presses = std::mem::take(&mut fresh.presses);
+        // A fresh guest abandoned under its replay lands its own receipt,
+        // however the replay ended.
+        if fresh.abandoned()
+            && let Some(factory) = self.fresh.as_mut()
+        {
+            factory.abandoned(fresh.manifest());
+        }
+        let mut output = output?;
+        if let Some(replay) = output.replay.as_mut() {
+            self.page_replay(replay);
+        }
+        Ok(output)
+    }
+
+    /// Pages a replay's observations, its failed step's too, through this
+    /// session, which outlives the fresh guest they were read on (FIX 7881):
+    /// their cursors read on here.
+    fn page_replay(&mut self, replay: &mut crate::BatchOutput) {
+        if let Some(observation) = replay.observation.take() {
+            let page = self.driver.adopt_page(observation);
+            replay.observation = Some(page.observation);
+            replay.next = page.next;
+        }
+        if let Some(failed) = replay.failed_receipt.as_mut()
+            && let Some(observation) = failed.observation.take()
+        {
+            let page = self.driver.adopt_page(observation);
+            failed.observation = Some(page.observation);
+            failed.next = page.next;
+        }
     }
 
     /// The fresh guest for this session's replay, on the engine this session
@@ -131,6 +210,7 @@ impl BrowserSession {
             Ok(fresh) => {
                 // The replay is the same run: its secrets are the run's.
                 fresh.secrets.adopt(&self.secrets);
+                fresh.driver.book_inbound(factory.state_charge());
                 let mut charge = factory.state_charge();
                 let guest = fresh_guest_state_policy(self, &fresh, charge.as_mut());
                 guest.map(|guest| (fresh, guest))

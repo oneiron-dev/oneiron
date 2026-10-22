@@ -6,7 +6,8 @@
 //! (`Runtime.bindingCalled`), taken only from a watched page's session, its
 //! top frame, by the binding's own name, and never from a seed document;
 //! and an in-page frame the browser attaches as its own target, named when
-//! its origin is not its page's. In-page frames the page itself commits,
+//! its origin is not its page's, at its attach and at each document it
+//! loads after (FIX 6892). In-page frames the page itself commits,
 //! and opaque and non-web documents, are named where their commit is read
 //! (`state`). None of them is carried.
 
@@ -57,6 +58,7 @@ impl Pipe {
         match event["method"].as_str() {
             Some("Runtime.bindingCalled") => self.keep_exit(event),
             Some("Target.attachedToTarget") => self.note_frame_target(event),
+            Some("Fetch.requestPaused") => self.note_frame_document(event),
             _ => {}
         }
     }
@@ -104,11 +106,43 @@ impl Pipe {
         let Some(tab) = event["sessionId"].as_str().and_then(|s| self.page_of(s)) else {
             return;
         };
-        let Some(origin) = info["url"].as_str().and_then(web_origin) else {
+        if let Some(frame) = event["params"]["sessionId"].as_str()
+            && let Ok(mut pages) = self.pages.lock()
+        {
+            pages.frames.insert(frame.to_owned(), tab.clone());
+        }
+        self.name_frame_origin(&tab, info["url"].as_str());
+    }
+
+    /// Names the origin of a document an attached in-page frame loads
+    /// after its attach: its own session's main-document request, as it
+    /// pauses.
+    fn note_frame_document(&self, event: &Value) {
+        let params = &event["params"];
+        if params["resourceType"].as_str() != Some("Document") {
+            return;
+        }
+        let Some(session) = event["sessionId"].as_str() else {
             return;
         };
-        if self.top_origin(&tab).as_deref() != Some(origin.as_str()) {
-            self.exclude(&tab, origin, SwitchLoss::CrossOriginFrame);
+        let tab = self
+            .pages
+            .lock()
+            .ok()
+            .and_then(|pages| pages.frames.get(session).cloned());
+        if let Some(tab) = tab {
+            self.name_frame_origin(&tab, params.pointer("/request/url").and_then(Value::as_str));
+        }
+    }
+
+    /// Names `url`'s origin, an in-page frame of page `tab` shows, when it
+    /// is not its page's.
+    fn name_frame_origin(&self, tab: &str, url: Option<&str>) {
+        let Some(origin) = url.and_then(web_origin) else {
+            return;
+        };
+        if self.top_origin(tab).as_deref() != Some(origin.as_str()) {
+            self.exclude(tab, origin, SwitchLoss::CrossOriginFrame);
         }
     }
 }

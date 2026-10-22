@@ -13,7 +13,7 @@ use crate::observation::splice_of;
 use crate::stop::elapsed_ms;
 use crate::{
     BatchOutput, BatchStep, BatchStopCause, BrowserDriver, FailedStepReceipt, Observation,
-    ObserveInput, StepStop, SubgoalStatus,
+    StepStop, SubgoalStatus,
 };
 
 /// The steps in a row that count and leave the page unchanged before the
@@ -55,6 +55,9 @@ pub(crate) struct Progress {
     /// The page before the next step that counts, or after the last one;
     /// none when the last read was cut, showed no tree or was refused.
     page: Option<Observation>,
+    /// The viewport's scroll offset at that read, where the driver reads
+    /// one (FIX 8508): a scroll that moved it is progress.
+    offset: Option<(f64, f64)>,
     /// `page` was read after the last step, and no step ran since.
     fresh: bool,
     unchanged: u32,
@@ -64,6 +67,7 @@ impl Progress {
     pub(crate) const fn new() -> Self {
         Self {
             page: None,
+            offset: None,
             fresh: false,
             unchanged: 0,
         }
@@ -78,10 +82,12 @@ impl Progress {
             return;
         }
         let now = complete_read(driver);
-        if !unchanged(self.page.as_ref(), now.as_ref()) {
+        let offset = driver.viewport_offset();
+        if !unchanged(self.page.as_ref(), now.as_ref()) || moved(self.offset, offset) {
             self.unchanged = 0;
         }
         self.page = now;
+        self.offset = offset;
     }
 
     /// After a step ran: for one that counts, the page as it is now against
@@ -97,12 +103,15 @@ impl Progress {
             return None;
         }
         let now = complete_read(driver);
-        self.unchanged = if unchanged(self.page.as_ref(), now.as_ref()) {
+        let offset = driver.viewport_offset();
+        let same = unchanged(self.page.as_ref(), now.as_ref()) && !moved(self.offset, offset);
+        self.unchanged = if same {
             self.unchanged.saturating_add(1)
         } else {
             0
         };
         self.page = now;
+        self.offset = offset;
         self.fresh = true;
         if self.unchanged >= NO_PROGRESS_STEPS {
             return self.page.clone();
@@ -116,10 +125,7 @@ impl Progress {
 /// unseen, so it proves no page unchanged, and neither does a refused read.
 fn complete_read<D: BrowserDriver + ?Sized>(driver: &mut D) -> Option<Observation> {
     driver
-        .observe(ObserveInput {
-            full: true,
-            ..ObserveInput::default()
-        })
+        .observe_hidden()
         .ok()
         .filter(|page| page.full && page.partial.is_none() && !page.no_tree)
 }
@@ -136,6 +142,19 @@ fn unchanged(was: Option<&Observation>, now: Option<&Observation>) -> bool {
     }
     let (splice, rows) = splice_of(&was.rows, &now.rows);
     splice.delete_count == 0 && rows.is_empty()
+}
+
+/// Whether the viewport moved between two reads of its offset (FIX 8508):
+/// a scroll that moved it is progress even where the outline already held
+/// its rows; a scroll at the page's end moves nothing. An offset the driver
+/// does not read proves no move.
+fn moved(was: Option<(f64, f64)>, now: Option<(f64, f64)>) -> bool {
+    match (was, now) {
+        (Some((x, y)), Some((nx, ny))) => {
+            x.to_bits() != nx.to_bits() || y.to_bits() != ny.to_bits()
+        }
+        _ => false,
+    }
 }
 
 /// The stop a batch's history notes when it went up for no progress at a
@@ -171,6 +190,8 @@ pub(crate) fn handed_up(
         missed: Vec::new(),
         observation: Some(page),
         error: Some(NO_PROGRESS.to_owned()),
+        refusal: None,
+        next: None,
     });
     output.elapsed_ms = elapsed_ms(started);
     output

@@ -22,8 +22,8 @@ use crate::observation::rows_named;
 use crate::stop::Stop;
 use crate::{
     AskUpReason, BatchStopCause, BrowserDriver, BrowserError, ClockScope, EffectReceipt,
-    ExpectInput, Observation, ObserveInput, Routine, RoutineAnswer, Row, StrictDenial,
-    StrictDenied, TypeInput, asked_up,
+    ExpectInput, Observation, Routine, RoutineAnswer, Row, StrictDenial, StrictDenied, TypeInput,
+    asked_up,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 /// What a Fill step types into its field: `supplied` text, else one of its
 /// `references`, else its `template`, else, with `generate`, text the
 /// host's writer writes to its `instruction`. With `enum_values`, the field
-/// takes only one of those texts.
+/// takes only one of those texts. A `secret` is a source of its own.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FieldSpec {
@@ -60,6 +60,12 @@ pub struct FieldSpec {
     /// The only texts the field takes, compared exactly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enum_values: Option<Vec<String>>,
+    /// A run-bound secret handle the field takes (FIX 8900), typed unread
+    /// through the host's custody as a `type` step's `secret` is, into a
+    /// secret field too; a library slot's own text in its place is typed
+    /// as text. It names no other source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secret: Option<String>,
 }
 
 /// One text a Fill step may type, by an id the step's caller gave it: the
@@ -171,6 +177,10 @@ pub struct FieldWrite {
     pub name: String,
     pub url: String,
     pub title: String,
+    /// The subgoal's one clock, in Unix milliseconds (FIX 8903): the call
+    /// ends at it, with no clock of its own. None where the caller set none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until_ms: Option<u64>,
 }
 
 /// What the writer wrote.
@@ -193,6 +203,9 @@ pub enum FieldWriteError {
     Refused(String),
     /// The call failed, or answered no text.
     Failed(String),
+    /// The subgoal's clock ran out before the call answered (FIX 8903):
+    /// the host ended the call there.
+    OutOfTime(String),
 }
 
 /// The host's field writer (CUA E6): one model call, admitted on the
@@ -224,6 +237,8 @@ impl FieldWriter for NoWriter {
 pub struct TextCheck<'a> {
     pub question: &'a str,
     pub state: Value,
+    /// The subgoal's one clock, as the writer's (FIX 8903).
+    pub until_ms: Option<u64>,
 }
 
 /// A text check's answer.
@@ -267,6 +282,24 @@ impl FieldSpec {
                 .as_ref()
                 .is_none_or(|options| options.iter().any(|option| option == text))
         };
+        // A secret is typed unread, so it names no other source and no
+        // option is compared with it (FIX 8900).
+        if self.secret.is_some() {
+            let others = self.supplied.is_some()
+                || !self.references.is_empty()
+                || self.template.is_some()
+                || self.generate;
+            if others {
+                return Err(BrowserError::Input(
+                    "a fill's secret names no other source".to_owned(),
+                )
+                .into());
+            }
+            return Ok(Prepared {
+                references: Vec::new(),
+                template: None,
+            });
+        }
         if let Some(supplied) = &self.supplied {
             if !fits(supplied) {
                 let source = TextSource::Supplied;
@@ -358,12 +391,13 @@ pub(crate) fn fill<D: BrowserDriver + ?Sized>(
     field: FieldSpec,
 ) -> Result<Observation, Stop> {
     let prepared = field.prepare()?;
+    // A secret goes in unread, on the type path (FIX 8900).
+    if field.secret.is_some() {
+        return fill_secret(driver, routine, target, field);
+    }
     // A look the caller never sees, as a routine step's: the page, and the
     // field's row as it shows it now.
-    let page = driver.observe(ObserveInput {
-        full: true,
-        ..ObserveInput::default()
-    })?;
+    let page = driver.observe_hidden()?;
     let (rows, _) = rows_named(
         std::slice::from_ref(&target),
         &page.rows,
@@ -395,6 +429,38 @@ pub(crate) fn fill<D: BrowserDriver + ?Sized>(
         provenance,
     )?;
     read_back(driver, &typed, &target, &text)?;
+    Ok(typed)
+}
+
+/// A Fill whose source is a `secret` (FIX 8900): a handle typed by its
+/// handle, the host lending its bytes at the send, or a library slot's own
+/// text typed as text (`secret_slot_arg_policy`); never read back, as a
+/// secret field shows only its handle.
+fn fill_secret<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    routine: &Routine<'_>,
+    target: String,
+    mut field: FieldSpec,
+) -> Result<Observation, Stop> {
+    let named = field.secret.take().unwrap_or_default();
+    let (text, secret) = if crate::library::handle_form(&named) {
+        (None, Some(named.clone()))
+    } else {
+        (Some(named.clone()), None)
+    };
+    field.secret = Some(named);
+    let mut provenance = TextProvenance::supplied();
+    provenance.fill = Some(field);
+    let typed = driver.fill_text(
+        TypeInput {
+            target,
+            text,
+            secret,
+            clear: true,
+            base: routine.base.clone(),
+        },
+        provenance,
+    )?;
     Ok(typed)
 }
 
@@ -451,19 +517,24 @@ fn resolve(
         1 => references.pop(),
         _ => {
             let question = format!("Which reference's text belongs in {}?", on.named());
-            let ids: Vec<String> = references.iter().map(|text| text.id.clone()).collect();
+            // Each reference is offered by a short token of its own, mapped
+            // back to its full id (`choice_token_policy`, FIX 8904): an id
+            // of any length is never cut, nor refused by the choice.
+            let tokens: Vec<String> = (1..=references.len()).map(choice_token).collect();
             let mut state = on.state(field);
             state["references"] = json!(
-                references
+                tokens
                     .iter()
-                    .map(|text| (text.id.clone(), text.text.clone()))
+                    .zip(&references)
+                    .map(|(token, text)| (token.clone(), json!({"id": text.id, "text": text.text})))
                     .collect::<BTreeMap<_, _>>()
             );
             // A final NONE falls through to the template (`fill_none`,
             // CALLS row).
             routine
-                .select(&question, &ids, state)?
-                .and_then(|id| references.into_iter().find(|text| text.id == id))
+                .select(&question, &tokens, state)?
+                .and_then(|token| tokens.iter().position(|offered| *offered == token))
+                .map(|at| references.swap_remove(at))
         }
     };
     if let Some(chosen) = chosen {
@@ -489,6 +560,15 @@ fn resolve(
         FieldTextReason::NoText,
         "no reference fit, and no template or generation followed",
     ))
+}
+
+/// The prefix of a reference's choice token (`choice_token_policy`, CALLS
+/// row): the `n`th reference is offered as `r<n>`.
+const CHOICE_TOKEN: &str = "r";
+
+/// The choice token of the `n`th reference, from 1.
+fn choice_token(n: usize) -> String {
+    format!("{CHOICE_TOKEN}{n}")
 }
 
 /// A template's `text_ref`: the digest of its text as the step typed it.
@@ -521,6 +601,11 @@ fn generate(
         let reason = AskUpReason::Strict { denied };
         return Err(Stop::new(asked_up(reason), error));
     }
+    // The writer runs under the subgoal's one clock (FIX 8903): past it,
+    // no writer is asked.
+    if let Some(stop) = crate::stop::clock_out(routine.until_ms) {
+        return Err(stop);
+    }
     let (role, name) = on
         .row
         .map_or_else(Default::default, |row| (row.role.clone(), row.name.clone()));
@@ -532,6 +617,7 @@ fn generate(
         name,
         url: on.page.url.clone(),
         title: on.page.title.clone(),
+        until_ms: routine.until_ms,
     };
     let written = writer.write(&ask).map_err(|error| match error {
         FieldWriteError::Unavailable(detail) => {
@@ -539,6 +625,12 @@ fn generate(
         }
         FieldWriteError::Refused(detail) => field_text(FieldTextReason::WriterRefused, detail),
         FieldWriteError::Failed(detail) => field_text(FieldTextReason::WriterFailed, detail),
+        FieldWriteError::OutOfTime(detail) => Stop::new(
+            BatchStopCause::Clock {
+                scope: ClockScope::Decision,
+            },
+            BrowserError::Timeout(detail),
+        ),
     })?;
     let mut record = serde_json::Map::new();
     record.insert(FIELD_WRITER.to_owned(), written.record);
@@ -554,9 +646,14 @@ fn generate(
     }
     let mut state = on.state(field);
     state["text"] = json!(written.text);
+    // The check runs under the same clock: past it, the text is not typed.
+    if let Some(stop) = crate::stop::clock_out(routine.until_ms) {
+        return Err(stop);
+    }
     let checked = routine.decider.check_text(TextCheck {
         question: &question,
         state,
+        until_ms: routine.until_ms,
     });
     let reply =
         checked.map_err(|error| field_text(FieldTextReason::CheckFailed, error.to_string()))?;

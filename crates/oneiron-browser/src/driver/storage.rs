@@ -65,7 +65,7 @@ pub(crate) fn switch_storage_capture_policy(
         StoragePhase::PreInput => Some(limits.input_chars),
         StoragePhase::PostAct | StoragePhase::HandBack => Some(limits.read_chars),
         StoragePhase::Exit => (engine == BrowserEngine::Chromium).then_some(limits.read_chars),
-        StoragePhase::SwitchExport => None,
+        StoragePhase::SwitchExport | StoragePhase::FreshExport => None,
     }
 }
 
@@ -251,17 +251,36 @@ impl CdpDriver {
     /// another tab is in front: a switch reads only the tab in front, so no
     /// switch or carry reads a closed tab's again, and no other tab reads
     /// another's. A closed tab still in front, where the front could not
-    /// move, keeps its snapshots.
-    pub(super) fn drop_closed(&self, closed: &[String]) {
-        for tab in closed.iter().filter(|tab| **tab != self.target) {
-            self.pipe.drop_snapshots(tab);
-        }
+    /// move, keeps its snapshots while it is in front, and drops them once
+    /// another tab is (FIX 7411).
+    pub(super) fn drop_closed(&mut self, closed: &[String]) {
+        self.held_closed.extend(closed.iter().cloned());
+        let front = self.target.clone();
+        let pipe = &self.pipe;
+        self.held_closed.retain(|tab| {
+            let gone = *tab != front;
+            if gone {
+                pipe.drop_snapshots(tab);
+            }
+            !gone
+        });
     }
 
     /// Keeps this driver's pages' storage reads through `sink` from now on:
-    /// for a session that keeps snapshots from after its attach.
+    /// for a session that keeps snapshots from after its attach. The pages
+    /// it readied before get their exit read now, as a page readied after
+    /// gets it at its attach (FIX 7878).
     pub(crate) fn collect(&self, sink: Sink) {
         self.pipe.collect(sink);
+        for tab in &self.tabs {
+            hook_exits(&self.pipe, &tab.session, self.engine);
+        }
+    }
+
+    /// Books this driver's CDP messages past the pipe's framing threshold
+    /// to `charge` on the host's memory floor (FIX 7988), so they read on.
+    pub(crate) fn book_inbound(&self, charge: Box<dyn crate::retention::HandleRetention>) {
+        self.pipe.book_inbound(charge);
     }
 
     /// Keeps a read of the front tab's stores another step took: a

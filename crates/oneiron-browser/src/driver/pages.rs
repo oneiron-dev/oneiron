@@ -18,7 +18,7 @@ use crate::{
     BrowserError, FindInput, Observation, ObservationPage, ObserveInput, PartialTree, Row,
     WaitForInput,
 };
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
 /// Observations a later one may edit, and answers of each kind held for
 /// their later pages.
@@ -92,16 +92,29 @@ struct Snapshot {
 
 /// The observations a later one may edit, and the answers held for their
 /// later pages: the last [`HISTORY`] observations, the one the caller last
-/// read whole, the last [`HISTORY`] paged observations and the last
-/// [`HISTORY`] paged or cut row answers (`find`, `wait_for`).
+/// read whole, the newest hidden read, and the paged observations and the
+/// paged or cut row answers (`find`, `wait_for`). An answer whose last page
+/// the caller has not read stays held, however many came after it (FIX
+/// 8007): only answers read to their end age out, past the last
+/// [`HISTORY`] of them, as before. A read no answer gives the caller (a
+/// routine look, a batch's progress read) is kept apart from `history`, so
+/// it never ages out an observation a caller's base names (FIX 8510).
 #[derive(Default)]
 pub(crate) struct Observations {
     history: VecDeque<Snapshot>,
     /// Kept apart from `history`, so reads the caller never sees cannot age
     /// it out.
     delivered: Option<Snapshot>,
+    /// The newest read no answer gives the caller.
+    hidden: Option<Snapshot>,
+    /// Whether the read now is one no answer gives the caller.
+    hiding: bool,
     paged: VecDeque<Observation>,
     rows: VecDeque<Rows>,
+    /// The paged observations, by seq, and the row answers, by number,
+    /// whose last page the caller read: only these age out.
+    read_paged: HashSet<u64>,
+    read_rows: HashSet<u64>,
     /// The number the last held row answer took.
     rows_seq: u64,
 }
@@ -162,16 +175,22 @@ impl Observations {
             walk_next: None,
             rebound: None,
             fact: None,
+            dialogs: Vec::new(),
         };
-        self.history.push_back(Snapshot {
+        let snapshot = Snapshot {
             seq: read.seq,
             scope: read.scope,
             url: whole.url.clone(),
             rows: read.rows,
             partial,
-        });
-        if self.history.len() > HISTORY {
-            self.history.pop_front();
+        };
+        if self.hiding {
+            self.hidden = Some(snapshot);
+        } else {
+            self.history.push_back(snapshot);
+            if self.history.len() > HISTORY {
+                self.history.pop_front();
+            }
         }
         let Some((base_seq, (splice, rows))) = edit else {
             return whole;
@@ -193,6 +212,7 @@ impl Observations {
             walk_next: None,
             rebound: None,
             fact: None,
+            dialogs: Vec::new(),
         };
         // AB-003: the two forms say the same; the answer takes the one
         // whose pages are fewer bytes, the whole one on a tie.
@@ -222,10 +242,17 @@ impl Observations {
     pub(crate) fn held_rows_at(&self, url: &str) -> Option<&[Row]> {
         self.history
             .iter()
-            .rev()
+            .chain(&self.hidden)
             .chain(&self.delivered)
-            .find(|held| !held.partial && held.url == url)
+            .filter(|held| !held.partial && held.url == url)
+            .max_by_key(|held| held.seq)
             .map(|held| held.rows.as_slice())
+    }
+
+    /// Marks the reads from now on as ones no answer gives the caller, or,
+    /// `false`, as the caller's again.
+    pub(crate) fn hiding(&mut self, hidden: bool) {
+        self.hiding = hidden;
     }
 
     fn held(&self, seq: u64) -> Option<&Snapshot> {
@@ -250,10 +277,23 @@ impl Observations {
     /// partial observation is held even when it fits one page: its last
     /// page's `walk_next` walks on (Rule 5). An observation whose last page
     /// is read is the caller's.
-    pub(crate) fn first(&mut self, mut observation: Observation) -> ObservationPage {
+    pub(crate) fn first(&mut self, observation: Observation) -> ObservationPage {
+        self.first_of(observation, true)
+    }
+
+    /// `observation`, read on another guest (a proposal's fresh replay, FIX
+    /// 7881), as its first page, the rest held here for its cursor. It is
+    /// never this session's base, so it delivers none.
+    pub(crate) fn first_adopted(&mut self, observation: Observation) -> ObservationPage {
+        self.first_of(observation, false)
+    }
+
+    fn first_of(&mut self, mut observation: Observation, delivers: bool) -> ObservationPage {
         let (mut page, next) = cut(&observation, 0);
         if next.is_none() {
-            self.deliver(observation.seq);
+            if delivers {
+                self.deliver(observation.seq);
+            }
             if observation.partial.is_none() {
                 return ObservationPage::whole(observation);
             }
@@ -262,12 +302,17 @@ impl Observations {
         page.observation.library = std::mem::take(&mut observation.library);
         page.observation.rebound = observation.rebound.take();
         page.observation.fact = observation.fact.take();
+        page.observation.dialogs = std::mem::take(&mut observation.dialogs);
         let seq = observation.seq;
         self.paged.retain(|held| held.seq != seq);
-        self.paged.push_back(observation);
-        if self.paged.len() > HISTORY {
-            self.paged.pop_front();
+        // A partial one that fits one page is read to its end at once.
+        if next.is_none() {
+            self.read_paged.insert(seq);
+        } else {
+            self.read_paged.remove(&seq);
         }
+        self.paged.push_back(observation);
+        age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
         page
     }
 
@@ -279,6 +324,8 @@ impl Observations {
         let seq = held.seq;
         if next.is_none() {
             self.deliver(seq);
+            self.read_paged.insert(seq);
+            age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
         }
         Ok(page)
     }
@@ -294,6 +341,8 @@ impl Observations {
             true,
         );
         self.deliver(rest.seq);
+        self.read_paged.insert(rest.seq);
+        age_out(&mut self.paged, &mut self.read_paged, |held| held.seq);
         Ok(rest)
     }
 
@@ -325,7 +374,7 @@ impl Observations {
     /// The page of a held row answer that `cursor` starts, and the cursor
     /// of the next when the rows go on.
     pub(crate) fn next_rows(
-        &self,
+        &mut self,
         cursor: &str,
     ) -> Result<(Vec<Row>, Option<String>), BrowserError> {
         let found = self.next_found(cursor)?;
@@ -355,15 +404,17 @@ impl Observations {
         };
         let found = found_of(&held, page, next);
         self.rows.push_back(held);
-        if self.rows.len() > HISTORY {
-            self.rows.pop_front();
+        // A cut one that fits one page is read to its end at once.
+        if next.is_none() {
+            self.read_rows.insert(answer);
         }
+        age_out(&mut self.rows, &mut self.read_rows, |held| held.answer);
         found
     }
 
     /// The page of a held row answer that `cursor` starts, the cursor of
     /// the next when the rows go on, and its cut, as its first page had it.
-    pub(crate) fn next_found(&self, cursor: &str) -> Result<Found, BrowserError> {
+    pub(crate) fn next_found(&mut self, cursor: &str) -> Result<Found, BrowserError> {
         let parsed = cursor
             .strip_prefix('r')
             .and_then(|rest| rest.split_once('.'))
@@ -375,7 +426,13 @@ impl Observations {
         };
         let held = self.held_rows(answer)?;
         let (page, next) = page_of(&held.rows, at);
-        Ok(found_of(held, page, next))
+        let found = found_of(held, page, next);
+        // Its last page read, it ages out as before, its `walk_next` with it.
+        if found.next.is_none() {
+            self.read_rows.insert(answer);
+            age_out(&mut self.rows, &mut self.read_rows, |held| held.answer);
+        }
+        Ok(found)
     }
 
     /// The search a cut row answer's `walk_next`, `cursor`, goes on with.
@@ -406,8 +463,11 @@ impl Observations {
     pub(crate) fn clear(&mut self) {
         self.history.clear();
         self.delivered = None;
+        self.hidden = None;
         self.paged.clear();
         self.rows.clear();
+        self.read_paged.clear();
+        self.read_rows.clear();
     }
 
     /// The paged observation `cursor` reads on, and where its next page
@@ -431,6 +491,20 @@ impl Observations {
                 ))
             })?;
         Ok((held, from))
+    }
+}
+
+/// Ages out the oldest held answer the caller read to its end, once more
+/// than [`HISTORY`] are held (`held_answer_policy`, CALLS row, open): an
+/// answer whose last page is still owed stays, however many are held.
+fn age_out<T>(held: &mut VecDeque<T>, read: &mut HashSet<u64>, key: impl Fn(&T) -> u64) {
+    while held.len() > HISTORY {
+        let Some(at) = held.iter().position(|answer| read.contains(&key(answer))) else {
+            return;
+        };
+        if let Some(answer) = held.remove(at) {
+            read.remove(&key(&answer));
+        }
     }
 }
 
@@ -459,6 +533,7 @@ fn part(whole: &Observation, rows: Vec<Row>, offset: Option<usize>, last: bool) 
             .map(|_| walk_cursor(whole.seq)),
         rebound: None,
         fact: None,
+        dialogs: Vec::new(),
     }
 }
 

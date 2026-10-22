@@ -16,6 +16,7 @@
 
 #[cfg(feature = "driver")]
 use crate::BrowserError;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "driver")]
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -23,7 +24,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 /// A request's destination the host refused by its own rule, in the host's
 /// words: its reason code and its message. The browser never fills it and
 /// never reads a reason from an address, a status or a string.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DestinationRefusal {
     pub reason: String,
     pub message: String,

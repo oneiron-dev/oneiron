@@ -20,7 +20,6 @@
 use super::pages::{Base, session_token};
 use super::{CALL, CdpDriver, LOAD, page_targets, target_id};
 use crate::cdp::Visits;
-use crate::session::storage::SwitchStateLimits;
 use crate::{BrowserEngine, BrowserError, Observation};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -59,19 +58,22 @@ pub(crate) enum StoreRead {
         chars: u64,
         relaxed: bool,
     },
-    /// Past the switch's bounds, holding `count` items.
-    Over { count: u64 },
     /// The page did not answer it, or no longer stood at the origin.
     Lost,
     /// The page threw reading it.
     Threw,
 }
 
-/// One store's items, as the page reads them, within its bounds: the page's
-/// origin, how many items it holds, the items (null past a bound), the
-/// UTF-16 code units of their keys and values, and whether the page relaxed
-/// `document.domain`. A store the page cannot read answers a count of -1.
-const STORE_READ: &str = "(() => { let d = false; try { d = document.domain !== location.hostname; } catch (e) {} try { const s = window.__STORE__; const n = s.length; if (n > __ITEMS__) return [location.origin, n, null, 0, d]; const p = []; let c = 0; for (let i = 0; i < n; i++) { const k = s.key(i); if (k === null) continue; const v = s.getItem(k); if (v === null) continue; c += k.length + v.length; if (c > __CHARS__) return [location.origin, n, null, c, d]; p.push([k, v]); } return [location.origin, n, p, c, d]; } catch (e) { return [location.origin, -1, null, 0, d]; } })()";
+/// One piece of a store's items, as the page reads them (FIX 8008): the
+/// page's origin, how many items it holds, the items from index `__FROM__`
+/// on until their keys and values pass `__PIECE__` UTF-16 code units (one
+/// item at least), those code units, whether the page relaxed
+/// `document.domain`, and the index the next piece starts at. A store the
+/// page cannot read answers a count of -1.
+const STORE_READ: &str = "(() => { let d = false; try { d = document.domain !== location.hostname; } catch (e) {} try { const s = window.__STORE__; const n = s.length; const p = []; let c = 0; let i = __FROM__; for (; i < n && (p.length === 0 || c < __PIECE__); i++) { const k = s.key(i); if (k === null) continue; const v = s.getItem(k); if (v === null) continue; c += k.length + v.length; p.push([k, v]); } return [location.origin, n, p, c, d, i]; } catch (e) { return [location.origin, -1, null, 0, d, 0]; } })()";
+/// UTF-16 code units of keys and values one piece of a store read carries:
+/// a framing size for one reply, never a bound on the store (FIX 8008).
+const STORE_PIECE_CHARS: u64 = 1 << 20;
 
 /// Clears one store of the seed document, sets the items its pieces
 /// spelled, and reads it back: how many items, their UTF-16 code units, and
@@ -141,58 +143,61 @@ impl CdpDriver {
         }
     }
 
-    /// `store` of the page in front, at `origin`, read within `limits`.
-    pub(crate) fn read_store(
-        &self,
-        store: Store,
-        origin: &str,
-        limits: &SwitchStateLimits,
-    ) -> StoreRead {
-        let expression = STORE_READ
-            .replace("__STORE__", store.global())
-            .replace("__ITEMS__", &limits.items.to_string())
-            .replace("__CHARS__", &limits.store_chars.to_string());
-        let Ok(answer) = self.page(
-            "Runtime.evaluate",
-            json!({"expression": expression, "returnByValue": true}),
-        ) else {
-            return StoreRead::Lost;
-        };
-        if answer.get("exceptionDetails").is_some() {
-            return StoreRead::Threw;
-        }
-        let read = answer.pointer("/result/value").unwrap_or(&Value::Null);
-        if read[0].as_str() != Some(origin) {
-            return StoreRead::Lost;
-        }
-        let Some(count) = read[1].as_i64() else {
-            return StoreRead::Lost;
-        };
-        let Ok(count) = u64::try_from(count) else {
-            return StoreRead::Threw;
-        };
-        let Some(items) = read[2].as_array() else {
-            return StoreRead::Over { count };
-        };
-        let mut pairs = Vec::with_capacity(items.len());
+    /// `store` of the page in front, at `origin`, read whole, piece by
+    /// piece (FIX 8008): no count of its items or of their size makes it a
+    /// loss. A read the page does not answer, or that finds the page at
+    /// another origin, is lost; one that throws, thrown.
+    pub(crate) fn read_store(&self, store: Store, origin: &str) -> StoreRead {
+        let mut pairs = Vec::new();
         let mut chars = 0;
-        for item in items {
-            let (Some(key), Some(value)) = (item[0].as_str(), item[1].as_str()) else {
+        let mut relaxed = false;
+        let mut from: u64 = 0;
+        loop {
+            let expression = STORE_READ
+                .replace("__STORE__", store.global())
+                .replace("__FROM__", &from.to_string())
+                .replace("__PIECE__", &STORE_PIECE_CHARS.to_string());
+            let Ok(answer) = self.page(
+                "Runtime.evaluate",
+                json!({"expression": expression, "returnByValue": true}),
+            ) else {
                 return StoreRead::Lost;
             };
-            chars += utf16(key) + utf16(value);
-            pairs.push((key.to_owned(), value.to_owned()));
+            if answer.get("exceptionDetails").is_some() {
+                return StoreRead::Threw;
+            }
+            let read = answer.pointer("/result/value").unwrap_or(&Value::Null);
+            if read[0].as_str() != Some(origin) {
+                return StoreRead::Lost;
+            }
+            let Some(count) = read[1].as_i64() else {
+                return StoreRead::Lost;
+            };
+            let Ok(count) = u64::try_from(count) else {
+                return StoreRead::Threw;
+            };
+            let (Some(items), Some(next)) = (read[2].as_array(), read[5].as_u64()) else {
+                return StoreRead::Lost;
+            };
+            for item in items {
+                let (Some(key), Some(value)) = (item[0].as_str(), item[1].as_str()) else {
+                    return StoreRead::Lost;
+                };
+                chars += utf16(key) + utf16(value);
+                pairs.push((key.to_owned(), value.to_owned()));
+            }
+            relaxed |= read[4].as_bool() == Some(true);
+            // The read ends at the store's end, or where a piece read on
+            // past nothing.
+            if next >= count || next <= from {
+                break;
+            }
+            from = next;
         }
-        // The page's own count of what it sent, checked again here.
-        let bound = u64::try_from(limits.store_chars).unwrap_or(u64::MAX);
-        if pairs.len() > limits.items || chars > bound {
-            return StoreRead::Over { count };
-        }
-        let relaxed = read[4].as_bool() == Some(true) && self.engine == BrowserEngine::Lightpanda;
         StoreRead::Items {
             pairs,
             chars,
-            relaxed,
+            relaxed: relaxed && self.engine == BrowserEngine::Lightpanda,
         }
     }
 

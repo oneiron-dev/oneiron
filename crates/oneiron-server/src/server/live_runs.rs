@@ -504,11 +504,16 @@ impl ResolvedLiveRun {
 
     /// The browser door this registered run's public calls share.
     pub(crate) fn browser_guests(&self, server: &super::SyncServer) -> Arc<crate::api::RunGuests> {
-        Arc::clone(
-            self.entry
-                .browser
-                .get_or_init(|| Arc::new(crate::api::RunGuests::browser(server, self.entry.run))),
-        )
+        Arc::clone(self.entry.browser.get_or_init(|| {
+            // The run's own payer bills its Fill writer (FIX 8902).
+            let payer = crate::ai_host::payer_funding::scope_funding(
+                server.vault(),
+                self.entry.spend_scope.as_ref(),
+                false,
+            );
+            let guests = crate::api::RunGuests::browser(server, self.entry.run);
+            Arc::new(guests.with_payer(payer.ok().flatten()))
+        }))
     }
 
     /// The `[models.planner]` the run's runner plans under, and the model it

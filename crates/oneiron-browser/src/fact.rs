@@ -48,6 +48,25 @@ pub enum ActionFact {
     },
 }
 
+/// A JavaScript dialog a page opened that the driver's answer did not
+/// close (FIX 6768): the driver answers each one at once, an alert, confirm
+/// or prompt dismissed and a beforeunload accepted, and one whose answer
+/// the browser refused is named on the next observation, once, as it
+/// stands. Information only: nothing else answers the dialog.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DialogAnswerFailure {
+    /// The tab whose page opened it, where the driver watches that page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+    /// The dialog's type as the browser named it: `alert`, `confirm`,
+    /// `prompt` or `beforeunload`.
+    pub kind: String,
+    /// Whether the answer accepted it.
+    pub accept: bool,
+    /// The browser's refusal of the answer, in its words.
+    pub error: String,
+}
+
 /// What an act acted on, as its receipt names it: the row's live handle,
 /// name and locator, and, for a `click_at`, the viewport point too.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

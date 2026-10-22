@@ -1,22 +1,24 @@
 //! The frame gate between a Lightpanda guest's bytes and its WebSocket
-//! (FIX 6851, `oversize_message_policy`). tungstenite cannot go on past a
-//! message beyond its bound: it fails, keeping the frame's head, and would
-//! hold the whole frame at its next read. So the gate reads each frame's
-//! head itself, ahead of it. A data message whose payload passes
-//! [`MAX_MESSAGE`] never reaches tungstenite: its frames are discarded as
-//! they arrive, and its first [`PREFIX`] bytes are kept and handed back,
-//! for its call to fail alone or, as an event, to be dropped. A message
-//! sent in frames is held until its last, never past the bound, and goes on
-//! whole as one frame of the same payload; once its frames pass the bound
-//! it is discarded the same way. Every other frame goes on as it came, and
+//! (FIX 6851, FIX 7988). tungstenite cannot go on past a message beyond its
+//! bound: it fails, keeping the frame's head, and would hold the whole frame
+//! at its next read. So the gate reads each frame's head itself, ahead of
+//! it. A message sent in frames, or one frame past [`MAX_MESSAGE`], never
+//! reaches tungstenite: the gate holds it until its last frame. Within the
+//! framing threshold a held message goes on whole as one frame of the same
+//! payload; past it, every byte it holds is charged to the host's memory
+//! floor before it is held (`overrun`), and it is handed back whole, in
+//! order, for the pipe to route as every message is. Where the floor admits
+//! no more of it, it is cut: its first [`PREFIX`] and last `TAIL` bytes
+//! are kept, the rest discarded as it arrives, and the cut is handed back
+//! once its last frame came. Every other frame goes on as it came, and
 //! tungstenite judges it by its own bounds, unchanged.
 //!
 //! The gate starts at the first byte past the upgrade's answer, a frame's
 //! head: the upgrade hands tungstenite that answer's head alone, and every
 //! byte past it, read with the head or after, goes through the gate.
 
-use crate::cdp::MAX_MESSAGE;
-use crate::cdp::overrun::PREFIX;
+use crate::cdp::overrun::{Cut, PREFIX, keep_tail};
+use crate::cdp::{MAX_MESSAGE, Pipe};
 use std::collections::VecDeque;
 
 /// A frame head's first two bytes, before its extended length and mask key.
@@ -37,86 +39,101 @@ pub(super) struct Gate {
     head: Vec<u8>,
     /// The frame whose payload comes now.
     frame: Option<Frame>,
-    /// The data message the gate holds or discards.
+    /// The data message the gate holds or cuts.
     message: Option<Held>,
+    /// A message the gate handed back and the pump has not taken yet.
+    out: Option<Out>,
+}
+
+/// A message the gate hands back to the pump, not to tungstenite.
+pub(super) enum Out {
+    /// Past the framing threshold, held whole: its payload.
+    Whole(Vec<u8>),
+    /// Cut where the floor admitted no more of it.
+    Cut(Cut),
 }
 
 /// One frame whose head the gate read.
 struct Frame {
     /// Its payload bytes still to come.
     left: u64,
-    /// Whether it is a frame of the message the gate holds or discards;
-    /// else it goes on as it came.
+    /// Whether it is a frame of the message the gate holds or cuts; else
+    /// it goes on as it came.
     held: bool,
     /// Whether it is its message's last.
     fin: bool,
 }
 
-/// A data message the gate holds or discards.
+/// A data message the gate holds or cuts.
 struct Held {
     /// Its first frame's first byte: its kind, for the frame it goes on as.
     first: u8,
-    /// Its payload so far; once past the bound, only its first [`PREFIX`]
-    /// bytes, until they are handed back.
+    /// Its payload so far; once cut, only its first [`PREFIX`] bytes.
     body: Vec<u8>,
-    /// Its payload's size so far.
-    size: u64,
-    /// Whether its payload passed the bound.
-    over: bool,
-    /// Whether its first bytes were handed back.
-    told: bool,
+    /// Once cut, its last `TAIL` bytes so far.
+    tail: Vec<u8>,
+    /// Why it was cut, once it was.
+    cut: Option<String>,
 }
 
 impl Gate {
     /// Takes the guest's next `bytes`: what goes on to tungstenite is added
-    /// to `through`, in order. Returns the first bytes of each message that
-    /// passed the bound.
-    pub(super) fn pass(&mut self, mut bytes: &[u8], through: &mut VecDeque<u8>) -> Vec<Vec<u8>> {
-        let mut over = Vec::new();
+    /// to `through`, in order. Stops once a message is handed back: how many
+    /// of `bytes` it took, and that message, which every byte before it in
+    /// `through` comes ahead of.
+    pub(super) fn pass(
+        &mut self,
+        bytes: &[u8],
+        through: &mut VecDeque<u8>,
+        pipe: &Pipe,
+    ) -> (usize, Option<Out>) {
+        let mut rest = bytes;
         loop {
+            if self.out.is_some() {
+                break;
+            }
             let Some(frame) = self.frame.as_mut() else {
                 let need = head_len(&self.head);
                 if self.head.len() >= need {
                     let head = std::mem::take(&mut self.head);
-                    self.start(&head, through, &mut over);
+                    self.start(&head, through, pipe);
                     continue;
                 }
-                if bytes.is_empty() {
+                if rest.is_empty() {
                     break;
                 }
-                let (part, rest) = bytes.split_at((need - self.head.len()).min(bytes.len()));
+                let (part, after) = rest.split_at((need - self.head.len()).min(rest.len()));
                 self.head.extend_from_slice(part);
-                bytes = rest;
+                rest = after;
                 continue;
             };
             if frame.left == 0 {
                 let ends = frame.held && frame.fin;
                 self.frame = None;
                 if ends {
-                    self.finish(through, &mut over);
+                    self.finish(through);
                 }
                 continue;
             }
-            if bytes.is_empty() {
+            if rest.is_empty() {
                 break;
             }
-            let take =
-                usize::try_from(frame.left).map_or(bytes.len(), |left| left.min(bytes.len()));
-            let (chunk, rest) = bytes.split_at(take);
-            bytes = rest;
+            let take = usize::try_from(frame.left).map_or(rest.len(), |left| left.min(rest.len()));
+            let (chunk, after) = rest.split_at(take);
+            rest = after;
             frame.left -= take as u64;
             let held = frame.held;
             if held {
-                self.hold(chunk, &mut over);
+                self.hold(chunk, pipe);
             } else {
                 through.extend(chunk);
             }
         }
-        over
+        (bytes.len() - rest.len(), self.out.take())
     }
 
     /// Starts the frame whose whole head is `head`.
-    fn start(&mut self, head: &[u8], through: &mut VecDeque<u8>, over: &mut Vec<Vec<u8>>) {
+    fn start(&mut self, head: &[u8], through: &mut VecDeque<u8>, pipe: &Pipe) {
         let fin = head[0] & FIN != 0;
         let opcode = head[0] & OPCODE;
         let masked = head[1] & MASK != 0;
@@ -127,92 +144,90 @@ impl Gate {
         } else if masked || opcode != 0 {
             // A new message, or a masked frame tungstenite refuses: the
             // message in progress ends.
-            self.close(over);
+            self.close(pipe);
             let gated = !masked && !(fin && left <= MAX_MESSAGE);
             if gated {
                 self.message = Some(Held {
                     first: head[0],
                     body: Vec::new(),
-                    size: left,
-                    over: left > MAX_MESSAGE,
-                    told: false,
+                    tail: Vec::new(),
+                    cut: None,
                 });
             }
             gated
-        } else if let Some(message) = self.message.as_mut() {
-            message.size = message.size.saturating_add(left);
-            if !message.over && message.size > MAX_MESSAGE {
-                message.over = true;
-                message.body.truncate(PREFIX);
-                message.body.shrink_to_fit();
-            }
-            true
         } else {
-            // A continuation of no message: tungstenite judges it.
-            false
+            // A continuation of the message held, or of no message, which
+            // tungstenite judges.
+            self.message.is_some()
         };
         if !held {
             through.extend(head);
         }
         self.frame = Some(Frame { left, held, fin });
-        self.tell(over);
     }
 
-    /// Takes `chunk` of a held frame's payload.
-    fn hold(&mut self, chunk: &[u8], over: &mut Vec<Vec<u8>>) {
+    /// Takes `chunk` of a held frame's payload: within the threshold as it
+    /// comes; past it, once the floor admitted the room it takes; once cut,
+    /// only into its first and last bytes.
+    fn hold(&mut self, chunk: &[u8], pipe: &Pipe) {
         let Some(message) = self.message.as_mut() else {
             return;
         };
-        if !message.over {
-            // Its room grows exactly, at most doubling, never past the
-            // bound (its payload so far never passes it).
+        if message.cut.is_none() {
+            // Its room grows exactly, at most doubling; past the threshold
+            // the floor admits it first.
             let needed = message.body.len() + chunk.len();
             if needed > message.body.capacity() {
-                let bound = usize::try_from(MAX_MESSAGE).unwrap_or(usize::MAX);
-                let room = message
-                    .body
-                    .capacity()
-                    .saturating_mul(2)
-                    .min(bound)
-                    .max(needed);
-                message.body.reserve_exact(room - message.body.len());
+                let threshold = usize::try_from(MAX_MESSAGE).unwrap_or(usize::MAX);
+                let room = message.body.capacity().saturating_mul(2).max(needed);
+                let room = if needed <= threshold {
+                    room.min(threshold)
+                } else {
+                    room
+                };
+                if room > threshold && !pipe.admit_inbound(room) {
+                    message.cut = Some(pipe.inbound_refusal());
+                    let mut tail = Vec::new();
+                    keep_tail(&mut tail, &message.body[message.body.len().min(PREFIX)..]);
+                    message.tail = tail;
+                    message.body.truncate(PREFIX);
+                    message.body.shrink_to_fit();
+                    pipe.release_inbound();
+                } else {
+                    message.body.reserve_exact(room - message.body.len());
+                }
             }
+        }
+        if message.cut.is_none() {
             message.body.extend_from_slice(chunk);
-        } else if !message.told {
+        } else {
             let room = PREFIX.saturating_sub(message.body.len()).min(chunk.len());
             message.body.extend_from_slice(&chunk[..room]);
-        }
-        self.tell(over);
-    }
-
-    /// Hands back the first bytes of a message past the bound, once they
-    /// came.
-    fn tell(&mut self, over: &mut Vec<Vec<u8>>) {
-        if let Some(message) = self.message.as_mut()
-            && message.over
-            && !message.told
-            && message.body.len() >= PREFIX
-        {
-            message.told = true;
-            over.push(std::mem::take(&mut message.body));
+            keep_tail(&mut message.tail, &chunk[room..]);
         }
     }
 
-    /// The held message's last frame came: within the bound it goes on as
-    /// one frame of its whole payload; past it, its first bytes are handed
-    /// back.
-    fn finish(&mut self, through: &mut VecDeque<u8>, over: &mut Vec<Vec<u8>>) {
+    /// The held message's last frame came: within the threshold it goes on
+    /// as one frame of its whole payload; past it, it is handed back whole;
+    /// cut, its cut is handed back.
+    fn finish(&mut self, through: &mut VecDeque<u8>) {
         let Some(message) = self.message.take() else {
             return;
         };
-        if message.over {
-            if !message.told {
-                over.push(message.body);
-            }
+        if let Some(why) = message.cut {
+            self.out = Some(Out::Cut(Cut {
+                prefix: message.body,
+                tail: message.tail,
+                why,
+            }));
+            return;
+        }
+        let size = message.body.len();
+        if u64::try_from(size).map_or(true, |size| size > MAX_MESSAGE) {
+            self.out = Some(Out::Whole(message.body));
             return;
         }
         through.push_back(message.first | FIN);
-        let size = message.body.len();
         match (u8::try_from(size), u16::try_from(size)) {
             (Ok(short), _) if short < 126 => through.push_back(short),
             (_, Ok(medium)) => {
@@ -227,15 +242,21 @@ impl Gate {
         through.extend(message.body);
     }
 
-    /// Ends the message in progress before its last frame: one past the
-    /// bound has its first bytes handed back; one within it is dropped, as
-    /// tungstenite refuses a message another frame cuts.
-    fn close(&mut self, over: &mut Vec<Vec<u8>>) {
-        if let Some(message) = self.message.take()
-            && message.over
-            && !message.told
-        {
-            over.push(message.body);
+    /// Ends the message in progress before its last frame: a cut one has
+    /// its cut handed back; one read so far is dropped, as tungstenite
+    /// refuses a message another frame cuts, its charge given back.
+    fn close(&mut self, pipe: &Pipe) {
+        if let Some(message) = self.message.take() {
+            match message.cut {
+                Some(why) => {
+                    self.out = Some(Out::Cut(Cut {
+                        prefix: message.body,
+                        tail: message.tail,
+                        why,
+                    }));
+                }
+                None => pipe.release_inbound(),
+            }
         }
     }
 }

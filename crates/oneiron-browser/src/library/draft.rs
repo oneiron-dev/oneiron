@@ -213,6 +213,13 @@ pub enum DraftGapKind {
     /// The step acted in another tab than the one the span's step before
     /// left in front.
     TabChange,
+    /// The step is a Fill whose text only the host's writer writes
+    /// (`generate`), which a replay with no model never asks (FIX 9269).
+    GeneratedFill,
+    /// A demonstration saw its page navigate with no act it recorded (a
+    /// typed URL, a script's history move, a navigation outside the run's
+    /// verbs), so a step may be missing (FIX 9413).
+    UnrecordedNavigation,
     /// The step names no page or tab it began on.
     MissingContext,
     /// Postcondition check `check` names a live handle this session does
@@ -401,6 +408,9 @@ struct Literal {
 struct Draft {
     origin: Option<String>,
     after_seq: u64,
+    /// The span's opening `open`, by seq: its redirect starts the span at
+    /// its result origin, its URL kept (FIX 9268).
+    opening: Option<u64>,
     /// The tab the last step left in front.
     tab: Option<String>,
     params: Vec<String>,
@@ -517,10 +527,13 @@ impl Draft {
                 self.gap(step, DraftGapKind::MissingContext);
             }
             if let Some(origin) = self.origin.clone() {
+                let opening = self.opening == Some(step.seq);
                 let elsewhere = [
                     step.acted_origin(),
                     step.result_origin.as_deref(),
-                    step.requested_origin.as_deref().filter(|_| opens),
+                    step.requested_origin
+                        .as_deref()
+                        .filter(|_| opens && !opening),
                 ];
                 if let Some(other) = elsewhere.into_iter().flatten().find(|own| *own != origin) {
                     let origin = Some(other.to_owned());
@@ -553,10 +566,18 @@ impl Draft {
                     option: option.clone(),
                 }
             }
-            ReplayAction::Fill { locator, field } => BatchStep::Fill {
-                target: locator.clone(),
-                field: field.clone(),
-            },
+            ReplayAction::Fill { locator, field } => {
+                // Generation is reached with no text, template or secret.
+                let unwritten =
+                    field.supplied.is_none() && field.template.is_none() && field.secret.is_none();
+                if field.generate && unwritten {
+                    self.gap(step, DraftGapKind::GeneratedFill);
+                }
+                BatchStep::Fill {
+                    target: locator.clone(),
+                    field: field.clone(),
+                }
+            }
             ReplayAction::Type {
                 locator,
                 operand,
@@ -699,6 +720,7 @@ pub fn draft_from_steps(
     let mut draft = Draft {
         origin: span.origin.clone(),
         after_seq: span.after_seq,
+        opening: None,
         tab: None,
         params: Vec::new(),
         secret: Vec::new(),
@@ -721,7 +743,7 @@ pub fn draft_from_steps(
         Some(first) if !matches!(first.action, Ok(ReplayAction::Open { .. })) => {
             draft.gap(first, DraftGapKind::MissingOpening);
         }
-        Some(_) => {}
+        Some(first) => draft.opening = Some(first.seq),
     }
     for step in taken {
         if !draft.step(step, input.past_press) {

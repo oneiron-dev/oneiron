@@ -384,6 +384,13 @@ impl HostNetFloor for OpenEgressProxy {
             None => UnmeteredFloor.acquire(fds, workers),
         }
     }
+
+    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
+        match self.vault.host_net_floor.get() {
+            Some(floor) => floor.acquire_bytes(bytes),
+            None => UnmeteredFloor.acquire_bytes(bytes),
+        }
+    }
 }
 impl EgressRelay for OpenEgressProxy {
     fn host_net_floor(&self) -> &dyn HostNetFloor {
