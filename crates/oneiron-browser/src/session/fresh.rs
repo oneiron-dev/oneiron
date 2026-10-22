@@ -133,8 +133,8 @@ impl BrowserSession {
         };
         // A link the library refuses costs no fresh guest (FIX 7876); its
         // filing checks it again.
-        if let Some(link) = solved.supersedes.as_deref()
-            && let Some(why) = library.supersedes_refused(&solved.site, link)?
+        if let Some((site, link)) = solved.link()
+            && let Some(why) = library.supersedes_refused(site, link)?
         {
             return Ok(supersedes_refused(link.to_owned(), why));
         }

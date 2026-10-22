@@ -525,6 +525,15 @@ pub(crate) struct Solved {
 }
 
 #[cfg(feature = "driver")]
+impl Solved {
+    /// The program's site and the `supersedes` link the proposal names,
+    /// for the link's read before the replay (FIX 7876).
+    pub(crate) fn link(&self) -> Option<(&str, &str)> {
+        Some((&self.site, self.supersedes.as_deref()?))
+    }
+}
+
+#[cfg(feature = "driver")]
 /// A refusal by `check`, with what it found.
 fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOutput {
     ProposeOutput {

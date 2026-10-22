@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1154 facade rows, 4093 declarations.
+Census: 1154 facade rows, 4094 declarations.
 Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1154 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -1658,7 +1658,7 @@ class AskUpReasonStrict(TypedDict):
 class AskUpReasonReobserve(TypedDict):
     why: Literal["reobserve"]
 AskUpReason = AskUpReasonAsked | AskUpReasonLooks | AskUpReasonNoAnswer | AskUpReasonWrongAnswer | AskUpReasonStrict | AskUpReasonReobserve
-ClockScope = Literal["wait", "navigation", "decision"]
+ClockScope = Literal["wait", "navigation", "decision", "protocol"]
 TextSource = Literal["supplied", "reference", "template", "generated"]
 class FieldTextReasonNoText(TypedDict):
     why: Literal["no_text"]
@@ -20260,12 +20260,16 @@ class ConnectorAnswerRequest(TypedDict):
     answers: list[ConnectorQuestionAnswer]
 class OpenInput(TypedDict):
     url: str
+class DestinationRefusal(TypedDict):
+    reason: str
+    message: str
 class TakeoverRecord(TypedDict):
     by: str
     asked: NotRequired[str | None]
     taken_at_ms: int
     returned_at_ms: int
     inputs: int
+    refusal: NotRequired[DestinationRefusal | None]
 TabSwitchCause = Literal["opened", "closed"]
 TabSwitch = TypedDict("TabSwitch", {"tab": str, "url": str, "title": str, "from": str, "why": TabSwitchCause})
 BrowserEngine = Literal["lightpanda", "chromium"]
@@ -20295,6 +20299,7 @@ class FieldSpec(TypedDict):
     generate: NotRequired[bool]
     instruction: NotRequired[str | None]
     enum_values: NotRequired[list[str] | None]
+    secret: NotRequired[str | None]
 class ReplayActionOpen(TypedDict):
     action: Literal["open"]
     url: str
@@ -20340,7 +20345,9 @@ class RecordingGapKindUncovered(TypedDict):
     target: str
 class RecordingGapKindCaptureLost(TypedDict):
     why: Literal["capture_lost"]
-RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost
+class RecordingGapKindUnrecordedNavigation(TypedDict):
+    why: Literal["unrecorded_navigation"]
+RecordingGapKind = RecordingGapKindNoLocator | RecordingGapKindGesture | RecordingGapKindUncovered | RecordingGapKindCaptureLost | RecordingGapKindUnrecordedNavigation
 class RecordingGap(TypedDict):
     seq: NotRequired[int | None]
     tab: NotRequired[str | None]
@@ -20460,6 +20467,10 @@ class DraftGapKindForeignOrigin(TypedDict):
     origin: NotRequired[str | None]
 class DraftGapKindTabChange(TypedDict):
     why: Literal["tab_change"]
+class DraftGapKindGeneratedFill(TypedDict):
+    why: Literal["generated_fill"]
+class DraftGapKindUnrecordedNavigation(TypedDict):
+    why: Literal["unrecorded_navigation"]
 class DraftGapKindMissingContext(TypedDict):
     why: Literal["missing_context"]
 class DraftGapKindCheckUnknownRef(TypedDict):
@@ -20473,7 +20484,7 @@ class DraftGapKindNoPostcondition(TypedDict):
     why: Literal["no_postcondition"]
 class DraftGapKindNoSubgoal(TypedDict):
     why: Literal["no_subgoal"]
-DraftGapKind = DraftGapKindPrePress | DraftGapKindUnknownPress | DraftGapKindNoAction | DraftGapKindSecretWithheld | DraftGapKindFailed | DraftGapKindNoEffect | DraftGapKindMissingOpening | DraftGapKindEmptySpan | DraftGapKindNoLiveOrigin | DraftGapKindForeignOrigin | DraftGapKindTabChange | DraftGapKindMissingContext | DraftGapKindCheckUnknownRef | DraftGapKindCheckSecretWithheld | DraftGapKindNoPostcondition | DraftGapKindNoSubgoal
+DraftGapKind = DraftGapKindPrePress | DraftGapKindUnknownPress | DraftGapKindNoAction | DraftGapKindSecretWithheld | DraftGapKindFailed | DraftGapKindNoEffect | DraftGapKindMissingOpening | DraftGapKindEmptySpan | DraftGapKindNoLiveOrigin | DraftGapKindForeignOrigin | DraftGapKindTabChange | DraftGapKindGeneratedFill | DraftGapKindUnrecordedNavigation | DraftGapKindMissingContext | DraftGapKindCheckUnknownRef | DraftGapKindCheckSecretWithheld | DraftGapKindNoPostcondition | DraftGapKindNoSubgoal
 class DraftGap(TypedDict):
     seq: NotRequired[int | None]
     verb: NotRequired[str | None]
@@ -20645,8 +20656,10 @@ class EffectReceipt(TypedDict):
     action: NotRequired[ReplayAction | None]
     source_url: NotRequired[str | None]
     source_origin: NotRequired[str | None]
+    source_title: NotRequired[str | None]
     tab: NotRequired[str | None]
     result_tab: NotRequired[str | None]
+    result_unread: NotRequired[str | None]
     duration_ms: int
 class SecretParam(TypedDict):
     name: str
@@ -20803,9 +20816,6 @@ SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
 class CheckReceipt(TypedDict):
     expect: ExpectInput
     observed: ExpectOutput
-class DestinationRefusal(TypedDict):
-    reason: str
-    message: str
 class FailedStepReceipt(TypedDict):
     step: NotRequired[int | None]
     stop_cause: BatchStopCause
@@ -20895,6 +20905,7 @@ class ProposeOutput(TypedDict):
     refused_by: NotRequired[WorkflowCheck | None]
     refusal: NotRequired[AdmissionRefusal | None]
     unmet: NotRequired[list[int]]
+    missed: NotRequired[list[CheckReceipt]]
     replay: NotRequired[BatchOutput | None]
     replay_guest: NotRequired[ReplayGuest | None]
     superseded: NotRequired[SupersedeOutcome | None]
@@ -20916,11 +20927,17 @@ class LibraryRetiredOutput(TypedDict):
     retired: list[RetiredCard]
 BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
 LibraryRunMode = Literal["strict", "assisted"]
+class SecretArgHandle(TypedDict):
+    handle: str
+class SecretArgText(TypedDict):
+    text: str
+SecretArg = SecretArgHandle | SecretArgText
 class LibraryRunInput(TypedDict):
     workflow: str
     args: NotRequired[dict[str, str]]
     base: NotRequired[ObservationBase | None]
     mode: NotRequired[LibraryRunMode | None]
+    secret_args: NotRequired[dict[str, SecretArg]]
 class LibraryRunOutput(TypedDict):
     workflow: str
     status: SubgoalStatus
