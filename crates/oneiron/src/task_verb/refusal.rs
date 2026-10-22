@@ -101,7 +101,7 @@ impl Memory<'_> {
         }
         let receipt = self.with_verified_actor_write_txn(|wtxn| {
             let mut body = task_body_in_txn(self.vault(), &*wtxn, task_ref)?;
-            self.require_execution_writer(&body)?;
+            self.require_execution_writer(&*wtxn, task_ref, &body)?;
             if let Some(existing) = &body.refusal {
                 if existing.by == self.actor()
                     && existing.domain == input.domain

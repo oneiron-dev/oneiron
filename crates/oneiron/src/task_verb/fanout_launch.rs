@@ -75,9 +75,11 @@ use crate::wave_orchestration::{
 };
 use serde::{Deserialize, Serialize};
 
+mod ask_auto;
 mod checks;
 mod hold;
 mod resume;
+pub(super) use self::ask_auto::AskAutoGate;
 use self::checks::settle_held_attempts_in;
 pub(super) use self::checks::{AskCheck, WaveCheck, record_ask_check_in, record_wave_check_in};
 pub(super) use self::hold::{

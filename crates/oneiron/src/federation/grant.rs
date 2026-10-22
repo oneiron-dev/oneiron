@@ -98,8 +98,8 @@ pub(super) const SCOPE_KIND_VAULT: &str = "vault";
 
 const SCOPE_KIND_ASK: &str = "ask";
 
-/// Wire/resource-safety maximum for one guest grant body, not a policy grant.
-/// Ask-class disclosure limits can narrow this bound but never widen it.
+/// The disclosed-ref count a guest grant body was once refused past; now
+/// observed where an ask mints the grant (FIX 10173), never refused here.
 pub const MAX_GUEST_DISCLOSED_REFS: usize = 64;
 
 const GUEST_SCOPE_KEYS: [&str; 3] = ["person_ref", "asker_ref", "disclosed_refs"];
@@ -339,7 +339,7 @@ pub struct FederationGrantGuestPayload {
 
 impl FederationGrantGuestPayload {
     fn validate(&self) -> Result<()> {
-        if self.disclosed_refs.is_empty() || self.disclosed_refs.len() > MAX_GUEST_DISCLOSED_REFS {
+        if self.disclosed_refs.is_empty() {
             return Err(invalid_grant());
         }
         Ok(())
@@ -835,7 +835,7 @@ fn decode_guest_payload(value: &Value) -> Result<FederationGrantGuestPayload> {
     let Value::Array(disclosed) = required_value(entries, GUEST_SCOPE_KEYS[2])? else {
         return Err(invalid_grant());
     };
-    if disclosed.is_empty() || disclosed.len() > MAX_GUEST_DISCLOSED_REFS {
+    if disclosed.is_empty() {
         return Err(invalid_grant());
     }
     let mut disclosed_refs = BTreeSet::new();

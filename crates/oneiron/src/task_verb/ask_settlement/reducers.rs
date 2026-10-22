@@ -29,6 +29,10 @@ pub(super) fn reduce(
         .unwrap_or_default();
     let mut human = BTreeMap::new();
     let mut delegated = BTreeMap::new();
+    // An admitted agent responder's own word counts as that agent's, under
+    // the same electorate, source and supersession rules; it is never a
+    // person's, so a person's word for the same seat still dominates it.
+    let mut executor = BTreeMap::new();
     for entry in evidence.iter() {
         if matches!(
             entry.source,
@@ -37,9 +41,12 @@ pub(super) fn reduce(
             human.insert(entry.person_ref, entry.answer.word_ref);
         } else if entry.source == TaskAskSource::Companion && entry.delegation_grant_ref.is_some() {
             delegated.insert(entry.person_ref, entry.answer.word_ref);
+        } else if entry.source == TaskAskSource::Executor {
+            executor.insert(entry.person_ref, entry.answer.word_ref);
         }
     }
-    let mut latest = delegated;
+    let mut latest = executor;
+    latest.extend(delegated);
     latest.extend(human.iter().map(|(person, word)| (*person, *word)));
     let responded: BTreeSet<_> = latest.keys().copied().collect();
     let unknown = who.difference(&responded).copied().collect();
@@ -59,34 +66,45 @@ pub(super) fn reduce(
                 TaskAskEvidenceReason::HumanDominates
             }
             TaskAskSource::Inform => TaskAskEvidenceReason::Inform,
-            TaskAskSource::Executor => TaskAskEvidenceReason::Executor,
-            TaskAskSource::Companion if human.contains_key(&entry.person_ref) => {
+            TaskAskSource::Companion | TaskAskSource::Executor
+                if human.contains_key(&entry.person_ref) =>
+            {
                 TaskAskEvidenceReason::HumanDominates
             }
             TaskAskSource::Companion if entry.delegation_grant_ref.is_none() => {
                 TaskAskEvidenceReason::CompanionHint
             }
-            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
+            TaskAskSource::Human
+            | TaskAskSource::ForeignStated
+            | TaskAskSource::Companion
+            | TaskAskSource::Executor
                 if latest.get(&entry.person_ref) != Some(&entry.answer.word_ref) =>
             {
                 TaskAskEvidenceReason::Superseded
             }
-            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
+            TaskAskSource::Human
+            | TaskAskSource::ForeignStated
+            | TaskAskSource::Companion
+            | TaskAskSource::Executor
                 if !need.contains(&entry.person_ref)
                     && !decision_seats.contains(&entry.person_ref)
                     && !required.contains(&entry.person_ref) =>
             {
                 TaskAskEvidenceReason::OutsideElectorate
             }
-            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion
+            TaskAskSource::Human
+            | TaskAskSource::ForeignStated
+            | TaskAskSource::Companion
+            | TaskAskSource::Executor
                 if !sources.is_subset(&entry.word.provenance_refs) =>
             {
                 unmet_sources.extend(sources.difference(&entry.word.provenance_refs).copied());
                 TaskAskEvidenceReason::MissingSource
             }
-            TaskAskSource::Human | TaskAskSource::ForeignStated | TaskAskSource::Companion => {
-                TaskAskEvidenceReason::Counted
-            }
+            TaskAskSource::Human
+            | TaskAskSource::ForeignStated
+            | TaskAskSource::Companion
+            | TaskAskSource::Executor => TaskAskEvidenceReason::Counted,
         };
         entry.ladder_changed = if entry.reason == TaskAskEvidenceReason::Counted
             && entry.source == TaskAskSource::Human

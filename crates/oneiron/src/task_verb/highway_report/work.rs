@@ -409,6 +409,7 @@ impl Memory<'_> {
                 .fields
                 .insert("ask_refused".to_owned(), rt.refused.join("; "));
         }
+        lifecycle.fields.extend(rt.decisions.drain(..));
         let own = rt.txn.is_none();
         let staged = StagedReport {
             via,

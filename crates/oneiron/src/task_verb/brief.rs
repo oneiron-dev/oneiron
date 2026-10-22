@@ -296,6 +296,14 @@ pub struct DoneMeans {
     /// beside a criterion the TASK's judge still decides.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_checks: Vec<oneiron_browser::ExpectInput>,
+    /// Reuse a settled done-means ask only when it is bound to this very
+    /// Done: the same TASK, try and attempt count, result and brief revision
+    /// (FIX 10183). Any other ask the TASK blocks on is passed over and the
+    /// TASK's own done-means question is asked instead. Off by default, when
+    /// a blocked-on ask answers as before; its binding is recorded either
+    /// way. The owner or an agent turns it on in the brief.
+    #[serde(default)]
+    pub strict_verified_reuse: bool,
 }
 
 /// What makes the work ask up.

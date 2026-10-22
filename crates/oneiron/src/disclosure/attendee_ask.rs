@@ -36,8 +36,6 @@ use super::tier_classification::{
 pub const ATTENDEE_UNKNOWN_OPTION: &str = "unknown";
 
 const CANDIDATE_OPTION_PREFIX: &str = "contact-";
-const MAX_ATTENDEE_KEY_BYTES: usize = 128;
-const MAX_ATTENDEE_CANDIDATES: usize = 32;
 const ASK_CLAIM_DOMAIN: &[u8] = b"oneiron.disclosure.attendee_ask.v1";
 const IDENTITY_CLAIM_DOMAIN: &[u8] = b"oneiron.disclosure.attendee_identity.v1";
 const IDENTITY_SLOT_DOMAIN: &[u8] = b"oneiron.disclosure.attendee_identity.slot.v1";
@@ -138,17 +136,16 @@ impl AttendeeAskRecord {
         ])
     }
 
+    /// Key lengths and the candidate count are observed where the entry is
+    /// admitted (FIX 10171), never refused here.
     fn validate(&self) -> Result<()> {
         for key in [&self.session_key, &self.speaker_key] {
-            if key.trim().is_empty() || key.trim() != key || key.len() > MAX_ATTENDEE_KEY_BYTES {
+            if key.trim().is_empty() || key.trim() != key {
                 return Err(invalid_ask());
             }
         }
         let distinct: BTreeSet<_> = self.candidates.iter().collect();
-        if self.roster_revision == 0
-            || self.candidates.len() > MAX_ATTENDEE_CANDIDATES
-            || distinct.len() != self.candidates.len()
-        {
+        if self.roster_revision == 0 || distinct.len() != self.candidates.len() {
             return Err(invalid_ask());
         }
         Ok(())
@@ -358,6 +355,84 @@ impl Memory<'_> {
         );
         spec.intent_key = format!("{PREDICATE_DISCLOSURE_ATTENDEE_ASK}/{}", ask_ref.to_hex());
         self.tasks_ask(&spec)
+    }
+
+    /// [`Self::raise_unknown_attendee_ask`]'s frozen question, written and
+    /// built in `txn`, a writer the caller already holds, and opening none
+    /// of its own (FIX 10172): its `disclosure.attendee_ask` CLAIM and the
+    /// ask spec to admit beside it, so an attendee's entry composes its ask
+    /// in the entry's own commit. The same candidates, CLAIM and question
+    /// the raise door freezes; the caller admits the spec.
+    pub(crate) fn unknown_attendee_ask_spec_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        ask: &UnknownAttendeeAsk,
+    ) -> MemoryResult<TaskAskSpec> {
+        let record = AttendeeAskRecord {
+            session_key: ask.session_key.clone(),
+            speaker_key: ask.speaker_key.clone(),
+            roster_revision: ask.roster_revision,
+            trigger_turn: ask.trigger_turn,
+            candidates: ask.candidates.clone(),
+        };
+        record.validate()?;
+        let ask_ref = attendee_ask_ref(&ask.session_key, &ask.speaker_key, ask.roster_revision)?;
+        let vault = self.vault();
+        for candidate in &record.candidates {
+            require_live_contact_in_txn(vault, &*txn, candidate)?;
+        }
+        match read_stored_claim_body(&vault.store, &*txn, &ask_ref)? {
+            Some(body) if body.predicate == PREDICATE_DISCLOSURE_ATTENDEE_ASK => {
+                if decode_attendee_ask_value(&body.value)? != record {
+                    return Err(invalid_ask().into());
+                }
+            }
+            Some(_) => return Err(invalid_ask().into()),
+            None => {
+                let claim = ClaimBody::new(
+                    PREDICATE_DISCLOSURE_ATTENDEE_ASK,
+                    ClaimSubject::Entity(self.actor()),
+                    record.to_value(),
+                    1.0,
+                    ClaimApprovalStatus::Auto,
+                    ClaimLifecycleStatus::Active,
+                )?;
+                let now = vault.store.clock.now_recorded_at();
+                vault.put_disclosure_claim_in_txn(txn, &ask_ref, &claim, now)?;
+            }
+        }
+        let owners = crate::policy_model::owners_in_txn(vault, &*txn)?;
+        if owners.is_empty() {
+            return Err(MemoryError::bad_request("attendee ask has no vault owner"));
+        }
+        let ask_claim = ConsultPayloadRef::Claim(ask_ref);
+        let mut question =
+            TaskAskQuestion::new(ask.trigger_turn.map_or(ask_claim, ConsultPayloadRef::Turn));
+        if ask.trigger_turn.is_some() {
+            question.context_refs.push(ask_claim);
+        }
+        question.revision = ask.roster_revision;
+        for choice in record
+            .candidates
+            .iter()
+            .copied()
+            .map(AttendeeIdentityChoice::Contact)
+            .chain([AttendeeIdentityChoice::Unknown])
+        {
+            let text = match choice {
+                AttendeeIdentityChoice::Contact(contact) => contact.to_hex(),
+                AttendeeIdentityChoice::Unknown => ATTENDEE_UNKNOWN_OPTION.to_owned(),
+            };
+            question.options.insert(choice.option()?, text);
+        }
+        let mut spec = TaskAskSpec::shorthand(
+            Some(TaskAskTarget::People(owners.into_iter().collect())),
+            question,
+            Some(ask.until),
+            TaskAskDefault::Hold,
+        );
+        spec.intent_key = format!("{PREDICATE_DISCLOSURE_ATTENDEE_ASK}/{}", ask_ref.to_hex());
+        Ok(spec)
     }
 }
 

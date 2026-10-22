@@ -500,6 +500,16 @@ impl Memory<'_> {
             if self.vault().get_raw_in(&*wtxn, &task_ref)?.is_some() {
                 return Err(MemoryError::bad_request("task post id is already occupied"));
             }
+            // An earlier proposal of this post, landed or not, answers it
+            // whatever the actor's ceiling is now (FIX 10180): the gated
+            // branch replays that proposal's handle and its landed TASK,
+            // and refuses changed arguments, instead of minting another.
+            if self
+                .held_proposal_in(&*wtxn, TASK_CREATE_PROPOSAL_PREDICATE, &key)?
+                .is_some()
+            {
+                return Ok(PostDirect::Gated);
+            }
             let creator = match via {
                 TaskVia::Host(binding) => Some(binding),
                 TaskVia::Wire => None,

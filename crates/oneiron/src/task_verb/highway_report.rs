@@ -142,6 +142,10 @@ pub(super) struct ReportTxn<'a, 't> {
     /// The id this report keeps its lifecycle receipt under when its write
     /// applies; `None` in a session that keeps no record.
     receipt_id: Option<String>,
+    /// What the report's decisions returned beside their answers (FIX
+    /// 10179, 10183): each ladder receipt and each settled ask's binding,
+    /// as lifecycle fields its commit keeps.
+    decisions: Vec<(String, String)>,
 }
 
 impl ReportTxn<'_, '_> {
@@ -153,6 +157,7 @@ impl ReportTxn<'_, '_> {
             judged: None,
             journal: None,
             receipt_id: None,
+            decisions: Vec::new(),
         }
     }
 }
@@ -170,7 +175,13 @@ impl<'a, 't> ReportTxn<'a, 't> {
             judged,
             journal: None,
             receipt_id: None,
+            decisions: Vec::new(),
         }
+    }
+
+    /// Keeps `value` under `field` in the lifecycle this report commits.
+    fn note_decision(&mut self, field: &str, value: String) {
+        self.decisions.push((field.to_owned(), value));
     }
 
     /// This report, journaled under `journal` when it names a try.

@@ -19,8 +19,9 @@ pub(super) const FOLLOWUPS: SideTable<EntityId, HumanTaskFollowupRecord, Raw> =
 pub(super) const FOLLOWUP_SWEEP: SideTable<(), EntityId, Raw> =
     SideTable::new(&side_table::HUMAN_TASK_FOLLOWUP_SWEEP);
 
-/// One C9 wait binding, keyed by the task's own id.
-pub(super) const WAIT_BINDINGS: SideTable<EntityId, HumanTaskWaitBinding, Raw> =
+/// One C9 wait binding per parked trap, keyed by `(task, trap claim)`: every
+/// workflow parked on the same TASK keeps its own (FIX 9867).
+pub(super) const WAIT_BINDINGS: SideTable<(EntityId, EntityId), HumanTaskWaitBinding, Raw> =
     SideTable::new(&side_table::HUMAN_TASK_WAIT_BINDING);
 
 /// Records which response event already produced a signal for one wait, so a
@@ -241,7 +242,12 @@ pub(super) fn put_wait_binding_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     binding: &HumanTaskWaitBinding,
 ) -> Result<()> {
-    WAIT_BINDINGS.put(&vault.store, wtxn, &binding.task_ref, binding)?;
+    WAIT_BINDINGS.put(
+        &vault.store,
+        wtxn,
+        &(binding.task_ref, binding.trap_claim_id),
+        binding,
+    )?;
     Ok(())
 }
 

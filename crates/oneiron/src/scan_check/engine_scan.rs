@@ -195,11 +195,31 @@ pub enum EngineScan {
     /// The longest note one attempt row's events carry, in bytes (once
     /// refused past 2048).
     AttemptEventNoteBytes,
+    /// The live identity candidates one attendee's first entry offers its
+    /// "who is this?" ask (once refused past 32).
+    AttendeeIdentityCandidates,
+    /// The fact refs one guest ask discloses, against the resolved class or
+    /// holder limit (once refused past it; shipped 16).
+    GuestDisclosureRefs,
+    /// The disclosed refs one guest grant carries (once refused past 64).
+    GuestGrantDisclosedRefs,
+    /// The symbols one symbol lease declaration names (once refused past
+    /// 4096).
+    DeclaredSymbols,
+    /// The longest session or speaker key one attendee's first entry
+    /// carries, in bytes (once refused past 128).
+    AttendeeIdentityKeyBytes,
+    /// The longest symbol one symbol lease declaration names, in bytes (once
+    /// refused past 1024).
+    DeclaredSymbolBytes,
+    /// The ancestor attempts one comm widen reach walk reads (once refused
+    /// past 256).
+    CommWidenAncestorRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 76] = [
+    pub const ALL: [Self; 83] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -276,6 +296,13 @@ impl EngineScan {
         Self::AttemptKindRows,
         Self::AttemptEventActorBytes,
         Self::AttemptEventNoteBytes,
+        Self::AttendeeIdentityCandidates,
+        Self::GuestDisclosureRefs,
+        Self::GuestGrantDisclosedRefs,
+        Self::DeclaredSymbols,
+        Self::AttendeeIdentityKeyBytes,
+        Self::DeclaredSymbolBytes,
+        Self::CommWidenAncestorRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -366,6 +393,13 @@ impl EngineScan {
             Self::AttemptKindRows => "attempt_kind_rows",
             Self::AttemptEventActorBytes => "attempt_event_actor_bytes",
             Self::AttemptEventNoteBytes => "attempt_event_note_bytes",
+            Self::AttendeeIdentityCandidates => "attendee_identity_candidates",
+            Self::GuestDisclosureRefs => "guest_disclosure_refs",
+            Self::GuestGrantDisclosedRefs => "guest_grant_disclosed_refs",
+            Self::DeclaredSymbols => "declared_symbols",
+            Self::AttendeeIdentityKeyBytes => "attendee_identity_key_bytes",
+            Self::DeclaredSymbolBytes => "declared_symbol_bytes",
+            Self::CommWidenAncestorRows => "comm_widen_ancestor_rows",
         }
     }
 
@@ -403,6 +437,13 @@ impl EngineScan {
             Self::AttemptKindRows => 100_000,
             Self::AttemptEventActorBytes => 128,
             Self::AttemptEventNoteBytes => 2048,
+            Self::AttendeeIdentityCandidates => 32,
+            Self::GuestDisclosureRefs => 16,
+            Self::GuestGrantDisclosedRefs => 64,
+            Self::DeclaredSymbols => 4096,
+            Self::AttendeeIdentityKeyBytes => 128,
+            Self::DeclaredSymbolBytes => 1024,
+            Self::CommWidenAncestorRows => 256,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -485,6 +526,13 @@ impl EngineScan {
             Self::AttemptKindRows => 101,
             Self::AttemptEventActorBytes => 102,
             Self::AttemptEventNoteBytes => 103,
+            Self::AttendeeIdentityCandidates => 104,
+            Self::GuestDisclosureRefs => 105,
+            Self::GuestGrantDisclosedRefs => 106,
+            Self::DeclaredSymbols => 107,
+            Self::AttendeeIdentityKeyBytes => 108,
+            Self::DeclaredSymbolBytes => 109,
+            Self::CommWidenAncestorRows => 110,
         }]
     }
 }

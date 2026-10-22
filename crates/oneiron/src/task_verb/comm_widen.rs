@@ -2,10 +2,11 @@
 //! ARCH-0028 :611: "Widening is one signal to the parent, approve-and-stop-
 //! asking." The signal is one durable TASK ask (CALLS W1; ARCH-0079 ask:
 //! "Work goes on while it waits") from the refused child to its dispatch
-//! parent's agent, or for a dispatch with no agent parent to the vault owner,
-//! offering approve and decline. The child asks in its own name, on a short
-//! question it witnesses itself; the question names the reach, never the
-//! refused message.
+//! parent's agent, offering approve and decline, or for a dispatch with no
+//! agent parent to the vault owner, offering the confirm trio: approve once,
+//! approve and stop asking, deny (FIX 10178). The child asks in its own
+//! name, on a short question it witnesses itself; the question names the
+//! reach, never the refused message.
 //!
 //! The answer is the existing `tasks.answer` door (CALLS W2): only the asked
 //! recipient's own word on its own ask moves the request, in the ask's
@@ -30,6 +31,7 @@ use crate::agent_inbox_lens::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;
+use crate::genui::ConsentConfirmOutcome;
 use crate::memory::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
@@ -40,9 +42,31 @@ use crate::{EdgeActorClass, EntityId, Vault};
 const INTENT_PREFIX: &str = "comm_widen/";
 /// The message type of the witnessed question.
 const QUESTION_TYPE: &str = "comm_widen_question";
-/// The two answers a widen ask offers (CALLS W1).
+/// The two answers a widen ask to an agent parent offers (CALLS W1).
 const APPROVE: &str = "approve";
 const DECLINE: &str = "decline";
+/// The confirm trio a widen ask to the owner offers (FIX 10178).
+const APPROVE_ONCE: &str = "approve_once";
+const APPROVE_AND_STOP_ASKING: &str = "approve_and_stop_asking";
+const DENY: &str = "deny";
+
+/// What `option` chose on a widen ask to `recipient`: one of the answers that
+/// ask offers, or `None`. An agent parent's approve is once and its decline
+/// a deny.
+fn widen_choice(recipient: CommWidenRecipient, option: &str) -> Option<ConsentConfirmOutcome> {
+    match (recipient, option) {
+        (CommWidenRecipient::Agent(_), APPROVE) | (CommWidenRecipient::Owner(_), APPROVE_ONCE) => {
+            Some(ConsentConfirmOutcome::ApproveOnce)
+        }
+        (CommWidenRecipient::Owner(_), APPROVE_AND_STOP_ASKING) => {
+            Some(ConsentConfirmOutcome::ApproveAndStopAsking)
+        }
+        (CommWidenRecipient::Agent(_), DECLINE) | (CommWidenRecipient::Owner(_), DENY) => {
+            Some(ConsentConfirmOutcome::Deny)
+        }
+        _ => None,
+    }
+}
 
 /// What one refused send's widen signal did: the reach it asks for, the ask
 /// that carries it, and where it stands.
@@ -151,24 +175,37 @@ fn intent_parts(intent_key: &str) -> Option<(AttemptId, CommReach, EntityId)> {
     (intent_key == self::intent_key(child, needed, turn)).then_some((child, needed, turn))
 }
 
-/// The ask a request's question carries: its recipient, approve or decline,
-/// holding by default.
+/// The ask a request's question carries: its recipient, approve or decline
+/// to an agent parent and the confirm trio to the owner, holding by default.
 fn ask_spec(
     child: AttemptId,
     request: &CommWidenRequest,
     turn: EntityId,
 ) -> MemoryResult<TaskAskSpec> {
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(turn));
-    what.options = BTreeMap::from([
-        (
-            TaskAskOptionId::new(APPROVE)?,
-            format!(
-                "Approve: widen its comm reach to {}",
-                request.needed.as_str()
+    let reach = request.needed.as_str();
+    what.options = match request.recipient {
+        CommWidenRecipient::Owner(_) => BTreeMap::from([
+            (
+                TaskAskOptionId::new(APPROVE_ONCE)?,
+                format!("Approve once: widen this run's comm reach to {reach}"),
             ),
-        ),
-        (TaskAskOptionId::new(DECLINE)?, "Decline".to_owned()),
-    ]);
+            (
+                TaskAskOptionId::new(APPROVE_AND_STOP_ASKING)?,
+                format!(
+                    "Approve and stop asking: widen this run, and the runs it starts, up to {reach}"
+                ),
+            ),
+            (TaskAskOptionId::new(DENY)?, "Deny".to_owned()),
+        ]),
+        CommWidenRecipient::Agent(_) | CommWidenRecipient::Erased => BTreeMap::from([
+            (
+                TaskAskOptionId::new(APPROVE)?,
+                format!("Approve: widen its comm reach to {reach}"),
+            ),
+            (TaskAskOptionId::new(DECLINE)?, "Decline".to_owned()),
+        ]),
+    };
     let who = match request.recipient {
         CommWidenRecipient::Agent(actor_ref) => TaskAssignee::Child { actor_ref },
         CommWidenRecipient::Owner(actor_ref) => TaskAssignee::Human { actor_ref },
@@ -279,7 +316,7 @@ pub(super) fn guard_word(
         || !word
             .option
             .as_ref()
-            .is_some_and(|option| matches!(option.as_str(), APPROVE | DECLINE))
+            .is_some_and(|option| widen_choice(request.recipient, option.as_str()).is_some())
         || request.state != CommWidenState::Pending
         || request.recipient.actor() != Some(actor)
         || source != recipient_source(request.recipient)
@@ -323,20 +360,21 @@ pub(super) fn resolve_answer_in(
                 })
                 .min_by_key(|entry| entry.order)
                 .and_then(|entry| entry.word.option.as_ref())
-                .map(|option| option.as_str() == APPROVE)
+                .and_then(|option| widen_choice(recipient, option.as_str()))
         })
         .flatten();
     let Some(mut record) = comm_widen_in(vault, txn, child)? else {
         return Ok(());
     };
     let moved = match answer {
-        Some(approve) => record.settle(
+        Some(choice) => record.settle(
             id,
-            approve,
+            choice != ConsentConfirmOutcome::Deny,
             CommWidenDecision {
                 by: recipient,
                 at: result.settlement.at,
                 ask: id,
+                choice,
             },
         ),
         None => record.close_round(id),

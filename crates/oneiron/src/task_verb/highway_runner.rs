@@ -250,8 +250,9 @@ pub(crate) fn wake_settled_tasks(vault: &Vault, tasks: &BTreeSet<EntityId>, now:
     }
 }
 
-/// How a runner's queue door settles the try it holds.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How a runner's queue door settles the try it holds. A judged Done carries
+/// its answer's ladder receipt (FIX 10179), so it is moved, never copied.
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum RunnerSettle<'a> {
     /// The try finished. Its row's result, when it names a durable entity,
     /// is the TASK's result; without one no TASK report is made.

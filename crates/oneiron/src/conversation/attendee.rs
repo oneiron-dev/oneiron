@@ -194,9 +194,14 @@ impl Memory<'_> {
         event: &ContainerAttendeeEvent,
         ask: EntryAsk,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
+        // The identity ask is admitted in the entry's own writer, so the
+        // task-work turn it needs is taken here, before any transaction.
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().attendee_entered(event, ask);
+        }
         let vault = self.vault();
         let writer = WriteActor::new(self.actor(), self.actor_class());
-        let pending = self.with_verified_actor_write_txn(|txn| {
+        self.with_verified_actor_write_txn(|txn| {
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through
             // its roster, and a speaker enters it asked nothing.
@@ -208,14 +213,14 @@ impl Memory<'_> {
             )?
             .is_some();
             if project && matches!(event.attendee, ContainerAttendee::Person(_)) {
-                return Ok(None);
+                return Ok(Ok(None));
             }
             if let ContainerAttendee::Person(person) = &event.attendee
                 && vault
                     .ever_members_in_txn(txn, event.container)?
                     .contains(person)
             {
-                return Ok(None);
+                return Ok(Ok(None));
             }
             let admit = match (ask, project) {
                 (EntryAsk::Identity, false) => crate::task_verb::admit_attendee_entry_in_txn,
@@ -235,29 +240,60 @@ impl Memory<'_> {
                 )?;
             }
             let decided = entry_decided_in(vault, txn, &admitted.entry_ref)?;
-            Ok((admitted.ask_pending && !decided).then_some(admitted.fact))
-        })?;
-        let Some(fact) = pending else {
-            return Ok(None);
-        };
+            if !admitted.ask_pending || decided {
+                return Ok(Ok(None));
+            }
+            // The ask commits with the entry (FIX 10172). Its failure is
+            // the ask's alone: the entry commits pending, as an entry whose
+            // ask was never admitted, for the next call to raise.
+            Ok(self.compose_entry_ask_in_savepoint(txn, admitted.entry_ref, &admitted.fact))
+        })?
+    }
+
+    /// Admits `fact`'s "who is this?" ask in a savepoint of the entry's
+    /// writer: its CLAIM, its question and its ask land together or not at
+    /// all, and never take the entry with them. A failure is logged by the
+    /// entry's id alone and answered to the caller after the entry commits.
+    fn compose_entry_ask_in_savepoint(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entry_ref: EntityId,
+        fact: &AttendeeEntryFact,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
         let ContainerAttendee::Speaker {
             session_key,
             speaker_key,
-        } = fact.attendee
+        } = &fact.attendee
         else {
             return Ok(None);
         };
-        // After the entry commits: the ask door opens its own writer, and a
-        // failure here leaves the entry pending for the next call to raise.
-        self.raise_unknown_attendee_ask(&UnknownAttendeeAsk {
-            session_key,
-            speaker_key,
+        let ask = UnknownAttendeeAsk {
+            session_key: session_key.clone(),
+            speaker_key: speaker_key.clone(),
             roster_revision: fact.roster_revision,
             trigger_turn: fact.trigger_turn,
-            candidates: fact.candidates,
+            candidates: fact.candidates.clone(),
             until: fact.until,
-        })
-        .map(Some)
+        };
+        let composed: MemoryResult<TaskAskReceipt> = self
+            .vault()
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(|error| crate::memory::MemoryError::from(crate::Error::from(error)))
+            .and_then(|mut savepoint| {
+                let spec = self.unknown_attendee_ask_spec_in_txn(&mut savepoint, &ask)?;
+                let receipt = self.compose_attendee_entry_ask_in_txn(&mut savepoint, &spec)?;
+                savepoint.commit().map_err(crate::Error::from)?;
+                Ok(receipt)
+            });
+        if composed.is_err() {
+            tracing::warn!(
+                entry = %entry_ref.to_hex(),
+                "an attendee entry's identity ask was not admitted; the entry stays pending"
+            );
+        }
+        composed.map(Some)
     }
 
     /// Records the entry into `container`, the committed room its voice

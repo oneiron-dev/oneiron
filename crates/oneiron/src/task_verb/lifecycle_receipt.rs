@@ -17,7 +17,9 @@
 //! the write that settled the TASK a replayed Done names (FIX 3272), and by
 //! time alone, which a receipt query reads newest first (FIX 3271).
 //!
-//! The receipt is narrative, not authority: no gate or proof reads it.
+//! The receipt is narrative, not authority: no gate or proof reads it, save
+//! the one row the engine keeps for itself, a consult interruption's frozen
+//! consent case (FIX 9742), which only the engine writes and reads back.
 
 use std::ops::Bound;
 
@@ -250,6 +252,16 @@ pub(super) fn replayed_in(
     id: String,
 ) -> MemoryResult<Option<String>> {
     Ok(RECEIPTS.contains(&vault.store, txn, &id)?.then_some(id))
+}
+
+/// The row kept under `id`, as it was kept, read in `txn`: for a record the
+/// engine keeps for itself and reads back (FIX 9742). `None` when none is.
+pub(super) fn kept_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &str,
+) -> MemoryResult<Option<ReceiptRecord>> {
+    Ok(RECEIPTS.get(&vault.store, txn, &id.to_owned())?)
 }
 
 /// [`replayed_in`] in a read of its own.

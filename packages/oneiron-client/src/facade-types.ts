@@ -677,7 +677,7 @@ export type Criterion = { text: string; evidence_ref?: EntityId | null }
 /** `oneiron_browser::ExpectInput` */
 export type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; secret?: string | null; absent?: boolean }
 /** `oneiron::task_verb::brief::DoneMeans` */
-export type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[] }
+export type DoneMeans = { question: string; yes_if_all?: Criterion[]; no_if_any?: Criterion[]; outcome_binding?: OutcomeBinding | null; browser_checks?: ExpectInput[]; strict_verified_reuse?: boolean }
 /** `oneiron::task_verb::brief::EscalationTrigger` */
 export type EscalationTrigger = "blocked" | "criteria_unmet" | "scope_widen" | "spend_over" | "deadline" | "brief_revised" | "retry_requested"
 /** `oneiron::llm::decision::policy::Reversibility` */

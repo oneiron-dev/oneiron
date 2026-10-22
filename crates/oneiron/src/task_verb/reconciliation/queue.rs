@@ -82,13 +82,21 @@ impl Vault {
             )?;
             return Ok(None);
         }
-        record_task_create(
+        // The vault's fan-out policy row names the threshold this create's
+        // own_rate_burst check is recorded at (FIX 10187); a conflict names
+        // no project or thread, so the vault scope's row answers. One that
+        // does not read keeps the shipped 10 per 60 s. A crossing is a check
+        // on its creator, never a refusal.
+        let create_rate = super::super::consult_fanout_store::policy_in(
             self,
             txn,
-            creator,
-            self.now_recorded_at(),
-            TaskCreateRateLimit::default(),
-        )?;
+            &super::super::ConsultFanOutScope::default(),
+        )
+        .map_or_else(
+            |_| TaskCreateRateLimit::default(),
+            |resolved| resolved.policy.create_rate,
+        );
+        record_task_create(self, txn, creator, self.now_recorded_at(), create_rate)?;
         mint_reconciliation_task_in_txn(self, txn, conflict, creator, class, now).map(Some)
     }
 }

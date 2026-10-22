@@ -62,9 +62,15 @@ pub(super) fn check_disclosure(
             spec.class.as_ref().and_then(|row| row.guest_fact_limit),
         )
         .ok_or_else(invalid)?;
-    if refs.len() > cap {
-        return Err(invalid());
-    }
+    // The resolved class or holder limit is where this ask's disclosure is
+    // observed (FIX 10173), never refused: every exact ref is kept.
+    let mut disclosed = crate::scan_check::ScanCount::start_at(
+        crate::scan_check::EngineScan::GuestDisclosureRefs,
+        person.as_bytes(),
+        u64::try_from(cap).unwrap_or(u64::MAX),
+    );
+    disclosed.rows(refs.len());
+    disclosed.defer(&vault.store);
     if refs.is_empty() || guest.companion_ref == person || guest.companion_ref == asker {
         return Err(invalid());
     }
@@ -190,6 +196,17 @@ pub(super) fn mint_guest_grants(
     if let Some(TaskAskTarget::Guests(guests)) = &effective.who {
         for (person, guest) in guests {
             let refs = check_disclosure(vault, txn, *person, asker, guest, effective)?;
+            // The guest grant keeps every disclosed ref; its old storage
+            // bound is observed where the grant is minted (FIX 10173).
+            if let Ok(mut count) = crate::scan_check::ScanCount::start(
+                &vault.store,
+                txn,
+                crate::scan_check::EngineScan::GuestGrantDisclosedRefs,
+                group_ref.as_bytes(),
+            ) {
+                count.rows(refs.len());
+                count.defer(&vault.store);
+            }
             let grant = crate::federation::FederationGrant::ask_guest(
                 group_ref,
                 guest.companion_ref,
