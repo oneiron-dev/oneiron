@@ -21,6 +21,26 @@ pub(crate) fn mcp_call_in_scope() -> bool {
     CALLER.try_with(|_| ()).is_ok()
 }
 
+/// The agent this MCP call's verified credential registered (FIX 7608
+/// 2b-ii, ASK 1 addition), read before any blocking work: `None` off an
+/// MCP call, before the gateway attached its proof, and for every caller
+/// that is not a registered agent, so the owner's own identity is never
+/// offered as an agent's. A call with `None` still reads masked
+/// ([`mcp_call_in_scope`]).
+#[allow(
+    dead_code,
+    reason = "FIX 7608 2b-ii-A: the repo doors bind it in 2b-ii-B"
+)]
+pub(crate) fn mcp_call_recipient() -> Option<oneiron::memory::RepoRevealRecipient> {
+    CALLER
+        .try_with(|caller| {
+            (caller.auth.is_some() && caller.actor_class == oneiron::EdgeActorClass::Agent)
+                .then(|| oneiron::memory::RepoRevealRecipient::proven_agent(caller.actor_ref))
+        })
+        .ok()
+        .flatten()
+}
+
 /// `None` means this is not an MCP call: the facade binds its own credential
 /// door. A present but different credential is refused, never downgraded.
 pub(crate) fn skill_execution_door(

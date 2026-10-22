@@ -311,12 +311,15 @@ impl Memory<'_> {
         let proposed = if CLOSED_GATE_EXPORT_WAITS && !export.authoritative && !export.outcome.noop
         {
             let made_by = self.body_made_by(input.made_by.as_ref(), "office_body.deck_export")?;
+            // A named envelope is admitted through this handle's lane as it
+            // waits (FIX 1229); the body's own names only its writer.
+            let named = input.made_by.as_ref().is_some_and(|value| !value.is_null());
             Some(self.vault().propose_pptx_export(
                 &artifact,
                 &export,
                 &input.run_ref,
-                self.body_actor(),
-                &made_by,
+                (self.body_actor(), &made_by),
+                self.made_by_reader(named.then_some(&made_by))?,
             )?)
         } else {
             None

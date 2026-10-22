@@ -4070,6 +4070,7 @@ class WeaveItemViewAgentHealth(TypedDict):
     item: Literal["agent_health"]
     card_ref: str
     card: AgentHealthCard
+    draft_erased: NotRequired[bool]
 class WeaveItemViewSieveAudit(TypedDict):
     item: Literal["sieve_audit"]
     attempt_ref: str
