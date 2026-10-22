@@ -39,7 +39,7 @@ pub(crate) fn flag(tree: &XmlTree, at: usize, name: &str) -> Option<bool> {
 /// One plot's settings as its plot element holds them, the `nth` plot of
 /// `kind`: only those `kind` holds.
 pub(crate) fn plot(tree: &XmlTree, kind: ChartKind, nth: u32, at: usize) -> ChartPlot {
-    let read = ChartPlot {
+    let mut read = ChartPlot {
         bar_dir: val(tree, at, "barDir").and_then(BarDirection::parse),
         grouping: val(tree, at, "grouping").and_then(PlotGrouping::parse),
         shape: val(tree, at, "shape").and_then(BarShape::parse),
@@ -50,6 +50,7 @@ pub(crate) fn plot(tree: &XmlTree, kind: ChartKind, nth: u32, at: usize) -> Char
         size_represents: val(tree, at, "sizeRepresents").and_then(SizeRepresents::parse),
         ..ChartPlot::new(kind, nth)
     };
+    super::special::read(tree, kind, at, &mut read);
     read.fit(kind, nth).0
 }
 

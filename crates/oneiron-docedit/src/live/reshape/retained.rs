@@ -34,7 +34,7 @@ fn order(kind: ChartKind) -> &'static [&'static str] {
             "shape",
             "extLst",
         ],
-        ChartKind::Line | ChartKind::Line3D | ChartKind::Scatter => &[
+        ChartKind::Line | ChartKind::Line3D | ChartKind::Scatter | ChartKind::Stock => &[
             "idx",
             "order",
             "tx",
@@ -49,7 +49,7 @@ fn order(kind: ChartKind) -> &'static [&'static str] {
             "smooth",
             "extLst",
         ],
-        ChartKind::Pie | ChartKind::Pie3D | ChartKind::Doughnut => &[
+        ChartKind::Pie | ChartKind::Pie3D | ChartKind::Doughnut | ChartKind::OfPie => &[
             "idx",
             "order",
             "tx",
@@ -94,6 +94,9 @@ fn order(kind: ChartKind) -> &'static [&'static str] {
             "bubble3D",
             "extLst",
         ],
+        ChartKind::Surface | ChartKind::Surface3D => {
+            &["idx", "order", "tx", "spPr", "cat", "val", "extLst"]
+        }
     }
 }
 
@@ -142,13 +145,15 @@ fn alias(name: &str) -> &str {
 }
 
 /// What a surviving series writes: its name, its category (or x) slot and
-/// value slot, a bubble series' size slot, and its 3D bubble setting.
+/// value slot, a bubble series' size slot, its 3D bubble setting, and the
+/// line and marker it takes on entering a stock plot.
 pub(super) struct Slots<'a> {
     pub(super) tx: &'a str,
     pub(super) cat: &'a str,
     pub(super) val: &'a str,
     pub(super) size: &'a str,
     pub(super) bubble_3d: Option<bool>,
+    pub(super) stock: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 /// The survivor `ser`, drawn in a `from` plot, written as a series of a
@@ -188,8 +193,19 @@ pub(super) fn retained(
             entries.push(("bubble3D", flag("bubble3D", bit(on)).into_bytes()));
         }
     }
+    // A surface series holds no point formatting or labels.
+    let holds = |name: &str| order(to).contains(&name);
     if xml::child(tree, ser, C, "dPt").is_some() {
-        entries.push(("dPt", carried(bytes, tree, &node.children, "dPt", points)));
+        let points = if holds("dPt") {
+            carried(bytes, tree, &node.children, "dPt", points)
+        } else {
+            Vec::new()
+        };
+        entries.push(("dPt", points));
+    }
+    let labels = xml::child(tree, ser, C, "dLbls");
+    if labels.is_some() && !holds("dLbls") {
+        entries.push(("dLbls", Vec::new()));
     }
     if from != to {
         for name in FAMILY_ONLY {
@@ -197,6 +213,15 @@ pub(super) fn retained(
                 entries.push((*name, Vec::new()));
             }
         }
+    }
+    // A series entering a stock plot draws no line and no marker but on its
+    // close; one leaving it takes its new plot's own again.
+    if let Some((line, marker)) = &slots.stock {
+        entries.push(("spPr", line.clone()));
+        entries.push(("marker", marker.clone()));
+    } else if from == ChartKind::Stock && to != ChartKind::Stock {
+        entries.push(("spPr", Vec::new()));
+        entries.push(("marker", Vec::new()));
     }
     let mut splices = written(bytes, tree, ser, order(to), &entries, alias);
     for (name, value) in [("idx", idx), ("order", place)] {
@@ -209,7 +234,7 @@ pub(super) fn retained(
             ));
         }
     }
-    if let Some(labels) = xml::child(tree, ser, C, "dLbls").filter(|&at| !tree.nodes[at].empty) {
+    if let Some(labels) = labels.filter(|&at| holds("dLbls") && !tree.nodes[at].empty) {
         let mut inner = vec![(
             "dLbl",
             carried(bytes, tree, &tree.nodes[labels].children, "dLbl", points),

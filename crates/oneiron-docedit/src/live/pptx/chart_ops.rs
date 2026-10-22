@@ -459,6 +459,32 @@ pub(super) fn lower_chart(
             });
         }
     }
+    // A stock plot's prices follow the series this lowering named anew.
+    let renamed: Vec<(NodeId, NodeId)> = series
+        .iter()
+        .zip(&lines)
+        .filter_map(|(line, now)| Some((line.id?, now.id?)))
+        .filter(|(was, now)| was != now && !wanted_ids.contains(was))
+        .collect();
+    for plot in plots {
+        let Some(mut roles) = plot.stock else {
+            continue;
+        };
+        let mut moved = false;
+        for slot in roles.slots_mut() {
+            if let Some(&(_, now)) = renamed.iter().find(|(was, _)| *slot == Some(*was)) {
+                *slot = Some(now);
+                moved = true;
+            }
+        }
+        if moved {
+            let plot = ChartPlot {
+                stock: Some(roles),
+                ..plot.clone()
+            };
+            emit(ChartEdit::SetPlot { plot }, &mut scratch, &mut edits, mint);
+        }
+    }
     edits
 }
 

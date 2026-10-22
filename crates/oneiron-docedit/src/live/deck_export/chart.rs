@@ -6,7 +6,7 @@
 
 use super::{CHART_EXTENT, Work};
 use crate::design_plan::{Cell, Column, ColumnKind, Dataset, Rect};
-use crate::edit::xml::next_part;
+use crate::edit::xml::{self, next_part};
 use crate::live::LiveError;
 use crate::live::held;
 use crate::live::pptx::{
@@ -107,7 +107,7 @@ pub(super) fn project(
     payload: &NodePayload,
 ) -> Result<(), LiveError> {
     let payload = &payload.drawn();
-    let NodePayload::Chart { source, .. } = payload else {
+    let NodePayload::Chart { source, plots, .. } = payload else {
         return Err(LiveError::Invalid(WRITTEN_FRAME));
     };
     let unbound = SeriesBinding::default();
@@ -125,8 +125,16 @@ pub(super) fn project(
     // Data that lived outside the chart's own workbook moves into a
     // new one, as PowerPoint's Edit Data embeds it.
     let moved = matches!(&have, NodePayload::Chart { source: from, .. } if from != source);
+    // A stock plot's prices and an of-pie plot's custom split, by identity
+    // through the binding: a change to either rewrites the chart whole.
+    let named = !plots
+        .iter()
+        .any(|plot| plot.stock.is_some() || plot.custom_split.is_some())
+        || xml::read(&work.package, &chart)
+            .is_ok_and(|(_, tree)| held::same_named(&tree, bound, plots));
     if moved
         || !same_ids
+        || !named
         || !reshape::same_data(&have, payload)
         || !reshape::same_settings(&have, payload)
     {
@@ -135,6 +143,7 @@ pub(super) fn project(
         // sequence or a refused write rewrites the chart whole.
         let in_place = !moved
             && same_ids
+            && named
             && reshape::plan(&work.package, &chart, &have, payload).is_some_and(|writes| {
                 writes.iter().all(|(series, target, values)| {
                     native_patch(

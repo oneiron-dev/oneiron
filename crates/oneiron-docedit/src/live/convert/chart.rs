@@ -1,6 +1,9 @@
 //! A chart payload settled into the form its export writes (OF-510): the
 //! plots Change Chart Type lays out, categories and x values turned between
-//! category and scatter series, and where the data lives.
+//! category and scatter series, stock prices, surface heights and of-pie
+//! splits ([`special`]), and where the data lives.
+
+mod special;
 
 use crate::design_plan::Cell;
 use crate::live::LiveError;
@@ -360,7 +363,7 @@ pub(in crate::live) fn settle_chart(
         Some(_) => return Err(LiveError::Invalid(WRITTEN_FRAME)),
     };
     let mut done = Vec::new();
-    let resolved: Vec<ChartKind> = series
+    let mut resolved: Vec<ChartKind> = series
         .iter()
         .map(|line| line.family.unwrap_or(*family))
         .collect();
@@ -370,7 +373,27 @@ pub(in crate::live) fn settle_chart(
         .iter()
         .map(|line| line.id.and_then(|id| own.get(&id).copied()))
         .collect();
-    let (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
+    let (mut targets, mut assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
+    // Each stock plot's prices bind its series by identity; a series no
+    // price takes is drawn as a line on the stock plot's axes (Engine
+    // ruling 10-22).
+    let held_settings: &[ChartPlot] = match was {
+        Some(NodePayload::Chart { plots, .. }) => plots.as_slice(),
+        _ => &[],
+    };
+    let stock = special::stock(
+        settings,
+        held_settings,
+        series,
+        (&targets, &assign),
+        &mut done,
+    );
+    if !stock.moved.is_empty() {
+        for &index in &stock.moved {
+            resolved[index] = ChartKind::Line;
+        }
+        (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
+    }
     if was.is_some() {
         for target in &targets {
             match target.held {
@@ -394,8 +417,9 @@ pub(in crate::live) fn settle_chart(
     }
     let combo = targets.len() > 1;
     let first = targets.first().map_or(*family, |target| target.kind);
+    // Plot by plot; a stock plot's series in its price order.
     let mut order: Vec<usize> = (0..series.len()).collect();
-    order.sort_by_key(|&index| assign[index]);
+    order.sort_by_key(|&index| (assign[index], stock.rank(series[index].id)));
     if order.iter().enumerate().any(|(at, &index)| at != index) {
         done.push(Conversion::SeriesRegrouped);
     }
@@ -414,8 +438,18 @@ pub(in crate::live) fn settle_chart(
     };
     let mut categories = categories.clone();
     settle_categories(&mut categories, &mut lines, &kinds, any_category, &mut done);
+    special::align_surfaces(&mut categories, &mut lines, &kinds, &mut done);
     settle_sizes(was, &mut lines, &kinds, &mut done);
-    let settings = settle_plots(&plots, &targets, settings, &mut done);
+    let mut settings = settle_plots(&plots, &targets, settings, &mut done);
+    stock.apply(&mut settings);
+    let line_targets: Vec<usize> = order.iter().map(|&index| assign[index]).collect();
+    special::settle_splits(
+        &mut settings,
+        &categories,
+        &lines,
+        (&targets, &line_targets),
+        &mut done,
+    );
     // A chart turned 3D with no view takes its first 3D plot's default.
     let turned = was.is_none() || !plots.iter().any(|(kind, _)| kind.is_3d());
     let view = match targets.iter().find(|target| target.kind.is_3d()) {
