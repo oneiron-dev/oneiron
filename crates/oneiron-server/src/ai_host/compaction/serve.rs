@@ -74,6 +74,7 @@ impl ServedCompactionBackend {
                 serde_json::json!(output_tokens(request.summary_token_budget)),
             )]),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         }
     }
 }

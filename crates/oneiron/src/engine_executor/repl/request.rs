@@ -248,6 +248,7 @@ impl EngineNativeExecutor<'_> {
             tools: Vec::new(),
             params: BTreeMap::new(),
             provider_options: BTreeMap::new(),
+            host_segments: None,
         };
         if let Some(seat) = self.seat {
             seat.bind(&mut request);
