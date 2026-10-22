@@ -2,7 +2,9 @@
 //!
 //! ApprovalRequired is a projection of existing identity-stamped held-send
 //! receipts. No mailbox, renderer, or independent approval store is created.
-//! Concern rows are the Coach's open agent-health cards (OF-568).
+//! Concern rows are the Coach's open agent-health cards (OF-568). Digest
+//! rows are the digest notifications already addressed to the agent (FIX
+//! 1261); no channel identity carries them.
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
@@ -27,6 +29,10 @@ pub enum AgentInboxItemKind {
     /// An agent-health card (ARCH-0063 concern cards): under "Waiting on
     /// you" with its own mark, grouped per agent by its subject.
     Concern,
+    /// A digest NOTIFICATION addressed to this agent alone and not yet
+    /// acknowledged (FIX 1261): under updates, at the lowest impact. The
+    /// vault itself sent it, so no identity carries it.
+    Digest,
 }
 
 /// What a concern row is about: the agent the card is on, its signal and
@@ -49,10 +55,12 @@ pub struct AgentInboxDiaryReview {
     pub reason: String,
 }
 
-/// One receiving identity on a row and the actor it is bound to.
+/// One receiving identity on a row and the actor it is bound to. `None` is
+/// no identity: a row the vault itself addresses to the actor, such as a
+/// digest, arrives on none, and none is invented for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AgentInboxParticipant {
-    pub identity_ref: EntityId,
+    pub identity_ref: Option<EntityId>,
     pub actor_ref: EntityId,
 }
 
@@ -61,8 +69,9 @@ pub struct AgentInboxLensItem {
     pub item_id: String,
     pub kind: AgentInboxItemKind,
     pub thread_ref: Option<String>,
-    /// The identity, actor and facet of the row's newest entry.
-    pub identity_ref: EntityId,
+    /// The identity, actor and facet of the row's newest entry. No identity
+    /// carries a row the vault itself sent.
+    pub identity_ref: Option<EntityId>,
     pub actor_ref: EntityId,
     pub facet_ref: Option<EntityId>,
     /// Every identity the row speaks for, sorted. A conversation row lists
@@ -77,6 +86,12 @@ pub struct AgentInboxLensItem {
     pub concern: Option<AgentInboxConcern>,
     /// Present exactly on a pending diary-read review's row.
     pub diary_review: Option<AgentInboxDiaryReview>,
+    /// FIX 9745: who the row is from, the author of its newest inbound
+    /// message whose routing admitted a known counterparty. `None` where no
+    /// inbound message carries admitted provenance; never invented.
+    pub sender: Option<EntityId>,
+    /// FIX 3901: the widening a comm widen ask's row asks for.
+    pub widening: Option<crate::context_board::ConsultWidening>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,8 +116,8 @@ impl Vault {
 
     pub fn agent_inbox_lens(&self, query: AgentInboxLensQuery) -> Result<Vec<AgentInboxLensItem>> {
         let wanted = query.identity_ref;
-        self.agent_inbox_view(&query, |row| {
-            wanted.is_none_or(|wanted| wanted == row.identity_ref)
+        self.agent_inbox_view(&query, None, |row| {
+            wanted.is_none_or(|wanted| row.identity_ref == Some(wanted))
         })
     }
 
@@ -120,31 +135,37 @@ impl Vault {
             limit,
             before,
         };
-        self.agent_inbox_view(&query, |row| row.actor_ref == actor)
+        self.agent_inbox_view(&query, Some(actor), |row| row.actor_ref == actor)
     }
 
     /// The actor's own slice, optionally narrowed to a receiving identity.
-    /// Keep both constraints in the existing fold, before paging.
+    /// Keep both constraints in the existing fold, before paging. Its digests
+    /// join only when `own` says the actor reads its own slice: no other
+    /// reader, the vault's owner included, reads an actor's digests.
     pub fn agent_identity_inbox_slice(
         &self,
         actor: EntityId,
         identity: Option<EntityId>,
         limit: usize,
         before: Option<(InboxImpact, u64, String)>,
+        own: bool,
     ) -> Result<Vec<AgentInboxLensItem>> {
         let query = AgentInboxLensQuery {
             identity_ref: None,
             limit,
             before,
         };
-        self.agent_inbox_view(&query, |row| {
-            row.actor_ref == actor && identity.is_none_or(|id| row.identity_ref == id)
+        self.agent_inbox_view(&query, own.then_some(actor), |row| {
+            row.actor_ref == actor && identity.is_none_or(|id| row.identity_ref == Some(id))
         })
     }
 
+    /// The lens rows `keep` admits. `digests_for` names the one actor whose
+    /// own digests join; none join without it.
     fn agent_inbox_view(
         &self,
         query: &AgentInboxLensQuery,
+        digests_for: Option<EntityId>,
         keep: impl Fn(&AgentInboxParticipant) -> bool,
     ) -> Result<Vec<AgentInboxLensItem>> {
         if query.limit == 0 {
@@ -185,11 +206,83 @@ impl Vault {
         // A widen proposal waiting on its board's owner (OF-568).
         items.extend(crate::agent_dispatch::widen_doors::widen_inbox_items(self)?);
         items.extend(crate::actor_claims::craft_candidate_inbox_items(self)?);
+        // A comm widen ask waiting on its recipient (FIX 3901).
+        items.extend(self.comm_widen_inbox_items()?);
+        if let Some(recipient) = digests_for {
+            items.extend(self.digest_inbox_items(recipient)?);
+        }
         // Filter after folding, so a filtered conversation still names every
         // identity on its thread.
         let mut items = fold_threads(items);
         items.retain(|item| item.participants.iter().any(&keep));
         sort_page(&mut items, query);
+        Ok(items)
+    }
+
+    /// The digests addressed to `recipient` alone that it has not yet
+    /// acknowledged (FIX 1261): the Digest NOTIFICATIONs weave already
+    /// writes for it, read off the notification index in full, one row each
+    /// at the lowest impact. The row names its NOTIFICATION; no identity
+    /// carries it. A body that does not decode makes no row.
+    fn digest_inbox_items(&self, recipient: EntityId) -> Result<Vec<AgentInboxLensItem>> {
+        const PAGE: usize = 256;
+        let caller = recipient.to_hex();
+        let mut items = Vec::new();
+        let mut after: Option<EntityId> = None;
+        loop {
+            let ids = self.entities_by_type_page(
+                crate::registry::ENTITY_TYPE_NOTIFICATION,
+                after.as_ref(),
+                PAGE,
+            )?;
+            let Some(last) = ids.last().copied() else {
+                break;
+            };
+            let txn = self.store.env.read_txn()?;
+            for id in &ids {
+                let crate::vault::LiveEntityRow::Live { entity_type, body } =
+                    crate::vault::live_entity_row_in_txn(&self.store, &txn, id)?
+                else {
+                    continue;
+                };
+                if entity_type != crate::registry::ENTITY_TYPE_NOTIFICATION {
+                    continue;
+                }
+                let Ok(body) = crate::inbox::decode_notification_body(&body) else {
+                    continue;
+                };
+                if body.kind != crate::inbox::NotificationKind::Digest
+                    || body.recipient.as_deref() != Some(caller.as_str())
+                    || body.acked_by.get(&caller) == Some(&true)
+                {
+                    continue;
+                }
+                items.push(AgentInboxLensItem {
+                    item_id: format!("digest:{}", id.to_hex()),
+                    kind: AgentInboxItemKind::Digest,
+                    thread_ref: None,
+                    identity_ref: None,
+                    actor_ref: recipient,
+                    facet_ref: None,
+                    participants: vec![AgentInboxParticipant {
+                        identity_ref: None,
+                        actor_ref: recipient,
+                    }],
+                    impact: InboxImpact(0),
+                    occurred_at: body.created_at,
+                    receipt_ref: None,
+                    payload_ref: Some(id.to_hex()),
+                    concern: None,
+                    diary_review: None,
+                    sender: None,
+                    widening: None,
+                });
+            }
+            if ids.len() < PAGE {
+                break;
+            }
+            after = Some(last);
+        }
         Ok(items)
     }
 }
@@ -201,6 +294,8 @@ impl Vault {
 fn fold_threads(items: Vec<AgentInboxLensItem>) -> Vec<AgentInboxLensItem> {
     let mut out = Vec::new();
     let mut threads: BTreeMap<String, AgentInboxLensItem> = BTreeMap::new();
+    // FIX 9745: each thread's sender, from its newest entry that has one.
+    let mut senders: BTreeMap<String, ((u64, String), EntityId)> = BTreeMap::new();
     for item in items {
         let thread = match &item.thread_ref {
             Some(thread) if item.kind != AgentInboxItemKind::ApprovalRequired => thread.clone(),
@@ -209,6 +304,19 @@ fn fold_threads(items: Vec<AgentInboxLensItem>) -> Vec<AgentInboxLensItem> {
                 continue;
             }
         };
+        if let Some(sender) = item.sender {
+            let stamp = (item.occurred_at, item.item_id.clone());
+            match senders.entry(thread.clone()) {
+                Entry::Vacant(slot) => {
+                    slot.insert((stamp, sender));
+                }
+                Entry::Occupied(mut slot) => {
+                    if stamp > slot.get().0 {
+                        slot.insert((stamp, sender));
+                    }
+                }
+            }
+        }
         let row = match threads.entry(thread) {
             Entry::Vacant(slot) => {
                 slot.insert(item);
@@ -229,6 +337,7 @@ fn fold_threads(items: Vec<AgentInboxLensItem>) -> Vec<AgentInboxLensItem> {
         }
     }
     for (thread, mut row) in threads {
+        row.sender = senders.remove(&thread).map(|(_, sender)| sender);
         row.participants.sort();
         row.participants.dedup();
         row.kind = AgentInboxItemKind::Conversation;
@@ -333,10 +442,10 @@ fn project_receipts(
                 AgentInboxItemKind::CoordinationUpdate
             },
             thread_ref: receipt.fields.get("thread_ref").cloned(),
-            identity_ref,
+            identity_ref: Some(identity_ref),
             actor_ref,
             participants: vec![AgentInboxParticipant {
-                identity_ref,
+                identity_ref: Some(identity_ref),
                 actor_ref,
             }],
             facet_ref: receipt
@@ -354,6 +463,8 @@ fn project_receipts(
                 .cloned(),
             concern: None,
             diary_review: None,
+            sender: None,
+            widening: None,
         });
     }
     sort_page(&mut items, &query);
