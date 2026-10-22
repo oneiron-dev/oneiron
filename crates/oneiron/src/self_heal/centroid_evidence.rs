@@ -13,12 +13,15 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::learning_setting::{SettingSpec, setting_value};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::{ResponseFamily, ResponseRead};
 use crate::{EntityId, Error, Result, Vault, store::RetrievalRunRecord};
 use serde::{Deserialize, Serialize};
 
 mod erase;
-pub(crate) use erase::erase_centroid_source_in_txn;
 pub(super) use erase::run_sources;
+pub(crate) use erase::{
+    centroid_evidence_carriage, centroid_evidence_owners, erase_centroid_source_in_txn,
+};
 
 const EVIDENCE: SideTable<[u8; 32], CentroidEvidence, Named> =
     SideTable::new(&side_table::SELF_HEAL_CENTROID_EVIDENCE);
@@ -91,15 +94,23 @@ pub(crate) fn snapshot_live_in_txn(
     let Some(raw) = EVIDENCE.get_bytes(store, txn, hash)? else {
         return Ok(false);
     };
-    if blake3::hash(&raw).as_bytes() != hash {
+    // A snapshot an erase retired from an image lands as its erased marker.
+    let ResponseRead::Present(raw) = ResponseRead::of(
+        ResponseFamily::CentroidEvidence,
+        &EVIDENCE.key_bytes(hash),
+        &raw,
+    ) else {
+        return Ok(false);
+    };
+    if blake3::hash(raw).as_bytes() != hash {
         return Ok(false);
     }
     let evidence: CentroidEvidence =
-        rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
+        rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
     let canonical = rmp_serde::to_vec_named(&evidence)
         .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
     Ok(evidence.version == 1
-        && raw == canonical
+        && raw == canonical.as_slice()
         && erase::erased_source_in_txn(store, txn, &evidence.sources())?.is_none())
 }
 
@@ -391,14 +402,22 @@ impl Vault {
                 },
             );
         };
-        if *blake3::hash(&raw).as_bytes() != event.replay.content_hash {
+        // A snapshot an erase retired from an image lands as its erased
+        // marker: unavailable, as a dropped one is.
+        let key = EVIDENCE.key_bytes(&event.replay.content_hash);
+        let ResponseRead::Present(raw) =
+            ResponseRead::of(ResponseFamily::CentroidEvidence, &key, &raw)
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        if *blake3::hash(raw).as_bytes() != event.replay.content_hash {
             return Err(Error::CorruptedIndex("centroid evidence hash"));
         }
-        let evidence: CentroidEvidence = rmp_serde::from_slice(&raw)
+        let evidence: CentroidEvidence = rmp_serde::from_slice(raw)
             .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
         let canonical = rmp_serde::to_vec_named(&evidence)
             .map_err(|_| Error::CorruptedIndex("centroid evidence body"))?;
-        if evidence.version != 1 || raw != canonical {
+        if evidence.version != 1 || raw != canonical.as_slice() {
             return Err(Error::CorruptedIndex("centroid evidence canonical form"));
         }
         if erase::erased_source_in_txn(&self.store, &txn, &evidence.sources())?.is_some() {

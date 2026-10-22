@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 use super::{CentroidEvidence, EVIDENCE};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::store::{RetrievalRunRecord, Store};
+use crate::store::{ResponseCarriage, ResponseScan, RetrievalRunRecord, Store};
 use crate::{EntityId, Result, Vault};
 
 impl CentroidEvidence {
@@ -56,6 +56,36 @@ pub(in crate::self_heal) fn run_sources(run: &RetrievalRunRecord) -> BTreeSet<[u
         }
     }
     sources
+}
+
+/// What a checkpoint carries of the snapshot row `value`: the whole row,
+/// and nothing once retired (its retirement drops the row, in images and
+/// live alike). A row that does not decode is carried whole as an opaque
+/// response.
+pub(crate) fn centroid_evidence_carriage(value: &[u8]) -> ResponseScan {
+    if EVIDENCE.decode_value(value).is_err() {
+        return ResponseScan::opaque_row();
+    }
+    ResponseScan::Decoded(ResponseCarriage {
+        keep: 0,
+        stub: Vec::new(),
+        retired: 0,
+    })
+}
+
+/// Who owns the snapshot row `value`: every source it copied, so any one's
+/// erase retires every image's copy; none for a row that does not decode.
+pub(crate) fn centroid_evidence_owners(value: &[u8]) -> Vec<EntityId> {
+    EVIDENCE
+        .decode_value(value)
+        .map(|evidence| {
+            evidence
+                .sources()
+                .into_iter()
+                .filter_map(|source| EntityId::from_bytes(source).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The first of `sources` erased in `txn`, by its permanent hard-delete
