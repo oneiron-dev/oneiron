@@ -11418,6 +11418,12 @@ pub struct CampaignEnrollRequest {
 pub enum CampaignEnrollmentState {
     #[serde(rename = "enrolled")]
     Enrolled,
+    #[serde(rename = "paused")]
+    Paused,
+    #[serde(rename = "exited")]
+    Exited,
+    #[serde(rename = "suppressed")]
+    Suppressed,
 }
 
 /// `oneiron::campaign::surface::actions::CampaignActionProvenance`.

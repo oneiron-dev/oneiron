@@ -194,14 +194,23 @@ impl AttemptQueue<'_> {
         task_ref: &str,
     ) -> Result<Vec<AttemptRecord>> {
         let mut records = Vec::new();
+        let mut erased = 0usize;
         for row in self.store.attempt_records.iter(wtxn)? {
             let (key, raw_record) = row?;
             let id = AttemptId::from_bytes(&key)?;
-            let record = decode_record(&raw_record, id)?;
+            let record = match decode_record(&raw_record, id) {
+                Ok(record) => record,
+                Err(error) if retired_marker(&error) => {
+                    erased += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if record.task_ref.as_deref() == Some(task_ref) {
                 records.push(record);
             }
         }
+        warn_erased_rows("list_task_in_write_txn", erased);
         records.sort_by(attempt_record_order);
         Ok(records)
     }
@@ -214,14 +223,23 @@ impl AttemptQueue<'_> {
         task_ref: &str,
     ) -> Result<Vec<AttemptRecord>> {
         let mut records = Vec::new();
+        let mut erased = 0usize;
         for row in self.store.attempt_records.iter(txn)? {
             let (key, raw_record) = row?;
             let id = AttemptId::from_bytes(&key)?;
-            let record = decode_record(&raw_record, id)?;
+            let record = match decode_record(&raw_record, id) {
+                Ok(record) => record,
+                Err(error) if retired_marker(&error) => {
+                    erased += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             if record.task_ref.as_deref() == Some(task_ref) {
                 records.push(record);
             }
         }
+        warn_erased_rows("list_task_in_txn", erased);
         records.sort_by(attempt_record_order);
         Ok(records)
     }
@@ -235,13 +253,19 @@ impl AttemptQueue<'_> {
     /// The same working-set projection at a caller-owned frozen ledger revision.
     pub(crate) fn list_in_txn(&self, rtxn: &heed::RoTxn<'_>) -> Result<Vec<AttemptRecord>> {
         let mut records = Vec::new();
+        let mut erased = 0usize;
         for row in self.store.attempt_records.iter(rtxn)? {
             let (key, raw_record) = row?;
             let id = AttemptId::from_bytes(&key)?;
             if !crate::vault_cleanup::attempt_is_archived(self.store, rtxn, id, &raw_record)? {
-                records.push(decode_record(&raw_record, id)?);
+                match decode_record(&raw_record, id) {
+                    Ok(record) => records.push(record),
+                    Err(error) if retired_marker(&error) => erased += 1,
+                    Err(error) => return Err(error),
+                }
             }
         }
+        warn_erased_rows("list_in_txn", erased);
         records.sort_by(attempt_record_order);
         Ok(records)
     }
@@ -583,4 +607,24 @@ pub(crate) fn dreamer_run_root_id_in_txn(
         payload = parent_payload;
     }
     Ok(Some(attempt_id))
+}
+
+/// FIX 10708: whether `error`, from decoding one scanned row, is the erased
+/// marker a retired opaque dispatch row leaves (#3960, FIX 9390). Such a row
+/// is never live, running or prunable, so a scan skips it and admits nothing
+/// by doing so. Every other decode error stays the scan's own.
+pub(super) fn retired_marker(error: &Error) -> bool {
+    error.kind() == crate::ErrorKind::ResponseErased
+}
+
+/// One warning per scan that skipped `skipped` erased markers: the scan and
+/// the count only, never a row's bytes.
+pub(super) fn warn_erased_rows(scan: &'static str, skipped: usize) {
+    if skipped > 0 {
+        tracing::warn!(
+            scan,
+            skipped,
+            "an attempt queue scan skipped erased markers of retired rows (FIX 10708)"
+        );
+    }
 }

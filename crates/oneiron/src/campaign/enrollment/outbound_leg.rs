@@ -7,7 +7,8 @@ use super::home_node::{
 use super::program::{CampaignProgramOutbound, CampaignProgramStep};
 use super::runner::CampaignEnrollmentAttemptPayload;
 use super::runner::{
-    decode_enrollment_attempt_payload, enrollment_consequence_id, resolve_program_step,
+    decode_enrollment_attempt_payload, enrollment_consequence_id, membership_sends,
+    resolve_program_step,
 };
 use super::storage::CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND;
 use crate::Vault;
@@ -39,6 +40,9 @@ pub(super) enum EnrollmentOutboundLeg {
     NotHomeNode(CampaignHomeNodeDesignation),
     /// No node holds it; nothing was sent.
     NoHomeNode,
+    /// The member's effective state is paused, suppressed or exited
+    /// (FIX 9662), on a first run or a replay alike; nothing was sent.
+    MembershipNotReady,
 }
 
 /// One outward leg's chokepoint result (FIX 6424 part 2a).
@@ -109,6 +113,12 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
+    // The send waits on the member's own state, read now (FIX 9662): an
+    // applied or replayed consequence never reaches a paused, suppressed or
+    // exited member.
+    if !membership_sends(vault, &event)? {
+        return Ok(EnrollmentOutboundLeg::MembershipNotReady);
+    }
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
     // is read before its gate input is built; a new one is retained before

@@ -2,7 +2,9 @@
 
 use crate::campaign::claims::{PREDICATE_CAMPAIGN_MEMBER, decode_campaign_member_value};
 use crate::claim::{ClaimLifecycleStatus, ClaimSubject, ScopedReadActorKey};
+use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{MembershipEvent, MembershipTransition, membership_events};
 use crate::{EntityId, Vault};
@@ -258,17 +260,64 @@ fn membership_heads(
         };
         let matches = match owner {
             MembershipOwner::Campaign => value.campaign == owner_ref,
-            MembershipOwner::SavedQuery => derivation.source_query == owner_ref,
+            // One reconciled head names only its newest source; a query that
+            // contributed earlier stays in the head's Supersedes lineage, and
+            // its own page keeps the member, folded from its own history
+            // (FIX 9664).
+            MembershipOwner::SavedQuery => {
+                derivation.source_query == owner_ref
+                    || lineage_names_query(vault, &claim_id, owner_ref)?
+            }
         };
         if matches {
             heads.push(MembershipHead {
                 entity_ref,
-                query_ref: derivation.source_query,
+                query_ref: match owner {
+                    MembershipOwner::Campaign => derivation.source_query,
+                    MembershipOwner::SavedQuery => owner_ref,
+                },
                 campaign_ref: value.campaign,
             });
         }
     }
     Ok(heads)
+}
+
+/// Whether a `campaign.member` claim `head` replaced, directly or through
+/// earlier replacements, was derived from `query_ref`. Reads in one snapshot
+/// of its own.
+fn lineage_names_query(vault: &Vault, head: &EntityId, query_ref: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = vec![*head];
+    while let Some(id) = next.pop() {
+        for edge in vault.store.port_edges(
+            &txn,
+            &id,
+            EdgeDirection::Out,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
+            let older = edge?.target;
+            if !seen.insert(older) {
+                continue;
+            }
+            let Some(body) = vault.get_claim_in_txn(&txn, &older)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_CAMPAIGN_MEMBER {
+                continue;
+            }
+            if decode_campaign_member_value(&body.value)?
+                .derivation
+                .is_some_and(|derivation| derivation.source_query == query_ref)
+            {
+                return Ok(true);
+            }
+            next.push(older);
+        }
+    }
+    Ok(false)
 }
 
 /// Folds one head's history into a single row.

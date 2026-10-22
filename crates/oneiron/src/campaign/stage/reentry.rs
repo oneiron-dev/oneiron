@@ -7,6 +7,7 @@ use crate::campaign::claims::{
 };
 use crate::campaign::enrollment::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentRunner, enrollment_dedupe_key,
+    keep_isolation_stamps, reentry_dedupe_key,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::{EntityId, Result, Vault};
@@ -166,6 +167,13 @@ pub struct ReentryPlan {
 /// is vetted through CA-03's own dedupe door BEFORE the pause is written, so an
 /// unresolvable membership event is refused with nothing half-applied.
 ///
+/// The pause and its re-entry land in ONE transaction (FIX 9662). A dated wake
+/// holds the attempt to its due instant on the queue, where the runner
+/// re-enters the member under a fresh entry; a trigger-only wake queues it
+/// ready, and the runner holds it until a real later trigger. The
+/// attempt's advisory key names this pause, so the queue never coalesces it
+/// into the settled row of the entry it re-runs.
+///
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) when the plan does not restart at touch 1, when
@@ -182,24 +190,43 @@ pub fn snooze_with_wake(
     if plan.restart_touch_index != 0 {
         return Err(invalid("campaign re-entry restarts at touch 1"));
     }
-    if let Some(attempt) = &plan.reentry_attempt {
-        enrollment_dedupe_key(vault, attempt)?;
-    }
-    let new_id = replace_member_state(
-        vault,
-        &MemberStateChange {
-            membership_claim_ref,
-            party_ref: plan.party_ref,
-            campaign_ref: plan.campaign_ref,
-            state: paused_state(&plan.wake),
-            evidence_ref: plan.reason_evidence_ref,
-            now,
-        },
-    )?;
-    if let Some(attempt) = &plan.reentry_attempt {
-        CampaignEnrollmentRunner::new(vault).enqueue(attempt, None, now)?;
-    }
+    let reentry = plan
+        .reentry_attempt
+        .as_ref()
+        .map(|attempt| enrollment_dedupe_key(vault, attempt).map(|key| (attempt, key)))
+        .transpose()?;
+    let change = MemberStateChange {
+        membership_claim_ref,
+        party_ref: plan.party_ref,
+        campaign_ref: plan.campaign_ref,
+        state: paused_state(&plan.wake),
+        evidence_ref: plan.reason_evidence_ref,
+        now,
+    };
+    let new_id = vault.store.clock.entity_id()?;
+    vault.with_write_txn_grouped(|wtxn| {
+        replace_member_state_in_txn(vault, wtxn, &change, &new_id)?;
+        if let Some((attempt, entry_key)) = &reentry {
+            CampaignEnrollmentRunner::new(vault).enqueue_in_txn(
+                wtxn,
+                attempt,
+                reentry_dedupe_key(entry_key, &new_id),
+                None,
+                wake_due(&plan.wake),
+                now,
+            )?;
+        }
+        Ok(())
+    })?;
     Ok(new_id)
+}
+
+/// The instant a dated wake falls due; `None` for a trigger-only wake.
+fn wake_due(wake: &WakeCondition) -> Option<u64> {
+    match *wake {
+        WakeCondition::At(at) | WakeCondition::AtOrNewTrigger { at } => Some(at),
+        WakeCondition::NewTrigger => None,
+    }
 }
 
 fn paused_state(wake: &WakeCondition) -> CampaignMemberState {
@@ -237,40 +264,51 @@ pub(super) struct MemberStateChange<'a> {
 /// supersedes the head it replaces, in one transaction.
 ///
 /// The replacement is built from the head it replaces, so channels and any
-/// derivation survive. The identity checks run inside the same txn as the write:
-/// a claim that is not this party's live membership in this campaign is rejected
-/// before anything lands.
+/// derivation survive, and it keeps that head's isolation stamps (FIX 9663): a
+/// state change never re-scopes who may read the membership. The identity
+/// checks run inside the same txn as the write: a claim that is not this
+/// party's live membership in this campaign is rejected before anything lands.
 pub(super) fn replace_member_state(
     vault: &Vault,
     change: &MemberStateChange<'_>,
 ) -> Result<EntityId> {
     let new_id = vault.store.clock.entity_id()?;
-    vault.with_write_txn_grouped(|wtxn| {
-        let value = require_member_head(vault, wtxn, change)?;
-        let replacement = CampaignMemberValue {
-            state: change.state,
-            ..value
-        };
-        let mut body = ClaimBody::new(
-            PREDICATE_CAMPAIGN_MEMBER,
-            ClaimSubject::Entity(change.party_ref),
-            encode_campaign_member_value(&replacement),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.evidence = Some(evidence_value(&[change.evidence_ref]));
-        vault.put_claim_in_txn(wtxn, &new_id, &body, at(change.now), change.now)?;
-        vault.supersede_claim_in_txn(wtxn, &new_id, change.membership_claim_ref, change.now)
-    })?;
+    vault
+        .with_write_txn_grouped(|wtxn| replace_member_state_in_txn(vault, wtxn, change, &new_id))?;
     Ok(new_id)
+}
+
+/// [`replace_member_state`] inside the caller's writer, under `new_id`.
+fn replace_member_state_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    change: &MemberStateChange<'_>,
+    new_id: &EntityId,
+) -> Result<()> {
+    let (head, value) = require_member_head(vault, wtxn, change)?;
+    let replacement = CampaignMemberValue {
+        state: change.state,
+        ..value
+    };
+    let mut body = ClaimBody::new(
+        PREDICATE_CAMPAIGN_MEMBER,
+        ClaimSubject::Entity(change.party_ref),
+        encode_campaign_member_value(&replacement),
+        1.0,
+        ClaimApprovalStatus::Approved,
+        ClaimLifecycleStatus::Active,
+    )?;
+    keep_isolation_stamps(&mut body, &head);
+    body.evidence = Some(evidence_value(&[change.evidence_ref]));
+    vault.put_claim_in_txn(wtxn, new_id, &body, at(change.now), change.now)?;
+    vault.supersede_claim_in_txn(wtxn, new_id, change.membership_claim_ref, change.now)
 }
 
 pub(super) fn require_member_head(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     change: &MemberStateChange<'_>,
-) -> Result<CampaignMemberValue> {
+) -> Result<(ClaimBody, CampaignMemberValue)> {
     let body = vault
         .get_claim_in_txn(wtxn, change.membership_claim_ref)?
         .ok_or(invalid("campaign.member head is missing"))?;
@@ -288,5 +326,5 @@ pub(super) fn require_member_head(
     if value.campaign != change.campaign_ref {
         return Err(invalid("campaign.member campaign mismatch"));
     }
-    Ok(value)
+    Ok((body, value))
 }
