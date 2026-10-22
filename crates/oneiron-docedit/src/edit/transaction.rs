@@ -37,8 +37,6 @@ pub use run::run_transaction;
 
 /// The grammar version a transaction and its report carry.
 pub const DECK_TRANSACTION_SCHEMA: u32 = 1;
-/// Steps in one transaction.
-pub const MAX_STEPS: usize = 256;
 const MAX_SEED_BYTES: usize = 256;
 const HANDOFF_CONTEXT: &str = "oneiron docedit deck candidate handoff v1";
 
@@ -380,7 +378,9 @@ impl DeckTransaction {
         if self.schema != DECK_TRANSACTION_SCHEMA {
             return Err(TransactionError::Invalid("unknown schema".to_owned()));
         }
-        if self.steps.is_empty() || self.steps.len() > MAX_STEPS {
+        // An empty transaction is no edit; a long one runs whole, with no
+        // count bound on its steps (FIX 8578).
+        if self.steps.is_empty() {
             return Err(TransactionError::Invalid("step count".to_owned()));
         }
         if self.seed.trim().is_empty() || self.seed.len() > MAX_SEED_BYTES {
@@ -483,7 +483,8 @@ pub enum TransactionError {
     Invalid(String),
     #[error("the base bytes do not hash to the transaction's base")]
     BaseChanged,
-    /// Signed or uninspectable packages are reported, never mutated.
+    /// Signed or uninspectable packages are reported, never mutated: a run
+    /// over one stands only when its candidate is the base byte for byte.
     #[error("the package is signed or its metadata cannot be inspected")]
     NotEditable,
     #[error("step {step} ({verb}): {refusal}")]

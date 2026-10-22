@@ -122,6 +122,9 @@ pub(crate) async fn execute_mcp_execute_code(
         "steps_run": outcome.steps_run,
         "bridge_calls": outcome.replay_record.bridge_calls.len(),
         "steps": steps,
+        // Each program step's type feedback, typed and whole, beside the
+        // bridge steps and never paged with them (FIX 8277).
+        "program_steps": outcome.program_steps,
         "result": mcp_executor_status_value(&outcome.status),
         "actor": mcp_actor_result(actor),
         "meta": actor.metadata(

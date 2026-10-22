@@ -105,6 +105,7 @@ fn request() -> LlmRequest {
         tools: vec![],
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
+        host_segments: None,
     }
 }
 fn seed_models(vault: &Vault) {
