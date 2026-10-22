@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::memory::MemoryError;
-use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner};
+use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner_toward};
 
 use super::host_doors::support::{Listed, internal, refused};
 use crate::auth::CoreAuth;
@@ -21,7 +21,10 @@ const VERB: &str = "vault.secrets.lift_history";
 /// input's `start` asks for one. It lists each record a proposal it shows
 /// was filed from (`record:<id>`): the proposal's reason and suggested name
 /// come from that record. The run, its receipt, its counts and the proposals
-/// live in the sweep's side tables, which hold no row.
+/// live in the sweep's side tables, which hold no row. Off this device a
+/// proposal filed from a record a world withheld from the caller's
+/// destination keeps is left out of the proposals and their counts, at the
+/// producer (FIX 8165); a queued run or a close it asked for stays.
 pub(crate) async fn vault_secrets_lift_history(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -32,8 +35,10 @@ pub(crate) async fn vault_secrets_lift_history(
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
+    let destination = auth.destination();
     let answer = tokio::task::spawn_blocking(move || {
-        secret_lift_as_owner(server.vault(), &owner, &input).map_err(MemoryError::from)
+        secret_lift_as_owner_toward(server.vault(), &owner, &input, &destination)
+            .map_err(MemoryError::from)
     })
     .await
     .unwrap_or_else(|_| Err(internal(VERB)));
