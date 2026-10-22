@@ -54,7 +54,9 @@ pub struct SufficiencyInput {
     /// The set or rubric version moved since the incumbent was measured.
     pub set_changed: bool,
     pub rubric_changed: bool,
-    pub canary_diverged: bool,
+    /// The seat's unrewarded canary moved apart from the measured axis.
+    /// `None` when no canary was measured: the card reads unknown.
+    pub canary_diverged: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -67,6 +69,8 @@ pub enum UnknownReason {
     SetChanged,
     RubricChanged,
     CanaryDiverged,
+    /// No canary was measured beside the axis.
+    NoCanary,
 }
 
 impl UnknownReason {
@@ -137,8 +141,10 @@ pub fn sufficiency_card(input: SufficiencyInput) -> Result<SufficiencyCard> {
     if input.rubric_changed {
         unknown.push(UnknownReason::RubricChanged);
     }
-    if input.canary_diverged {
-        unknown.push(UnknownReason::CanaryDiverged);
+    match input.canary_diverged {
+        Some(true) => unknown.push(UnknownReason::CanaryDiverged),
+        Some(false) => {}
+        None => unknown.push(UnknownReason::NoCanary),
     }
     for (slice, families) in &input.floor_slices {
         if *families < input.min_families_per_slice.max(1) {

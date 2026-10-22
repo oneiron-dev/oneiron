@@ -209,6 +209,24 @@ pub(super) fn exposure_in_txn(
     Ok(counts)
 }
 
+/// One serving of a cohort by its id, on the caller's snapshot.
+pub(super) fn exposure_row_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cohort: &EntityId,
+    exposure: &EntityId,
+) -> Result<Option<EvalExposure>> {
+    vault
+        .store
+        .vault_meta
+        .get(
+            txn,
+            &[EXPOSURE_PREFIX, cohort.as_bytes(), exposure.as_bytes()].concat(),
+        )?
+        .map(|raw| decode(&raw))
+        .transpose()
+}
+
 /// The whole sealed families a cut of `from..until` takes for `seat`, with
 /// their cases in id order: each sealed family whose every case's source
 /// date falls in the window, and that no earlier cohort holds.

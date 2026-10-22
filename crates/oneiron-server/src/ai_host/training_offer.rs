@@ -236,6 +236,9 @@ pub(super) fn draft(
             continue;
         };
         pilot::ground(vault, &mut draft)?;
+        // An exact Final paired measurement of this pair supplies its own
+        // card (FIX 574); without one the grounded evidence stands.
+        super::eval_measurement::attach_measured_card(vault, &mut draft, now)?;
         // The offer also reads the pilots it grounds on (FIX 7021): its set
         // after ground, `None` when any grounding pilot's measurement set is
         // unknown.

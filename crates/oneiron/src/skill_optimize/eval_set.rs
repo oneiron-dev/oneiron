@@ -47,6 +47,8 @@ mod cohort;
 pub(super) use cohort::cohort_in_txn as cohort_for_offer_in_txn;
 mod cut_audit;
 pub mod doors;
+mod measurement;
+mod replay_input;
 mod sufficiency;
 
 use std::collections::BTreeSet;
@@ -74,6 +76,13 @@ pub use cut_audit::{
     AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,
     EvalCutAuthor, NearCopyFlag,
 };
+pub use measurement::{
+    EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
+    EvalMeasurement, EvalMeasurementRequest, FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS,
+    MeasurementMethodPin, MeasurementState, MeasurementUnavailable, ScoreDirection,
+    eval_seat_canary,
+};
+pub use replay_input::EvalTaskInput;
 pub use sufficiency::{
     EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
     WaitingDecision, sufficiency_card,

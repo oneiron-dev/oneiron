@@ -22787,8 +22787,12 @@ pub struct SufficiencyInput {
     pub set_changed: bool,
     #[serde(rename = "rubric_changed")]
     pub rubric_changed: bool,
-    #[serde(rename = "canary_diverged")]
-    pub canary_diverged: bool,
+    #[serde(
+        rename = "canary_diverged",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub canary_diverged: Option<bool>,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::UnknownReason`.
@@ -22813,6 +22817,8 @@ pub enum UnknownReason {
     RubricChanged,
     #[serde(rename = "canary_diverged")]
     CanaryDiverged,
+    #[serde(rename = "no_canary")]
+    NoCanary,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyVerdict`.

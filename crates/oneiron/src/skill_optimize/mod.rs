@@ -183,6 +183,12 @@ pub use self::eval_set::{
     apply_eval_authoring_plan, eval_authoring_inventory, eval_authoring_inventory_sourced,
     setup_eval_cohorts, sufficiency_card,
 };
+pub use self::eval_set::{
+    EstimateGap, EvalArmPin, EvalAxisPin, EvalCaseMeasurement, EvalFamilySummary, EvalLegRecord,
+    EvalMeasurement, EvalMeasurementRequest, EvalTaskInput, FloorSlicePolicy, JUDGE_SCORE_AXIS,
+    JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState, MeasurementUnavailable,
+    ScoreDirection, eval_seat_canary,
+};
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,
     GoalAxisReport, OnlineAxisMeasurement, OnlineAxisOutcome, OnlineAxisSample, measure_goal_axes,
