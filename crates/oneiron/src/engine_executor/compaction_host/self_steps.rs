@@ -78,6 +78,9 @@ impl EngineNativeExecutor<'_> {
         // The run's authenticated actor is an agent: the self writer holds
         // any other actor's flight before it calls (`no_identity`).
         let writer = WriteActor::new(execution.writer, EdgeActorClass::Agent);
+        // FIX 3103: the filed steps are the run's own writes, under its token.
+        let _run_writes =
+            crate::skill_attribution::enter_run_write_token(self.gated_write.run_write_token());
         match self.storage.file_compaction_steps(
             self.gated_write.run_ref(),
             run,

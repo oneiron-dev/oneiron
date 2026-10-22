@@ -150,10 +150,9 @@ impl Chain<'_> {
             ("now", self.now.to_string()),
             ("rows_read", run.rows_read.to_string()),
             ("run_key", hex_lower(&run.key)),
-            ("fuel_used", run.fuel_used.to_string()),
-            ("host_calls", run.host_calls.to_string()),
         ]
         .into_iter()
+        .chain(run.usage.receipt_fields())
         .map(|(name, value)| (name.to_owned(), value))
         .collect();
         for (name, value) in [
