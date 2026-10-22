@@ -16,7 +16,8 @@ mod webhook;
 pub use dispatch::{VaultLinearOutboundDoor, held_approve_once};
 pub use egress::{LinearHostEgress, LinearMutation, LinearOutboundDoor};
 pub use http::{
-    GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient, LINEAR_GRAPHQL_ENDPOINT,
+    GraphQlBody, GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient,
+    LINEAR_GRAPHQL_ENDPOINT, LinearBodyLine,
 };
 pub use oneiron::linear_sync::{LinearExternalActor, LinearWebhookEvent, LinearWebhookKind};
 pub use source::{LinearHostChangeSource, LinearTrackerConfig};
