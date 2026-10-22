@@ -233,7 +233,8 @@ impl EngineNativeExecutor<'_> {
                 self.legibility,
             )
             .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model);
+            .with_skill_executor(&config.model)
+            .with_result_share(&self.result_share);
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
