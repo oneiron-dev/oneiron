@@ -403,13 +403,26 @@ GH_TOKEN = "cli:gh"
 
 ## Prompt layout
 
-`ONEIRON_PROMPT_LAYOUT` chooses where a turn's context (activated memory, the
-`ai.reply` board, a chat answer's craft) sits in the request (FIX 6676).
-`early_system`, the default, keeps today's order: the context joins the early
-system text, before the history. `stable_history_then_turn_context` puts the
-stable system and the append-only history first and the turn's context in one
-request-only message right before the latest user turn, so a provider's
-prompt cache can reuse the prefix. Any other value keeps the default. The
+A vault's `[models] prompt_layout` key chooses where a turn's context
+(activated memory, the `ai.reply` board, a chat answer's craft) sits in the
+request (FIX 6676). Each turn is assembled under it. `early_system`, the
+default, keeps today's order: the context joins the early system text, before
+the history. `stable_history_then_turn_context` puts the stable system and the
+append-only history first and the turn's context in one request-only message
+right before the latest user turn, so a provider's prompt cache can reuse the
+prefix.
+
+```toml
+[models]
+prompt_layout = "stable_history_then_turn_context"
+```
+
+When the key is set, it wins over `ONEIRON_PROMPT_LAYOUT`. That variable takes
+the same two values and is the host-level fallback for a vault that sets no
+key. A hosted engine starts with a cleared environment, so on a hosted engine
+the key is how a vault chooses. A key with any other value logs one warning at
+boot and falls back to the env variable, then to the default; it never stops
+the server. An env value that names neither layout keeps the default. The
 answer-quality screen decides whether the default flips.
 
 ## CJK Dictionaries

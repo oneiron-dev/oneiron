@@ -12,7 +12,7 @@ use crate::llm::{
 
 /// Where a turn's request puts the context read for that turn (FIX 6676).
 /// Every assembler that builds a turn's request reads
-/// [`session_prompt_layout`]: this module's session builder, the `ai.reply`
+/// [`effective_prompt_layout`]: this module's session builder, the `ai.reply`
 /// board door and a chat answer's craft.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptLayout {
@@ -25,6 +25,28 @@ pub enum PromptLayout {
     StableHistoryThenTurnContext,
 }
 
+impl PromptLayout {
+    /// The layout `name` names, as a vault's `[models] prompt_layout` and
+    /// [`PROMPT_LAYOUT_ENV`] both spell it ([`Self::as_setting`]). `None`
+    /// for any other text.
+    #[must_use]
+    pub fn from_setting(name: &str) -> Option<Self> {
+        [Self::EarlySystem, Self::StableHistoryThenTurnContext]
+            .into_iter()
+            .find(|layout| layout.as_setting() == name)
+    }
+
+    /// This layout's name in a setting: `early_system` or
+    /// `stable_history_then_turn_context`.
+    #[must_use]
+    pub const fn as_setting(self) -> &'static str {
+        match self {
+            Self::EarlySystem => "early_system",
+            Self::StableHistoryThenTurnContext => "stable_history_then_turn_context",
+        }
+    }
+}
+
 /// The layout a host uses when its operator names none: today's order
 /// (Engine 10-22 11:35, rubric 1). The answer-quality screen decides whether
 /// the stable-prefix layout becomes the default (FIX 9430).
@@ -33,19 +55,27 @@ pub const DEFAULT_PROMPT_LAYOUT: PromptLayout = PromptLayout::EarlySystem;
 /// The environment variable an operator sets to choose the layout:
 /// `stable_history_then_turn_context` for ARCH-0067 v5's order, or
 /// `early_system` for today's. Unset or any other value keeps
-/// [`DEFAULT_PROMPT_LAYOUT`].
+/// [`DEFAULT_PROMPT_LAYOUT`]. A vault's `[models] prompt_layout` wins over
+/// it ([`effective_prompt_layout`]).
 pub const PROMPT_LAYOUT_ENV: &str = "ONEIRON_PROMPT_LAYOUT";
 
-/// The one layout every assembler of a turn's request reads (FIX 6676), as
-/// [`PROMPT_LAYOUT_ENV`] names it when the turn is assembled. Both arms are
+/// The host's layout (FIX 6676), as [`PROMPT_LAYOUT_ENV`] names it when the
+/// turn is assembled: the fallback for a vault that sets none. Both arms are
 /// policy alternatives, not a compatibility path.
 #[must_use]
 pub fn session_prompt_layout() -> PromptLayout {
-    match std::env::var(PROMPT_LAYOUT_ENV).as_deref() {
-        Ok("stable_history_then_turn_context") => PromptLayout::StableHistoryThenTurnContext,
-        Ok("early_system") => PromptLayout::EarlySystem,
-        _ => DEFAULT_PROMPT_LAYOUT,
-    }
+    std::env::var(PROMPT_LAYOUT_ENV)
+        .ok()
+        .and_then(|name| PromptLayout::from_setting(&name))
+        .unwrap_or(DEFAULT_PROMPT_LAYOUT)
+}
+
+/// The one layout every assembler of a turn's request reads (FIX 6676),
+/// once per turn: `setting`, the vault's resolved `[models] prompt_layout`,
+/// when it names one; else the host's [`session_prompt_layout`].
+#[must_use]
+pub fn effective_prompt_layout(setting: Option<PromptLayout>) -> PromptLayout {
+    setting.unwrap_or_else(session_prompt_layout)
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -81,8 +111,9 @@ pub struct ResolvedPrompt {
 pub struct SessionPromptParts {
     /// This turn's activated memory: blocks already admitted and rendered,
     /// fenced and attributed, by the board's renderer. Under
-    /// [`session_prompt_layout`] they ride the turn's context message after
-    /// the history ([`place_turn_context`]), never the system text.
+    /// [`PromptLayout::StableHistoryThenTurnContext`] they ride the turn's
+    /// context message after the history ([`place_turn_context`]), never
+    /// the system text.
     pub activated_memory: Vec<String>,
     pub history: Vec<LlmMessage>,
     /// Host-supplied sections (including any off-record disclosure).
@@ -90,6 +121,9 @@ pub struct SessionPromptParts {
     /// in the early system text in either layout: a section that changes
     /// turn by turn belongs in `activated_memory` as a rendered block.
     pub host_sections: Vec<String>,
+    /// The vault's resolved `[models] prompt_layout`, if it sets one: the
+    /// assembly's layout is [`effective_prompt_layout`] of it, read once.
+    pub layout: Option<PromptLayout>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -222,8 +256,8 @@ pub fn place_turn_context<S: AsRef<str>>(
     Some(at)
 }
 
-/// [`assemble_session_prompt`], beside where [`session_prompt_layout`] put
-/// the turn's context: its message's index, or `None` when it rode the
+/// [`assemble_session_prompt`], beside where [`effective_prompt_layout`]
+/// put the turn's context: its message's index, or `None` when it rode the
 /// system text or there was none. The stamp's assembled fingerprint is the
 /// exact system text sent, in either layout.
 fn assemble_session(
@@ -232,7 +266,7 @@ fn assemble_session(
     parts: SessionPromptParts,
 ) -> Result<(SessionPromptAssembly, Option<usize>), io::Error> {
     let mut resolved = resolve_prompt(prompt_path, package_root)?;
-    let layout = session_prompt_layout();
+    let layout = effective_prompt_layout(parts.layout);
     let early_memory: &[String] = match layout {
         PromptLayout::EarlySystem => &parts.activated_memory,
         PromptLayout::StableHistoryThenTurnContext => &[],

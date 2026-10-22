@@ -4,9 +4,9 @@
 //! every note its resident keeps, in the craft reader's order. A workflow
 //! leaf and a wave plan show it as one system message after their
 //! instructions, before anything they read ([`join_craft`]). A chat answer
-//! and a Retry or Continue show it where [`session_prompt_layout`] places it
-//! ([`place_craft`]): after their history, in a data-only carrier that names
-//! its resident, right before the latest user turn (FIX 6676).
+//! and a Retry or Continue show it where their turn's [`PromptLayout`]
+//! places it ([`place_craft`]): after their history, in a data-only carrier
+//! that names its resident, right before the latest user turn (FIX 6676).
 //!
 //! A call on a queue attempt loads each note on that attempt, so its
 //! manifest names what it was shown. A call with no attempt to stamp reads
@@ -30,7 +30,7 @@ use oneiron::actor_claims::{
 };
 use oneiron::attempt_queue::{AttemptId, AttemptRecord, ManifestEntry};
 use oneiron::memory::Memory;
-use oneiron::prompt::{PromptLayout, place_turn_context, session_prompt_layout};
+use oneiron::prompt::{PromptLayout, place_turn_context};
 use oneiron::{ContentPart, EntityId, LlmMessage, LlmMessageRole, LlmRequest, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -80,7 +80,7 @@ pub(crate) fn snapshot_craft(vault: &Vault, resident: &EntityId, at: u64) -> Opt
 /// [`snapshot_craft`] for a chat answer (SCAN C009) and a Retry or
 /// Continue (FIX 6102): only the notes the caller's own read admits, read
 /// through `reader`, the caller's handle where it sits, in one snapshot.
-/// Its message is the craft as [`session_prompt_layout`] shows it
+/// Its message is the craft as the turn's `layout` shows it
 /// ([`place_craft`]): the system message, or its data-only carrier (FIX
 /// 6676), built here, before anything stamps it. `None` without such
 /// craft, or when the caller's read or the craft does not read.
@@ -89,6 +89,7 @@ pub(crate) fn snapshot_craft_scoped(
     reader: &Memory<'_>,
     resident: &EntityId,
     at: u64,
+    layout: PromptLayout,
 ) -> Option<SnapshotCraft> {
     let key = match reader.read_key() {
         Ok(key) => key,
@@ -106,7 +107,7 @@ pub(crate) fn snapshot_craft_scoped(
         }
     };
     let craft = snapshot_of(&notes, at)?;
-    match session_prompt_layout() {
+    match layout {
         PromptLayout::EarlySystem => Some(craft),
         PromptLayout::StableHistoryThenTurnContext => Some(SnapshotCraft {
             message: carried(resident, &craft.message)?,
@@ -223,17 +224,18 @@ fn shown_craft(text: &str, at: u64) -> Option<Vec<ManifestEntry>> {
 /// Shows a chat answer, or a Retry or Continue, its snapshot craft
 /// ([`snapshot_craft_scoped`]) once `messages` hold its instructions (the
 /// first `instructions` of them), its history and its latest user turn,
-/// where [`session_prompt_layout`] places it (FIX 6676): as the system
-/// message right after those instructions, where it always went, or as the
-/// turn's context right before that user turn ([`place_turn_context`]).
-/// Returns where the turn's context went; `None` when the craft rides the
-/// early system.
+/// where the turn's `layout` places it (FIX 6676), the one its snapshot
+/// read took: as the system message right after those instructions, where
+/// it always went, or as the turn's context right before that user turn
+/// ([`place_turn_context`]). Returns where the turn's context went; `None`
+/// when the craft rides the early system.
 pub(crate) fn place_craft(
     messages: &mut Vec<LlmMessage>,
     instructions: usize,
     craft: LlmMessage,
+    layout: PromptLayout,
 ) -> Option<usize> {
-    match session_prompt_layout() {
+    match layout {
         PromptLayout::EarlySystem => {
             messages.insert(instructions.min(messages.len()), craft);
             None

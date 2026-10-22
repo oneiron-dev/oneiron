@@ -73,6 +73,9 @@ pub(crate) struct ModelsFile {
     default: Option<String>,
     prompt: Option<String>,
     prompt_file: Option<PathBuf>,
+    /// Where a turn's context sits in its request (FIX 6676): one of the
+    /// names `PromptLayout::from_setting` takes.
+    prompt_layout: Option<String>,
     local: Option<String>,
     cloud: Option<String>,
     prefer_local: Option<bool>,
@@ -201,6 +204,11 @@ pub struct ModelsConfig {
     /// as a stock vendor model name, and the configured model it calls.
     /// None is built in.
     pub aliases: BTreeMap<String, oneiron::ModelId>,
+    /// `prompt_layout`: where each turn's context sits in its request (FIX
+    /// 6676), `early_system` or `stable_history_then_turn_context`. `None`,
+    /// unset or unknown, leaves the host's `ONEIRON_PROMPT_LAYOUT`, then
+    /// today's order (`oneiron::prompt::effective_prompt_layout`).
+    pub prompt_layout: Option<oneiron::prompt::PromptLayout>,
     /// Owner opt-in for the Dreamer's extraction calls to leave the device.
     /// Off by default: personal-data extraction stays local unless the owner
     /// says otherwise (ARCH-0036 counter-arrow).
@@ -527,6 +535,18 @@ impl ModelsFile {
             roles,
             stays_on_device,
             aliases,
+            // An unknown name never fails boot: it warns, and the host's
+            // layout stands.
+            prompt_layout: self.prompt_layout.as_deref().and_then(|name| {
+                let layout = oneiron::prompt::PromptLayout::from_setting(name);
+                if layout.is_none() {
+                    tracing::warn!(
+                        value = name,
+                        "models.prompt_layout names no layout; the host's layout stands"
+                    );
+                }
+                layout
+            }),
             extraction_egress: self.extraction_egress.unwrap_or(false),
             raw_budget_units,
             dreamer,
