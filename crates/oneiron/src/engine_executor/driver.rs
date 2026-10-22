@@ -261,6 +261,10 @@ impl<'a> EngineNativeExecutor<'a> {
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
+        // FIX 3103: the mint is the run's own write outside any verb call, so
+        // it lands under the run's token.
+        let _run_writes =
+            crate::skill_attribution::enter_run_write_token(self.gated_write.run_write_token());
         let plan = match &self.storage {
             ExecutorStorage::Canonical(vault) => driver.integrate_with_coverage(
                 vault,

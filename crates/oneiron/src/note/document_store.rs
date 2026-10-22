@@ -681,3 +681,8 @@ pub(crate) fn resolve_deck_pin_in_txn(
     super::citation_erase::validate_pins(vault, txn, std::slice::from_ref(pin))?;
     load(vault, txn, pin.document)?.resolve(pin)
 }
+
+mod deck;
+pub(crate) use deck::{
+    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+};
