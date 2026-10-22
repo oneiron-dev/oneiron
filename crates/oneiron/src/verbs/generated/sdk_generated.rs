@@ -33660,7 +33660,7 @@ pub fn vault_notes_from_entity(
         &input,
         &["/source_ref"],
     )?;
-    memory.create_note_from_entity(&input.source_ref, &input.kind)
+    memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())
 }
 pub fn vault_notes_read(
     memory: &Memory<'_>,

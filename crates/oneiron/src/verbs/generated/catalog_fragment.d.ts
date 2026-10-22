@@ -3964,7 +3964,7 @@ declare namespace Sdk {
   type BriefCitationFollowRequest = { share_ref: string; claim_ref: string; narrowing?: ShareViewNarrowing | null };
   type AuthorTakeTarget = { subject: string } | { claim: string };
   type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string };
-  type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
+  type CreateNoteFromEntityRequest = { source_ref: string; kind: string; reason?: string | null };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteActor = string;
