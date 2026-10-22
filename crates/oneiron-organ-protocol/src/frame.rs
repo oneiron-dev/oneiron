@@ -1,9 +1,17 @@
-//! Framing: `len: u32 LE | MessagePack body`, with descriptors riding as
-//! `SCM_RIGHTS` on the send that carries the frame's first byte.
+//! Framing (protocol 2.0): a message is one or more frames back to back,
+//! each `len: u32 LE | more: u8 | len bytes`, `more` 1 on every frame but
+//! the message's last. The bytes of all its frames together are the
+//! message's encoding ([`crate::codec`]). Descriptors ride as `SCM_RIGHTS`
+//! on the send that carries a frame's first byte, at most
+//! [`MAX_FDS_PER_FRAME`] on one frame: a message's descriptors are its
+//! frames' in order, and the rest of a larger set rides the next frame. A
+//! frame is at most its receiver's frame limit long, and a longer message
+//! takes more frames. So neither the `u32` length nor the descriptor count
+//! limits a message: each only paces its frames.
 //!
-//! A frame with a deadline is bounded as a whole, not per read or write: a
-//! peer that stops reading, or drips one byte at a time, ends the frame at
-//! the deadline with [`FrameError::TimedOut`]. A timed frame waits with
+//! A message with a deadline is bounded as a whole, not per read or write:
+//! a peer that stops reading, or drips one byte at a time, ends it at the
+//! deadline with [`FrameError::TimedOut`]. A timed message waits with
 //! poll(2) and moves bytes without blocking; it never sets a socket timeout
 //! or mode, which every clone of the socket would share. A timed send needs
 //! a socket the caller made nonblocking: macOS ignores `MSG_DONTWAIT` while
@@ -11,12 +19,11 @@
 //! blocking past the deadline. An untimed read on such a socket, or a
 //! clone of it, waits in poll(2) through [`recv_frame_polled`].
 //!
-//! A booked frame makes room before each allocation it makes (FIX 6195): a
-//! sender counts the body's bytes with nothing allocated
-//! ([`frame_body_len`]) and books them before it sends; a read books the
-//! body's declared length before reading it, then the value the body
-//! decodes into before that is built ([`FrameBooking`]). The wire is the
-//! same either way.
+//! A booked message makes room before each allocation it makes (FIX 6195):
+//! a sender counts the encoding's bytes with nothing allocated
+//! ([`frame_body_len`]) and books them before it sends; a read books each
+//! frame's declared length before reading it, then the value the message
+//! decodes into before that is built ([`FrameBooking`]).
 
 use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
@@ -34,47 +41,51 @@ use rustix::net::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::shape;
-use crate::wire::MAX_FDS_PER_FRAME;
+use crate::codec::{self, CodecError};
+use crate::wire::{INITIAL_HANDSHAKE_FRAME_BYTES, MAX_FDS_PER_FRAME};
 
 mod booked;
 
-use booked::body_only;
-pub use booked::{FrameBooking, frame_body_len, recv_frame_polled_booked, recv_frame_until_booked};
+use booked::Unbooked;
+pub use booked::{
+    FrameBooking, frame_body_len, recv_frame_polled_booked, recv_frame_until_booked,
+    recv_handshake, recv_handshake_until_booked,
+};
 
-const HEADER: usize = 4;
+/// `len: u32 LE | more: u8`.
+const HEADER: usize = 5;
 
 /// The longest single poll(2). macOS has no ppoll: its poll takes the
 /// timeout as an i32 of milliseconds (about 24.8 days) and fails a longer
 /// one with EINVAL. A later deadline polls again.
 const LONGEST_POLL: Duration = Duration::from_millis(i32::MAX as u64);
 
-/// How often a gated frame waiting for room before its first byte asks
+/// How often a gated message waiting for room before its first byte asks
 /// again whether it is still wanted ([`send_frame_if`]).
 const RECHECK: Duration = Duration::from_millis(20);
 
-/// Why a frame could not be sent or read. Any of them ends the connection,
-/// except a refusal [`FrameError::is_local`] reports.
+/// Why a message could not be sent or read. Any of them ends the
+/// connection, except a refusal [`FrameError::is_local`] reports.
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     #[error("the peer closed the connection")]
     Closed,
+    /// A frame past its receiver's frame limit, or a handshake message past
+    /// the pre-session bound: the peer broke the framing.
     #[error("frame of {len} bytes is over the {limit}-byte limit")]
-    TooLarge { len: u64, limit: u32 },
-    #[error("frame carries {0} descriptors; the limit is 16")]
-    TooManyFds(usize),
+    TooLarge { len: u64, limit: u64 },
     #[error("descriptors were cut off in transit")]
     FdsTruncated,
     #[error("protocol violation: {0}")]
     Protocol(&'static str),
-    /// The frame's shape breaks the limits its receiver enforces
-    /// ([`crate::MAX_FRAME_VALUES`], [`crate::MAX_FRAME_DEPTH`]).
+    /// The message was refused before a byte of it left, by the caller's
+    /// own booking (the machine's memory floor).
     #[error("frame refused before sending: {0}")]
     Refused(&'static str),
-    /// The deadline passed before the frame's first byte left.
+    /// The deadline passed before the message's first byte left.
     #[error("the deadline passed before the frame was sent")]
     Late,
-    /// The caller withdrew the frame before its first byte left
+    /// The caller withdrew the message before its first byte left
     /// ([`send_frame_if`]).
     #[error("the frame was withdrawn before it was sent")]
     Withdrawn,
@@ -85,28 +96,22 @@ pub enum FrameError {
     #[error("the frame missed its deadline")]
     TimedOut,
     #[error("frame encode: {0}")]
-    Encode(#[from] rmp_serde::encode::Error),
+    Encode(CodecError),
     #[error("frame decode: {0}")]
-    Decode(#[from] rmp_serde::decode::Error),
+    Decode(CodecError),
     #[error("frame io: {0}")]
     Io(#[from] io::Error),
 }
 
 impl FrameError {
-    /// No byte of the frame left (it was refused or withdrawn, or its
-    /// deadline came first), so the connection is still in step and the
-    /// peer saw nothing.
+    /// No byte of the message left (it did not encode, or was refused or
+    /// withdrawn, or its deadline came first), so the connection is still
+    /// in step and the peer saw nothing.
     #[must_use]
     pub fn is_local(&self) -> bool {
         matches!(
             self,
-            Self::TooLarge { .. }
-                | Self::TooManyFds(_)
-                | Self::Encode(_)
-                | Self::Refused(_)
-                | Self::Late
-                | Self::Withdrawn
-                | Self::Blocking
+            Self::Encode(_) | Self::Refused(_) | Self::Late | Self::Withdrawn | Self::Blocking
         )
     }
 }
@@ -197,11 +202,12 @@ const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
 const SEND_FLAGS: SendFlags = SendFlags::empty();
 
-/// Encodes `msg` and sends it with `fds` attached.
+/// Encodes `msg` and sends it with `fds` attached, in as many frames of at
+/// most `limit` bytes and [`MAX_FDS_PER_FRAME`] descriptors as it takes.
 ///
 /// # Errors
-/// Fails on encode, on a frame over `limit`, and on any socket error.
-pub fn send_frame<T: Serialize>(
+/// Fails on encode and on any socket error.
+pub fn send_frame<T: Serialize + ?Sized>(
     stream: &UnixStream,
     msg: &T,
     fds: &[BorrowedFd<'_>],
@@ -210,42 +216,42 @@ pub fn send_frame<T: Serialize>(
     send_frame_with(stream, msg, fds, limit, Wait::Syscall, Gate::open()).map(|_| ())
 }
 
-/// [`send_frame`], with the whole frame bounded by `deadline`, on a socket
-/// the caller made nonblocking. A frame cut off by the deadline leaves the
-/// stream out of step: close it. Returns the encoded body's length, the
-/// four-byte header aside.
+/// [`send_frame`], with the whole message bounded by `deadline`, on a
+/// socket the caller made nonblocking. A message cut off by the deadline
+/// leaves the stream out of step: close it. Returns the message's encoded
+/// length, every frame's header aside.
 ///
 /// # Errors
-/// As [`send_frame`], plus [`FrameError::Refused`] for a frame the receiver
-/// would refuse, [`FrameError::Blocking`] for a timed send on a socket in
-/// blocking mode, [`FrameError::Late`] when no byte left by the deadline,
-/// and [`FrameError::TimedOut`] for a frame cut off part way.
-pub fn send_frame_until<T: Serialize>(
+/// As [`send_frame`], plus [`FrameError::Blocking`] for a timed send on a
+/// socket in blocking mode, [`FrameError::Late`] when no byte left by the
+/// deadline, and [`FrameError::TimedOut`] for a message cut off part way.
+pub fn send_frame_until<T: Serialize + ?Sized>(
     stream: &UnixStream,
     msg: &T,
     fds: &[BorrowedFd<'_>],
     limit: u32,
     deadline: Option<Instant>,
-) -> Result<u32, FrameError> {
+) -> Result<u64, FrameError> {
     send_frame_with(stream, msg, fds, limit, Wait::until(deadline), Gate::open())
 }
 
 /// [`send_frame_until`], sent only while `still` says so. Before each try
-/// at the frame's first byte, `still` is asked again and the guard it
+/// at the message's first byte, `still` is asked again and the guard it
 /// returns is held across that try; `started` runs with that guard as the
-/// first byte leaves. So whatever `still` locks orders the frame's start
-/// against the lock's other holders: once they have withdrawn the frame,
+/// first byte leaves. So whatever `still` locks orders the message's start
+/// against the lock's other holders: once they have withdrawn the message,
 /// no byte of it leaves, and once a byte has left they see what `started`
-/// did. While the frame waits for room before its first byte, `still` is
-/// asked every 20 ms, so a frame withdrawn then ends at once, not at its
-/// deadline. A frame that has started is finished. The deadline is checked
-/// again once `still` returns, but not while it waits: it should take only
-/// a lock its holders keep briefly. Returns the encoded body's length.
+/// did. While the message waits for room before its first byte, `still` is
+/// asked every 20 ms, so a message withdrawn then ends at once, not at its
+/// deadline. A message that has started is finished, every frame of it. The
+/// deadline is checked again once `still` returns, but not while it waits:
+/// it should take only a lock its holders keep briefly. Returns the
+/// message's encoded length.
 ///
 /// # Errors
 /// As [`send_frame_until`], plus [`FrameError::Withdrawn`] when `still`
 /// returned `None` before the first byte left.
-pub fn send_frame_if<T: Serialize, G>(
+pub fn send_frame_if<T: Serialize + ?Sized, G>(
     stream: &UnixStream,
     msg: &T,
     fds: &[BorrowedFd<'_>],
@@ -253,7 +259,7 @@ pub fn send_frame_if<T: Serialize, G>(
     deadline: Instant,
     still: impl FnMut() -> Option<G>,
     started: impl FnMut(&mut G),
-) -> Result<u32, FrameError> {
+) -> Result<u64, FrameError> {
     let gate = Gate {
         still,
         started,
@@ -262,7 +268,7 @@ pub fn send_frame_if<T: Serialize, G>(
     send_frame_with(stream, msg, fds, limit, Wait::Poll(Some(deadline)), gate)
 }
 
-/// What a frame's first byte waits for besides room ([`send_frame_if`]).
+/// What a message's first byte waits for besides room ([`send_frame_if`]).
 struct Gate<S, F> {
     still: S,
     started: F,
@@ -271,7 +277,7 @@ struct Gate<S, F> {
 }
 
 impl Gate<fn() -> Option<()>, fn(&mut ())> {
-    /// A frame no one can withdraw.
+    /// A message no one can withdraw.
     fn open() -> Self {
         Self {
             still: || Some(()),
@@ -281,63 +287,95 @@ impl Gate<fn() -> Option<()>, fn(&mut ())> {
     }
 }
 
-fn send_frame_with<T: Serialize, G>(
+fn send_frame_with<T: Serialize + ?Sized, G>(
     stream: &UnixStream,
     msg: &T,
     fds: &[BorrowedFd<'_>],
     limit: u32,
     wait: Wait,
     mut gate: Gate<impl FnMut() -> Option<G>, impl FnMut(&mut G)>,
-) -> Result<u32, FrameError> {
+) -> Result<u64, FrameError> {
     if wait.polls() && !fcntl_getfl(stream).is_ok_and(|mode| mode.contains(OFlags::NONBLOCK)) {
         return Err(FrameError::Blocking);
     }
     #[cfg(target_vendor = "apple")]
     rustix::net::sockopt::set_socket_nosigpipe(stream, true).map_err(io::Error::from)?;
-    // The body's length first, with nothing allocated: a frame over its
-    // limit is refused before any buffer is made, and the buffer is made
-    // whole, as the sender booked it.
-    let encoded = frame_body_len(msg)?;
-    let len = u32::try_from(encoded)
-        .ok()
-        .filter(|len| *len <= limit)
-        .ok_or(FrameError::TooLarge {
-            len: encoded,
-            limit,
-        })?;
-    if fds.len() > MAX_FDS_PER_FRAME {
-        return Err(FrameError::TooManyFds(fds.len()));
+    // The encoding's length first, with nothing allocated, so the buffer is
+    // made whole, as the sender booked it.
+    let len = codec::encoded_len(msg).map_err(FrameError::Encode)?;
+    let capacity = usize::try_from(len).map_err(|_| {
+        FrameError::Encode(CodecError::Invalid("a message past this address space"))
+    })?;
+    let mut body = Vec::with_capacity(capacity);
+    codec::write_into(&mut body, msg).map_err(FrameError::Encode)?;
+    let chunk = usize::try_from(limit.max(1)).unwrap_or(usize::MAX);
+    let frames = body
+        .len()
+        .div_ceil(chunk)
+        .max(fds.len().div_ceil(MAX_FDS_PER_FRAME))
+        .max(1);
+    for at in 0..frames {
+        let bytes = piece(&body, at, chunk);
+        let carried = piece(fds, at, MAX_FDS_PER_FRAME);
+        let mut header = [0u8; HEADER];
+        header[..4].copy_from_slice(&(bytes.len() as u32).to_le_bytes());
+        header[4] = u8::from(at + 1 < frames);
+        let frame = Frame {
+            header: &header,
+            bytes,
+            fds: carried,
+        };
+        send_one(stream, &frame, wait, &mut gate, at == 0)?;
     }
-    let mut body = Vec::with_capacity(len as usize);
-    rmp_serde::encode::write_named(&mut body, msg)?;
-    // Refused here, not by the receiver, which would end the connection.
-    shape::check(&body).map_err(FrameError::Refused)?;
-    let header = len.to_le_bytes();
+    Ok(len)
+}
+
+/// The `at`th run of at most `size` items of `all`, empty past its end.
+fn piece<T>(all: &[T], at: usize, size: usize) -> &[T] {
+    let rest = all.get(at.saturating_mul(size)..).unwrap_or(&[]);
+    &rest[..rest.len().min(size)]
+}
+
+/// One frame of a message, about to be sent.
+struct Frame<'a> {
+    header: &'a [u8; HEADER],
+    bytes: &'a [u8],
+    fds: &'a [BorrowedFd<'a>],
+}
+
+/// Sends one frame. Before the message's first byte, `first` and `gate`
+/// decide whether it still goes; the frame's descriptors ride on its own
+/// first byte.
+fn send_one<G>(
+    stream: &UnixStream,
+    frame: &Frame<'_>,
+    wait: Wait,
+    gate: &mut Gate<impl FnMut() -> Option<G>, impl FnMut(&mut G)>,
+    first: bool,
+) -> Result<(), FrameError> {
     let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(MAX_FDS_PER_FRAME))];
     let mut control = SendAncillaryBuffer::new(&mut space);
-    if !fds.is_empty() && !control.push(SendAncillaryMessage::ScmRights(fds)) {
-        return Err(FrameError::TooManyFds(fds.len()));
+    if !frame.fds.is_empty() && !control.push(SendAncillaryMessage::ScmRights(frame.fds)) {
+        return Err(FrameError::Protocol(
+            "a frame's descriptors did not fit its control buffer",
+        ));
     }
-    let total = HEADER + body.len();
+    let header = frame.header.as_slice();
+    let total = HEADER + frame.bytes.len();
     let mut sent = 0;
-    let late = |sent: usize| {
-        if sent == 0 {
-            FrameError::Late
-        } else {
-            FrameError::TimedOut
-        }
-    };
+    // Before the message's first byte, the message is still the caller's.
+    let opening = |sent: usize| first && sent == 0;
     while sent < total {
         let room = match gate.recheck {
-            Some(every) if sent == 0 => wait.within(every),
+            Some(every) if opening(sent) => wait.within(every),
             _ => wait,
         };
         match ready(stream, room, true) {
-            // Still no room before the first byte: is the frame wanted?
+            // Still no room before the first byte: is the message wanted?
             // Asked at the deadline too, and held across the clock check as
-            // on the first send, so a frame withdrawn before the deadline
+            // on the first send, so a message withdrawn before the deadline
             // is seen to pass ends withdrawn, not late.
-            Err(FrameError::TimedOut) if sent == 0 && gate.recheck.is_some() => {
+            Err(FrameError::TimedOut) if opening(sent) && gate.recheck.is_some() => {
                 let Some(_held) = (gate.still)() else {
                     return Err(FrameError::Withdrawn);
                 };
@@ -346,33 +384,39 @@ fn send_frame_with<T: Serialize, G>(
                 }
                 continue;
             }
-            Err(FrameError::TimedOut) => return Err(late(sent)),
+            Err(FrameError::TimedOut) if opening(sent) => return Err(FrameError::Late),
             waited => waited?,
         }
         let iov = if sent < HEADER {
-            [IoSlice::new(&header[sent..]), IoSlice::new(&body)]
+            [IoSlice::new(&header[sent..]), IoSlice::new(frame.bytes)]
         } else {
-            [IoSlice::new(&body[sent - HEADER..]), IoSlice::new(&[])]
+            [
+                IoSlice::new(&frame.bytes[sent - HEADER..]),
+                IoSlice::new(&[]),
+            ]
         };
-        // The descriptors ride on the first send only, which goes only
-        // while `still` holds.
-        let result = if sent == 0 {
+        // The descriptors ride on the frame's first send, which for the
+        // message's first frame goes only while `still` holds.
+        let result = if opening(sent) {
             let Some(mut guard) = (gate.still)() else {
                 return Err(FrameError::Withdrawn);
             };
             if wait.passed() {
                 return Err(FrameError::Late);
             }
-            let first = sendmsg(stream, &iov, &mut control, SEND_FLAGS);
-            if matches!(first, Ok(written) if written > 0) {
+            let written = sendmsg(stream, &iov, &mut control, SEND_FLAGS);
+            if matches!(written, Ok(written) if written > 0) {
                 (gate.started)(&mut guard);
             }
             drop(guard);
-            first
+            written
         } else if wait.passed() {
             // Room can come after the deadline (poll rounds its wait up, or
-            // this thread runs late); the rest of the frame does not go then.
+            // this thread runs late); the rest of the message does not go
+            // then.
             return Err(FrameError::TimedOut);
+        } else if sent == 0 {
+            sendmsg(stream, &iov, &mut control, SEND_FLAGS)
         } else {
             sendmsg(
                 stream,
@@ -388,10 +432,11 @@ fn send_frame_with<T: Serialize, G>(
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
-    Ok(len)
+    Ok(())
 }
 
-/// Reads one frame and the descriptors that rode with it.
+/// Reads one message and the descriptors that rode with it, each frame of
+/// it at most `limit` bytes.
 ///
 /// # Errors
 /// [`FrameError::Closed`] at a clean end of stream; any other variant for a
@@ -400,11 +445,11 @@ pub fn recv_frame<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::Syscall, body_only(|_| Ok(())))
+    recv_frame_with(stream, Bound::frames(limit), Wait::Syscall, Unbooked)
         .map(|(msg, fds, ..)| (msg, fds))
 }
 
-/// [`recv_frame`] for a socket in nonblocking mode: the frame waits in
+/// [`recv_frame`] for a socket in nonblocking mode: the message waits in
 /// poll(2), with no deadline, for as long as its peer takes.
 ///
 /// # Errors
@@ -413,36 +458,67 @@ pub fn recv_frame_polled<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
 ) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_polled_len(stream, limit).map(|(msg, fds, _)| (msg, fds))
+    recv_frame_with(stream, Bound::frames(limit), Wait::Poll(None), Unbooked)
+        .map(|(msg, fds, ..)| (msg, fds))
 }
 
-/// [`recv_frame_polled`], with the encoded body's length, the four-byte
-/// header aside.
+/// [`recv_frame`], with the whole message bounded by `deadline`.
 ///
 /// # Errors
-/// As [`recv_frame`].
-pub fn recv_frame_polled_len<T: DeserializeOwned>(
+/// As [`recv_frame`], plus [`FrameError::TimedOut`].
+pub fn recv_frame_until<T: DeserializeOwned>(
     stream: &UnixStream,
     limit: u32,
-) -> Result<(T, Vec<OwnedFd>, u32), FrameError> {
-    recv_frame_with(stream, limit, Wait::Poll(None), body_only(|_| Ok(())))
-        .map(|(msg, fds, len, ())| (msg, fds, len))
+    deadline: Option<Instant>,
+) -> Result<(T, Vec<OwnedFd>), FrameError> {
+    recv_frame_with(
+        stream,
+        Bound::frames(limit),
+        Wait::until(deadline),
+        Unbooked,
+    )
+    .map(|(msg, fds, ..)| (msg, fds))
 }
 
-/// [`recv_frame_polled_len`], with room for the body reserved before it is
-/// read: once the header and its descriptors are in, `reserve` gets the
-/// body's declared length before anything is allocated for it, and may
-/// wait for room. What it returns comes back with the frame, so the caller
-/// holds the room for as long as the frame's bytes live.
-///
-/// # Errors
-/// As [`recv_frame`], plus whatever `reserve` returns.
-pub fn recv_frame_polled_reserved<T: DeserializeOwned, L>(
-    stream: &UnixStream,
-    limit: u32,
-    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
-) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
-    recv_frame_with(stream, limit, Wait::Poll(None), body_only(reserve))
+/// What a read lets a message be: each frame at most `frame` bytes, and the
+/// whole at most `message` where a bound holds before a session exists
+/// ([`INITIAL_HANDSHAKE_FRAME_BYTES`]).
+#[derive(Debug, Clone, Copy)]
+struct Bound {
+    frame: u32,
+    message: Option<u64>,
+}
+
+impl Bound {
+    fn frames(limit: u32) -> Self {
+        Self {
+            frame: limit,
+            message: None,
+        }
+    }
+
+    /// The handshake's: one pre-session bound on the whole message.
+    fn handshake() -> Self {
+        Self {
+            frame: INITIAL_HANDSHAKE_FRAME_BYTES,
+            message: Some(u64::from(INITIAL_HANDSHAKE_FRAME_BYTES)),
+        }
+    }
+
+    /// A frame of `len` bytes after `before` bytes of its message.
+    fn check(self, len: u32, before: u64) -> Result<(), FrameError> {
+        if len > self.frame {
+            return Err(FrameError::TooLarge {
+                len: u64::from(len),
+                limit: u64::from(self.frame),
+            });
+        }
+        let whole = before.saturating_add(u64::from(len));
+        match self.message {
+            Some(limit) if whole > limit => Err(FrameError::TooLarge { len: whole, limit }),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Received descriptors are close-on-exec from the moment they exist, so no
@@ -466,45 +542,46 @@ fn mark_cloexec(fds: &[OwnedFd]) -> io::Result<()> {
     Ok(())
 }
 
-/// [`recv_frame`], with the whole frame bounded by `deadline`.
-///
-/// # Errors
-/// As [`recv_frame`], plus [`FrameError::TimedOut`].
-pub fn recv_frame_until<T: DeserializeOwned>(
-    stream: &UnixStream,
-    limit: u32,
-    deadline: Option<Instant>,
-) -> Result<(T, Vec<OwnedFd>), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline), body_only(|_| Ok(())))
-        .map(|(msg, fds, ..)| (msg, fds))
-}
-
-/// [`recv_frame_until`], with room for the body reserved before it is
-/// read, as [`recv_frame_polled_reserved`] reserves it: once the header is
-/// in and its length is within `limit`, `reserve` gets that length before
-/// anything is allocated for the body. `deadline` bounds the reads, not
-/// `reserve`'s own wait, which should end by it too.
-///
-/// # Errors
-/// As [`recv_frame_until`], plus whatever `reserve` returns.
-pub fn recv_frame_until_reserved<T: DeserializeOwned, L>(
-    stream: &UnixStream,
-    limit: u32,
-    deadline: Option<Instant>,
-    reserve: impl FnOnce(u32) -> Result<L, FrameError>,
-) -> Result<(T, Vec<OwnedFd>, u32, L), FrameError> {
-    recv_frame_with(stream, limit, Wait::until(deadline), body_only(reserve))
-}
-
 fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
     stream: &UnixStream,
-    limit: u32,
+    bound: Bound,
     wait: Wait,
     mut booking: B,
-) -> Result<(T, Vec<OwnedFd>, u32, B::Held), FrameError> {
+) -> Result<(T, Vec<OwnedFd>, u64, B::Held), FrameError> {
+    let mut fds = Vec::new();
+    let (len, mut more) = recv_header(stream, wait, &mut fds)?;
+    bound.check(len, 0)?;
+    // The room first, then the bytes: nothing is allocated for a frame its
+    // receiver has not made room for.
+    let mut held = booking.body(u64::from(len))?;
+    let mut body = Vec::new();
+    recv_body(stream, wait, &mut body, len)?;
+    while more {
+        let (len, next) = recv_header(stream, wait, &mut fds)?;
+        bound.check(len, body.len() as u64)?;
+        booking.more(&mut held, u64::from(len))?;
+        recv_body(stream, wait, &mut body, len)?;
+        more = next;
+    }
+    let total = body.len() as u64;
+    let shape = codec::shape(&body).map_err(FrameError::Decode)?;
+    // Room for the value before it is built, while the bytes still live;
+    // theirs goes back once only the value is left.
+    booking.value(&mut held, shape.decoded())?;
+    let message = codec::from_slice(&body).map_err(FrameError::Decode)?;
+    drop(body);
+    booking.body_gone(&mut held, total);
+    Ok((message, fds, total, held))
+}
+
+/// One frame's header, and the descriptors that rode on its first byte.
+fn recv_header(
+    stream: &UnixStream,
+    wait: Wait,
+    fds: &mut Vec<OwnedFd>,
+) -> Result<(u32, bool), FrameError> {
     let mut header = [0u8; HEADER];
     let mut got = 0;
-    let mut fds = Vec::new();
     let flags = if wait.polls() {
         RECV_FLAGS | RecvFlags::DONTWAIT
     } else {
@@ -535,41 +612,44 @@ fn recv_frame_with<T: DeserializeOwned, B: FrameBooking>(
         }
         got += msg.bytes;
     }
-    if fds.len() > MAX_FDS_PER_FRAME {
-        return Err(FrameError::TooManyFds(fds.len()));
-    }
-    let len = u32::from_le_bytes(header);
-    if len > limit {
-        return Err(FrameError::TooLarge {
-            len: u64::from(len),
-            limit,
-        });
-    }
-    // The room first, then the body: nothing is allocated for a frame its
-    // receiver has not made room for.
-    let mut held = booking.body(len)?;
-    let mut body = vec![0u8; len as usize];
-    let mut filled = 0;
-    let body_flags = if wait.polls() {
+    let [a, b, c, d, more] = header;
+    let more = match more {
+        0 => false,
+        1 => true,
+        _ => {
+            return Err(FrameError::Protocol(
+                "a frame's more flag is neither 0 nor 1",
+            ));
+        }
+    };
+    Ok((u32::from_le_bytes([a, b, c, d]), more))
+}
+
+/// Appends one frame's `len` bytes to `body`, its room already made.
+fn recv_body(
+    stream: &UnixStream,
+    wait: Wait,
+    body: &mut Vec<u8>,
+    len: u32,
+) -> Result<(), FrameError> {
+    let start = body.len();
+    let len = len as usize;
+    body.reserve_exact(len);
+    body.resize(start + len, 0);
+    let flags = if wait.polls() {
         RecvFlags::DONTWAIT
     } else {
         RecvFlags::empty()
     };
+    let mut filled = start;
     while filled < body.len() {
         ready(stream, wait, false)?;
-        match recv(stream, &mut body[filled..], body_flags) {
+        match recv(stream, &mut body[filled..], flags) {
             Ok((0, _)) => return Err(FrameError::Closed),
             Ok((read, _)) => filled += read,
             Err(errno) if wait.retry(errno) => {}
             Err(errno) => return Err(io::Error::from(errno).into()),
         }
     }
-    let shape = shape::check(&body).map_err(FrameError::Protocol)?;
-    // Room for the value before it is built, while the body still lives;
-    // the body's own goes back once only the value is left.
-    booking.value(&mut held, shape.decoded())?;
-    let message = rmp_serde::from_slice(&body)?;
-    drop(body);
-    booking.body_gone(&mut held, len);
-    Ok((message, fds, len, held))
+    Ok(())
 }

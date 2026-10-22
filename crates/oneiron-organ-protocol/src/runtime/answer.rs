@@ -10,6 +10,7 @@ use std::ops::Deref;
 use std::os::fd::OwnedFd;
 
 use super::AskLine;
+use crate::codec;
 use crate::memory::{ASK_MEMORY_GROW, MemoryAnswer, MemoryAsk};
 use crate::region::MappedRegion;
 use crate::wire::{AskCode, AskData, AskRefusal, Hash32, Payload};
@@ -74,9 +75,9 @@ impl AskLine {
             }
             Payload::Inline(_) => return Err(broken("inline length")),
             Payload::Slot(slot) => {
-                let fd = fds
-                    .into_iter()
-                    .nth(usize::from(slot))
+                let fd = usize::try_from(slot)
+                    .ok()
+                    .and_then(|slot| fds.into_iter().nth(slot))
                     .ok_or_else(|| broken("slot"))?;
                 // The engine's pages, mapped: nothing of this process's yet.
                 let region =
@@ -102,8 +103,8 @@ impl AskLine {
         if bytes == 0 {
             return Ok(AnswerMemory::Reserved { bytes });
         }
-        let value = to_value(&MemoryAsk { bytes })
-            .ok_or_else(|| failed("the memory ask did not encode".to_owned()))?;
+        let value = codec::to_value(&MemoryAsk { bytes })
+            .map_err(|err| failed(format!("the memory ask did not encode: {err}")))?;
         let (value, _) = match self.exchange(ASK_MEMORY_GROW, value) {
             Ok(answered) => answered,
             Err(refusal) if matches!(refusal.code, AskCode::NotGranted | AskCode::Unsupported) => {
@@ -111,29 +112,16 @@ impl AskLine {
             }
             Err(refusal) => return Err(refusal),
         };
-        match from_value::<MemoryAnswer>(&value) {
-            Some(MemoryAnswer::Granted) => Ok(AnswerMemory::Reserved { bytes }),
-            Some(MemoryAnswer::Floor { needed, available }) => Err(failed(format!(
+        match codec::from_value::<MemoryAnswer>(&value) {
+            Ok(MemoryAnswer::Granted) => Ok(AnswerMemory::Reserved { bytes }),
+            Ok(MemoryAnswer::Floor { needed, available }) => Err(failed(format!(
                 "the machine cannot hold the answer's {bytes} bytes: {needed} needed, \
                  {available} available"
             ))),
-            Some(MemoryAnswer::Deadline) => Err(failed(
+            Ok(MemoryAnswer::Deadline) => Err(failed(
                 "the answer's bytes were not reserved before the call's deadline".to_owned(),
             )),
-            None => Err(failed("the memory answer did not read".to_owned())),
+            Err(err) => Err(failed(format!("the memory answer did not read: {err}"))),
         }
     }
-}
-
-/// A wire value with named fields.
-fn to_value<T: serde::Serialize>(value: &T) -> Option<rmpv::Value> {
-    let bytes = rmp_serde::to_vec_named(value).ok()?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).ok()
-}
-
-/// A wire value read as `T`, by its field names.
-fn from_value<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Option<T> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).ok()?;
-    rmp_serde::from_slice(&bytes).ok()
 }

@@ -5,9 +5,15 @@
 //! the verb, unmaps the inputs and sends the reply. It exits when the engine
 //! closes the socket, so an organ never outlives its engine.
 //!
-//! On a 1.1 session a verb may ask the engine for something mid-call
-//! ([`CallContext::ask`]). The reader thread routes each answer to the verb
-//! that waits for it, and a cancel wakes that verb at once.
+//! A verb may ask the engine for something mid-call ([`CallContext::ask`]).
+//! The reader thread routes each answer to the verb that waits for it, and
+//! a cancel wakes that verb at once.
+//!
+//! The engine reserves the memory this process takes to read and decode
+//! each call or answer it sends, before the message leaves (FIX 6195): its
+//! frames' bytes and the value they decode into, held in the call's room as
+//! the organ's own, as a `memory.grow` holds them. So the reader books
+//! nothing of its own.
 
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -21,13 +27,14 @@ use std::thread;
 
 use serde_bytes::ByteBuf;
 
-use crate::frame::{FrameError, recv_frame, send_frame};
+use crate::frame::{FrameError, recv_frame, recv_handshake, send_frame};
 use crate::region::{MappedRegion, SharedRegion};
+use crate::value::Value;
 use crate::wire::{
     Ask, AskAnswer, AskCode, AskData, AskOutcome, AskRefusal, Call, ErrorCode, FromOrgan, Hash32,
-    HelloAck, INITIAL_HANDSHAKE_FRAME_BYTES, INLINE_MAX_BYTES, Input, Limits, MAX_FDS_PER_FRAME,
-    Notes, OrganError, OrganIdentity, Outcome, Output, PROTOCOL, Payload, Proposal,
-    ProtocolVersion, Reply, ToOrgan, TypedBody, VerbSpec,
+    HelloAck, INITIAL_HANDSHAKE_FRAME_BYTES, INLINE_MAX_BYTES, Input, Limits, Notes, OrganError,
+    OrganIdentity, Outcome, Output, PROTOCOL, Payload, Proposal, Reply, ToOrgan, TypedBody,
+    VerbSpec,
 };
 
 /// Reads every input byte and folds it; the host's read-throughput probe.
@@ -52,7 +59,7 @@ pub trait Organ: Send + Sync + 'static {
 pub struct Answer {
     pub body: Option<TypedBody>,
     pub outputs: Vec<OutputBytes>,
-    pub report: rmpv::Value,
+    pub report: Value,
     pub notes: Notes,
 }
 
@@ -61,7 +68,7 @@ impl Default for Answer {
         Self {
             body: None,
             outputs: Vec::new(),
-            report: rmpv::Value::Nil,
+            report: Value::Nil,
             notes: Notes::default(),
         }
     }
@@ -79,7 +86,7 @@ pub struct OutputBytes {
 pub struct CallContext<'a> {
     pub verb: &'a str,
     pub schema: u32,
-    pub args: &'a rmpv::Value,
+    pub args: &'a Value,
     pub body: Option<&'a TypedBody>,
     pub inputs: &'a [InputBytes],
     pub limits: Limits,
@@ -94,7 +101,7 @@ impl<'a> CallContext<'a> {
     pub fn new(
         verb: &'a str,
         schema: u32,
-        args: &'a rmpv::Value,
+        args: &'a Value,
         body: Option<&'a TypedBody>,
         inputs: &'a [InputBytes],
         limits: Limits,
@@ -138,11 +145,11 @@ impl<'a> CallContext<'a> {
     /// verb goes on or fails, as it chooses.
     ///
     /// # Errors
-    /// The engine's refusal; [`AskCode::Unsupported`] on a 1.0 session or
-    /// outside a served call, where nothing is sent; [`AskCode::Cancelled`]
-    /// once the call is cancelled. A value of any size is sent whole: past
+    /// The engine's refusal; [`AskCode::Unsupported`] outside a served call,
+    /// where nothing is sent; [`AskCode::Cancelled`] once the call is
+    /// cancelled. A value of any size and depth is sent whole: past
     /// [`crate::ASK_VALUE_MAX`] the engine's `[limits]` row asks, and reads it.
-    pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+    pub fn ask(&self, verb: &str, value: Value) -> Result<AskReply, AskRefusal> {
         self.asker.ask(verb, value)
     }
 
@@ -162,14 +169,14 @@ pub use answer::{AnswerMemory, AskBytes};
 /// What the engine answered.
 #[derive(Debug)]
 pub struct AskReply {
-    pub value: rmpv::Value,
+    pub value: Value,
     /// Bytes beside the value.
     pub data: Option<AskBytes>,
 }
 
 /// An answer as it came: its value, and its bytes with the descriptors they
 /// ride in, not yet in the organ's own memory.
-type Answered = (rmpv::Value, Option<(AskData, Vec<OwnedFd>)>);
+type Answered = (Value, Option<(AskData, Vec<OwnedFd>)>);
 
 /// One served call's way to ask, and the ask that waits for its answer.
 #[derive(Debug, Default)]
@@ -221,7 +228,7 @@ impl Asker {
     /// As [`CallContext::ask`]; outside a served call, or once the call has
     /// replied, [`AskCode::Unsupported`] or [`AskCode::Cancelled`] without
     /// sending.
-    pub fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+    pub fn ask(&self, verb: &str, value: Value) -> Result<AskReply, AskRefusal> {
         match &self.line {
             Some(line) => line.ask(verb, value),
             None => Err(AskRefusal::new(
@@ -239,13 +246,12 @@ struct AskLine {
     limit: u32,
     call: u64,
     state: Arc<CallState>,
-    asks: bool,
     next: AtomicU32,
     one: Mutex<()>,
 }
 
 impl AskLine {
-    fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+    fn ask(&self, verb: &str, value: Value) -> Result<AskReply, AskRefusal> {
         let (value, data) = self.exchange(verb, value)?;
         // Answered, and the call's one ask is free again: a region's bytes
         // are reserved by an ask of their own before they are copied out
@@ -259,13 +265,7 @@ impl AskLine {
 
     /// Sends one ask and waits for its answer, holding the call's one ask
     /// in flight until it comes.
-    fn exchange(&self, verb: &str, value: rmpv::Value) -> Result<Answered, AskRefusal> {
-        if !self.asks {
-            return Err(AskRefusal::new(
-                AskCode::Unsupported,
-                "the engine speaks 1.0, which carries no asks",
-            ));
-        }
+    fn exchange(&self, verb: &str, value: Value) -> Result<Answered, AskRefusal> {
         let cancelled = || AskRefusal::new(AskCode::Cancelled, "the call was cancelled");
         let _one = lock(&self.one);
         let id = self.next.fetch_add(1, Ordering::SeqCst) + 1;
@@ -360,8 +360,6 @@ struct Shared<O> {
     writer: Arc<Mutex<UnixStream>>,
     calls: Mutex<HashMap<u64, Arc<CallState>>>,
     limits: Limits,
-    /// The version this session speaks: the lower minor of both sides.
-    session: ProtocolVersion,
 }
 
 struct Job {
@@ -383,10 +381,13 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
     // The hello and the ack cross under the pre-session bound alone
     // (FIX 7648): no session's frame limit holds until the handshake sets
     // one.
-    let (first, _) = recv_frame::<ToOrgan>(stream, INITIAL_HANDSHAKE_FRAME_BYTES)?;
+    let (first, _) = recv_handshake::<ToOrgan>(stream)?;
     let ToOrgan::Hello(hello) = first else {
         return Err(FrameError::Protocol("the first frame must be hello"));
     };
+    if PROTOCOL.session(hello.protocol).is_none() {
+        return Err(FrameError::Protocol("the engine speaks another major"));
+    }
     let mut verbs = organ.verbs();
     verbs.extend(builtin_verbs());
     let ack = FromOrgan::HelloAck(HelloAck {
@@ -396,17 +397,12 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
     });
     send_frame(stream, &ack, &[], INITIAL_HANDSHAKE_FRAME_BYTES)?;
     let limits = hello.limits;
-    let session = PROTOCOL.session(hello.protocol).unwrap_or(ProtocolVersion {
-        major: PROTOCOL.major,
-        minor: 0,
-    });
     let shared = Arc::new(Shared {
         organ,
         verbs,
         writer: Arc::new(Mutex::new(stream.try_clone()?)),
         calls: Mutex::new(HashMap::new()),
         limits,
-        session,
     });
     let (jobs, queue) = mpsc::channel::<Job>();
     let queue = Arc::new(Mutex::new(queue));
@@ -432,14 +428,11 @@ pub fn serve_stream<O: Organ>(organ: Arc<O>, stream: &UnixStream) -> Result<(), 
                 }
             }
             // An answer for a call that has ended is dropped with its fds.
-            Ok((ToOrgan::Answer(answer), fds)) if shared.session.asks() => {
+            Ok((ToOrgan::Answer(answer), fds)) => {
                 let state = lock(&shared.calls).get(&answer.call).cloned();
                 if let Some(state) = state {
                     state.answer(answer, fds);
                 }
-            }
-            Ok((ToOrgan::Answer(_), _)) => {
-                return Err(FrameError::Protocol("an answer on a 1.0 session"));
             }
             Ok((ToOrgan::Shutdown, _)) | Err(FrameError::Closed) => return Ok(()),
             Ok((ToOrgan::Hello(_), _)) => return Err(FrameError::Protocol("a second hello")),
@@ -468,17 +461,13 @@ fn work<O: Organ>(shared: &Shared<O>, queue: &Mutex<mpsc::Receiver<Job>>) {
         let writer = lock(&shared.writer);
         let reply = FromOrgan::Reply(Reply { id, outcome });
         let sent = match send_frame(&writer, &reply, &borrowed, shared.limits.max_reply_frame) {
-            // Nothing left, so the engine can still be told why.
+            // Nothing left, so the engine can still be told why: the reply
+            // did not encode.
             Err(err) if err.is_local() => {
-                let code = if matches!(err, FrameError::Encode(_)) {
-                    ErrorCode::Internal
-                } else {
-                    ErrorCode::TooLarge
-                };
                 let refused = FromOrgan::Reply(Reply {
                     id,
                     outcome: Outcome::Error(OrganError::new(
-                        code,
+                        ErrorCode::Internal,
                         format!("reply not sent: {err}"),
                     )),
                 });
@@ -524,7 +513,6 @@ fn answer<O: Organ>(shared: &Shared<O>, job: Job) -> (Outcome, Vec<OwnedFd>) {
             limit: shared.limits.max_reply_frame,
             call: call.id,
             state: Arc::clone(&state),
-            asks: shared.session.asks(),
             next: AtomicU32::new(0),
             one: Mutex::new(()),
         })),
@@ -570,8 +558,9 @@ fn map_inputs(inputs: Vec<Input>, fds: Vec<OwnedFd>) -> Result<Vec<InputBytes>, 
                     return Err(OrganError::new(ErrorCode::BadRequest, "inline length"));
                 }
                 Payload::Slot(slot) => {
-                    let fd = slots
-                        .get_mut(usize::from(slot))
+                    let fd = usize::try_from(slot)
+                        .ok()
+                        .and_then(|slot| slots.get_mut(slot))
                         .and_then(Option::take)
                         .ok_or_else(|| OrganError::new(ErrorCode::BadRequest, "input slot"))?;
                     let region = MappedRegion::map(fd, input.len).map_err(|err| {
@@ -595,7 +584,7 @@ fn touch(ctx: &CallContext<'_>) -> Answer {
         .iter()
         .fold(0, |fold, input| fold ^ touch_fold(input));
     let len: u64 = ctx.inputs.iter().map(|input| input.len() as u64).sum();
-    let report = rmpv::Value::Map(vec![
+    let report = Value::Map(vec![
         ("fold".into(), fold.into()),
         ("len".into(), len.into()),
     ]);
@@ -620,6 +609,9 @@ pub fn touch_fold(bytes: &[u8]) -> u64 {
     fold
 }
 
+/// The verb's answer as a proposal, each output inline or in a region of
+/// its own: there may be any number of either, and the reply's frames carry
+/// every region's descriptor.
 fn encode_answer(answer: Answer) -> Result<(Proposal, Vec<OwnedFd>), OrganError> {
     let mut fds = Vec::new();
     let mut outputs = Vec::with_capacity(answer.outputs.len());
@@ -627,17 +619,10 @@ fn encode_answer(answer: Answer) -> Result<(Proposal, Vec<OwnedFd>), OrganError>
         let data = if output.bytes.len() <= INLINE_MAX_BYTES || !cfg!(target_os = "linux") {
             Payload::Inline(ByteBuf::from(output.bytes))
         } else {
-            if fds.len() >= MAX_FDS_PER_FRAME {
-                return Err(OrganError::new(
-                    ErrorCode::TooLarge,
-                    format!("more than {MAX_FDS_PER_FRAME} region outputs"),
-                ));
-            }
             let region = SharedRegion::from_bytes(&output.bytes).map_err(|err| {
                 OrganError::new(ErrorCode::Internal, format!("output region: {err}"))
             })?;
-            let slot = u16::try_from(fds.len())
-                .map_err(|_| OrganError::new(ErrorCode::TooLarge, "too many outputs"))?;
+            let slot = fds.len() as u64;
             fds.push(region.into_fd());
             Payload::Slot(slot)
         };
