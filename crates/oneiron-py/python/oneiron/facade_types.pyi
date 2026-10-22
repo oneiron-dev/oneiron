@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4127 declarations.
+Census: 1157 facade rows, 4128 declarations.
 Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -5530,6 +5530,7 @@ class PluginSectionProposal(TypedDict):
     manifest: SectionManifestEnvelope
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
 class PluginSectionPendingRow(TypedDict):
     claim_ref: str
     pack_id: str
@@ -5549,6 +5550,10 @@ class PluginSectionPackRow(TypedDict):
     section: PackSection
 class PluginSectionsView(TypedDict):
     pending: list[PluginSectionPendingRow]
+    pending_total: int
+    pending_remaining: int
+    next_cursor: NotRequired[str | None]
+    end: bool
     admitted: list[PluginSectionAdmittedRow]
     pack_sections: list[PluginSectionPackRow]
     rendered_pack_sections: list[str]
@@ -15090,7 +15095,9 @@ class ModelStepResultFailed(TypedDict):
 class ModelStepResultBudgetDenied(TypedDict):
     status: Literal["budget_denied"]
     trap_ref: str
-ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied
+class ModelStepResultErased(TypedDict):
+    status: Literal["erased"]
+ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied | ModelStepResultErased
 class ModelStepReceipt(TypedDict):
     step_ref: str
     step_hash: str
@@ -15615,6 +15622,7 @@ class FrozenTrialCase(TypedDict):
     noise_weight: float
     derived_from: list[EntityId]
 TrialAdmission = Literal["ready", "ask_exploration"]
+ModelTrialExecutionState = Literal["not_started", "running", "interrupted", "measured"]
 class ModelTrialEvidence(TypedDict):
     measurements_hash: list[int]
     incumbent_loss: NotRequired[float | None]
@@ -15623,6 +15631,7 @@ class ModelTrialEvidence(TypedDict):
     incumbent_cost_per_thousand: float
     candidate_cost_per_thousand: float
     trial_cost: float
+    unknown_arms: int
 class PairedQualityInterval(TypedDict):
     low: float
     high: float
@@ -15659,6 +15668,10 @@ class ModelTrialView(TypedDict):
     admission: TrialAdmission
     prepared_at: int
     execution_started: bool
+    execution: ModelTrialExecutionState
+    arms_completed: int
+    arms_unknown: int
+    arms_total: int
     evidence: NotRequired[ModelTrialEvidence | None]
     receipt: NotRequired[ModelTrialReceipt | None]
 class ModelTrialRef(TypedDict):

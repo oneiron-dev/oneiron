@@ -256,6 +256,20 @@ impl Vault {
         read: AuthorizedArtifactRead,
     ) -> Result<Option<ArtifactServedFile>> {
         let target = read.target;
+        // The export's taint is read again in this view before any byte is
+        // read (FIX 9574): a stale one serves only under its pointer's stamp
+        // while the stale-publish policy still permits it.
+        let refs = exhaust_taint_refs_in_txn(&self.store, txn, &target.owner)?;
+        let stale = matches!(
+            taint_state_for_refs_in_txn(&self.store, txn, &refs)?,
+            ArtifactTaintState::TaintedStale
+        );
+        if stale
+            && !(target.pointer.stale_taint_override
+                && allow_stale_publish_in_txn(&self.store, txn)?)
+        {
+            return Ok(None);
+        }
         // A hosted reader is never the owner verified at a door (OF-560): the
         // bytes it reads are masked. A body kept in its ASSET's file is masked
         // as it is read, never held whole beside its copy (FIX 6507).
@@ -314,24 +328,19 @@ impl Vault {
                 if artifact_id != target.owner || artifact != artifact_id.to_hex() {
                     return Ok(None);
                 }
-                let Some(record) =
-                    self.blob_artifact_version_metadata_in_txn(txn, &artifact_id, version)?
-                else {
+                // A replica serves from its descriptor (FIX 1195).
+                let Some(serving) = self.serving_blob_in_txn(txn, &artifact_id, version)? else {
                     return Ok(None);
                 };
-                if path != "export" && path != "index.html" && path != record.export_name {
+                if path != "export" && path != "index.html" && path != serving.export_name {
                     return Ok(None);
                 }
-                let Some(bytes) = self.read_blob_artifact_version_sighted_in_txn(
-                    txn,
-                    &artifact_id,
-                    version,
-                    sight,
-                )?
+                let Some(bytes) =
+                    self.read_serving_blob_in_txn(txn, &artifact_id, &serving, sight)?
                 else {
                     return Ok(None);
                 };
-                (bytes, Some(record.export_media_type), record.content_hash)
+                (bytes, Some(serving.export_media_type), serving.content_hash)
             }
         };
         // A DOCX copy shows its default author (FIX 4513).

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1157 facade rows, 4111 generated types.
+// UniFFI census: 1157 facade rows, 4112 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1109.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -16779,6 +16779,8 @@ pub struct PluginSectionProposal {
 pub struct PluginSectionListRequest {
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// `oneiron::memory::plugin_sections::PluginSectionPendingRow`.
@@ -16829,6 +16831,18 @@ pub struct PluginSectionPackRow {
 pub struct PluginSectionsView {
     #[serde(rename = "pending")]
     pub pending: Vec<PluginSectionPendingRow>,
+    #[serde(rename = "pending_total")]
+    pub pending_total: u64,
+    #[serde(rename = "pending_remaining")]
+    pub pending_remaining: u64,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "end")]
+    pub end: bool,
     #[serde(rename = "admitted")]
     pub admitted: Vec<PluginSectionAdmittedRow>,
     #[serde(rename = "pack_sections")]
@@ -47170,6 +47184,8 @@ pub enum ModelStepResult {
         #[serde(rename = "trap_ref")]
         trap_ref: String,
     },
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::llm::step::public::ModelStepReceipt`.
@@ -48736,6 +48752,19 @@ pub enum TrialAdmission {
     AskExploration,
 }
 
+/// `oneiron::llm::model_trials::types::ModelTrialExecutionState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelTrialExecutionState {
+    #[serde(rename = "not_started")]
+    NotStarted,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "measured")]
+    Measured,
+}
+
 /// `oneiron::llm::catalog_doors::types::ModelTrialEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48762,6 +48791,8 @@ pub struct ModelTrialEvidence {
     pub candidate_cost_per_thousand: f64,
     #[serde(rename = "trial_cost")]
     pub trial_cost: f64,
+    #[serde(rename = "unknown_arms")]
+    pub unknown_arms: u64,
 }
 
 /// `oneiron::llm::model_trials::types::PairedQualityInterval`.
@@ -48882,6 +48913,14 @@ pub struct ModelTrialView {
     pub prepared_at: u64,
     #[serde(rename = "execution_started")]
     pub execution_started: bool,
+    #[serde(rename = "execution")]
+    pub execution: ModelTrialExecutionState,
+    #[serde(rename = "arms_completed")]
+    pub arms_completed: u64,
+    #[serde(rename = "arms_unknown")]
+    pub arms_unknown: u64,
+    #[serde(rename = "arms_total")]
+    pub arms_total: u64,
     #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<ModelTrialEvidence>,
     #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]

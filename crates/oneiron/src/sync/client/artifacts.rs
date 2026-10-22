@@ -1,43 +1,82 @@
-//! Pinned artifact publications on the owner lane: each owed one goes out once
-//! the NOTE session binds, and again while the server answers `Staged`.
+//! Pinned artifact publications on the owner lane: each owed one goes out in
+//! bounded parts once the NOTE session binds, a part at a time and a turn
+//! for each publication (FIX 9575), and again while the server answers
+//! `Staged`.
 use std::time::{Duration, Instant};
 
 use super::SyncClient;
 use crate::EntityId;
-use crate::artifact_hosting::ArtifactPublicationOutcome;
+use crate::artifact_hosting::{
+    ArtifactPublicationCursor, ArtifactPublicationOutcome, ArtifactPublicationPart,
+    ArtifactPublicationStep,
+};
 
-/// How long a sent publication waits for its receipt before it goes again.
-/// A `Staged` one waits for window sync to deliver what it names.
+/// How long a sent publication waits for its receipt before it goes again,
+/// counted from its last part: a round waits, never each part. A `Staged`
+/// one waits for window sync to deliver what it names.
 const ARTIFACT_PUBLICATION_RESEND: Duration = Duration::from_secs(5);
 
 impl SyncClient {
-    /// The publication frames due on this connection now. The server applies
-    /// one only from the vault owner's bound session, so none goes before it.
-    pub(crate) fn due_artifact_publication_frames(&mut self) -> crate::Result<Vec<Vec<u8>>> {
-        if !self.note_session_bound
+    /// Fills `slot`, when it is empty, with the next publication part due
+    /// on this connection; `true` when it did. The server applies a
+    /// publication only from the vault owner's bound session, so none goes
+    /// before it. A publication that does not prepare is reported and stays
+    /// owed; the next pull moves on to the next one.
+    pub(crate) fn pull_artifact_publication(
+        &mut self,
+        cursor: &mut ArtifactPublicationCursor,
+        slot: &mut Option<ArtifactPublicationPart>,
+    ) -> crate::Result<bool> {
+        if slot.is_some()
+            || !self.note_session_bound
             || self.config.note_session.is_none()
             || self.config.federation_peer.is_some()
         {
-            return Ok(Vec::new());
+            return Ok(false);
         }
-        let owed = self.vault.artifact_publication_frames()?;
-        self.artifact_publication_resend
-            .retain(|digest, _| owed.iter().any(|owed| owed.digest == *digest));
         let now = Instant::now();
-        let mut due = Vec::new();
-        for owed in owed {
-            if self
-                .artifact_publication_resend
-                .get(&owed.digest)
-                .is_some_and(|at| *at > now)
-            {
-                continue;
+        self.artifact_publication_resend.retain(|_, at| *at > now);
+        let waiting = &self.artifact_publication_resend;
+        let due = |digest: &[u8; 32]| !waiting.contains_key(digest);
+        match self.vault.next_artifact_publication_step(cursor, &due)? {
+            ArtifactPublicationStep::Ready(part) => {
+                *slot = Some(part);
+                Ok(true)
             }
-            self.artifact_publication_resend
-                .insert(owed.digest, now + ARTIFACT_PUBLICATION_RESEND);
-            due.push(owed.frame);
+            ArtifactPublicationStep::ItemError { entity, error } => {
+                let _ = self.event_tx.send(super::SyncEvent::Error(format!(
+                    "Artifact publication {} did not prepare: {error}",
+                    entity.to_hex()
+                )));
+                Ok(false)
+            }
+            ArtifactPublicationStep::Idle => Ok(false),
         }
-        Ok(due)
+    }
+
+    /// Whether `part` may still go: its frame is not withheld, and its
+    /// pointer still owes the change it carries.
+    pub(crate) fn artifact_publication_part_current(&self, part: &ArtifactPublicationPart) -> bool {
+        !self.frame_withheld(&part.frame)
+            && self
+                .vault
+                .artifact_publication_part_current(part)
+                .unwrap_or(false)
+    }
+
+    /// Moves `cursor` past `part`, which the socket took (`sent`) or which
+    /// was dropped unsent. A round's last part sent starts its wait for the
+    /// receipt.
+    pub(crate) fn artifact_publication_released(
+        &mut self,
+        cursor: &mut ArtifactPublicationCursor,
+        part: &ArtifactPublicationPart,
+        sent: bool,
+    ) {
+        if cursor.released(part, sent) {
+            self.artifact_publication_resend
+                .insert(part.digest, Instant::now() + ARTIFACT_PUBLICATION_RESEND);
+        }
     }
 
     /// `Applied` and `Refused` clear the outbox row the receipt names; a

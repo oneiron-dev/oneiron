@@ -7,12 +7,14 @@ use serde_json::{Value, json};
 
 use crate::llm::decision::catalogue::DESCRIPTION_FIT;
 use crate::llm::decision::{
-    AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
-    Reversibility, cut_text, fit_state,
+    AnswerContract, DecisionBandPolicy, DecisionDial, DecisionLadder, Reversibility, cut_text,
+    fit_state,
 };
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
+
+use super::readings::DescriptionFitnessReadings;
 
 /// Generation beside a decided route: the reason a routed seat's receipt keeps, from the
 /// host's own model transport. The model, its effort and its fitness are already decided;
@@ -52,15 +54,16 @@ pub struct DescriptionDecisions<'a> {
 }
 
 impl DescriptionDecisions<'_> {
-    /// Every candidate's fitness for `task` as one pack: a `[0, 1]` score each, keyed by
-    /// model. An abstained grade leaves its candidate unfit.
+    /// Every candidate's fitness for `task` as one pack: each candidate's complete typed
+    /// decision, whose `[0, 1]` score is its fitness (FIX 9922). An abstained grade leaves
+    /// its candidate unfit.
     pub(super) fn fitness(
         &self,
         task: &str,
         candidates: &[Candidate<'_>],
-    ) -> Result<Vec<Option<f64>>> {
+    ) -> Result<DescriptionFitnessReadings> {
         if candidates.is_empty() {
-            return Ok(Vec::new());
+            return Ok(DescriptionFitnessReadings::default());
         }
         let questions = candidates
             .iter()
@@ -107,12 +110,6 @@ impl DescriptionDecisions<'_> {
             Reversibility::ReversibleRead,
             &RetrievalDeadline::hard(Instant::now(), self.budget),
         )?;
-        Ok(decisions
-            .iter()
-            .map(|decision| match decision.answer {
-                DecisionAnswer::Score(fitness) => Some(fitness),
-                _ => None,
-            })
-            .collect())
+        Ok(DescriptionFitnessReadings::of(candidates, decisions))
     }
 }

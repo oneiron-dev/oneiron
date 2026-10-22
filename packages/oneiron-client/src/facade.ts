@@ -2597,7 +2597,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.connector.grants.put": { description: "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.remove": { description: "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.propose": { description: "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.packs.sections.list": { description: "Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.packs.sections.list": { description: "Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.grant": { description: "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.revoke": { description: "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.suggest": { description: "Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3170,8 +3170,8 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.skills.attribution.judgments": { description: "The owner reads every persisted attribution judgment in both lanes, the projector cursor and the unclear ledger.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.proposals": { description: "The owner reads the pending skill edit proposals, preference proposals and positive skill proposals attribution has minted.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.skills.attribution.positive.retire": { description: "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.steps.submit": { description: "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "ai.steps.receipt": { description: "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "ai.steps.submit": { description: "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "ai.steps.receipt": { description: "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.streams.open": { description: "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "ai.streams.subscribe": { description: "Attach before or after open to the caller's shared model stream, without starting a producer; replay every typed part event from the first under an independently detachable handle.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "ai.streams.events": { description: "Drain one subscription's queued typed LlmStreamEvents (part-correlated text, reasoning, tool and image deltas, then Done) without blocking; closed once the producer ended and the queue is empty.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -3197,11 +3197,11 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.models.catalog.get": { description: "Reads a pinned model catalog revision with its prices, backend offers and score evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.catalog.diff": { description: "Diffs two immutable model catalog revisions, including prices, scores and retired offers.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.nominate": { description: "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.trials.get": { description: "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.models.trials.get": { description: "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.approve": { description: "Approves exploration for a held-out model trial only; leaves its role binding unchanged.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.trials.run": { description: "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.trials.run": { description: "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.trials.complete": { description: "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.models.bindings.propose": { description: "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.models.bindings.propose": { description: "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.get": { description: "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.read": { description: "Reads the currently active manifest binding for a model role.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.models.bindings.accept": { description: "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4259,7 +4259,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         sections: {
           /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
           propose: (input: Facade.PluginSectionProposeRequest, options?: O): FacadeReturns<"vault.packs.sections.propose">[K] => invoke("vault.packs.sections.propose", input, options, newInvocation()),
-          /** Plugin sections as they stand: install offers awaiting the owner, admitted sections with their granted manifests, and the sections installed packs project. */
+          /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
           list: (input: Facade.PluginSectionListRequest, options?: O): FacadeReturns<"vault.packs.sections.list">[K] => invoke("vault.packs.sections.list", input, options, newInvocation()),
           /** The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent. */
           grant: (input: Facade.PluginSectionGrantRequest, options?: O): FacadeReturns<"vault.packs.sections.grant">[K] => invoke("vault.packs.sections.grant", input, options, newInvocation()),
@@ -5682,17 +5682,17 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         trials: {
           /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
           nominate: (input: Facade.ModelTrialNominate, options?: O): FacadeReturns<"vault.models.trials.nominate">[K] => invoke("vault.models.trials.nominate", input, options, newInvocation()),
-          /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+          /** Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown. */
           get: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.get">[K] => invoke("vault.models.trials.get", input, options, newInvocation()),
           /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
           approve: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.approve">[K] => invoke("vault.models.trials.approve", input, options, newInvocation()),
-          /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+          /** Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome. */
           run: (input: Facade.ModelTrialRef, options?: O): FacadeReturns<"vault.models.trials.run">[K] => invoke("vault.models.trials.run", input, options, newInvocation()),
           /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
           complete: (input: Facade.ModelTrialComplete, options?: O): FacadeReturns<"vault.models.trials.complete">[K] => invoke("vault.models.trials.complete", input, options, newInvocation()),
         },
         bindings: {
-          /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+          /** Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it. */
           propose: (input: Facade.ModelBindingPropose, options?: O): FacadeReturns<"vault.models.bindings.propose">[K] => invoke("vault.models.bindings.propose", input, options, newInvocation()),
           /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
           get: (input: Facade.ModelBindingProposalRef, options?: O): FacadeReturns<"vault.models.bindings.get">[K] => invoke("vault.models.bindings.get", input, options, newInvocation()),
@@ -6370,9 +6370,9 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         completions: (input: Facade.ChatCompletionRequest, options?: O): FacadeReturns<"ai.chat.completions">[K] => invoke("ai.chat.completions", input, options, newInvocation()),
       },
       steps: {
-        /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+        /** Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result. */
         submit: (input: Facade.ModelStepSubmit, options?: O): FacadeReturns<"ai.steps.submit">[K] => invoke("ai.steps.submit", input, options, newInvocation()),
-        /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+        /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain. */
         receipt: (input: Facade.ModelStepReceiptRequest, options?: O): FacadeReturns<"ai.steps.receipt">[K] => invoke("ai.steps.receipt", input, options, newInvocation()),
       },
       streams: {

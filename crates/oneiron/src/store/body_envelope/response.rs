@@ -197,6 +197,9 @@ pub(crate) enum ResponseFamily {
     /// A Dreamer agent dispatch's attempt row: its target's instructions,
     /// briefing and direct spawn receipt (FIX 7115).
     AttemptPayload,
+    /// A public model-step submission: its request and its result, kept
+    /// beside the receipt's metadata (FIX 9929).
+    ModelStepSubmission,
 }
 
 impl ResponseFamily {
@@ -210,6 +213,10 @@ impl ResponseFamily {
                 (&side_table::CODE_RUN_REPLAY, Self::Replay),
                 (&side_table::COACH_BLOCKED_SOURCE, Self::BlockedCapture),
                 (&side_table::CODE_RUN_WAIT_DELIVERY, Self::WaitDelivery),
+                (
+                    &side_table::MODEL_STEP_SUBMISSION,
+                    Self::ModelStepSubmission,
+                ),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -243,7 +250,8 @@ impl ResponseFamily {
             | Self::Replay
             | Self::BlockedCapture
             | Self::WaitDelivery
-            | Self::WaitSettled => ResponseDb::VaultMeta,
+            | Self::WaitSettled
+            | Self::ModelStepSubmission => ResponseDb::VaultMeta,
         }
     }
 
@@ -292,6 +300,7 @@ impl ResponseFamily {
             Self::AttemptPayload => ResponseScan::decoded(
                 crate::attempt_queue::attempt_payload_stub(key, value).map(whole),
             ),
+            Self::ModelStepSubmission => crate::llm::submission_carriage(value),
         }
     }
 
@@ -361,6 +370,7 @@ impl ResponseFamily {
             Self::WaitDelivery => crate::code_run::wait_delivery_owners(store, txn, key),
             Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
+            Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             // A clip's owners are its job's, as the job's row stamps them.
             Self::MediaPart => {
                 let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
@@ -407,7 +417,8 @@ impl ResponseFamily {
             | Self::MediaJob
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::AttemptPayload => Ok(()),
+            | Self::AttemptPayload
+            | Self::ModelStepSubmission => Ok(()),
         }
     }
 
@@ -441,7 +452,8 @@ impl ResponseFamily {
             | Self::StepState
             | Self::Replay
             | Self::WaitDelivery
-            | Self::WaitSettled => store.side_vault_meta().put(wtxn, key, kept()?),
+            | Self::WaitSettled
+            | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
             Self::BlockedCapture => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
