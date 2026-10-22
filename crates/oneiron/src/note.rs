@@ -528,6 +528,9 @@ pub(crate) fn note_side_text_in_txn(
 mod document_store;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
+pub(crate) use document_store::{
+    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+};
 mod files;
 pub use files::{
     DEFAULT_FILES_EXCLUDE, FILES_DEFAULT_KIND, FILES_TEXT_EXTENSIONS, FILES_WORLD_NAME, FileFacts,

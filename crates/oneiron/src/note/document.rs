@@ -351,8 +351,33 @@ impl NoteDocument {
         if pin.document != self.id {
             return Err(invalid("NOTE cursor names another document"));
         }
-        let start = Cursor::decode(&pin.start_cursor).map_err(|_| invalid("NOTE start cursor"))?;
-        let end = Cursor::decode(&pin.end_cursor).map_err(|_| invalid("NOTE end cursor"))?;
+        if let Some((start, end, quote)) =
+            self.live_span(&pin.start_cursor, &pin.end_cursor, &pin.quote_hash)?
+        {
+            return Ok(NoteSpanResolution::Mapped {
+                start,
+                end,
+                claim: pin.claim,
+                quote,
+            });
+        }
+        Ok(NoteSpanResolution::Drifted {
+            claim: pin.claim,
+            quote: pin.quote_text.clone(),
+        })
+    }
+
+    /// The live characters a cited span's cursors name and their text, when
+    /// both still stand and the text hashes to `quote_hash`; `None` is
+    /// drift. A span with no claim resolves alike (FIX 9814).
+    pub(super) fn live_span(
+        &self,
+        start_cursor: &[u8],
+        end_cursor: &[u8],
+        quote_hash: &[u8; 32],
+    ) -> Result<Option<(usize, usize, String)>> {
+        let start = Cursor::decode(start_cursor).map_err(|_| invalid("NOTE start cursor"))?;
+        let end = Cursor::decode(end_cursor).map_err(|_| invalid("NOTE end cursor"))?;
         // Resolve only live character IDs. get_cursor_pos falls back to
         // historical replay for deleted anchors, which cannot run safely on
         // StateOnly documents whose dependencies have been erased (Loro 1.13).
@@ -368,19 +393,11 @@ impl NoteDocument {
             && let Some(end) = end.checked_add(1)
             && start < end
             && let Ok(quote) = self.doc.get_text(BODY).slice(start, end)
-            && blake3::hash(quote.as_bytes()).as_bytes() == &pin.quote_hash
+            && blake3::hash(quote.as_bytes()).as_bytes() == quote_hash
         {
-            return Ok(NoteSpanResolution::Mapped {
-                start,
-                end,
-                claim: pin.claim,
-                quote,
-            });
+            return Ok(Some((start, end, quote)));
         }
-        Ok(NoteSpanResolution::Drifted {
-            claim: pin.claim,
-            quote: pin.quote_text.clone(),
-        })
+        Ok(None)
     }
 
     /// Edit a fork of the client's actual base; merge its stamped operations
