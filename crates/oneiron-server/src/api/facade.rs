@@ -139,6 +139,7 @@ pub(super) mod role_picks;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
+mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
@@ -992,7 +993,9 @@ pub(super) fn owner_authorship(
     }) else {
         return Ok(None);
     };
-    if server.managed_issuer.is_some() || !auth.is_owner_grade() {
+    // The owner's own forwarded slip carries his authorship on a managed
+    // vault too (FIX 5121): it is his say-so, on his own proof.
+    if !auth.is_owner_grade() {
         return Ok(None);
     }
     let refused = || ApiError::forbidden_scope("owner");

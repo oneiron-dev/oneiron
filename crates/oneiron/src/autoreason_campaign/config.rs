@@ -1,3 +1,7 @@
+//! Fixed OF-366 campaign configuration; the general schema is `super::general`.
+//! Entry type: `CampaignConfig`.
+//! Owns these definitions, re-exported by `crate::autoreason_campaign`.
+
 use serde::{Deserialize, Serialize};
 
 use crate::dreamer_runner::{

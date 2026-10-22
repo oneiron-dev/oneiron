@@ -24,6 +24,7 @@ use crate::learning::evidence::evidence_in_txn;
 use crate::learning::read::read_learning_in_txn;
 use crate::learning::{Anchor, LearningCell};
 use crate::memory::{MemoryError, MemoryResult};
+use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::task_type::TypeTree;
 use crate::{EntityId, Vault};
 
@@ -36,7 +37,7 @@ use super::doors::{
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
-use super::spawn_intent::SpawnPhase;
+use super::spawn_intent::{SpawnErasure, SpawnPhase};
 
 /// One team start as read: what [`resolve_team`] holds against the plan.
 struct TeamRead<'a> {
@@ -74,6 +75,12 @@ pub(super) fn observe_spawn(
             ],
         ));
     };
+    // An erase of the AGENT_DEF it runs as took its text (Engine 10-22): its
+    // permanent hard-delete marker, read in this snapshot.
+    let target = input.target.agent_definition_ref()?;
+    let erased = vault
+        .store
+        .port_deletion_marked(&txn, DeletionMarker::HardDelete, &target)?;
     let stamp = TypeStamp::from(&input.type_ref);
     let mut issues = Vec::new();
     let plan = input.plan.as_ref().map(plan_view);
@@ -137,7 +144,12 @@ pub(super) fn observe_spawn(
     let critics = critiques(vault, &txn, &launched, &mut issues)?;
     Ok(PlannedSpawnObservation {
         spawn_ref,
-        phase: SpawnPhase::Launched,
+        phase: if erased {
+            SpawnPhase::Erased
+        } else {
+            SpawnPhase::Launched
+        },
+        erasure: erased.then_some(SpawnErasure::TargetErased),
         type_ref: stamp,
         plan,
         launched,
