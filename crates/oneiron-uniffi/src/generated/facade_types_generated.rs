@@ -42642,7 +42642,7 @@ pub struct TaskAskResult {
     pub settlement: TaskAskSettlement,
 }
 
-/// `oneiron::code_run::types::SelfEffect`.
+/// `oneiron::code_run::types::effect::SelfEffect`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelfEffect {
     #[serde(rename = "AgentsSpawn")]
@@ -42749,7 +42749,7 @@ pub enum SelfEffect {
     RepoExport,
 }
 
-/// `oneiron::code_run::types::SelfDurableWaitReason`.
+/// `oneiron::code_run::types::outcome::SelfDurableWaitReason`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SelfDurableWaitReason {
     #[serde(rename = "HumanInput")]
@@ -42762,7 +42762,7 @@ pub enum SelfDurableWaitReason {
     PeerResult,
 }
 
-/// `oneiron::code_run::types::SelfDurableWait`.
+/// `oneiron::code_run::types::outcome::SelfDurableWait`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SelfDurableWait {
     #[serde(rename = "wait_id")]
