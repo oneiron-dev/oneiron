@@ -9,17 +9,20 @@
 mod defer;
 mod enqueue_claim;
 mod enqueue_record;
+mod leased_payload;
 mod mutate;
 mod owner_retained_payload;
 mod place;
 mod prune;
 mod reads;
+mod reclaim;
 mod redirect;
 mod requeue;
 mod successor;
 mod task_lease;
 mod workflow;
 
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 /// Queue handle over a vault store.
@@ -60,9 +63,42 @@ impl<'a> AttemptQueue<'a> {
         record: &mut super::AttemptRecord,
     ) -> crate::Result<Vec<u8>> {
         super::payload_erase::scrub_hard_erased_payload_in_txn(self.store, wtxn, record);
+        // FIX 9578: a settled row carries what it left behind, written with
+        // the write that settles it, whichever door settles it.
+        super::result::settle_terminal_exhaust(record);
+        observe_event_bytes(self.store, wtxn, record);
         match self.vault {
             Some(vault) => super::encoding::encode_admitted_record(vault, wtxn, record),
             None => super::encoding::encode_admitted_record(self.store, wtxn, record),
+        }
+    }
+}
+
+/// The longest actor and note `record` carries, each against its scan row
+/// (FIX 9580): what the queue once refused past is observed, never refused.
+/// A threshold row that does not read skips the observation, never the
+/// write; the crossing waits for the vault's next write of its own.
+fn observe_event_bytes(store: &Store, txn: &heed::RoTxn<'_>, record: &super::AttemptRecord) {
+    let actors = record.events.iter().map(|event| event.actor.len()).chain(
+        record
+            .cancel_receipts()
+            .iter()
+            .map(|receipt| receipt.actor.len()),
+    );
+    let notes = record
+        .events
+        .iter()
+        .filter_map(|event| event.note.as_deref().map(str::len));
+    for (scan, longest) in [
+        (EngineScan::AttemptEventActorBytes, actors.max()),
+        (EngineScan::AttemptEventNoteBytes, notes.max()),
+    ] {
+        let Some(longest) = longest else {
+            continue;
+        };
+        if let Ok(mut count) = ScanCount::start(store, txn, scan, record.id.as_bytes()) {
+            count.rows(longest);
+            count.defer(store);
         }
     }
 }

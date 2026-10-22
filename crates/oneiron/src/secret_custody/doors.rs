@@ -411,6 +411,7 @@ fn put_custody_body_in_txn(
 
 /// Puts stored body `data` of `rec` (its value sealed, or none) as record
 /// `id`, and keeps the name's high-water and the known-value index with it.
+/// An erased credential's id is never put again (KS-6 part 2).
 pub(super) fn apply_custody_body_in_txn(
     write: &CustodyWrite<'_>,
     wtxn: &mut heed::RwTxn<'_>,
@@ -419,6 +420,7 @@ pub(super) fn apply_custody_body_in_txn(
     data: Vec<u8>,
     (occurred, occurred_at): (TimeRange, u64),
 ) -> Result<()> {
+    write.store.refuse_erased_credential_in_txn(wtxn, id)?;
     apply_ops(
         write.store,
         write.config,
@@ -777,15 +779,16 @@ pub(super) fn bind_synced_name_in_txn(
 /// custody records so a re-import keeps every key (owner ruling 2026-10-17);
 /// no export to a contact or share carries one. Returns whether it restored
 /// it: a portable record whose id an admitted revoke names stays dead, and
-/// nothing is written (WILL L04 row 04).
+/// nothing is written (WILL L04 row 04); so does an erased one (KS-6 part 2).
 pub(crate) fn restore_secret_custody_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     rec: &mut SecretCustodyRecord,
 ) -> Result<bool> {
-    if rec.class == CustodyClass::CustodyPortable
-        && super::control::custody_revoked_in_txn(vault, wtxn, id)?
+    if !vault.store.credential_readmits_in_txn(wtxn, id)
+        || (rec.class == CustodyClass::CustodyPortable
+            && super::control::custody_revoked_in_txn(vault, wtxn, id)?)
     {
         return Ok(false);
     }

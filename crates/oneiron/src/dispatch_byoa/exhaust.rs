@@ -575,7 +575,9 @@ pub(super) fn union_taint_refs(into: &mut Vec<SecretTaintRef>, refs: &[SecretTai
 /// Stores one capture in its artifact: each stream past the inline budget as
 /// budget-sized chunk versions, in order, then the envelope naming them, whose
 /// version is the head the result ref names. The longest stream is measured
-/// against the engine's text row; no stream is refused for its length.
+/// against the engine's text row, and the frontier and taint counts traced;
+/// no stream is refused for its length, nor a frontier or taint set for its
+/// count.
 pub(super) fn append_exhaust_envelope(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -592,6 +594,13 @@ pub(super) fn append_exhaust_envelope(
         .max()
         .unwrap_or_default();
     let _ = vault.measure_limit(EngineLimit::MaintenanceTextBytes, longest);
+    // Counts observed, never refused: every frontier entry and taint ref is
+    // kept whole.
+    tracing::debug!(
+        checkpoint_frontier = envelope.exhaust.checkpoint_frontier.len(),
+        secret_taint_refs = envelope.exhaust.secret_taint_refs.len(),
+        "byoa capture: checkpoint frontier and taint ref counts"
+    );
     let occurred = TimeRange {
         start: now,
         end: now,

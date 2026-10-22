@@ -235,6 +235,43 @@ impl Vault {
         self.import_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
     }
 
+    /// [`Self::import_default_hub_skill`] for a caller that names the skill
+    /// it asked for (FIX 10202): the package is fetched once from the pinned
+    /// commit, its declared id and the requested version are checked before
+    /// any write, and the import commits that same package. A mismatch
+    /// writes nothing.
+    pub(crate) fn import_default_hub_skill_expecting(
+        &self,
+        subtree: &str,
+        skill_id: &str,
+        version: Option<&str>,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<EntityId> {
+        let id = default_skill_hub_id()?;
+        let row = self.skill_hub_record(&id)?;
+        if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
+            return Err(crate::error::Error::InvalidConfig(
+                "default skill hub requires pinned Git configuration".to_owned(),
+            ));
+        }
+        let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, HUB_COMMIT)?;
+        let reference = HubRef::new(id, subtree, HubPin::Commit(HUB_COMMIT.to_owned()))?;
+        let package = adapter.fetch_package(&reference)?;
+        super::hub_owner::check_expected_skill(&package.record, skill_id, version)?;
+        let inventory = super::osv::dependency_inventory(&package)?;
+        Ok(self
+            .install_skill_with_advisories(
+                &reference,
+                &package,
+                &inventory,
+                &super::osv::OsvDevClient,
+                occurred,
+                learned_at,
+            )?
+            .entity)
+    }
+
     /// Imports the review explainer through the pinned library/scanner path.
     /// Activation, governance and optimized forks use the ordinary skill doors.
     /// The returned entity (or an optimized descendant) is supplied to

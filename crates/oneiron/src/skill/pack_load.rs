@@ -19,6 +19,16 @@ pub struct LoadedSkillPack {
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
 }
 
+/// Whose skill a load may bind.
+#[derive(Clone, Copy)]
+enum LoadResident {
+    /// The named resident's own fork; `None` loads shared skills only.
+    Named(Option<EntityId>),
+    /// The live attempt's own agent, read from its leased row in the load's
+    /// transaction (FIX 10153): its resident-bound fork, else shared skills.
+    Attempt,
+}
+
 /// The one runtime admission invariant used by the load door and hub installs.
 #[must_use]
 pub(crate) fn skill_loadable(record: &SkillRecord) -> bool {
@@ -89,7 +99,7 @@ impl Vault {
         self.load_skill_pack_bound(
             attempt,
             skill,
-            None,
+            LoadResident::Named(None),
             lease_owner,
             attempt_count,
             Some(executor_model),
@@ -116,7 +126,7 @@ impl Vault {
         self.load_skill_pack_bound(
             attempt,
             skill,
-            Some(*resident),
+            LoadResident::Named(Some(*resident)),
             lease_owner,
             attempt_count,
             Some(executor_model),
@@ -132,7 +142,7 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
-        resident: Option<EntityId>,
+        resident: LoadResident,
         lease_owner: &str,
         attempt_count: u32,
         executor_model: Option<&str>,
@@ -143,6 +153,10 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let record = self.read_skill_record_in_txn(txn, skill)?;
+            let resident = match resident {
+                LoadResident::Named(resident) => resident,
+                LoadResident::Attempt => self.attempt_resident_in_txn(txn, attempt, &record)?,
+            };
             if super::resident_of(&record)? != resident {
                 return Err(Error::InvalidClaimBody(
                     "skill belongs to a different resident",
@@ -182,11 +196,11 @@ impl Vault {
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
                 super::resident::bind_skill_in_txn(self, txn, &receipt, &entity)?;
             }
-            queue.append_manifest_entry_in_txn(
-                txn,
-                attempt,
-                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
-            )?;
+            let entry =
+                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at);
+            let entry =
+                super::loaded_revision::pin_loaded_in_txn(self, txn, &entity, &record, entry)?;
+            queue.append_manifest_entry_in_txn(txn, attempt, entry)?;
             let read =
                 self.pack_source_rows_in_txn(txn, &entity, &record, source_files.is_some())?;
             self.record_attempt_sources_best_effort_in_txn(
@@ -240,7 +254,7 @@ impl Vault {
         self.load_skill_pack_bound(
             leased.id,
             skill,
-            None,
+            LoadResident::Attempt,
             lease_owner,
             leased.attempt_count,
             (!stamped).then_some(executor),
@@ -277,6 +291,8 @@ impl Vault {
                 &loaded.record.version,
                 at,
             );
+            let entry =
+                super::loaded_revision::pin_loaded_in_txn(self, txn, skill, &loaded.record, entry)?;
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
             let packaged = loaded.source_files.is_some();
             let read = self.pack_source_rows_in_txn(txn, skill, &loaded.record, packaged)?;
@@ -359,6 +375,8 @@ impl Vault {
                 .map(|package| package.files);
             let entry =
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at);
+            let entry =
+                super::loaded_revision::pin_loaded_in_txn(self, txn, entity, &record, entry)?;
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor_model, entry)?;
             let read =
                 self.pack_source_rows_in_txn(txn, entity, &record, source_files.is_some())?;
@@ -374,6 +392,30 @@ impl Vault {
                 source_files,
             })
         })
+    }
+
+    /// The skill's resident when the live attempt runs as that very agent,
+    /// its leased row decoded in the load's own transaction (FIX 10153). The
+    /// lease itself is fenced later in that transaction. Any other attempt,
+    /// or a row the dispatch decoder does not read, loads as before: shared
+    /// skills only.
+    fn attempt_resident_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+        record: &SkillRecord,
+    ) -> Result<Option<EntityId>> {
+        let Some(owner) = super::resident_of(record)? else {
+            return Ok(None);
+        };
+        let actor = AttemptQueue::new(self)
+            .get_in_txn(txn, attempt)?
+            .as_ref()
+            .and_then(crate::agent_dispatch::record_dispatch_input)
+            .and_then(|input| crate::agent_dispatch::agent_dispatch_actor(&input).ok());
+        Ok(actor
+            .map(|actor| actor.entity_ref())
+            .filter(|actor| *actor == owner))
     }
 
     /// The rows a pack load read `entity`'s instructions from (FIX 7017):

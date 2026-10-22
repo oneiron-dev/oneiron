@@ -1322,11 +1322,11 @@ class Oneiron:
             """The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."""
     class _VaultShapeVerbs:
         def read(self, spec: Facade.EmptyRequest | None = None) -> Facade.ShapeRead:
-            """The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read."""
+            """The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."""
         def plan(self, spec: Facade.ShapePlanRequest) -> Facade.ShapePlan:
-            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing."""
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
-            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
+            """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."""
     class _VaultCompanionsVerbs:
         @property
         def access_requests(self) -> "Oneiron._VaultCompanionsAccessRequestsVerbs": ...
@@ -2528,7 +2528,7 @@ class Oneiron:
             """Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."""
     class _VaultPolicyRelayVerbs:
         def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.HostedRelayDecision:
-            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer."""
     class _VaultConsentVerbs:
         def approve_once(self, spec: Facade.ApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
@@ -2853,8 +2853,8 @@ class Oneiron:
             """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
         def model_heal_count(self, spec: Facade.CodeRunModelHealCountRequest) -> Facade.CodeRunModelHealCountView:
             """Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."""
-        def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedback | None:
-            """Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again."""
+        def type_diagnostics(self, spec: Facade.CodeRunTypeDiagnosticsRequest) -> Facade.ProgramStepFeedbackRelease | None:
+            """Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again."""
         @property
         def waits(self) -> "Oneiron._VaultCodeWaitsVerbs": ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
@@ -3948,7 +3948,7 @@ class Oneiron:
         def read(self, spec: Facade.SavedQueryReadRequest) -> Facade.SavedQueryReadResult:
             """One saved query the caller owns; a query absent or not the caller's reads as not found."""
         def update(self, spec: Facade.SavedQueryUpdateRequest) -> Facade.SavedQueryRecordView:
-            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."""
+            """Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it."""
         def archive(self, spec: Facade.SavedQueryArchiveRequest) -> Facade.SavedQueryRecordView:
             """Archives a saved query under a definition-version check: it stays readable and is never evaluated again."""
         def members(self, spec: Facade.SavedQueryMembersRequest) -> Facade.SavedQueryMembershipPageView:

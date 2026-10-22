@@ -1,15 +1,14 @@
 //! `oneiron-server host vm`'s runner: one vault VM behind one unix socket.
 
+use super::ledger_io::{self, LedgerCommit, MAX_LEDGER_PEERS};
 use super::provision;
 use super::{
     API_TIMEOUT, STOP_GRACE, SleepOutcome, VaultVm, VaultVmConfig, VmAnchorHostIo, VmRestoreFds,
 };
 use crate::managed::listener::bind_unix_socket;
 use crate::managed::vault_gates::read_managed_credentials;
-use crate::managed::vm_schedule::VmWakeSchedule;
-use oneiron_vault_contract::{
-    CtlRequest, CtlResponse, LedgerAck, LedgerUpdate, MAX_CTL_LINE, TokenHex, now_ts,
-};
+use oneiron_vault_contract::vm_provision::VmFscryptKey;
+use oneiron_vault_contract::{Credentials, CtlRequest, CtlResponse, TokenHex, now_ts};
 use std::{
     path::PathBuf,
     sync::{
@@ -18,12 +17,15 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::UnixStream;
+use tokio::signal::unix::Signal;
+use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 /// `oneiron-server host vm`: one vault VM behind one unix socket. It starts
 /// the VM on the first connection or a due wake, proxies HTTP into it, takes
-/// its ledger pushes, and sleeps it after `idle` without traffic. With
+/// its ledger pushes on tasks of their own (FIX 9502, [`ledger_io`]), and
+/// sleeps it after `idle` without traffic. Every start is dropped by a
+/// SIGTERM that comes first (FIX 9501). With
 /// `restore` it starts the VM at once with a cold restore (FIX 6584), and
 /// binds its socket only once the restored vault is ready. With a custody
 /// anchor URL it binds every serving boot's anchor to it (FIX 6517).
@@ -48,41 +50,19 @@ pub struct VaultVmRun {
     pub idle: Duration,
 }
 
-async fn take_ledger_push(
-    stream: UnixStream,
-    vault: &str,
-    token: &TokenHex,
-    schedule: &mut VmWakeSchedule,
-) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut line = String::new();
-    BufReader::new(reader.take(MAX_CTL_LINE as u64 + 2))
-        .read_line(&mut line)
-        .await?;
-    let update: anyhow::Result<()> = serde_json::from_str(line.trim_end_matches(['\r', '\n']))
-        .map_err(anyhow::Error::from)
-        .and_then(|update: LedgerUpdate| {
-            update.validate()?;
-            anyhow::ensure!(
-                update.vault == vault && update.token.ct_eq(token),
-                "foreign ledger push"
-            );
-            schedule.replace(update.rev, update.entries)
-        });
-    let ack = match &update {
-        Ok(_) => LedgerAck {
-            ok: true,
-            error: None,
-        },
-        Err(error) => LedgerAck {
-            ok: false,
-            error: Some(error.to_string()),
-        },
-    };
-    let mut reply = serde_json::to_string(&ack)?;
-    reply.push('\n');
-    writer.write_all(reply.as_bytes()).await?;
-    update
+/// Starts the VM unless a SIGTERM comes first (FIX 9501): then the start is
+/// dropped, which ends its waits and its supervisor pipe's read and joins
+/// that read, and the runner stops the VM. Whether it started.
+async fn start_or_terminate(
+    vm: &mut VaultVm,
+    credentials: &Credentials,
+    fscrypt_key: &VmFscryptKey,
+    terminate: &mut Signal,
+) -> anyhow::Result<bool> {
+    tokio::select! {
+        started = vm.start(credentials, fscrypt_key, API_TIMEOUT) => started.map(|()| true),
+        _ = terminate.recv() => Ok(false),
+    }
 }
 
 pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
@@ -152,13 +132,19 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     let open = Arc::new(AtomicUsize::new(0));
     let mut last_activity = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    // Ledger peers run as tasks this loop owns; their complete reports come
+    // back here, to the schedule's one owner, to commit.
+    let mut peers = JoinSet::new();
+    let (reports, mut commits) = mpsc::channel::<LedgerCommit>(MAX_LEDGER_PEERS);
     loop {
         tokio::select! {
             _ = terminate.recv() => break,
             accepted = front.accept() => {
                 let (mut client, _) = accepted?;
-                if !vm.is_running() {
-                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
+                if !vm.is_running()
+                    && !start_or_terminate(&mut vm, &credentials, &fscrypt_key, &mut terminate).await?
+                {
+                    break;
                 }
                 last_activity = Instant::now();
                 let mut guest = vm.http().await?;
@@ -169,15 +155,24 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
                     open.fetch_sub(1, Ordering::SeqCst);
                 });
             }
-            pushed = ledger.accept() => {
+            pushed = ledger.accept(), if peers.len() < MAX_LEDGER_PEERS => {
                 let (stream, _) = pushed?;
-                if let Err(error) = take_ledger_push(stream, &run.vault_name, &token, &mut vm.schedule).await {
-                    tracing::warn!(%error, "vault VM ledger push refused");
-                }
+                peers.spawn(ledger_io::take_push(
+                    stream,
+                    run.vault_name.clone(),
+                    token.clone(),
+                    reports.clone(),
+                ));
             }
+            Some(commit) = commits.recv() => {
+                let _ = commit.answer.send(vm.schedule.replace(commit.report));
+            }
+            Some(_) = peers.join_next(), if !peers.is_empty() => {}
             _ = tick.tick() => {
                 if !vm.is_running() && vm.schedule.has_due(now_ts()) {
-                    vm.start(&credentials, &fscrypt_key, API_TIMEOUT).await?;
+                    if !start_or_terminate(&mut vm, &credentials, &fscrypt_key, &mut terminate).await? {
+                        break;
+                    }
                     last_activity = Instant::now();
                 }
                 if vm.is_running() {
@@ -190,7 +185,7 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
                         last_activity = Instant::now();
                     }
                     if open.load(Ordering::SeqCst) == 0 && last_activity.elapsed() >= run.idle {
-                        match vm.sleep(API_TIMEOUT).await? {
+                        match vm.sleep(&token, API_TIMEOUT).await? {
                             SleepOutcome::Busy => last_activity = Instant::now(),
                             SleepOutcome::Snapshotted { .. } | SleepOutcome::Stopped { .. } => {}
                         }
@@ -199,6 +194,9 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
             }
         }
     }
+    // Every ledger peer ends with the runner; a report not yet committed is
+    // owed to the next push.
+    peers.shutdown().await;
     if vm.is_running() {
         vm.stop(STOP_GRACE).await?;
     }

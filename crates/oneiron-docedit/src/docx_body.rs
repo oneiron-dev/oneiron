@@ -158,14 +158,19 @@ pub enum DocxLock {
     Opaque,
 }
 
-/// Read the top-level blocks of a DOCX package within the caller's archive limits.
+/// Read the top-level blocks of a DOCX package within the caller's archive
+/// limits: every read inside, the parse's own included, runs under them and
+/// reserves through the operation the caller runs it in
+/// ([`crate::resource::Resources::docx`]).
 pub fn read_docx_blocks(
     bytes: &[u8],
     limits: ArchiveLimits,
 ) -> Result<Vec<DocxBlock>, DoceditError> {
-    preflight_with_limits(bytes, limits)?;
-    let document = Document::parse(bytes)?;
-    Ok(document.read().blocks.iter().map(block).collect())
+    crate::within(limits, || {
+        preflight_with_limits(bytes, limits)?;
+        let document = Document::parse(bytes)?;
+        Ok(document.read().blocks.iter().map(block).collect())
+    })
 }
 
 fn block(view: &BlockView) -> DocxBlock {
@@ -335,8 +340,19 @@ pub struct DocxRevision {
 /// Project `changes` onto the imported `source` package as one tracked revision.
 /// No changes return the source bytes unchanged. A stale guard, an unknown
 /// block or a broken output fails closed; unknown XML outside the edited
-/// blocks is retained by the native writer.
+/// blocks is retained by the native writer. Every read inside runs under
+/// `limits` and reserves through the operation the caller runs it in.
 pub fn project_docx(
+    source: &[u8],
+    changes: &[DocxChange],
+    revision: &DocxRevision,
+    limits: ArchiveLimits,
+) -> Result<Vec<u8>, DoceditError> {
+    crate::within(limits, || project_within(source, changes, revision, limits))
+}
+
+/// [`project_docx`] within its limits.
+fn project_within(
     source: &[u8],
     changes: &[DocxChange],
     revision: &DocxRevision,

@@ -19,6 +19,7 @@
     "tap_name": "ovm61000",
     "guest_mac": "02:00:00:00:ee:48"
   },
+  "snapshot_custody": null,
   "outbox": {
     "store": "/var/lib/oneiron/vaults/example/outbox-carrier",
     "escrow_outbox": "/var/lib/oneiron/vaults/example/escrow-outbox",

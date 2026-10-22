@@ -13,8 +13,12 @@
 //! use, an anchor that cannot judge a new output, and any missing or
 //! ambiguous context are unavailable, never "did not contribute".
 
+mod admission;
+
 use serde::{Deserialize, Serialize};
 
+pub use self::admission::ForkMismatch;
+pub(crate) use self::admission::matched_contribution_facts_in_txn;
 use super::replay_capsule::{CapsuleRungBinding, ExposureSlot, StepReplayCapsule};
 use super::storage::{
     ForkRows, capsule_request, fork_response, fork_rows, put_fork, put_unavailable,

@@ -442,7 +442,9 @@ impl Vault {
     /// ids) still owes, for its receipt's read: `None` when none of their
     /// keys was ever in custody here. Their claim keys, the body instances
     /// the erase retired or owes (KS-2A) and a custody record's known-value
-    /// history (KS-3) count alike. Each
+    /// history (KS-3) count alike, and so do an erased credential's
+    /// discovery and every key its id names (KS-6 part 2): its discovery
+    /// owed reads pending, even with nothing in custody here. Each
     /// handed-off retirement is complete once the watermark passed it;
     /// until then, every member behind it and the anchor are owed (with no
     /// anchor configured, every member's ack completes it, rollback not
@@ -459,9 +461,18 @@ impl Vault {
                 .store
                 .custody_subject(CustodyKind::ClaimDecision, record)?
             else {
-                return Ok(None);
+                // Unbound: no key was ever in custody here, but an erased
+                // credential's owed discovery still reads pending.
+                for record in erased {
+                    owed.credential(&self.store, txn, record);
+                }
+                let pending = owed.steps.iter().map(CustodyPendingStep::name).collect();
+                return Ok(owed
+                    .found
+                    .then_some((CUSTODY_RETIREMENT_PENDING, pending, None)));
             };
             owed.subject(&self.store, txn, &subject)?;
+            owed.credential(&self.store, txn, record);
             if let Some(history) = self
                 .store
                 .custody_subject(CustodyKind::KnownValueEntry, record)?
@@ -665,6 +676,36 @@ impl EraseOwed {
                 target_id: None,
                 reason: None,
             });
+        }
+    }
+
+    /// Notes what erased credential `record` still owes (KS-6 part 2): its
+    /// discovery while owed, and each key its id names. A read that faults
+    /// is warned and reads pending, never complete.
+    fn credential(&mut self, store: &crate::store::Store, txn: &RoTxn<'_>, record: &[u8; 16]) {
+        let read = (|| -> Result<()> {
+            let credential = EntityId::from_bytes(*record)?;
+            let Some((discovery_owed, subjects)) =
+                store.credential_erase_debt_in_txn(txn, &credential)?
+            else {
+                return Ok(());
+            };
+            if discovery_owed {
+                self.found = true;
+                self.step(CUSTODY_RETIREMENT_PENDING);
+            }
+            for subject in &subjects {
+                self.subject(store, txn, subject)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = read {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "an erased credential's custody did not read; its erase reads pending"
+            );
+            self.found = true;
+            self.step(CUSTODY_RETIREMENT_PENDING);
         }
     }
 

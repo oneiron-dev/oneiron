@@ -22,13 +22,26 @@
 //! PendingCustody; a credential row neither form validates never lands at
 //! all, PendingCustody; the rest restores (CALLS `KS-6 image value form`).
 //! A landed value is read back by opening it under its exact leaf.
+//!
+//! A credential an erase fenced never comes back (KS-6 part 2, CALLS `KS-6
+//! erase fence form`): the evidence a restore takes is a live source's
+//! fences and erase debt (a fork's source, the live rows a restore over a
+//! live vault carried, or the vault whose custody a kept restore takes,
+//! read before anything lands), and a retired value key in the custody it
+//! takes, never an image's own: an image's fence and credential intent
+//! rows never land. Each handle is looked up alone. A fenced row lands with
+//! its value withheld, ErasedUnavailable, and no fork copies its key; one
+//! whose own evidence did not read lands withheld, PendingCustody, warned,
+//! with a retry. The restored vault takes each fence, its discovery owed,
+//! so its own finisher retires every key the id names in the custody it
+//! holds now.
 
 use super::{CheckpointImage, Custody, Rejected, codec_error};
 use crate::Vault;
 use crate::secret_custody::{
     CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
 };
-use crate::store::Store;
+use crate::store::{CredentialFences, CustodyPlan, Store};
 
 /// What a restore says of a credential value its rows commit to that it did
 /// not land readable, by its handle and generation, each with its remedy
@@ -37,7 +50,8 @@ use crate::store::Store;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CredentialRestoreNote {
     /// The custody the restore took retired its key after the image was
-    /// taken: its row rests sealed, its value unavailable.
+    /// taken, or an erase fenced its id (KS-6 part 2): its row rests sealed
+    /// or withheld, its value unavailable.
     ErasedUnavailable { handle: String, generation: u32 },
     /// Its keys stay on the machine that held them: no custody head carries
     /// them, or none was found. Re-enter or reissue it here, or import the
@@ -133,10 +147,44 @@ impl std::fmt::Display for CredentialRestoreNote {
 /// The credential values a restore owes once its rows landed.
 pub(super) struct CredentialLanding(PlannedCredentials);
 
+/// The erase evidence a restore by `custody`'s route takes (CALLS `KS-6
+/// erase fence form`): its live source's, the live rows a restore over a
+/// live vault carried into `image`, or those of the vault whose custody a
+/// kept restore takes, read now, its fences and debt alike; and the
+/// retired credential value keys of the custody `plan` takes, by handle.
+/// Never an image's own.
+fn route_fences(
+    image: &CheckpointImage,
+    plan: &CustodyPlan,
+    custody: Custody<'_>,
+) -> CredentialFences {
+    let mut fences = match custody {
+        Custody::Fork(Some((live, _))) => live.credential_fences(),
+        Custody::Fork(None) | Custody::Replace(..) => image
+            .databases
+            .get("vault_meta")
+            .map(|rows| CredentialFences::in_rows(rows))
+            .unwrap_or_default(),
+        Custody::Keep => plan
+            .source()
+            .map(|source| CredentialFences::at_vault(source.root(), None))
+            .unwrap_or_default(),
+        Custody::Landed | Custody::NewHost => CredentialFences::default(),
+    };
+    if let Some(source) = plan.source() {
+        fences.with_custody(source);
+    }
+    fences
+}
+
 /// Before the destination exists: plans each credential value a row of
 /// `image` commits to through `plan`, the restore's one plan, under the
 /// custody `custody` names, and withholds the value of any row the image
-/// carried in the clear. Never refuses for a value.
+/// carried in the clear, and of any credential an erase fenced or whose
+/// own evidence did not read, which is never planned. An image's own fence
+/// and credential intent rows never land, but where a restore carries its
+/// live source's rows; each fence the route's evidence names lands with the
+/// rows instead. Never refuses for a value.
 pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut crate::store::CustodyPlan,
@@ -147,6 +195,7 @@ pub(super) fn require(
         Custody::Landed => CredentialRoute::Landed,
         Custody::NewHost => CredentialRoute::Absent,
     };
+    let mut fences = route_fences(image, plan, custody);
     let rows = image
         .databases
         .get_mut("entities")
@@ -154,9 +203,21 @@ pub(super) fn require(
     let mut withheld = Vec::new();
     let mut refs = Vec::new();
     let mut malformed = std::collections::BTreeSet::new();
+    let mut fenced = PlannedCredentials::default();
     for (key, raw) in rows.iter_mut() {
         match crate::secret_custody::image_credential_row(key, raw) {
             ImageCredentialRow::Other => {}
+            ImageCredentialRow::Sealed(Some(credential))
+                if fenced.fenced(&mut fences, &credential) =>
+            {
+                // Its value never opens here, whatever key custody holds.
+                match crate::secret_custody::withheld_credential_row(raw) {
+                    Some(row) => *raw = row,
+                    None => {
+                        malformed.insert(key.clone());
+                    }
+                }
+            }
             ImageCredentialRow::Sealed(credential) => refs.extend(credential),
             ImageCredentialRow::Withheld(row, credential) => {
                 *raw = row;
@@ -172,7 +233,26 @@ pub(super) fn require(
     rows.retain(|(key, _)| !malformed.contains(key));
     let mut planned = PlannedCredentials::plan(plan, refs, route);
     for credential in withheld {
-        planned.pending(credential);
+        if !fenced.fenced(&mut fences, &credential) {
+            planned.pending(credential);
+        }
+    }
+    planned.merge(fenced);
+    let vault_meta = image
+        .databases
+        .get_mut("vault_meta")
+        .ok_or_else(codec_error)?;
+    // An image never supplies erase evidence: its own rows go, but where
+    // they are its live source's, carried (both families stay LIVE).
+    if !matches!(custody, Custody::Fork(None) | Custody::Replace(..)) {
+        vault_meta.retain(|(key, _)| !CredentialFences::image_owned(key));
+    }
+    // The restored vault keeps every fence, its discovery owed.
+    for (key, value) in fences.rows()? {
+        match vault_meta.binary_search_by(|(held, _)| held.as_slice().cmp(key.as_slice())) {
+            Ok(at) => vault_meta[at].1 = value,
+            Err(at) => vault_meta.insert(at, (key, value)),
+        }
     }
     Ok(CredentialLanding(planned))
 }

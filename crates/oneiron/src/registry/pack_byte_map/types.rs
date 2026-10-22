@@ -26,7 +26,11 @@ pub struct PackKindIdentity {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PackKindRegistration {
+    /// The active identity new instances are written under.
     pub identity: PackKindIdentity,
+    /// The exact identities admitted same-pack updates replaced, oldest
+    /// first: instances pinned to one still validate and remap (FIX 10062).
+    pub retained: Vec<PackKindIdentity>,
     /// `None` only after inactive, unreferenced handle collection.
     pub handle: Option<u8>,
     /// Monotonic local allocation generation, never reset by garbage collection.

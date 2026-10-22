@@ -3,18 +3,19 @@
 //! machinery, with no separate routine entity.
 //!
 //! - **Catalog.** [`callable_catalog`] lists the loadable callable skills
-//!   with their typed call contracts, so an agent can see what a helper takes
-//!   and returns before it calls one.
+//!   the caller's bound read admits, with their typed call contracts, so an
+//!   agent can see what a helper takes and returns before it calls one.
 //! - **Promotion.** An agent-born helper lands Candidate + Proposed and can
 //!   never activate itself. [`gate_callable_helper`] scores it on frozen
-//!   cases the engine splits (the author never picks the held-out half, and
-//!   cases the author supplied are refused), through a host-supplied
-//!   [`CallableHarness`] that runs the exact source in the sandbox. It
-//!   admits only under the Self-Harness rule, Δ_in ≥ 0 ∧ Δ_ho ≥ 0 ∧
-//!   max(Δ_in, Δ_ho) > 0, and only when the helper's own anchored
-//!   reliability is not worse than its parent's. Raw execution counts never
-//!   promote. [`admit_callable_helper`] activates against the standing
-//!   verdict for the exact content.
+//!   cases the eval source-family ledger splits (the author never picks the
+//!   held-out half, and cases the author supplied are refused), through a
+//!   host-supplied [`CallableHarness`] that runs the exact source in the
+//!   sandbox. It admits only under the Self-Harness rule, Δ_in ≥ 0 ∧
+//!   Δ_ho ≥ 0 ∧ max(Δ_in, Δ_ho) > 0, and only when the shared paired
+//!   measurement of the helper against its parent finds it not worse
+//!   (FIX 10154, 10155); unknown evidence leaves it pending. Raw execution
+//!   counts never promote. [`admit_callable_helper`] activates against the
+//!   standing verdict for the exact content.
 //! - **Stop.** [`suspend_callable_helper`] quarantines a helper on the
 //!   owner's word, so no new pack loads it, and cancels every call of it
 //!   already running in this vault (FIX 600); the evidence stays.
@@ -23,10 +24,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use crate::Vault;
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::{ClaimApprovalStatus, ScopedRead};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::learning::{LearningCell, LearningPredicate, TypeRef};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::HubFile;
@@ -42,14 +42,8 @@ use super::role::{SkillCallContract, SkillRole};
 const GATE_VERDICT: SideTable<EntityId, CallableGateVerdict, Named> =
     SideTable::new(&side_table::SKILL_CALLABLE_GATE);
 
-/// The held-out share of a helper's cases, in 256ths of the case hash space.
-const HELD_OUT_SHARE_OF_256: u8 = 77;
-
 /// Fewest cases on each side of the split before a verdict can admit.
 const MIN_CASES_PER_SPLIT: usize = 1;
-
-/// The axis a helper's reliability is read on.
-pub const HELPER_AXIS: &str = "quality";
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
@@ -65,14 +59,20 @@ pub struct CallableCard {
     pub call: SkillCallContract,
 }
 
-/// Every loadable callable skill and its call contract, ordered by skill id.
+/// Every loadable callable skill `read` admits, with its call contract,
+/// ordered by skill id. The type scan only finds candidates: a helper the
+/// caller's bound read does not admit is absent, its identity, description
+/// and contract never read into a card (FIX 9958).
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub fn callable_catalog(vault: &Vault) -> Result<Vec<CallableCard>> {
+/// Storage and read-lane errors.
+pub fn callable_catalog(vault: &Vault, read: &ScopedRead<'_>) -> Result<Vec<CallableCard>> {
     let mut cards = Vec::new();
     for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
+        if !read.is_entity_readable(&id)? {
+            continue;
+        }
         let Some(record) = vault.get_skill_record(&id)? else {
             continue;
         };
@@ -213,18 +213,16 @@ pub enum CaseSplit {
     HeldOut,
 }
 
-/// The engine's split: a keyed hash of the helper and the case reference, so
-/// neither the author nor the scorer chooses the held-out half.
-#[must_use]
-pub fn split_case(skill: &EntityId, case_ref: &str) -> CaseSplit {
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron callable helper case split v1");
-    hasher.update(skill.as_bytes());
-    hasher.update(case_ref.as_bytes());
-    if hasher.finalize().as_bytes()[0] < HELD_OUT_SHARE_OF_256 {
-        CaseSplit::HeldOut
-    } else {
-        CaseSplit::InSample
-    }
+/// What the shared paired measurement says of a helper against its parent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HelperPairedVerdict {
+    /// Its sufficiency card found the helper not worse.
+    NotWorse,
+    /// Its card found the helper worse.
+    Worse,
+    /// No finished card yet, or one that reads unknown.
+    Pending,
 }
 
 /// A pass rate before and after: the incumbent (the parent helper, or no
@@ -275,10 +273,10 @@ pub struct CallableGateVerdict {
     pub held_out: HarnessScore,
     pub in_sample_cases: usize,
     pub held_out_cases: usize,
-    /// The helper's own anchored reliability lower bound, when it has runs.
-    pub reliability_lower_bound: Option<f64>,
-    /// The parent's reliability mean the helper must not fall below.
-    pub parent_reliability: Option<f64>,
+    /// The shared paired measurement read, by its digest.
+    pub measurement: String,
+    /// What that measurement's sufficiency card says of the helper.
+    pub paired: HelperPairedVerdict,
     pub accepted: bool,
     pub reason: String,
     pub at: u64,
@@ -303,38 +301,25 @@ fn source_files(vault: &Vault, id: &EntityId, record: &SkillRecord) -> Result<Ve
         .unwrap_or_default())
 }
 
-/// The helper's (or its parent's) anchored reliability for `executor`.
-fn reliability(
-    vault: &Vault,
-    skill: &EntityId,
-    executor: &str,
-    type_ref: &TypeRef,
-) -> Result<Option<crate::learning::Estimate>> {
-    let cell = LearningCell::new(LearningPredicate::Reliability, *skill)
-        .executor(executor)
-        .type_ref(type_ref.clone())
-        .axis(HELPER_AXIS);
-    crate::learning::learning_estimate(vault, &cell)
-}
-
 /// Scores a Candidate callable helper and stores the verdict.
 ///
-/// `executor` and `type_ref` name the reliability cell the Bayesian check
-/// reads. Cases the helper's own author supplied are refused, and the split
-/// is the engine's.
+/// `measurement` is the digest of the shared paired eval measurement of the
+/// helper's exact content against its parent's: its seat's source-family
+/// ledger splits the cases, and its sufficiency card is the not-worse check.
+/// Cases the helper's own author supplied are refused.
 ///
 /// # Errors
 ///
 /// [`ArtifactError::InvalidSkillBody`] when the skill is not a Candidate
-/// callable, a case is the author's own, too few cases fall on a side, or the
-/// harness reports a score outside [0, 1]; harness and storage errors.
+/// callable, a case is the author's own, the measurement is absent or
+/// compares other content, too few cases fall on a side, or the harness
+/// reports a score outside [0, 1]; harness and storage errors.
 pub fn gate_callable_helper(
     vault: &Vault,
     skill: &EntityId,
     cases: &[CallableCase],
     harness: &dyn CallableHarness,
-    executor: &str,
-    type_ref: &TypeRef,
+    measurement: &[u8; 32],
     now: u64,
 ) -> Result<CallableGateVerdict> {
     let record = vault
@@ -355,15 +340,6 @@ pub fn gate_callable_helper(
             "a helper's author never supplies the cases that promote it",
         ));
     }
-    let (held_out, in_sample): (Vec<&CallableCase>, Vec<&CallableCase>) = cases
-        .iter()
-        .partition(|case| split_case(skill, &case.case_ref) == CaseSplit::HeldOut);
-    if held_out.len() < MIN_CASES_PER_SPLIT || in_sample.len() < MIN_CASES_PER_SPLIT {
-        return Err(invalid(
-            "the helper gate needs cases on both sides of the split",
-        ));
-    }
-
     let files = source_files(vault, skill, &record)?;
     let parent = match record.forked_from {
         Some(parent) => vault
@@ -375,6 +351,27 @@ pub fn gate_callable_helper(
             .transpose()?,
         None => None,
     };
+    let measured = super::helper_eval::helper_measurement(
+        vault,
+        measurement,
+        &record,
+        parent.as_ref().map(|(_, parent_record, _)| parent_record),
+    )?;
+    let mut held_out = Vec::new();
+    let mut in_sample = Vec::new();
+    let splits = super::helper_eval::case_splits(vault, &measured, cases)?;
+    for (case, split) in cases.iter().zip(splits) {
+        match split {
+            Some(CaseSplit::HeldOut) => held_out.push(case),
+            Some(CaseSplit::InSample) => in_sample.push(case),
+            None => {}
+        }
+    }
+    if held_out.len() < MIN_CASES_PER_SPLIT || in_sample.len() < MIN_CASES_PER_SPLIT {
+        return Err(invalid(
+            "the helper gate needs cases on both sides of the split",
+        ));
+    }
     let incumbent = parent
         .as_ref()
         .map(|(_, parent_record, parent_files)| (parent_record, parent_files.as_slice()));
@@ -383,33 +380,21 @@ pub fn gate_callable_helper(
     in_score.validate()?;
     ho_score.validate()?;
 
-    let own = reliability(vault, skill, executor, type_ref)?;
-    let parent_estimate = match &parent {
-        Some((parent, _, _)) => reliability(vault, parent, executor, type_ref)?,
-        None => None,
-    };
-    let reliability_lower_bound = own
-        .as_ref()
-        .filter(|e| e.runs > 0.0)
-        .map(|e| e.lower_bound());
-    let parent_reliability = parent_estimate
-        .as_ref()
-        .filter(|e| e.runs > 0.0)
-        .map(crate::learning::Estimate::mean);
-    let not_worse = match (reliability_lower_bound, parent_reliability) {
-        (Some(lower), Some(parent_mean)) => own
-            .as_ref()
-            .is_some_and(|e| e.upper_bound() >= parent_mean || lower >= parent_mean),
-        _ => true,
-    };
+    let paired = super::helper_eval::paired_verdict(&measured);
     let harness_ok = self_harness_accepts(&in_score, &ho_score);
-    let accepted = harness_ok && not_worse;
+    let accepted = harness_ok && paired == HelperPairedVerdict::NotWorse;
     let reason = if !harness_ok {
         "the Self-Harness rule failed: a split got worse or neither improved"
-    } else if !not_worse {
-        "its anchored reliability is worse than its parent's"
     } else {
-        "both splits held or improved, at least one improved"
+        match paired {
+            HelperPairedVerdict::NotWorse => {
+                "both splits held or improved, at least one improved, and it is not worse than its parent"
+            }
+            HelperPairedVerdict::Worse => "its paired measurement finds it worse than its parent",
+            HelperPairedVerdict::Pending => {
+                "pending: its paired measurement has no not-worse verdict yet"
+            }
+        }
     };
     let verdict = CallableGateVerdict {
         skill: *skill,
@@ -418,8 +403,8 @@ pub fn gate_callable_helper(
         held_out: ho_score,
         in_sample_cases: in_sample.len(),
         held_out_cases: held_out.len(),
-        reliability_lower_bound,
-        parent_reliability,
+        measurement: measured.digest,
+        paired,
         accepted,
         reason: reason.to_owned(),
         at: now,
@@ -455,6 +440,11 @@ pub fn admit_callable_helper(vault: &Vault, skill: &EntityId, now: u64) -> Resul
     let verdict = callable_gate_verdict(vault, skill)?.ok_or(invalid(
         "a helper activates only on a standing gate verdict",
     ))?;
+    if verdict.paired == HelperPairedVerdict::Pending {
+        return Err(invalid(
+            "the helper's paired measurement is still pending; it activates once that finds it not worse",
+        ));
+    }
     if !verdict.accepted {
         return Err(invalid("the helper's gate verdict did not accept it"));
     }

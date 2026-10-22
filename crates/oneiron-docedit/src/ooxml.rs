@@ -141,7 +141,8 @@ impl XmlTree {
             match event {
                 Event::Start(tag) | Event::Empty(tag) => {
                     resources.checkpoint()?;
-                    hold.take(node_bytes(&ns, end - start))?;
+                    // An estimate past the one node pushed, which is measured.
+                    hold.take_estimate(node_bytes(&ns, end - start), bytes_of::<Node>(1))?;
                     let parent = stack.last().copied();
                     let node = make_node(bytes, &reader, &tag, ns, start..end, parent, &mut hold)?;
                     let empty = node.empty;
@@ -276,7 +277,11 @@ fn make_node(
             ResolveResult::Unknown(_) => return Err(invalid("unbound attribute namespace")),
         };
         let local = local.as_ref().to_owned();
-        hold.take(attribute_bytes(&key, &value, &namespace, &local))?;
+        // An estimate past the value's one copy, which is measured.
+        hold.take_estimate(
+            attribute_bytes(&key, &value, &namespace, &local),
+            wide(value.len()),
+        )?;
         if attrs_ns.insert((namespace, local), value.clone()).is_some() {
             return Err(invalid("duplicate expanded attribute"));
         }

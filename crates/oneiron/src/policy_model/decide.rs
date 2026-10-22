@@ -3,7 +3,7 @@
 //! the contract the policy declared.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -17,10 +17,10 @@ use crate::llm::decision::{
     cut_text, fit_state,
 };
 use crate::llm::{BudgetGuard, BudgetLease, DurableStepResult, LlmBackend, LlmRequest};
-use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 
 use super::binding::PolicyContentBinding;
+use super::clock::PolicyCallClock;
 use super::contract::PolicyOutputContract;
 use super::notes::rationale_notes;
 use super::planes::PolicyPlane;
@@ -33,10 +33,11 @@ use super::verdict::{
     PolicyVerdictCategory,
 };
 
-/// The time the safeguard read has, from its start to its answer. Generous: a
-/// reasoning safeguard model thinks before it answers, and a reply after it is
-/// no answer.
-const SAFEGUARD_READ_BUDGET: Duration = Duration::from_secs(600);
+/// The time the safeguard read has, from its call's start to its answer, its
+/// notes included. Generous: a reasoning safeguard model thinks before it
+/// answers, and a reply after it is no answer. One call's clock spends it
+/// once, across its retries ([`PolicyCallClock`]).
+pub(super) const SAFEGUARD_READ_BUDGET: Duration = Duration::from_secs(600);
 
 /// The option a category question offers for content the policy allows.
 pub(super) const CLEAN: &str = "clean";
@@ -136,6 +137,12 @@ impl PolicyDecisions {
             .to_string()
     }
 
+    /// The plane's row questions through the host's ladder, on `clock`: a
+    /// retry spends what the call has left of the configured budget.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pass's plane, binding, audit and call clock join the read's inputs"
+    )]
     pub(super) fn classify(
         &self,
         request: &PolicyClassifyRequest,
@@ -144,6 +151,7 @@ impl PolicyDecisions {
         binding: PolicyContentBinding,
         config: &PolicyModelConfig,
         mut audit: PolicyPassAudit,
+        clock: &PolicyCallClock,
     ) -> Result<PolicyClassifyVerdict> {
         let (plane_id, family) = match &plane {
             AnswerPlane::Owner => (PolicyPlane::OwnerPolicy, POLICY_OWNER_ROW),
@@ -182,7 +190,7 @@ impl PolicyDecisions {
                 "row_ref": row.row_ref, "action": row.action.as_str(), "why": row.why,
             })).collect::<Vec<_>>(),
         });
-        let deadline = RetrievalDeadline::hard(Instant::now(), self.budget);
+        let deadline = clock.deadline(self.budget);
         let ladder = self.ladder.ladder();
         let decisions = ladder.run_pack(
             &questions.iter().collect::<Vec<_>>(),
@@ -324,10 +332,11 @@ impl<'a> SafeguardModel<'a> {
 /// resolves to the strictest row); otherwise, which row it violates, or clean.
 /// The row decides the action. A read that does not decide is a skip, never an
 /// allow; under `rationale_json` a decided read is followed by the notes call
-/// that fills the audit.
+/// that fills the audit. The read and its notes spend `clock`'s one
+/// [`SAFEGUARD_READ_BUDGET`].
 #[expect(
     clippy::too_many_arguments,
-    reason = "the pass's plane, principal, binding and audit join the read's inputs"
+    reason = "the pass's plane, principal, binding, audit and clock join the read's inputs"
 )]
 pub(super) async fn safeguard_verdict(
     safeguard: SafeguardModel<'_>,
@@ -338,6 +347,7 @@ pub(super) async fn safeguard_verdict(
     binding: PolicyContentBinding,
     config: &PolicyModelConfig,
     mut audit: PolicyPassAudit,
+    clock: &PolicyCallClock,
 ) -> Result<PolicyClassifyVerdict> {
     let plane_id = match plane {
         AnswerPlane::Owner => PolicyPlane::OwnerPolicy,
@@ -348,7 +358,7 @@ pub(super) async fn safeguard_verdict(
     };
     let wording = Wording::shipped()?;
     let asked = ask(prompt, plane, &wording)?;
-    let decisions = match read(safeguard, request, prompt, &asked, principal, config).await {
+    let decisions = match read(safeguard, request, prompt, &asked, principal, config, clock).await {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
         Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
             return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));
@@ -374,7 +384,8 @@ pub(super) async fn safeguard_verdict(
     };
     if prompt.output_contract == PolicyOutputContract::RationaleJson {
         let label = violation.as_ref().and_then(|(label, ..)| *label);
-        rationale_notes(safeguard, prompt, config, label, &wording.notes, &mut audit).await?;
+        let notes = &wording.notes;
+        rationale_notes(safeguard, prompt, config, label, notes, &mut audit, clock).await?;
     } else {
         // With no notes owed, the audit names the decided row.
         let row_ref = violation
@@ -512,6 +523,7 @@ async fn read(
     asked: &Asked<'_>,
     principal: EntityId,
     config: &PolicyModelConfig,
+    clock: &PolicyCallClock,
 ) -> DurableStepResult<GeneratedDecisions> {
     let shell = prompt.llm_request(config);
     let model = shell.model.to_string();
@@ -544,7 +556,7 @@ async fn read(
             },
             &DecisionBandPolicy::default(),
             Reversibility::OutboundEffect,
-            &RetrievalDeadline::hard(Instant::now(), SAFEGUARD_READ_BUDGET),
+            &clock.deadline(SAFEGUARD_READ_BUDGET),
         )
         .await
 }

@@ -381,6 +381,47 @@ drive an open and a restore both boot with. A RAM resume reads no file again,
 so a changed list takes effect at the next cold boot: drop a published snapshot
 first.
 
+## RAM snapshot custody (FIX 9497)
+
+A sleep's RAM snapshot holds the guest's fscrypt key and decrypted vault
+pages, so it is written only to protected backing, from its first byte:
+
+- With the profile's `snapshot_custody` (`{"socket": ..., "dir": ...}`), only
+  into `dir`. Before any snapshot file is written or looked for, `host vm`
+  sends the custody socket `{"op":"unlock","vault":"<name>"}` and checks that
+  `dir` is an fscrypt v2 directory whose key is present. It holds the unlock
+  while the VMM may write or map the files, and once that VMM is reaped it
+  sends `{"op":"evict","vault":"<name>"}` and checks that the key is gone. A
+  dropped driver's reaper thread evicts only after its own reap. The answer
+  is one line, `{"ok":true,"error":null}` or `{"ok":false,"error":"<why>"}`.
+- With `snapshot_custody: null`, only into a state directory that is already
+  protected: RAM-backed (tmpfs or ramfs) or an fscrypt v2 directory whose key
+  is present.
+- Otherwise the snapshot is withheld and the vault stops, as an off-record
+  sleep does, with the log line `snapshot withheld: the state dir is
+  unprotected, and bound snapshot custody would allow it`.
+
+A start, a cold restore and an inspection unlock a bound custody before they
+look for a snapshot. One whose custody does not unlock refuses with
+`VmSnapshotCustodyUnavailable`, boots nothing and keeps the snapshot; start it
+again once the custody answers. The supervisor supplies the custody: a
+per-vault encrypted directory, the key held outside `host vm`, unlock and
+evict bound to the vault, and an eviction that really removes the key. `host
+vm` never holds the key.
+
+## Wake ledger pages (FIX 9549, FIX 9498)
+
+The guest's wake ledger report reaches the host whole, in pages of at most
+`MAX_LEDGER_PAGE_ENTRIES`: a push sends a report's pages in order on one
+ledger connection, and a sleep reads the report its freeze holds with
+`ledger_page` and releases it with `ledger_pulled`, before any snapshot or
+stop. `host vm` commits a report only once every page is in and its digest
+checks, durably, and answers the last page `committed`. Each ledger
+connection is a task of its own, at most 8 at once; a silent one never holds
+up the runner. Each window fires at one second inside it, chosen once for the
+vault, alarm and window and kept with the report, so vaults sharing a window
+spread across it; a sleep returns that second as the next wake.
+
 ## Lost result: decision table
 
 If the same restored guest is still serving, read ctl `restore_status` and

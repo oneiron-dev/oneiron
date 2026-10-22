@@ -27,10 +27,11 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::write_envelope::WriteActor;
 
 mod actor_erase;
+mod resolution;
 mod sourced;
 mod subject;
 pub(crate) use actor_erase::{erase_setting_actor_in_txn, names_no_actor};
-pub(crate) use sourced::setting_value_sourced_in_txn;
+pub(crate) use sourced::setting_value_in_scope_sourced_in_txn;
 
 /// One learned knob: its key, its bounds and the value it ships with.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -630,41 +631,7 @@ fn scopes_value_in_txn(
     scopes: &[SettingScope],
     type_ref: Option<&crate::learning::TypeRef>,
 ) -> Result<f64> {
-    for scope in scopes {
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Pin, scope)? {
-            return Ok(value);
-        }
-    }
-    let type_node = type_ref
-        .filter(|type_ref| !type_ref.is_root())
-        .map(|type_ref| type_ref.node_id.as_str());
-    for scope in scopes.iter().filter(|scope| **scope != SettingScope::Vault) {
-        let fits: Vec<(Option<crate::entity_id::EntityId>, Option<&str>)> = match scope {
-            SettingScope::Goal(subject) | SettingScope::Project(subject) => type_node
-                .map(|node| (Some(*subject), Some(node)))
-                .into_iter()
-                .chain([(Some(*subject), None)])
-                .collect(),
-            SettingScope::Type(_) => type_node
-                .map(|node| (None, Some(node)))
-                .into_iter()
-                .collect(),
-            SettingScope::Vault => Vec::new(),
-        };
-        for (subject, node) in fits {
-            if let Some(value) = cached_fit(store, txn, spec, subject, node)? {
-                return Ok(value);
-            }
-        }
-        if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Seed, scope)? {
-            return Ok(value);
-        }
-    }
-    if let Some(value) = cached_fit(store, txn, spec, None, None)? {
-        return Ok(value);
-    }
-    let seed = scoped_row_value(store, txn, spec, SettingMode::Seed, &SettingScope::Vault)?;
-    Ok(seed.unwrap_or(spec.seed))
+    resolution::resolve_in_txn(store, txn, spec, scopes, type_ref).map(|(value, _)| value)
 }
 
 /// The key a setting cell's fit is cached under

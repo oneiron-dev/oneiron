@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use crate::entity_id::EntityId;
 use crate::llm::decision::{
     DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionQuestion,
-    Reversibility,
+    DecisionReceipt, DecisionRung, ProviderPin, Reversibility,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 
@@ -58,6 +58,15 @@ impl PortAnswer {
     }
 }
 
+/// A routed answer beside the model whose answer stands (FIX 1877): the
+/// provider pin of the rung that answered, `None` when no model did (a rule,
+/// a person's queue, an abstention, a refused call or no ladder).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TracedAnswer {
+    pub(super) answer: PortAnswer,
+    pub(super) answered_by: Option<ProviderPin>,
+}
+
 /// Asks one surface question for `principal` over `evidence` and the bounded
 /// `state` object.
 pub(super) fn ask(
@@ -68,8 +77,32 @@ pub(super) fn ask(
     state: &serde_json::Value,
     reversibility: Reversibility,
 ) -> PortAnswer {
+    ask_traced(
+        decisions,
+        question,
+        principal,
+        evidence,
+        state,
+        reversibility,
+    )
+    .answer
+}
+
+/// [`ask`], beside the model whose answer stands.
+pub(super) fn ask_traced(
+    decisions: Option<&TaskDecisions<'_>>,
+    question: TaskQuestion,
+    principal: EntityId,
+    evidence: &[EntityId],
+    state: &serde_json::Value,
+    reversibility: Reversibility,
+) -> TracedAnswer {
+    let unanswered = TracedAnswer {
+        answer: PortAnswer::AskUp,
+        answered_by: None,
+    };
     let Some(decisions) = decisions else {
-        return PortAnswer::AskUp;
+        return unanswered;
     };
     let typed = match question {
         TaskQuestion::Take => &decisions.take,
@@ -86,9 +119,32 @@ pub(super) fn ask(
         reversibility,
         &RetrievalDeadline::hard(Instant::now(), decisions.budget),
     );
-    match decided.map(|decision| decision.answer) {
-        Ok(DecisionAnswer::Noul(true)) => PortAnswer::Yes,
-        Ok(DecisionAnswer::Noul(false)) => PortAnswer::No,
-        Ok(_) | Err(_) => PortAnswer::AskUp,
+    let Ok(decision) = decided else {
+        return unanswered;
+    };
+    let answer = match decision.answer {
+        DecisionAnswer::Noul(true) => PortAnswer::Yes,
+        DecisionAnswer::Noul(false) => PortAnswer::No,
+        _ => return unanswered,
+    };
+    TracedAnswer {
+        answer,
+        answered_by: answering_model(&decision.receipt),
     }
+}
+
+/// The pin of the model whose answer stands on `receipt`: the last provider
+/// read on its answered rung. `None` when no rung answered, or a rule or a
+/// person did: neither is a model.
+fn answering_model(receipt: &DecisionReceipt) -> Option<ProviderPin> {
+    let rung = receipt.time?.answered?;
+    if matches!(rung, DecisionRung::Rule | DecisionRung::Human) {
+        return None;
+    }
+    receipt
+        .providers
+        .iter()
+        .rev()
+        .find(|pin| pin.rung == rung)
+        .cloned()
 }

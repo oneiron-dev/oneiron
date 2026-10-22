@@ -26,6 +26,15 @@ pub(crate) fn resolve_policy_manifest(
     let mut vault_precedence: Option<ConnectorClassPrecedence> = None;
     let mut shipped_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
     let mut owner_pptx_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits> = None;
+    // The document resource and DOCX archive rows follow the PPTX rows: the
+    // shipped row is a default, an owner's trusted rows replace it, and rows
+    // within each group meet restrictively (FIX 8763, 8764).
+    let mut shipped_docedit_resource: Option<crate::gate::docedit_resource::DoceditResourcePolicy> =
+        None;
+    let mut owner_docedit_resource: Option<crate::gate::docedit_resource::DoceditResourcePolicy> =
+        None;
+    let mut shipped_docx_limits = Vec::new();
+    let mut owner_docx_limits = Vec::new();
     let mut authored_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> =
         None;
     let mut seeded_confidence: Option<crate::gate::carry_forward_policy::CarryForwardPolicy> = None;
@@ -403,13 +412,12 @@ pub(crate) fn resolve_policy_manifest(
                 resolution.act_policy.extend_rows(decoded.act_policy);
                 resolution.hosted_tts.rows.extend(decoded.hosted_tts.rows);
                 if let Some(bounds) = decoded.docedit_resource_policy {
-                    let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
-                    resolution.docedit_resource_policy = Some(
-                        resolution
-                            .docedit_resource_policy
-                            .unwrap_or(baseline)
-                            .restrict(bounds),
-                    );
+                    let slot = if id == crate::gate::default_policy_manifest_id()? {
+                        &mut shipped_docedit_resource
+                    } else {
+                        &mut owner_docedit_resource
+                    };
+                    *slot = Some(slot.map_or(bounds, |previous| previous.restrict(bounds)));
                 }
 
                 if let Some(limits) = decoded.livequery_tracker_limits {
@@ -426,7 +434,11 @@ pub(crate) fn resolve_policy_manifest(
                     resolution.diagnostics.malformed_manifest_seen = true;
                 }
                 if let Some(limits) = decoded.docx_archive_limits {
-                    resolution.docx_archive_limits.push(limits);
+                    if id == crate::gate::default_policy_manifest_id()? {
+                        shipped_docx_limits.push(limits);
+                    } else {
+                        owner_docx_limits.push(limits);
+                    }
                 }
 
                 if let Some(bounds) = decoded.diagnostic_bounds {
@@ -611,6 +623,12 @@ pub(crate) fn resolve_policy_manifest(
     resolution.connector_class_carry = class_policy_named.then_some(carry);
 
     resolution.pptx_comment_limits = owner_pptx_limits.or(shipped_pptx_limits);
+    resolution.docedit_resource_policy = owner_docedit_resource.or(shipped_docedit_resource);
+    resolution.docx_archive_limits = if owner_docx_limits.is_empty() {
+        shipped_docx_limits
+    } else {
+        owner_docx_limits
+    };
     resolution.carry_forward_authored = authored_confidence.is_some();
     resolution.carry_forward_confidence = authored_confidence
         .or(seeded_confidence)

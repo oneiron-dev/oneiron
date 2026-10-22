@@ -337,8 +337,10 @@ side_tables! {
     /// An audit's label that two pieces of one team's work duplicated each other. Key: string
     /// (team reference "\0" first "\0" second).
     LEARNING_DUPLICATE_LABEL: VaultMeta b"learning:duplicate_label:v1:" Named;
-    /// One admitted anchored outcome for a `learning.*` cell. Key: cell digest + receipt string.
-    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named;
+    /// One admitted anchored outcome for a `learning.*` cell; its pack context is cleared once it
+    /// names an erased entity. Key: cell digest + receipt string.
+    LEARNING_EVIDENCE: VaultMeta b"learning:evidence:v1:" Named
+        => crate::learning::erase_learning_pack_context_in_txn;
     /// A judge swap's fitted score map, applied as a projection. Key: string (old judge revision).
     LEARNING_JUDGE_CONVERSION: VaultMeta b"learning:judge_conversion:v1:" Named;
     /// A `learning.*` cell's engine-written prior (origin, value, weight in runs). Key: cell digest.

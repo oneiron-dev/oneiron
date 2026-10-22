@@ -4,7 +4,10 @@ A receipt is a provenance record, not a signature (signing is a later pack)
 and not a boot proof. It names every input pin the build read, the builder's
 identity (tools tree content hash), every output digest, the measured bytes
 against the variant's proposed budget, and the build's SBOM and provenance
-statement by digest (attest.py). Fields keep the checker receipt's names
+statement by digest (attest.py). The payloads and external source builds the
+variant used are named by their pins, and what each put in the image is
+measured there (installed: a file's sha256 or a tree's content digest); a
+source build adds its own toolchain's versions and its binary's hash. Fields keep the checker receipt's names
 where they overlap (source_commit, cargo_lock_sha256, rustc, cargo,
 fence_sha256, guest_sha256).
 """
@@ -71,6 +74,14 @@ def receipt(model: Model, record: dict) -> dict:
             "contracts": inputs["contracts"],
             "build": inputs["build"],
             "packages_lock_sha256": record["packages_lock_sha256"],
+            "payloads": record.get("payloads", {}),
+        },
+        "installed": record.get("installed", {}),
+        "source_builds": {
+            pin: {"repository": pin_["repository"], "rev": pin_["rev"], "archive_sha256": pin_["archive_sha256"],
+                  "cargo_lock_sha256": pin_["cargo_lock_sha256"], "store": f"cargo-home-{pin}",
+                  "rustc": record["native"].get(f"rustc-{pin}"), "cargo": record["native"].get(f"cargo-{pin}")}
+            for pin, pin_ in record.get("payloads", {}).items() if pin_.get("kind") == "source-build"
         },
         "packages": [{"name": n, "version": v, "arch": a} for n, v, a in record["packages"]],
         "ownership": record["ownership"],

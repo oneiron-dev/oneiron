@@ -1,18 +1,23 @@
-//! One parse's XML budget across every part of a DOCX package.
+//! What one parse's XML trees cost, across every part of a DOCX package,
+//! reserved through the operation it runs in before any tree is built
+//! (Rule 5; FIX 8570).
 //!
-//! The archive reader bounds inflated bytes and the tree builders bound
-//! nesting depth, but neither bounds how many heap nodes a shallow, highly
-//! compressible part expands into. Admission streams each XML part once,
-//! building nothing, and charges what the tree builders would keep: a node per
-//! element, attribute, namespace binding, text run, CDATA section, comment and
-//! processing instruction, and the decoded bytes of names, values and text,
-//! with the resolved namespace URI each element and attribute stores. The
-//! counters run across the whole package and never reset at a part boundary,
-//! so an over-budget package is refused before any reader builds a tree.
+//! The archive reader reserves the inflated bytes, but not the heap nodes a
+//! shallow, highly compressible part expands into. Admission streams each XML
+//! part once, building nothing, and measures what the tree builders would
+//! keep: a node per element, attribute, namespace binding, text run, CDATA
+//! section, comment and processing instruction, and the decoded bytes of
+//! names, values and text, with the resolved namespace URI each element and
+//! attribute stores. The counts are observations, never a reason to stop:
+//! each part's cost is reserved through the operation's port before the next
+//! part is measured, and the operation is asked at each part whether its
+//! deadline passed. The port refuses only at the machine's floor or that
+//! deadline. The decoded bytes are measured; the node overhead is the
+//! estimate, so only the decoded bytes can meet the machine's floor at once.
 //!
-//! A part the tree builders cannot read stops admission where they stop, with
-//! what it charged so far kept. Packages under both bounds read exactly as
-//! they did without admission.
+//! A part the tree builders cannot read stops measuring where they stop, with
+//! what it measured so far kept. Packages read exactly as they did without
+//! admission; only their memory is reserved first.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek};
@@ -24,105 +29,82 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{Prefix, QName};
 use zip::ZipArchive;
 
+use crate::admission::{Hold, Operation, Refusal, bytes_of};
 use crate::word_xml::{canonicalize_ooxml_namespace, canonicalize_relationship_type};
-
-/// Nodes one parse may build across all parts: elements, attributes,
-/// namespace bindings, text runs, CDATA, comments and processing
-/// instructions. Covers book-length documents (5,000+ pages at ~1,500 nodes
-/// a page).
-pub const MAX_DOCX_XML_NODES: u64 = 10_000_000;
-
-/// Decoded XML bytes one parse may build across all parts, each element's and
-/// attribute's resolved namespace URI included. Matches the archive's total
-/// inflation ceiling.
-pub const MAX_DOCX_XML_EXPANDED_BYTES: u64 = 500 * 1024 * 1024;
 
 const XML_URI: &str = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_URI: &str = "http://www.w3.org/2000/xmlns/";
 
-/// The DOCX parse budget a package exceeded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ParseBound {
-    /// [`MAX_DOCX_XML_NODES`].
-    XmlNodes,
-    /// [`MAX_DOCX_XML_EXPANDED_BYTES`].
-    XmlExpandedBytes,
-}
-
-impl ParseBound {
-    /// The bound's name in a refusal.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::XmlNodes => "max_xml_nodes",
-            Self::XmlExpandedBytes => "max_xml_expanded_bytes",
-        }
-    }
-
-    /// The bound's limit.
-    #[must_use]
-    pub fn limit(self) -> u64 {
-        match self {
-            Self::XmlNodes => MAX_DOCX_XML_NODES,
-            Self::XmlExpandedBytes => MAX_DOCX_XML_EXPANDED_BYTES,
-        }
-    }
-}
-
-/// The caller-safe refusal naming the bound a package exceeded.
-#[must_use]
-pub fn refusal(bound: ParseBound, limit: u64) -> String {
-    format!("DOCX parse refused: {}={limit} exceeded", bound.name())
-}
-
-/// Admit one package already inflated in memory, its parts in archive order.
-pub(crate) fn admit_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]>) -> Result<(), ParseBound> {
-    let mut budget = Budget::default();
+/// Reserve the trees one package already inflated in memory builds, its
+/// parts in archive order. The hold lasts until the caller drops it, once the
+/// trees are built.
+///
+/// # Errors
+/// The operation's refusal.
+pub(crate) fn admit_parts<'a>(
+    parts: impl IntoIterator<Item = &'a [u8]>,
+    operation: &Operation,
+) -> Result<Hold, Refusal> {
+    let mut trees = operation.hold();
     for part in parts {
-        admit_part(part, &mut budget)?;
+        operation.checkpoint()?;
+        let mut cost = Cost::default();
+        admit_part(part, &mut cost);
+        cost.reserve(&mut trees)?;
     }
-    Ok(())
+    Ok(trees)
 }
 
-/// Admit every entry of a ZIP its reader opened itself. Each entry inflates
-/// as a stream, so admission keeps none of it.
-pub(crate) fn admit_zip<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<(), ParseBound> {
-    let mut budget = Budget::default();
+/// [`admit_parts`] for every entry of a ZIP its reader opened itself. Each
+/// entry inflates as a stream, so admission keeps none of it.
+///
+/// # Errors
+/// The operation's refusal.
+pub(crate) fn admit_zip<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    operation: &Operation,
+) -> Result<Hold, Refusal> {
+    let mut trees = operation.hold();
     for index in 0..zip.len() {
+        operation.checkpoint()?;
         // An unreadable entry is its reader's own finding.
         let Ok(entry) = zip.by_index(index) else {
             continue;
         };
-        admit_part(BufReader::new(entry), &mut budget)?;
+        let mut cost = Cost::default();
+        admit_part(BufReader::new(entry), &mut cost);
+        cost.reserve(&mut trees)?;
     }
-    Ok(())
+    Ok(trees)
 }
 
-/// The running charge of one parse.
+/// What one part's trees keep: observations, reserved as bytes.
 #[derive(Default)]
-struct Budget {
+struct Cost {
     nodes: u64,
-    expanded_bytes: u64,
+    decoded_bytes: u64,
 }
 
-impl Budget {
-    fn charge(&mut self, nodes: u64, bytes: usize) -> Result<(), ParseBound> {
+impl Cost {
+    fn charge(&mut self, nodes: u64, bytes: usize) {
         self.nodes = self.nodes.saturating_add(nodes);
-        if self.nodes > MAX_DOCX_XML_NODES {
-            return Err(ParseBound::XmlNodes);
-        }
-        self.expanded_bytes = self.expanded_bytes.saturating_add(bytes as u64);
-        if self.expanded_bytes > MAX_DOCX_XML_EXPANDED_BYTES {
-            return Err(ParseBound::XmlExpandedBytes);
-        }
-        Ok(())
+        self.decoded_bytes = self
+            .decoded_bytes
+            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
+    }
+
+    /// Reserve the part's trees: each node as one tree node, and the decoded
+    /// bytes they hold. Only the decoded bytes are measured.
+    fn reserve(&self, trees: &mut Hold) -> Result<(), Refusal> {
+        let nodes = bytes_of::<xmltree::XMLNode>(usize::try_from(self.nodes).unwrap_or(usize::MAX));
+        trees.take_estimate(nodes.saturating_add(self.decoded_bytes), self.decoded_bytes)
     }
 }
 
 /// Charge one part, read with the tree builders' reader settings.
-fn admit_part<R: BufRead>(mut source: R, budget: &mut Budget) -> Result<(), ParseBound> {
+fn admit_part<R: BufRead>(mut source: R, budget: &mut Cost) {
     if !opens_as_xml(&mut source) {
-        return Ok(());
+        return;
     }
     let mut reader = Reader::from_reader(source);
     {
@@ -137,32 +119,32 @@ fn admit_part<R: BufRead>(mut source: R, budget: &mut Budget) -> Result<(), Pars
     let mut buf = Vec::new();
     loop {
         let Ok(event) = reader.read_event_into(&mut buf) else {
-            return Ok(());
+            return;
         };
         let continues_run = in_text_run;
         in_text_run = matches!(event, Event::Text(_) | Event::GeneralRef(_));
         match event {
             Event::Start(ref start) => {
-                if !charge_tag(start, true, &mut scope, budget)? {
-                    return Ok(());
+                if !charge_tag(start, true, &mut scope, budget) {
+                    return;
                 }
             }
             Event::Empty(ref start) => {
-                if !charge_tag(start, false, &mut scope, budget)? {
-                    return Ok(());
+                if !charge_tag(start, false, &mut scope, budget) {
+                    return;
                 }
             }
             Event::End(_) => scope.close(),
-            Event::Text(text) => budget.charge(u64::from(!continues_run), text.len())?,
+            Event::Text(text) => budget.charge(u64::from(!continues_run), text.len()),
             // A reference's name is never shorter than what it decodes to.
             Event::GeneralRef(reference) => {
-                budget.charge(u64::from(!continues_run), reference.len())?;
+                budget.charge(u64::from(!continues_run), reference.len());
             }
-            Event::CData(text) => budget.charge(1, text.len())?,
-            Event::Comment(text) | Event::DocType(text) => budget.charge(1, text.len())?,
-            Event::PI(pi) => budget.charge(1, pi.len())?,
+            Event::CData(text) => budget.charge(1, text.len()),
+            Event::Comment(text) | Event::DocType(text) => budget.charge(1, text.len()),
+            Event::PI(pi) => budget.charge(1, pi.len()),
             Event::Decl(_) => {}
-            Event::Eof => return Ok(()),
+            Event::Eof => return,
         }
         buf.clear();
     }
@@ -182,28 +164,23 @@ fn opens_as_xml<R: BufRead>(source: &mut R) -> bool {
 
 /// Charge one start or empty tag: its namespace bindings, the element with
 /// its resolved URI, each attribute with its own, and each binding an
-/// `mc:Choice` hoists for its `Requires` prefixes. `Ok(false)` is a malformed
+/// `mc:Choice` hoists for its `Requires` prefixes. `false` is a malformed
 /// attribute, where the tree builders stop reading the part.
-fn charge_tag(
-    start: &BytesStart<'_>,
-    opens: bool,
-    scope: &mut Scope,
-    budget: &mut Budget,
-) -> Result<bool, ParseBound> {
+fn charge_tag(start: &BytesStart<'_>, opens: bool, scope: &mut Scope, budget: &mut Cost) -> bool {
     // Bindings first: a binding is in scope on its own element.
     let mut declared = Vec::new();
     for attribute in attributes(start) {
         let Ok(attribute) = attribute else {
-            return Ok(false);
+            return false;
         };
         let Some(prefix) = declared_prefix(attribute.key) else {
             continue;
         };
         let Ok(value) = unescape(&attribute.value) else {
-            return Ok(false);
+            return false;
         };
         let uri = canonicalize_ooxml_namespace(&value).len();
-        budget.charge(1, prefix.len() + uri)?;
+        budget.charge(1, prefix.len() + uri);
         declared.push((prefix.to_owned(), uri));
     }
     scope.open(declared);
@@ -211,31 +188,31 @@ fn charge_tag(
     let name = start.name();
     let (local, prefix) = name.decompose();
     let prefix = prefix.map_or("", Prefix::into_inner);
-    budget.charge(1, name.as_ref().len() + scope.resolve(prefix))?;
+    budget.charge(1, name.as_ref().len() + scope.resolve(prefix));
     let hoists = prefix == "mc" && local.as_ref() == "Choice";
 
     for attribute in attributes(start) {
         let Ok(attribute) = attribute else {
-            return Ok(false);
+            return false;
         };
         if declared_prefix(attribute.key).is_some() {
             continue;
         }
         let Ok(value) = unescape(&attribute.value) else {
-            return Ok(false);
+            return false;
         };
         let value = canonicalize_ooxml_namespace(&value);
         let value = canonicalize_relationship_type(&value);
         let (key_local, key_prefix) = attribute.key.decompose();
         let uri = key_prefix.map_or(0, |key_prefix| scope.resolve(key_prefix.into_inner()));
-        budget.charge(1, attribute.key.as_ref().len() + value.len() + uri)?;
+        budget.charge(1, attribute.key.as_ref().len() + value.len() + uri);
         if hoists && key_prefix.is_none() && key_local.as_ref() == "Requires" {
             for token in value.split_whitespace() {
                 if scope.binds_here(token) {
                     continue;
                 }
                 if let Some(uri) = scope.lookup(token) {
-                    budget.charge(1, token.len() + uri)?;
+                    budget.charge(1, token.len() + uri);
                 }
             }
         }
@@ -244,7 +221,7 @@ fn charge_tag(
     if !opens {
         scope.close();
     }
-    Ok(true)
+    true
 }
 
 /// A tag's attributes as the tree builders read them, without the duplicate

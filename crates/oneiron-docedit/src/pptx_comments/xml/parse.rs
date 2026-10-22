@@ -141,11 +141,16 @@ impl<'a> Xml<'a> {
                     return Err(PptxError::InvalidXml);
                 }
                 let value = unescape(&text[begin..pos])?;
-                hold.take(wide(name.len() + value.len()).saturating_add(bytes_of::<(
-                    String,
-                    String,
-                    Range<usize>,
-                )>(2)))?;
+                // Two slots (the vector grows by doubling); the one slot pushed
+                // is the measured part.
+                hold.take_estimate(
+                    wide(name.len() + value.len()).saturating_add(bytes_of::<(
+                        String,
+                        String,
+                        Range<usize>,
+                    )>(2)),
+                    bytes_of::<(String, String, Range<usize>)>(1),
+                )?;
                 raw.push((name, value, begin..pos));
                 pos += 1;
             }
@@ -177,17 +182,20 @@ impl<'a> Xml<'a> {
             }
             let mut raw_names = BTreeSet::new();
             for (name, value, _) in &raw {
-                hold.take(wide(name.len()).saturating_add(bytes_of::<&String>(2)))?;
+                hold.take_estimate(
+                    wide(name.len()).saturating_add(bytes_of::<&String>(2)),
+                    bytes_of::<&String>(1),
+                )?;
                 if !raw_names.insert(name) {
                     return Err(PptxError::InvalidXml);
                 }
                 if name == "xmlns" || name.starts_with("xmlns:") {
-                    hold.take(wide(name.len() + value.len()).saturating_add(bytes_of::<(
-                        String,
-                        String,
-                    )>(
-                        1
-                    )))?;
+                    // The binding's value is copied; the rest is an estimate.
+                    hold.take_estimate(
+                        wide(name.len() + value.len())
+                            .saturating_add(bytes_of::<(String, String)>(1)),
+                        wide(value.len()),
+                    )?;
                 }
                 if name == "xmlns" {
                     std::rc::Rc::make_mut(&mut namespaces).insert(String::new(), value.clone());
@@ -209,11 +217,16 @@ impl<'a> Xml<'a> {
                     continue;
                 }
                 let (ns, name) = expanded(&qname, &namespaces, true)?;
-                // The attribute and its expanded name, kept twice.
-                hold.take(
+                // The attribute and its expanded name, kept twice; one
+                // attribute, one set entry and one copy of the name are
+                // measured.
+                hold.take_estimate(
                     wide(2 * (ns.len() + name.len()))
                         .saturating_add(bytes_of::<Attr>(2))
                         .saturating_add(bytes_of::<(String, String)>(1)),
+                    bytes_of::<Attr>(1)
+                        .saturating_add(bytes_of::<(String, String)>(1))
+                        .saturating_add(wide(ns.len() + name.len())),
                 )?;
                 if !expanded_names.insert((ns.clone(), name.clone())) {
                     return Err(PptxError::InvalidXml);
@@ -234,10 +247,11 @@ impl<'a> Xml<'a> {
             // The node twice (the arena grows by doubling), its names, its
             // child index and its stack slot, before the arena grows.
             limits.resources.checkpoint()?;
-            hold.take(
+            hold.take_estimate(
                 bytes_of::<Node>(2)
                     .saturating_add(wide(qname.len() + ns.len() + name.len()))
                     .saturating_add(bytes_of::<usize>(2)),
+                bytes_of::<Node>(1),
             )?;
             let index = nodes.len();
             nodes.push(Node {

@@ -3,8 +3,8 @@
 use super::doc_actor::{DocActor, names_no_actor};
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
+use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn};
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
-use crate::batch::secret_scan::secret_scan_mode_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{ArtifactError, Error, Result};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot};
@@ -452,30 +452,30 @@ pub(super) fn open_proposal_in_txn(
             return Err(invalid("fork operation actor mismatch"));
         }
     }
+    // The proposal's prose is admitted with one plan (OF-067; FIX 2371).
+    let mut plan = crate::batch::secret_scan::Lifted::default();
     for req in requests {
         validate_actor(vault, txn, req.actor)?;
         let h = storage::head(&vault.store, txn, &req.entity)?;
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;
         bind_actor(vault, txn, &fork, req.actor, at)?;
-        // A handle of a key the live text's lift marked writes its
-        // value again (OF-067).
+        // New text is admitted before the fork holds it, and a handle of a
+        // key the live text's lift marked writes its value again (OF-067).
         let lifted =
             crate::batch::secret_scan::LiftedKeys::of_in_txn(&vault.store, txn, [live.text()])?;
         if let Some(text) = &req.rewrite {
-            crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, text.as_bytes())?;
-            let resolved = lifted.resolved(text);
-            let text = resolved.as_deref().unwrap_or(text);
+            let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
             fork.edit_as(req.actor, at, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
-                body.insert(0, text)
+                body.insert(0, &text)
                     .map_err(|_| invalid("fork rewrite insert"))
             })?;
         } else {
             for op in &req.edits {
-                let secrets = secret_scan_mode_in_txn(&vault.store, txn)?;
-                super::verbs::apply(&mut fork, req.entity, op, at, secrets, &lifted)?;
+                let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
+                super::verbs::apply(&mut fork, req.entity, op, &text, at, &lifted)?;
             }
         }
         let id = EntityId::now();

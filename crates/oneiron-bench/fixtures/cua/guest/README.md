@@ -29,8 +29,11 @@ build host (never here on the Mac):
 
 ```sh
 cd /srv/oneiron
-export IMAGE="$(crates/oneiron-container/guest/browser/build.sh)"
+export IMAGE="$(crates/oneiron-container/guest/browser/build.sh --dockerfile --store-id)"
 ```
+
+`IMAGE` is then the id this host's Docker store runs the image by, not
+necessarily the config digest a VM vault pins (the recipe's README, "Two ids").
 
 Record the resulting `sha256:...` local image id in the S2 run metadata. Use the
 same id for every arm; do not use the floating tag as the run's pin.

@@ -16,7 +16,7 @@ use axum::response::sse::Event;
 use futures_util::{Stream, stream};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
 
-use super::{CoreRunTreeResponse, core_run_tree_response};
+use super::encode;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
@@ -40,12 +40,12 @@ pub(super) fn intervention_tree(
     auth: &CoreAuth,
     run_id: &str,
     attempt_id: &str,
-) -> Option<CoreRunTreeResponse> {
+) -> Option<oneiron::RunTree> {
     if !reads_run_tree(server, auth) {
         return None;
     }
     match oneiron::RunTreeAdapter::new(&server.vault).read_run(run_id) {
-        Ok(tree) => Some(core_run_tree_response(tree)),
+        Ok(tree) => Some(tree),
         Err(error) => {
             tracing::error!(kind = ?error.kind(), attempt_id = %attempt_id, "core run tree intervention snapshot failed");
             None
@@ -109,7 +109,7 @@ pub(super) fn observe(
             let current = oneiron::RunTreeAdapter::new(&state.server.vault)
                 .read_run(&state.run_id)
                 .ok()
-                .and_then(|tree| serde_json::to_string(&core_run_tree_response(tree)).ok());
+                .and_then(|tree| encode::run_tree_json(tree).ok());
             let Some(current) = current else {
                 state.done = true;
                 let event = Event::default().event("error").data("run_tree_read_failed");

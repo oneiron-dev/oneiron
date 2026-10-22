@@ -12,6 +12,13 @@ release-manifest.schema.json; the reader is oneiron_container::image_release
 
 No signing key exists. Without --signer-cmd no envelope is written, and the
 engine reports the image as image_signature_unavailable.
+
+The two VM capability facts, vm_trusted_organ_builds_revision and
+vm_guest_runtime_revision, are measured from rootfs.tar
+(measure_vm_capabilities, FIX 9344); neither gates anything. write_release is
+the one schema check, exact-byte write and signing step, which the standalone
+Firecracker vault image's emitter (deploy/firecracker/release.py, FIX 9352)
+shares: only that image may name no OCI form.
 """
 
 from __future__ import annotations
@@ -42,6 +49,13 @@ VAULT_KEYS = (
     "contract_version", "vm_provision_revision", "vm_outbox_wire_revision", "vm_restore_wire_revision",
     "vm_anchor_wire_revision", "vm_anchor_proxy_revision", "vm_network_revision", "vm_managed_profile_revision",
 )
+# What an image holding the whole guest runtime names
+# (oneiron_vault_contract::vm::VM_GUEST_RUNTIME_REVISION, FIX 7671), and where
+# deploy/firecracker/build.py stages the runtime's descriptor; and where the
+# vault image keeps its init (packages.toml [variants.vault]).
+GUEST_RUNTIME_REVISION = 1
+GUEST_RUNTIME_DESCRIPTOR = "usr/lib/oneiron/guest-runtimes/manifest.json"
+VAULT_INIT = "usr/sbin/oneiron-vault-init"
 # The first Linux release that offers each Landlock ABI (kernel
 # Documentation/userspace-api/landlock.rst). The fence runs on the host
 # kernel in the OCI form, so its floor is the host's kernel floor.
@@ -187,13 +201,60 @@ def _binaries(rootfs_tar: Path, recorded: dict) -> dict:
     return out
 
 
+def measure_vm_capabilities(rootfs_tar: Path, receipt: dict) -> dict:
+    """The image's two VM capability facts, measured from rootfs.tar (FIX 9344).
+
+    vm_trusted_organ_builds_revision is release.toml's revision when the image
+    holds the pinned vault init, and 0 when it holds no init there.
+    vm_guest_runtime_revision is GUEST_RUNTIME_REVISION only when the image
+    holds the runtime's descriptor and every file it names at its sha256, and
+    0 when it holds no descriptor; a descriptor whose files do not all match is
+    refused, never measured as either. Neither is a gate.
+    """
+    inputs = receipt["inputs"]
+    pinned = _u32(inputs["contracts"]["vault"]["vm_trusted_organ_builds_revision"],
+                  "contracts.vault.vm_trusted_organ_builds_revision")
+    with tarfile.open(rootfs_tar) as tar:
+        def regular(name: str) -> tuple[str, bytes] | None:
+            """The sha256 and bytes of the regular file /name in the image, or None without it."""
+            try:
+                info = tar.getmember(name)
+            except KeyError:
+                return None
+            if not info.isreg():
+                raise PinMismatch(f"/{name} in rootfs.tar is not a regular file")
+            data = tar.extractfile(info).read()
+            return sha256_bytes(data), data
+
+        init = regular(VAULT_INIT)
+        if init is not None:
+            _expect(init[0], inputs["files"]["vault-init"]["sha256"], f"/{VAULT_INIT}")
+        descriptor = regular(GUEST_RUNTIME_DESCRIPTOR)
+        runtime = 0
+        if descriptor is not None:
+            named = json.loads(descriptor[1])
+            files = [*(named.get("closure") or []), named.get("browser_image"), named.get("desktop_image")]
+            if not named.get("closure") or any(not isinstance(item, dict) for item in files):
+                raise PinMismatch(f"/{GUEST_RUNTIME_DESCRIPTOR} in rootfs.tar names no whole guest runtime")
+            for item in files:
+                held = regular(str(item.get("guest_path", "")).lstrip("/"))
+                if held is None:
+                    raise PinMismatch(f"rootfs.tar lacks {item.get('guest_path')}, which the guest runtime descriptor names")
+                _expect(held[0], item.get("sha256"), str(item.get("guest_path")))
+            runtime = GUEST_RUNTIME_REVISION
+    return {
+        "vm_trusted_organ_builds_revision": pinned if init is not None else 0,
+        "vm_guest_runtime_revision": runtime,
+    }
+
+
 def _u32(value, what: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFF:
         raise BadPin(f"{what} must be an unsigned 32-bit integer, got {value!r}")
     return value
 
 
-def _contracts(receipt: dict, variant: str) -> dict:
+def _contracts(receipt: dict, variant: str, capabilities: dict) -> dict:
     inputs = receipt["inputs"]
     contracts, files = inputs["contracts"], inputs["files"]
 
@@ -210,7 +271,9 @@ def _contracts(receipt: dict, variant: str) -> dict:
         "guest_protocol": _u32(contracts["code_guest_protocol"]["version"], "code_guest_protocol.version"),
         "checker_helper": _u32(contracts["checker_helper"]["header_version"], "checker_helper.header_version"),
         "wit_world": contracts["wit"]["world"],
-        "vault": {key: _u32(contracts["vault"][key], f"contracts.vault.{key}") for key in VAULT_KEYS},
+        # The pinned contract revisions, then the two measured capability facts.
+        "vault": {**{key: _u32(contracts["vault"][key], f"contracts.vault.{key}") for key in VAULT_KEYS},
+                  **capabilities},
         # Only the vault's engine keeps vault storage.
         "storage": {
             "abi_version": _u32(storage["abi_version"], "storage.abi_version"),
@@ -342,7 +405,7 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
     kernel_image = _file(kernel.resolve(), blake3) if kernel else None
     config_pin = receipt["inputs"]["files"]["kernel-config-vault" if variant == "vault" else "kernel-config-foreign"]
     binaries = _binaries(rootfs_tar, receipt.get("native") or {})
-    contracts = _contracts(receipt, variant)
+    contracts = _contracts(receipt, variant, measure_vm_capabilities(rootfs_tar, receipt))
     fenced = binaries["fence"] is not None
     floor = None
     if fenced:
@@ -386,12 +449,28 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
         },
         "facts": [] if blake3 is not None else ["blake3_unmeasured"],
     }
+    path, sha = write_release(artifacts, payload, signer_cmd)
+    if kernel_image:
+        log(f"the kernel is listed as {kernel_image['path']}: ship it beside {MANIFEST}")
+    return path, sha
+
+
+def write_release(directory: Path, payload: dict, signer_cmd: str | None) -> tuple[Path, str]:
+    """Checks `payload` against the closed wire, writes its exact bytes as
+    <directory>/image-release.json and, with a signer, the envelope over them;
+    without one, removes an envelope over older bytes. Returns the manifest's
+    path and sha256. A null OCI form passes only for the standalone Firecracker
+    vault image with its kernel image (FIX 9352): a builder output always
+    names its real OCI form."""
     schema = _schema()
     _check(payload, schema, schema, "manifest")
+    artifacts = payload["artifacts"]
+    if artifacts["oci"] is None and (payload["variant"] != "vault" or artifacts["kernel"]["image"] is None):
+        raise BadPin("manifest.artifacts.oci: null only for a standalone Firecracker vault image with its kernel image")
     data = (json.dumps(payload, indent=2) + "\n").encode()
-    path = artifacts / MANIFEST
+    path = directory / MANIFEST
     path.write_bytes(data)
-    envelope_path = artifacts / ENVELOPE
+    envelope_path = directory / ENVELOPE
     if signer_cmd:
         envelope_path.write_bytes(_sign(signer_cmd, data, schema))
         log(f"envelope {envelope_path}")
@@ -400,6 +479,4 @@ def emit(model: Model, work: Path, variant: str, *, kernel: Path | None, signer_
         # invalid signature, never as this manifest's.
         envelope_path.unlink()
         log(f"removed {envelope_path}: no --signer-cmd ran for these manifest bytes")
-    if kernel_image:
-        log(f"the kernel is listed as {kernel_image['path']}: ship it beside {MANIFEST}")
     return path, sha256_bytes(data)

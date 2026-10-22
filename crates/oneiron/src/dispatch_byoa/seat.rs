@@ -221,7 +221,7 @@ pub enum SeatPassedOver {
     /// unreadable, or none was kept (FIX 7449): the seat has no task to run.
     TaskUnreadable,
     /// A CLI seat whose argv cannot carry the work's task: a control
-    /// character in it, or too many entries (FIX 7505). Only an ordered
+    /// character in it (FIX 7505). Only an ordered
     /// search passes a seat over for this; an explicit seat keeps its
     /// refusal.
     CliArgvShape,
@@ -239,7 +239,7 @@ impl std::fmt::Display for SeatPassedOver {
                 "the work's task record is erased or unreadable, so this CLI seat has no task",
             ),
             Self::CliArgvShape => f.write_str(
-                "this CLI seat's argv cannot carry the work's task (a control character or too many entries)",
+                "this CLI seat's argv cannot carry the work's task (a control character)",
             ),
         }
     }

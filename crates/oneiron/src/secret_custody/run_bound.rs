@@ -277,22 +277,29 @@ impl Vault {
 
     /// Hard-erases every run-bound record `run`'s `seat` found, as the seat
     /// ends: each record and its sealed value, its short id and its name,
-    /// in one transaction. The count erased.
+    /// in one transaction, each fenced and every key its id names staged to
+    /// retire before its row goes, then retired after the commit (KS-6 part
+    /// 2, FIX 8332). The count erased.
     ///
     /// # Errors
     /// A legal hold on a record; storage faults. Nothing is erased then.
     pub fn erase_run_secrets(&self, seat: RunSecretSeat, run: EntityId) -> Result<usize> {
         let prefix = seat.names(&run);
-        self.with_write_txn(|wtxn| {
+        let erased = self.with_write_txn(|wtxn| {
             let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
             for (name, entry) in &held {
+                self.fence_credential_in_txn(wtxn, &entry.id);
                 crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.
                 NAME_INDEX.delete(&self.store, wtxn, name)?;
             }
             Ok(held.len())
-        })
+        })?;
+        if erased > 0 {
+            self.finish_credential_retirements_after_commit();
+        }
+        Ok(erased)
     }
 }
 

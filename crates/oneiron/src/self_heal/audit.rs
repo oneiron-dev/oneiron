@@ -3,6 +3,7 @@
 //! Grant and budget. Drawing a check grants no authority and runs no model.
 
 pub mod doors;
+mod scope;
 
 use std::collections::BTreeSet;
 
@@ -10,10 +11,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::learning::TypeRef;
-use crate::learning_setting::{AUDIT_RATE, setting_value_in_txn};
 use crate::limit_ask::EngineLimit;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
+
+use self::scope::{attempt_project, audit_rate_in_txn};
 
 const SEALS: SideTable<[u8; 16], SealedAttemptReceipt, Named> =
     SideTable::new(&side_table::SELF_HEAL_ATTEMPT_SEAL);
@@ -24,7 +26,10 @@ const SEALS: SideTable<[u8; 16], SealedAttemptReceipt, Named> =
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveConfession {
     pub objective: String,
-    pub met: bool,
+    /// The agent's own answer; `None` when it gave none (FIX 9466): a
+    /// missing or malformed confession is recorded as no answer, never
+    /// filled in.
+    pub met: Option<bool>,
     pub flaw: Option<String>,
     pub uncertainty: Option<String>,
 }
@@ -32,7 +37,7 @@ pub struct ObjectiveConfession {
 impl ObjectiveConfession {
     #[must_use]
     pub fn confesses_flaw(&self) -> bool {
-        !self.met || self.flaw.is_some()
+        self.met == Some(false) || self.flaw.is_some()
     }
 
     #[must_use]
@@ -124,6 +129,9 @@ pub struct SealCheckReceipt {
 #[serde(deny_unknown_fields)]
 pub struct SealedAttemptReceipt {
     pub confession: AttemptConfession,
+    /// The project the attempt ran in, as its stored dispatch names it at
+    /// seal time (FIX 2957). `None` when it names none.
+    pub project: Option<EntityId>,
     pub executor: String,
     pub result_ref: String,
     pub sealed_at: u64,
@@ -248,6 +256,7 @@ impl Vault {
         if !crate::vault::live_entity_row_in_txn(&self.store, txn, &confession.subject)?.is_live() {
             return Err(Error::EntityNotFound);
         }
+        let project = attempt_project(&attempt);
         let result_ref = attempt
             .result_ref
             .as_ref()
@@ -263,6 +272,7 @@ impl Vault {
         let _ = self.measure_limit(EngineLimit::SealReferenceBytes, executor.len() as u64);
         let mut receipt = SealedAttemptReceipt {
             confession: confession.clone(),
+            project,
             executor,
             result_ref,
             sealed_at: now,
@@ -455,33 +465,24 @@ impl Vault {
 }
 
 /// The Coach's draw recipe. Each passing attempt gets exactly one draw at
-/// the setting in force in this transaction. Directed rechecks do not suppress
-/// random audits: uncertainty must not become an escape from a deep check.
+/// the setting in force in this transaction where its seal's project and type
+/// apply (FIX 2957). Directed rechecks do not suppress random audits:
+/// uncertainty must not become an escape from a deep check.
 pub(crate) fn draw_audits_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     now: u64,
 ) -> Result<u64> {
-    let rate = audit_rate_in_txn(vault, txn)?;
     let mut selected = 0;
     for (key, mut receipt) in SEALS.scan(&vault.store, txn)? {
         if !receipt.passing || receipt.draw.is_some() {
             continue;
         }
+        let rate = audit_rate_in_txn(vault, txn, &receipt)?;
         selected += u64::from(draw_audit(&mut receipt, rate, now));
         SEALS.put(&vault.store, txn, &key, &receipt)?;
     }
     Ok(selected)
-}
-
-fn audit_rate_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<f64> {
-    let rate = setting_value_in_txn(&vault.store, txn, &AUDIT_RATE)?;
-    if !rate.is_finite() || !(AUDIT_RATE.min..=AUDIT_RATE.max).contains(&rate) {
-        return Err(invalid(
-            "the seal audit rate is bounded and strictly positive",
-        ));
-    }
-    Ok(rate)
 }
 
 /// Called only for a passing receipt that has no draw, with a validated rate.

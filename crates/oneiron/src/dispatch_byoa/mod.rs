@@ -127,7 +127,7 @@ pub use self::exhaust::{
 };
 pub use self::repo_binding::ByoaRepoBinding;
 pub use self::staged_input::{ByoaInputStager, StagedInputPin};
-pub(crate) use self::staged_input::{erase_staged_input_in_txn, staged_job_pointer};
+pub(crate) use self::staged_input::{StagedJob, erase_staged_input_in_txn};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;
 

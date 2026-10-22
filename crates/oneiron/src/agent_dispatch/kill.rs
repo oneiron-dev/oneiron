@@ -226,40 +226,44 @@ impl AgentDispatcher<'_> {
         }
 
         let killer_actor = crate::entity_id::bytes_to_hex_lower(killer_attempt.as_bytes());
-        let intervention_kind = match record.state {
+        match record.state {
             // A scheduled child has not started: kill it the same way a queued
             // one is killed.
             AttemptState::Queued
             | AttemptState::Paused
             | AttemptState::Cancelled
-            | AttemptState::Scheduled => AttemptInterventionKind::Cancel,
+            | AttemptState::Scheduled => {}
             // A RUNNING child is asked, never killed (ONE-1896 rung 1). The
             // spawner's proven parent link is peer standing, which is standing
             // to ASK; only the owner/authority or a runtime ground can force,
-            // and this trusted wrapper mints neither.
-            AttemptState::Leased | AttemptState::Landing => AttemptInterventionKind::Interrupt,
+            // and this trusted wrapper mints neither. The ask is the soft
+            // request alone (FIX 9562): it leaves the lease-expiry clock where
+            // it is, so asking again never renews the child's lease.
+            AttemptState::Leased | AttemptState::Landing => {
+                queue.request_cancel_in_txn(
+                    &mut wtxn,
+                    RequestAttemptCancel {
+                        id: *spawn_attempt_id,
+                        actor: killer_actor,
+                        standing: CancelStanding::PeerAgent,
+                        trigger: LandingTrigger::CancelRequest,
+                        reason: None,
+                        now,
+                    },
+                )?;
+                wtxn.commit()?;
+                self.vault.store.notify_attempt_observers();
+                return Ok(KillOutcome::CancellationRequested);
+            }
             AttemptState::Completed | AttemptState::Failed | AttemptState::Abandoned => {
                 return Ok(KillOutcome::AlreadyTerminal);
             }
-        };
-        if record.state.is_running() {
-            queue.request_cancel_in_txn(
-                &mut wtxn,
-                RequestAttemptCancel {
-                    id: *spawn_attempt_id,
-                    actor: killer_actor.clone(),
-                    standing: CancelStanding::PeerAgent,
-                    trigger: LandingTrigger::CancelRequest,
-                    reason: None,
-                    now,
-                },
-            )?;
         }
         let outcome = queue.intervene_in_txn(
             &mut wtxn,
             InterveneAttempt {
                 id: *spawn_attempt_id,
-                kind: intervention_kind,
+                kind: AttemptInterventionKind::Cancel,
                 actor: killer_actor,
                 note: None,
                 now,

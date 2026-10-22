@@ -218,15 +218,19 @@ fn binary(hash: Option<&BinaryHash>) -> Option<&Sha256Digest> {
 fn artifact_checks(m: &ImageReleaseManifest, o: &ObservedArtifacts) -> Vec<ArtifactCheck> {
     let a = &m.artifacts;
     let kernel = a.kernel.image.as_ref();
-    let image = o.oci_image_digest.as_ref().map(|digest| {
-        if *digest == a.oci.config_digest
-            || *digest == a.oci.manifest_digest
-            || *digest == a.oci.index_digest
+    // A standalone image names no OCI form: an OCI digest observed against
+    // it is not in the manifest, never a match (FIX 9352).
+    let oci = a.oci.as_ref();
+    let image = o.oci_image_digest.as_ref().map(|digest| match oci {
+        None => CheckOutcome::NotInManifest,
+        Some(oci)
+            if *digest == oci.config_digest
+                || *digest == oci.manifest_digest
+                || *digest == oci.index_digest =>
         {
             CheckOutcome::Matched
-        } else {
-            CheckOutcome::Mismatched
         }
+        Some(_) => CheckOutcome::Mismatched,
     });
     [
         (
@@ -237,11 +241,17 @@ fn artifact_checks(m: &ImageReleaseManifest, o: &ObservedArtifacts) -> Vec<Artif
         (ArtifactRole::OciImage, image),
         (
             ArtifactRole::OciConfig,
-            compare(o.oci_config_digest.as_ref(), Some(&a.oci.config_digest)),
+            compare(
+                o.oci_config_digest.as_ref(),
+                oci.map(|oci| &oci.config_digest),
+            ),
         ),
         (
             ArtifactRole::OciArchive,
-            compare(o.oci_archive_sha256.as_ref(), Some(&a.oci.archive.sha256)),
+            compare(
+                o.oci_archive_sha256.as_ref(),
+                oci.map(|oci| &oci.archive.sha256),
+            ),
         ),
         (
             ArtifactRole::RootfsExt4Sha256,

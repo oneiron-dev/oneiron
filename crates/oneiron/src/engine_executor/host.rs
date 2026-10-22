@@ -59,6 +59,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
+    /// The run's share of the result-memory pool, which a callable skill's
+    /// answer check holds its buffers on (FIX 10149).
+    result_share: Option<&'s crate::result_memory::ResultShare>,
     recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
@@ -153,6 +156,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             legibility,
             storage: None,
+            result_share: None,
             recoverable: Vec::new(),
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
@@ -178,6 +182,16 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    /// Lends the run's share of the result-memory pool to the callable
+    /// skills its program calls (FIX 10149).
+    pub(super) fn with_result_share(
+        mut self,
+        share: &'s crate::result_memory::ResultShare,
+    ) -> Self {
+        self.result_share = Some(share);
         self
     }
 

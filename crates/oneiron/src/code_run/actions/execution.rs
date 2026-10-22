@@ -185,16 +185,27 @@ impl ActionRegistry {
                 .bridge_calls
                 .first()
                 .and_then(|row| super::payload::refusal_words(&row.outcome));
+            // The receipt the first dispatch's row stated, stated again by
+            // the door's caller: the replay runs no row (FIX 8159).
+            let row_receipt = record
+                .bridge_calls
+                .first()
+                .and_then(|row| super::payload::row_receipt(&row.outcome));
             // A replayed search keeps only the hits this caller reads now.
             let key = principal.selected_read_key();
             return record
                 .replay_cursor()
                 .dispatch(call)
                 .and_then(|outcome| replay_read::rescoped(vault, key, outcome, read_receipt))
-                .map(|(outcome, read_receipt)| ActionDispatch {
-                    outcome,
-                    read_receipt,
-                    refusal,
+                .map(|(outcome, read_receipt)| {
+                    if let (Some(door), Some(receipt)) = (&verb_door, &row_receipt) {
+                        door.replay_row_receipt(receipt);
+                    }
+                    ActionDispatch {
+                        outcome,
+                        read_receipt,
+                        refusal,
+                    }
                 });
         }
         lease_holds()?;
@@ -265,6 +276,11 @@ impl ActionRegistry {
         let mut row = CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?;
         if let Some(words) = &refusal {
             super::payload::word_refusal(&mut row.outcome, words);
+        }
+        // The call receipt its row's reply stated rides on its record too, so
+        // a retry under the same key states it again (FIX 8159).
+        if let Some(receipt) = worded.as_deref().and_then(|door| door.row_receipt()) {
+            super::payload::keep_row_receipt(&mut row.outcome, &receipt);
         }
         record.bridge_calls.push(row);
         vault.put_code_run_replay_record_if_generation(&record, Some(generation))?;

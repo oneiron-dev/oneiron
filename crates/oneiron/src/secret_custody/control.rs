@@ -51,7 +51,7 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    InputBinding, RelayedInput, input_digest, keep_input_in_txn, request_witness_in_txn,
+    InputBinding, RelayedInput, input_digest, keep_witnessed_input_in_txn, request_witness_in_txn,
 };
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
@@ -415,7 +415,9 @@ impl Vault {
         at: u64,
     ) -> Result<Recorded> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let Some((machine, _)) = self.owner_work_carrier_in_txn(txn, &fold)? else {
+        // The carrier's install key signs the request, and so a witness's
+        // numbered parts (FIX 8088): no other key is looked up.
+        let Some((machine, signing)) = self.owner_work_carrier_in_txn(txn, &fold)? else {
             return Ok(Recorded::kept(CustodyKeptHere::NoCarrier));
         };
         let holder = change.plan.holder.unwrap_or(machine);
@@ -488,16 +490,17 @@ impl Vault {
         let mut rotation = None;
         let mut manifest = None;
         if let (Some(envelope), true) = (envelope, holder != machine || change.sealed.is_some()) {
-            keep_input_in_txn(
+            keep_witnessed_input_in_txn(
                 self,
                 txn,
-                &RelayedInput {
+                RelayedInput {
                     sealed_at: at,
                     request: hash,
                     witness: request_witness_in_txn(self, txn, &hash)?,
                     part: None,
                     envelope,
                 },
+                &signing,
             )?;
         }
         if holder == machine {

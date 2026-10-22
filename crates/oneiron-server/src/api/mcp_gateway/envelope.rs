@@ -104,6 +104,11 @@ pub(crate) struct McpGatewayError {
     /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
     /// hands it back to the run as the typed outage.
     pub(super) retry_after: Option<u64>,
+    /// A failed code run's kept type feedback, released apart from the
+    /// refusal (FIX 10389, 10390), surfaced as `error.data.program_steps`.
+    /// Never among the words its release reads. Boxed for size, as
+    /// `effective_scope` is.
+    pub(super) program_steps: Option<Box<super::type_feedback_release::ErrorProgramSteps>>,
 }
 
 impl McpGatewayError {
@@ -122,6 +127,7 @@ impl McpGatewayError {
             row_receipt: None,
             hook: None,
             retry_after: None,
+            program_steps: None,
         }
     }
 

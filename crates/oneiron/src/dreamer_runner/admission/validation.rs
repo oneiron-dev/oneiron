@@ -1,3 +1,7 @@
+//! Admission validation: shape checks on a Dreamer admission request.
+//! Entry: `validate_admission_input`.
+//! The parent admission module owns the request types.
+
 use super::*;
 
 pub(super) fn validate_admission_input(input: &AdmitDreamerAttempt) -> Result<()> {

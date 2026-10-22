@@ -1270,15 +1270,15 @@ async fn vault_off_record_rooms_export_attachment(
     uri: axum::http::Uri,
     headers: HeaderMap,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<impl IntoResponse, FacadeApiError> {
-    let answer = facade_route(auth, State(server), uri, headers, payload).await?;
-    Ok((
-        [(
+) -> Response {
+    let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+    if answer.extensions().get::<FacadeApiError>().is_none() {
+        answer.headers_mut().insert(
             axum::http::header::CONTENT_DISPOSITION,
-            "attachment; filename=\"off-record-talk.json\"",
-        )],
-        answer,
-    ))
+            HeaderValue::from_static("attachment; filename=\"off-record-talk.json\""),
+        );
+    }
+    answer
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(

@@ -58,10 +58,12 @@ impl<'v> ScopedRead<'v> {
     /// narrows the turn, for this read and every later one, and never widens
     /// it. A thread's ceiling (`turn.branch`) re-proves standing on that
     /// thread instead, which its Ready receipt gives an agent off the room
-    /// (OF-529), and takes no live entry; an Owner or Admin reading a private
-    /// thread off the room meets its own clearance beside its members'
-    /// (FIX 6497), as the rebuild does. A refresh keeps the ceiling
-    /// personal or held as `turn` is ([`RoomTurnCeiling::narrowed_by`]).
+    /// (OF-529). A private thread's takes no live entry; a public thread's
+    /// takes the room's live speakers as the room's does (FIX 9754). An
+    /// Owner or Admin reading a private thread off the room meets its own
+    /// clearance beside its members' (FIX 6497), as the rebuild does. A
+    /// refresh keeps the ceiling personal or held as `turn` is
+    /// ([`RoomTurnCeiling::narrowed_by`]).
     pub(super) fn room_ceiling_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -114,7 +116,9 @@ impl<'v> ScopedRead<'v> {
             roster = empty_private_thread_refresh_parties(turn.caller);
         }
         let live = match turn.branch {
-            Some(_) => None,
+            Some(thread) => crate::context_board::public_thread_live_speakers_in(
+                self.vault, txn, turn.room, thread,
+            )?,
             None => Some(self.vault.room_live_speaker_entries_in(txn, turn.room)?),
         };
         let mut held = self

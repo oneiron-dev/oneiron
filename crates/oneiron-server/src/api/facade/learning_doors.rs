@@ -107,12 +107,15 @@ pub(crate) async fn vault_learning_projection(
         |view| {
             let mut rows = Vec::new();
             if let Some(receipt) = &view.receipt {
-                pack_rows(&receipt.attribution, &mut rows);
-                rows.extend(receipt.direct_subjects.iter().copied());
+                // An erase leaves its slots empty (FIX 8988): they name no row.
+                if let Some(attribution) = &receipt.attribution {
+                    pack_rows(attribution, &mut rows);
+                }
+                rows.extend(receipt.direct_subjects.iter().flatten().copied());
                 for share in &receipt.shares {
-                    rows.push(share.subject);
+                    rows.extend(share.subject);
                     rows.extend(share.origin_skill);
-                    for edge in &share.chain {
+                    for edge in share.chain.iter().flatten() {
                         rows.extend([edge.derived, edge.source]);
                     }
                 }

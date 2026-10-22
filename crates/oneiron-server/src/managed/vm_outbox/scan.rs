@@ -186,7 +186,10 @@ impl Carrier {
             let Some(class) = vm_outbox_member(kind, &member) else {
                 continue;
             };
-            let retires = class.origin == self.side || class.peer_retires;
+            // A protected member, a public key the other end installed, is
+            // never retired from this end (FIX 9503): only its origin
+            // removes it.
+            let retires = class.origin == self.side || (class.peer_retires && !class.protected);
             let op = remove_op(&mut record, &member, retires, class.remove_rank);
             record.cached = None;
             self.store.put(kind, &member, record)?;

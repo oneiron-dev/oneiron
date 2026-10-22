@@ -27,5 +27,17 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `WORLD_PLACEMENT_UNVERIFIABLE` | A row's world placement, the rows a result came from or the vault root cannot be verified now, so nothing was released. No change to the request helps; retry once the vault has settled it. |
 | `SANDBOX_PROPOSAL_DISK_FLOOR` | A foreign program's proposed file would cross the host disk's free-space floor, so the run failed and proposed nothing. The message names the bytes needed and free. No change to the request helps; run again once the host has room. |
 
+## Server refusal codes
+
+A server door refuses with these too; they pass through verbatim.
+
+| Code | Response |
+|---|---|
+| `AGENT_THREAD_WALK_IN_FORBIDDEN` | An agent may request to join a private thread it is not in; it cannot add itself. Ask the thread's members to add the agent, or have it request to join. HTTP answers 409; over MCP the kind is `agent_thread_walk_in_forbidden` (-32020). |
+| `writes_frozen` | This hosted vault is paused while the service prepares to reap it; the pause names no duration. Retry once the reap is aborted or the vault wakes. HTTP answers 503; over MCP the kind is `writes_frozen` (-32020). |
+| `render_deadline` | The deck render did not finish within its deadline, and nothing of it was kept. Ask again once `retry_after` seconds have passed. HTTP answers 503; over MCP the kind is `render_deadline` (-32020). |
+| `render_memory_floor` | This machine cannot hold the deck render's memory past its reserve. Ask on a host with more memory. HTTP answers 503; over MCP the kind is `render_memory_floor` (-32020). |
+| `render_disk_floor` | The vault's disk is at its free-space reserve, where the deck render writes its scratch. Ask again once `retry_after` seconds have passed and the disk has room. HTTP answers 503; over MCP the kind is `render_disk_floor` (-32020). |
+
 Remote server-specific codes and HTTP schemas are also indexed by
 [the engine API reference](../../oneiron.skills.md).

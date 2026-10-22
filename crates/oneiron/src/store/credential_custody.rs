@@ -20,6 +20,9 @@
 //! `ConnectorResume` key: item = the call ref, generation = the caller's
 //! round generation, retired with its PENDING_CALLS row.
 
+mod erase;
+mod fences;
+
 use heed::RwTxn;
 use rand::RngCore;
 use zeroize::Zeroizing;
@@ -31,6 +34,9 @@ use crate::store::key_custody::{
     CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, Requirement,
     RetireCause, RetirementIntent, stage_retirement_in_txn,
 };
+
+pub(crate) use self::erase::{FenceLookup, credential_erases_staged};
+pub(crate) use self::fences::CredentialFences;
 
 /// The width of every KS-6 key: an AES-256-GCM key (CALLS `KS-6 leaf ids`,
 /// CUSTODY_LEAF_KEY_BYTES).
@@ -157,7 +163,8 @@ impl Store {
     ///
     /// # Errors
     /// An archived vault, whose custody is its replacement's; a retired
-    /// key, which is never minted again; custody faults.
+    /// key, which is never minted again, nor any of an erased credential's
+    /// (KS-6 part 2); custody faults.
     pub(crate) fn credential_value_leaf_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -167,6 +174,7 @@ impl Store {
         if self.core.gate_custody_archived() {
             return Err(Error::Store(StoreError::ArchivedVault));
         }
+        self.refuse_erased_credential_in_txn(wtxn, credential)?;
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
@@ -257,7 +265,8 @@ impl Store {
     /// `KS-6 leaf deposit`).
     ///
     /// # Errors
-    /// An archived vault; a kind that is no carrier's; custody faults.
+    /// An archived vault; an erased credential (KS-6 part 2); a kind that
+    /// is no carrier's; custody faults.
     #[allow(
         dead_code,
         reason = "KS-6 carrier wire ships off until live leaf delivery lands (FIX-LIST)"
@@ -271,6 +280,7 @@ impl Store {
         if self.core.gate_custody_archived() {
             return Err(Error::Store(StoreError::ArchivedVault));
         }
+        self.refuse_erased_credential_in_txn(wtxn, credential)?;
         self.core.key_custody.pin_in_txn(self, wtxn)?;
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let mut instance = [0; 16];
@@ -312,10 +322,6 @@ impl Store {
     ///
     /// # Errors
     /// Custody faults.
-    #[allow(
-        dead_code,
-        reason = "KS-6 part 2's erase stages every subject this lists (FIX-LIST)"
-    )]
     pub(crate) fn credential_custody_subjects(
         &self,
         credential: &EntityId,
@@ -324,11 +330,7 @@ impl Store {
             return Ok(Vec::new());
         };
         let mut subjects = Vec::new();
-        for kind in [
-            CustodyKind::CredentialValue,
-            CustodyKind::CustodyTransition,
-            CustodyKind::CustodyRequestInput,
-        ] {
+        for kind in erase::CREDENTIAL_PARENT_KINDS {
             subjects.extend(custody.subjects_with_prefix(kind, credential.as_bytes())?);
         }
         Ok(subjects)

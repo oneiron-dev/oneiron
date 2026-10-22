@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use oneiron_vault_contract::{
     BackupCoverageWire, CtlResponse, IDLE_REAP_PREPARATION_SECS, IDLE_REAP_SCHEMA_VERSION,
-    IdleBackupFailure, IdleBackupState, IdleBackupWire, IdleReapWire,
+    IdleBackupFailure, IdleBackupState, IdleBackupWire, IdleReapWire, LedgerReportHead,
 };
 use rand_core::{OsRng, RngCore};
 use tokio::sync::watch;
@@ -43,7 +43,6 @@ use tokio::time::Instant;
 use super::ManagedState;
 use super::admission::{InFlightCounts, WriteKind};
 use crate::managed::ManagedError;
-use crate::managed::ledger::LedgerSnapshot;
 use crate::owner::schedule::{OwnerHost, PreIdleAttempt, PreIdleBackup};
 
 /// How long an attempt's backup has from its first call.
@@ -120,8 +119,8 @@ struct Report {
     quiet: bool,
     /// The admitted writes in flight at the freeze, by kind.
     in_flight_at_freeze: InFlightCounts,
-    ledger_rev: u64,
-    ledger: LedgerSnapshot,
+    /// The wake ledger report the freeze holds for the supervisor's pull.
+    ledger: LedgerReportHead,
 }
 
 impl Attempt {
@@ -388,8 +387,7 @@ impl ManagedState {
                 attempt.report = Some(Report {
                     quiet,
                     in_flight_at_freeze: at_freeze,
-                    ledger_rev: prepared.ledger_rev,
-                    ledger: prepared.report,
+                    ledger: prepared.report.head,
                 });
                 attempt.expire();
                 if matches!(attempt.phase, Phase::Settled(_)) {
@@ -551,9 +549,7 @@ impl ManagedState {
                 schema_version: IDLE_REAP_SCHEMA_VERSION,
                 quiescent,
                 in_flight_at_freeze: report.in_flight_at_freeze.wire(),
-                ledger_rev: report.ledger_rev,
-                next_wake: report.ledger.entries.clone(),
-                training: report.ledger.training.clone(),
+                ledger: report.ledger.clone(),
                 backup,
             },
         }

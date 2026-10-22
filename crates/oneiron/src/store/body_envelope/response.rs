@@ -200,6 +200,10 @@ pub(crate) enum ResponseFamily {
     /// A public model-step submission: its request and its result, kept
     /// beside the receipt's metadata (FIX 9929).
     ModelStepSubmission,
+    /// A saved query's verdict memo: its judge's explanation, owned by the
+    /// query, the candidate and every row its evidence came from; a retired
+    /// memo leaves nothing (FIX 10089).
+    SavedQueryMemo,
 }
 
 impl ResponseFamily {
@@ -217,6 +221,7 @@ impl ResponseFamily {
                     &side_table::MODEL_STEP_SUBMISSION,
                     Self::ModelStepSubmission,
                 ),
+                (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -251,7 +256,8 @@ impl ResponseFamily {
             | Self::BlockedCapture
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::ModelStepSubmission => ResponseDb::VaultMeta,
+            | Self::ModelStepSubmission
+            | Self::SavedQueryMemo => ResponseDb::VaultMeta,
         }
     }
 
@@ -301,6 +307,7 @@ impl ResponseFamily {
                 crate::attempt_queue::attempt_payload_stub(key, value).map(whole),
             ),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
+            Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
         }
     }
 
@@ -371,6 +378,7 @@ impl ResponseFamily {
             Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
+            Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
             // A clip's owners are its job's, as the job's row stamps them.
             Self::MediaPart => {
                 let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
@@ -407,6 +415,11 @@ impl ResponseFamily {
                 Ok(())
             }
             Self::BlockedCapture => {
+                drop_row(databases, ResponseDb::VaultMeta, key);
+                Ok(())
+            }
+            // A retired memo's row goes; the next evaluation derives anew.
+            Self::SavedQueryMemo => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -455,6 +468,10 @@ impl ResponseFamily {
             | Self::WaitSettled
             | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
             Self::BlockedCapture => {
+                store.side_vault_meta().delete(wtxn, key)?;
+                Ok(())
+            }
+            Self::SavedQueryMemo => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

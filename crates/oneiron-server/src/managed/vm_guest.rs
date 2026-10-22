@@ -231,7 +231,10 @@ fn next_wake(entries: &[WakeEntry]) -> Option<SystemTime> {
 /// while no off-record stretch is open (OFFREC-SNAPSHOT = A). The outbox
 /// companion, when there is one, is parked before the report and resumed
 /// after, so no carrier commit is in flight at a snapshot. Stop drains the
-/// vault exactly as SIGTERM does on a node.
+/// vault exactly as SIGTERM does on a node, and is heard while the vault is
+/// parked too (FIX 9548): a Stop, or the channel lost for good, ends the
+/// park at once and starts the drain, with no resume reported and the
+/// companion left to the drain.
 pub(super) fn spawn_lifecycle(
     link: GuestLink,
     state: Arc<ManagedState>,
@@ -255,11 +258,22 @@ pub(super) fn spawn_lifecycle(
                     };
                     let snapshot_ok = !server.vault().has_open_off_record_session();
                     let companion = state.vm_outbox_revision().is_some();
-                    if companion {
-                        super::vm_outbox::park_companion().await;
-                    }
-                    if let Err(error) = link.idle(wake, snapshot_ok).await {
-                        tracing::warn!(%error, "vault VM idle report failed");
+                    let parked = async {
+                        if companion {
+                            super::vm_outbox::park_companion().await;
+                        }
+                        link.idle(wake, snapshot_ok).await
+                    };
+                    tokio::select! {
+                        () = link.stop_requested() => {
+                            shutdown.trigger();
+                            return;
+                        }
+                        idled = parked => {
+                            if let Err(error) = idled {
+                                tracing::warn!(%error, "vault VM idle report failed");
+                            }
+                        }
                     }
                     if companion {
                         super::vm_outbox::resume_companion().await;

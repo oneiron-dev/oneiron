@@ -18,7 +18,7 @@ pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ModelId;
-use crate::code_run::{ProgramStepFeedback, parse_check_ref};
+use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref};
 use crate::consent::AuthenticatedOwner;
 
 impl Memory<'_> {
@@ -65,7 +65,9 @@ impl Memory<'_> {
     /// type feedback by its `check_ref`, as it stands now: a check that
     /// landed after its step answers under the step's identity, a pending
     /// one of a checker that is gone answers interrupted. Nothing runs again.
-    /// `None` for a reference no step's feedback was kept under.
+    /// `None` for a reference no step's feedback was kept under. It answers
+    /// the feedback released whole; an MCP answer whose own release check
+    /// holds it for its destination gives it withheld (FIX 10390).
     ///
     /// The CALL behind the scope: the canonical rows of this vault alone. An
     /// off-record session's steps keep their feedback with their run.
@@ -73,7 +75,7 @@ impl Memory<'_> {
         &self,
         owner: &AuthenticatedOwner,
         input: CodeRunTypeDiagnosticsRequest,
-    ) -> MemoryResult<Option<ProgramStepFeedback>> {
+    ) -> MemoryResult<Option<ProgramStepFeedbackRelease>> {
         self.code_run_owner(owner, "a step's type feedback")?;
         let key = parse_check_ref(&input.check_ref).ok_or_else(|| {
             MemoryError::bad_request(
@@ -82,7 +84,7 @@ impl Memory<'_> {
             )
         })?;
         let row = self.vault.type_diagnostics_row(key)?;
-        Ok(row.map(|row| row.feedback(key)))
+        Ok(row.map(|row| ProgramStepFeedbackRelease::Released(row.feedback(key))))
     }
 }
 

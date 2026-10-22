@@ -17,7 +17,7 @@ use oneiron::code_run::{
 use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_INTERNAL};
 use tower::ServiceExt;
 
-use crate::api::call_receipt::CallStamp;
+use crate::api::call_receipt::{CallStamp, RECEIPT_REF_HEADER};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -196,7 +196,7 @@ impl FacadeRowDoor {
             HeaderValue::from_static("application/json"),
         );
         *request.extensions_mut() = self.extensions.clone();
-        // The dispatcher holds this blocking thread while the row runs on
+        // The dispatcher holds its driver thread while the row runs on
         // the server runtime, as a request of its own would.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let rows = self.rows.clone();
@@ -250,5 +250,26 @@ impl AgentVerbDoor for FacadeRowDoor {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// The receipt the last row's reply stated, as its header spelled it:
+    /// none when no row ran through its route (FIX 8159).
+    fn row_receipt(&self) -> Option<String> {
+        self.stamp()
+            .header_value()
+            .and_then(|value| value.to_str().ok().map(str::to_owned))
+    }
+
+    /// A replayed action's first receipt, read as its reply's header reads,
+    /// stated again by this door's caller in place of the unrecorded stamp
+    /// a door that ran no row holds (FIX 8159).
+    fn replay_row_receipt(&self, receipt: &str) {
+        let Ok(value) = HeaderValue::from_str(receipt) else {
+            return;
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert(RECEIPT_REF_HEADER, value);
+        *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) =
+            CallStamp::of_headers(&headers);
     }
 }

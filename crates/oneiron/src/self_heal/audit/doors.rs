@@ -92,7 +92,7 @@ pub fn audit_as_owner(
             .sealed_attempt_receipt_in_txn(txn, input.attempt)?
             .ok_or(Error::EntityNotFound)?;
         if receipt.passing && receipt.draw.is_none() {
-            let rate = audit_rate_in_txn(vault, txn)?;
+            let rate = audit_rate_in_txn(vault, txn, &receipt)?;
             draw_audit(&mut receipt, rate, crate::unix_seconds_now());
             SEALS.put(&vault.store, txn, input.attempt.as_bytes(), &receipt)?;
         }

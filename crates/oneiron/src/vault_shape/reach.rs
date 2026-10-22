@@ -321,13 +321,20 @@ impl ShapePlanReach {
                 .filter(|fact| after.facts.iter().all(|now| now.key() != fact.key()))
                 .map(|fact| format!("after this, {}", fact.lost_phrase())),
         );
-        let mut line = if phrases.is_empty() {
-            REACH_LINE_NO_CHANGE.to_owned()
-        } else {
-            sentence(phrases)
+        // An item the projection cannot see through may move a path, so a
+        // plan with one never reads as "No change" (FIX 10201).
+        let mut line = match (phrases.is_empty(), unresolved.is_empty()) {
+            (true, true) => REACH_LINE_NO_CHANGE.to_owned(),
+            (true, false) => String::new(),
+            (false, _) => sentence(phrases),
         };
         if !unresolved.is_empty() {
-            line.push_str(&format!(" Not projected: {} item(s).", unresolved.len()));
+            let projected = format!("Not projected: {} item(s).", unresolved.len());
+            line = if line.is_empty() {
+                projected
+            } else {
+                format!("{line} {projected}")
+            };
         }
         Self {
             before,
@@ -474,6 +481,20 @@ impl ReachRows {
                     {
                         actor.enabled = *enabled;
                     }
+                }
+                // A new enabled actor is served by every connector key bound
+                // to no actor, and the rows cannot name it until its entity
+                // exists: its reach is unresolved, never "No change"; its
+                // creation is not refused (FIX 10201).
+                (
+                    ShapeTarget::Actor { agent_id },
+                    ShapeChange::Create,
+                    Some(ShapeRow::Actor { enabled: true, .. }),
+                ) if rows.connectors.iter().any(|tool| tool.actor.is_none()) => {
+                    unresolved.push(format!(
+                        "actor {agent_id}: what a connector key bound to no actor lets it send is \
+                         not projected until it exists"
+                    ));
                 }
                 // Retiring an actor takes it off duty.
                 (ShapeTarget::Actor { agent_id }, ShapeChange::Retire, _) => {

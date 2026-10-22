@@ -89,6 +89,9 @@ impl AttemptQueue<'_> {
             placement: None,
             result_ref: None,
             history: Vec::new(),
+            active_pause: None,
+            terminal_exhaust: None,
+            signal_intents: Vec::new(),
         };
 
         if self

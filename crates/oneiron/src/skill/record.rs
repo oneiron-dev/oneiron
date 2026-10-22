@@ -39,8 +39,6 @@ pub const SKILL_VERSION_MAX_BYTES: usize = 128;
 
 pub const SKILL_DESC_MAX_BYTES: usize = 4096;
 
-pub const SKILL_MAX_DEPENDENCIES: usize = 64;
-
 pub(super) const KEY_SKILL_ID: &str = SKILL_RECORD_BODY_KEYS[0];
 
 pub(super) const KEY_DESC: &str = SKILL_RECORD_BODY_KEYS[1];

@@ -1,52 +1,61 @@
-//! A vault-wide setting's value beside the rows it stands on (FIX 7101): what
-//! a producer that cites its inputs reads in place of the bare value.
+//! A setting's value beside the rows it stands on (FIX 7101): what a producer
+//! that cites its inputs reads in place of the bare value, at the scope its
+//! work ran under (FIX 2957).
 
-use super::{
-    SettingMode, SettingScope, SettingSpec, cached_fit, global_setting_subject, scoped_row_value,
-};
+use super::resolution::{Decided, resolve_in_txn};
+use super::{SettingSpec, global_setting_subject, read_scopes_in_txn};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::{LearningPredicate, TypeRef};
 
-/// [`super::setting_value_in_txn`] beside the rows its value stands on: the
-/// heads of the vault fit's cells when that fit decides, none when the
-/// catalog seed does. `None`, unknown, when an owner pin or seed decides, as
-/// an owner row keeps no witness row, and when the fit's cells hold no head.
+/// [`super::setting_value_in_scope_in_txn`] beside the rows its value stands
+/// on, from the same walk: the heads of the deciding fit's cells when a fit
+/// decides, none when the catalog seed does. `None`, unknown, when an owner
+/// pin or seed decides, as an owner row keeps no witness row, and when the
+/// fit's cells hold no head.
 ///
 /// # Errors
 ///
-/// As [`super::setting_value_in_txn`].
-pub(crate) fn setting_value_sourced_in_txn(
+/// As [`super::setting_value_in_scope_in_txn`].
+pub(crate) fn setting_value_in_scope_sourced_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
+    project: Option<EntityId>,
+    type_ref: Option<&TypeRef>,
 ) -> Result<(f64, Option<Vec<EntityId>>)> {
-    let store = &vault.store;
-    let scope = SettingScope::Vault;
-    if let Some(value) = scoped_row_value(store, txn, spec, SettingMode::Pin, &scope)? {
-        return Ok((value, None));
-    }
-    if let Some(value) = cached_fit(store, txn, spec, None, None)? {
-        return Ok((value, vault_fit_heads_in_txn(vault, txn, spec)?));
-    }
-    Ok(
-        match scoped_row_value(store, txn, spec, SettingMode::Seed, &scope)? {
-            Some(value) => (value, None),
-            None => (spec.seed, Some(Vec::new())),
-        },
-    )
+    let scopes = read_scopes_in_txn(vault, txn, project, type_ref)?;
+    let (value, decided) = resolve_in_txn(&vault.store, txn, spec, &scopes, type_ref)?;
+    let rows = match decided {
+        Decided::Owner => None,
+        Decided::Catalog => Some(Vec::new()),
+        Decided::Fit { subject, type_node } => {
+            fit_heads_in_txn(vault, txn, spec, subject, type_node.as_deref())?
+        }
+    };
+    Ok((value, rows))
 }
 
-/// The active head CLAIM of each cell the vault fit of `spec` is cached
-/// from: root-typed, on its knob's global subject, with no executor, axis or
-/// consent scope. `None` when no such cell holds one.
-fn vault_fit_heads_in_txn(
+/// The active head CLAIM of each cell one fit of `spec` is cached from: on
+/// `subject`, else its knob's global subject; at `type_node`, else
+/// root-typed; with no executor, axis or consent scope. `None` when no such
+/// cell holds one.
+fn fit_heads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
+    subject: Option<EntityId>,
+    type_node: Option<&str>,
 ) -> Result<Option<Vec<EntityId>>> {
-    let subject = global_setting_subject(spec.key)?;
+    let subject = match subject {
+        Some(subject) => subject,
+        None => global_setting_subject(spec.key)?,
+    };
+    let typed = |type_ref: &TypeRef| match type_node {
+        Some(node) => type_ref.node_id == node,
+        None => type_ref.is_root(),
+    };
     let mut heads = Vec::new();
     for row in crate::learning::evidence::cells_for_subject_in_txn(vault, txn, &subject)? {
         let cell = row.cell;
@@ -55,7 +64,7 @@ fn vault_fit_heads_in_txn(
             || cell.executor.is_some()
             || cell.axis.is_some()
             || cell.consent_scope.is_some()
-            || !cell.type_ref.as_ref().is_some_and(TypeRef::is_root)
+            || !cell.type_ref.as_ref().is_some_and(typed)
         {
             continue;
         }

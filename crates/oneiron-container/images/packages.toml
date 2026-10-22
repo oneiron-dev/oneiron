@@ -7,9 +7,12 @@
 #
 # Every variant is [base] plus its overlay: `packages` (runtime, in the image),
 # `build_packages` (only in the build overlay the native build runs in),
-# `native` (cargo bins built inside the image's userspace), `files` (pinned
-# repo files), `payloads` (pinned downloads), `trees`, `links`, `dirs`,
-# `owners` (explicit ownership rules) and `image` (the OCI run config).
+# `native` (cargo bins built inside the image's userspace), `source_builds`
+# (an external source compiled there too, offline, from its pinned archive and
+# its own Cargo store), `files` (pinned repo files), `payloads` (pinned
+# downloads), `launchers` (a two-line /bin/sh exec of a pinned runtime on a
+# pinned entry), `trees`, `links`, `dirs`, `owners` (explicit ownership rules)
+# and `image` (the OCI run config).
 # mkosi always installs Debian's essential set and base-files; a list names
 # only what comes on top.
 schema = 1
@@ -179,12 +182,23 @@ image = { env = [
 
 [variants.generic-agent]
 # Shell, CA roots, the guest agent and a small starter runtime: Python from
-# the snapshot, Bun and tsrs from their pins (FIX 8254; installs land with
-# the variant's phase).
+# the snapshot, Bun and tsrs from their pins (FIX 8254, 8976). No Node: the
+# npm packages are unpacked where Node's resolution finds them, and the two
+# public commands run their entry files under Bun. /usr/local/bin is on the
+# PATH of both the OCI config and the guest's native exec.
 packages = ["ca-certificates", "python3"]
 payloads = [
   { pin = "bun", dest = "/usr/local/bin/bun", mode = "0555" },
   { pin = "tsrs", dest = "/opt/tsrs/node_modules/tsrs" },
   { pin = "tsrs-wasm", dest = "/opt/tsrs/node_modules/@tsrs/wasm" },
   { pin = "tsrs-linux-x64-gnu", dest = "/opt/tsrs/node_modules/@tsrs/linux-x64-gnu" },
+]
+launchers = [
+  { path = "/usr/local/bin/tsrs", runtime = "/usr/local/bin/bun", entry = "/opt/tsrs/node_modules/tsrs/bin/tsrs" },
+  { path = "/usr/local/bin/tsrs-wasm", runtime = "/usr/local/bin/bun", entry = "/opt/tsrs/node_modules/@tsrs/wasm/bin/tsrs-wasm.js" },
+]
+# The packages' own `bin` declarations, as npm would link them.
+links = [
+  { path = "/opt/tsrs/node_modules/.bin/tsrs", target = "../tsrs/bin/tsrs" },
+  { path = "/opt/tsrs/node_modules/.bin/tsrs-wasm", target = "../@tsrs/wasm/bin/tsrs-wasm.js" },
 ]

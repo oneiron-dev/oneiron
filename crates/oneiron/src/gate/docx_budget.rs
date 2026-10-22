@@ -15,8 +15,9 @@ pub(super) struct DocxArchivePolicy {
 }
 
 impl DocxArchivePolicy {
-    /// Exact actor rows can only narrow their own vault row. Folding trusted
-    /// manifests applies another field-wise minimum; no last-writer override.
+    /// Exact actor rows can only narrow their own vault row. Folding the
+    /// selected trusted manifests (an owner's rows, else the shipped one)
+    /// applies another field-wise minimum; no last-writer override.
     pub(super) fn for_holder(&self, actor: Option<EntityId>) -> ArchiveLimits {
         let mut limits = self.vault;
         for (holder, row) in &self.holders {
@@ -56,9 +57,17 @@ fn limits_value(limits: ArchiveLimits) -> Value {
     ])
 }
 
-/// Strict nested row: absent dimensions inherit the containing ceiling.
-/// Duplicate/unknown keys, zero or above-ceiling values reject the manifest.
-fn parse_limits(value: &Value, ceiling: ArchiveLimits, partial: bool) -> Option<ArchiveLimits> {
+/// Strict nested row. A vault row (`ceiling` None) is complete and bounded by
+/// nothing shipped: the trusted owner's row replaces the default (FIX 8763).
+/// A holder row is partial: absent dimensions inherit its vault row, and it
+/// may only narrow it. Duplicate/unknown keys, zero, incoherent or
+/// above-ceiling values reject the manifest. A count wider than this machine
+/// holds is kept saturated: it is an observation, never a refusal.
+fn parse_limits(
+    value: &Value,
+    ceiling: Option<ArchiveLimits>,
+    partial: bool,
+) -> Option<ArchiveLimits> {
     let Value::Map(entries) = value else {
         return None;
     };
@@ -80,16 +89,21 @@ fn parse_limits(value: &Value, ceiling: ArchiveLimits, partial: bool) -> Option<
     if partial && count.is_none() && part.is_none() && total.is_none() {
         return None;
     }
+    let inherited =
+        |own: Option<u64>, field: fn(ArchiveLimits) -> u64| own.or_else(|| ceiling.map(field));
     let limits = ArchiveLimits {
-        max_entries: usize::try_from(count.unwrap_or(ceiling.max_entries as u64)).ok()?,
-        max_part_bytes: part.unwrap_or(ceiling.max_part_bytes),
-        max_total_bytes: total.unwrap_or(ceiling.max_total_bytes),
+        max_entries: usize::try_from(inherited(count, |row| row.max_entries as u64)?)
+            .unwrap_or(usize::MAX),
+        max_part_bytes: inherited(part, |row| row.max_part_bytes)?,
+        max_total_bytes: inherited(total, |row| row.max_total_bytes)?,
     };
     (limits.is_valid()
-        && limits.max_entries <= ceiling.max_entries
-        && limits.max_part_bytes <= ceiling.max_part_bytes
-        && limits.max_total_bytes <= ceiling.max_total_bytes)
-        .then_some(limits)
+        && ceiling.is_none_or(|ceiling| {
+            limits.max_entries <= ceiling.max_entries
+                && limits.max_part_bytes <= ceiling.max_part_bytes
+                && limits.max_total_bytes <= ceiling.max_total_bytes
+        }))
+    .then_some(limits)
 }
 
 pub(super) fn parse(value: &Value) -> Option<DocxArchivePolicy> {
@@ -107,7 +121,7 @@ pub(super) fn parse(value: &Value) -> Option<DocxArchivePolicy> {
             return None;
         }
     }
-    let vault = parse_limits(vault?, ArchiveLimits::DEFAULT, false)?;
+    let vault = parse_limits(vault?, None, false)?;
     let mut parsed = Vec::new();
     if let Some(value) = holders {
         let Value::Array(rows) = value else {
@@ -132,7 +146,7 @@ pub(super) fn parse(value: &Value) -> Option<DocxArchivePolicy> {
             if actor.to_hex() != actor_text {
                 return None;
             }
-            let limits = parse_limits(&Value::Map(fields), vault, true)?;
+            let limits = parse_limits(&Value::Map(fields), Some(vault), true)?;
             if parsed.iter().any(|(existing, _)| *existing == actor) {
                 return None;
             }

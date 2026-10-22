@@ -9,6 +9,7 @@ use super::super::binding::{
     PolicyContentBinding, content_binding, relay_skip_content_binding, relay_verify_content_binding,
 };
 use super::super::classify::OwnerPlanePass;
+use super::super::clock::PolicyCallClock;
 use super::super::concurrent::join2;
 use super::super::notice::{policy_model_rationale_notice, policy_notice};
 use super::super::pattern::CompiledPatternRules;
@@ -60,8 +61,8 @@ impl Vault {
     ///
     /// Advisory: this classifies but does not itself halt the relay — the
     /// caller must honor [`RelayBoundaryPass::must_halt_relay`]. Every pass
-    /// that carries a signal is receipted; the one pass that is not is a clean
-    /// allow the model actually examined with nothing to say. A returned `Err`
+    /// that carries a signal or a completed model decision is receipted; the
+    /// one pass that is not had no hosted policy in play. A returned `Err`
     /// means infrastructure misuse only — unresolvable/malformed local policy
     /// state or a failed receipt write — never a model outcome.
     pub async fn relay_boundary_pass(
@@ -222,9 +223,10 @@ impl Vault {
         verdicts: &dyn VaultSideVerdictSource,
     ) -> Result<DualPlanePass> {
         let owner_safeguard = safeguard.map(|tier| (tier.backend, tier.lease));
+        let owner_clock = PolicyCallClock::start();
         let verify_at = self.relay_verify_at(&request, domain, config)?;
         let (owner, relay) = join2(
-            self.owner_plane_pass_pinned(&request, config, owner_safeguard),
+            self.owner_plane_pass_pinned(&request, config, owner_safeguard, &owner_clock),
             self.relay_boundary_pass_at(
                 request.clone(),
                 domain,
@@ -242,7 +244,7 @@ impl Vault {
         // so the manifest may have moved since it was pinned. Pin it again.
         if self.policy_model_verdict_is_stale_with_config(&owner.verdict, &request, config)? {
             owner = self
-                .owner_plane_pass_pinned(&request, config, owner_safeguard)
+                .owner_plane_pass_pinned(&request, config, owner_safeguard, &owner_clock)
                 .await?;
         }
         // Both halves are settled against the policy in force in ONE final
@@ -358,13 +360,12 @@ impl Vault {
     /// pattern is too wide; and any resolution other than a clean one nobody
     /// needs told about.
     ///
-    /// Exactly TWO pass shapes write nothing, and both are silent because there
-    /// was nothing to say: the model looked at the content and found it clean
-    /// ([`RelayResolution::ModelDecided`]), and no hosted policy was bound to
-    /// the attested identity at all
-    /// ([`RelayResolution::NoPolicyInPlay`]) — in the second case no question
-    /// was ever asked, so there is no answer to record. Either way a degrade, a
-    /// breach or a matched pattern puts the row back.
+    /// Exactly ONE pass shape writes nothing: no hosted policy was bound to
+    /// the attested identity at all ([`RelayResolution::NoPolicyInPlay`]), so
+    /// no question was asked and there is no answer to record. A model that
+    /// looked and found the content clean ([`RelayResolution::ModelDecided`])
+    /// made a decision, and every completed decision gets its one content-free
+    /// row (FIX 10037). A degrade, a breach or a matched pattern always writes.
     /// Test-only door onto [`Self::record_relay_receipt`], which is private
     /// and takes a borrowed struct the test module cannot name a lifetime for
     /// otherwise. No production caller.
@@ -449,21 +450,22 @@ impl Vault {
                     )
                     && verdict.audit.is_none();
                 if signalless {
-                    // A clean allow leaves no row — but it still has a pinned
-                    // binding, and the relay is about to act on it. Skipping
-                    // the re-check here would leave the commonest hosted
-                    // result, an unaudited model allow, as the one path that
-                    // can relay against policy state it can no longer pin.
-                    // So the check still runs; it just writes nothing unless
-                    // the binding moved, in which case the move IS the signal
-                    // and earns its row.
+                    // A completed hosted model decision is one receipt, a
+                    // clean Allow too (FIX 10037), through the binding-checked
+                    // writer. NoPolicyInPlay asked no question: it writes
+                    // nothing unless its binding moved, the move its signal.
+                    let row = if classified.resolution == RelayResolution::ModelDecided {
+                        RelayReceiptRow::Always
+                    } else {
+                        RelayReceiptRow::OnlyIfBindingMoved
+                    };
                     return self.append_relay_receipt_binding_checked(
                         &receipt,
                         verdict,
                         &format!("relay_boundary_{}", verdict.decision.ledger_str()),
                         reason_codes,
                         Vec::new(),
-                        RelayReceiptRow::OnlyIfBindingMoved,
+                        row,
                     );
                 }
                 reason_codes.extend(policy_model_reason_codes(verdict));

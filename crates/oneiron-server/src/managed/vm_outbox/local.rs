@@ -67,6 +67,24 @@ impl Owner {
         }
     }
 
+    /// Whether a protected member this end found counts as present though it
+    /// does not send it (FIX 9503): on the guest, the public key the host's
+    /// carrier installed, a regular file root:UID 0640 as [`Self::own_file`]
+    /// leaves it. Presence is census only and never permission to put: the
+    /// guest still sends only what the vault's UID owns.
+    fn keeps_protected(self, metadata: &Metadata) -> bool {
+        match self {
+            Self::Guest { uid } => {
+                metadata.is_file()
+                    && metadata.uid() == 0
+                    && metadata.gid() == uid
+                    && metadata.mode() & 0o7777 == 0o640
+            }
+            // The host sends every regular file, a protected one included.
+            Self::Host => false,
+        }
+    }
+
     /// Gives a directory this end made its owner and mode 0700.
     fn own_dir(self, dir: &File) -> std::io::Result<()> {
         if let Self::Guest { uid } = self {
@@ -143,7 +161,8 @@ fn parent_of(root: &File, member: &str, make: Option<Owner>) -> std::io::Result<
 
 /// Every member of `kind` under `root` this end sends or keeps, by name,
 /// with its stamp: protocol names only, regular files only, hidden names
-/// (temporaries, locks) skipped and no link followed.
+/// (temporaries, locks) skipped and no link followed. A protected member the
+/// other end installed is kept as present ([`Owner::keeps_protected`]).
 pub(super) fn list(
     root: &File,
     kind: VmOutboxKind,
@@ -152,16 +171,16 @@ pub(super) fn list(
 ) -> std::io::Result<BTreeMap<String, FileStamp>> {
     let mut found = BTreeMap::new();
     walk(root, "", 1, &mut |member: &str, dir: &File, name: &str| {
-        if vm_outbox_member(kind, member).is_none() || !takes(member) {
+        let Some(class) = vm_outbox_member(kind, member).filter(|_| takes(member)) else {
             return Ok(());
-        }
+        };
         let file = match open_file_at(dir, name) {
             Ok(file) => file,
             Err(error) if is_gone(&error) => return Ok(()),
             Err(error) => return Err(error),
         };
         let metadata = file.metadata()?;
-        if owner.sends(&metadata) {
+        if owner.sends(&metadata) || (class.protected && owner.keeps_protected(&metadata)) {
             found.insert(member.to_owned(), FileStamp::of(&metadata));
         }
         Ok(())

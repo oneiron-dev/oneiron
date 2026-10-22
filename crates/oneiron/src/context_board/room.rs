@@ -191,7 +191,21 @@ impl RoomSection {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
+        self.board_section_page(people, &self.roster, None)
+    }
+
+    /// [`Self::board_section`] for one page of the room's rows (FIX 9746):
+    /// `members` is the room's whole roster, which `invite?:` leaves out
+    /// whatever page it is on, and `page` is the page's header row, right
+    /// under the room's.
+    pub(super) fn board_section_page(
+        &self,
+        people: &PeopleView<'_>,
+        members: &[RoomPresence],
+        page: Option<String>,
+    ) -> std::result::Result<BoardSection, BoardFrameError> {
         let mut rows = vec![format!("room: {}", self.room.to_hex())];
+        rows.extend(page);
         rows.extend(self.roster.iter().map(|member| {
             let kind = people
                 .kind(member.actor)
@@ -211,8 +225,7 @@ impl RoomSection {
                 ),
             }
         }));
-        let members: std::collections::BTreeSet<EntityId> = self
-            .roster
+        let members: std::collections::BTreeSet<EntityId> = members
             .iter()
             .filter_map(|member| people.people.get(member.actor).map(|row| row.person))
             .collect();

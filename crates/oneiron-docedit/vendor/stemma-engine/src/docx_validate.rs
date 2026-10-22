@@ -203,8 +203,27 @@ impl PackageState {
 // =============================================================================
 
 /// Validate a serialized DOCX package for OOXML spec compliance.
-/// Checks package-level invariants that the serializer might violate.
+/// Checks package-level invariants that the serializer might violate. Where
+/// the package's memory was refused ([`validate_docx_admitted`]), the
+/// refusal is its one `I-PKG-000` finding.
 pub fn validate_docx(bytes: &[u8]) -> DocxValidation {
+    validate_docx_admitted(bytes).unwrap_or_else(|refusal| DocxValidation {
+        findings: vec![ValidationFinding {
+            rule_id: "I-PKG-000",
+            severity: ValidationSeverity::Error,
+            message: format!("the package's memory was not reserved: {refusal}"),
+            location: "(package)".to_string(),
+        }],
+    })
+}
+
+/// [`validate_docx`], reserving the trees of every part through the
+/// operation it runs in before any part is parsed (Rule 5; FIX 8570).
+///
+/// # Errors
+/// The operation's refusal: the machine's memory floor or its deadline,
+/// never a finding about the package.
+pub fn validate_docx_admitted(bytes: &[u8]) -> Result<DocxValidation, crate::admission::Refusal> {
     let mut findings = Vec::new();
 
     let cursor = Cursor::new(bytes);
@@ -217,20 +236,13 @@ pub fn validate_docx(bytes: &[u8]) -> DocxValidation {
                 message: format!("cannot open ZIP archive: {e}"),
                 location: "(package)".to_string(),
             });
-            return DocxValidation { findings };
+            return Ok(DocxValidation { findings });
         }
     };
 
-    // One XML budget across every part, charged before any part is parsed.
-    if let Err(bound) = crate::parse_budget::admit_zip(&mut zip) {
-        findings.push(ValidationFinding {
-            rule_id: "I-PKG-000",
-            severity: ValidationSeverity::Error,
-            message: crate::parse_budget::refusal(bound, bound.limit()),
-            location: "(package)".to_string(),
-        });
-        return DocxValidation { findings };
-    }
+    // The trees every part builds, reserved before any part is parsed and
+    // held until the checks below have run.
+    let _trees = crate::parse_budget::admit_zip(&mut zip, &crate::admission::Operation::current())?;
 
     // Build the package state once.
     let state = build_package_state(&mut zip, &mut findings);
@@ -255,7 +267,7 @@ pub fn validate_docx(bytes: &[u8]) -> DocxValidation {
     // Cross-part reference checks.
     check_cross_part_references(&state, &mut findings);
 
-    DocxValidation { findings }
+    Ok(DocxValidation { findings })
 }
 
 // =============================================================================

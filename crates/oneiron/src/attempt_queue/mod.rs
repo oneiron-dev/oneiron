@@ -57,6 +57,7 @@ pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
+pub use types::AttemptTerminalExhaust;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
     AttemptInterventionKind, AttemptPlacement, AttemptQueueCleanupReport, AttemptQueueRetryReason,

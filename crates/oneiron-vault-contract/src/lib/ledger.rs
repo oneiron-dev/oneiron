@@ -2,27 +2,29 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{TOKEN_LEN, TokenHex, WakeEntry, valid_vault_name, validate_wake_entries};
+use super::{LedgerPage, LedgerReportHead, TOKEN_LEN, TokenHex, valid_vault_name};
 
-/// Vault → supervisor push on the shared supervisor socket. Token-authenticated,
-/// rev-ordered, full replacement.
+/// Vault → supervisor push on the shared supervisor socket: one page of a
+/// rev-ordered, full-replacement report ([`LedgerPage`], FIX 9549).
+/// Token-authenticated: every page
+/// carries the token, and a report's pages go in order on one connection,
+/// each answered by a [`LedgerAck`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerUpdate {
     pub op: String, // "ledger_update"
     pub vault: String,
     pub token: TokenHex,
-    pub rev: u64,
-    pub entries: Vec<WakeEntry>,
-    /// The vault's live training setting, reported with every push (contract
-    /// v3). A push that carries none is refused, never read as off.
-    pub training: ManagedTrainingSetting,
+    /// The page, the vault's live training setting in it (contract v3): a
+    /// page that carries none is refused, never read as off.
+    pub page: LedgerPage,
 }
 
 impl LedgerUpdate {
     /// Reject-not-truncate enforcement of the wire limits: op discriminator,
-    /// vault name, token shape, entry count, per-entry bounds, the training
-    /// setting's shape. Supervisors call this immediately after parsing an
-    /// untrusted push.
+    /// vault name, token shape, and the page's shape ([`LedgerPage::validate`]:
+    /// its digest and offset, its entry count for that offset, per-entry
+    /// bounds, the training setting's shape). Supervisors call this
+    /// immediately after parsing an untrusted push.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(self.op == "ledger_update", "unknown op");
         anyhow::ensure!(valid_vault_name(&self.vault), "bad vault name");
@@ -31,8 +33,7 @@ impl LedgerUpdate {
             t.len() == TOKEN_LEN * 2 && t.bytes().all(|b| b.is_ascii_hexdigit()),
             "malformed token"
         );
-        validate_wake_entries(&self.entries)?;
-        self.training.validate()
+        self.page.validate()
     }
 }
 
@@ -72,16 +73,29 @@ impl ManagedTrainingSetting {
 }
 
 /// Whether `value` is exactly `len` lowercase hex digits.
-fn lowercase_hex(value: &str, len: usize) -> bool {
+pub(super) fn lowercase_hex(value: &str, len: usize) -> bool {
     value.len() == len
         && value
             .bytes()
             .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// The supervisor's answer to one [`LedgerUpdate`] page: a receipt, and on
+/// the report's last page, whether the report is committed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerAck {
     pub ok: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The report the answered page belongs to; `null` only when the line
+    /// named none the supervisor could read.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub report: Option<LedgerReportHead>,
+    /// The answered page's offset; `null` as `report` is.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub offset: Option<u64>,
+    /// True only on the answer to a report's last page, once the supervisor
+    /// holds that report, or a later revision, durably. A page's receipt is
+    /// never a commit.
+    pub committed: bool,
 }

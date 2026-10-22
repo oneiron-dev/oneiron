@@ -3,7 +3,7 @@
 use super::{
     McpBoardOmissions, McpBoardState, McpCallContext, McpCarrierPolicy, McpGatewayError,
     mcp_actor_result, mcp_board_frame_error, mcp_board_verb_error, mcp_current_board,
-    mcp_endpoint_result, mcp_page_cursor_error,
+    mcp_endpoint_result, mcp_page_cursor_error, type_feedback_release,
 };
 use crate::mcp::McpPageBudget;
 use crate::mcp::McpResolvedActor;
@@ -50,7 +50,8 @@ pub(crate) async fn execute_mcp_execute_code(
     // Revocation takes effect at once: a credential that died while its run
     // ran gets its own refusal, never the run's results or failure. The run's
     // durable record stays for a re-entry its credential admits. A failure is
-    // released as a result is, by the rows the run served before it failed.
+    // released as a result is, by the rows the run served before it failed,
+    // with the feedback its steps kept on its own release (FIX 10389).
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
@@ -64,10 +65,11 @@ pub(crate) async fn execute_mcp_execute_code(
                 rows.extend(verbs.served());
                 rows
             });
-            return Err(super::device_release::mcp_release_error(
+            return Err(type_feedback_release::release_run_error(
                 server,
                 actor,
                 rows.as_deref(),
+                run_id,
                 mcp_code_execution_error(&error),
             ));
         }
@@ -122,9 +124,6 @@ pub(crate) async fn execute_mcp_execute_code(
         "steps_run": outcome.steps_run,
         "bridge_calls": outcome.replay_record.bridge_calls.len(),
         "steps": steps,
-        // Each program step's type feedback, typed and whole, beside the
-        // bridge steps and never paged with them (FIX 8277).
-        "program_steps": outcome.program_steps,
         "result": mcp_executor_status_value(&outcome.status),
         "actor": mcp_actor_result(actor),
         "meta": actor.metadata(
@@ -153,6 +152,11 @@ pub(crate) async fn execute_mcp_execute_code(
     // beside each answer, fresh or replayed, and as this call's verb calls
     // listed them, recorded or not.
     let record = &outcome.replay_record;
+    // Each program step's type feedback (FIX 8277), and the feedback its
+    // bridge steps carry, leave after the answer on their own release (FIX
+    // 10390), never paged with the bridge steps.
+    let held =
+        type_feedback_release::hold_run_feedback(&mut structured, record, outcome.program_steps);
     let named = super::device_release::mcp_run_named_rows(server, actor, &structured, record)
         .zip(record.agent_verb_rows())
         .map(|(mut named, recorded)| {
@@ -173,7 +177,7 @@ pub(crate) async fn execute_mcp_execute_code(
     super::actor_dispatch::mcp_execute_code_gate(server, actor)?;
     #[cfg(test)]
     super::device_release::release_hook::run(server);
-    super::device_release::mcp_release_run_result(server, actor, named.as_deref(), result)
+    type_feedback_release::release_run_answer(server, actor, named, held, result)
 }
 
 /// One read of a result of the durable run `run_ref` names under this

@@ -252,8 +252,18 @@ pub(crate) fn capsule_request(
 /// A matched pair's rows.
 pub(crate) fn fork_rows(vault: &Vault, pair: &[u8; 32]) -> Result<ForkRows> {
     let txn = vault.store.env.read_txn()?;
+    fork_rows_in_txn(vault, &txn, pair)
+}
+
+/// [`fork_rows`] in the caller's transaction, so a reader that admits a pair
+/// reads its forks on its own snapshot (FIX 3610).
+pub(crate) fn fork_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    pair: &[u8; 32],
+) -> Result<ForkRows> {
     let mut rows = ForkRows::default();
-    for ((_, _), row) in FORKS.scan_from(&vault.store, &txn, pair)? {
+    for ((_, _), row) in FORKS.scan_from(&vault.store, txn, pair)? {
         match row {
             ForkRow::Unavailable(reason) => rows.unavailable = Some(reason),
             ForkRow::Fork(receipt) => match receipt.treatment {

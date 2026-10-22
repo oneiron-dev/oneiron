@@ -171,6 +171,9 @@ const fn invalid(reason: &'static str) -> Error {
 /// rows) would inherit it as fact. Every reference is resolved here, at the
 /// door, so the projector downstream can trust what it reads.
 pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Result<()> {
+    let Some(actor) = evidence.actor else {
+        return Err(invalid("attribution evidence names its actor"));
+    };
     if evidence.followed_state.is_some() && evidence.followed_skill.is_some() {
         return Err(invalid("attribution followed states conflict"));
     }
@@ -183,18 +186,13 @@ pub(super) fn validate_evidence(vault: &Vault, evidence: &OutcomeEvidence) -> Re
         let limits = policy
             .attribution_limits()
             .ok_or(invalid("attribution deviation policy is malformed"))?;
-        if (reason.len() as u64) > limits.reason_bytes_for(&evidence.actor) {
+        if (reason.len() as u64) > limits.reason_bytes_for(&actor) {
             return Err(invalid(
                 "attribution deviation exceeds policy reason budget",
             ));
         }
     }
-    ground_attempt_receipt(
-        vault,
-        &evidence.receipt_ref,
-        &evidence.actor,
-        evidence.skill,
-    )
+    ground_attempt_receipt(vault, &evidence.receipt_ref, &actor, evidence.skill)
 }
 
 /// Grounds one attempt citation: `receipt_ref` is a stamped terminal pack
@@ -226,7 +224,9 @@ pub(crate) fn ground_attempt_receipt(
     let Some(skill) = skill else {
         return Ok(());
     };
-    let Some(record) = vault.get_skill_record(&skill)? else {
+    // The revision the pack loaded, which an in-place update since leaves
+    // retained (FIX 10110), not today's record.
+    let Some(record) = crate::skill::receipt_skill_record(vault, &receipt, &skill)? else {
         return Err(invalid("attribution evidence names an unknown skill"));
     };
     if let Some(resident) = crate::skill::resident_of(&record)? {
@@ -391,10 +391,7 @@ fn encode_evidence(evidence: &OutcomeEvidence, sequence: u64) -> Value {
             Value::from(KEY_RECEIPT_REF),
             Value::from(evidence.receipt_ref.as_str()),
         ),
-        (
-            Value::from(KEY_ACTOR),
-            Value::Binary(evidence.actor.as_bytes().to_vec()),
-        ),
+        (Value::from(KEY_ACTOR), optional_entity(evidence.actor)),
         (Value::from(KEY_SKILL), optional_entity(evidence.skill)),
         (
             Value::from(KEY_OUTCOME),
@@ -435,7 +432,7 @@ fn decode_evidence(raw: &[u8]) -> Result<(u64, OutcomeEvidence)> {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
             KEY_SEQUENCE => sequence = value.as_u64(),
             KEY_RECEIPT_REF => receipt_ref = value.as_str().map(str::to_owned),
-            KEY_ACTOR => actor = Some(decode_entity(value)?),
+            KEY_ACTOR => actor = Some(decode_optional_entity(value)?),
             KEY_SKILL => skill = decode_optional_entity(value)?,
             KEY_OUTCOME => outcome = value.as_str().and_then(AttemptOutcome::parse),
             KEY_FOLLOWED_SKILL => followed_skill = value.as_bool(),
@@ -472,10 +469,7 @@ fn encode_judgment(judgment: &AttributionJudgment) -> Value {
             Value::from(KEY_VERDICT),
             Value::from(judgment.verdict.as_str()),
         ),
-        (
-            Value::from(KEY_SUBJECT),
-            Value::Binary(judgment.subject.as_bytes().to_vec()),
-        ),
+        (Value::from(KEY_SUBJECT), optional_entity(judgment.subject)),
         (
             Value::from(KEY_EVIDENCE_RECEIPTS),
             Value::Array(
@@ -503,7 +497,7 @@ fn decode_judgment(raw: &[u8]) -> Result<AttributionJudgment> {
             KEY_SCHEMA_VERSION => require_schema_version(value)?,
             KEY_SEQUENCE => sequence = value.as_u64(),
             KEY_VERDICT => verdict = value.as_str().and_then(AttributionVerdict::parse),
-            KEY_SUBJECT => subject = Some(decode_entity(value)?),
+            KEY_SUBJECT => subject = Some(decode_optional_entity(value)?),
             KEY_EVIDENCE_RECEIPTS => evidence_receipts = Some(decode_receipt_array(value)?),
             KEY_AT => at = value.as_u64(),
             _ => return Err(invalid("attribution judgment key is not pinned")),

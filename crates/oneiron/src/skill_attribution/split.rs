@@ -5,8 +5,9 @@
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::TypeRef;
 use crate::learning_setting::{
-    ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_sourced_in_txn,
+    ATTRIBUTION_UNCLEAR_FLOOR, setting_value, setting_value_in_scope_sourced_in_txn,
 };
 
 use super::judge::{Attributed, AttributionDecisions, AttributionRules, JudgeTrace};
@@ -33,20 +34,57 @@ pub(crate) fn unclear_floor(vault: &Vault) -> Result<f32> {
     Ok(setting_value(vault, &ATTRIBUTION_UNCLEAR_FLOOR)? as f32)
 }
 
-/// [`unclear_floor`] beside the rows it stands on, from one snapshot
-/// ([`setting_value_sourced_in_txn`], FIX 7101).
+/// The `attribution_unclear_floor` in force where the outcome on terminal
+/// pack receipt `receipt` ran (FIX 2957): at the project and task type that
+/// receipt records, beside the rows it stands on, from one snapshot
+/// ([`setting_value_in_scope_sourced_in_txn`], FIX 7101). No receipt, or one
+/// that records neither, reads the vault's.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn unclear_floor_sourced(vault: &Vault) -> Result<(f32, Option<Vec<EntityId>>)> {
+pub(crate) fn unclear_floor_sourced(
+    vault: &Vault,
+    receipt: Option<&str>,
+) -> Result<(f32, Option<Vec<EntityId>>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let (floor, rows) = setting_value_sourced_in_txn(vault, &rtxn, &ATTRIBUTION_UNCLEAR_FLOOR)?;
+    let (project, type_ref) = match receipt {
+        Some(receipt) => outcome_scope_in_txn(vault, &rtxn, receipt)?,
+        None => (None, None),
+    };
+    let (floor, rows) = setting_value_in_scope_sourced_in_txn(
+        vault,
+        &rtxn,
+        &ATTRIBUTION_UNCLEAR_FLOOR,
+        project,
+        type_ref.as_ref(),
+    )?;
     #[expect(
         clippy::cast_possible_truncation,
         reason = "a unit-interval setting narrowed to the judge's f32 confidence"
     )]
     Ok((floor as f32, rows))
+}
+
+/// The project and task type terminal pack receipt `receipt` records: its
+/// type stamp, else its frozen attribution's type, and that attribution's
+/// project. Either is `None` where the receipt records none: unknown, never
+/// read off its actor or session.
+fn outcome_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+) -> Result<(Option<EntityId>, Option<TypeRef>)> {
+    let Some(receipt) = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt)?
+    else {
+        return Ok((None, None));
+    };
+    let attribution = receipt.pack_attribution_fields().ok();
+    let type_ref = receipt
+        .task_type_ref()
+        .map(|stamp| TypeRef::from(&stamp))
+        .or_else(|| attribution.as_ref().map(|fields| fields.type_ref.clone()));
+    Ok((attribution.and_then(|fields| fields.project), type_ref))
 }
 
 /// Asks about `request` and turns the answers into a split, beside the exact

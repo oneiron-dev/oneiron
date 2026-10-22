@@ -1,6 +1,7 @@
 //! Holder-governed owner-policy row edits, proposals, events and change log.
 mod authority;
 mod ledger;
+mod notification_receipt;
 mod notifications;
 mod secret_scan_switch;
 mod world_privacy_switch;

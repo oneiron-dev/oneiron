@@ -11,6 +11,7 @@ use crate::dreamer_runner::{
     DREAMER_RUNNER_ATTEMPT_KIND, DreamerAttemptPayload, decode_dreamer_attempt_payload,
 };
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 
 use super::AttemptQueue;
@@ -247,16 +248,24 @@ impl AttemptQueue<'_> {
 
     /// Complete kind view for a projection that must not silently truncate.
     ///
-    /// `max_scanned` caps the rows the view reads, all of them counted. It
-    /// reads only its kind's side of the owner-retained boundary
+    /// The view reads its kind's whole side of the owner-retained boundary
     /// ([`crate::attempt_queue::OWNER_RETAINED_ID_PREFIX`]), so a tagging
-    /// backlog of any size never costs another kind's view a row.
+    /// backlog of any size never costs another kind's view a row, and sorts
+    /// it oldest-ready first. No row count refuses it (Rule 5, FIX 9576):
+    /// every row read, before the kind filter, counts on the
+    /// `attempt_kind_rows` scan row, and past `max_scanned` the finished read
+    /// asks whether everything is okay.
     pub(crate) fn list_kind_bounded(
         &self,
         kind: &str,
         max_scanned: usize,
     ) -> Result<Vec<AttemptRecord>> {
         use std::ops::Bound;
+        let mut count = ScanCount::start_at(
+            EngineScan::AttemptKindRows,
+            kind.as_bytes(),
+            u64::try_from(max_scanned).unwrap_or(u64::MAX),
+        );
         let txn = self.store.env.read_txn()?;
         let boundary = &crate::attempt_queue::OWNER_RETAINED_RANGE_START[..];
         let retained = crate::attempt_queue::owner_retained_kind(kind);
@@ -266,16 +275,16 @@ impl AttemptQueue<'_> {
             (Bound::Unbounded, Bound::Excluded(boundary))
         };
         let mut records = Vec::new();
-        for (scanned, row) in self.store.attempt_records.range(&txn, &range)?.enumerate() {
-            if scanned >= max_scanned {
-                return Err(Error::IndexOverflow("attempt kind projection"));
-            }
+        for row in self.store.attempt_records.range(&txn, &range)? {
+            count.row();
             let (key, raw) = row?;
             let record = decode_record(&raw, AttemptId::from_bytes(&key)?)?;
             if record.kind == kind {
                 records.push(record);
             }
         }
+        drop(txn);
+        count.defer(self.store);
         records.sort_by(attempt_record_order);
         Ok(records)
     }

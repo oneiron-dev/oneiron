@@ -140,7 +140,7 @@ fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
 /// A batch's or library run's answer with its row hooks' decisions among
 /// its own (FIX 8042): a library run's `model_free` then reads them too, so
 /// a hook that asked a model leaves it false.
-fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
+pub(crate) fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
     if hooks.is_empty() {
         return;
     }

@@ -1782,7 +1782,7 @@ export interface FacadeResults {
   "vault.code.oplog": Facade.CodeMutationLog;
   "execute_code": Facade.ForeignCodeRunResult;
   "vault.code.model_heal_count": Facade.CodeRunModelHealCountView;
-  "vault.code.type_diagnostics": Facade.ProgramStepFeedback | null;
+  "vault.code.type_diagnostics": Facade.ProgramStepFeedbackRelease | null;
   "vault.code.waits.resolve": Facade.CodeWaitReceiptView;
   "vault.code.waits.receipt": Facade.CodeWaitReceiptView | null;
   "vault.results.status": Facade.ResultRunStatus;
@@ -2383,9 +2383,9 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.people.create": { description: "The owner creates a distinct PERSON with declared identity hints and existing identity-evidence refs, looking before minting an opaque id without selecting or merging a namesake.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.entities.look_before_mint": { description: "The owner queries the declared PERSON, ORG or PLACE identity hints for N candidates with evidence and provenance; only stored mention evidence is scored by the waterfall, and no entity is restored, linked or minted.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.identity.mention": { description: "The owner reads one saved mention as unresolved, candidates or resolved, preserving the original tagger suggestion and the resolving owner evidence and provenance.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.shape.read": { description: "The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.shape.plan": { description: "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.shape.apply": { description: "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.shape.read": { description: "The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.shape.plan": { description: "The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.shape.apply": { description: "Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "self.message": { description: "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.grants.ask": { description: "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.companions.access_requests.answer": { description: "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2515,7 +2515,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.turn_programs.disarm": { description: "Disarms one of the caller's own armed turn programs; true when it was armed.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.saved_query.create": { description: "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.saved_query.read": { description: "One saved query the caller owns; a query absent or not the caller's reads as not found.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "self.saved_query.update": { description: "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check.", scope: "Write", proposes: false, hostDoor: false, section: false },
+  "self.saved_query.update": { description: "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.saved_query.archive": { description: "Archives a saved query under a definition-version check: it stays readable and is never evaluated again.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.saved_query.members": { description: "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.saved_query.evaluate": { description: "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2828,7 +2828,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.policy.owner.configure": { description: "The owner configures or toggles content policy against the current manifest hash without changing other policy tables.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.policy.owner.row.change": { description: "The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.policy.outbound.decide": { description: "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.policy.relay.decide": { description: "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.policy.relay.decide": { description: "Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.consent.approve_once": { description: "The owner approves exactly one engine-emitted effect digest; no standing grant is created.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.connectors.calls.approve_once": { description: "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.consent.deny": { description: "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -2958,7 +2958,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.oplog": { description: "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "execute_code": { description: "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.model_heal_count": { description: "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.code.type_diagnostics": { description: "Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.type_diagnostics": { description: "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.resolve": { description: "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.receipt": { description: "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.results.status": { description: "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -3672,11 +3672,11 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         },
       },
       shape: {
-        /** The vault's stored seed and its live setup plane held as one document (ARCH-0070); a free read. */
+        /** The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read. */
         read: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.shape.read">[K] => invoke("vault.shape.read", input, options, newInvocation()),
-        /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; a free read that writes nothing. */
+        /** The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing. */
         plan: (input: Facade.ShapePlanRequest, options?: O): FacadeReturns<"vault.shape.plan">[K] => invoke("vault.shape.plan", input, options, newInvocation()),
-        /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item. */
+        /** Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan. */
         apply: (input: Facade.ShapeApplyRequest, options?: O): FacadeReturns<"vault.shape.apply">[K] => invoke("vault.shape.apply", input, options, newInvocation()),
       },
       companions: {
@@ -4846,7 +4846,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           decide: (input: Facade.PolicyOutboundRequest, options?: O): FacadeReturns<"vault.policy.outbound.decide">[K] => invoke("vault.policy.outbound.decide", input, options, newInvocation()),
         },
         relay: {
-          /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+          /** Decide bytes carried by the host-bound attested relay under its own legal policy; each completed model decision leaves one content-free receipt, and outages halt with a service notice and local-model offer. */
           decide: (input: Facade.PolicyOutboundRequest, options?: O): FacadeReturns<"vault.policy.relay.decide">[K] => invoke("vault.policy.relay.decide", input, options, newInvocation()),
         },
       },
@@ -5205,7 +5205,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         oplog: (input: Facade.CodeRepoRequest, options?: O): FacadeReturns<"vault.code.oplog">[K] => invoke("vault.code.oplog", input, options, newInvocation()),
         /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
         model_heal_count: (input: Facade.CodeRunModelHealCountRequest, options?: O): FacadeReturns<"vault.code.model_heal_count">[K] => invoke("vault.code.model_heal_count", input, options, newInvocation()),
-        /** Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again. */
+        /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
         type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest, options?: O): FacadeReturns<"vault.code.type_diagnostics">[K] => invoke("vault.code.type_diagnostics", input, options, newInvocation()),
         waits: {
           /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
@@ -6214,7 +6214,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         create: (input: Facade.SavedQueryCreateRequest, options?: O): FacadeReturns<"self.saved_query.create">[K] => invoke("self.saved_query.create", input, options, newInvocation()),
         /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
         read: (input: Facade.SavedQueryReadRequest, options?: O): FacadeReturns<"self.saved_query.read">[K] => invoke("self.saved_query.read", input, options, newInvocation()),
-        /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+        /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check; it is how the owner accepts a pack-drift repair for a paused query, and a valid replacement resumes it. */
         update: (input: Facade.SavedQueryUpdateRequest, options?: O): FacadeReturns<"self.saved_query.update">[K] => invoke("self.saved_query.update", input, options, newInvocation()),
         /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
         archive: (input: Facade.SavedQueryArchiveRequest, options?: O): FacadeReturns<"self.saved_query.archive">[K] => invoke("self.saved_query.archive", input, options, newInvocation()),

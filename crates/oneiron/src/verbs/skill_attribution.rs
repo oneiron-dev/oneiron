@@ -780,7 +780,8 @@ pub fn skill_attribution_evidence_record_as_owner(
 pub struct AttemptJudgmentView {
     pub sequence: u64,
     pub verdict: AttributionLabel,
-    pub subject: EntityId,
+    /// `None` once the actor it charged is erased (FIX 8988).
+    pub subject: Option<EntityId>,
     pub evidence_receipts: Vec<String>,
     pub at: u64,
 }

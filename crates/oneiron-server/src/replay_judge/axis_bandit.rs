@@ -185,7 +185,7 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
         drop(taken);
         let defect = attribution_judgments(vault)?.into_iter().any(|judgment| {
             judgment.verdict == AttributionVerdict::SkillDefect
-                && judgment.subject == arm.skill
+                && judgment.subject == Some(arm.skill)
                 && judgment.evidence_receipts.contains(&run.receipt_id)
         });
         // A run that failed or carries a defect misses every axis; only a

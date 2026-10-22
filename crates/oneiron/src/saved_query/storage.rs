@@ -576,6 +576,11 @@ pub(super) fn encode_memo_row(row: &VerdictMemoRow) -> Result<Vec<u8>> {
         Value::String(row.verdict.as_str().to_owned()),
     );
     root.insert("why".to_owned(), Value::String(row.why.clone()));
+    // Absent while the sources are not known whole (FIX 10089).
+    if let Some(sources) = &row.source_refs {
+        let refs = sources.iter().map(|id| Value::String(id.to_hex()));
+        root.insert("source_refs".to_owned(), Value::Array(refs.collect()));
+    }
     root.insert(
         "envelope".to_owned(),
         serde_json::to_value(&row.envelope)
@@ -598,6 +603,16 @@ pub(super) fn decode_memo_row(raw: &[u8]) -> Result<VerdictMemoRow> {
         verdict: MatchVerdict::parse(&required_string(&value, "verdict", CONTEXT)?)
             .ok_or(Error::CorruptedIndex(CONTEXT))?,
         why: required_string(&value, "why", CONTEXT)?,
+        source_refs: value
+            .get("source_refs")
+            .map(|refs| {
+                refs.as_array()
+                    .ok_or(Error::CorruptedIndex(CONTEXT))?
+                    .iter()
+                    .map(|id| parse_entity_ref(id).map_err(|_| Error::CorruptedIndex(CONTEXT)))
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?,
         envelope: serde_json::from_value(
             value
                 .get("envelope")

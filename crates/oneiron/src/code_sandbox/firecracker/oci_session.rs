@@ -96,14 +96,13 @@ pub(super) fn start(
     }
     let image = resolve(spec.image.as_str(), "")?;
     config.pins.verify(&image)?;
-    let image_release = image_release::observe_release(
-        None,
+    let image_release = image_release::observe_bound_release(
+        image_release::SelectedImage::Oci(&spec.image),
         &image_release::ObservedArtifacts::from_firecracker_pins(
             config.pins.kernel,
             config.pins.rootfs,
         )
         .with_image_ref(&spec.image),
-        &image_release::HostCapabilities::default(),
         &image_release::NoVerifierConfigured,
     );
     let scratch = tempfile::tempdir()?;

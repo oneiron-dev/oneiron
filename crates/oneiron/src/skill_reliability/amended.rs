@@ -130,16 +130,6 @@ impl AmendedRow {
     }
 }
 
-/// Whether an amendment verdict, standing or withdrawn, was ever kept for `outcome` — so this
-/// vault's own ledger knows the attempt.
-pub(super) fn is_amended(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    outcome: &OutcomeRef,
-) -> Result<bool> {
-    AMENDED.contains(&vault.store, rtxn, outcome)
-}
-
 /// The amended attempts of one arm: attempt receipt → defect share.
 pub(super) fn amended_shares_in_txn(
     vault: &Vault,

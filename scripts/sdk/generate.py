@@ -204,6 +204,18 @@ for row in ROWS:
     pointers = row['refs']
     if not pointers or len(set(pointers)) != len(pointers) or not all(isinstance(p, str) and re.fullmatch(r'(/(\*|[a-z_][a-z0-9_]*))+', p) for p in pointers):
         raise ValueError(f'{row["name"]}: refs are distinct JSON pointers of field names and `*`')
+# 2690: a `readable` entry is `rows`, a top-level field, or a nested path of
+# fields joined by `.`, any of them suffixed `[*]` to take every item of an
+# array (`reviewed[*].artifact_ref`). The facade checks each hex entity id at
+# its end with the credential's read check; a top-level field keeps its own
+# check, unchanged.
+def nested_readable(readable):
+    'Whether a `readable` entry is a nested path rather than a top-level field.'
+    return '.' in readable or '[' in readable
+for row in ROWS:
+    for readable in row.get('admission', {}).get('readable', []):
+        if readable != 'rows' and not re.fullmatch(r'[a-z_][a-z0-9_]*(\[\*\])?(\.[a-z_][a-z0-9_]*(\[\*\])?)*', readable):
+            raise ValueError(f'{row["name"]}: readable entries are `rows` or field paths of `.` and `[*]`')
 # OF-063 prose links (Engine ruling 10-17): `prose_links` lists a row's text
 # slots, read for `oneiron://` record links before the engine call
 # (`prose_links_check`) and receipted only once that call has landed the
@@ -282,6 +294,9 @@ HOME_SERVER_DOORS = {'vault.recall': 'recall_home_listing'}
 # surface and then the home step, which lists the home's references.
 CALL_HOME_DOORS = {'vault.search.bm25': ('super::search_home_doors::vault_search_bm25',
                                          'crate::api::search::complete_bm25_with_home')}
+# FIX 10425: the facade host-door rows whose answer counts its hooks' verdict
+# decisions among its own (`model_free`), as their code-mode door does.
+HOOK_DECISION_ROWS = {'self.browser.batch', 'self.browser.library.run'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -1321,12 +1336,17 @@ def facade_dispatch(facade_rows):
         if 'attachment' not in r: continue
         handler = r['name'].replace('.', '_') + '_attachment'
         disposition = json.dumps(f'attachment; filename="{r["attachment"]}"')
+        # The route's answer, encoded inside its answer scope (FIX 8238); only
+        # an answer, never a refusal, is named an attachment.
         routes += f'''async fn {handler}(
             auth: CoreAuth, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
             headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
-        ) -> Result<impl IntoResponse, FacadeApiError> {{
-            let answer = facade_route(auth, State(server), uri, headers, payload).await?;
-            Ok(([(axum::http::header::CONTENT_DISPOSITION, {disposition})], answer))
+        ) -> Response {{
+            let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+            if answer.extensions().get::<FacadeApiError>().is_none() {{
+                answer.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_static({disposition}));
+            }}
+            answer
         }}\n'''
     routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
@@ -1437,15 +1457,23 @@ def facade_dispatch(facade_rows):
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
             failed = 'Err(error) => { row_hooks_abort(server, hooks).await; return Err(error); }'
+            # FIX 10425: a browser batch's or library run's answer counts the
+            # decisions its hooks' verdicts answered among its own, as its
+            # code-mode door does, so `model_free` reads them. Record only.
+            counted = name in HOOK_DECISION_ROWS
+            pre_hooks = (f'let (mut hooks, decided) = facade_hooks_pre_counted(server, call, {json.dumps(name)}, value).await?;' if counted
+                         else f'let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;')
+            post_hooks = (f'facade_hooks_post_counted(server, hooks, {json.dumps(name)}, output, decided)' if counted
+                          else 'facade_hooks_post(server, hooks, output)')
             answer = (f'''let ran = async {{
                     let (output, listed) = {door};
                     Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
-                Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
+                Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
             scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
                            if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
                            # FIX 6867: a lane door judges its records in its engine door.
@@ -1457,7 +1485,7 @@ def facade_dispatch(facade_rows):
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
-                let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
+                {pre_hooks}
                 {answer}
             }}\n'''
             continue
@@ -1481,7 +1509,13 @@ def facade_dispatch(facade_rows):
         elif readables:
             room_guard += f'facade_room_turn_serves(call, "{name}", oneiron::memory::RoomTurnHandle::serves("{name}"))?;'
         branch_turn = ''
+        # FIX 1210: a row that declares record refs refuses a ref the caller
+        # cannot read with the same NOT_FOUND, its row's own ref check
+        # receipting it first, as its engine fn would have.
+        receipted = [readable for readable in readables if readable != 'rows'] if 'refs' in r else []
         for readable in readables:
+            if readable in receipted:
+                continue
             if readable == 'rows':
                 memory = 'credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()).listing_producers(&producers)'
                 result = (f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&{memory}, facade_input(value)?)?)?;\n'
@@ -1496,8 +1530,14 @@ def facade_dispatch(facade_rows):
                               'let memory = match turn { Some(turn) => memory.with_task_work_turn(turn), None => memory };\n'
                               f'facade_readable_task_rows(&server.vault, auth, oneiron::task_verb::sdk::{method}(&memory, facade_input(value)?)?)? }};\n'
                               'let rows = Some(producers.take());')
+            elif nested_readable(readable):
+                # 2690: a nested path walks to each ref it names.
+                ref_guard += f'facade_admit_readable_path(&server.vault, auth, &value, "{readable}")?;'
             else:
                 ref_guard += f'facade_admit_readable_ref(&server.vault, auth, &value, "{readable}")?;'
+        if receipted:
+            fields = ', '.join(json.dumps(readable) for readable in receipted)
+            ref_guard += f'facade_admit_receipted(server, call, actor, class, "{name}", &value, &[{fields}])?;'
         # A server door runs the verb with the host's execution inputs, off the
         # runtime, inside the room turn the call names, if any, and lists the
         # rows its answer is derived from without naming them.
@@ -1581,6 +1621,15 @@ def facade_dispatch(facade_rows):
         let output = {result}{landed}
         Ok(FacadeCallOutput::listed(output, &producers))
         }}\n'''
+    # 2690: each row's nested readable paths, which a hook's rewrite meets
+    # again (`facade_admit_rewritten_paths`), as a top-level `*_ref` does.
+    nested = [(r['name'], [x for x in r.get('admission', {}).get('readable', []) if nested_readable(x)]) for r in facade_rows]
+    dispatch += ('/// The nested `readable` paths of each facade row that declares one (2690):\n'
+                 '/// a hook\'s rewrite of one meets its credential read check again.\n'
+                 'const NESTED_READABLE: &[(&str, &[&str])] = &[' + ''.join(f'({json.dumps(verb)}, &[{", ".join(json.dumps(path) for path in paths)}]),' for verb, paths in nested if paths) + '];\n'
+                 '/// [`NESTED_READABLE`]\'s paths for `verb`; none for a row that declares none.\n'
+                 "pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {\n"
+                 'match NESTED_READABLE.iter().find(|(row, _)| *row == verb) { Some((_, paths)) => *paths, None => &[] }\n}\n')
     dispatch += f'''/// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -1704,6 +1753,22 @@ def outputs():
             core += f"pub fn {method}<S: crate::board_verb::LiveBoardSource>(context: &mut crate::board_verb::BoardVerbContext<'_, S>, {binding}: {r['input']}) -> Result<{r['output']}, crate::board_verb::BoardVerbError> {{ {result} }}\n"
         else:
             core += f"pub fn {method}(memory: &Memory<'_>, {binding}: {r['input']}) -> MemoryResult<{r['output']}> {{ {checks} {result} }}\n"
+    # FIX 1210: the record-ref check a row's engine fn runs before its call,
+    # alone, for a door that refuses a ref its caller cannot read before that
+    # fn runs: the refusal is receipted as the fn's would be, and no call runs.
+    core += ("/// The record-ref check `verb`'s engine fn runs before its call, run alone\n"
+             "/// (FIX 1210): a door that refused one of its refs before reaching the fn\n"
+             "/// receipts that refusal as the fn would have. Its own checks of the input\n"
+             "/// run first, as in the fn; no engine call runs. A verb whose door checks\n"
+             "/// no readable ref checks nothing.\n"
+             "pub fn receipt_declared_refs(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<()> {\nmatch verb {\n")
+    for r in ROWS:
+        if 'refs' not in r or not [x for x in r.get('admission', {}).get('readable', []) if x != 'rows']:
+            continue
+        checks = r.get('admission', {}).get('validate', '')
+        prose = prose_links_check(r).replace('let unlinked_prose =', 'let _unlinked_prose =')
+        core += f'{json.dumps(r["name"])} => {{ let input: {r["input"]} = decode(value)?; {checks} {prose}{record_refs_check(r)}}}\n'
+    core += '_ => {}\n}\nOk(())\n}\n'
     server, dispatch = facade_dispatch(facade_rows)
     remote = HEADER + 'use super::*;\n'
     remote += '''fn remote_agent_verb_output<R: serde::de::DeserializeOwned + serde::Serialize>(

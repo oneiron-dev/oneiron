@@ -5,10 +5,11 @@
 //! ZIP central-directory reader and copy-through writer. All source records
 //! remain owned by the package; only checked edits and added parts change output.
 use super::{Error, Result, XmlLimits, xml};
-use crate::resource::{Resources, wide};
+use crate::resource::{Dimension, Resources, wide};
 
 mod open;
 mod parts;
+mod zip32;
 use flate2::{Compression, read::DeflateDecoder, write::DeflateEncoder};
 use open::check_limits;
 pub use parts::{Relationship, rels_name};
@@ -16,6 +17,7 @@ use std::{
     collections::HashSet,
     io::{Read, Write},
 };
+use zip32::{as_u32, compressed_length, get16, get32, patch16, patch32};
 
 const LOCAL: u32 = 0x0403_4b50;
 const CENTRAL: u32 = 0x0201_4b50;
@@ -176,12 +178,16 @@ impl Package {
                     .ok_or(Error::Edit("edited package size overflow"))
             },
         )?;
-        let budget = self.limits.part_bytes.min(
+        let budget =
             self.limits
-                .expanded_bytes
-                .checked_sub(other_size)
-                .ok_or(Error::Edit("edited package size limit"))?,
-        );
+                .part_bytes
+                .min(self.limits.expanded_bytes.checked_sub(other_size).ok_or(
+                    Error::capacity_hit(
+                        Dimension::ExpandedBytes,
+                        other_size,
+                        self.limits.expanded_bytes,
+                    ),
+                )?);
         let part = xml::ValidatedXmlPart::parse(&old, &self.resources)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
         self.commit_replacement(index, old, new)
@@ -202,7 +208,11 @@ impl Package {
         let index = self.editable_xml_part(name)?;
         let old = self.expanded(&self.entries[index])?;
         if value.len() > self.limits.part_bytes {
-            return Err(Error::Edit("edited part size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::PartBytes,
+                value.len(),
+                self.limits.part_bytes,
+            ));
         }
         xml::ValidatedXmlPart::parse(&value, &self.resources)?;
         self.commit_replacement(index, old, value)
@@ -227,7 +237,11 @@ impl Package {
     /// budgets pass. `old` is the part's current expanded bytes.
     fn commit_replacement(&mut self, index: usize, old: Vec<u8>, new: Vec<u8>) -> Result<()> {
         if new.len() > self.limits.part_bytes {
-            return Err(Error::Edit("edited part size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::PartBytes,
+                new.len(),
+                self.limits.part_bytes,
+            ));
         }
         let total =
             self.entries
@@ -247,7 +261,11 @@ impl Package {
                     .ok_or(Error::Edit("edited package size overflow"))
                 })?;
         if total > self.limits.expanded_bytes {
-            return Err(Error::Edit("edited package size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                total,
+                self.limits.expanded_bytes,
+            ));
         }
         if new != old {
             let original = if self.entries[index].replacement.is_some() {
@@ -306,8 +324,19 @@ impl Package {
                 .and_then(|size| size.checked_add(emitted))
                 .ok_or(Error::Edit("edited ZIP size overflow"))?;
         }
-        if total > self.limits.archive_bytes || u32::try_from(total).is_err() {
-            return Err(Error::Edit("edited archive size limit"));
+        if total > self.limits.archive_bytes {
+            return Err(Error::capacity_hit(
+                Dimension::ArchiveBytes,
+                total,
+                self.limits.archive_bytes,
+            ));
+        }
+        if u32::try_from(total).is_err() {
+            return Err(Error::capacity_hit(
+                Dimension::ZipBytes,
+                total,
+                u32::MAX as usize,
+            ));
         }
         Ok(())
     }
@@ -334,10 +363,12 @@ impl Package {
             .filter_map(|entry| entry.replacement.as_ref())
             .fold(0usize, |sum, data| sum.saturating_add(data.len()));
         let added = self.added_archive_bytes()?;
-        let _hold = self.resources.reserve(
+        // An estimate past the added records, whose bytes are measured.
+        let _hold = self.resources.reserve_estimate(
             wide(self.source.len())
                 .saturating_add(wide(replaced).saturating_mul(2))
                 .saturating_add(wide(added)),
+            wide(added),
         )?;
         let mut out = Vec::with_capacity(self.source.len());
         let mut offsets = vec![0u32; self.entries.len()];
@@ -415,71 +446,27 @@ impl Package {
         let cd_size = as_u32(out.len() - cd_offset as usize)?;
         let mut footer = self.source[self.eocd..].to_vec();
         let kept = self.entries.iter().filter(|entry| !entry.removed).count();
-        let count = u16::try_from(kept + self.added.len())
-            .map_err(|_| Error::Invalid("ZIP32 entry limit"))?;
+        let count = u16::try_from(kept + self.added.len()).map_err(|_| {
+            Error::capacity_hit(
+                Dimension::ZipEntries,
+                kept + self.added.len(),
+                usize::from(u16::MAX),
+            )
+        })?;
         patch16(&mut footer, 8, count);
         patch16(&mut footer, 10, count);
         patch32(&mut footer, 12, cd_size);
         patch32(&mut footer, 16, cd_offset);
         out.extend_from_slice(&footer);
         if out.len() > self.limits.archive_bytes {
-            return Err(Error::Invalid("export archive size limit"));
+            return Err(Error::capacity_hit(
+                Dimension::ArchiveBytes,
+                out.len(),
+                self.limits.archive_bytes,
+            ));
         }
         Ok(out)
     }
-}
-
-fn get16(bytes: &[u8], at: usize) -> Result<u16> {
-    let raw: [u8; 2] = bytes
-        .get(at..at.checked_add(2).ok_or(Error::Invalid("offset overflow"))?)
-        .ok_or(Error::Invalid("truncated ZIP"))?
-        .try_into()
-        .map_err(|_| Error::Invalid("truncated ZIP"))?;
-    Ok(u16::from_le_bytes(raw))
-}
-fn get32(bytes: &[u8], at: usize) -> Result<u32> {
-    let raw: [u8; 4] = bytes
-        .get(at..at.checked_add(4).ok_or(Error::Invalid("offset overflow"))?)
-        .ok_or(Error::Invalid("truncated ZIP"))?
-        .try_into()
-        .map_err(|_| Error::Invalid("truncated ZIP"))?;
-    Ok(u32::from_le_bytes(raw))
-}
-fn patch16(out: &mut [u8], at: usize, value: u16) {
-    out[at..at + 2].copy_from_slice(&value.to_le_bytes());
-}
-fn patch32(out: &mut [u8], at: usize, value: u32) {
-    out[at..at + 4].copy_from_slice(&value.to_le_bytes());
-}
-fn as_u32(size: usize) -> Result<u32> {
-    u32::try_from(size).map_err(|_| Error::Invalid("ZIP32 output limit"))
-}
-
-struct CountedBytes(usize);
-impl Write for CountedBytes {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.0 = self
-            .0
-            .checked_add(bytes.len())
-            .ok_or(std::io::ErrorKind::OutOfMemory)?;
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-fn compressed_length(method: u16, data: &[u8]) -> Result<usize> {
-    if method == 0 {
-        return Ok(data.len());
-    }
-    let mut encoder = DeflateEncoder::new(CountedBytes(0), Compression::default());
-    encoder
-        .write_all(data)
-        .map_err(|_| Error::Edit("compression failed"))?;
-    let sink = encoder
-        .finish()
-        .map_err(|_| Error::Edit("compression failed"))?;
-    Ok(sink.0)
 }
 
 #[cfg(test)]

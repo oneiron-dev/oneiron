@@ -12,7 +12,7 @@ use crate::checkout::CheckoutId;
 use crate::error::{ArtifactError, Error};
 
 use super::connector::ByoaConnectorSpec;
-use super::error::{ByoaError, ByoaResult, ERR_ARGV_ENTRY, ERR_ARGV_TOO_LONG};
+use super::error::{ByoaError, ByoaResult, ERR_ARGV_ENTRY};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::RunnerSeat;
 use super::validate::validate_connector;
@@ -20,7 +20,7 @@ use super::validate::validate_connector;
 /// The connector `seat` would run the work on: its adapter's connector,
 /// judged by the dispatch validator before any custody is claimed for it,
 /// a custom adapter's included. `None` when its CLI argv cannot carry the
-/// task: a control character, or too many entries. An unknown runner and
+/// task: a control character in it. An unknown runner and
 /// every other refusal stand.
 ///
 /// # Errors
@@ -46,6 +46,6 @@ fn cli_argv_shape(error: &ByoaError) -> bool {
     matches!(
         error,
         ByoaError::Store(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason)))
-            if *reason == ERR_ARGV_ENTRY || *reason == ERR_ARGV_TOO_LONG
+            if *reason == ERR_ARGV_ENTRY
     )
 }

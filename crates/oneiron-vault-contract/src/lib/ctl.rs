@@ -12,8 +12,8 @@ use super::restore::{
 use super::slim_control::{SlimResidency, SlimStatusWire, UnslimWire};
 use super::wake::validate_wake_fields;
 use super::{
-    IdleReapWire, ManagedBackupFacts, ManagedTrainingSetting, WakeEntry,
-    valid_owner_signing_challenge,
+    IdleReapWire, LedgerPage, LedgerPageRequest, LedgerPulledRequest, LedgerReportHead,
+    ManagedBackupFacts, valid_owner_signing_challenge,
 };
 
 /// How a managed vault came up, as every `Ping` reports it.
@@ -46,7 +46,7 @@ pub enum ShedCause {
 pub enum CtlRequest {
     PrepareReap,
     ReapAbort,
-    /// Fields carry the same bounds as [`WakeEntry`]; vaults must run
+    /// Fields carry the same bounds as [`WakeEntry`](crate::WakeEntry); vaults must run
     /// [`CtlRequest::validate`] after parsing — deserialization alone does
     /// not enforce the wire limits.
     AlarmDue {
@@ -189,11 +189,28 @@ pub enum CtlRequest {
         #[serde(flatten)]
         request: RelayLockerBindRequest,
     },
+    /// Appended last (FIX 9549): one page of the wake ledger report the
+    /// freeze holds, which `prepare_reap` or `prepare_idle_reap` named
+    /// ([`CtlResponse::LedgerPage`]). Token-authenticated; a read that
+    /// writes nothing, so a vault frozen for reap answers it and stays
+    /// frozen. Build floor: the wake ledger pages'.
+    LedgerPage {
+        #[serde(flatten)]
+        request: LedgerPageRequest,
+    },
+    /// Appended last (FIX 9549): the supervisor holds the frozen report
+    /// durably; the vault takes it as delivered and lets it go
+    /// (`Ok { ok: true }`). Token-authenticated. Build floor: as
+    /// `ledger_page`'s.
+    LedgerPulled {
+        #[serde(flatten)]
+        request: LedgerPulledRequest,
+    },
 }
 
 impl CtlRequest {
     /// Vault-side reject-not-truncate enforcement: `alarm_due` fields share
-    /// the [`WakeEntry`] bounds; `shed` requires a positive observed wait, not
+    /// the [`WakeEntry`](crate::WakeEntry) bounds; `shed` requires a positive observed wait, not
     /// a policy threshold. Vaults call this immediately after parsing a ctl line.
     pub fn validate(&self) -> anyhow::Result<()> {
         match self {
@@ -218,6 +235,8 @@ impl CtlRequest {
             CtlRequest::RelayDeleteExecute { request } => request.validate()?,
             CtlRequest::RelayDeleteRechecks { request } => request.validate()?,
             CtlRequest::RelayLockerBind { request } => request.validate()?,
+            CtlRequest::LedgerPage { request } => request.validate()?,
+            CtlRequest::LedgerPulled { request } => request.validate()?,
             CtlRequest::PrepareReap
             | CtlRequest::ReapAbort
             | CtlRequest::Ping
@@ -437,16 +456,13 @@ pub enum LegalHoldsNotProven {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CtlResponse {
-    /// Supervisors must run [`validate_wake_entries`](crate::validate_wake_entries)
-    /// on `next_wake` before trusting it — deserialization alone does not enforce
-    /// the wire limits. `training` is the vault's live training setting at
-    /// `ledger_rev` (contract v3), shape-checked by [`CtlResponse::validate`];
-    /// a reply that carries none matches no variant.
+    /// `ledger` names the wake ledger report the freeze holds (FIX 9549):
+    /// its entries and the training setting at its revision, read page by
+    /// page with `ledger_page` ([`LedgerPage`] checks each) and released
+    /// with `ledger_pulled`. A reply that carries none matches no variant.
     PrepareReap {
         quiescent: bool,
-        ledger_rev: u64,
-        next_wake: Vec<WakeEntry>,
-        training: ManagedTrainingSetting,
+        ledger: LedgerReportHead,
     },
     /// `readiness` is how the vault came up (contract v3,
     /// [`ManagedReadiness`]); a reply that carries none is no `Ping`.
@@ -538,7 +554,7 @@ pub enum CtlResponse {
         ok: bool,
     },
     /// Appended after `Ok`. Required fields {slim, status} are disjoint from every
-    /// variant above ({quiescent, ledger_rev, next_wake, training},
+    /// variant above ({quiescent, ledger},
     /// {ok, vault, pid, contract_version, readiness}, {ok}), preserving the untagged
     /// declaration-order invariant. Do NOT add a required `ok` field here:
     /// it would let the `Ok` variant shadow this one during untagged
@@ -667,20 +683,26 @@ pub enum CtlResponse {
     RelayLockerBind {
         relay_locker_bind: RelayLockerBindWire,
     },
+    /// Appended last (FIX 9549): the answer to [`CtlRequest::LedgerPage`].
+    /// Its one required field {ledger_page} is disjoint from every variant
+    /// above, and it carries no `ok`.
+    LedgerPage {
+        ledger_page: LedgerPage,
+    },
 }
 
 impl CtlResponse {
     /// Validate SLIM status, residency, numerics, and blocker combinations,
-    /// the shape of `PrepareReap.training`, the residency an `Unslim` left,
-    /// the shape of a `RestoreStatus` page, of a `PrepareIdleReap` answer
-    /// ([`IdleReapWire::validate`]), of a `HostOrderHolds` page and of the
-    /// relay delete answers, after parsing. Existing
-    /// responses keep their prior validation requirements;
-    /// `PrepareReap.next_wake` still uses
-    /// [`validate_wake_entries`](crate::validate_wake_entries).
+    /// the shape of `PrepareReap.ledger` and of a `LedgerPage` page, the
+    /// residency an `Unslim` left, the shape of a `RestoreStatus` page, of a
+    /// `PrepareIdleReap` answer ([`IdleReapWire::validate`]), of a
+    /// `HostOrderHolds` page and of the relay delete answers, after parsing.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if let CtlResponse::PrepareReap { training, .. } = self {
-            training.validate()?;
+        if let CtlResponse::PrepareReap { ledger, .. } = self {
+            ledger.validate()?;
+        }
+        if let CtlResponse::LedgerPage { ledger_page } = self {
+            ledger_page.validate()?;
         }
         if let CtlResponse::RestoreStatus { restore_status } = self {
             restore_status.validate()?;

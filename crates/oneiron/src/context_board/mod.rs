@@ -38,9 +38,11 @@ pub(crate) use room::scope_worlds;
 pub use room::{
     RoomBar, RoomMode, RoomPosture, RoomPresence, RoomSection, RosterParty, room_scope,
 };
+pub use room_verbs::RoomSectionPage;
 pub(crate) use room_verbs::{
-    off_room_reader_clearance_in, room_ceiling_in, room_clearance_in, room_facets_axis_in,
-    room_reader_in, room_roster_in, thread_ceiling_in, thread_reader_in,
+    off_room_reader_clearance_in, public_thread_live_speakers_in, room_ceiling_in,
+    room_clearance_in, room_facets_axis_in, room_reader_in, room_roster_in, thread_ceiling_in,
+    thread_reader_in,
 };
 pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
@@ -76,7 +78,9 @@ pub use scratchpad::{
     SCRATCHPAD_LINE_MAX_BYTES, SCRATCHPAD_RECALL_LINES, ScratchpadAppendReceipt, ScratchpadBoard,
     ScratchpadMark, ScratchpadRecall, ScratchpadRecallLine,
 };
-pub(crate) use scratchpad::{erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists};
+pub(crate) use scratchpad::{
+    erase_scratchpad_rows_in_txn, scratchpad_erase_scope_exists, seal_session_pad_in_txn,
+};
 pub(crate) use scratchpad::{sealed_pad_reask_text, sealed_pad_review_text};
 
 pub use stream::{

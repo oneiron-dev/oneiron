@@ -1,3 +1,7 @@
+//! Affect facade: VAD annotations, claim VAD, triggers and coping outcomes.
+//! Entry: `Vad`, re-exported with its annotation types from contracts.
+//! oneiron_contracts::affect owns the wire types; local children own the rest.
+
 mod annotation;
 mod annotation_as;
 mod claim_vad;

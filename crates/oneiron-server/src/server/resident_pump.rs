@@ -29,6 +29,7 @@
 //! A leased run's planned team writes its start on the run's own seat and
 //! line, and a planned team's leader runs with the exact pattern pack its
 //! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod attribution;
 mod browser_workflow;
 mod child_pin;
 mod craft;

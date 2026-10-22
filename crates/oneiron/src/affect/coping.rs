@@ -1,3 +1,7 @@
+//! Coping outcomes: which strategy a person used and how their affect moved.
+//! Entry: `CopingOutcomeValue`, the typed `coping.outcome` claim body.
+//! Definitions are local to this module; affect types come from the parent.
+
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
