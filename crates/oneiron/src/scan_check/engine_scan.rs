@@ -143,11 +143,14 @@ pub enum EngineScan {
     /// The records one private-thread walk reaches from one record: its
     /// places and the sources of its words.
     PrivateThreadAncestryRecords,
+    /// One TASK's Linear mirror event index rows a provenance page reads,
+    /// its lookahead row included.
+    LinearProvenanceRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 57] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -204,6 +207,7 @@ impl EngineScan {
         Self::AudienceEdgeRows,
         Self::RoomAncestryRecords,
         Self::PrivateThreadAncestryRecords,
+        Self::LinearProvenanceRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -274,6 +278,7 @@ impl EngineScan {
             Self::AudienceEdgeRows => "audience_edge_rows",
             Self::RoomAncestryRecords => "room_ancestry_records",
             Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
+            Self::LinearProvenanceRows => "linear_provenance_rows",
         }
     }
 
@@ -290,6 +295,7 @@ impl EngineScan {
             Self::RetrievalRunRows => 1024,
             Self::CallReceiptRows => 8192,
             Self::BlockedRunReports => 128,
+            Self::LinearProvenanceRows => 200,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -352,6 +358,7 @@ impl EngineScan {
             Self::AudienceEdgeRows => 81,
             Self::RoomAncestryRecords => 82,
             Self::PrivateThreadAncestryRecords => 83,
+            Self::LinearProvenanceRows => 92,
         }]
     }
 }

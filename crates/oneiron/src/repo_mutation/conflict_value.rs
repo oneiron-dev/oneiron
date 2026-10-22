@@ -1,3 +1,7 @@
+//! Closed MessagePack values for repository conflict claims.
+//! The admission entry is `validate_repo_conflict_claim_value`.
+//! This module owns its value types and codecs and forwards no definitions.
+
 use std::collections::{BTreeSet, HashMap};
 
 use rmpv::Value;

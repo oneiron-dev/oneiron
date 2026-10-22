@@ -1,3 +1,7 @@
+//! The code run model-heal count request and view records.
+//! `CodeRunModelHealCountRequest` is the first of its records.
+//! These are local definitions; `memory::code_run_doors` re-exports them.
+
 use serde::{Deserialize, Serialize};
 
 /// Names the one model whose healed-turn tally the owner reads.
