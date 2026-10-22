@@ -24,11 +24,16 @@ use std::collections::BTreeMap;
 use heed::RoTxn;
 
 pub(crate) mod claims;
+pub(crate) mod clearance;
+pub(crate) mod edit;
 pub(crate) mod git;
 pub(crate) mod graph_objects;
+pub(crate) mod recipient;
+pub(crate) mod reveal;
 pub(crate) mod types;
 
 pub(crate) use self::git::ExactSourceExportProof;
+pub(crate) use self::recipient::{RepoRevealRecipient, RepoToolRecipient};
 pub(crate) use self::types::{
     REPO_OPAQUE_FILE_BYTES, RepoFileProjectionKind, RepoFileProjectionView, RepoGrantedFileProof,
     RepoOpaqueFile,
@@ -126,7 +131,15 @@ pub(crate) fn project_repo_blob<F: FnOnce() -> Result<Vec<u8>>>(
     audience: &RepoSecretAudience<'_>,
     read_exact: F,
 ) -> Result<RepoBodyProjection> {
-    if audience.reads_exact() || marks.is_empty() {
+    // A granted file proof opens only the ORIGINAL it was committed for:
+    // any other blob reads as a masked reader's (FIX 7608 2b-ii).
+    let exact = match audience {
+        RepoSecretAudience::GrantedFile(proof) => {
+            proof.covers(marks.source_blob(), marks.raw_blake3())
+        }
+        _ => audience.reads_exact(),
+    };
+    if exact || marks.is_empty() {
         return read_exact().map(RepoBodyProjection::Exact);
     }
     if let (true, Some(source_blob)) = (marks.opaque(), marks.source_blob()) {

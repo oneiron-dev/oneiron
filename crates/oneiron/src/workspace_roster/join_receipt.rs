@@ -125,19 +125,7 @@ pub const ACTOR_ERASE_PENDING_JOIN: RosterErase = RosterErase::Delete;
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the roster rows.
-pub(super) fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+pub(super) use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the joins (FIX 3520). A join no one settled whose
 /// remaining act waits on it, or that names it by id (FIX 4228), goes, when

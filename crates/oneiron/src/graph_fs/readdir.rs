@@ -48,6 +48,7 @@ impl<'read, 'vault> GraphFsResolver<'read, 'vault> {
             scoped_read,
             options,
             snapshot: None,
+            repo_masked: false,
         }
     }
 

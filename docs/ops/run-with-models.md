@@ -271,11 +271,17 @@ refused `SupervisorOwned`:
 
 - `--browser-runtime <path>` and `--desktop-runtime <path>`: the browser and
   desktop guests' container CLI, an absolute path on the vault's own host or
-  root filesystem. Each stands as the `runtime` of the owner's `[browser]` or
-  `[desktop]` section, which may then leave `runtime` out. The owner's section
-  still turns the guest on and picks its image and bounds; the flag alone turns
-  on no guest, and the guest still needs an isolating host. An owner's own
-  `runtime` inside the vault's storage works as before without the flag.
+  root filesystem. Each sets `runtime` only in the owner's existing
+  `[browser]` or `[desktop]` section; neither flag makes a section or starts
+  a guest by itself. A `[browser]` section that is otherwise valid may leave
+  `runtime` out even without the flag: the vault then serves it configured
+  and unbound, with no browser guest, and reports the image it would run.
+  With no `[browser]` section it reports not configured. With a runtime bound
+  it reports bound, which is not a verified start; a guest still needs an
+  isolating host. The owner's section still picks the image and bounds, and
+  an owner's own `runtime` inside the vault's storage works as before.
+  `[desktop]` is unchanged: its section needs `runtime`, from the owner or
+  `--desktop-runtime`, and has no configured-unbound mode.
 - `--organ-dir <path>`: where pack organ builds, the seal's among them, are
   written, on the tenant's own storage; without it, `<data_dir>/organs`. It is
   made private at start. A managed vault never reads `ONEIRON_ORGAN_DIR` and
@@ -302,9 +308,21 @@ refused `SupervisorOwned`:
   `not_owned`, `unreadable` or `unsupported`), never a refused start. An
   engine from before these flags refuses them, so a supervisor passes them
   only to engines at or after the merge that added them.
-- `--guest-runtime-fact <fact>` (managed only): the supervisor's one
-  observation of the guest runtime it provisioned for the vault's UID. It
-  moves only the browser's readiness and never refuses the start.
+- `--guest-runtime-fact <fact>` (managed only): the trusted supervisor's one
+  observation of the guest runtime it provisioned for the vault's UID, for
+  this engine spawn. Its exact spellings are `guest_runtime_provisioned`,
+  `guest_runtime_disabled`, `guest_runtime_nss_unavailable`,
+  `guest_runtime_subids_conflict`, `guest_runtime_userns_unavailable`,
+  `guest_runtime_userspace_missing`, `guest_runtime_limits_unavailable`,
+  `guest_runtime_dirs_unavailable`, `guest_runtime_image_import_failed` and
+  `guest_runtime_image_id_mismatch`. Provisioned means the image was imported
+  and the observed preconditions held, not that a guest started. A known
+  fact moves only the browser's readiness and never refuses the start; a
+  spelling not among these ten is refused. Without the flag there is no
+  observation, neither provisioned nor disabled. The flag binds no runtime
+  and starts or probes no guest. An engine from before this flag refuses it,
+  so a supervisor passes it only to engines at or after the merge that added
+  it (`version.rs`, guest runtime fact).
 - `--hosted-private-origin <origin>` (managed only, repeatable): a private
   origin the hosted node's web fetch may reach (FIX 7657). A managed node's
   fetch refuses hosted infrastructure (loopback, "this host", link-local,
@@ -381,6 +399,44 @@ vault reports ready, with the reason `managed_facility_missing`. A degraded
 vault still serves and sends the same ready byte: reads and sync go on, and
 the signing and world-key doors refuse as they do without a keystore. An owner
 who set `backend = "off"` gets `ready`.
+
+Beside it, a managed vault's ctl `Ping` carries `browser`, and the
+authenticated `GET /v1/owner/status` reply requires it: both read the same
+live browser readiness (FIX 7670). It starts again at each engine spawn from
+the `[browser]` section, its runtime binding and the supervisor's runtime
+fact, and moves only when a browser guest start this process makes
+completes: a `browser.session` check, a run's browser (an engine switch or a
+replay included) or a web fetch's headless render. The last completed start
+stands. Reading it starts or probes nothing, it has no expiry and is not
+kept, and a desktop start never moves it. The boot-only `readiness` above
+stays as it is.
+
+Its `state` and the keys each state requires:
+
+- `not_configured`: no `[browser]` section; `state` alone.
+- `configured_unbound`: a section with no runtime bound, so no guest can
+  start; `image` and `runtime_fact`.
+- `bound`: a runtime is bound and no start has completed; `image` and
+  `runtime_fact`. The binding proves no start.
+- `verified_start`: the last start ran in a proved sandbox and its browser
+  driver attached; `image`, `runtime_fact`, `tier` (`firecracker` or
+  `fenced_oci`) and `last_observed_at`. It proves that start, not a seat live
+  now.
+- `unavailable`: the last start failed; `image`, `runtime_fact`,
+  `last_observed_at` and `reason` (`sandbox_unavailable`, `guest_start_failed`,
+  `driver_attach_failed` or `session_receipt_failed`).
+
+`runtime_fact` is present as `null` in each state that has it when the
+supervisor observed none; that is not a provisioned or disabled fact. No
+browser state fails the ready handshake, turns `Ping`'s `ok` false or asks
+for a restart: the vault serves in each, and only its browser acts refuse
+while it has no browser. Each reply carries a build floor at the engine
+revision it merged in, with contract v3 unchanged and no `Ping` revision
+field. A `Ping` with no `browser` says its engine offers no browser, as one
+built before that floor sends none, and no browser state stands in for it.
+A client that reads the owner's status `browser` runs against an engine at
+or after the floor; no reply without it is read and no default stands in
+for it. Public `/api/health` carries none of it.
 
 The supervisor gives a vault its publisher training outbox (OF-420, "Learn from
 my conversations") as `--publisher-training-outbox-dir <vault>/training-outbox`,
