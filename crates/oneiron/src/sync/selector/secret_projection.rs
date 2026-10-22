@@ -45,7 +45,9 @@
     reason = "FIX 7608 slice 4, part 1: the release and inbound adapters call these when they activate together"
 )]
 
+mod frames;
 mod history;
+mod release;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -61,6 +63,8 @@ use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
 pub(crate) use history::ProjectedHistory;
+pub use release::{RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame};
+pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::{CopyRow, InboundRow};
 
 /// The domain a copy id is derived in.

@@ -277,9 +277,18 @@ pub fn promotion_window_pads(
     window: &WindowKey,
     snapshot: &[u8],
 ) -> Result<Vec<u8>, TransportError> {
-    prepare_window_pads(vault, window, snapshot, None, peer)
-        .envelope(WindowPadKind::Promotion, None)
-        .encode()
+    // FIX 7608 slice 4: the masked copy, made before any pad is.
+    let masked = crate::sync::selector::prepare_repo_sync_frame(vault, snapshot, None)
+        .map_err(|error| TransportError::Storage(error.to_string()))?;
+    prepare_window_pads(
+        vault,
+        window,
+        masked.as_deref().unwrap_or(snapshot),
+        None,
+        peer,
+    )
+    .envelope(WindowPadKind::Promotion, None)
+    .encode()
 }
 
 /// What this machine did with `envelope`'s pads, a frame of `window` that

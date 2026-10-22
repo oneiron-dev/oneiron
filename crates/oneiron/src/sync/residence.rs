@@ -351,8 +351,11 @@ pub fn selected_item_blob_with(
     withhold: Withhold<'_>,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-    Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+    // FIX 7608 slice 4: a copy id reads its source; a marked row is its copy.
+    super::selector::secret_projection::released_item_blob(vault, item, |item| {
+        let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+        Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+    })
 }
 
 /// Refuse a local put at an item held only as a thin read cache. The check

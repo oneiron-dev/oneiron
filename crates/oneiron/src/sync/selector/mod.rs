@@ -27,6 +27,7 @@ mod peer_confidence;
 mod scope;
 // FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
 pub(crate) mod secret_projection;
+pub use secret_projection::{RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame};
 mod text_egress;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;

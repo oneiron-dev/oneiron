@@ -91,6 +91,12 @@ impl SyncClient {
         context: Option<&LoroDoc>,
     ) -> Result<PreparedWindowPads, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // FIX 7608 slice 4: the home gets a marked repo item's masked copy,
+        // made before any pad is; one that cannot be masked fails this send
+        // and stays in the window, owed to the next exchange.
+        let masked = crate::sync::selector::prepare_repo_sync_frame(&self.vault, payload, context)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let payload = masked.as_deref().unwrap_or(payload);
         if self.window_pad_ledger().carrier.contains(window_key) {
             return Ok(carrier_window_pads(&self.vault, &key, payload, context));
         }
@@ -262,9 +268,22 @@ impl SyncClient {
         };
         let receipt = admit_window_pads(&self.vault, key, &envelope);
         if receipt.readiness != WindowPadReadiness::NotReady {
+            // FIX 7608 slice 4: a copy edit lands on its source here; a ruled
+            // hold imports nothing, and the home sends it again.
+            let window = self.window(key.as_str());
+            let admitted = crate::sync::selector::admit_repo_sync_frame(
+                &self.vault,
+                key.as_str(),
+                &envelope.payload,
+                window.as_ref().map(|window| &window.doc),
+            )
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+            let crate::sync::selector::RepoSyncAdmission::Admit(payload) = admitted else {
+                return Ok(ControlFlow::Break(Vec::new()));
+            };
             return Ok(ControlFlow::Continue((
                 sub_tag,
-                Cow::Owned(envelope.payload),
+                Cow::Owned(payload.into_owned()),
             )));
         }
         // Nothing of it imports. The home is told, sends this window as the
