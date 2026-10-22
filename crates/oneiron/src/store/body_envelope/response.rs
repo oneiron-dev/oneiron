@@ -200,6 +200,9 @@ pub(crate) enum ResponseFamily {
     /// A public model-step submission: its request and its result, kept
     /// beside the receipt's metadata (FIX 9929).
     ModelStepSubmission,
+    /// The reply assertions a MESSAGE born whole kept (FIX 10260), carried
+    /// whole: an owner's erase retires the row.
+    MessageReplyAssertions,
 }
 
 impl ResponseFamily {
@@ -216,6 +219,10 @@ impl ResponseFamily {
                 (
                     &side_table::MODEL_STEP_SUBMISSION,
                     Self::ModelStepSubmission,
+                ),
+                (
+                    &side_table::MESSAGE_REPLY_ASSERTIONS,
+                    Self::MessageReplyAssertions,
                 ),
             ]
             .into_iter()
@@ -251,7 +258,8 @@ impl ResponseFamily {
             | Self::BlockedCapture
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::ModelStepSubmission => ResponseDb::VaultMeta,
+            | Self::ModelStepSubmission
+            | Self::MessageReplyAssertions => ResponseDb::VaultMeta,
         }
     }
 
@@ -301,6 +309,9 @@ impl ResponseFamily {
                 crate::attempt_queue::attempt_payload_stub(key, value).map(whole),
             ),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
+            Self::MessageReplyAssertions => {
+                ResponseScan::decoded(crate::memory::reply_assertions_stub(value).map(whole))
+            }
         }
     }
 
@@ -371,6 +382,7 @@ impl ResponseFamily {
             Self::WaitSettled => crate::code_run::wait_settled_owners(store, txn, key),
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
+            Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
             // A clip's owners are its job's, as the job's row stamps them.
             Self::MediaPart => {
                 let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
@@ -406,7 +418,7 @@ impl ResponseFamily {
                 drop_row(databases, ResponseDb::SyncState, key);
                 Ok(())
             }
-            Self::BlockedCapture => {
+            Self::BlockedCapture | Self::MessageReplyAssertions => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -454,7 +466,7 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
-            Self::BlockedCapture => {
+            Self::BlockedCapture | Self::MessageReplyAssertions => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

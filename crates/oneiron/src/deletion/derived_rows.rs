@@ -32,6 +32,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::dreamer_runner::maintenance::erase_source_copies_in_txn,
     // FIX 9929: a public model step's kept request and result.
     crate::llm::erase_submissions_in_txn,
+    // FIX 10260: a MESSAGE's kept reply assertions.
+    crate::memory::erase_reply_assertions_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
 ];

@@ -17,6 +17,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
+    // Content-owned audit, never authority (FIX 10260).
+    (&t::MESSAGE_REPLY_ASSERTIONS, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
     (&t::MESSAGE_STREAM_RECEIPT, CONTENT),
