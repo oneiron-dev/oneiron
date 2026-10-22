@@ -1,3 +1,6 @@
+//! How live query subscriptions are delivered: a refresh, and resyncs on published changes.
+//! `LiveQueries::refresh` is its call surface, driven by the server's subscription loop.
+//! The subscriptions root defines `LiveQueries` and its state, the records used here.
 use super::*;
 
 impl LiveQueries {

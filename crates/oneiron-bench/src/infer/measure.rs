@@ -164,6 +164,7 @@ pub(super) async fn drive(
                 message,
                 usage,
                 finish_reason,
+                ..
             } => {
                 let text: String = message
                     .content

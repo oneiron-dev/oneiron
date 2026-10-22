@@ -28,31 +28,20 @@ pub struct SkillsSection {
 
 impl SkillsSection {
     /// Skills and agent definitions the capability channel found, each one
-    /// `found` row; a definition's row says `agent` (PEOPLE, ARCH-0067: the
-    /// AGENTS section is gone, and its candidates found here).
-    pub fn project(hits: &[CapabilityHit], session: &SessionReadSet) -> Self {
-        let found = found_hits(hits)
-            .map(|hit| {
-                let kind = if hit.entity_type == ENTITY_TYPE_AGENT_DEF {
-                    "agent "
-                } else {
-                    ""
-                };
-                format!(
-                    "{} found {kind}{}",
-                    hit.id.to_hex(),
-                    one_line_token(&hit.label)
-                )
-            })
+    /// `found` row led by its vault short handle (`sk<n>`, `ag<n>`) (FIX
+    /// 7984); a definition's row says `agent` (PEOPLE, ARCH-0067: the AGENTS
+    /// section is gone, and its candidates found here). A hit the vault holds
+    /// no handle for keeps its row under its hex id.
+    pub fn project(
+        hits: &[CapabilityHit],
+        session: &SessionReadSet,
+        vault: &crate::Vault,
+    ) -> crate::Result<Self> {
+        let found = found_rows(hits, vault)?
+            .into_iter()
+            .map(|(_, row)| row)
             .collect();
-        let loaded: Vec<_> = session
-            .loaded_skills()
-            .map(|(id, version)| format!("{}@{}", one_line_token(id), one_line_token(version)))
-            .collect();
-        Self {
-            found,
-            loaded: format!("loaded: {}", loaded.join(",")),
-        }
+        Ok(Self::with_found(found, session))
     }
 
     /// [`Self::project`] with the learning view on each found row: the
@@ -65,23 +54,35 @@ impl SkillsSection {
         vault: &crate::Vault,
         actor: Option<EntityId>,
     ) -> crate::Result<Self> {
-        let mut section = Self::project(hits, session);
-        for (row, hit) in section.found.iter_mut().zip(found_hits(hits)) {
-            if hit.entity_type != ENTITY_TYPE_SKILL {
-                continue;
+        let mut found = Vec::new();
+        for (hit, mut row) in found_rows(hits, vault)? {
+            if hit.entity_type == ENTITY_TYPE_SKILL {
+                if let Some(posterior) =
+                    crate::skill_reliability::skill_reliability_posterior(vault, &hit.id)?
+                {
+                    row.push_str(&format!(" rel={:.2}", posterior.mean()));
+                }
+                if let Some(actor) = actor
+                    && let Some(fit) = crate::actor_claims::skill_fit_for(vault, &actor, &hit.id)?
+                {
+                    row.push_str(&format!(" fit={fit:.2}"));
+                }
             }
-            if let Some(posterior) =
-                crate::skill_reliability::skill_reliability_posterior(vault, &hit.id)?
-            {
-                row.push_str(&format!(" rel={:.2}", posterior.mean()));
-            }
-            if let Some(actor) = actor
-                && let Some(fit) = crate::actor_claims::skill_fit_for(vault, &actor, &hit.id)?
-            {
-                row.push_str(&format!(" fit={fit:.2}"));
-            }
+            found.push(row);
         }
-        Ok(section)
+        Ok(Self::with_found(found, session))
+    }
+
+    /// The section over its `found` rows, with the session's loaded line.
+    fn with_found(found: Vec<String>, session: &SessionReadSet) -> Self {
+        let loaded: Vec<_> = session
+            .loaded_skills()
+            .map(|(id, version)| format!("{}@{}", one_line_token(id), one_line_token(version)))
+            .collect();
+        Self {
+            found,
+            loaded: format!("loaded: {}", loaded.join(",")),
+        }
     }
 
     pub fn board_section(&self) -> Result<BoardSection, BoardFrameError> {
@@ -103,6 +104,31 @@ impl SkillsSection {
 fn found_hits(hits: &[CapabilityHit]) -> impl Iterator<Item = &CapabilityHit> {
     hits.iter()
         .filter(|hit| matches!(hit.entity_type, ENTITY_TYPE_SKILL | ENTITY_TYPE_AGENT_DEF))
+}
+
+/// Each found hit with its `found` row, led by the short handle the vault's
+/// short-id mapping holds for its id, else by its hex id.
+fn found_rows<'a>(
+    hits: &'a [CapabilityHit],
+    vault: &crate::Vault,
+) -> crate::Result<Vec<(&'a CapabilityHit, String)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut rows = Vec::new();
+    for hit in found_hits(hits) {
+        let handle =
+            crate::ports::ShortIdStoreRead::port_short_id_reference(&vault.store, &txn, &hit.id)?
+                .map_or_else(|| hit.id.to_hex(), |(handle, _)| handle);
+        let kind = if hit.entity_type == ENTITY_TYPE_AGENT_DEF {
+            "agent "
+        } else {
+            ""
+        };
+        rows.push((
+            hit,
+            format!("{handle} found {kind}{}", one_line_token(&hit.label)),
+        ));
+    }
+    Ok(rows)
 }
 
 fn serialize_capability_id<S: serde::Serializer>(

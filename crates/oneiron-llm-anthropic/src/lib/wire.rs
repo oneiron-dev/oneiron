@@ -232,6 +232,8 @@ pub fn parse_anthropic_messages_response(body: &JsonValue) -> LlmResult<LlmRespo
             .get("usage")
             .map_or_else(LlmUsage::zero, parse_anthropic_usage),
         finish_reason: stop_reason,
+        // A provider's reply asserts no record: its host alone does (FIX 3416).
+        reply_assertions: Default::default(),
     })
 }
 

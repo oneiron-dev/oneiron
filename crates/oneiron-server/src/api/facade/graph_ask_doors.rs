@@ -28,7 +28,7 @@ use oneiron::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
     QuestionScheduleHead, ScheduledBackfill, calibration_pairs, create_question, edit_question,
     outcome_labels, pause_question, project_bound_outcomes, question_call_budget, read_question,
-    read_question_schedule, refresh_artifact_question_now, refresh_question_with,
+    read_question_schedule, refresh_artifact_question_now, refresh_standing_question_with,
     run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
@@ -43,7 +43,7 @@ use oneiron::receipt::{
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::{Listed, hex_rows, internal, naming};
+use super::host_doors::support::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
@@ -431,19 +431,27 @@ async fn vault_questions_refresh_answer(
         if let Some(asks) = asked {
             return Ok(QuestionAnswer::union(Vec::new(), asks));
         }
-        let graph =
-            refresh_question_with(vault, asker, asker.entity_ref(), input.id, now, |record| {
+        // The answers are written, and the answerer answers, as the asker the
+        // question's version keeps (FIX 9176).
+        let graph = refresh_standing_question_with(
+            vault,
+            asker,
+            asker.entity_ref(),
+            input.id,
+            now,
+            |record, writer| {
                 Ok(LadderGraphAnswerer::routed(
                     &server,
                     record.principal,
-                    asker,
+                    writer,
                     standing_ask_route(record.principal),
                     record.definition.dial,
                     record.definition.deadline(vault)?,
                 )
                 .with_criteria(record.definition.criteria.clone())
                 .with_posture(record.definition.posture))
-            })?;
+            },
+        )?;
         Ok(QuestionAnswer::union(graph, Vec::new()))
     })
     .await
