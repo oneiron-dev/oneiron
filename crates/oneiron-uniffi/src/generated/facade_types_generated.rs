@@ -61796,6 +61796,12 @@ pub struct FoldHistoryStep {
         skip_serializing_if = "Option::is_none"
     )]
     pub preparation_note: Option<ProgramPreparationNote>,
+    #[serde(
+        rename = "type_feedback",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub type_feedback: Option<ProgramStepFeedbackRelease>,
 }
 
 /// `oneiron::engine_executor::history::FoldHistory`.

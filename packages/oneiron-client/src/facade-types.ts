@@ -7781,7 +7781,7 @@ export type FoldUnfold = { fold: number; at: number }
 /** `oneiron::engine_executor::history::FoldHistoryEpoch` */
 export type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null }
 /** `oneiron::engine_executor::history::FoldHistoryStep` */
-export type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null }
+export type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null; type_feedback?: ProgramStepFeedbackRelease | null }
 /** `oneiron::engine_executor::history::FoldHistory` */
 export type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null }
 /** `oneiron::memory::run_review::RunReviewChange` */

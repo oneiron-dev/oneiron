@@ -20103,6 +20103,7 @@ class FoldHistoryStep(TypedDict):
     console: str
     type_diagnostics: NotRequired[TypeDiagnostics | None]
     preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_feedback: NotRequired[ProgramStepFeedbackRelease | None]
 class FoldHistory(TypedDict):
     run: str
     completed_steps: int

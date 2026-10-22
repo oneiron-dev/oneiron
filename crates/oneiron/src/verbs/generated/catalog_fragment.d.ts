@@ -3993,7 +3993,7 @@ declare namespace Sdk {
   type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type FoldUnfold = { fold: number; at: number };
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
-  type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null };
+  type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null; type_feedback?: ProgramStepFeedbackRelease | null };
   type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
   type RunReviewChange = { kind: "claim"; claim_ref: string } | { kind: "edge"; provenance_ref: string } | { kind: "note"; note_ref: string; fork_ref: string } | { kind: "topology"; event_ref: string } | { kind: "external_effect"; receipt_ref: string } | { kind: "delete"; entity_ref: string } | { kind: "erase"; entity_ref: string };
   type RunReviewRequest = { run_id: string; changes: RunReviewChange[] };
