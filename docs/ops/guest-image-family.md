@@ -127,6 +127,9 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       its build overlay, so they link against the glibc the image ships. It
       runs `--locked --offline` with the mirror's clean `CARGO_HOME`,
       `--remap-path-prefix` for every build path, and `SOURCE_DATE_EPOCH`.
+      C and C++ that build scripts compile (cc, cmake) get the same maps as
+      `CFLAGS`/`CXXFLAGS` `-ffile-prefix-map`: the Rust remap never reaches a
+      C compiler, and tree-sitter's C keeps its assertions' `__FILE__`.
       An external source build runs after it, in `env -i` with only the
       variables it names: its own Rust and store, `--remap-path-prefix` and
       C `-ffile-prefix-map` for its source, store, toolchain and target dir,
@@ -134,7 +137,10 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       the two source SHAs its build script would otherwise ask git for).
       Default features, as the Docker recipe built it.
    4. `mkosi.postinst` places the guest account, pinned files, payloads,
-      launchers and links. An npm package is unpacked without npm or its
+      launchers, links, directories and empty files. An empty file (the
+      vault's `/etc/resolv.conf`) is an empty regular file at its mode: a
+      link at its path is removed, never followed, a parent that is a link
+      is refused, and `install -D -T` refuses a directory there. An npm package is unpacked without npm or its
       lifecycle scripts: `package/package.json` must name the pinned
       package and version, `package/` goes, a link or `..` member refuses
       it, and modes are normalized (directories 0755, files 0644, files the
@@ -375,14 +381,23 @@ budgets are each variant's proposed `payload_max_bytes` in `release.toml`.
 | checker | built-candidate | 950.1 MiB (996,290,560) | 2.67 GiB (2,866,141,097) | 2-8 GiB provisional: within | 3.16 GiB (3,388,997,632; 864 MiB, 905,969,664) | 2.96 GiB | 2.13 GiB |
 | generic-agent | built-candidate | 105.5 MiB (110,622,720) | 270.3 MiB (283,428,090) | <= 1 GiB: within | 400.0 MiB (419,430,400; 3.61 GiB) | 302.8 MiB | 2.00 GiB |
 
-- **Every output is new bytes, and none is `boot-proved`.** The engine pin
+- **Three outputs are `boot-proved` by their acceptance smokes on kel**
+  (10-22 21:3x-21:4x, p5's images, `--network none`): the checker by L11-A's
+  offline-workspace-check smoke (5 of 5 legs, `cargo check --locked
+  --workspace --all-features` rc=0 in 670 s), desktop-cua by L11-B's image
+  legs (7 of 7: MCP initialize on stdio, 64 tools, the Xvfb display,
+  get_screen_size, get_desktop_state; peak 58.1 MiB), and generic-agent by
+  L11-B's image legs (9 of 9: python3, bun, tsrs and tsrs-wasm each
+  `--version`, a clean and a failing `.ts`; peak 188.6 MiB). Each output's
+  `note` names its host, time, run and image id. @@BROWSER_NOTE@@
+- **Every output was new bytes at this pin.** The engine pin
   moved from `95afa460192b…` to `79a82238e3…` (FIX 10353; the first main
   whose default oneiron-server build compiles, so the vault pack builds at
   this same pin): every native binary, the checker's Cargo store and the
-  OCI revision annotation change with it. The browser's Lightpanda smoke (b6's image) and the checker's
-  offline-check smoke (f1's image) proved layers these outputs do not have,
-  so both outputs are `built-candidate` until their smokes run again on
-  these images. Their earlier notes are in "Findings" below.
+  OCI revision annotation change with it. The browser's Lightpanda smoke
+  (b6's image) and the checker's first offline-check smoke (f1's image)
+  proved layers these outputs do not have; the checker's p5 smoke above
+  replaces its proof. Their earlier notes are in "Findings" below.
 - **desktop-cua** carries `/usr/local/bin/cua-driver` (58,739,952 bytes,
   sha256 `4ff2703f9ff5…`), built offline in the image's build overlay from
   trycua/cua `6d6c734c127025fb…` (driver 0.36.0) with rustc 1.97.1, default
@@ -569,6 +584,52 @@ stdio with its Xvfb display (L11-B); generic-agent's exec of Python, Bun,
 Earlier candidates, for the record: run b6's browser (archive
 `5d900355867e…`) was smoked on nelly; run f1's checker (archive
 `27446d5730f7…`, engine `95afa460192b…`) was smoked on kel.
+
+## The vault candidate (phase 4)
+
+The vault variant builds like the others, with these differences:
+- **No guest plumbing.** There is no guest account, fence or guest agent,
+  and PID 1 is the pinned `deploy/firecracker/oneiron-vault-init` at
+  `/usr/sbin/oneiron-vault-init`, byte for byte.
+- **The engine binaries.** `oneiron-server`, `oneiron-broker`,
+  `oneiron-vm-init` and `oneiron-vm-outbox` (one Cargo invocation, default
+  features) compile in release in the image's build overlay:
+  build-essential, pkg-config, and cmake, which expat-sys needs to build its
+  bundled Expat when the overlay has no system Expat. @@VAULT_NEEDED@@
+- **Memory.** A release build of oneiron-server ran out of memory above
+  22 GiB at one Cargo job, so book the vault build at 48G on a host that
+  allows it (nelly); kel, bel and mel cap a guest at 16G.
+  @@VAULT_PEAK@@
+- **What the init runs.** sh, cat, head and sync come with Debian's
+  essential set; mount and umount with `mount`. `reboot -f` is busybox's
+  reboot applet, through one root-owned link, `/usr/bin/reboot` ->
+  `/usr/bin/busybox` (no `--install`, no setuid). With `-f` it makes the
+  reboot call itself, with no init system asked.
+- **Mountpoints.** `/vault`, `/config`, `/restore` and `/etc/oneiron` are
+  0755 directories. `/etc/resolv.conf` is an empty regular file, 0644
+  root:root, which the guest network covers with a bind mount of its
+  runtime resolver file (`crates/oneiron-server/src/managed/vm_init/network.rs`).
+- **Capabilities.** No rootless guest runtime is staged. The receipt's
+  `vault_capabilities` says so in deploy/firecracker/build.py's rootfs-receipt
+  fields: `vm_guest_runtime_revision` 0, `guest_runtime` null, and
+  `vm_trusted_organ_builds_revision` 1 (the pinned init passes the config
+  drive's trusted-organ-builds to the engine). They are measured from
+  `rootfs.tar` by the same function as the manifest's `contracts.vault`
+  facts.
+
+**Export versus launch.** The vault's OCI archive is an export: every
+family output has one, but the vault runs only as a Firecracker microVM
+(`host.kvm` true), and nothing in this family launches it. LC's vault VM
+boots `rootfs.ext4` read-only as `/dev/vda` with an operator-supplied
+kernel, which the family does not build (`build.py manifest --kernel`
+lists one), and its own vault, config and restore disks. Hypnos today
+imports the standalone image from deploy/firecracker/build.py: its
+`manifest.json` and `rootfs-receipt.json`, which it checks agree. Taking
+this candidate instead is LC's `vault-family-artifact-import`, together
+with the kernel and LC's boot legs (health, provision, restore, outbox,
+resolver, shutdown). None of them ran here.
+
+**The candidate (run @@VTAG@@, nelly):** @@VAULT_TABLE@@
 
 ## Repeatability
 

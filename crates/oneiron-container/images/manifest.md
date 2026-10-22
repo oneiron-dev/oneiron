@@ -83,6 +83,36 @@ own rootfs and kernel bytes instead; its snapshot is not qualified. It
 shares the emitter's schema check, exact-byte write and signing seam: with
 no `--signer-cmd`, no envelope is written.
 
+### The family's vault output: exported, not launched
+
+The family builder's `vault` variant (phase 4) is a second, independent
+producer of a vault rootfs: mkosi from the frozen snapshot, the four engine
+binaries compiled in the image's own userspace, and the pinned init
+unmodified (`images/README.md`). Its manifest is an ordinary builder output:
+- a real OCI form, which is an export only. The vault runs only as a
+  Firecracker microVM, so `host.kvm` is true.
+- `rootfs.ext4`, the image LC's vault VM would attach read-only as
+  `/dev/vda`.
+- `artifacts.kernel.image` `null` unless `manifest --kernel` names the
+  operator's vault kernel. The family builds no kernel; `kernel.config` pins
+  the vault config fragment.
+- the three binary roles all `null` (no guest, fence or relay).
+- `contracts.storage` set, and the two measured capability facts:
+  trusted organ builds 1 (the pinned init is present) and guest runtime 0.
+
+The receipt repeats those two facts in deploy/firecracker/build.py's
+rootfs-receipt field names (`vault_capabilities`: `vm_guest_runtime_revision`,
+`guest_runtime` null, `vm_trusted_organ_builds_revision`), measured by the
+same function, so the two documents cannot disagree.
+
+Nothing launches this output today. Hypnos imports the standalone image
+above: it reads `manifest.json` and `rootfs-receipt.json` from
+deploy/firecracker/build.py and checks that they agree. It reads neither this
+manifest's `contracts.vault` nor the family receipt. Taking the family's
+vault needs LC's hash-preserving import (`vault-family-artifact-import`), a
+kernel, and LC's boot legs. A no-runtime candidate is never a profile that
+binds guest runtimes. Measured (run @@VTAG@@): @@VAULT_SIZES@@.
+
 ## Wire
 
 All fields are required, and unknown fields are refused at every level. A
@@ -101,7 +131,7 @@ No path is absolute on the host.
 | `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. Required: `null` only for the standalone Firecracker vault image, which names its kernel image; every builder output names its real OCI form. |
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
-| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver` and generic-agent's Bun, tsrs and launchers are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
+| `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver`, generic-agent's Bun, tsrs and launchers, and the vault's four engine binaries (`oneiron-server`, `oneiron-broker`, `oneiron-vm-init`, `oneiron-vm-outbox`) are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
 | `sbom` | The build's SPDX 2.3 JSON SBOM: `{media_type: "application/spdx+json", path: "sbom.spdx.json", sha256}`, measured again from the file and checked against the receipt; `null` for a build without one. The in-toto provenance statement (`provenance.json`) is named by the receipt. |
 | `provenance` | The build receipt: `{media_type, path: "receipt.json", sha256}`. |
 | `host` | `kvm` (true when every launch form needs `/dev/kvm`; only the vault), `kernel_floor` (from the fence's Landlock ABI floor: ABI 3 needs Linux 6.2), `landlock_abi_floor`, and `seccomp_user_notify` (fence plumbing). |

@@ -8,7 +8,7 @@ The runbook is [docs/ops/guest-image-family.md](../../../docs/ops/guest-image-fa
 | File | Holds |
 |---|---|
 | `release.toml` | The one release list: frozen inputs (base digests, Debian snapshot, mkosi, Rust, engine commit, existing pins by path + sha256, contract revisions, payloads), proposed budgets, and each variant's built outputs (absent until measured). |
-| `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, owners, OCI run config). |
+| `packages.toml` | Requests only: the tools tree, `[base]` and the five overlays (packages, build-only packages, native bins, external source builds, files, payloads, launchers, links, directories, empty files, owners, OCI run config). |
 | `packages.lock.toml` | The resolved Debian closure, written by the first `fetch --learn`. |
 | `build.py`, `imagebuild/` | `validate`, `fetch`, `build --variant`, `receipt`, `manifest`; `imagebuild/attest.py` writes each build's SBOM and provenance statement. |
 | `release-manifest.schema.json`, `manifest.md` | The release manifest's closed wire (`image-release.json` and its detached signature envelope), the verification results and the observe-only policy. |
@@ -42,6 +42,34 @@ What the phase-3 variants install, all from pins checked in the fetch:
   `/opt/tsrs/node_modules` (their sha512 integrity checked on every use), and
   `/usr/local/bin/tsrs` and `/usr/local/bin/tsrs-wasm`, two-line launchers
   that run the packages' entry files under Bun. There is no Node.
+
+What the vault (phase 4) installs, with no guest plumbing:
+- the engine's `oneiron-server`, `oneiron-broker`, `oneiron-vm-init` and
+  `oneiron-vm-outbox` in `/usr/bin`, built in release in the image's build
+  overlay (build-essential, pkg-config, and cmake for expat-sys's bundled
+  Expat);
+- the pinned `deploy/firecracker/oneiron-vault-init`, unmodified, at
+  `/usr/sbin/oneiron-vault-init` (the kernel's `init=/sbin/oneiron-vault-init`
+  in the merged /usr);
+- `mount`, and busybox with one link, `/usr/bin/reboot`, for the init's
+  `reboot -f`;
+- the mountpoints `/vault`, `/config`, `/restore` and `/etc/oneiron`, and an
+  empty regular file, `/etc/resolv.conf` (0644), which the guest network
+  covers with a file bind mount.
+
+Its receipt's `vault_capabilities` holds what deploy/firecracker/build.py's
+rootfs receipt would: guest runtime revision 0 with a null descriptor (no
+rootless guest runtime is staged), and trusted organ builds revision 1.
+Measured (run @@VTAG@@): @@VAULT_SIZES@@.
+
+The vault output is an export, not something this family launches. It has an
+OCI form because every output does, but the vault runs only as a Firecracker
+microVM (`host.kvm` is true). LC's vault VM boots `rootfs.ext4` read-only,
+with a kernel the family does not build (`manifest --kernel` lists one) and
+its own vault, config and restore disks. Hypnos imports the standalone image
+of deploy/firecracker/build.py (its `manifest.json` and `rootfs-receipt.json`),
+not this output: taking the family's vault is LC's
+`vault-family-artifact-import`.
 
 Each build writes these under `<work>/artifacts/<variant>/`:
 - `rootfs.tar` (xattrs: only security.capability is exported, as v2) and
