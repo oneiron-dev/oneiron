@@ -51,6 +51,7 @@ use crate::learning_setting::{
     GROUP_COMMIT_MAX_WRITES, GROUP_COMMIT_WINDOW_MS, SettingSpec, setting_value_in_txn,
 };
 
+use super::legal_hold::RefusalBatch;
 use super::{Store, active_write_txn_depth};
 
 /// Whose closure a write runs, which decides whether its group may go on
@@ -401,9 +402,10 @@ impl Store {
     }
 
     /// [`Self::group_write`] for a write of either kind: a
-    /// [`Callback::Opaque`] write runs as a group of its own. Once its group
-    /// settled, the legal-hold refusals queued so far reach their logs before
-    /// it answers ([`Self::flush_legal_hold_refusals_settled`]); a write nested
+    /// [`Callback::Opaque`] write runs as a group of its own. Each write's
+    /// legal-hold refusals reach their logs in its group's own transaction,
+    /// kept whatever its rows did, so they are durable when it answers and no
+    /// writer is taken again while its answer lives (FIX 2435); a write nested
     /// in a held writer leaves them to its outer write.
     pub(crate) fn group_write_as<T, E>(
         &self,
@@ -433,16 +435,12 @@ impl Store {
         };
         drop(announced);
         let Some(ticket) = ticket else {
-            let answer = self.lead(callback, write);
-            self.flush_legal_hold_refusals_settled();
-            return answer;
+            return self.lead(callback, write);
         };
-        let answer = match ticket.wait_for_turn() {
+        match ticket.wait_for_turn() {
             Assigned::Lead => self.lead(callback, write),
             Assigned::Run(shared) => self.join(&ticket, shared, write),
-        };
-        self.flush_legal_hold_refusals_settled();
-        answer
+        }
     }
 
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
@@ -496,22 +494,36 @@ impl Store {
         };
         let opened = Instant::now();
         let limits = Limits::read(self, &shared);
-        // The leader writes straight into the shared transaction. It goes
-        // first, so a failure has no neighbour to protect and drops it whole.
-        let answer = match catch_unwind(AssertUnwindSafe(|| write(&mut shared))) {
-            Ok(Rows::Commit(value)) => Ok(value),
-            Ok(Rows::Refuse(err)) => Err(err),
-            Ok(Rows::Discard(answer)) => {
-                drop(shared);
+        // The leader's rows go first, in a transaction nested in the shared
+        // one, so dropping them keeps the refusals logged beside them.
+        let (staged, refusals) = self.stage(&mut shared, write);
+        // An engine write's group also carries the refusals queued outside
+        // any door's writer, as its flush did. An opaque one, which may be a
+        // commit that moves no backup mark (FIX 6730), carries its own alone.
+        let mut refusals = match callback {
+            Callback::Audited => refusals.with_queued(),
+            Callback::Opaque => refusals,
+        };
+        let answer = match staged {
+            Staged::Kept(answer) => answer,
+            Staged::Dropped(answer) => {
+                // Nothing of it joined: the group closes at once, carrying
+                // only those refusals, and drops whole when there are none.
+                if refusals.write_in(&mut shared) {
+                    refusals.landed(shared.commit().is_ok());
+                } else {
+                    drop(shared);
+                }
                 group.hand_off();
                 return answer;
             }
-            Err(panic) => {
+            Staged::Panicked(panic) => {
                 drop(shared);
                 group.hand_off();
                 resume_unwind(panic);
             }
         };
+        refusals.write_in(&mut shared);
         let mut members = Vec::new();
         let mut kept = 1;
         // An opaque leader runs alone (no member is ever opaque).
@@ -531,6 +543,7 @@ impl Store {
         if committed.is_ok() {
             self.diagnostics.group_commit.record(kept as u64);
         }
+        refusals.landed(committed.is_ok());
         // Every member waits for this, kept rows or not: an answer read in the
         // shared transaction may rest on rows an earlier member staged.
         for ticket in &members {
@@ -550,27 +563,18 @@ impl Store {
     where
         E: From<Error>,
     {
-        let staged = {
+        let (staged, refusals) = {
             // SAFETY: the leader lent its open transaction and stays blocked in
             // `Ticket::run` until this thread reports `Ran` below. This
-            // reference and the nested transaction under it both end inside
+            // reference and the nested transactions under it all end inside
             // this block, before that report.
             let parent = unsafe { &mut *shared.0 };
-            match self.env.nested_write_txn(parent) {
-                Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
-                Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {
-                    Ok(Rows::Commit(value)) => match child.commit() {
-                        Ok(()) => Staged::Kept(Ok(value)),
-                        Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
-                    },
-                    Ok(Rows::Refuse(refusal)) => match child.commit() {
-                        Ok(()) => Staged::Kept(Err(refusal)),
-                        Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
-                    },
-                    Ok(Rows::Discard(answer)) => Staged::Dropped(answer),
-                    Err(panic) => Staged::Panicked(panic),
-                },
+            let (staged, mut refusals) = self.stage(parent, write);
+            // Its refusals join the group whatever its rows did.
+            if !matches!(staged, Staged::Panicked(_)) {
+                refusals.write_in(parent);
             }
+            (staged, refusals)
         };
         match staged {
             Staged::Kept(answer) => {
@@ -578,7 +582,9 @@ impl Store {
                     kept: true,
                     closes: holds_postcommit_permit(),
                 });
-                match ticket.wait_settled() {
+                let lost = ticket.wait_settled();
+                refusals.landed(lost.is_none());
+                match lost {
                     None => answer,
                     Some(lost) => Err(E::from(Error::from(lost))),
                 }
@@ -590,7 +596,9 @@ impl Store {
                     kept: false,
                     closes: false,
                 });
-                match (ticket.wait_settled(), answer) {
+                let lost = ticket.wait_settled();
+                refusals.landed(lost.is_none());
+                match (lost, answer) {
                     (Some(lost), Ok(_)) => Err(E::from(Error::from(lost))),
                     (_, answer) => answer,
                 }
@@ -603,6 +611,36 @@ impl Store {
                 resume_unwind(panic)
             }
         }
+    }
+
+    /// Runs `write` in a transaction nested in `parent`, keeping or dropping
+    /// its rows as it says. The refusals it queues on this thread meanwhile
+    /// come back as its own batch, for the caller to log in `parent`.
+    fn stage<T, E>(
+        &self,
+        parent: &mut RwTxn<'_>,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+    ) -> (Staged<T, E>, RefusalBatch<'_>)
+    where
+        E: From<Error>,
+    {
+        let attempt = self.begin_refusal_attempt();
+        let staged = match self.env.nested_write_txn(parent) {
+            Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
+            Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {
+                Ok(Rows::Commit(value)) => match child.commit() {
+                    Ok(()) => Staged::Kept(Ok(value)),
+                    Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
+                },
+                Ok(Rows::Refuse(refusal)) => match child.commit() {
+                    Ok(()) => Staged::Kept(Err(refusal)),
+                    Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
+                },
+                Ok(Rows::Discard(answer)) => Staged::Dropped(answer),
+                Err(panic) => Staged::Panicked(panic),
+            },
+        };
+        (staged, attempt.finish())
     }
 }
 
