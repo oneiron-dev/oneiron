@@ -249,7 +249,7 @@ impl EngineNativeExecutor<'_> {
             let step_outcome = self
                 .runtime
                 .run_prepared_step_cancellable(step, &prepared, &mut host, cancel);
-            self.keep_step_feedback(&mut checking);
+            self.keep_step_feedback(&checking);
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {
@@ -484,7 +484,7 @@ impl EngineNativeExecutor<'_> {
             // beside the bindings they describe, and so does the seal of the
             // code consent wait the step parks on (DOOR-079 1b).
             let parked = parked_wait(&record, terminal_status.as_ref(), bridge_start);
-            let mut next_generation = self
+            let next_generation = self
                 .storage
                 .put_code_run_replay_record_with_receipts_if_generation(
                     &record,
@@ -502,11 +502,6 @@ impl EngineNativeExecutor<'_> {
             }
             steps_run += 1;
             checking.ended(terminal_status.as_ref());
-            if let Some(generation) =
-                checking.append_report(&self.storage, &mut record, next_generation)
-            {
-                next_generation = generation;
-            }
 
             if let Some(status) = terminal_status {
                 // A reply that landed while the step ran resumes the run

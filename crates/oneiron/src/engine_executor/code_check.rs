@@ -19,21 +19,16 @@ use oneiron_code_check::{
 };
 
 use super::host::executor_declarations;
-use super::store::{
-    RESULT_REPLY_INLINE_BYTES, code_check_output_path, record_text_output,
-    type_diagnostics_output_path, write_json,
-};
+use super::store::{RESULT_REPLY_INLINE_BYTES, type_diagnostics_output_path, write_json};
 use super::types::EngineExecutorStatus;
 use crate::code_run::{
-    CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, DiagnosticCollection,
-    ExecutorStorage, ProgramPreparationNote, ProgramStepFeedback, ProgramStepIdentity, StepKey,
-    StoredStepFeedback, TYPE_CHECK_NOT_LOADED, TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF,
-    TypeCheckFacts, TypeDiagnostic, TypeDiagnostics, measure,
+    CodeRunRawOutput, DiagnosticCollection, ExecutorStorage, ProgramPreparationNote,
+    ProgramStepFeedback, ProgramStepIdentity, StepKey, StoredStepFeedback, TYPE_CHECK_NOT_LOADED,
+    TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF, TypeCheckFacts, TypeDiagnostic, TypeDiagnostics,
+    measure,
 };
 use crate::receipt::{ActionInputs, call_bytes_digest};
-use crate::session_overlay::RouteTarget;
 use crate::{EntityId, Vault};
-use serde_json::json;
 
 /// The action a feedback check's digest names.
 const FEEDBACK_CHECK_ACTION: &str = "code_check.feedback";
@@ -195,7 +190,6 @@ impl Service {
                     diagnostics,
                     body,
                     finalized,
-                    report: Some(checked.report()),
                     observed: Some((checker, checked)),
                 }
             }
@@ -276,36 +270,6 @@ fn check(checker: &FeedbackCheck, job: &CheckJob) -> Checked {
 }
 
 impl Checked {
-    /// The step's report as its record keeps it, when the check landed by
-    /// the step's end: what the check found, or why it found nothing. Every
-    /// diagnostic, each message whole: the report is a stored output, which
-    /// holds any size.
-    fn report(&self) -> String {
-        let backend = match &self.result {
-            Ok(report) => &report.backend,
-            Err(_) => &self.backend,
-        };
-        let mut record = json!({
-            "schema_version": 1,
-            "mode": "feedback",
-            "backend": backend.name,
-            "pin": backend.pin,
-            "action_digest": self.action_digest,
-            "elapsed_us": u64::try_from(self.elapsed.as_micros()).unwrap_or(u64::MAX),
-        });
-        match &self.result {
-            Ok(report) => {
-                record["diagnostics"] = json!(report.diagnostics);
-                record["peak_memory_bytes"] = json!(report.peak_memory_bytes);
-                if let Some(failure) = report.incomplete {
-                    record["failure"] = json!(failure.code());
-                }
-            }
-            Err(failure) => record["failure"] = json!(failure.code()),
-        }
-        record.to_string()
-    }
-
     /// The check as the step's feedback carries it, every diagnostic inline.
     fn type_diagnostics(&self, pending: &TypeCheckFacts) -> TypeDiagnostics {
         let backend = match &self.result {
@@ -436,9 +400,6 @@ struct Landed {
     body: Option<CodeRunRawOutput>,
     /// Whether a collection past one reply is kept in its body already.
     finalized: bool,
-    /// The report a step whose check landed by its end appends to its
-    /// record; taken once.
-    report: Option<String>,
     /// The checker and its answer, counted once the step's end is known.
     observed: Option<(Arc<FeedbackCheck>, Checked)>,
 }
@@ -449,7 +410,6 @@ impl Landed {
             diagnostics,
             body: None,
             finalized: true,
-            report: None,
             observed: None,
         }
     }
@@ -636,17 +596,11 @@ fn observe(state: &mut CellState, key: StepKey) {
 pub(super) struct StepCheck {
     cell: Arc<StepCell>,
     ended: bool,
-    /// The report of a check that landed by the step's end.
-    report: Option<String>,
 }
 
 impl StepCheck {
     fn of(cell: Arc<StepCell>) -> Self {
-        Self {
-            cell,
-            ended: false,
-            report: None,
-        }
+        Self { cell, ended: false }
     }
 
     /// A step no checker serves: its feedback is `diagnostics` from the
@@ -668,57 +622,6 @@ impl StepCheck {
 
     pub(super) fn cell(&self) -> Arc<StepCell> {
         Arc::clone(&self.cell)
-    }
-
-    /// Takes the report of a check that landed by now, the step's end: a
-    /// check still running never reaches the record.
-    pub(super) fn take_landed_report(&mut self) {
-        self.report = lock(&self.cell.state)
-            .landed
-            .as_mut()
-            .and_then(|landed| landed.report.take());
-    }
-
-    /// Appends the report of a check that landed by the step's end to its
-    /// record, after the step's own append at `generation`: the report never
-    /// takes room the step needed, and one that cannot be stored is traced
-    /// and dropped, the record left as the step committed it. Only the
-    /// vault's own storage keeps reports: an off-record overlay is
-    /// quota-bounded, and a discarding route keeps nothing.
-    pub(super) fn append_report(
-        &mut self,
-        storage: &ExecutorStorage<'_>,
-        record: &mut CodeRunReplayRecord,
-        generation: CodeRunReplayGeneration,
-    ) -> Option<CodeRunReplayGeneration> {
-        if !matches!(
-            storage.session_route_target(),
-            None | Some(RouteTarget::Base)
-        ) {
-            return None;
-        }
-        let report = self.report.take()?;
-        let (_, seq, _) = self.cell.key;
-        let appended = record_text_output(storage, record, code_check_output_path(seq), &report)
-            .and_then(|()| {
-                storage
-                    .put_code_run_replay_record_if_generation_with_heal(
-                        record,
-                        Some(generation),
-                        None,
-                    )
-                    .map_err(|error| {
-                        record.outputs.pop();
-                        error.into()
-                    })
-            });
-        match appended {
-            Ok(generation) => Some(generation),
-            Err(error) => {
-                tracing::warn!(target: "oneiron::code_check", %error, "type check report not recorded");
-                None
-            }
-        }
     }
 
     /// How the step ended: the run's status when it stopped there, or none

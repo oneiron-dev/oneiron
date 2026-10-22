@@ -61,11 +61,9 @@ impl EngineNativeExecutor<'_> {
 
     /// Keeps the step's feedback as the step ends, before any way out of it:
     /// the run's rows on the vault's own storage get it, landed or pending,
-    /// and every later turn of this attempt reads it. A report of a check
-    /// that landed by now is taken for the step's record. A feedback write
-    /// that fails is traced, never the step's failure.
-    pub(super) fn keep_step_feedback(&self, check: &mut StepCheck) {
-        check.take_landed_report();
+    /// and every later turn of this attempt reads it. A feedback write that
+    /// fails is traced, never the step's failure.
+    pub(super) fn keep_step_feedback(&self, check: &StepCheck) {
         let cell = check.cell();
         self.keep_row(&cell);
         self.held_checks().push(cell);

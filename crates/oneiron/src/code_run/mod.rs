@@ -169,7 +169,7 @@ pub use self::type_diagnostics::{
     TYPE_CHECK_NOT_STARTED, TYPE_CHECK_OFF, TYPE_FEEDBACK_NOT_KEPT, TypeCheckFacts, TypeDiagnostic,
     TypeDiagnostics,
 };
-pub(crate) use self::type_diagnostics::{check_incarnation, measure, parse_check_ref};
+pub(crate) use self::type_diagnostics::{measure, parse_check_ref};
 pub(crate) use self::wait_rows::{keep_wait_rows, parks_on};
 // ONE-1686: a canonical run's transcript identity is DERIVED from its run ref,
 // so the tests that assert where its bubbles landed derive it the same way
