@@ -42,8 +42,25 @@ use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
 
 mod erase;
+mod evidence;
+mod index;
 mod records;
 pub(crate) use erase::{erase_retired_actor_in_txn, erase_workflow_actor_in_txn};
+pub use evidence::{
+    CANDIDATE_DOMAIN, FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
+    SOLVED_RUN_PREDICATE, SOLVED_SCOPE_DOMAIN, SavedBrowserCaller, ScopedSolvedGroupKey,
+    SolvedCaptureGap, SolvedCaptureReceipt, SolvedGroupKey, SolvedRunCapture, SolvedRunEvidence,
+    SolvedRunScope, SolvedSource,
+};
+pub use index::{
+    DirtySolvedGroup, FailureLineage, Page, PageCursor, ProgramFailureRef, ProgramSeen,
+    SOLVED_PAGE, dirty_solved_groups, mark_group_clean, mark_program_seen_in_txn, program_seen,
+    programs_with_failures, solved_group_coverage, solved_runs_in_group,
+};
+pub(crate) use index::{
+    erase_authority_actor_in_txn, erase_dirty_actor_in_txn, index_capture_in_txn,
+    invalidate_solved_source_in_txn,
+};
 pub use records::{
     file_workflow, record_workflow_run, resolve_workflow_in_txn, retire_workflow, retired_workflow,
     retired_workflows, site_workflows, supersedes_refusal, workflow,
@@ -210,6 +227,10 @@ pub struct WorkflowRecord {
     pub recent: Vec<RecentRun>,
     /// Its strict runs in a row that missed ([`strict_misses_after`]).
     pub strict_misses: u32,
+    /// The solved group its filing's caller filed it in (CUA E8a): none
+    /// for a filing with no caller scope. No card shows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filed_scope: Option<FiledScope>,
 }
 
 impl WorkflowRecord {

@@ -7,12 +7,13 @@ use oneiron_browser::{
     RunOutcome, SupersedeOutcome, SupersedeRefusal, WorkflowProgram, WorkflowProof,
 };
 
+use super::index::{index_failure_in_txn, index_filing_in_txn, index_retire_in_txn};
 #[cfg(doc)]
 use super::type_filter;
 use super::{
-    DRIFT_REASON, Filing, LibraryActor, RETIRE_FILER_ONLY, RETIRED, RecentOutcome, Retired,
-    RetiredWorkflow, STRICT_MISSES_BEFORE_DRIFT, WORKFLOWS, WorkflowRecord, WorkflowResolution,
-    push_recent, strict_misses_after, superseded_by, superseded_reason,
+    DRIFT_REASON, FiledScope, Filing, LibraryActor, RETIRE_FILER_ONLY, RETIRED, RecentOutcome,
+    Retired, RetiredWorkflow, STRICT_MISSES_BEFORE_DRIFT, WORKFLOWS, WorkflowRecord,
+    WorkflowResolution, push_recent, strict_misses_after, superseded_by, superseded_reason,
 };
 use crate::Vault;
 use crate::batch::secret_scan::{admitted_from, named_tree};
@@ -21,7 +22,7 @@ use crate::error::Result;
 use crate::learning::TypeRef;
 use crate::task_type::{PlacementDecisions, PlacementRequest, TaskTypeRef, place_type_ref};
 
-fn site_key(site: &str) -> [u8; 32] {
+pub(super) fn site_key(site: &str) -> [u8; 32] {
     *blake3::hash(site.as_bytes()).as_bytes()
 }
 
@@ -135,6 +136,10 @@ pub fn supersedes_refusal(
 /// program filed again keeps its id, its runs and its seed, and takes the
 /// new proof; a `supersedes` link on it is dropped, as no repair.
 ///
+/// `filed_scope` is the solved group the filing's caller files it in (CUA
+/// E8a); the same write moves the group's coverage, from the group a refile
+/// held it in before, read in that write.
+///
 /// A new program that `supersedes` one of `site`'s, live or retired, is
 /// filed as its successor, with its lineage's recent outcomes and one
 /// repair more; in the same write a live one retires
@@ -159,6 +164,7 @@ pub fn file_workflow(
     at: u64,
     decisions: Option<&PlacementDecisions<'_>>,
     supersedes: Option<EntityId>,
+    filed_scope: Option<FiledScope>,
 ) -> Result<Filing> {
     let same = serde_json::to_value(program).ok();
     // A filed program holds handles where this one may hold the secrets the
@@ -190,8 +196,10 @@ pub fn file_workflow(
             if supersedes == Some(record.id) {
                 return Ok(Filing::Refused(SupersedeRefusal::SameRecord));
             }
+            let key = (site_key(site), record.id);
+            let prior = WORKFLOWS.get(&vault.store, wtxn, &key)?;
             let seed = record.proof.seed.take().or_else(|| proof.seed.clone());
-            let record = WorkflowRecord {
+            let mut record = WorkflowRecord {
                 type_ref,
                 proof: WorkflowProof {
                     seed,
@@ -202,9 +210,13 @@ pub fn file_workflow(
                 // A passing re-admission starts the miss streak again, as
                 // a strict pass does (FIX 8048).
                 strict_misses: 0,
+                filed_scope: filed_scope.clone(),
                 ..record
             };
-            WORKFLOWS.put(vault, wtxn, &(site_key(site), record.id), &record)?;
+            // The index reads the record as the side-row wall keeps it.
+            WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
+            WORKFLOWS.put(vault, wtxn, &key, &record)?;
+            index_filing_in_txn(vault, wtxn, prior.as_ref(), &record)?;
             let superseded = predecessor.map(|_| SupersedeOutcome::Dropped);
             return Ok(Filing::Filed {
                 id: record.id,
@@ -228,7 +240,7 @@ pub fn file_workflow(
         if superseded.is_some() {
             push_recent(&mut recent, RecentOutcome::Repair, at);
         }
-        let record = WorkflowRecord {
+        let mut record = WorkflowRecord {
             id,
             site: site.to_owned(),
             program: program.clone(),
@@ -242,8 +254,12 @@ pub fn file_workflow(
             supersedes,
             recent,
             strict_misses: 0,
+            filed_scope: filed_scope.clone(),
         };
-        WORKFLOWS.put(vault, wtxn, &(site_key(site), id), &record)?;
+        let key = (site_key(site), id);
+        WORKFLOWS.admit(vault, wtxn, &key, &mut record)?;
+        WORKFLOWS.put(vault, wtxn, &key, &record)?;
+        index_filing_in_txn(vault, wtxn, None, &record)?;
         if let Some(old) = retire {
             let reason = superseded_reason(id);
             retire_in_txn(vault, wtxn, old, by, Some(reason.as_str()), at)?;
@@ -280,6 +296,7 @@ pub fn record_workflow_run(
         record.runs = record.runs.saturating_add(1);
         if !outcome.done {
             record.failures = record.failures.saturating_add(1);
+            index_failure_in_txn(vault, wtxn, &record)?;
         }
         let recent = if outcome.done {
             RecentOutcome::Pass
@@ -340,6 +357,7 @@ fn retire_in_txn(
 ) -> Result<RetiredWorkflow> {
     let id = record.id;
     WORKFLOWS.delete(&vault.store, wtxn, &(site_key(&record.site), id))?;
+    index_retire_in_txn(vault, wtxn, &record)?;
     let trace = RetiredWorkflow {
         record,
         retired_by: LibraryActor::Actor(by),
