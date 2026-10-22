@@ -8,7 +8,7 @@ struct LeafTextTarget {
     span: Range<usize>,
 }
 
-/// Bytes parsed again with the same limits; semantics and unchanged regions
+/// Bytes parsed again through the same port; semantics and unchanged regions
 /// are checked before a package can install them.
 pub(in crate::retained_opc) struct CheckedPartEdit(pub Vec<u8>);
 
@@ -93,7 +93,7 @@ impl ValidatedXmlPart<'_> {
         candidate.extend_from_slice(suffix);
         // Reparse candidate under the same caller budget, then verify its
         // meaning and target location. No part state changes before this check.
-        let checked = ValidatedXmlPart::parse(&candidate, self.limits)?;
+        let checked = ValidatedXmlPart::parse(&candidate, &self.resources)?;
         let after = checked.target(path, value)?;
         if after.id != target.id
             || checked.nodes.len() != self.nodes.len()

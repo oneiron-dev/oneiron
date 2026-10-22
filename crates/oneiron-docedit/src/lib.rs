@@ -27,6 +27,7 @@ pub mod live;
 pub mod native_patch;
 pub mod ooxml;
 pub mod pptx_comments;
+pub mod resource;
 pub mod retained_opc;
 pub mod xlfn;
 pub mod xlsx_body;

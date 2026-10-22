@@ -111,7 +111,11 @@ impl FormualizerEngine {
         clock: &RecalcClock,
         location: Option<&DocumentLocation>,
     ) -> Result<WorkbookRecalc> {
-        let package = Package::open(bytes, limits)?;
+        let package = Package::open(
+            bytes,
+            limits,
+            &oneiron_docedit::resource::Resources::measuring(),
+        )?;
         crate::links::external_targets(&package)?;
         // Malformed content is refused outright before any link is read.
         let formulas = Formulas::read(&package)?;
@@ -942,7 +946,7 @@ pub(crate) fn escaped(text: &str) -> bool {
 /// relationships and the links' content types stay as they were. The host
 /// reads the result back under its own limits, so the result must fit them.
 fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Result<()> {
-    let after = Package::open(after, before.limits())
+    let after = Package::open(after, before.limits(), before.resources())
         .map_err(|_| unsupported("recalculated package exceeds the host's package limits"))?;
     let kept: BTreeSet<&str> = after.names().collect();
     if before.names().any(|name| !kept.contains(name)) {
@@ -954,7 +958,7 @@ fn keep_gated_bytes(before: &Package, after: &[u8], formulas: &Formulas) -> Resu
             continue;
         }
         if let Some(xml) = &part
-            && Xml::parse(xml, before.limits().xml).is_err()
+            && Xml::parse(xml, before.resources()).is_err()
         {
             return Err(unsupported(format!(
                 "recalculated {name} does not read back under the host's XML limits"
@@ -1021,7 +1025,7 @@ fn link_relationships(
     let Some(rels) = rels else {
         return Ok(Vec::new());
     };
-    let xml = Xml::parse(rels, package.limits().xml)?;
+    let xml = Xml::parse(rels, package.resources())?;
     let mut links: Vec<_> = xml
         .nodes
         .iter()
@@ -1049,7 +1053,7 @@ fn link_content_types(
     let Some(types) = types else {
         return Ok(Vec::new());
     };
-    let xml = Xml::parse(types, package.limits().xml)?;
+    let xml = Xml::parse(types, package.resources())?;
     let links: BTreeSet<String> = package
         .names()
         .filter(|name| name.starts_with("xl/externalLinks/"))

@@ -1,5 +1,6 @@
 //! PowerPoint comment requests, inspection facts, codec limits and typed refusals.
 
+use crate::resource::{ResourceRefusal, Resources};
 use crate::retained_opc::{Limits, XmlLimits};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -53,6 +54,37 @@ pub enum PptxError {
     PartDiffOutsideTransaction,
     #[error("a written anchor does not read back as it was resolved")]
     AnchorReadBack,
+    /// The work's memory was refused at the machine's floor, or its wait or
+    /// deadline ran out (FIX 8596): never invalid XML.
+    #[error(transparent)]
+    Resource(#[from] ResourceRefusal),
+}
+
+impl PptxError {
+    /// The refusal, when memory or a deadline stopped the work.
+    #[must_use]
+    pub const fn resource(&self) -> Option<ResourceRefusal> {
+        match self {
+            Self::Resource(refusal) => Some(*refusal),
+            _ => None,
+        }
+    }
+}
+
+/// One comment read's or edit's codec limits with the operation's resource
+/// port, which the package and every part parse reserve through. Attribute,
+/// namespace, depth and node counts are observations (FIX 8596, 9822).
+#[derive(Clone, Copy)]
+pub(super) struct Codec<'a> {
+    pub limits: &'a PptxCommentLimits,
+    pub resources: &'a Resources,
+}
+
+impl std::ops::Deref for Codec<'_> {
+    type Target = PptxCommentLimits;
+    fn deref(&self) -> &PptxCommentLimits {
+        self.limits
+    }
 }
 
 pub(super) type PatchResult<T> = std::result::Result<T, PptxError>;

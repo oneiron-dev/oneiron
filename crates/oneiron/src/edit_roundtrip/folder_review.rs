@@ -12,6 +12,7 @@ use super::judgment_cells::named_sheet_cells;
 use super::{CellRef, CellValue, OfficeFormat, RangeRef};
 use crate::llm::decision::{DecisionImage, EvidenceVersion, MAX_DECISION_IMAGE_BYTES};
 use crate::llm::image::ImageBytes;
+use crate::office_body::document_resources;
 use crate::{EntityId, Result, Vault};
 use oneiron_docedit::ArchiveLimits;
 use oneiron_docedit::deck::DeckView;
@@ -243,7 +244,7 @@ fn file_content(
                 .collect::<Vec<_>>()
                 .join("\n\n")
         }),
-        Ok(OfficeFormat::Pptx) => Package::open(bytes, package_limits)
+        Ok(OfficeFormat::Pptx) => Package::open(bytes, package_limits, &document_resources())
             .ok()
             .and_then(|package| DeckView::read(&package).ok())
             .map(|view| {
@@ -255,28 +256,30 @@ fn file_content(
                     .collect::<Vec<_>>()
                     .join("\n\n")
             }),
-        Ok(OfficeFormat::Xlsx) => read_xlsx_cells(bytes, package_limits).ok().map(|book| {
-            book.sheets
-                .iter()
-                .flat_map(|sheet| {
-                    sheet.cells.iter().filter_map(move |cell| {
-                        let value = match &cell.value {
-                            XlsxValue::Blank => return None,
-                            XlsxValue::Number(number) => number.to_string(),
-                            XlsxValue::Text(text) | XlsxValue::Error(text) => text.clone(),
-                            XlsxValue::Bool(value) => value.to_string(),
-                        };
-                        Some(format!(
-                            "{}!{}{}: {value}",
-                            sheet.name,
-                            super::address::column_to_letters(cell.col),
-                            cell.row
-                        ))
+        Ok(OfficeFormat::Xlsx) => read_xlsx_cells(bytes, package_limits, &document_resources())
+            .ok()
+            .map(|book| {
+                book.sheets
+                    .iter()
+                    .flat_map(|sheet| {
+                        sheet.cells.iter().filter_map(move |cell| {
+                            let value = match &cell.value {
+                                XlsxValue::Blank => return None,
+                                XlsxValue::Number(number) => number.to_string(),
+                                XlsxValue::Text(text) | XlsxValue::Error(text) => text.clone(),
+                                XlsxValue::Bool(value) => value.to_string(),
+                            };
+                            Some(format!(
+                                "{}!{}{}: {value}",
+                                sheet.name,
+                                super::address::column_to_letters(cell.col),
+                                cell.row
+                            ))
+                        })
                     })
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        }),
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }),
         _ => None,
     };
     (text.filter(|text| !text.trim().is_empty()), Vec::new())

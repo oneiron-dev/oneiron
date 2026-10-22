@@ -33,7 +33,7 @@ impl Book {
             .package
             .part(part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let mut removed: HashSet<usize> = HashSet::new();
         let mut sets: Vec<(usize, &'static str, String)> = Vec::new();
         let mut unsets: Vec<(usize, &'static str)> = Vec::new();

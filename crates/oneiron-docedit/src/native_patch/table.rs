@@ -228,7 +228,7 @@ pub(crate) fn insert_frame(
     let bytes = package
         .part(slide)?
         .ok_or(NativeRefusal::Stale("slide part missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let id = id.to_string();
     if tree
         .nodes
@@ -287,7 +287,7 @@ pub(super) fn set_cell(
     let bytes = package
         .part(slide)?
         .ok_or(NativeRefusal::Stale("slide part missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let id = table.to_string();
     let frame = tree
         .nodes

@@ -98,7 +98,7 @@ struct LinkedBook {
 /// external source. A relationship part the check cannot read fails closed to
 /// the fallback, as it did before linked workbooks were read natively.
 pub(crate) fn external_targets(package: &Package) -> Result<()> {
-    let limits = package.limits().xml;
+    let limits = package.resources();
     for name in package.names().filter(|name| name.ends_with(".rels")) {
         let Some(bytes) = package.part(name)? else {
             continue;
@@ -140,7 +140,7 @@ impl LinkedBooks {
     /// Excel does is the fallback's; malformed XML in the workbook or a link
     /// part stays an outright refusal (`InvalidWorkbook`).
     pub(crate) fn read(package: &Package) -> Result<Self> {
-        let limits = package.limits().xml;
+        let limits = package.resources();
         let Some(workbook) = package.part("xl/workbook.xml")? else {
             return Ok(Self::default());
         };
@@ -561,7 +561,7 @@ impl LinkedBook {
     fn read(part: &[u8], package: &Package) -> Result<Self> {
         let unreadable = || unsupported("external link part the check cannot read");
         let out_of_place = || unsupported(OUT_OF_PLACE);
-        let xml = Xml::parse(part, package.limits().xml)?;
+        let xml = Xml::parse(part, package.resources())?;
         xml.root(MAIN, "externalLink").map_err(|_| unreadable())?;
         if xml
             .child(0, MAIN, "ddeLink")
@@ -786,7 +786,7 @@ impl ContentTypes {
         let bytes = package
             .part("[Content_Types].xml")?
             .ok_or_else(unreadable)?;
-        let xml = Xml::parse(&bytes, package.limits().xml).map_err(|_| unreadable())?;
+        let xml = Xml::parse(&bytes, package.resources()).map_err(|_| unreadable())?;
         let mut types = Self {
             overrides: BTreeMap::new(),
             defaults: BTreeMap::new(),

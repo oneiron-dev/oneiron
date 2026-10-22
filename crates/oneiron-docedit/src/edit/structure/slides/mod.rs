@@ -262,7 +262,7 @@ impl Cloner<'_> {
         let Some(bytes) = self.input.part(&rels_name(from))? else {
             return Ok(());
         };
-        let tree = XmlTree::parse(&bytes, self.input.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.input.resources())?;
         let resolved = self.input.relationships(from)?;
         let mut edits = Vec::new();
         for (_, node) in tree.children(0) {

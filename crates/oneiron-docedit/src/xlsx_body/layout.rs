@@ -42,7 +42,7 @@ impl Book {
             .package
             .part(&self.part)?
             .ok_or(refused("the workbook part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let (list, list_node) = tree
             .child(0, SML, "sheets")?
             .ok_or(refused("the workbook has no sheet list"))?;
@@ -411,7 +411,7 @@ impl Book {
         let Some(bytes) = self.package.part(&part)? else {
             return Ok(());
         };
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let edits: Vec<_> = tree
             .children(0)
             .filter(|(_, node)| {
@@ -455,7 +455,7 @@ impl Book {
                 .package
                 .part(&cache)?
                 .ok_or(refused("a workbook part is missing"))?;
-            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let tree = XmlTree::parse(&bytes, self.package.resources())?;
             let mut edits = Vec::new();
             let mut lost = Vec::new();
             for node in &tree.nodes {
@@ -513,7 +513,7 @@ impl Book {
             .package
             .part(part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let mut edits = Vec::new();
         for node in &tree.nodes {
             if (FORMULA_ELEMENTS.contains(&node.name.as_str()) || node.is(SML, "definedName"))
@@ -556,7 +556,7 @@ impl Book {
             let Some(bytes) = self.package.part(&cache)? else {
                 continue;
             };
-            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let tree = XmlTree::parse(&bytes, self.package.resources())?;
             let Some(table) = tree
                 .nodes
                 .iter()

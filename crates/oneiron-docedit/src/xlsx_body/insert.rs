@@ -82,7 +82,7 @@ impl Book {
             .package
             .part(part)?
             .ok_or(refused("a worksheet part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let edits = match edit.axis {
             XlsxAxis::Row => row_shells(&bytes, &tree, edit)?,
             XlsxAxis::Column => column_range(&bytes, &tree, edit),

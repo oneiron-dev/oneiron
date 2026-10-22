@@ -49,6 +49,7 @@ pub mod decision_host;
 mod decision_verdict;
 mod device_local;
 mod device_sync;
+mod document_memory;
 pub mod embedded;
 mod embedder;
 pub mod error;

@@ -198,9 +198,9 @@ pub(super) fn recalc_xlsx(
             )?),
         )),
         Err(_) => Ok((
-            mark_full_calc(bytes, limits).map_err(|_| {
-                invalid("the projected workbook could not be marked to recalculate")
-            })?,
+            mark_full_calc(bytes, limits, &crate::office_body::document_resources()).map_err(
+                |_| invalid("the projected workbook could not be marked to recalculate"),
+            )?,
             None,
         )),
     }

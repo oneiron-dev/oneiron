@@ -175,7 +175,12 @@ pub(super) fn docx_blocks(bytes: &[u8], limits: &TextLimits) -> Option<Vec<(Stri
 }
 
 fn deck_view(bytes: &[u8], limits: &TextLimits) -> Option<oneiron_docedit::deck::DeckView> {
-    let package = Package::open(bytes, limits.package).ok()?;
+    let package = Package::open(
+        bytes,
+        limits.package,
+        &crate::office_body::document_resources(),
+    )
+    .ok()?;
     oneiron_docedit::deck::DeckView::read(&package).ok()
 }
 
@@ -226,7 +231,12 @@ fn sheet_texts(
     limits: &TextLimits,
     wanted: &dyn Fn(&str, &CellRef) -> bool,
 ) -> Option<Vec<(String, BTreeMap<CellRef, String>)>> {
-    let book = read_xlsx_cells(bytes, limits.package).ok()?;
+    let book = read_xlsx_cells(
+        bytes,
+        limits.package,
+        &crate::office_body::document_resources(),
+    )
+    .ok()?;
     Some(
         book.sheets
             .iter()
@@ -353,7 +363,12 @@ pub(super) fn unit_texts(
             })
             .collect(),
         OfficeFormat::Xlsx => {
-            let book = read_xlsx_cells(bytes, limits.package).ok()?;
+            let book = read_xlsx_cells(
+                bytes,
+                limits.package,
+                &crate::office_body::document_resources(),
+            )
+            .ok()?;
             let mut units = Vec::new();
             for sheet in &book.sheets {
                 for cell in &sheet.cells {

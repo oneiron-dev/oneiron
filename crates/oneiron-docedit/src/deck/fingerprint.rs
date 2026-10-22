@@ -77,7 +77,7 @@ pub(super) fn render(
         let rels = match graph.parts.get(&part) {
             Some(parsed) => parsed.rels.clone(),
             None if hash == [0; 32] => Vec::new(),
-            None => relationships(package, &part, graph.limits)?,
+            None => relationships(package, &part)?,
         };
         parts.insert(part.clone(), hash);
         let master = graph.parts.get(&part).is_some_and(|parsed| {

@@ -14,6 +14,7 @@ pub fn project_xlsx(
     source: &[u8],
     changes: &[XlsxChange],
     limits: Limits,
+    resources: &crate::resource::Resources,
 ) -> Result<XlsxProjection> {
     if changes.is_empty() {
         return Ok(XlsxProjection {
@@ -21,7 +22,7 @@ pub fn project_xlsx(
             effects: Vec::new(),
         });
     }
-    let mut book = Book::open(source, limits)?;
+    let mut book = Book::open(source, limits, resources)?;
     let mut defined = changes.iter().filter_map(|change| match change {
         XlsxChange::Formats { formats } => Some(formats),
         _ => None,
@@ -273,13 +274,17 @@ pub(super) fn unshare_written_anchors(book: &mut Book, changes: &[XlsxChange]) -
 
 /// Have the opening application recalculate every formula on load: the
 /// projection's fallback when the engine cannot recalculate the workbook.
-pub fn mark_full_calc(bytes: &[u8], limits: Limits) -> Result<Vec<u8>> {
-    let mut book = Book::open(bytes, limits)?;
+pub fn mark_full_calc(
+    bytes: &[u8],
+    limits: Limits,
+    resources: &crate::resource::Resources,
+) -> Result<Vec<u8>> {
+    let mut book = Book::open(bytes, limits, resources)?;
     let source = book
         .package
         .part(&book.part)?
         .ok_or(refused("the workbook part is missing"))?;
-    let tree = XmlTree::parse(&source, limits.xml)?;
+    let tree = XmlTree::parse(&source, resources)?;
     let value = match tree.child(0, SML, "calcPr")? {
         Some((_, node)) => match node.attr_spans.get("fullCalcOnLoad") {
             Some(span) => [
@@ -335,12 +340,8 @@ impl Book {
             .package
             .part(&part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let (indices, value, added) = write_formats(
-            &bytes,
-            self.package.limits().xml,
-            formats,
-            self.styles.len(),
-        )?;
+        let (indices, value, added) =
+            write_formats(&bytes, self.package.resources(), formats, self.styles.len())?;
         // Excel applies only a style the workbook has; the nearest it does
         // not refuse is to add one, and the receipt says so.
         for name in added {
@@ -401,7 +402,7 @@ impl Book {
             .package
             .part(&self.part)?
             .ok_or(refused("the workbook part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let root = &tree.nodes[0];
         let mut pending: Vec<((String, Option<usize>), Option<retain::NameWrite<'_>>)> = Vec::new();
         for change in changes {

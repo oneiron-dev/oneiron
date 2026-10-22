@@ -98,7 +98,7 @@ pub(super) fn write_slide_list(
     let bytes = package
         .part(presentation)?
         .ok_or(retained_opc::Error::Edit("presentation part missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     tree.root(PML, "presentation")?;
     let root = &tree.nodes[0];
     let id = root.child_name("sldId");

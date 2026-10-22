@@ -51,7 +51,7 @@ impl FormulaError {
 /// A part the namespace-aware reader refuses is malformed workbook content.
 impl From<oneiron_docedit::ooxml::XmlError> for FormulaError {
     fn from(error: oneiron_docedit::ooxml::XmlError) -> Self {
-        Self::InvalidWorkbook(error.0)
+        Self::InvalidWorkbook(error.reason())
     }
 }
 

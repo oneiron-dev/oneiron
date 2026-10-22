@@ -39,7 +39,7 @@ fn fallback(package: &Package, svg: &str) -> Option<String> {
             continue;
         }
         let (Ok(tree), Ok(rels)) = (
-            XmlTree::parse(&bytes, package.limits().xml),
+            XmlTree::parse(&bytes, package.resources()),
             package.relationships(name),
         ) else {
             continue;

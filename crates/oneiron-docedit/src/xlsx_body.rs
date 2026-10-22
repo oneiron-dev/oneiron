@@ -122,8 +122,8 @@ struct Book {
 }
 
 impl Book {
-    fn open(bytes: &[u8], limits: Limits) -> Result<Self> {
-        let package = Package::open(bytes, limits)?;
+    fn open(bytes: &[u8], limits: Limits, resources: &crate::resource::Resources) -> Result<Self> {
+        let package = Package::open(bytes, limits, resources)?;
         let part = package
             .relationships("")?
             .into_iter()
@@ -216,7 +216,7 @@ fn rewrite_rows(
     let bytes = package
         .part(part)?
         .ok_or(refused("a worksheet part is missing"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     let (data, data_node) = tree
         .child(0, SML, "sheetData")?
         .ok_or(refused("a worksheet has no sheetData"))?;
@@ -403,7 +403,7 @@ fn parse(package: &Package, part: &str) -> Result<XmlTree> {
     let bytes = package
         .part(part)?
         .ok_or(refused("a workbook part is missing"))?;
-    Ok(XmlTree::parse(&bytes, package.limits().xml)?)
+    Ok(XmlTree::parse(&bytes, package.resources())?)
 }
 
 /// A range attribute (`B2:D9`, `B2`, the whole columns `A:C` or rows `2:5`)

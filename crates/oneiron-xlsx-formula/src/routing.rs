@@ -35,8 +35,18 @@ pub fn preserve_external_links(
     after: &[u8],
     limits: Limits,
 ) -> std::result::Result<(), &'static str> {
-    let before = Package::open(before, limits).map_err(|_| "unreadable input package")?;
-    let after = Package::open(after, limits).map_err(|_| "unreadable output package")?;
+    let before = Package::open(
+        before,
+        limits,
+        &oneiron_docedit::resource::Resources::measuring(),
+    )
+    .map_err(|_| "unreadable input package")?;
+    let after = Package::open(
+        after,
+        limits,
+        &oneiron_docedit::resource::Resources::measuring(),
+    )
+    .map_err(|_| "unreadable output package")?;
     for name in before.names() {
         let link_part = name.starts_with("xl/externalLinks/");
         if !link_part && !name.ends_with(".rels") {
@@ -117,12 +127,15 @@ pub fn route_workbook<'a>(
 /// True when a `.rels` document names an external target. The scan is a
 /// namespace-aware parse of `TargetMode="External"`, including entities; unknown XML
 /// elsewhere in the part is ignored, never stripped or rewritten.
-fn rels_has_external_target(xml: &[u8], limits: XmlLimits) -> bool {
-    crate::xml::Xml::parse(xml, limits).map_or(true, |xml| {
-        xml.nodes
-            .iter()
-            .any(|node| node.attr("TargetMode") == Some("External"))
-    })
+fn rels_has_external_target(xml: &[u8], _limits: XmlLimits) -> bool {
+    crate::xml::Xml::parse(xml, &oneiron_docedit::resource::Resources::measuring()).map_or(
+        true,
+        |xml| {
+            xml.nodes
+                .iter()
+                .any(|node| node.attr("TargetMode") == Some("External"))
+        },
+    )
 }
 
 /// Whether a formula names another workbook. The parser builds an external

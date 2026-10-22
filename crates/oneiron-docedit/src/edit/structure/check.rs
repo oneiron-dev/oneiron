@@ -23,7 +23,7 @@ pub(super) fn verify(
     op: &StructureEdit<'_>,
     plan: &Plan,
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let slide = op
         .slide()
         .ok_or(EditRefusal::Invalid("the plan does not match the verb"))?;

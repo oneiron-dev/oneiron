@@ -111,7 +111,9 @@ impl Vault {
         let Ok(limits) = self.docedit_package_limits_in_txn(txn) else {
             return Ok(bytes);
         };
-        let Ok(mut package) = Package::open(&bytes, limits) else {
+        let Ok(mut package) =
+            Package::open(&bytes, limits, &crate::office_body::document_resources())
+        else {
             return Ok(bytes);
         };
         let Ok(Some(document)) = package.part(DOCUMENT_PART) else {

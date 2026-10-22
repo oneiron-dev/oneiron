@@ -1448,7 +1448,11 @@ pub fn attach_evidence(
     let held = project(head, package, document, profile, assets)?;
     let merged = project(&report.candidate, package, document, profile, assets)?;
     let open = |outcome: &ExportOutcome| -> Result<Package, LiveError> {
-        Ok(Package::open(&outcome.bytes, package.limits())?)
+        Ok(Package::open(
+            &outcome.bytes,
+            package.limits(),
+            package.resources(),
+        )?)
     };
     let (held_package, merged_package) = (open(&held)?, open(&merged)?);
     report.diff.relationships = relationship_changes(&held_package, &merged_package)?;
@@ -1599,7 +1603,7 @@ pub fn roundtrip_check(
     let deck = LiveDeck::import(package)?;
     let outcome = project(&deck, package, "roundtrip", profile, &NoAssets)?;
     let baseline_preserved = outcome.noop && outcome.bytes == original_bytes;
-    let reopened = Package::open(&outcome.bytes, package.limits())?;
+    let reopened = Package::open(&outcome.bytes, package.limits(), package.resources())?;
     let closure = DeckView::read(&reopened);
     let fixed_point = match &closure {
         Ok(_) => LiveDeck::import(&reopened)?.semantically_eq(&deck),

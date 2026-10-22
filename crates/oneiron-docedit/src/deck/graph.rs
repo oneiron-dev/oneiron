@@ -3,7 +3,7 @@
 //! here writes to the package.
 use super::DeckError;
 use crate::ooxml::{PACKAGE_RELATIONSHIPS, XmlTree};
-use crate::retained_opc::{Package, XmlLimits};
+use crate::retained_opc::Package;
 use std::collections::BTreeMap;
 
 pub(super) const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
@@ -34,21 +34,18 @@ pub(super) struct Part {
 }
 
 pub(super) struct Graph {
-    pub(super) limits: XmlLimits,
     pub(super) parts: BTreeMap<String, Part>,
     pub(super) presentation: String,
 }
 
 impl Graph {
     pub(super) fn load(package: &Package) -> Result<Self, DeckError> {
-        let limits = package.limits().xml;
-        let presentation = relationships(package, "", limits)?
+        let presentation = relationships(package, "")?
             .into_iter()
             .find(|rel| rel.kind == "officeDocument")
             .and_then(|rel| rel.target)
             .ok_or(DeckError::Invalid("package has no presentation part"))?;
         let mut graph = Self {
-            limits,
             parts: BTreeMap::new(),
             presentation: presentation.clone(),
         };
@@ -61,8 +58,8 @@ impl Graph {
                 .part(&name)?
                 .ok_or(DeckError::Invalid("related part is missing"))?;
             let part = Part {
-                tree: XmlTree::parse(&bytes, limits)?,
-                rels: relationships(package, &name, limits)?,
+                tree: XmlTree::parse(&bytes, package.resources())?,
+                rels: relationships(package, &name)?,
             };
             queue.extend(
                 part.rels
@@ -99,15 +96,11 @@ impl Graph {
 
 /// Parse the relationships `part` owns; a part without a `.rels` has none.
 /// The empty name addresses the package's own relationships.
-pub(super) fn relationships(
-    package: &Package,
-    part: &str,
-    limits: XmlLimits,
-) -> Result<Vec<Relationship>, DeckError> {
+pub(super) fn relationships(package: &Package, part: &str) -> Result<Vec<Relationship>, DeckError> {
     let Some(bytes) = package.part(&rels_path(part))? else {
         return Ok(Vec::new());
     };
-    let tree = XmlTree::parse(&bytes, limits)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     tree.root(PACKAGE_RELATIONSHIPS, "Relationships")?;
     let mut rels: Vec<Relationship> = Vec::new();
     for (_, node) in tree.children(0) {

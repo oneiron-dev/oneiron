@@ -167,8 +167,9 @@ pub(crate) fn chart_workbook(
     dataset: &Dataset,
     sheet: &str,
     limits: retained_opc::Limits,
+    resources: &crate::resource::Resources,
 ) -> Result<Vec<u8>, NativeRefusal> {
-    workbook::create(dataset, sheet, limits)
+    workbook::create(dataset, sheet, limits, resources)
 }
 
 /// Apply one native edit as a single checked operation; on any refusal the
@@ -177,7 +178,7 @@ pub fn native_patch(
     package: &mut Package,
     edit: &NativeEdit<'_>,
 ) -> Result<NativeReport, NativeRefusal> {
-    let mut next = package.clone();
+    let mut next = package.copy()?;
     let mut workbook = None;
     let allowed: Vec<String> = match *edit {
         NativeEdit::CreateTable {
@@ -197,7 +198,7 @@ pub fn native_patch(
             workbook: book,
             sheet,
         } => {
-            let bytes = workbook::create(dataset, sheet, next.limits())?;
+            let bytes = workbook::create(dataset, sheet, next.limits(), next.resources())?;
             next.add_part(book, XLSX_TYPE, bytes)?;
             let data = next.relate(chart, &format!("{REL}/package"), book)?;
             next.add_part(

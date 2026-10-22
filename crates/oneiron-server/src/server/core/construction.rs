@@ -203,6 +203,15 @@ impl SyncServer {
         // One machine memory line for the server's work and its organs'
         // own buffers alike (FIX 7649, FIX 7654).
         let memory = crate::machine::MachineMemory::new();
+        // FIX 8569, 8574, 8596, 8598: office reads and edits reserve from
+        // the same line, each reservation waiting the host's queue wait.
+        // The first server of a process registers it.
+        let _ = oneiron::office_body::register_document_memory(Arc::new(
+            crate::document_memory::DocumentFloor {
+                memory: memory.clone(),
+                wait: config.limits.queue_wait(),
+            },
+        ));
         Ok(Self {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),

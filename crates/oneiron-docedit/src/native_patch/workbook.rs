@@ -203,8 +203,12 @@ struct Stored {
 }
 
 impl Workbook {
-    pub(super) fn open(bytes: &[u8], limits: Limits) -> Result<Self, NativeRefusal> {
-        let package = Package::open(bytes, limits).map_err(NativeRefusal::Workbook)?;
+    pub(super) fn open(
+        bytes: &[u8],
+        limits: Limits,
+        resources: &crate::resource::Resources,
+    ) -> Result<Self, NativeRefusal> {
+        let package = Package::open(bytes, limits, resources).map_err(NativeRefusal::Workbook)?;
         let rels = package.relationships("").map_err(NativeRefusal::Workbook)?;
         let book = rels
             .iter()
@@ -418,7 +422,7 @@ impl Workbook {
             .part(part)
             .map_err(NativeRefusal::Workbook)?
             .ok_or(NativeRefusal::AmbiguousChartData("worksheet part missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         cells::rewrite(&bytes, &tree, writes, styles)
     }
 }
@@ -428,7 +432,7 @@ fn parse(package: &Package, part: &str) -> Result<XmlTree, NativeRefusal> {
         .part(part)
         .map_err(NativeRefusal::Workbook)?
         .ok_or(NativeRefusal::AmbiguousChartData("workbook part missing"))?;
-    Ok(XmlTree::parse(&bytes, package.limits().xml)?)
+    Ok(XmlTree::parse(&bytes, package.resources())?)
 }
 
 /// The text of a shared or inline string item, phonetic runs excluded.
@@ -481,6 +485,7 @@ pub(super) fn create(
     dataset: &Dataset,
     sheet: &str,
     limits: Limits,
+    resources: &crate::resource::Resources,
 ) -> Result<Vec<u8>, NativeRefusal> {
     if sheet.is_empty()
         || sheet.chars().count() > 31
@@ -548,7 +553,7 @@ pub(super) fn create(
         }
         data.push_str("</row>");
     }
-    let mut package = Package::create(limits)?;
+    let mut package = Package::create(limits, resources)?;
     package.relate("", &format!("{REL}/officeDocument"), "xl/workbook.xml")?;
     let sheet_link = package.relate(
         "xl/workbook.xml",

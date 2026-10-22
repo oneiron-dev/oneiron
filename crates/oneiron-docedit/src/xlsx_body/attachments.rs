@@ -20,7 +20,7 @@ impl Book {
         let Some(bytes) = self.package.part(part)? else {
             return Ok(());
         };
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let (line, offset, lines, last) = match edit.axis {
             XlsxAxis::Row => ("row", "rowOff", "rows", MAX_ROW),
             XlsxAxis::Column => ("col", "colOff", "columns", MAX_COLUMN),
@@ -127,7 +127,7 @@ impl Book {
             return Ok(());
         };
         // An older writer's VML need not be XML; its shapes stay as written.
-        let Ok(tree) = XmlTree::parse(&bytes, self.package.limits().xml) else {
+        let Ok(tree) = XmlTree::parse(&bytes, self.package.resources()) else {
             self.effects.push(format!(
                 "note_shapes_kept: {sheet}, {part}; the drawing does not read as XML"
             ));
@@ -237,7 +237,7 @@ impl Book {
             .package
             .part(part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let root = &tree.nodes[0];
         let Some(range) = root
             .attr("ref")
@@ -348,7 +348,6 @@ impl Book {
     /// defined name, its slicer views on whichever worksheet shows them, and
     /// the drawn shapes that show them. The effects name each.
     pub(super) fn drop_table_slicers(&mut self, lost: &[LostColumns]) -> Result<()> {
-        let limits = self.package.limits().xml;
         // Each bound cache: its relationship id and name, and the table and
         // column it filtered.
         let mut caches: Vec<(String, String, String, String)> = Vec::new();
@@ -359,7 +358,7 @@ impl Book {
             let Some(bytes) = self.package.part(&rel.target)? else {
                 continue;
             };
-            let tree = XmlTree::parse(&bytes, limits)?;
+            let tree = XmlTree::parse(&bytes, self.package.resources())?;
             let number = |node: &Node, name: &str| {
                 node.attr(name).and_then(|v| v.trim().parse::<u32>().ok())
             };
@@ -406,7 +405,7 @@ impl Book {
                 let Some(bytes) = self.package.part(&rel.target)? else {
                     continue;
                 };
-                let tree = XmlTree::parse(&bytes, limits)?;
+                let tree = XmlTree::parse(&bytes, self.package.resources())?;
                 let slicers: Vec<&Node> = tree
                     .children(0)
                     .map(|(_, node)| node)
@@ -520,7 +519,7 @@ impl Book {
         let Some(bytes) = self.package.part(part)? else {
             return Ok(0);
         };
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let mut removed: HashSet<usize> = (1..tree.nodes.len())
             .filter(|at| pick(&tree, *at))
             .collect();

@@ -104,7 +104,7 @@ pub(in crate::edit::structure) fn duplicated(
     else {
         return Err(EditRefusal::Invalid("the plan does not match the verb"));
     };
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let changed = diff(input, &candidate)?;
     let old = Lists::read(input)?;
     let presentation = old.part.as_str();
@@ -392,7 +392,7 @@ pub(in crate::edit::structure) fn reordered(
     before: &DeckView,
     order: &[u32],
 ) -> Result<Vec<String>, EditRefusal> {
-    let candidate = Package::open(&next.export()?, input.limits())?;
+    let candidate = Package::open(&next.export()?, input.limits(), input.resources())?;
     let changed = diff(input, &candidate)?;
     let (old, new) = (Lists::read(input)?, Lists::read(&candidate)?);
     // The app properties keep their slide count when they changed.

@@ -27,7 +27,7 @@ pub(super) fn verify(
     bytes: &[u8],
     slides: &[EmittedSlide],
 ) -> Result<Vec<String>, EmitError> {
-    let candidate = Package::open(bytes, template.limits())?;
+    let candidate = Package::open(bytes, template.limits(), template.resources())?;
     let row = plan.package();
 
     // The write set: what differs from the template, against the row.
@@ -57,7 +57,7 @@ pub(super) fn verify(
     let types = candidate
         .part(TYPES)?
         .ok_or(crate::retained_opc::Error::Invalid("content types missing"))?;
-    let types = XmlTree::parse(&types, candidate.limits().xml)?;
+    let types = XmlTree::parse(&types, candidate.resources())?;
     types.root(CONTENT_TYPES, "Types")?;
     for new in &row.new_parts {
         if candidate.part(&new.part)?.is_none() {
@@ -113,7 +113,7 @@ pub(super) fn verify(
         let bytes = candidate
             .part(&slide.part)?
             .ok_or(crate::retained_opc::Error::Invalid("slide missing"))?;
-        let tree = XmlTree::parse(&bytes, candidate.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, candidate.resources())?;
         let links: BTreeSet<String> = candidate
             .relationships(&slide.part)?
             .into_iter()
@@ -218,7 +218,7 @@ fn native_data(
         return Ok(false);
     };
     let bytes = candidate.part(slide)?.unwrap_or_default();
-    let tree = XmlTree::parse(&bytes, candidate.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, candidate.resources())?;
     let id = unit.shape.to_string();
     let Some(frame) = (0..tree.nodes.len()).find(|&at| {
         tree.nodes[at].is(PML, "graphicFrame")
@@ -321,12 +321,12 @@ fn introduced_metrics(
     let Some(bytes) = candidate.part(name)? else {
         return Ok(false);
     };
-    let mut found = metrics(&XmlTree::parse(&bytes, candidate.limits().xml)?);
+    let mut found = metrics(&XmlTree::parse(&bytes, candidate.resources())?);
     if found.is_empty() {
         return Ok(false);
     }
     if let Some(before) = template.part(name)? {
-        for held in metrics(&XmlTree::parse(&before, template.limits().xml)?) {
+        for held in metrics(&XmlTree::parse(&before, template.resources())?) {
             if let Some(at) = found.iter().position(|metric| *metric == held) {
                 found.swap_remove(at);
             }

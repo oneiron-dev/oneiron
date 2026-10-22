@@ -18,6 +18,7 @@ mod svg;
 mod tests;
 
 use crate::design_plan::{AssetBinding, AssetKind, MediaType, Rect};
+use crate::resource::{ResourceRefusal, Resources};
 use std::collections::BTreeSet;
 
 /// 96 px per inch.
@@ -97,15 +98,18 @@ pub struct GenerationReceipt {
     pub seed: Option<u64>,
 }
 
-/// Payload ceilings. Past one, the asset is refused, not truncated.
+/// Payload ceilings. Past a byte or pixel one, the asset is refused, not
+/// truncated. The SVG node, depth, segment and fill-edge counts are
+/// observations (FIX 8574): the compiler reserves their memory through the
+/// operation's port and checkpoints the quadratic fill-rule proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GraphicLimits {
     pub svg_bytes: usize,
     pub svg_nodes: usize,
     pub svg_depth: usize,
-    /// Drawing segments in one graphic.
+    /// Drawing segments in one graphic: an observation.
     pub segments: usize,
-    /// Edges in one filled outline (its fill-rule check is quadratic).
+    /// Edges in one filled outline: an observation.
     pub fill_edges: usize,
     pub raster_bytes: usize,
     pub raster_pixels: u64,
@@ -312,6 +316,21 @@ pub enum GraphicError {
         element: String,
         refused: Refused,
     },
+    /// The compile's memory was refused at the machine's floor, or its wait
+    /// or deadline ran out: never an unsupported graphic.
+    #[error(transparent)]
+    Resource(#[from] ResourceRefusal),
+}
+
+impl GraphicError {
+    /// The refusal, when memory or a deadline stopped the compile.
+    #[must_use]
+    pub const fn resource(&self) -> Option<ResourceRefusal> {
+        match self {
+            Self::Resource(refusal) => Some(*refusal),
+            _ => None,
+        }
+    }
 }
 
 /// Why an SVG left the closed subset.
@@ -353,16 +372,23 @@ pub enum Refused {
     Bounds,
     Limit,
     Malformed(&'static str),
+    /// Memory or a deadline stopped the compile here; it reaches the caller
+    /// as [`GraphicError::Resource`], not as a refused subset.
+    Resource(ResourceRefusal),
 }
 
 /// Compile one placed asset: native shapes for an SVG, a verified binding for
-/// a raster image. Never a raster fallback.
-pub fn compile_graphic(input: &GraphicInput<'_>) -> Result<CompiledGraphic, GraphicError> {
+/// a raster image. Never a raster fallback. An SVG's tree, shapes and
+/// fill-rule proofs reserve their memory through `resources`.
+pub fn compile_graphic(
+    input: &GraphicInput<'_>,
+    resources: &Resources,
+) -> Result<CompiledGraphic, GraphicError> {
     let bytes = asset::admit(input)?;
     let record = input.record;
     let (output, original, placed) = match record.media {
         MediaType::Svg => {
-            let drawing = svg::compile(bytes, input.bounds, &input.limits)?;
+            let drawing = svg::compile(bytes, input.bounds, resources)?;
             let original = Extent {
                 cx: drawing.child.cx,
                 cy: drawing.child.cy,

@@ -26,6 +26,7 @@ use crate::live::{
     ApproveScope, Conflict, DeckFork, DeckOp, Landing, LiveDeck, LiveError, NodeId, NodeKind,
     PreflightReport, land, preflight,
 };
+use crate::resource::Resources;
 use crate::retained_opc::{Limits, Package};
 use evidence::{Evidence, export_over, landed, surfaced};
 use std::collections::BTreeSet;
@@ -134,7 +135,8 @@ fn prepare(run: &mut Run, base: &Deck, anchor: &Anchor) -> Res<Prepared> {
     );
     head.rebind(&outcome)
         .map_err(|error| format!("it does not rebind: {error}"))?;
-    let package = Package::open(&outcome.bytes, run.limits).map_err(text)?;
+    let package =
+        Package::open(&outcome.bytes, run.limits, &Resources::measuring()).map_err(text)?;
     let defects = checks::defects(&outcome.bytes, run.limits);
     let origin = outcome.bytes.clone();
     let text_checks = [(1, "Free shape"), (1, "Group child"), (2, "Second slide")]
@@ -490,7 +492,7 @@ fn theme_inherited_style(p: &Prepared, limits: Limits, evidence: &mut Evidence) 
 
 /// The resolved Latin font of each run of one shape.
 fn fonts(bytes: &[u8], limits: Limits, part: &str, native: u32) -> Res<Vec<String>> {
-    let package = Package::open(bytes, limits).map_err(text)?;
+    let package = Package::open(bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let shape = view
         .slides
@@ -692,7 +694,7 @@ pub(super) fn built_ranges(
     let native = bound
         .native_id
         .ok_or("the animated shape has no native id")?;
-    let package = Package::open(&outcome.bytes, limits).map_err(text)?;
+    let package = Package::open(&outcome.bytes, limits, &Resources::measuring()).map_err(text)?;
     let view = DeckView::read(&package).map_err(text)?;
     let slide = view
         .slides

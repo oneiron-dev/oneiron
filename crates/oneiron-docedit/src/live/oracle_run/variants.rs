@@ -50,7 +50,7 @@ pub(super) fn part_text(package: &Package, name: &str) -> Res<String> {
 }
 
 pub(super) fn xml_tree(package: &Package, xml: &str) -> Res<XmlTree> {
-    XmlTree::parse(xml.as_bytes(), package.limits().xml).map_err(text)
+    XmlTree::parse(xml.as_bytes(), package.resources()).map_err(text)
 }
 
 /// The presentation part, through the package's officeDocument
@@ -161,7 +161,7 @@ pub(super) struct CommentSlide<'a> {
 pub(super) fn commented(package: &Package, slide: &CommentSlide<'_>) -> Res<Vec<u8>> {
     let base = package.export().map_err(text)?;
     let limits = comment_limits(package);
-    let number = inspect_pptx(&base, &limits)
+    let number = inspect_pptx(&base, &limits, &crate::resource::Resources::measuring())
         .map_err(text)?
         .slides
         .iter()
@@ -190,9 +190,15 @@ pub(super) fn commented(package: &Package, slide: &CommentSlide<'_>) -> Res<Vec<
             text: COMMENT_TEXT.to_owned(),
         },
     };
-    comment_patch(&base, &[edit], SlideMints::Replay(&mints), &limits)
-        .map(|effects| effects.new_bytes)
-        .map_err(text)
+    comment_patch(
+        &base,
+        &[edit],
+        SlideMints::Replay(&mints),
+        &limits,
+        &crate::resource::Resources::measuring(),
+    )
+    .map(|effects| effects.new_bytes)
+    .map_err(text)
 }
 
 /// The comment writer's codec ceilings: the package's own.

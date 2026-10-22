@@ -14,7 +14,11 @@ pub(crate) fn inspect_pptx_with_limits(
     bytes: &[u8],
     limits: &PptxOperationalLimits,
 ) -> Result<PptxInspection, PptxError> {
-    pptx_comments::inspect_pptx(bytes, &limits.codec())
+    pptx_comments::inspect_pptx(
+        bytes,
+        &limits.codec(),
+        &crate::office_body::document_resources(),
+    )
 }
 
 /// Rebinds by imported creation identities, never by a nearby shape or its name.

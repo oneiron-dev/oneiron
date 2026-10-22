@@ -4,14 +4,20 @@ use super::archive::Archive;
 use super::model::*;
 use super::xml::Xml;
 use crate::deck::DeckView;
+use crate::resource::Resources;
 use crate::retained_opc::{Limits, Package, XmlLimits};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Reads identities without creating missing ones or changing any package byte.
-pub fn inspect_pptx(bytes: &[u8], limits: &PptxCommentLimits) -> Result<PptxInspection, PptxError> {
+pub fn inspect_pptx(
+    bytes: &[u8],
+    limits: &PptxCommentLimits,
+    resources: &Resources,
+) -> Result<PptxInspection, PptxError> {
     if !limits.valid() {
         return Err(PptxError::InvalidPatch);
     }
+    let limits = &Codec { limits, resources };
     let archive = Archive::read(bytes, limits)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
     resolve_positions(bytes, &archive.parts, &mut inspection, limits);
@@ -28,7 +34,7 @@ pub(super) fn resolve_positions(
     bytes: &[u8],
     parts: &BTreeMap<String, Vec<u8>>,
     inspection: &mut PptxInspection,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) {
     // The archive already expanded these parts; its own size is the budget.
     let package_limits = Limits {
@@ -41,7 +47,7 @@ pub(super) fn resolve_positions(
             max_nodes: limits.max_xml_nodes,
         },
     };
-    let Ok(package) = Package::open(bytes, package_limits) else {
+    let Ok(package) = Package::open(bytes, package_limits, limits.resources) else {
         return;
     };
     let Ok(view) = DeckView::read(&package) else {
@@ -67,7 +73,7 @@ pub(super) fn text<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> Patc
 }
 pub(super) fn inspect_parts(
     parts: &BTreeMap<String, Vec<u8>>,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<PptxInspection> {
     let presentation = Xml::parse_with_limits(text(parts, "ppt/presentation.xml")?, limits)?;
     let root = presentation.root(P, "presentation")?;
@@ -388,7 +394,7 @@ pub(super) struct Relationship {
 pub(super) fn relationships(
     parts: &BTreeMap<String, Vec<u8>>,
     name: &str,
-    limits: &PptxCommentLimits,
+    limits: &Codec<'_>,
 ) -> PatchResult<Vec<Relationship>> {
     if !parts.contains_key(name) {
         return Ok(Vec::new());

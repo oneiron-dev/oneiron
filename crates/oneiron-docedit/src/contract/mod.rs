@@ -19,6 +19,7 @@ use crate::docx_body::{DocxBlock, DocxChange, DocxRevision};
 use crate::pptx_comments::{
     PptxAnchorOutcome, PptxCommentEdit, PptxCommentLimits, PptxSlideIdentity,
 };
+use crate::resource::{ResourceRefusal, Resources};
 use crate::retained_opc::{Limits, XmlLimits};
 use crate::xlsx_body::{XlsxBook, XlsxChange};
 use schemars::JsonSchema;
@@ -659,9 +660,29 @@ pub struct ContractError {
     pub code: ErrorCode,
     /// At most [`MAX_DETAIL_BYTES`].
     pub detail: String,
+    /// The machine's floor (what the work needed and what was available)
+    /// or the deadline, when memory or a deadline stopped the call: the
+    /// typed cause behind [`ErrorCode::MemoryFloor`] and
+    /// [`ErrorCode::ResourceDeadline`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource: Option<ResourceRefusal>,
 }
 
 impl ContractError {
+    /// The error a resource refusal ends a call with: its own code, and the
+    /// refusal itself as the cause. A host may run the call again.
+    #[must_use]
+    pub fn resource(refusal: ResourceRefusal) -> Self {
+        let code = match refusal {
+            ResourceRefusal::MemoryFloor { .. } => ErrorCode::MemoryFloor,
+            ResourceRefusal::Deadline => ErrorCode::ResourceDeadline,
+        };
+        Self {
+            resource: Some(refusal),
+            ..Self::new(code, refusal.to_string())
+        }
+    }
+
     pub fn new(code: ErrorCode, detail: impl Into<String>) -> Self {
         let mut detail = detail.into();
         if detail.len() > MAX_DETAIL_BYTES {
@@ -671,7 +692,11 @@ impl ContractError {
             }
             detail.truncate(end);
         }
-        Self { code, detail }
+        Self {
+            code,
+            detail,
+            resource: None,
+        }
     }
 }
 
@@ -697,6 +722,13 @@ pub enum ErrorCode {
     /// The op needs a host port the caller did not supply.
     Unavailable,
     Internal,
+    /// The machine cannot hold the memory the work needs: the error's
+    /// `resource` names what was needed and what was available. A count in
+    /// the document is never this reason.
+    MemoryFloor,
+    /// The host's wait for memory, or a deadline the caller gave, ran out;
+    /// the call may run again.
+    ResourceDeadline,
 }
 
 impl ErrorCode {
@@ -712,6 +744,8 @@ impl ErrorCode {
             Self::NeedsFallback => "needs_fallback",
             Self::Unavailable => "unavailable",
             Self::Internal => "internal",
+            Self::MemoryFloor => "memory_floor",
+            Self::ResourceDeadline => "resource_deadline",
         }
     }
 }
@@ -748,6 +782,10 @@ pub struct Recalculated {
 #[derive(Clone, Copy, Default)]
 pub struct Ports<'a> {
     pub recalc: Option<&'a dyn RecalcPort>,
+    /// The host's resource port the call's package and XML readers reserve
+    /// their memory through; without one, the call measures and reserves
+    /// nothing ([`Resources::measuring`]).
+    pub resources: Option<&'a Resources>,
 }
 
 /// Run one call over `inputs`. The inputs are only read.

@@ -185,8 +185,12 @@ fn sheets(package: &Package) -> Option<(String, Vec<(String, Option<String>)>)> 
 /// The name the rebuilt data takes in the chart's own workbook `bytes`:
 /// the first of `Sheet1`, `Sheet2`, … no sheet of it holds, in any case.
 /// `None` when the workbook does not read: the rebuild starts afresh.
-pub(super) fn free_sheet(bytes: &[u8], limits: Limits) -> Option<String> {
-    let package = Package::open(bytes, limits).ok()?;
+pub(super) fn free_sheet(
+    bytes: &[u8],
+    limits: Limits,
+    resources: &crate::resource::Resources,
+) -> Option<String> {
+    let package = Package::open(bytes, limits, resources).ok()?;
     let (_, sheets) = sheets(&package)?;
     let taken: BTreeSet<String> = sheets.iter().map(|(name, _)| name.to_lowercase()).collect();
     (1_u64..)
@@ -204,8 +208,9 @@ pub(super) fn beside(
     dataset: &Dataset,
     sheet: &str,
     limits: Limits,
+    resources: &crate::resource::Resources,
 ) -> Option<Vec<u8>> {
-    let book = read_xlsx_cells(source, limits).ok()?;
+    let book = read_xlsx_cells(source, limits, resources).ok()?;
     let mut layout: Vec<XlsxSheetPlan> = book
         .sheets
         .iter()
@@ -243,14 +248,21 @@ pub(super) fn beside(
             });
         }
     }
-    let projected = project_xlsx(source, &changes, limits).ok()?.bytes;
-    shown_first(&projected, sheet, limits)
+    let projected = project_xlsx(source, &changes, limits, resources)
+        .ok()?
+        .bytes;
+    shown_first(&projected, sheet, limits, resources)
 }
 
 /// `bytes` with `sheet` the workbook's active tab and its only selected
 /// one, as Edit Data then opens it.
-fn shown_first(bytes: &[u8], sheet: &str, limits: Limits) -> Option<Vec<u8>> {
-    let mut package = Package::open(bytes, limits).ok()?;
+fn shown_first(
+    bytes: &[u8],
+    sheet: &str,
+    limits: Limits,
+    resources: &crate::resource::Resources,
+) -> Option<Vec<u8>> {
+    let mut package = Package::open(bytes, limits, resources).ok()?;
     let (book, sheets) = sheets(&package)?;
     let tab = sheets.iter().position(|(name, _)| name == sheet)?;
     let (book_bytes, tree) = xml::read(&package, &book).ok()?;

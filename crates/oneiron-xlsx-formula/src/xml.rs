@@ -15,7 +15,7 @@ pub(crate) fn parse_part(package: &Package, name: &str) -> Result<Xml> {
     let bytes = package
         .part(name)?
         .ok_or_else(|| invalid("missing workbook part"))?;
-    Ok(Xml::parse(&bytes, package.limits().xml)?)
+    Ok(Xml::parse(&bytes, package.resources())?)
 }
 
 pub(crate) fn invalid(reason: &'static str) -> FormulaError {

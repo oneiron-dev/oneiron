@@ -4,27 +4,29 @@
 
 use super::*;
 
-/// Run one transaction over `base` under `limits`. Returns the candidate
-/// bytes and the report; nothing is written anywhere.
+/// Run one transaction over `base` under `limits`, reserving its memory
+/// through `resources`. Returns the candidate bytes and the report; nothing
+/// is written anywhere.
 pub fn run_transaction(
     base: &[u8],
     transaction: &DeckTransaction,
     limits: Limits,
     assets: &dyn Assets,
+    resources: &crate::resource::Resources,
 ) -> Result<(Vec<u8>, DeckTransactionReport), TransactionError> {
     transaction.validate()?;
     if Digest::of(base) != transaction.base {
         return Err(TransactionError::BaseChanged);
     }
-    let original = Package::open(base, limits)?;
+    let original = Package::open(base, limits, resources)?;
     // A signed or uninspectable package runs on a scratch copy, and only a
     // run whose candidate is the base byte for byte is accepted: a no-op
     // stands, any change to it refuses as before (FIX 8579).
     let read_only = original.editability() != Editability::Unsigned;
     let mut deck = if read_only {
-        original.scratch()
+        original.scratch()?
     } else {
-        original.clone()
+        original.copy()?
     };
     let mut marks = transaction.marks.clone();
     marks.join(&IdMarks::of_deck(&DeckView::read(&deck)?));
@@ -46,7 +48,7 @@ pub fn run_transaction(
     if read_only && bytes != base {
         return Err(TransactionError::NotEditable);
     }
-    let candidate = Package::open(&bytes, limits)?;
+    let candidate = Package::open(&bytes, limits, resources)?;
     let (parts, untouched) = part_diff(&original, &candidate)?;
     if let Some(outside) = parts.iter().find(|change| !allowed.contains(&change.part)) {
         return Err(TransactionError::PartDiffOutsideTransaction(

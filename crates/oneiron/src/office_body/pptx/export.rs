@@ -67,8 +67,14 @@ impl Vault {
         let package = Package::open(
             &self.deck_source(artifact, &source, body.retained)?,
             self.docedit_package_limits()?,
+            &crate::office_body::document_resources(),
         )
-        .map_err(|_| invalid("the PPTX package could not be read"))?;
+        .map_err(|error| {
+            crate::office_body::document_error(
+                error.resource(),
+                "the PPTX package could not be read",
+            )
+        })?;
         let outcome =
             project(&body.deck, &package, &artifact.to_hex(), &profile, &assets).map_err(live)?;
         Ok(PptxExport {
