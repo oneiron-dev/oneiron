@@ -3,8 +3,9 @@
 //! one derived-from edge the run actually used, checked with and without its
 //! source, the ancestor. One experiment identity serves both: the run, the
 //! exact credited outcome, its goal revision, the axis and the target. The
-//! check's key, its receipt, its sample draw and the fork pair's key all read
-//! it, so two outcomes or two targets of one run never share a measurement.
+//! check's key, its sample draw and the fork pair's key all read it, so two
+//! outcomes or two targets of one run never share a measurement. The check's
+//! own receipt is a fresh opaque id kept with its measurement.
 
 use std::collections::BTreeSet;
 
@@ -185,16 +186,6 @@ impl<'a> Experiment<'a> {
             self.target.spelled(),
             digest.to_hex()
         )
-    }
-
-    /// The check's own receipt id: the identity and both forks.
-    pub(super) fn check_receipt(&self, pair: &ContributionPair) -> String {
-        let mut hash = self.hasher("oneiron contribution check v2");
-        for receipt in [&pair.with_skill.receipt, &pair.without_skill.receipt] {
-            hash.update(&(receipt.len() as u64).to_be_bytes());
-            hash.update(receipt.as_bytes());
-        }
-        format!("contribution:{}", hash.finalize().to_hex())
     }
 
     /// Whether the experiment falls in the sample at `rate`: a fixed draw

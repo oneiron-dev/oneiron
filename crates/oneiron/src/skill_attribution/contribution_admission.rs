@@ -153,7 +153,12 @@ fn proved_in_txn(
             &pair.without_skill,
         )? {
             Ok(facts) => Ok(ContributionCheck {
-                receipt: experiment.check_receipt(pair),
+                // A fresh opaque id, kept with the measurement: no id the
+                // check names derives it, so none confirms it once erased.
+                receipt: format!(
+                    "contribution:{}",
+                    crate::entity_id::bytes_to_hex_lower(&vault.store.clock.ulid()?)
+                ),
                 contributed: contributed(facts.with_skill_passed, facts.without_skill_passed),
             }),
             Err(mismatches) => Err(mismatches.into_iter().map(UnmatchedReason::Forks).collect()),
