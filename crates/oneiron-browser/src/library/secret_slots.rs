@@ -281,6 +281,18 @@ impl SlotBook<'_> {
         if let Some(slot) = taken {
             return slot.name.clone();
         }
+        let name = self.unbound(kind);
+        self.args.insert(name.clone(), solved);
+        if let Some(replay) = replay {
+            self.replay_args.insert(name.clone(), replay);
+        }
+        name
+    }
+
+    /// A new secret slot of `kind`, named for its kind, that no value binds
+    /// yet: a parameter marked secret, with no arg (CUA E9a: a secret a
+    /// page withheld, for the caller to bind).
+    pub(super) fn unbound(&mut self, kind: SecretKind) -> String {
         let word = slot_word(kind);
         let (mut name, mut nth) = (word.to_owned(), 1_u32);
         while self.params.contains(&name) {
@@ -288,10 +300,6 @@ impl SlotBook<'_> {
             name = format!("{word}_{nth}");
         }
         self.params.push(name.clone());
-        self.args.insert(name.clone(), solved);
-        if let Some(replay) = replay {
-            self.replay_args.insert(name.clone(), replay);
-        }
         self.mark(&name, kind);
         name
     }

@@ -12,8 +12,8 @@ use crate::deletion::{
     append_redaction_sweep_completion_in_txn, decode_hard_erase_sweep_job,
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
     encode_withdrawn_generation_job_value, finish_redaction_erase_in_txn,
-    raise_withdrawn_generation_fence_in_txn, redaction_sweep_completion_in_txn,
-    validate_redaction_receipt_body,
+    is_corrupt_claim_repair_event, raise_withdrawn_generation_fence_in_txn,
+    redaction_sweep_completion_in_txn, validate_redaction_receipt_body,
 };
 use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
@@ -106,6 +106,11 @@ pub(super) fn finalize_job(
             let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
             if raw.len() < header_len {
                 return Err(Error::CorruptedIndex("entity metadata"));
+            }
+            // A valid corrupt-CLAIM repair event is no erase receipt and owes
+            // no sweep (FIX 7800); any other body still meets the check below.
+            if is_corrupt_claim_repair_event(&raw[header_len..]) {
+                continue;
             }
             // Finding 2 (fail closed): a REDACTION_AUDIT entity
             // whose body cannot be decoded is on-disk accountability
@@ -360,6 +365,11 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
         if raw.len() < header_len {
             return Err(Error::CorruptedIndex("entity metadata"));
+        }
+        // A valid corrupt-CLAIM repair event is no erase receipt: neither
+        // undecodable nor an obligation (FIX 7800).
+        if is_corrupt_claim_repair_event(&raw[header_len..]) {
+            continue;
         }
         // Undecodable count is SCOPED to the audit's own iteration over
         // LOCAL REDACTION_AUDIT obligations (the same predicate scope the covering

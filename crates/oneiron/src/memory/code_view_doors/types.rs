@@ -30,6 +30,11 @@ pub struct CodeViewRequest {
 pub struct CodeViewReadRequest {
     pub view: CodeViewRequest,
     pub path: String,
+    /// Why the caller needs this marked file's real bytes (FIX 7608,
+    /// CALL 3): absent reads the masked copy as before; a why from a proven
+    /// agent asks the owner for this file's stored bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

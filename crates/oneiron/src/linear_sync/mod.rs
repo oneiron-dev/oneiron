@@ -69,12 +69,14 @@
 
 mod approval;
 mod codec;
+mod custody;
 mod effect;
 mod engine;
 mod facade;
 mod facade_types;
 mod mirror_event;
 mod model;
+mod rate_wait;
 mod served;
 mod storage_codec;
 mod webhook;
@@ -85,12 +87,13 @@ pub use self::approval::{
 };
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
+pub use self::custody::{LinearBody, LinearBodyRole, LinearFreeze};
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
 pub use self::facade_types::{
-    LINEAR_PROVENANCE_PAGE_DEFAULT, LINEAR_PROVENANCE_PAGE_MAX, LinearLinkView, LinearMappingEdit,
-    LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView,
-    LinearProvenanceEntry, LinearProvenancePage, LinearProvenanceRequest,
+    LINEAR_PROVENANCE_PAGE_DEFAULT, LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt,
+    LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry,
+    LinearProvenancePage, LinearProvenanceRequest,
 };
 pub(crate) use self::mirror_event::{
     EventDirection, erase_mirror_control_actor_in_txn, erase_mirror_event_actor_in_txn, event_in,
@@ -105,9 +108,10 @@ pub use self::model::{
     LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource, LinearEgress,
     LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
     LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError,
-    LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWriteActor,
+    LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWait, LinearWriteActor,
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
+pub use self::rate_wait::{LINEAR_RATE_WINDOW_REASON, LinearRateTurn};
 pub use self::served::ServedLinearEgress;
 pub use self::webhook::{
     LinearExternalActor, LinearWebhookEvent, LinearWebhookKind, LinearWebhookReceipt,

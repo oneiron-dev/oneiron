@@ -15,7 +15,7 @@ use crate::error::Result;
 /// reference that does not parse, carries no path, so missing or unreadable
 /// state never proves descent. A read error is the result. A project shared
 /// along two paths (a diamond) is walked once, and a cycle ends the walk.
-pub(super) fn project_descends_from_in_txn(
+pub(crate) fn project_descends_from_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     child: EntityId,
