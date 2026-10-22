@@ -39,6 +39,8 @@ use crate::builtin_host::{
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
+mod line_chats;
+
 /// A folder read from disk stops here; the pack source applies its own,
 /// tighter bounds after.
 const MAX_FOLDER_FILES: usize = 1024;
@@ -85,6 +87,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/packs/skills/{entity}/activation/approve",
             post(approve_skill_activation),
         )
+        .merge(line_chats::routes())
 }
 
 #[derive(Debug, Deserialize)]

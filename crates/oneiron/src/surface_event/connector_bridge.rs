@@ -56,6 +56,11 @@ pub struct SurfaceConnectorPayload {
     pub received_at: u64,
     pub foreign_inbound: bool,
     pub claims_not_instructions: bool,
+    /// The receiving identity was retiring when the event routed (released,
+    /// or quarantined on its own machine): inbound still delivers, and its
+    /// outbound rules still decide any reply.
+    #[serde(default)]
+    pub identity_retiring: bool,
 }
 
 impl SurfaceConnectorPayload {
@@ -130,6 +135,7 @@ pub fn connector_event_from_surface(
         received_at: event.received_at,
         foreign_inbound: event.foreign_inbound,
         claims_not_instructions: event.claims_not_instructions,
+        identity_retiring: event.identity_retiring,
     };
     Ok(ConnectorEvent {
         event_id: request.idempotency_key.to_owned(),
