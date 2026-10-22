@@ -26,8 +26,53 @@ pub(crate) fn resolve_core_room(
     let (members, live) = vault
         .room_audience_with_live_under(scoped_read, room, principal)
         .map_err(|error| core_engine_error("room audience failed", error))?;
-    let room = RoomAudience::resolve(vault, auth, &members, live)?;
+    let room = RoomAudience::resolve(vault, auth, scoped_read, &members, live)?;
     Ok((Some(members), Some(room)))
+}
+
+/// The audience an assembly reads for, resolved once: the room (if any), the
+/// interlocutor set it makes, the caller's read narrowed to it, and the
+/// disclosure clamp it applies. A board's pins, its standing block and the
+/// read-back of a kept board all read through this one sequence, so each
+/// meets the room's Scope as a room turn's reads do (ARCH-0067 §8). It spends
+/// no once answer: only a retrieval's own assembly does.
+pub(crate) struct CoreAudience<'a> {
+    pub(crate) read: oneiron::claim::ScopedRead<'a>,
+    pub(crate) room: Option<RoomAudience>,
+    pub(crate) interlocutors: Option<oneiron::InterlocutorSet>,
+    pub(crate) disclosure: Option<oneiron::DisclosureContext>,
+}
+
+/// [`CoreAudience`] for `read`, the caller's own read, and the room `room_id`
+/// names, if any.
+pub(crate) fn resolve_core_audience<'a>(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    read: oneiron::claim::ScopedRead<'a>,
+    room_id: Option<oneiron::EntityId>,
+) -> Result<CoreAudience<'a>, ApiError> {
+    let (room_members, room) = resolve_core_room(vault, auth, &read, room_id)?;
+    let interlocutors =
+        super::resolve_core_interlocutor_set(vault, auth, &read, None, room.as_ref())?;
+    let read = narrow_to_core_audience(
+        vault,
+        auth,
+        read,
+        room_members.as_deref(),
+        room.as_ref(),
+        interlocutors.as_ref(),
+    )?;
+    let disclosure = super::resolve_core_disclosure(
+        vault,
+        interlocutors.as_ref(),
+        room.as_ref().map(|room| room.reader.is_some()),
+    )?;
+    Ok(CoreAudience {
+        read,
+        room,
+        interlocutors,
+        disclosure,
+    })
 }
 
 /// The caller's read narrowed to the audience it speaks to: a room's met world set, roster and
@@ -35,7 +80,8 @@ pub(crate) fn resolve_core_room(
 /// linked PERSON; else the read as it is. A speaker that entered the room unplaced is met by its
 /// entry fact, under the cut it entered at, in either branch (OF-365 P5). A room's branch also
 /// meets the entry of every speaker its live voice calls must place, whether the request names
-/// them or not (FIX 1388/1389 C1).
+/// them or not (FIX 1388/1389 C1). A room's branch reads inside the room's
+/// signed facets too, as a room turn does, its owner excepted (FIX 643).
 pub(crate) fn narrow_to_core_audience<'a>(
     vault: &oneiron::Vault,
     auth: &CoreAuth,
@@ -67,6 +113,7 @@ pub(crate) fn narrow_to_core_audience<'a>(
             }
         }
         return Ok(scoped_read
+            .within_room_facets(room.room)
             .for_audience(&audience)
             .with_peer_reads(room.agent_reads()));
     }

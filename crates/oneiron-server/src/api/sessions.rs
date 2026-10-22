@@ -67,10 +67,18 @@ pub(super) async fn mode(
         Some(facet) => facet,
         None => server.vault.session_facet(id).ok().flatten(),
     };
-    server
-        .vault
-        .set_session_mode_within(id, req.mode, facet_ref, actor(&auth, req.actor)?, &facets)
-        .map_err(|e| core_engine_error("session mode failed", e))?;
+    // A slip's own records, worlds and liveness bind the session in the
+    // write itself (FIX 8218); its facets stay the ones named above.
+    let actor = actor(&auth, req.actor)?;
+    match auth.verified_slip() {
+        Some(proof) => server
+            .vault
+            .set_session_mode_bound(id, req.mode, facet_ref, actor, &facets, proof),
+        None => server
+            .vault
+            .set_session_mode_within(id, req.mode, facet_ref, actor, &facets),
+    }
+    .map_err(|e| core_engine_error("session mode failed", e))?;
     Ok(Json(
         json!({"mode":req.mode,"facet_ref":facet_ref.map(|facet| facet.to_hex())}),
     ))

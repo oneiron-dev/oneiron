@@ -131,11 +131,16 @@ pub(super) fn first_category(tree: &XmlTree) -> Option<usize> {
 /// One live series' data as the rewrite writes it.
 pub(super) struct Data {
     pub(super) name: String,
-    /// Workbook columns (1-based) of its x values and its values.
+    /// Workbook columns (1-based) of its x values, its values and its
+    /// bubble sizes.
     pub(super) x_col: Option<u32>,
     pub(super) y_col: u32,
+    pub(super) size_col: Option<u32>,
     pub(super) x: Option<Vec<Cell>>,
     pub(super) values: Vec<Cell>,
+    /// A bubble series' sizes, one per point (a missing one a missing
+    /// cell).
+    pub(super) size: Option<Vec<Cell>>,
     /// The category set it draws, by its place among [`Wanted::sets`].
     pub(super) set: Option<usize>,
 }
@@ -178,8 +183,8 @@ impl CategorySet {
 /// The live data a chart rewrite writes: each series' family, each
 /// category set a series draws (the chart's once, each series' own once),
 /// and each series' cells on a rebuilt workbook's columns (each set's
-/// levels, then each series' x column, a scatter series', and values
-/// column).
+/// levels, then each series' x column, a scatter or bubble series', its
+/// values column and a bubble series' size column).
 pub(super) struct Wanted {
     pub(super) resolved: Vec<ChartKind>,
     pub(super) sets: Vec<CategorySet>,
@@ -258,7 +263,7 @@ pub(super) fn wanted(
     let mut set_of: Vec<Option<usize>> = Vec::with_capacity(series.len());
     for (index, (line, kind)) in series.iter().zip(&resolved).enumerate() {
         let set = effective_categories(categories, line);
-        if *kind == ChartKind::Scatter || set.is_empty() {
+        if kind.draws_x() || set.is_empty() {
             set_of.push(None);
             continue;
         }
@@ -292,24 +297,33 @@ pub(super) fn wanted(
         .zip(&resolved)
         .zip(set_of)
         .map(|((line, kind), set)| {
-            let scatter = *kind == ChartKind::Scatter;
+            let scatter = kind.draws_x();
+            let size = line
+                .bubble_size
+                .as_ref()
+                .filter(|_| *kind == ChartKind::Bubble);
             let count = match (&line.x, scatter, set) {
                 (Some(x), true, _) => x.len().max(line.values.len()),
                 (None, true, _) | (_, false, None) => line.values.len(),
                 (_, false, Some(set)) => sets[set].count(),
-            };
+            }
+            .max(size.map_or(0, Vec::len));
             let x = line
                 .x
                 .as_ref()
                 .filter(|_| scatter)
                 .map(|x| number_cells(x, count));
             let x_col = x.as_ref().map(|_| take());
+            let y_col = take();
+            let size = size.map(|size| number_cells(size, count));
             Data {
                 name: line.name.clone(),
                 x_col,
-                y_col: take(),
+                y_col,
+                size_col: size.as_ref().map(|_| take()),
                 x,
                 values: number_cells(&line.values, count),
+                size,
                 set,
             }
         })

@@ -733,6 +733,19 @@ impl Vault {
         Ok(epochs)
     }
 }
+
+/// The sequence of the latest restore, wake or migrate epoch `txn` reads, none before
+/// the first: a reader's position that must not outlive a restore is bound to it
+/// (FIX 1585).
+pub(crate) fn latest_restore_epoch_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<u64>> {
+    match RESTORE_EPOCH.iter_rev_from(&vault.store, txn, &[])?.next() {
+        Some(row) => Ok(Some(row?.0)),
+        None => Ok(None),
+    }
+}
 #[cfg(test)]
 mod test_hooks;
 #[cfg(test)]

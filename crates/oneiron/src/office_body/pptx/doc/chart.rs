@@ -1,21 +1,22 @@
 //! A chart frame's chart in the body's `charts` root, keyed by the frame's
 //! identity (ARCH-0077: "Ordered category and series ids over one dataset;
 //! caches and workbooks are projections"). Its frame's `payload` holds only
-//! [`MARK`]. Each entry holds the chart's `family` and `source`, one value
-//! each; `category_set`, its categories by point identity
-//! ([`categories`]); `order`, a movable list of series identities; and
-//! `series`, a map from series identity to that series' `name`, `family`
-//! and `x`, one value each, whether it draws a set of its own (`local`, its
-//! own set under `category_set`, kept while it draws the chart's), and its
-//! values: by category point identity (`cells`) for a series that draws
-//! categories, else one list (`values`). Every value is written only where
-//! it changed, so concurrent writers' series and category inserts, deletes
-//! and moves, writes of other series, points or values, and writes of
-//! other fields of one series all join. A series the order no longer lists
-//! is not part of the chart; its fields stay where they were, so a
-//! concurrent write to one of them never brings it back. The joined chart
-//! is read as it stands: how its export draws it is derived when it is
-//! drawn, never written back by a reader.
+//! [`MARK`]. Each entry holds the chart's `family`, `source`, `plots` (each
+//! plot's settings) and `view` (its 3D view), one value each;
+//! `category_set`, its categories by point identity ([`categories`]);
+//! `order`, a movable list of series identities; and `series`, a map from
+//! series identity to that series' `name`, `family`, `x`, `size` (a bubble
+//! series' sizes) and `bubble_3d`, one value each, whether it draws a set
+//! of its own (`local`, its own set under `category_set`, kept while it
+//! draws the chart's), and its values: by category point identity
+//! (`cells`) for a series that draws categories, else one list (`values`).
+//! Every value is written only where it changed, so concurrent writers'
+//! series and category inserts, deletes and moves, writes of other series,
+//! points or values, and writes of other fields of one series all join. A
+//! series the order no longer lists is not part of the chart; its fields
+//! stay where they were, so a concurrent write to one of them never brings
+//! it back. The joined chart is read as it stands: how its export draws it
+//! is derived when it is drawn, never written back by a reader.
 
 mod categories;
 
@@ -40,11 +41,15 @@ const VALUES: &str = "values";
 const CELLS: &str = "cells";
 const LOCAL: &str = "local";
 const X: &str = "x";
+const SIZE: &str = "size";
+const BUBBLE_3D: &str = "bubble_3d";
+const PLOTS: &str = "plots";
+const VIEW: &str = "view";
 
-/// Whether a series of a chart of `family` draws categories: a scatter
-/// series draws x values.
+/// Whether a series of a chart of `family` draws categories: a scatter or
+/// bubble series draws x values.
 fn draws(family: ChartKind, line: &ChartSeries) -> bool {
-    line.family.unwrap_or(family) != ChartKind::Scatter
+    !line.family.unwrap_or(family).draws_x()
 }
 
 /// The chart `charts` holds for the frame `id`. A series listed twice is
@@ -79,7 +84,7 @@ pub(super) fn read(charts: &LoroMap, id: NodeId) -> Result<NodePayload> {
             };
             let line_family: Option<ChartKind> = json(&map, FAMILY)?;
             let set = own.as_ref().unwrap_or(&chart_set);
-            let values = if line_family.unwrap_or(family) != ChartKind::Scatter && !set.is_empty() {
+            let values = if !line_family.unwrap_or(family).draws_x() && !set.is_empty() {
                 categories::read_values(child_map(&map, CELLS).as_ref(), set)?
             } else {
                 json_or(&map, VALUES, Vec::new())?
@@ -91,6 +96,8 @@ pub(super) fn read(charts: &LoroMap, id: NodeId) -> Result<NodePayload> {
                 family: line_family,
                 x: json(&map, X)?,
                 categories: own,
+                bubble_size: json_or(&map, SIZE, None)?,
+                bubble_3d: json_or(&map, BUBBLE_3D, None)?,
             });
         }
     }
@@ -99,6 +106,8 @@ pub(super) fn read(charts: &LoroMap, id: NodeId) -> Result<NodePayload> {
         categories: chart_set,
         series,
         source: json(&entry, SOURCE)?,
+        plots: json_or(&entry, PLOTS, Vec::new())?,
+        view: json_or(&entry, VIEW, None)?,
     })
 }
 
@@ -142,11 +151,15 @@ fn sync_chart(entry: &LoroMap, chart: &NodePayload) -> Result<()> {
         categories: chart_set,
         series,
         source,
+        plots,
+        view,
     } = chart
     else {
         return Ok(());
     };
     put_json(entry, FAMILY, family)?;
+    put_json(entry, PLOTS, plots)?;
+    put_json(entry, VIEW, view)?;
     categories::sync(
         &entry.ensure_mergeable_map(CATEGORY_SET).map_err(loro)?,
         chart_set,
@@ -170,6 +183,8 @@ fn sync_chart(entry: &LoroMap, chart: &NodePayload) -> Result<()> {
         put_json(&map, NAME, &line.name)?;
         put_json(&map, FAMILY, &line.family)?;
         put_json(&map, X, &line.x)?;
+        put_json(&map, SIZE, &line.bubble_size)?;
+        put_json(&map, BUBBLE_3D, &line.bubble_3d)?;
         put_json(&map, LOCAL, &line.categories.is_some())?;
         if let Some(own) = &line.categories {
             categories::sync(&map.ensure_mergeable_map(CATEGORY_SET).map_err(loro)?, own)?;

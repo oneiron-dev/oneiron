@@ -1,5 +1,5 @@
 //! Microsoft's TypeScript 7 as an external process: the correctness oracle,
-//! and the fallback when tsc-rs is unavailable.
+//! and the fallback when the in-process backend (tsrs or tsc-rs) cannot check.
 //!
 //! The binary is the native `tsc` of the npm platform package
 //! `@typescript/typescript-<platform>` at [`MICROSOFT_TS_VERSION`]
