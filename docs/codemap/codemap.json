@@ -80666,6 +80666,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/convert/chart/special.rs",
+     "purpose": "A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [
@@ -80734,7 +80744,7 @@
      "path": "src/live/held/chart.rs",
      "purpose": "A chart frame's data as the live model holds it: its chart part, its plots in document order, and each…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -80745,6 +80755,16 @@
      "purpose": "A chart part's family settings as the live model holds them (OF-510, FIX 3493 D9b): each plot's settings…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/held/chart/special.rs",
+     "purpose": "A chart part's stock, surface and of-pie settings as the live model holds them (OF-510, FIX 3493 D9c): each…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -80992,10 +81012,10 @@
      "path": "src/live/pptx/chart.rs",
      "purpose": "A live chart's model (ARCH-0077, \"One deck, one document\": \"Ordered category and series ids over one…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 2
      }
     },
@@ -81033,6 +81053,24 @@
       "crate-vis": 8,
       "enum": 4,
       "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfPieType",
+      "SplitType",
+      "StockOrder",
+      "StockRoles",
+      "SurfaceBand"
+     ],
+     "path": "src/live/pptx/chart/special.rs",
+     "purpose": "A live chart's stock, surface and of-pie settings (OF-510, FIX 3493 D9c), held on each plot's own…",
+     "surface": {
+      "crate-vis": 12,
+      "enum": 3,
       "struct": 2
      }
     },
@@ -81143,7 +81181,7 @@
      "path": "src/live/reshape/families.rs",
      "purpose": "A rewritten chart's plots and 3D view (OF-510, FIX 3493 D9b): a kept plot with its series replaced and only…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -81184,6 +81222,16 @@
      "purpose": "A new series' format (OF-510, FIX 3493)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/reshape/special.rs",
+     "purpose": "A rewritten chart's stock, surface and of-pie plots (OF-510, FIX 3493 D9c): the compound settings a plot…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -81872,7 +81920,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 51,
+     "files": 55,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81944,7 +81992,7 @@
    },
    "over_bar": 6,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 144,
+   "source_files": 148,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -104442,6 +104490,7 @@
       "Of360QaAnswer",
       "Of360RateMetric",
       "Of360Speaker",
+      "OfPieType",
       "OffRecordBackendClass",
       "OffRecordClaimRequest",
       "OffRecordClosed",
@@ -105745,6 +105794,7 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "SplitType",
       "StageDefinition",
       "StageEvidenceClass",
       "StageLadderDefinition",
@@ -105771,6 +105821,8 @@
       "StepSequence",
       "StepTarget",
       "StepXfrm",
+      "StockOrder",
+      "StockRoles",
       "StopCause",
       "StoragePhase",
       "StoredShapeSeed",
@@ -105819,6 +105871,7 @@
       "SupportGrantStatus",
       "SupportGrantView",
       "SupportHolderClass",
+      "SurfaceBand",
       "SwitchCarried",
       "SwitchComponent",
       "SwitchEngineInput",
@@ -106229,8 +106282,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 987,
-      "struct": 3042
+      "enum": 990,
+      "struct": 3044
      }
     },
     {
