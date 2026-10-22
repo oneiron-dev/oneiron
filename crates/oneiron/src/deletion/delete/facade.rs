@@ -82,14 +82,20 @@ impl Vault {
         deleted
     }
 
-    /// The hard delete of an owner-confirmed erase come due (FIX 6337), run
-    /// as [`Self::delete_entity_with_reason`] runs one, except that the first
-    /// writer that would publish or tear the record re-proves that the erase
-    /// still waits, and a hold's refusal names the owner its row records.
-    /// None waiting cancels the erase: nothing is published or torn.
-    pub(crate) fn delete_confirmed_erase(&self, id: &EntityId) -> Result<ConfirmedEraseOutcome> {
-        let due = PendingConfirmedErase::default();
-        let reason = DeleteReason::UserHardDelete;
+    /// The delete of an owner erase come due (FIX 6337), under the reason
+    /// its request `generation` keeps (FIX 1465): run as
+    /// [`Self::delete_entity_with_reason`] runs one, except that the first
+    /// writer that would publish or tear the record re-proves that this
+    /// request still waits, and a hold's refusal names the owner its row
+    /// records. None waiting, or a newer request, cancels it: nothing is
+    /// published or torn.
+    pub(crate) fn delete_confirmed_erase(
+        &self,
+        id: &EntityId,
+        reason: DeleteReason,
+        generation: EntityId,
+    ) -> Result<ConfirmedEraseOutcome> {
+        let due = PendingConfirmedErase::new(generation);
         let deleted = self.delete_entity_through_dependents(id, reason, None, Some(&due));
         self.store.flush_legal_hold_refusals_settled();
         due.outcome(deleted)
@@ -137,7 +143,7 @@ impl Vault {
         Ok(outcome)
     }
 
-    fn require_room_delete_gate(
+    pub(super) fn require_room_delete_gate(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
@@ -415,6 +421,11 @@ impl Vault {
             // arm publishes its tombstone after the scrub, so the re-fold below
             // in the publish txn is the decision that binds.
             reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
+            // A due owner delete scrubs only while its request still waits
+            // (FIX 1465): this scrub is its first destructive commit.
+            if let Some(due) = due {
+                due.prove_in(self, &wtxn, id)?;
+            }
             // A Connect guest's PERSON leaves its pacts first (FIX 3875).
             revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
             // This scrub is the first destructive commit. The intent rides

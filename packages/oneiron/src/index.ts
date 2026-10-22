@@ -1603,7 +1603,7 @@ export class Oneiron {
       list: (input: Facade.EmptyRequest = {}): Facade.LegalHold[] => this.#call(() => this.#client.vaultLegalHoldsList(input) as Facade.LegalHold[]),
       /** The owner-visible legal hold log, oldest first. */
       log: (input: Facade.EmptyRequest = {}): Facade.LegalHoldEvent[] => this.#call(() => this.#client.vaultLegalHoldsLog(input) as Facade.LegalHoldEvent[]),
-      /** The owner's one confirm that lifts or narrows the customer holds on the named records and erases them. */
+      /** The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records. */
       lift_and_erase: (input: Facade.LegalHoldLiftAndEraseRequest): Facade.LegalHoldLiftAndErased => this.#call(() => this.#client.vaultLegalHoldsLiftAndErase(input) as Facade.LegalHoldLiftAndErased),
     },
     courtesy_delete: {

@@ -257,6 +257,30 @@ impl SafeDeleteReason {
     }
 }
 
+/// Where one delete request stands (FIX 1465). Neither says the erase is
+/// complete: that is its deletion receipt's signed final row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeleteRequestState {
+    /// The local delete rail applied it.
+    Applied,
+    /// Accepted and recorded, not applied yet: "erase confirmed; completion
+    /// pending". It runs once nothing holds the record, or once the shared
+    /// vault's veto window has run out.
+    CompletionPending,
+}
+
+impl DeleteRequestState {
+    /// Stable string form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Applied => "applied",
+            Self::CompletionPending => "completion_pending",
+        }
+    }
+}
+
 /// Receipt for one safe delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteReceipt {
@@ -265,8 +289,11 @@ pub struct DeleteReceipt {
     /// The reason the delete was performed under.
     pub reason: String,
     /// Redaction audit receipt ref (`redaction:<hex>`); `None` for
-    /// `user_delete`, which writes no receipt entity by design.
+    /// `user_delete`, which writes no receipt entity by design, and for a
+    /// request not applied yet.
     pub receipt_ref: Option<String>,
+    /// Whether the local rail applied it or it waits (FIX 1465).
+    pub state: DeleteRequestState,
 }
 
 /// One pending gated write awaiting consent.

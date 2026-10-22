@@ -829,8 +829,16 @@ pub struct LegalHoldWidenArgs {
 #[derive(Args, Clone, Debug)]
 pub struct LegalHoldLiftArgs {
     /// The records to lift and erase, 32 hex each.
-    #[arg(required = true, value_name = "RECORD")]
+    #[arg(
+        required_unless_present = "claim_free_partition",
+        value_name = "RECORD"
+    )]
     pub records: Vec<String>,
+
+    /// Also release every customer hold on the claim-free gate-decision
+    /// partition, the one the retention-horizon sweep ages (FIX 9782).
+    #[arg(long)]
+    pub claim_free_partition: bool,
 
     /// You have read the prompt and confirm it.
     #[arg(long)]

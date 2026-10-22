@@ -172,6 +172,9 @@ pub struct NapiDeleteReceipt {
     pub reason: String,
     /// Redaction audit ref; absent for `user_delete`.
     pub receipt_ref: Option<String>,
+    /// `applied`, or `completion_pending` while an owner's accepted delete
+    /// waits (FIX 1465).
+    pub state: String,
 }
 
 /// One gated write parked for consent.

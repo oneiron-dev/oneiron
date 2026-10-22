@@ -44,14 +44,28 @@ fn refusal(verb: &str, error: OwnerError) -> MemoryError {
 }
 
 /// The rows an incoming ask names: each world it asks about, each record
-/// it covers and each its answer deleted.
+/// it covers, each record its answer deleted, left out of its hold or
+/// names in its progress, and each courtesy hold with what it holds (FIX
+/// 2924, 2926, 2927).
 fn incoming_rows(ask: &CourtesyDeleteIncoming) -> impl Iterator<Item = EntityId> + '_ {
-    let deleted = ask.answer.iter().flat_map(|answer| answer.deleted.iter());
+    let deleted = ask.answer.iter().flat_map(|answer| {
+        answer
+            .deleted
+            .iter()
+            .chain(answer.excluded.iter())
+            .chain(answer.progress.iter().map(|saved| &saved.record))
+    });
+    let holds = ask
+        .holds
+        .iter()
+        .chain(ask.answer.iter().flat_map(|answer| answer.holds.iter()))
+        .flat_map(|hold| std::iter::once(&hold.hold).chain(hold.records.iter()));
     ask.worlds
         .iter()
         .map(|world| &world.world)
         .chain(ask.candidates.iter())
         .chain(deleted)
+        .chain(holds)
         .filter_map(|hex| EntityId::from_hex(hex).ok())
 }
 

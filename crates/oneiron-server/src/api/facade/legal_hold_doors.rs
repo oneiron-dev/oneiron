@@ -166,9 +166,10 @@ pub(crate) async fn vault_legal_holds_log(
 }
 
 /// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
-/// erase?" confirm. It erases; the engine takes the owner's proof and the
-/// records, and nothing here adds a token of its own. It lists the records
-/// its receipt names.
+/// erase?" confirm. It erases; the engine takes the owner's proof, the
+/// targets and the state the confirm showed, and checks that state itself
+/// (FIX 1462). Nothing here adds a token or prepares a state of its own. It
+/// lists the records its receipt names.
 pub(crate) async fn vault_legal_holds_lift_and_erase(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

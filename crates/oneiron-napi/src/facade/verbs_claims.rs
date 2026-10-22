@@ -192,6 +192,7 @@ impl ActorScopedVault {
             existed: receipt.existed,
             reason: receipt.reason,
             receipt_ref: receipt.receipt_ref,
+            state: receipt.state.as_str().to_owned(),
         })
     }
 

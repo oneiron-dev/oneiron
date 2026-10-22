@@ -19,7 +19,6 @@ use super::coop_request::{
     SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
-use super::{DeleteReason, LegalHoldKind, LegalHoldTarget};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt, RetryAttempt,
@@ -27,10 +26,15 @@ use crate::attempt_queue::{
 use crate::authority::FederationPactStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::legal_hold as hold_store;
 use crate::{EntityId, Error, Result, Vault};
 
+mod answer;
 mod refresh;
+mod types;
+
+pub use types::{
+    CooperativeDeleteOperation, CooperativeDeleteRecord, CooperativeDeleteRecordState,
+};
 
 /// The queue kind carrying both legs: the ask and the answer.
 pub const COOP_DELETION_DELIVERY_ATTEMPT_KIND: &str = "cooperative_deletion.delivery";
@@ -208,9 +212,16 @@ pub struct CooperativeDeletionDisposition {
     pub reason_code: Option<String>,
     /// When a choice other than delete comes up for review, unix seconds.
     pub review_at: Option<u64>,
-    /// The records the owner deleted under a delete choice, hex.
+    /// The records the owner's delete choice removed, hex.
     pub deleted: Vec<String>,
     pub recorded_at: u64,
+    /// The customer hold a legal hold choice placed or kept (FIX 2924).
+    pub hold_ids: Vec<EntityId>,
+    /// The records a legal hold choice named that are no copy this ask
+    /// covers, hex: left out of its hold (FIX 2927).
+    pub excluded: Vec<String>,
+    /// A delete choice's operation and each record's state (FIX 2926).
+    pub delete_operation: Option<CooperativeDeleteOperation>,
 }
 
 /// One filed ask, for the recipient owner's review.
@@ -234,6 +245,9 @@ pub struct IncomingCooperativeDeletion {
     /// Delivery of the owner's answer back to the requester, once one is queued.
     pub reply_status: Option<CooperativeDeletionDeliveryStatus>,
     pub reply_started_at: Option<u64>,
+    /// Every customer hold an answer to this ask placed or kept, a later
+    /// choice's and an earlier one's alike (FIX 2924).
+    pub courtesy_hold_ids: Vec<EntityId>,
 }
 
 /// What the owner chose for one filed ask.
@@ -242,8 +256,9 @@ pub struct CooperativeDeletionAnswer {
     pub kind: CooperativeDeletionDispositionKind,
     pub reason_code: Option<String>,
     pub review_at: Option<u64>,
-    /// Under a delete choice, the records to hard-delete. Each goes through
-    /// the ordinary delete rail, one by one.
+    /// Under a delete choice, the records to hard-delete, each once in the
+    /// order first named. Each goes through the owner's delete rail, one by
+    /// one, once no legal hold keeps any of them.
     pub delete: Vec<EntityId>,
     /// Under a legal hold choice, this vault's records to hold, each once.
     /// They take one customer hold, written with the answer.
@@ -367,6 +382,8 @@ impl Vault {
         };
         let key = (body.nonce, recipient);
         self.with_write_txn_grouped(|txn| {
+            // The owner still holds in the writer that queues (FIX 9784).
+            owner.revalidate_in_txn(self, txn)?;
             if NOTICES.contains(&self.store, txn, &key)? {
                 return Err(invalid("an ask under this nonce is already queued"));
             }
@@ -390,6 +407,8 @@ impl Vault {
         let bytes = encode_signed_cooperative_deletion_reply(signed)?;
         let key = (body.pact_id, body.nonce);
         self.with_write_txn_grouped(|txn| {
+            // The owner still holds in the writer that queues (FIX 9784).
+            owner.revalidate_in_txn(self, txn)?;
             let mut filed = INCOMING
                 .get(&self.store, txn, &key)?
                 .ok_or_else(|| invalid("no such ask"))?;
@@ -493,6 +512,7 @@ impl Vault {
                     disposition: None,
                     reply_status: None,
                     reply_started_at: None,
+                    courtesy_hold_ids: Vec::new(),
                 };
                 INCOMING.put(&self.store, txn, &key, &filed)?;
                 Ok(CooperativeDeletionIngress::Filed)
@@ -553,88 +573,6 @@ impl Vault {
             notice.updated_at = now;
             NOTICES.put(&self.store, txn, &key, &notice)?;
             Ok(CooperativeDeletionIngress::Filed)
-        })
-    }
-
-    /// Records the owner's choice on a filed ask. A delete choice hard-deletes
-    /// the records the owner named through the ordinary delete rail first. A
-    /// legal hold choice places a customer hold on the records the owner
-    /// named, in the writer that records the answer, so a refused hold leaves
-    /// the old answer in place. Every choice but delete is recorded with its
-    /// reason code and review date, and no choice but these two touches the
-    /// data.
-    pub fn answer_cooperative_deletion_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        pact_id: &[u8; 32],
-        nonce: &[u8; 16],
-        answer: &CooperativeDeletionAnswer,
-        now: u64,
-    ) -> Result<IncomingCooperativeDeletion> {
-        self.recheck_owner(owner)?;
-        let key = (*pact_id, *nonce);
-        {
-            let rtxn = self.store.env.read_txn()?;
-            if !INCOMING.contains(&self.store, &rtxn, &key)? {
-                return Err(invalid("no such ask"));
-            }
-        }
-        let delete = answer.kind == CooperativeDeletionDispositionKind::Delete;
-        if delete {
-            if answer.reason_code.is_some() || answer.review_at.is_some() {
-                return Err(invalid(
-                    "a delete choice carries no reason code or review date",
-                ));
-            }
-        } else {
-            let code = answer
-                .reason_code
-                .as_deref()
-                .ok_or_else(|| invalid("this choice needs a reason code"))?;
-            if code.is_empty()
-                || code.len() > MAX_REASON_CODE_LEN
-                || !code
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-            {
-                return Err(invalid("a reason code is a short snake_case token"));
-            }
-            if answer.review_at.is_none_or(|at| at <= now) {
-                return Err(invalid("this choice needs a future review date"));
-            }
-            if !answer.delete.is_empty() {
-                return Err(invalid("only a delete choice deletes records"));
-            }
-        }
-        check_hold_records(answer)?;
-        let mut deleted = Vec::new();
-        for id in &answer.delete {
-            if self
-                .delete_entity_with_reason(id, DeleteReason::UserHardDelete)?
-                .existed
-            {
-                deleted.push(id.to_hex());
-            }
-        }
-        self.with_write_txn_grouped(|txn| {
-            let mut filed = INCOMING
-                .get(&self.store, txn, &key)?
-                .ok_or_else(|| invalid("no such ask"))?;
-            if answer.kind == CooperativeDeletionDispositionKind::LegalHold {
-                hold_for_ask(self, txn, owner, pact_id, nonce, &answer.hold)?;
-            }
-            // A new choice replaces the old one but lifts no hold an earlier
-            // legal hold answer placed. The owner lifts that only through
-            // `confirm_lift_legal_hold_and_erase`.
-            filed.disposition = Some(CooperativeDeletionDisposition {
-                kind: answer.kind,
-                reason_code: answer.reason_code.clone(),
-                review_at: answer.review_at,
-                deleted: deleted.clone(),
-                recorded_at: now,
-            });
-            INCOMING.put(&self.store, txn, &key, &filed)?;
-            Ok(filed)
         })
     }
 
@@ -781,69 +719,6 @@ impl Vault {
             Ok(next)
         })
     }
-}
-
-/// A legal hold choice names the records it holds, each once; every other
-/// choice names none.
-fn check_hold_records(answer: &CooperativeDeletionAnswer) -> Result<()> {
-    if answer.kind != CooperativeDeletionDispositionKind::LegalHold {
-        if !answer.hold.is_empty() {
-            return Err(invalid("only a legal hold choice holds records"));
-        }
-        return Ok(());
-    }
-    if answer.hold.is_empty() {
-        return Err(invalid("a legal hold choice names the records it holds"));
-    }
-    let mut seen = std::collections::BTreeSet::new();
-    if !answer.hold.iter().all(|id| seen.insert(*id)) {
-        return Err(invalid("a legal hold choice names each record once"));
-    }
-    Ok(())
-}
-
-/// The matter reference of the hold an ask's legal hold answer places:
-/// `courtesy:`, the pact's 64 hex, `:`, the nonce's 32 hex. Its 106
-/// characters fit the 128 an opaque reference allows.
-fn courtesy_matter_ref(pact_id: &[u8; 32], nonce: &[u8; 16]) -> String {
-    format!("courtesy:{}:{}", hex(pact_id), hex(nonce))
-}
-
-/// Holds `records` for one filed ask, in the answer's writer. Each must be a
-/// record this vault stores. A standing customer hold of this ask that
-/// already names them all is kept and nothing new is placed, so a retried
-/// answer holds once. Other holds on the same records stand beside it.
-fn hold_for_ask(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    owner: &AuthenticatedOwner,
-    pact_id: &[u8; 32],
-    nonce: &[u8; 16],
-    records: &[EntityId],
-) -> Result<()> {
-    for id in records {
-        if !crate::ports::EntityStoreRead::port_entity_present(&vault.store, txn, id)? {
-            return Err(invalid("a held record must exist in this vault"));
-        }
-    }
-    let matter_ref = courtesy_matter_ref(pact_id, nonce);
-    let targets: Vec<LegalHoldTarget> = records
-        .iter()
-        .copied()
-        .map(LegalHoldTarget::Record)
-        .collect();
-    let held = hold_store::holds_in_txn(&vault.store, txn)?
-        .iter()
-        .any(|hold| {
-            hold.kind == LegalHoldKind::Customer
-                && hold.stands()
-                && hold.matter_ref.as_deref() == Some(matter_ref.as_str())
-                && targets.iter().all(|target| hold.targets.contains(target))
-        });
-    if !held {
-        vault.place_legal_hold_in_txn(txn, owner, targets, Some(matter_ref))?;
-    }
-    Ok(())
 }
 
 /// Stages one leg's queue row in the caller's transaction.

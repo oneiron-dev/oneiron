@@ -159,7 +159,7 @@ impl LegalHold {
     }
 }
 
-/// The six hold events (C3).
+/// The seven hold events (C3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldEventKind {
@@ -167,6 +167,10 @@ pub enum LegalHoldEventKind {
     ScopeChanged,
     DeleteRefused,
     LiftAndEraseConfirmed,
+    /// The owner's plain delete of a record only secret orders keep was
+    /// accepted: erase confirmed, completion pending, no hold lifted (FIX
+    /// 1465).
+    EraseConfirmed,
     EraseCompleted,
     Lifted,
 }
@@ -289,6 +293,10 @@ pub enum ErasePendingReason {
     /// Its sweep finished or none was queued, and a custody retirement it
     /// bound has not finished on every required target yet (FIX 5844).
     CustodyRetirement,
+    /// Nothing is erased yet: in a shared vault with two or more Owners the
+    /// erase waits out the vault's `erase` veto window first, through the
+    /// record's own `erase` act, and runs once that act completes (FIX 9781).
+    VetoWindow,
 }
 
 /// The owner's one confirm's result.
@@ -297,6 +305,10 @@ pub struct LiftAndEraseOutcome {
     /// The customer holds lifted, or narrowed to what is left.
     pub holds: Vec<EntityId>,
     pub records: Vec<(EntityId, LiftAndEraseStatus)>,
+    /// What the owner confirmed is not what the vault holds now: nothing was
+    /// lifted or erased, and this is what the confirm shows now, to confirm
+    /// again in one step (FIX 1462).
+    pub changed: Option<super::LiftAndEraseShownState>,
 }
 
 /// A record kept after a refused privacy erasure: it serves only the legal
