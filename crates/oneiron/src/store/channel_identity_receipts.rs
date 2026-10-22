@@ -130,6 +130,40 @@ impl Store {
     }
 }
 
+/// Erasing `actor` from the lifecycle receipts (FIX 8853): each receipt whose
+/// actor it is names no actor, and keeps its id, time, actor class, verb,
+/// intent, outcome, identity and channel facts and its decision, approval
+/// and request links. In the erase's own transaction, and again in a
+/// restore's actor sweep. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt that does not decode.
+pub(crate) fn erase_channel_identity_receipt_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &crate::entity_id::EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let actor_ref = actor.to_hex();
+    let mut cleared = Vec::new();
+    for row in RECEIPTS.iter_from(&vault.store, &*wtxn, &[])? {
+        let (receipt_id, mut record) = row?;
+        if record.actor_ref.as_deref() != Some(actor_ref.as_str()) {
+            continue;
+        }
+        record.actor_ref = None;
+        vet_channel_identity_lifecycle_receipt_record(&record)?;
+        cleared.push((receipt_id, record));
+    }
+    for (receipt_id, record) in &cleared {
+        RECEIPTS.put(&vault.store, wtxn, receipt_id, record)?;
+    }
+    Ok(())
+}
+
 fn vet_channel_identity_lifecycle_receipt_record(
     record: &ChannelIdentityLifecycleReceiptRecord,
 ) -> Result<()> {

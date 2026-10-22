@@ -139,7 +139,7 @@ side_tables! {
         => crate::training_pack::erase_role_actor_in_txn;
     /// Pinned corpus, compute, dispatch and evaluation of one training job. Key: id16 (run).
     TRAINING_PACK_RUN: VaultMeta b"training_pack:run:v1:" Named
-        => crate::training_pack::erase_run_actor_in_txn;
+        => crate::training_pack::erase_run_id_in_txn;
     /// Immutable owner-approved role-swap receipt. Key: id16 (receipt).
     TRAINING_PACK_SWAP: VaultMeta b"training_pack:swap:v1:" Named
         => crate::training_pack::erase_swap_actor_in_txn;

@@ -19,6 +19,38 @@ const TRIAL_CATALOG: SideTable<EntityId, String, Named> =
 const PROPOSALS: SideTable<EntityId, ModelBindingProposal, Named> =
     SideTable::new(&side_table::LLM_BINDING_PROPOSAL);
 
+/// Drops an erased row `id` from the source rows of every registry row a
+/// stored catalog revision keeps, its refreshed rows and its catalog's
+/// alike (FIX 6933), rewriting only the revisions that named it: each keeps
+/// its id, head, prices, scores, score diffs and refresh time, and an
+/// unknown set stays unknown. Registered on the revision table's
+/// declaration.
+///
+/// # Errors
+///
+/// Storage errors, or a stored revision that does not decode.
+pub(crate) fn erase_catalog_source_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut named = Vec::new();
+    for (key, mut stored) in REVISIONS.scan(&vault.store, wtxn)? {
+        let mut changed = false;
+        let rows = stored.rows.iter_mut().chain(&mut stored.catalog.rows);
+        for row in rows {
+            changed |= crate::skill_optimize::forget_source_row(&mut row.source_rows, id);
+        }
+        if changed {
+            named.push((key, stored));
+        }
+    }
+    for (key, stored) in named {
+        REVISIONS.put(&vault.store, wtxn, &key, &stored)?;
+    }
+    Ok(())
+}
+
 fn revision(vault: &Vault, txn: &heed::RoTxn<'_>, id: &str) -> Result<ModelCatalogRevision> {
     REVISIONS
         .get(&vault.store, txn, &id.to_owned())?

@@ -44,9 +44,10 @@ use crate::identity_topology::{
     note_zero_head_split_in_txn, shell_edge_sources_for_store_in_txn,
     zero_head_split_shells_for_store_in_txn,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::Store;
-use crate::vault::{MAX_EDGE_QUERY_RESULTS, Vault};
+use crate::vault::Vault;
 
 /// `vault_meta` key prefix of the redirect projection. The full key is this
 /// prefix followed by the 16-byte shell id; the value is a
@@ -416,6 +417,10 @@ fn ledger_inbound_shells_in_txn(
 /// Either structural witness alone answers the ordinary case; the union is
 /// what makes an ERASE walk fail-closed, because a shell missed here keeps a
 /// readable payload of precisely what the erasure hid.
+///
+/// Every inbound edge is read, however many there are (FIX 8691): the count
+/// only feeds the advisory [`EngineScan::EdgePeerRows`] check for this head,
+/// kind and direction, which never refuses, caps or drops a shell.
 fn direct_inbound_shells_in_txn(
     store: &Store,
     rtxn: &heed::RoTxn<'_>,
@@ -424,22 +429,15 @@ fn direct_inbound_shells_in_txn(
     ledger_inbound: &BTreeMap<EntityId, BTreeSet<EntityId>>,
     shells: &mut BTreeSet<EntityId>,
 ) -> Result<()> {
+    let direction = crate::ports::EdgeDirection::In;
     for kind in SHELL_EDGE_KINDS {
-        for (scanned, entry) in store
-            .port_edges(
-                rtxn,
-                head,
-                crate::ports::EdgeDirection::In,
-                Some(kind),
-                None,
-            )?
-            .enumerate()
-        {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("identity redirect inbound shells"));
-            }
+        let scope = [&[direction as u8][..], head.as_bytes(), &[kind as u8][..]].concat();
+        let mut count = ScanCount::start(store, rtxn, EngineScan::EdgePeerRows, &scope)?;
+        for entry in store.port_edges(rtxn, head, direction, Some(kind), None)? {
+            count.row();
             shells.insert(entry?.target);
         }
+        count.defer(store);
     }
     for witness in [table_inbound, ledger_inbound] {
         if let Some(witnessed) = witness.get(head) {
@@ -453,11 +451,12 @@ fn direct_inbound_shells_in_txn(
 /// `heads`. The inverse of [`resolve_into_in_txn`], and the walk ARCH-0055 §9
 /// means by "HardErase walks redirects".
 ///
-/// Bounded by [`MAX_REDIRECT_CHAIN_DEPTH`], the same law the forward
-/// resolution carries, and cycle-safe for a stronger reason than a path
-/// guard: a shell is expanded at most ONCE, so a forged cycle costs one
-/// frontier step and terminates rather than erroring — an erase walk must
-/// not be stoppable by planting a cycle in the data it is about to erase.
+/// The frontier is walked to exhaustion, with no depth bound (FIX 8690): a
+/// shell left past a cutoff would keep a readable payload of what the erase
+/// hid. It still terminates and is cycle-safe for a stronger reason than a
+/// path guard: a shell is expanded at most ONCE, so a forged cycle costs one
+/// frontier step and ends rather than erroring — an erase walk must not be
+/// stoppable by planting a cycle in the data it is about to erase.
 ///
 /// `heads` themselves are never returned; the answer is the shells around
 /// them.
@@ -486,10 +485,7 @@ fn inbound_redirect_shells_with_ledger_in_txn(
     let mut reached = heads.clone();
     let mut shells = BTreeSet::new();
     let mut frontier: Vec<EntityId> = heads.iter().copied().collect();
-    for _ in 0..MAX_REDIRECT_CHAIN_DEPTH {
-        if frontier.is_empty() {
-            break;
-        }
+    while !frontier.is_empty() {
         let mut found = BTreeSet::new();
         for head in &frontier {
             direct_inbound_shells_in_txn(

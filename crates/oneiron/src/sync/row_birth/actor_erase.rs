@@ -79,6 +79,40 @@ pub(crate) fn erase_birth_carriers_in_txn(
     Ok(())
 }
 
+/// Whether a window this vault stores still carries a birth one of `actors`
+/// made (FIX 6386): a carrier a legal hold kept, or one a lifted hold kept
+/// until the next due pass drops it, whether or not its birth landed here. A
+/// stored window whose bytes do not rebuild proves nothing gone, so it
+/// counts. An erase of one of `actors` is not complete while one does.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn birth_carriers_remain_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actors: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    if actors.is_empty() {
+        return Ok(false);
+    }
+    for key in stored_windows_in_txn(vault, txn)? {
+        let doc = match stored_window_in_txn(vault, txn, &key)? {
+            Some(Ok(doc)) => doc,
+            Some(Err(_)) => return Ok(true),
+            None => continue,
+        };
+        let mut carried = false;
+        map_for_each_bytes(&births(&doc), |_, bytes| {
+            carried |= maker(bytes).is_some_and(|actor| actors.contains(&actor));
+        });
+        if carried {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Drops from `doc` each birth carrier whose maker this vault erased, by its
 /// own `dt:` marker, but for a born row a legal hold keeps. Every export and
 /// persist runs it, so neither a loaded window that has not merged the

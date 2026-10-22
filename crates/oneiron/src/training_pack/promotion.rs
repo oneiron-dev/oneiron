@@ -240,11 +240,13 @@ impl Vault {
                 return Err(invalid("training run was scored while opening its cohort"));
             }
             current.eval_exposure = Some(release.exposure.clone());
-            // The evaluator scores the released cases and labels (FIX 5760).
-            current.source_rows = crate::skill_optimize::union_source_rows([
+            // The evaluator scores the released cases and labels (FIX 5760),
+            // less a source an erase reached since (FIX 6933).
+            let sources = crate::skill_optimize::union_source_rows([
                 current.source_rows.take(),
                 release.source_rows(),
             ]);
+            current.source_rows = crate::skill_optimize::live_source_rows_in(self, txn, sources)?;
             RUNS.put(&self.store, txn, id, &current)
         })?;
         Ok(TrainingEvalInput {
@@ -279,12 +281,14 @@ impl Vault {
             for log in &evaluation.verifier_logs {
                 read_pin(self, txn, log)?;
             }
-            // The scores are the verifier logs' (FIX 5760).
+            // The scores are the verifier logs' (FIX 5760), less a source an
+            // erase reached since (FIX 6933).
             let logs = evaluation.verifier_logs.iter().map(|log| log.artifact);
-            run.source_rows = crate::skill_optimize::union_source_rows([
+            let sources = crate::skill_optimize::union_source_rows([
                 run.source_rows.take(),
                 Some(logs.collect::<Vec<_>>()),
             ]);
+            run.source_rows = crate::skill_optimize::live_source_rows_in(self, txn, sources)?;
             run.evaluation = Some(evaluation.clone());
             run.state = TrainingState::Scored;
             RUNS.put(&self.store, txn, id, &run)?;

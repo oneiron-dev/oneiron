@@ -1,7 +1,9 @@
 //! What a hold's refusals tell the owner (WILL-PLAN L01 rows 01 and 03). A
 //! standing host order the owner may see names its bound, the law, and what
 //! self-hosting changes. A customer hold refuses as it always has, with no
-//! hosted-law bound. While only secret orders hold, nothing is said.
+//! hosted-law bound. While only secret orders hold, nothing is said. A
+//! record a hosted privacy erasure kept serves only the purpose of the holds
+//! that keep it, for as long as one stands (C6, FIX 8849).
 
 use heed::RoTxn;
 
@@ -63,14 +65,17 @@ pub(super) fn held_refusal(holds: &[LegalHold], now: u64) -> Error {
     Error::InvalidConfig(refusal.to_owned())
 }
 
-/// Whether `hold` keeps what it names from use (C6): a standing host order
-/// whose own terms say so. A customer hold never does.
+/// Whether `hold` keeps a record a hosted privacy erasure kept for its own
+/// legal purpose only (C6, FIX 8849): every standing hold, a customer hold
+/// or a host order, whether or not the order's own terms forbid use. Those
+/// terms stay the order's data, never what makes the limit.
 pub(super) fn restricts_use(hold: &LegalHold) -> bool {
-    hold.kind == LegalHoldKind::HostOrder && hold.requires_non_use && hold.stands()
+    hold.stands()
 }
 
-/// The standing orders on `record` that keep it from use.
-pub(super) fn non_use_orders_in_txn(
+/// The standing holds on `record` that keep it for their purpose only: its
+/// use limit lasts until the last of them lifts, narrows or lapses.
+pub(super) fn retaining_holds_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
     record: &EntityId,
@@ -85,9 +90,10 @@ pub(super) fn non_use_orders_in_txn(
 
 impl Store {
     /// The refusal a named write of `record` meets while it is kept from use
-    /// (C6, WILL-PLAN L01 row 03): `use_restricted` with the order's bound,
-    /// or absence while only orders whose silence runs keep it. `None` while
-    /// no standing order keeps it from use, whatever its marker says.
+    /// (C6, WILL-PLAN L01 row 03): `use_restricted` with the bound of a host
+    /// order the owner may see, or absence while only customer holds or
+    /// orders whose silence runs keep it. `None` once no standing hold keeps
+    /// it, whatever its marker says.
     pub(crate) fn use_restricted_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -96,12 +102,12 @@ impl Store {
         if !USE_LIMITS.contains(self, txn, record)? {
             return Ok(None);
         }
-        let orders = non_use_orders_in_txn(self, txn, record)?;
-        if orders.is_empty() {
+        let holds = retaining_holds_in_txn(self, txn, record)?;
+        if holds.is_empty() {
             return Ok(None);
         }
         let now = self.clock.now_recorded_at();
-        let refusal = match law_notice(&orders, now, LegalHoldState::UseRestricted) {
+        let refusal = match law_notice(&holds, now, LegalHoldState::UseRestricted) {
             Some(notice) => Error::LegalHold(Box::new(notice)),
             None => Error::EntityNotFound,
         };

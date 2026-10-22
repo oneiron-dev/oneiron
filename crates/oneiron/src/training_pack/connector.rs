@@ -349,8 +349,10 @@ impl Vault {
                 .chain(&exported.files)
                 .map(|file| file.content.artifact)
                 .collect::<Vec<_>>();
-            run.source_rows =
+            // Less a source an erase reached since (FIX 6933).
+            let sources =
                 crate::skill_optimize::union_source_rows([run.source_rows.take(), Some(returned)]);
+            run.source_rows = crate::skill_optimize::live_source_rows_in(self, txn, sources)?;
             let checks = check_export(&run, &output, &training, &exported)?;
             run.result = Some(TrainingResult {
                 training_checkpoint: training,

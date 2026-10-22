@@ -438,9 +438,9 @@ fn hosts_bytes(store: &Store) -> bool {
 
 /// Writes queued refusals to their hold logs. A refused privacy erasure keeps
 /// the held record for that legal reason only: where Oneiron hosts the bytes
-/// and a standing host order's own terms forbid its use, it gets a use limit
-/// (C5, C6, WILL-PLAN L01 row 03). A customer hold keeps bytes, never use.
-/// Returns how many were written.
+/// it gets a use limit under every standing hold, a customer hold or a host
+/// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
+/// 8849). Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -505,8 +505,7 @@ fn keep_use_limited_in_txn(
 /// A privacy erasure request over `records` (C5): returns the records no
 /// hold names, for the caller to erase, and the held ones it keeps. Each
 /// held record logs a refusal with its reason; where Oneiron hosts the bytes
-/// and an order forbids its use it is kept under a use limit (C6). It never
-/// lifts or skips a hold.
+/// it is kept under a use limit (C6). It never lifts or skips a hold.
 pub(crate) fn split_privacy_erase_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -540,9 +539,10 @@ pub(crate) fn split_privacy_erase_in_txn(
 }
 
 /// The C6 use limit on `record`, if it was kept after a refused privacy
-/// erasure and a standing host order that forbids its use still names it
-/// (WILL-PLAN L01 row 03). A marker no such order backs, the order released
-/// or ended, restricts nothing.
+/// erasure and a standing hold, customer or host order, still keeps it
+/// (WILL-PLAN L01 row 03, FIX 8849): it lasts the whole retention, until the
+/// last hold lifts, narrows or lapses. A marker no standing hold backs
+/// restricts nothing.
 pub(crate) fn use_limit_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,
@@ -551,7 +551,7 @@ pub(crate) fn use_limit_in_txn(
     let Some(limit) = USE_LIMITS.get(dbs, txn, record)? else {
         return Ok(None);
     };
-    if notice::non_use_orders_in_txn(dbs, txn, record)?.is_empty() {
+    if notice::retaining_holds_in_txn(dbs, txn, record)?.is_empty() {
         return Ok(None);
     }
     Ok(Some(limit))

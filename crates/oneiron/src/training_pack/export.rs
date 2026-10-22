@@ -216,7 +216,9 @@ impl Vault {
                 eval_exposure: None,
                 authorization: None,
                 hold: None,
-                source_rows,
+                // A source an erase reached since the export read it does not
+                // come back (FIX 6933).
+                source_rows: crate::skill_optimize::live_source_rows_in(self, txn, source_rows)?,
             };
             RUNS.put(&self.store, txn, &id, &run)?;
             Ok(run)

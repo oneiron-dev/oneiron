@@ -78,8 +78,12 @@ impl UsageLedger {
                         recorded_at: now_secs(),
                         source_rows,
                     };
-                    self.vault
-                        .sync_state_put_in_write_txn(txn, &key, &encode_entry(&stored)?)?;
+                    // A source an erase reached since the call settled does
+                    // not come back (FIX 6933).
+                    let row = self
+                        .vault
+                        .usage_event_with_live_sources_in_write_txn(txn, &encode_entry(&stored)?)?;
+                    self.vault.sync_state_put_in_write_txn(txn, &key, &row)?;
                     mark_rollup_behind_in_txn(&self.vault, txn, &rollup_key, &key)?;
                     Ok((true, source, cost, unpriced))
                 })?;

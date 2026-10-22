@@ -13,14 +13,17 @@
 //! member or agent surface may route to; a host-only log the owner reads
 //! through one permitted view; silence under a secrecy order; refusals that
 //! name the order's law bound and what self-hosting changes; a privacy erase
-//! that keeps only the held part; and a use limit on what it keeps where the
-//! order forbids use (WILL-PLAN L01 rows 01-03). Everywhere, "erase
-//! confirmed" stands apart from "erase completed" (C4, row 04).
+//! that keeps only the held part; and a use limit on what it keeps, for its
+//! holds' purpose only, while any hold keeps it, customer or host order
+//! (WILL-PLAN L01 rows 01-03, FIX 8849). Everywhere, "erase confirmed"
+//! stands apart from "erase completed" (C4, row 04).
 
+mod held_scrubs;
 mod types;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 
 use crate::consent::AuthenticatedOwner;
@@ -29,7 +32,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, LegalHoldState, Result};
 use crate::memory::Memory;
-use crate::memory::erase_sweep::RecordEraseSweepRequest;
+use crate::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
+use crate::recovery::checkpoint::CUSTODY_RETIREMENT_COMPLETE;
 use crate::store::legal_hold::{self as hold_store, HoldActor};
 use crate::{HostingPrivacyPosture, Vault};
 
@@ -96,7 +100,9 @@ impl Vault {
 
     /// Places the owner's hold on `targets`: a customer hold, logged as
     /// placed. Deletes of what it names then fail for agents, timers,
-    /// members and the owner alike, and every other verb keeps working.
+    /// members and the owner alike, and every other verb keeps working, but
+    /// on a record a hosted privacy erasure kept, which serves only the
+    /// hold's purpose (C6, FIX 8849).
     ///
     /// # Errors
     /// The owner proof no longer holds, `matter_ref` is not an opaque id, or
@@ -347,12 +353,15 @@ impl Vault {
                 )?;
             }
             // A birth these holds kept from an erased actor's scrub goes with
-            // them (FIX 6280); a row another hold still names keeps its own.
-            super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
+            // them (FIX 6280), and so does each Gate decision scrub they kept
+            // (FIX 7993, 7994); a row another hold still names keeps its own.
+            self.settle_held_scrubs_in_txn(txn)?;
             Ok((actor, kept, lifting.into_keys().collect::<Vec<_>>()))
         })?;
-        // The lifts committed: a delete they deferred asks again (FIX 1488).
+        // The lifts committed: a delete they deferred asks again (FIX 1488),
+        // and an erase they kept from completing completes (FIX 5844).
         self.note_backup_hold_recheck();
+        self.finish_redaction_erases_logged();
         let memory = self.memory(actor, EdgeActorClass::Human);
         let hard = crate::memory::SafeDeleteReason::UserHardDelete;
         let now = self.store.clock.now_recorded_at();
@@ -608,13 +617,16 @@ impl Vault {
     /// Runs each owner-confirmed erase whose record nothing holds now.
     /// A failed one stays for the next pass. One whose row went before its
     /// writer ran is cancelled: nothing erased, counted or dropped (FIX 6337).
-    fn run_due_legal_hold_erases(&self) -> Result<u64> {
-        // A birth a released hold kept from an erased actor's scrub goes
-        // first, whether or not an erase waits (FIX 6280).
+    /// A released gate-decision partition runs it too.
+    pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
+        // What a released hold kept from an erase's scrubs goes first,
+        // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
+        // an erase it kept from completing completes (FIX 5844).
         let due = self.with_write_txn_grouped(|txn| {
-            super::actor_fields::rerun_birth_actor_scrubs_in_txn(self, txn)?;
+            self.settle_held_scrubs_in_txn(txn)?;
             hold_store::due_erases_in_txn(&self.store, txn)
         })?;
+        self.finish_redaction_erases_logged();
         let mut erased = 0_u64;
         for record in due {
             match self.due_confirmed_erase(&record) {
@@ -640,8 +652,8 @@ impl Vault {
     /// Writes the refusals still queued to the hold logs. Each refusing door
     /// logs its own before it returns, so this writes what a failed log write
     /// left. A refused privacy erasure keeps its record under a use limit
-    /// where Oneiron hosts the bytes and a standing host order forbids its
-    /// use (C6). Returns how many were written.
+    /// where Oneiron hosts the bytes, while any hold keeps it (C6, FIX
+    /// 8849). Returns how many were written.
     pub fn flush_legal_hold_refusals(&self) -> Result<u64> {
         self.store.flush_legal_hold_refusals_now()
     }
@@ -661,9 +673,9 @@ impl Vault {
     }
 
     /// The use limit on a record kept after a refused privacy erasure, while
-    /// a standing host order that forbids its use still names it: it serves
-    /// only the legal reason that kept it (C6). Enforcing it on reads is the
-    /// scope checks' (L02).
+    /// any standing hold, customer or host order, still names it: it serves
+    /// only the legal reason that kept it, for that whole retention (C6, FIX
+    /// 8849). Enforcing it on reads is the scope checks' (L02).
     pub fn legal_hold_use_limit(&self, record: &EntityId) -> Result<Option<LegalHoldUseLimit>> {
         let txn = self.store.env.read_txn()?;
         hold_store::use_limit_in_txn(&self.store, &txn, record)
@@ -686,10 +698,11 @@ fn kept_status(seen: &[LegalHold], now: u64) -> LiftAndEraseStatus {
 
 /// What an owner erase that ran reads as (C4, WILL-PLAN L01 row 04), one
 /// rule wherever the bytes live: erased once its receipt's signed final row
-/// is appended (its hard purge, its historical sweep and every custody
-/// retirement it bound finished, FIX 5844), else completion pending with
-/// the receipt and what it still waits on: its queued sweep, or its
-/// custody. No receipt: nothing was there to erase.
+/// is appended (its hard purge, its historical sweep, every custody
+/// retirement it bound and every scrub a hold kept finished, FIX 5844),
+/// else completion pending with the receipt and what it still waits on: its
+/// queued sweep, or its custody. A scrub a hold keeps owed names no reason.
+/// No receipt: nothing was there to erase.
 fn erase_status(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -710,14 +723,23 @@ fn erase_status(
         Ok(Some(sweep)) if sweep.sweep_queued_at.is_some() && sweep.sweep_complete_at.is_none() => {
             Some(ErasePendingReason::HistoricalSweep)
         }
-        Ok(Some(_)) => Some(ErasePendingReason::CustodyRetirement),
-        // An unreadable receipt proves nothing complete.
+        Ok(Some(sweep)) if custody_pending(&sweep) => Some(ErasePendingReason::CustodyRetirement),
+        // Only a scrub a hold keeps owed is left (FIX 6386, 7993, 7994), or
+        // the receipt did not read, which proves nothing complete.
         _ => None,
     };
     LiftAndEraseStatus::CompletionPending {
         receipt_ref: Some(receipt_ref),
         reason,
     }
+}
+
+/// Whether a custody retirement the erase `sweep` reads bound is still owed.
+fn custody_pending(sweep: &RecordEraseSweep) -> bool {
+    sweep
+        .custody
+        .as_ref()
+        .is_some_and(|custody| custody.state != CUSTODY_RETIREMENT_COMPLETE)
 }
 
 fn standing_host_order_in_txn(

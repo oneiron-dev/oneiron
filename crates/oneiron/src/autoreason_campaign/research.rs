@@ -55,6 +55,7 @@ mod continuation;
 mod estimator;
 mod promotion;
 mod recording;
+mod source_erase;
 
 pub use budget::{
     ResearchBudgetRead, ResearchReservation, ResearchReservationLine, refund_research_work,
@@ -91,6 +92,7 @@ pub use recording::{
     prune_branch, record_fork, record_held_out_measurement, record_invalid_experiment,
     record_search_measurement, record_weave,
 };
+pub(crate) use source_erase::erase_release_source_rows_in_txn;
 
 /// One bound campaign, keyed by its root attempt.
 const BINDING: SideTable<[u8; 16], ResearchBinding, Named> =

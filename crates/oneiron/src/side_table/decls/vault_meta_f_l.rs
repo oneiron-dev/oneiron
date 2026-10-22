@@ -100,6 +100,11 @@ side_tables! {
     /// Latest retain-until stamp (u64be seconds) of a held gate decision partition. Key: 0
     /// (claim-free partition) or 1 + id16 (claim).
     GATE_DECISION_PARTITION_RETAIN_UNTIL: VaultMeta b"gate_decision:partition_retain_until:v1:" Raw;
+    /// A Gate decision's scrub an erase owes while a legal hold keeps the decision's own
+    /// partition (FIX 7993, 7994), and when the erase asked: ids and a time only. Key: kind (0 an
+    /// erased claim's skeleton, 1 an erased actor's attribution) + id16 (erased source) + id16
+    /// (decision).
+    GATE_DECISION_PENDING_SCRUB: VaultMeta b"gate_decision:pending_scrub:v1:" Named;
     /// Append-time retention ancestry of one gate decision; the retention-scope module's own
     /// layout. Key: id16 (decision).
     GATE_DECISION_RETENTION_CONTEXT: VaultMeta b"gate_decision:retention_context:v1:" Raw;
@@ -426,7 +431,8 @@ side_tables! {
     /// The current immutable catalog revision. Key: ().
     LLM_CATALOG_HEAD: VaultMeta b"llm:catalog_head:v1" Named;
     /// Pinned catalog prices, scores and refresh diffs. Key: revision string.
-    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named;
+    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named
+        => crate::llm::catalog_doors::erase_catalog_source_rows_in_txn;
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored;
     /// Vault-owned description policy. Key: ().
@@ -447,7 +453,8 @@ side_tables! {
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
-    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored;
+    LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
+        => crate::llm::registry::erase_registry_source_in_txn;
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;

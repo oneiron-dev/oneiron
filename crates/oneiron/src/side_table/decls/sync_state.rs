@@ -439,7 +439,8 @@ side_tables! {
     SYNC_U_W: SyncState b"u:w:" Raw;
     /// One idempotently recorded usage-metering event for an owner/vault, keyed by its caller-
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
-    USAGE_EVENT: SyncState b"usage:event:" Named;
+    USAGE_EVENT: SyncState b"usage:event:" Named
+        => crate::store::erase_usage_source_in_txn;
     /// The receipt of one owner repair that removed a stored usage event that no longer decoded
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).

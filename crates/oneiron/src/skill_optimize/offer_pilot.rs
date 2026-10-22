@@ -359,7 +359,9 @@ pub fn prepare_pilot(
             measurement: None,
             card: None,
             completed_at: None,
-            release_source_rows: release.source_rows(),
+            // A source an erase reached since the release was read does not
+            // come back (FIX 6933).
+            release_source_rows: super::live_source_rows_in(vault, txn, release.source_rows())?,
             measurement_source_rows: None,
         };
         PILOTS.put(&vault.store, txn, &id, &pilot)?;
@@ -417,8 +419,10 @@ pub fn complete_pilot_traced(
         pilot.card = Some(sufficiency_card(sufficiency)?);
         pilot.measurement = Some(measurement);
         pilot.completed_at = Some(now);
-        pilot.measurement_source_rows =
-            super::union_source_rows([pilot.release_source_rows.clone(), trace]);
+        // A source an erase reached since the release, or one the trace names, does not come
+        // back (FIX 6933).
+        let measured = super::union_source_rows([pilot.release_source_rows.clone(), trace]);
+        pilot.measurement_source_rows = super::live_source_rows_in(vault, txn, measured)?;
         PILOTS.put(&vault.store, txn, &pilot.id, &pilot)?;
         Ok(pilot)
     })
@@ -575,6 +579,34 @@ pub(crate) fn validate_snapshot_in_txn(
                 "the pilot evidence changed before the offer committed",
             ));
         }
+    }
+    Ok(())
+}
+
+/// Drops an erased row `id` from every pilot's release and measurement source
+/// rows (FIX 6933), each set on its own, rewriting only the pilots that named
+/// it: exposure, digest, card, measurement, receipt keys, costs and times
+/// stay. Registered on the pilot table's declaration; a source may be any
+/// row, so this reads every pilot for each erased id.
+///
+/// # Errors
+///
+/// Storage errors, or a stored pilot that does not decode.
+pub(crate) fn erase_pilot_source_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let mut named = Vec::new();
+    for (key, mut pilot) in PILOTS.scan(&vault.store, wtxn)? {
+        let released = super::forget_source_row(&mut pilot.release_source_rows, id);
+        let measured = super::forget_source_row(&mut pilot.measurement_source_rows, id);
+        if released || measured {
+            named.push((key, pilot));
+        }
+    }
+    for (key, pilot) in named {
+        PILOTS.put(&vault.store, wtxn, &key, &pilot)?;
     }
     Ok(())
 }
