@@ -19137,7 +19137,7 @@
      "path": "src/context_board/memories_projection.rs",
      "purpose": "MEMORIES projection with source labels, world fences, and one shared render budget",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 2
      }
     },
@@ -19160,7 +19160,7 @@
      "purpose": "Typed Context Board render projections",
      "surface": {
       "crate-vis": 9,
-      "re-export": 23
+      "re-export": 24
      }
     },
     {
@@ -19778,6 +19778,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/context_board/unprocessed.rs",
+     "purpose": "The unprocessed items a board's prefix carries (FIX 7740, CROSS-ARCH-0002c): the caller's emotionally heavy…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "WorldPresence",
       "WorldsSection"
@@ -19785,7 +19795,8 @@
      "path": "src/context_board/worlds.rs",
      "purpose": "WORLDS scope-map projection over the turn's resolved world authority",
      "surface": {
-      "fn": 4,
+      "crate-vis": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -66692,7 +66703,7 @@
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
       "crate-vis": 15,
-      "fn": 19,
+      "fn": 20,
       "struct": 1
      }
     },
@@ -73542,7 +73553,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -74706,7 +74717,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4839,
+   "source_files": 4840,
    "test_files": 902
   },
   "oneiron-android": {
