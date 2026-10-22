@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::receipt::{ReceiptKind, ReceiptRecord, hex_lower};
-use crate::runtime_hooks::body::{HookBodyRun, HookVerdict};
+use crate::runtime_hooks::body::{HookBodyRun, HookBudgetOverrun, HookVerdict};
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::grant::HookGrant;
 use crate::runtime_hooks::lineage::HookCheckReason;
@@ -99,14 +99,19 @@ pub(in crate::runtime_hooks) struct Verdict {
     pub(in crate::runtime_hooks) reason: Option<String>,
     pub(in crate::runtime_hooks) fuel_used: u64,
     pub(in crate::runtime_hooks) host_calls: u32,
+    /// The run ended past its `budget_ms`: a measured fact beside the
+    /// outcome, never part of the judgement (FIX 8842).
+    pub(in crate::runtime_hooks) budget_overrun: Option<HookBudgetOverrun>,
 }
 
-/// A body that failed, trapped or ran past its budget is `failed`. An
-/// outcome that does not parse, is not a kind of the binding's phase, is not
-/// one the binding allows, or has the wrong shape is `refused`.
+/// A body that failed or trapped is `failed`. An outcome that does not
+/// parse, is not a kind of the binding's phase, is not one the binding
+/// allows, or has the wrong shape is `refused`. Time is not judged: a run
+/// past its budget keeps whichever of these it is, with `overrun` beside it.
 pub(in crate::runtime_hooks) fn judge(
     binding: &PackHookBinding,
     result: Result<HookBodyRun>,
+    overrun: Option<HookBudgetOverrun>,
 ) -> Verdict {
     let run = match result {
         Ok(run) => run,
@@ -119,6 +124,7 @@ pub(in crate::runtime_hooks) fn judge(
                 reason: Some(bounded(&error.to_string())),
                 fuel_used: 0,
                 host_calls: 0,
+                budget_overrun: overrun,
             };
         }
     };
@@ -131,6 +137,7 @@ pub(in crate::runtime_hooks) fn judge(
             reason: None,
             fuel_used: run.fuel_used,
             host_calls: run.host_calls,
+            budget_overrun: overrun,
         },
         Err(reason) => Verdict {
             state: HookRunState::Refused,
@@ -140,6 +147,7 @@ pub(in crate::runtime_hooks) fn judge(
             reason: Some(reason),
             fuel_used: run.fuel_used,
             host_calls: run.host_calls,
+            budget_overrun: overrun,
         },
     }
 }
@@ -199,13 +207,15 @@ pub(super) fn record(
         state: verdict.state,
         receipt_id: store::receipt_id(&run.key),
         duration_ms,
+        budget_overrun: verdict.budget_overrun,
         now,
         committed_at: 0,
     }
 }
 
 /// The run's Hook receipt: the hook, its CODE id and body hash, the duration,
-/// the outcome, `now`, the rows read and the run key.
+/// the outcome, `now`, the rows read and the run key, and the overrun of a
+/// run past its budget.
 pub(super) fn receipt(
     run: &Run<'_>,
     verdict: &Verdict,
@@ -239,6 +249,11 @@ pub(super) fn receipt(
     }
     if let Some(reason) = &verdict.reason {
         fields.insert("reason".to_owned(), bounded(reason));
+    }
+    if let Some(overrun) = &verdict.budget_overrun {
+        for (name, value) in overrun.receipt_fields() {
+            fields.insert(name.to_owned(), value);
+        }
     }
     ReceiptRecord {
         receipt_id: store::receipt_id(&run.key),

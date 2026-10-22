@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::runtime_hooks::outcome::HookOutcome;
 use crate::runtime_hooks::runner::{MAX_OUTCOME_BYTES, Verdict, bounded, judge};
 use crate::runtime_hooks::store::{HookIntent, HookIntentState, HookReadPin, HookRunState, RunKey};
-use crate::runtime_hooks::{apply, grant, read};
+use crate::runtime_hooks::{HookBudgetOverrun, HookRunContext, apply, grant, read};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result};
 
@@ -21,7 +21,7 @@ pub(super) struct RunRecord<'c> {
     pub(super) id: EntityId,
     pub(super) binding: &'c PackHookBinding,
     pub(super) key: RunKey,
-    /// The outcome kind, or `refused`, `failed` or `timed_out`.
+    /// The outcome kind, or `refused` or `failed`.
     pub(super) token: String,
     pub(super) reason: Option<String>,
     pub(super) note: Option<String>,
@@ -31,6 +31,9 @@ pub(super) struct RunRecord<'c> {
     /// The canonical work its room could not do for its outcome.
     pub(super) unavailable: Option<&'static str>,
     pub(super) duration_ms: u64,
+    /// The run ended past its `budget_ms`: measured beside its outcome,
+    /// never a failure and never its hook's fail-safe (FIX 8842).
+    pub(super) budget_overrun: Option<HookBudgetOverrun>,
     pub(super) rows_read: usize,
     pub(super) fuel_used: u64,
     pub(super) host_calls: u32,
@@ -67,6 +70,7 @@ impl<'c> Chain<'c> {
         let (lane, cap) = self.lanes(&grant, view.as_ref());
         let mut pins = Vec::new();
         let started = Instant::now();
+        let mut context = HookRunContext::new(binding.selector.budget_ms);
         let ran = match self.runtime {
             Err(reason) => Err(Error::InvalidConfig(reason.to_owned())),
             Ok(runtime) => match self.vault.verb_hook_state.body(self.vault, binding) {
@@ -81,12 +85,15 @@ impl<'c> Chain<'c> {
                         }
                         _ => Err("this call has no read lane".to_owned()),
                     };
-                    runtime.run_hook(&body, &input, binding.selector.budget_ms, &mut answer)
+                    runtime.run_hook(&body, &input, &mut context, &mut answer)
                 }
             },
         };
+        // The body's worker has joined, a failed run's too: its accounting
+        // ends here. Time judges nothing (FIX 8842).
+        let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let mut verdict = judge(binding, ran);
+        let mut verdict = judge(binding, ran, overrun);
         if let Some(reason) = verdict
             .outcome
             .as_ref()
@@ -100,26 +107,18 @@ impl<'c> Chain<'c> {
                 ..verdict
             };
         }
-        let timed_out = verdict.state == HookRunState::Failed
-            && verdict
-                .reason
-                .as_deref()
-                .is_some_and(|reason| reason.contains("deadline exceeded"));
         let rows_read = pins.iter().map(|pin| pin.rows.len()).sum::<usize>();
         let mut run = RunRecord {
             id,
             binding,
             key,
-            token: if timed_out {
-                "timed_out".to_owned()
-            } else {
-                verdict.token.clone()
-            },
+            token: verdict.token.clone(),
             reason: verdict.reason.clone(),
             note: None,
             fail_safe: None,
             unavailable: None,
             duration_ms,
+            budget_overrun: verdict.budget_overrun,
             rows_read,
             fuel_used: verdict.fuel_used,
             host_calls: verdict.host_calls,

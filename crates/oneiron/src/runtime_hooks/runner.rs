@@ -19,7 +19,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 use super::apply;
 use super::block::{self, HookBlock};
-use super::body::{HookBodyRuntime, HookVerdict};
+use super::body::{HookBodyRuntime, HookRunContext, HookVerdict};
 use super::filter;
 use super::grant::{self, HookGrant};
 use super::lineage::{self, HookCheck, LineageLink};
@@ -453,8 +453,8 @@ impl Pass<'_> {
             now,
         )?;
         let started = Instant::now();
-        let budget_ms = run.binding.selector.budget_ms;
-        let deadline = started + Duration::from_millis(u64::from(budget_ms));
+        let mut context = HookRunContext::new(run.binding.selector.budget_ms);
+        let deadline = context.deadline();
         let mut pins = Vec::new();
         let mut verdicts = VerdictPins::new();
         let result = match body {
@@ -470,12 +470,15 @@ impl Pass<'_> {
                     reply
                 };
                 self.runtime
-                    .run_fact_hook(&body, &input, budget_ms, &mut answer, &mut verdict)
+                    .run_fact_hook(&body, &input, &mut context, &mut answer, &mut verdict)
             }
             Err(reason) => Err(Error::InvalidConfig(reason)),
         };
+        // The body's worker has joined, a failed run's too: its accounting
+        // ends here, and an overrun goes beside its outcome (FIX 8842).
+        let overrun = context.finish();
         let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let verdict = judge(run.binding, result);
+        let verdict = judge(run.binding, result, overrun);
         let memo = record(run, &input, pins, verdicts, &verdict, duration_ms, now);
         let queued = self.commit(run, memo, &verdict)?;
         self.report.count(&verdict);

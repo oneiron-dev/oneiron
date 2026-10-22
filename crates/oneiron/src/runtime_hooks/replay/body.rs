@@ -1,9 +1,8 @@
 //! One replayed body run (ARCH-0080 §6 Replay): on a run's memo, on a
 //! verb run's saved copy, or live on an entry no run pinned.
 
-use std::time::{Duration, Instant};
-
 use crate::claim::ScopedRead;
+use crate::runtime_hooks::body::{HookBudgetOverrun, HookRunContext};
 use crate::runtime_hooks::filter;
 use crate::runtime_hooks::read;
 use crate::runtime_hooks::runner::{ask_verdict, input_json, judge};
@@ -32,11 +31,12 @@ impl Replay<'_> {
         }
         let mut reads = PinnedReads::new(&memo.reads);
         let mut verdicts = PinnedVerdicts::new(&memo.verdicts);
+        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
             Ok(body) => self.runtime.run_fact_hook(
                 body,
                 input,
-                self.binding.selector.budget_ms,
+                &mut context,
                 &mut |request: &str| reads.answer(lane, self.grant, request),
                 &mut |request: &str| {
                     let (reply, evidence) = verdicts.answer(request);
@@ -46,13 +46,14 @@ impl Replay<'_> {
             ),
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        let overrun = self.overrun(&context);
         self.served(&memo.reads);
         self.served(&reads.scratch);
         if let Some(reason) = reads.missing.or(verdicts.missing) {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result),
+            judge(self.binding, result, overrun),
             Some(memo.outcome.as_str()),
             memo.outcome_json.as_deref(),
             true,
@@ -72,22 +73,23 @@ impl Replay<'_> {
             return input_too_large();
         };
         let mut reads = PinnedReads::new(&saved.reads);
+        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
-            Ok(body) => self.runtime.run_hook(
-                body,
-                input,
-                self.binding.selector.budget_ms,
-                &mut |request: &str| reads.answer(lane, self.grant, request),
-            ),
+            Ok(body) => self
+                .runtime
+                .run_hook(body, input, &mut context, &mut |request: &str| {
+                    reads.answer(lane, self.grant, request)
+                }),
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        let overrun = self.overrun(&context);
         self.served(&saved.reads);
         self.served(&reads.scratch);
         if let Some(reason) = reads.missing {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result),
+            judge(self.binding, result, overrun),
             Some(saved.outcome.as_str()),
             saved.outcome_json.as_deref(),
             true,
@@ -138,8 +140,8 @@ impl Replay<'_> {
             &seen.claim_json,
             now,
         )?;
-        let budget_ms = self.binding.selector.budget_ms;
-        let deadline = Instant::now() + Duration::from_millis(u64::from(budget_ms));
+        let mut context = HookRunContext::new(self.binding.selector.budget_ms);
+        let deadline = context.deadline();
         let mut pins = Vec::new();
         let result = match &self.body {
             Ok(body) => {
@@ -151,17 +153,39 @@ impl Replay<'_> {
                     reply
                 };
                 self.runtime
-                    .run_fact_hook(body, &input, budget_ms, &mut answer, &mut verdict)
+                    .run_fact_hook(body, &input, &mut context, &mut answer, &mut verdict)
             }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        let overrun = self.overrun(&context);
         self.served(&pins);
         Ok(Some(ran(
-            judge(self.binding, result),
+            judge(self.binding, result, overrun),
             None,
             None,
             false,
             true,
         )))
+    }
+
+    /// A replayed body's overrun, read once it has ended, on the fresh
+    /// clock its replay ran on (FIX 8842): a runtime observation only. The
+    /// run it replays keeps the timing it saved, and the replay answer
+    /// carries none.
+    fn overrun(&self, context: &HookRunContext) -> Option<HookBudgetOverrun> {
+        let overrun = context.finish();
+        if let Some(overrun) = &overrun {
+            tracing::info!(
+                binding = %self.binding_id.to_hex(),
+                budget_ms = overrun.budget_ms,
+                elapsed_ms = overrun.elapsed_ms,
+                overrun_ms = overrun.overrun_ms,
+                callback_ms = overrun.callback_ms,
+                read_overruns = overrun.read_overruns,
+                verdict_overruns = overrun.verdict_overruns,
+                "a replayed hook body ran past its budget"
+            );
+        }
+        overrun
     }
 }

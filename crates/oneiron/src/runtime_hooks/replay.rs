@@ -159,11 +159,11 @@ impl Vault {
     }
 
     /// [`Self::hooks_replay`], beside the rows its entries stand on: the
-    /// binding, its body's source, each entry's fact entity (a live entry's
-    /// actor too) and every row a replayed read served, as the run pinned it
-    /// and as it reads now, and the rows each verdict an entry heard
-    /// resolved its evidence to. `None` once an entry heard a verdict whose
-    /// evidence rows are not known.
+    /// stored binding, its body's source, each entry's fact entity (a live
+    /// entry's actor too) and every row a replayed read served, as the run
+    /// pinned it and as it reads now, and the rows each verdict an entry
+    /// heard resolved its evidence to. `None` once an entry heard a verdict
+    /// whose evidence rows are not known.
     ///
     /// # Errors
     ///
@@ -181,14 +181,23 @@ impl Vault {
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
-        self.hooks_replay_binding_listing(
+        let (entries, rows) = self.hooks_replay_binding_listing(
             runtime,
             verdict.as_deref(),
             binding_id,
             &row,
             since,
             limit,
-        )
+        )?;
+        // The binding was read from its stored row, so it is one of the rows
+        // the answer stands on (FIX 4710).
+        let rows = rows.map(|mut rows| {
+            rows.push(binding_id);
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        });
+        Ok((entries, rows))
     }
 
     /// [`Self::hooks_replay`] over `row` as given, stored or not: a hub
@@ -207,8 +216,12 @@ impl Vault {
             .map(|(entries, _)| entries)
     }
 
-    /// [`Self::hooks_replay_binding`], listing as
-    /// [`Self::hooks_replay_listing`] does.
+    /// [`Self::hooks_replay_binding`], beside the rows its entries stand on
+    /// as [`Self::hooks_replay_listing`] lists them, but for the binding
+    /// itself: `binding_id` is the identity `row` replays as, which may name
+    /// no stored row (a Candidate pack's hook replays as the binding it
+    /// would get), so it is never listed. Its body's source, each entry's
+    /// fact row and every row a read or verdict served are listed (FIX 4710).
     pub(crate) fn hooks_replay_binding_listing(
         &self,
         runtime: &dyn HookBodyRuntime,
@@ -289,7 +302,9 @@ impl Vault {
             binding: row,
             grant: &grant,
             body,
-            rows: RefCell::new(vec![binding_id, row.source]),
+            // Only rows that exist: the binding id may be one no row holds
+            // yet, so the stored-binding wrapper lists it (FIX 4710).
+            rows: RefCell::new(vec![row.source]),
             unlisted_verdict: Cell::new(false),
         };
         let walked = walk(&replay, &lane)?;
