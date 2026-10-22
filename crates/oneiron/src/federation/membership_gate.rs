@@ -148,7 +148,9 @@ pub(crate) fn grant_allows_content_write(grant: &FederationGrant, scope: &Scope)
     ) {
         return false;
     }
-    let mut record = scope.clone();
+    // A NOTE in several worlds is held at one this Grant holds (FIX-LIST 9433).
+    let mut record =
+        super::record_scope::note_world::any_world_at(scope, &grant.authority_scope.worlds);
     record.verbs = ScopeAxis::Some(BTreeSet::from(["write".to_owned()]));
     grant
         .authority_scope
@@ -184,18 +186,27 @@ impl Vault {
     ) -> Result<Scope> {
         let raw = self.get_raw_in(txn, &id)?.ok_or_else(denied)?;
         let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
-        match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
-            Some(scope) => Ok(scope),
+        let scope = match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
+            Some(scope) => scope,
             None if header.entity_type == crate::registry::ENTITY_TYPE_NOTE => {
                 // A NOTE born without a FacetOf edge has the ordinary base/default
                 // position. Never use this fallback for another record kind.
-                Ok(super::record_scope::default_stamp(
+                super::record_scope::default_stamp(
                     header.entity_type,
                     crate::claim::substrate_facet_id(id)?,
-                ))
+                )
             }
-            None => Err(denied()),
-        }
+            None => return Err(denied()),
+        };
+        // A NOTE carries every world its live InWorld edges place it in; each
+        // Grant holds it at one of them (FIX-LIST 9433).
+        Ok(super::record_scope::note_world::every_world_position(
+            &self.store,
+            txn,
+            id,
+            header.entity_type,
+            scope,
+        ))
     }
 
     /// NOTE-specific spelling for the actor-bound editor doors.

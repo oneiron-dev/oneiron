@@ -55,23 +55,29 @@ pub(crate) async fn vault_slim_state(
     .await
 }
 
+/// The owner's shed waits its turn, and for a moment it can be decided,
+/// rather than being refused while more than one outbound step is pending
+/// (FIX 10157). Each look runs on the blocking pool and revalidates the
+/// owner first; the wait between looks holds no thread.
 pub(crate) async fn vault_slim_drop_heavy(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SlimDropRequest,
 ) -> Listed<SlimDropReceipt> {
-    owned(server, auth, "vault.slim.drop_heavy", move |server, _| {
-        server
-            .vault()
-            .shed_rebuildable_heap(
-                input.cause,
-                input.waited_secs.get(),
-                oneiron_vault_contract::now_ts().saturating_mul(1000),
-            )
-            .map(SlimDropReceipt::from)
-            .map_err(MemoryError::from)
-    })
-    .await
+    const VERB: &str = "vault.slim.drop_heavy";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    let answer = server
+        .vault()
+        .shed_rebuildable_heap_as_owner(owner, input, |attempt| async move {
+            tokio::task::spawn_blocking(move || attempt.run())
+                .await
+                .map_err(|_| internal(VERB))
+        })
+        .await;
+    (answer, Vec::new())
 }
 
 pub(crate) async fn vault_slim_resume(
