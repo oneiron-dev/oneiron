@@ -266,26 +266,34 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
                 normalize_line_user_like_id(user, "LINE source user id", MAX_LINE_COMPONENT_BYTES)
             })
             .transpose()?;
-        // A chat-routed message's party is the chat it is answered in, so a
-        // reply is admitted on that audience, not on whoever wrote.
-        let (receiving_address_or_handle, counterparty_key) = match (&line.chat, source_user_id) {
-            (Some(chat), _) => {
-                let chat_id = normalize_line_chat_id(&chat.id, chat.kind)?;
-                (
-                    line_chat_address(&destination, chat.kind, &chat_id),
-                    format!("line:{}:{chat_id}", chat.kind.as_str()),
-                )
-            }
-            (None, Some(user)) => (
-                line_shared_presence_address(&destination, &user),
-                format!("line:user:{user}"),
-            ),
+        let routed_chat = line.chat.as_ref().map(normalized_line_chat).transpose()?;
+        // A per-sender message's chat only names the reply's audience; an id
+        // LINE would never send falls back to the sender, and the sink still
+        // answers only the audience the reply is admitted on.
+        let reply_chat = line
+            .reply_chat
+            .as_ref()
+            .and_then(|chat| normalized_line_chat(chat).ok());
+        let receiving_address_or_handle = match (&routed_chat, &source_user_id) {
+            (Some(chat), _) => line_chat_address(&destination, chat.kind, &chat.id),
+            (None, Some(user)) => line_shared_presence_address(&destination, user),
             (None, None) => {
                 return Err(Error::InvalidConfig(
                     "LINE inbound names neither its sender nor a group or room".to_owned(),
                 ));
             }
         };
+        // A message's party is the chat it is answered in, so a reply is
+        // admitted on that audience, not on whoever wrote: a chat-routed
+        // message, and an unbound chat's message that routes per sender
+        // (FIX 2838). A 1:1 message's party is its sender.
+        let audience = routed_chat.as_ref().or(reply_chat.as_ref());
+        let counterparty_key = line_audience_key(audience, source_user_id.as_deref())
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "LINE inbound names neither its sender nor a group or room".to_owned(),
+                )
+            })?;
         let mut input = InboundSurfaceEventInput::new(
             line.provider_event_id,
             LINE_CHANNEL,
@@ -297,4 +305,25 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
         input.payload_ref = line.payload_ref;
         Ok(input)
     }
+}
+
+/// The audience a LINE message is answered to (FIX 2838): the group or
+/// room it was written in (`line:group:<C…>`, `line:room:<R…>`), else its
+/// sender (`line:user:<U…>`). The one spelling of the reply target the
+/// adapter freezes and of the archived event the sink answers, so a reply
+/// never answers an audience it was not admitted on. `None` names nobody.
+#[must_use]
+pub fn line_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Option<String> {
+    match (chat, user_id) {
+        (Some(chat), _) => Some(format!("line:{}:{}", chat.kind.as_str(), chat.id)),
+        (None, Some(user)) => Some(format!("line:user:{user}")),
+        (None, None) => None,
+    }
+}
+
+fn normalized_line_chat(chat: &LineChat) -> Result<LineChat> {
+    Ok(LineChat::new(
+        chat.kind,
+        normalize_line_chat_id(&chat.id, chat.kind)?,
+    ))
 }

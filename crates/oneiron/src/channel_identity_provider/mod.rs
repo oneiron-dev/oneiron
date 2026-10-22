@@ -31,6 +31,7 @@ pub use self::inbound_types::{
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
+    line_audience_key,
 };
 pub use self::shared_validate::{
     CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, DEFAULT_EMAIL_LOCAL_PART_PREFIX,

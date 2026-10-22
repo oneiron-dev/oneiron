@@ -469,11 +469,13 @@ fn line_events(
             let kind = LineChatKind::parse(text(source, "type")?)?;
             Some(LineChat::new(kind, text(source, kind.id_field())?))
         });
-        let chat = match chat {
+        // A chat that routes per sender (no identity is bound to it) still
+        // names the reply's audience (FIX 2838).
+        let (chat, reply_chat) = match chat {
             Some(chat) if line_routes_by_chat(vault, handle, &chat, user_id.is_some())? => {
-                Some(chat)
+                (Some(chat), None)
             }
-            _ => None,
+            other => (None, other),
         };
         if chat.is_none() && user_id.is_none() {
             continue;
@@ -491,6 +493,7 @@ fn line_events(
             destination: destination.to_owned(),
             source_user_id: user_id.map(str::to_owned),
             chat,
+            reply_chat,
             // Carried for the adapter's checks only: the archived event is
             // the copy a reply reads it back from.
             reply_token: text(event, "replyToken")
@@ -565,7 +568,9 @@ fn admit(
 /// declared `effector` and never leaves this closure. The compare is the
 /// MAC's own constant-time `verify_slice`. The one signed-webhook check:
 /// the built-in channels' webhooks here and the Linear webhook door
-/// (`linear_host::webhook`) both call it (FIX 4263).
+/// (`linear_host::webhook`) both call it (FIX 4263). It runs before the
+/// request is authenticated, so it reads through the verification door's
+/// read snapshot and never takes the vault's writer (FIX 2095).
 pub(crate) fn hmac_matches(
     vault: &Vault,
     name: &str,
@@ -574,7 +579,7 @@ pub(crate) fn hmac_matches(
     expected: &[u8],
 ) -> oneiron::Result<bool> {
     let mut matched = false;
-    vault.inject_secret_at_door(name, effector, &mut |value: &[u8]| {
+    vault.inject_secret_for_verification_at_door(name, effector, &mut |value: &[u8]| {
         let mut mac = Hmac::<Sha256>::new_from_slice(value.trim_ascii()).map_err(|_| {
             oneiron::Error::InvalidConfig("the stored signing secret is unusable".to_owned())
         })?;
