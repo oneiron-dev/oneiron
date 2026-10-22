@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4101 declarations.
+// Census: 1198 code-mode rows (1158 host rows, 40 run rows), 4106 declarations.
 // Replies: 1078 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -3526,7 +3526,7 @@ declare namespace Sdk {
   type HeldMedia = { part: string; hash: Digest };
   type TableMerge = { first_row: NodeId; first_column: NodeId; last_row: NodeId; last_column: NodeId };
   type TableBody = { rows: NodeId[]; columns: NodeId[]; cells?: Record<string, Record<string, string>>; merges?: TableMerge[] };
-  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble";
+  type ChartKind = "bar" | "line" | "pie" | "area" | "scatter" | "doughnut" | "radar" | "bar_3d" | "line_3d" | "pie_3d" | "area_3d" | "bubble" | "stock" | "surface" | "surface_3d" | "of_pie";
   type ChartCategory = { id?: NodeId | null; levels?: (string | null)[] };
   type ChartCategories = { level_count?: number; points?: ChartCategory[] };
   type ChartSeries = { id?: NodeId | null; name: string; values: (number | null)[]; family?: ChartKind | null; x?: (number | null)[] | null; categories?: ChartCategories | null; bubble_size?: (number | null)[] | null; bubble_3d?: boolean | null };
@@ -3535,7 +3535,12 @@ declare namespace Sdk {
   type PlotGrouping = "standard" | "clustered" | "stacked" | "percent_stacked";
   type BarShape = "box" | "cone" | "cone_to_max" | "cylinder" | "pyramid" | "pyramid_to_max";
   type SizeRepresents = "area" | "width";
-  type ChartPlot = { family: ChartKind; nth?: number; bar_dir?: BarDirection | null; grouping?: PlotGrouping | null; shape?: BarShape | null; gap_depth?: number | null; bubble_3d?: boolean | null; bubble_scale?: number | null; show_neg_bubbles?: boolean | null; size_represents?: SizeRepresents | null };
+  type StockOrder = "hlc" | "ohlc";
+  type StockRoles = { order: StockOrder; open?: NodeId | null; high?: NodeId | null; low?: NodeId | null; close?: NodeId | null };
+  type SurfaceBand = { index: number; fill?: string | null };
+  type OfPieType = "pie" | "bar";
+  type SplitType = "auto" | "cust" | "percent" | "pos" | "val";
+  type ChartPlot = { family: ChartKind; nth?: number; bar_dir?: BarDirection | null; grouping?: PlotGrouping | null; shape?: BarShape | null; gap_depth?: number | null; bubble_3d?: boolean | null; bubble_scale?: number | null; show_neg_bubbles?: boolean | null; size_represents?: SizeRepresents | null; stock?: StockRoles | null; hi_low_lines?: boolean | null; up_down_bars?: boolean | null; up_down_gap_width?: number | null; up_fill?: string | null; down_fill?: string | null; wireframe?: boolean | null; bands?: SurfaceBand[] | null; of_pie_type?: OfPieType | null; split_type?: SplitType | null; split_pos?: number | null; custom_split?: NodeId[] | null; second_pie_size?: number | null; gap_width?: number | null; ser_lines?: boolean | null };
   type ChartView = { rot_x?: number | null; h_percent?: number | null; rot_y?: number | null; depth_percent?: number | null; r_ang_ax?: boolean | null; perspective?: number | null };
   type ConnectorPreset = "straight" | "elbow" | "curved";
   type ConnectorEnd = { node: NodeId; site: number };
