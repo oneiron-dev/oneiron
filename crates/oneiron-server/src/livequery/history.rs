@@ -107,6 +107,33 @@ impl History {
         Ok(None)
     }
 
+    /// The rows the retained result at `cursor` was derived from (FIX
+    /// 9493), or `None` when the journal holds no result there.
+    pub(super) fn rows_at(
+        doc: &LoroDoc,
+        view: &ScopedView,
+        channel: Channel,
+        cursor: &Cursor,
+    ) -> Result<Option<Vec<oneiron::EntityId>>, AppError> {
+        for kind in ["data", "snapshot"] {
+            if let Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) = doc
+                .get_map("history")
+                .get(&format!("{}:{kind}", cursor.batch))
+            {
+                let entry: Entry = rmp_serde::from_slice(&bytes).map_err(|_| error())?;
+                if &entry.view == view && entry.channel == channel && &entry.cursor == cursor {
+                    return entry
+                        .rows
+                        .iter()
+                        .map(|row| oneiron::EntityId::from_hex(row).map_err(|_| error()))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map(Some);
+                }
+            }
+        }
+        Ok(None)
+    }
+
     pub(super) fn replay(
         doc: &LoroDoc,
         view: &ScopedView,
