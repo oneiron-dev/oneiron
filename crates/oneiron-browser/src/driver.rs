@@ -52,7 +52,7 @@ use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line, Masks};
 use crate::retention::HandleRetention;
-use crate::secret::{Entry, Secrets, bare_handle, entry};
+use crate::secret::{Entry, SecretUse, Secrets, bare_handle, entry};
 use crate::{
     BrowserDriver, BrowserEngine, BrowserError, BrowserPersonInput, BrowserTab, ClickInput,
     CropInput, ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, Observation,
@@ -572,6 +572,7 @@ impl CdpDriver {
             Err(error) => return Err(error),
         };
         let (url, title) = self.page_info()?;
+        let (url, title) = self.shown_page(url, title);
         self.seq += 1;
         let read = Read {
             seq: self.seq,
@@ -600,6 +601,7 @@ impl CdpDriver {
     /// partial observation: never an edit, and never a base for one.
     fn timed_out(&mut self) -> Result<Observation, BrowserError> {
         let (url, title) = self.page_info()?;
+        let (url, title) = self.shown_page(url, title);
         self.seq += 1;
         let read = Read {
             seq: self.seq,
@@ -891,11 +893,14 @@ impl CdpDriver {
                 Entry::Text(text) => driver
                     .page("Input.insertText", json!({"text": text}))
                     .map(drop),
-                Entry::Secret(handle) => driver.secrets.with_value(handle, &mut |text: &str| {
-                    driver
-                        .page("Input.insertText", json!({"text": text}))
-                        .map(drop)
-                }),
+                Entry::Secret(handle) => {
+                    let use_ = SecretUse::Type;
+                    driver.secrets.with_value(handle, use_, &mut |text: &str| {
+                        driver
+                            .page("Input.insertText", json!({"text": text}))
+                            .map(drop)
+                    })
+                }
             },
         )?;
         observation.rebound.clone_from(&target.rebound);

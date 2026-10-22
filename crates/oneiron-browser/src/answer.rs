@@ -73,6 +73,10 @@ pub struct BrowserAnswer<T> {
     /// draft naming no subgoal and no checks (CUA E9a).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demonstration: Option<DemonstrationOutput>,
+    /// The guest session's manifest, as the run's door adds it to every
+    /// answer (FIX 5705).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_manifest: Option<SessionManifest>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -86,6 +90,7 @@ impl<T> BrowserAnswer<T> {
             switched: None,
             engine: None,
             demonstration: None,
+            session_manifest: None,
         }
     }
 }
@@ -103,6 +108,10 @@ pub struct DesktopAnswer<T> {
     /// The agent's verbs moved to another window since its last answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub switched: Option<WindowSwitch>,
+    /// The guest session's manifest, as the run's door adds it to every
+    /// answer (FIX 5705).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_manifest: Option<SessionManifest>,
 }
 
 impl<T> DesktopAnswer<T> {
@@ -114,6 +123,56 @@ impl<T> DesktopAnswer<T> {
             answer,
             takeover: None,
             switched: None,
+            session_manifest: None,
         }
     }
+}
+
+/// What a guest session proved about its fence, as the run's door names it
+/// on every answer (FIX 5705): the container's own session manifest, as it
+/// reads on the wire. The door sends that manifest; this is its shape.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionManifest {
+    pub backend: String,
+    pub runtime: String,
+    pub image: String,
+    /// blake3 of the full runtime argument list, so a receipt names its
+    /// flags.
+    pub argv_digest: String,
+    pub network: String,
+    pub seccomp: SessionSeccomp,
+    pub generation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fence_proof: Option<SessionFenceProof>,
+    /// Non-Linux or explicitly unfenced sessions never claim isolation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fence_unproven: bool,
+    /// The guest-image release the launch saw (FIX 8253): evidence only,
+    /// in the container's own shape.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub image_release: serde_json::Value,
+}
+
+/// Evidence the session verified before its guest made its first network
+/// call.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionFenceProof {
+    pub ruleset_hash: String,
+    pub seccomp_hash: String,
+    pub network_routes: Vec<String>,
+    pub network_evidence_digest: String,
+    pub sandbox_generation: String,
+    pub launcher_digest: String,
+}
+
+/// How the guest's own system calls are filtered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionSeccomp {
+    /// The runtime's default profile.
+    RuntimeDefault,
+    /// The guest program runs its own namespace and seccomp sandbox.
+    GuestSandbox,
+    /// Engine Landlock and seccomp user-notification launcher.
+    EngineFence,
 }

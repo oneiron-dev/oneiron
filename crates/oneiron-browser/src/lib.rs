@@ -52,7 +52,10 @@ mod session;
 mod stop;
 mod switch;
 
-pub use answer::{BrowserAnswer, DesktopAnswer, TakeoverRecord, WindowSwitch, WindowSwitchCause};
+pub use answer::{
+    BrowserAnswer, DesktopAnswer, SessionFenceProof, SessionManifest, SessionSeccomp,
+    TakeoverRecord, WindowSwitch, WindowSwitchCause,
+};
 pub use demonstration::{
     DemonstrationId, DemonstrationOutput, DemonstrationSource, DemonstrationStartInput,
     DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep,
@@ -91,7 +94,7 @@ pub use request::DestinationRefusal;
 pub use request::{BrowserRequestHandler, RenderedDocument};
 pub use retention::HandleRetention;
 pub use row::{Row, RowFieldGap, RowGapField, RowGapReason};
-pub use secret::SecretCustody;
+pub use secret::{SecretCustody, SecretUse};
 pub use secret_fields::{RowSecret, SecretKind, SecretNote};
 #[cfg(feature = "driver")]
 pub use session::{BrowserGuest, BrowserGuestStarter, BrowserSession, FreshGuest, StartedGuest};

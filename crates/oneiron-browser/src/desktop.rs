@@ -64,6 +64,8 @@
 //! typed secret reads the bytes. A settle poll's read, which only a hash
 //! reads, masks the same fields and holds nothing.
 
+mod point;
+
 use crate::capture::{self, Capture, Captures};
 use crate::driver::pages::{
     Base, Found, Observations, Read, Search, find_cursor, is_search, is_walk, session_token,
@@ -72,7 +74,7 @@ use crate::driver::pages::{
 use crate::driver::{crop_region, encode_png, png_dimensions};
 use crate::mcp::{Mcp, ToolError, ToolReply};
 use crate::observation::match_target;
-use crate::secret::{Entry, Secrets, entry};
+use crate::secret::{Entry, SecretUse, Secrets, entry};
 use crate::secret_fields::{
     FieldFacts, SECRET_MARK, classify, masked, secret_display_policy, secret_echo_policy,
 };
@@ -382,6 +384,10 @@ struct Line {
     frame: Option<Rect>,
     masked: bool,
     original: Option<String>,
+    /// Whether the read reached past the row's whole subtree: a later node
+    /// at its raw depth or above came. A row a cut read ends inside is not
+    /// closed (FIX 5740, `point`).
+    closed: bool,
 }
 
 impl Line {
@@ -1060,7 +1066,12 @@ impl DesktopSession {
                 self.token, snapshot.key.pid, snapshot.key.id
             ),
             url: url_of(&snapshot.app, snapshot.key),
-            title: snapshot.title,
+            // A secret the run's reads took shows its handle in the window's
+            // title too (FIX 8340).
+            title: self
+                .secrets
+                .mask_known(&snapshot.title)
+                .unwrap_or(snapshot.title),
             rows: snapshot.lines.into_iter().map(|line| line.row).collect(),
             no_tree: snapshot.no_tree,
             partial: snapshot.partial,
@@ -1604,11 +1615,31 @@ fn roles_of(element: &Value) -> (String, String) {
 /// classified first and held through `view`, so no row, locator or name
 /// is built from a secret (FIX 8028).
 fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) {
+    let (lines, secrets, typed) = lines_with(elements, view, Vec::new());
+    if typed.is_empty() {
+        return (lines, secrets);
+    }
+    // A secret a field holds by what was typed into it shows its handle in
+    // every other row that echoes it too (FIX 8338): the rows are made
+    // again with it in the echo set, before any name or locator stands.
+    let (lines, secrets, _) = lines_with(elements, view, typed);
+    (lines, secrets)
+}
+
+/// [`lines`], with `extra` in its echo set from the start: the rows, the
+/// regions a screenshot masks, and each secret a field holds only by what
+/// was typed into it that the echo set lacked.
+fn lines_with(
+    elements: &[Value],
+    view: &SecretView<'_>,
+    extra: Vec<(String, String)>,
+) -> (Vec<Line>, Vec<Secret>, Vec<(String, String)>) {
     let mut taken = HashMap::new();
     // Each element's secret, as the classifier reads it, and what each
-    // secret shows in its place wherever a name or value echoes it.
+    // secret shows in its place wherever a name or value echoes it, what
+    // earlier reads of the run took among them (FIX 8337).
     let mut kinds = Vec::with_capacity(elements.len());
-    let mut echoes: Vec<(String, String)> = Vec::new();
+    let mut echoes: Vec<(String, String)> = extra;
     for element in elements {
         let (raw, role) = roles_of(element);
         let kind = secret_kind(element, &raw, &role);
@@ -1620,8 +1651,18 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
                 echoes.push((value.trim().to_owned(), shown));
             }
         }
+        if let Some(secrets) = view.secrets {
+            for field in ["label", "value"] {
+                for known in secrets.known_in(text_field(element, field)) {
+                    if !echoes.iter().any(|(held, _)| *held == known.0) {
+                        echoes.push(known);
+                    }
+                }
+            }
+        }
         kinds.push(kind);
     }
+    let mut typed_echoes: Vec<(String, String)> = Vec::new();
     let shown: Vec<(&str, &str)> = echoes
         .iter()
         .map(|(secret, shown)| (secret.as_str(), shown.as_str()))
@@ -1633,10 +1674,18 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
     let mut scope: Vec<(u64, String)> = Vec::new();
     let mut controls: Vec<u64> = Vec::new();
     let mut seen: HashMap<String, u32> = HashMap::new();
-    let mut out = Vec::new();
+    let mut out: Vec<Line> = Vec::new();
     let mut secrets = Vec::new();
+    // Each emitted row whose raw subtree is still open, by its raw depth:
+    // every raw node closes those at its depth or below it, emitted or not.
+    let mut open: Vec<(u64, usize)> = Vec::new();
     for (element, kind) in elements.iter().zip(kinds) {
         let depth = element.get("depth").and_then(Value::as_u64).unwrap_or(0);
+        while open.last().is_some_and(|(open_at, _)| *open_at >= depth) {
+            if let Some((_, at)) = open.pop() {
+                out[at].closed = true;
+            }
+        }
         while scope.last().is_some_and(|(at, _)| *at >= depth) {
             scope.pop();
         }
@@ -1692,6 +1741,7 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
             // handles.
             let locator = format!("d{}", &hash[..12]);
             // A field a type entered a secret into reads as that secret.
+            let found = kind;
             let kind = kind.or_else(|| view.typed.get(&locator).copied());
             let mut states = Vec::new();
             if element.get("enabled").and_then(Value::as_bool) == Some(false) {
@@ -1706,7 +1756,14 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
             let raw_value = Some(text_field(element, "value")).filter(|value| !value.is_empty());
             let (value, row_secret, value_echoed) = match kind {
                 Some(kind) => {
-                    let (shown, held) = view.hold(&mut taken, kind, text_field(element, "value"));
+                    let raw = text_field(element, "value");
+                    let (shown, held) = view.hold(&mut taken, kind, raw);
+                    let typed_only = found.is_none() && !masked(raw) && !raw.trim().is_empty();
+                    if let Some(display) = shown.as_ref().filter(|_| typed_only)
+                        && !echoes.iter().any(|(held, _)| held == raw.trim())
+                    {
+                        typed_echoes.push((raw.trim().to_owned(), display.clone()));
+                    }
                     (shown, Some(held), false)
                 }
                 None => match raw_value.and_then(|raw| secret_echo_policy(raw, &shown)) {
@@ -1740,7 +1797,9 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
                 token,
                 masked: row_masked,
                 original: row_masked.then(|| raw_value.map(str::to_owned)).flatten(),
+                closed: false,
             });
+            open.push((depth, out.len() - 1));
             if out.last().is_some_and(|line: &Line| line.token.is_some()) {
                 controls.push(depth);
             }
@@ -1749,7 +1808,7 @@ fn lines(elements: &[Value], view: &SecretView<'_>) -> (Vec<Line>, Vec<Secret>) 
             scope.push((depth, format!("{role} \"{name_key}\"")));
         }
     }
-    (out, secrets)
+    (out, secrets, typed_echoes)
 }
 
 /// Whether the square of [`CLICK_CHECK_RADIUS`] around screenshot pixel
@@ -1989,79 +2048,7 @@ impl BrowserDriver for DesktopSession {
     }
 
     fn click_at(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
-        let started = Instant::now();
-        self.live()?;
-        let (_, frame) = self.held(&input.image)?;
-        if !(0.0..=1.0).contains(&input.x) || !(0.0..=1.0).contains(&input.y) {
-            return Err(BrowserError::Input(
-                "a point is two fractions of its image, each from 0 to 1".to_owned(),
-            ));
-        }
-        // The image must still show the window as it stands: the same
-        // window, in the same place. This one read carries the window's
-        // pixels too, for the check below; it is never held.
-        let mut snapshot = self.snapshot(true)?;
-        if snapshot.key != frame.window
-            || !snapshot
-                .bounds
-                .is_some_and(|bounds| bounds.same(frame.bounds))
-        {
-            return Err(BrowserError::StaleImage(input.image));
-        }
-        let x = frame.left + input.x * frame.width;
-        let y = frame.top + input.y * frame.height;
-        // The driver's window pixels are its screenshot's, from the
-        // window's corner.
-        let bounds = frame.bounds;
-        let across =
-            ((x - bounds.x) * frame.scale).clamp(0.0, (bounds.w * frame.scale - 1.0).max(0.0));
-        let down =
-            ((y - bounds.y) * frame.scale).clamp(0.0, (bounds.h * frame.scale - 1.0).max(0.0));
-        // And the spot must still look as it did: a scroll or a redraw in
-        // place leaves the window where it was but moves what is under the
-        // point. The read is masked as the image was, so secret fields match.
-        let (now, scale) = snapshot.shot.take().ok_or_else(|| {
-            BrowserError::Protocol("get_window_state sent no screenshot".to_owned())
-        })?;
-        let now = mask(now, bounds, scale, &snapshot.secrets)?;
-        if (scale - frame.scale).abs() > f64::EPSILON
-            || !looks_as_it_did(&frame.source, &now, across, down)?
-        {
-            return Err(BrowserError::StaleImage(input.image));
-        }
-        // The row under the point judges the press (Rule 5): a read cut
-        // before a row is there walks on first, as an act on a row does. A
-        // walk that gave way to another window leaves the image stale.
-        let read = self.search_lines(snapshot, None, |line| line.covers(x, y))?;
-        if read.key != frame.window {
-            return Err(BrowserError::StaleImage(input.image));
-        }
-        let row = read.line_at(x, y).map(|line| line.row.clone());
-        let class = row.as_ref().and_then(|row| effect_class(&row.name));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
-            (_, None) if read.partial.is_some() => return Err(floor_press(x, y)),
-            _ => PressMode::None,
-        };
-        let key = read.key;
-        let mut observation = self.act(&read, &Base::of(input.base), |session| {
-            session
-                .input(
-                    "click",
-                    json!({"pid": key.pid, "window_id": key.id, "x": across.round(), "y": down.round()}),
-                )
-                .map_err(BrowserError::from)
-        })?;
-        let class = receipt_class(class, row.as_ref());
-        self.receipt(
-            "click_at",
-            row.as_ref(),
-            class,
-            press,
-            &mut observation,
-            started,
-        );
-        Ok(observation)
+        self.click_point(input)
     }
 
     fn type_text(&mut self, input: TypeInput) -> Result<Observation, BrowserError> {
@@ -2089,7 +2076,7 @@ impl BrowserDriver for DesktopSession {
                 self.typed.insert(line.row.locator.clone(), kind);
                 let secrets = self.secrets.clone();
                 let mut entered = None;
-                secrets.with_value(handle, &mut |text: &str| {
+                secrets.with_value(handle, SecretUse::Type, &mut |text: &str| {
                     entered = Some(self.enter(&typing, &line.row, text)?);
                     Ok(())
                 })?;
