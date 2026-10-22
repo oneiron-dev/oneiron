@@ -123,6 +123,12 @@ fn served_spawn(
     let placement_clock =
         decisions.map(|host| RetrievalDeadline::hard(started, host.placement_budget));
     let planner_clock = decisions.map(|host| RetrievalDeadline::hard(started, host.planner_budget));
+    // FIX 9535: the house pattern run keeps the caller's own deadline, in the
+    // caller's fair task-work turn; the server-wide runner stays as it is.
+    let bound = planner_clock.as_ref().and_then(|clock| {
+        server.pattern_launch_runner_until(clock.answer_at(), owner.actor_for_read(vault).ok()?)
+    });
+    let runner = bound.as_deref().or(runner);
     let placement = decisions
         .zip(placement_clock.as_ref())
         .map(|(host, deadline)| PlacementDecisions {

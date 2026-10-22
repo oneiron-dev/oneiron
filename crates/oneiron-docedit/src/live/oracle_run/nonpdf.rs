@@ -77,7 +77,12 @@ pub(super) fn comments(
                     return Ok(());
                 }
             };
-            let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
+            let output = Package::open(
+                &exported.outcome.bytes,
+                run.limits,
+                &crate::resource::Resources::measuring(),
+            )
+            .map_err(text)?;
             let kept = comment_kept(&commented.package, &output, &exported, &anchor);
             run.record(NON_PDF, &id, verdict(kept));
             record_edit(run, &commented, &output, &exported, &id);
@@ -328,7 +333,12 @@ fn build_case(
             ))
         },
     );
-    let output = Package::open(&exported.outcome.bytes, run.limits).map_err(text)?;
+    let output = Package::open(
+        &exported.outcome.bytes,
+        run.limits,
+        &crate::resource::Resources::measuring(),
+    )
+    .map_err(text)?;
     record_edit(run, animated, &output, &exported, id);
     let slides = checks::slides(&exported.deck).len();
     run.candidate(Emit {

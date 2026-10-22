@@ -210,8 +210,10 @@ pub(super) fn export_over(deck: &LiveDeck, package: &Package, order: &str) -> Re
 
 /// How many slides an export holds.
 fn slides(bytes: &[u8], limits: Limits) -> Res<usize> {
-    Ok(DeckView::read(&Package::open(bytes, limits).map_err(text)?)
-        .map_err(text)?
-        .slides
-        .len())
+    Ok(DeckView::read(
+        &Package::open(bytes, limits, &crate::resource::Resources::measuring()).map_err(text)?,
+    )
+    .map_err(text)?
+    .slides
+    .len())
 }

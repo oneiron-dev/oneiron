@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4184 declarations.
+// Census: 1208 code-mode rows (1168 host rows, 40 run rows), 4187 declarations.
 // Replies: 1085 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -2265,6 +2265,9 @@ declare namespace Sdk {
   type DiagnosticCollection = { form: "inline"; diagnostics: TypeDiagnostic[] } | { form: "stored"; handle: string; occurrence: string; byte_len: number };
   type TypeDiagnostics = { state: "complete"; check: TypeCheckFacts; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "pending"; check: TypeCheckFacts } | { state: "failed"; check: TypeCheckFacts; failure: string; measures: DiagnosticMeasures; diagnostics: DiagnosticCollection } | { state: "unavailable"; reason: string; detail?: string | null };
   type ProgramStepFeedback = { step: ProgramStepIdentity; check_ref: string; preparation_note?: ProgramPreparationNote | null; type_diagnostics: TypeDiagnostics };
+  type TypeCheckState = "complete" | "pending" | "failed" | "unavailable";
+  type FeedbackWithheldReason = "recipient" | "placement" | "producers_unknown" | "conflicted_root" | "release_check_failed";
+  type ProgramStepFeedbackRelease = (ProgramStepFeedback & { release: "released" }) | { release: "withheld"; step: ProgramStepIdentity; check_ref: string; state: TypeCheckState; check?: TypeCheckFacts | null; failure?: string | null; unavailable?: string | null; measures?: DiagnosticMeasures | null; preparation_code?: string | null; reason: FeedbackWithheldReason };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
   type CodeWaitChoice = "approve_once" | "approve_and_stop_asking" | "deny";
   type CodeWaitResolveRequest = { target: CodeWaitTarget; answer: CodeWaitChoice; word_ref: EntityId };
@@ -2601,7 +2604,7 @@ declare namespace Sdk {
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; erasure?: SpawnErasure | null; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
   type SpawnAskKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
-  type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null };
+  type SpawnIntentRequest = { intent_key: string; prompt: string; requested_type?: TypeStamp | null; need: string; care?: string | null; notes?: string | null; model?: SpawnAskKnob<string> | null; width?: SpawnAskKnob<number> | null; pattern?: SpawnAskKnob<string> | null; budget_cap_units?: SpawnAskKnob<number> | null; balance_free_prompt?: boolean };
   type SpawnIntentReply = { intent_key: string; phase: SpawnPhase; placed?: TypeStamp | null; refusal?: string | null; root_attempt?: EntityId | null; member_attempts: EntityId[]; team_ref?: string | null; agent_def_ref?: EntityId | null; plan?: PlanObservation | null; erasure?: SpawnErasure | null };
   type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
   type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned" | "cancelled";
@@ -4011,7 +4014,7 @@ declare namespace Sdk {
   type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type FoldUnfold = { fold: number; at: number };
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
-  type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null };
+  type FoldHistoryStep = { step: number; code: string; console: string; type_diagnostics?: TypeDiagnostics | null; preparation_note?: ProgramPreparationNote | null; type_feedback?: ProgramStepFeedbackRelease | null };
   type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
   type RunReviewChange = { kind: "claim"; claim_ref: string } | { kind: "edge"; provenance_ref: string } | { kind: "note"; note_ref: string; fork_ref: string } | { kind: "topology"; event_ref: string } | { kind: "external_effect"; receipt_ref: string } | { kind: "delete"; entity_ref: string } | { kind: "erase"; entity_ref: string };
   type RunReviewRequest = { run_id: string; changes: RunReviewChange[] };
@@ -4165,7 +4168,7 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
+  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null; balance_free_prompt?: boolean };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type SpawnAskField = "need" | "care" | "notes" | "model" | "width" | "pattern";
@@ -5360,8 +5363,8 @@ declare const vault: Sdk.VaultHost & {
       /** Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only. */
       renew(input: Sdk.CodeSymbolsTaskRequest): Promise<Sdk.CodeSymbolLeaseView | StoredResult>;
     };
-    /** Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again. */
-    type_diagnostics(input: Sdk.CodeRunTypeDiagnosticsRequest): Promise<Sdk.ProgramStepFeedback | null | StoredResult>;
+    /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
+    type_diagnostics(input: Sdk.CodeRunTypeDiagnosticsRequest): Promise<Sdk.ProgramStepFeedbackRelease | null | StoredResult>;
     views: {
       /** Freeze current view input identities and return the REAPI action digest with its exact command bytes and input root digest. */
       action(input: Sdk.CodeViewActionRequest): Promise<Sdk.CodeViewAction | StoredResult>;

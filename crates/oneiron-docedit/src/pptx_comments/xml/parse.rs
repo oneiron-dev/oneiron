@@ -1,13 +1,27 @@
 //! Namespace-aware parsing for PPTX comment XML.
 //! Entry: `Xml::parse_with_limits`.
 //! Xml and Node remain defined in the parent module.
+//!
+//! Attribute, in-scope namespace, depth and node counts are observations
+//! (FIX 8596, 9822): raw and decoded attributes, a namespace map's copy on
+//! write and each node are reserved through the operation's port before
+//! they grow, and only the machine's floor or a deadline stops the parse.
 
 use super::*;
+use crate::resource::{bytes_of, wide};
+
+/// What a copy of an inherited namespace map allocates.
+fn map_bytes(map: &BTreeMap<String, String>) -> u64 {
+    map.iter().fold(
+        bytes_of::<(String, String)>(map.len()),
+        |sum, (prefix, uri)| sum.saturating_add(wide(prefix.len() + uri.len())),
+    )
+}
 
 impl<'a> Xml<'a> {
     pub(in crate::pptx_comments) fn parse_with_limits(
         text: &'a str,
-        limits: &PptxCommentLimits,
+        limits: &Codec<'_>,
     ) -> PatchResult<Self> {
         if text.len() > limits.max_xml_bytes || text.chars().any(|c| !valid_char(c)) {
             return Err(PptxError::InvalidXml);
@@ -15,6 +29,7 @@ impl<'a> Xml<'a> {
         let bytes = text.as_bytes();
         let mut nodes: Vec<Node> = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
+        let mut hold = limits.resources.hold();
         let mut pos = usize::from(text.starts_with('\u{feff}')) * 3;
         let mut roots = 0;
         while pos < bytes.len() {
@@ -125,11 +140,14 @@ impl<'a> Xml<'a> {
                 if pos == bytes.len() {
                     return Err(PptxError::InvalidXml);
                 }
-                raw.push((name, unescape(&text[begin..pos])?, begin..pos));
+                let value = unescape(&text[begin..pos])?;
+                hold.take(wide(name.len() + value.len()).saturating_add(bytes_of::<(
+                    String,
+                    String,
+                    Range<usize>,
+                )>(2)))?;
+                raw.push((name, value, begin..pos));
                 pos += 1;
-                if raw.len() > limits.max_xml_attributes {
-                    return Err(PptxError::InvalidXml);
-                }
             }
             let empty = bytes.get(pos) == Some(&b'/');
             if empty {
@@ -149,10 +167,27 @@ impl<'a> Xml<'a> {
                 },
                 |i| nodes[i].namespaces.clone(),
             );
+            // The inherited map is copied on its first new binding here.
+            if std::rc::Rc::strong_count(&namespaces) > 1
+                && raw
+                    .iter()
+                    .any(|(name, ..)| name == "xmlns" || name.starts_with("xmlns:"))
+            {
+                hold.take(map_bytes(&namespaces))?;
+            }
             let mut raw_names = BTreeSet::new();
             for (name, value, _) in &raw {
+                hold.take(wide(name.len()).saturating_add(bytes_of::<&String>(2)))?;
                 if !raw_names.insert(name) {
                     return Err(PptxError::InvalidXml);
+                }
+                if name == "xmlns" || name.starts_with("xmlns:") {
+                    hold.take(wide(name.len() + value.len()).saturating_add(bytes_of::<(
+                        String,
+                        String,
+                    )>(
+                        1
+                    )))?;
                 }
                 if name == "xmlns" {
                     std::rc::Rc::make_mut(&mut namespaces).insert(String::new(), value.clone());
@@ -166,9 +201,6 @@ impl<'a> Xml<'a> {
                     std::rc::Rc::make_mut(&mut namespaces).insert(prefix.into(), value.clone());
                 }
             }
-            if namespaces.len() > limits.max_xml_namespaces {
-                return Err(PptxError::InvalidXml);
-            }
             let (ns, name) = expanded(&qname, &namespaces, false)?;
             let mut attrs = Vec::new();
             let mut expanded_names = BTreeSet::new();
@@ -177,6 +209,12 @@ impl<'a> Xml<'a> {
                     continue;
                 }
                 let (ns, name) = expanded(&qname, &namespaces, true)?;
+                // The attribute and its expanded name, kept twice.
+                hold.take(
+                    wide(2 * (ns.len() + name.len()))
+                        .saturating_add(bytes_of::<Attr>(2))
+                        .saturating_add(bytes_of::<(String, String)>(1)),
+                )?;
                 if !expanded_names.insert((ns.clone(), name.clone())) {
                     return Err(PptxError::InvalidXml);
                 }
@@ -193,11 +231,14 @@ impl<'a> Xml<'a> {
                     return Err(PptxError::InvalidXml);
                 }
             }
-            // Count empty elements as a depth level too: an empty child is
-            // still nested even though it never enters the open-element stack.
-            if stack.len() >= limits.max_xml_depth || nodes.len() >= limits.max_xml_nodes {
-                return Err(PptxError::InvalidXml);
-            }
+            // The node twice (the arena grows by doubling), its names, its
+            // child index and its stack slot, before the arena grows.
+            limits.resources.checkpoint()?;
+            hold.take(
+                bytes_of::<Node>(2)
+                    .saturating_add(wide(qname.len() + ns.len() + name.len()))
+                    .saturating_add(bytes_of::<usize>(2)),
+            )?;
             let index = nodes.len();
             nodes.push(Node {
                 ns,

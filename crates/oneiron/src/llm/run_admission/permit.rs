@@ -176,27 +176,24 @@ impl RunInner {
             request_digest,
             ..offer.dispatch_binding()
         };
-        let local = offer.payer == Payer::Local && offer.locality == ModelLocality::OnDevice;
-        let (lease, reserved_units) = if local {
-            let lease = self
-                .guard
-                .admit_unmetered(binding)
-                .map_err(|denied| RunDenied::Budget { denied })?
-                .lease;
-            (lease, 0)
-        } else {
-            let reserve = priced(
-                u128::from(line.reserve_units),
-                &tokens,
-                &line.unit,
-                &offer.rates,
-            )?;
-            let lease = self
-                .guard
-                .admit_call_bound(reserve, &request.envelope.purpose, binding)
-                .map_err(|denied| RunDenied::Budget { denied })?
-                .lease;
-            (lease, reserve)
+        let free = self.free_lease(offer.payer, offer.custody, &binding)?;
+        let metered = free.is_none();
+        let (lease, reserved_units) = match free {
+            Some(lease) => (lease, 0),
+            None => {
+                let reserve = priced(
+                    u128::from(line.reserve_units),
+                    &tokens,
+                    &line.unit,
+                    &offer.rates,
+                )?;
+                let lease = self
+                    .guard
+                    .admit_call_bound(reserve, &request.envelope.purpose, binding)
+                    .map_err(|denied| RunDenied::Budget { denied })?
+                    .lease;
+                (lease, reserve)
+            }
         };
         let allocation = match self.hold_allocation(
             offer.payer,
@@ -248,7 +245,7 @@ impl RunInner {
             },
             revision,
             lease,
-            metered: !local,
+            metered,
             allocation: allocation.map(|(_, hold)| hold),
             native: tokens,
             unit_cost: 1,
@@ -279,12 +276,21 @@ impl RunInner {
         )?;
         let line = declaration.budget();
         let native = u128::from(connector.unit_cost) * u128::from(quantity);
-        let reserve = priced(native, &connector.cost_unit, &line.unit, &connector.rates)?;
-        let lease = self
-            .guard
-            .admit_reserve_bound(reserve, connector.dispatch_binding())
-            .map_err(|denied| RunDenied::Budget { denied })?
-            .lease;
+        let binding = connector.dispatch_binding();
+        let free = self.free_lease(connector.payer, connector.custody, &binding)?;
+        let metered = free.is_none();
+        let (lease, reserve) = match free {
+            Some(lease) => (lease, 0),
+            None => {
+                let reserve = priced(native, &connector.cost_unit, &line.unit, &connector.rates)?;
+                let lease = self
+                    .guard
+                    .admit_reserve_bound(reserve, binding)
+                    .map_err(|denied| RunDenied::Budget { denied })?
+                    .lease;
+                (lease, reserve)
+            }
+        };
         let allocation = match self.hold_allocation(
             connector.payer,
             native,
@@ -334,7 +340,7 @@ impl RunInner {
             },
             revision,
             lease,
-            metered: true,
+            metered,
             allocation: allocation.map(|(_, hold)| hold),
             native: connector.cost_unit.clone(),
             unit_cost: connector.unit_cost,
@@ -342,6 +348,25 @@ impl RunInner {
             rates: connector.rates.clone(),
             settled: false,
         })
+    }
+
+    /// The unmetered lease of a call that is [`free_work`], taken before any
+    /// price, policy row or exhaustion check (FIX 9482): it reserves nothing
+    /// and is charged nothing, and still starts only for `binding`, once.
+    /// `None` for paid work, which reserves on the line.
+    fn free_lease(
+        &self,
+        payer: Payer,
+        custody: KeyCustody,
+        binding: &DispatchBinding,
+    ) -> Result<Option<BudgetLease>, RunDenied> {
+        if !free_work(payer, binding.locality, custody) {
+            return Ok(None);
+        }
+        self.guard
+            .admit_free_work(binding.clone(), custody == KeyCustody::Keyless)
+            .map(|admission| Some(admission.lease))
+            .map_err(|denied| RunDenied::Budget { denied })
     }
 
     /// Reserves a host-paid call on the vault's live allocation. A refused
@@ -394,6 +419,20 @@ impl RunInner {
             },
         )))
     }
+}
+
+/// Whether a call is free work (FIX 9482): nobody pays per call
+/// ([`Payer::Local`]) and the host bound it to this device, or to the owner's
+/// own server with no key. Read only from the host-bound offer or connector,
+/// never from a caller's request, nor from a missing key, an own server or a
+/// zero rate alone; a keyed owner endpoint stays paid.
+fn free_work(payer: Payer, locality: ModelLocality, custody: KeyCustody) -> bool {
+    let free_route = match locality {
+        ModelLocality::OnDevice => true,
+        ModelLocality::OwnServer => custody == KeyCustody::Keyless,
+        ModelLocality::ThirdParty => false,
+    };
+    payer == Payer::Local && free_route
 }
 
 /// A reservation in a meter's unit. A price no meter can hold never fits.
