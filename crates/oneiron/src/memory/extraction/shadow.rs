@@ -65,7 +65,8 @@ impl Memory<'_> {
         // The caller waits on the witnessed turn's answer: a live call.
         let served = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let model = encoder.model_id().as_str().to_owned();
-            let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+            let caller = ExtractionCaller::actor(&self.actor);
+            let attempt = infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller);
             (model, attempt)
         }));
         let (model, attempt) = served.unwrap_or_else(|_| {
@@ -101,13 +102,24 @@ pub fn infer_encoder(
     work: ExtractionWork,
     encoder: &dyn ExtractionEncoder,
 ) -> EncoderAttempt<String> {
+    infer_encoder_for(input, work, encoder, &ExtractionCaller::new("host"))
+}
+
+/// [`infer_encoder`] for `caller`, whose calls the host's dispatcher shares
+/// its room by (FIX 9519).
+pub fn infer_encoder_for(
+    input: &EncoderInput,
+    work: ExtractionWork,
+    encoder: &dyn ExtractionEncoder,
+    caller: &ExtractionCaller,
+) -> EncoderAttempt<String> {
     if encoder.locality() != EmbedderLocality::OnDevice {
         return EncoderAttempt {
             execution: None,
             result: Err("off_device_shadow_denied".into()),
         };
     }
-    let attempt = encoder.infer(input, work);
+    let attempt = encoder.infer_for(input, work, caller);
     let result = attempt
         .result
         .map_err(|error| format!("{:?}", error.kind()))
@@ -168,11 +180,10 @@ pub(crate) fn hash_input(input: &EncoderInput) -> String {
     }
     format!("{:x}", hash.finalize())
 }
+/// The answer's structure, never its size: any number of spans and links
+/// that hold every rule passes (FIX 9944).
 fn validate(input: &EncoderInput, output: &EncoderOutput) -> Result<(), &'static str> {
-    if output.spans.len() > 4096
-        || output.links.len() > 4096
-        || output.vad.is_some_and(|vad| vad.validate().is_err())
-    {
+    if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err("invalid_encoder_output");
     }
     for span in &output.spans {

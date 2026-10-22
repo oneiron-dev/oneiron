@@ -31,7 +31,7 @@ use oneiron::feedback::{
     TextFilter, TextFilterError, TextFilterIdentity, UnredactedFeedback, apply_recognised_spans,
 };
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork,
+    EncoderInput, EncoderMessage, ExtractionCaller, ExtractionEncoder, ExtractionWork,
 };
 
 use crate::oneironer::{EncoderNotSelected, TaggerSlot};
@@ -50,6 +50,9 @@ pub(crate) struct OneironerFilter {
     encoder: Option<Arc<dyn ExtractionEncoder>>,
     /// The vault manifest's tagger binding when the slot's tagger is not it.
     differs_from_binding: Option<String>,
+    /// Who its calls are made for: the server's vault, whose calls the
+    /// dispatcher shares its room by (FIX 9519).
+    caller: ExtractionCaller,
 }
 
 impl OneironerFilter {
@@ -59,6 +62,7 @@ impl OneironerFilter {
         Self {
             encoder: slot.map(|slot| Arc::clone(slot.tagger()) as Arc<dyn ExtractionEncoder>),
             differs_from_binding: slot.and_then(|slot| unselected_binding(slot, server.vault())),
+            caller: ExtractionCaller::vault(server.vault()),
         }
     }
 }
@@ -102,7 +106,7 @@ impl TextFilter for OneironerFilter {
         };
         // Neither a chat turn nor the tag door: a bulk call (FIX 6755).
         let called = catch_unwind(AssertUnwindSafe(|| {
-            encoder.infer(&input, ExtractionWork::Bulk).result
+            encoder.infer_for(&input, ExtractionWork::Bulk, &self.caller).result
         }));
         let output = match called {
             Ok(Ok(output)) => output,

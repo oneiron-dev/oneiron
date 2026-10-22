@@ -150,6 +150,35 @@ pub enum ExtractionWork {
     /// publication or a recovery owes, and feedback redaction.
     Bulk,
 }
+/// Who one extraction call is made for: the key a host's dispatcher shares
+/// its room by (FIX 9519), so one caller's backlog never holds another's
+/// calls back. Opaque and stable: an actor, or a vault's own background
+/// tagging, never a process-wide stand-in. Like the class, it is never part
+/// of the input, its digest or a marker's dedupe key: the tagger never sees
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExtractionCaller(String);
+impl ExtractionCaller {
+    /// A caller named by `key`.
+    pub fn new(key: impl Into<String>) -> Self {
+        Self(key.into())
+    }
+    /// An actor's own calls.
+    pub fn actor(actor: &crate::EntityId) -> Self {
+        Self(format!("actor:{}", actor.to_hex()))
+    }
+    /// A vault's own background tagging: its markers, under the vault's
+    /// root project, the one id every replica of it gives the same answer.
+    pub fn vault(vault: &crate::Vault) -> Self {
+        match vault.root_project() {
+            Ok(root) => Self(format!("vault:{}", root.to_hex())),
+            Err(_) => Self("vault".to_owned()),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 /// The runtime that ran one call. A call names the runtime that actually ran
 /// it, never one it fell back from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -278,6 +307,18 @@ pub trait ExtractionEncoder: Send + Sync {
     /// worker that ran it. The class orders the call and never changes what
     /// the tagger reads.
     fn infer(&self, input: &EncoderInput, work: ExtractionWork) -> EncoderAttempt;
+    /// [`Self::infer`] for `caller`, whose calls a host's dispatcher shares
+    /// its room by (FIX 9519). A host that keeps no per-caller order runs it
+    /// as `infer`.
+    fn infer_for(
+        &self,
+        input: &EncoderInput,
+        work: ExtractionWork,
+        caller: &ExtractionCaller,
+    ) -> EncoderAttempt {
+        let _ = caller;
+        self.infer(input, work)
+    }
 }
 /// Not deserializable: persistence requires a locally validated shadow receipt.
 #[derive(Debug, Clone, Serialize)]

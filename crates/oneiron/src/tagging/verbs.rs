@@ -329,7 +329,6 @@ pub struct TaggingMentionsView {
 
 fn refusal_str(refusal: OutputRefusal) -> &'static str {
     match refusal {
-        OutputRefusal::TooManyRows => "too_many_rows",
         OutputRefusal::MoodOutOfRange => "mood_out_of_range",
         OutputRefusal::UnknownMessage => "unknown_message",
         OutputRefusal::BadOffsets => "bad_offsets",
