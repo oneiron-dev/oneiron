@@ -6,6 +6,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::Arc;
 
 pub type OpenAiCompatFuture<'a> = Pin<
     Box<
@@ -25,6 +26,9 @@ pub struct OpenAiCompatHttpRequest {
     pub path: String,
     pub headers: BTreeMap<String, String>,
     pub body: JsonValue,
+    /// The call's segment manifest, as the host set it on the request
+    /// (DESIGN-V2 R2); only the native EXL3 transport reads it.
+    pub host_segments: Option<Arc<oneiron::llm::SegmentManifest>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

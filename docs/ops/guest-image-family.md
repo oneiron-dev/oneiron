@@ -6,9 +6,12 @@ generic agent sandbox and the vault) come from one builder in
 frozen Debian snapshot, and the guest binaries are built inside the image's
 own userspace. One assembled tree is exported twice: as an OCI image for the
 no-KVM container backend and as a root-only ext4 rootfs for Firecracker.
-Nothing here changes which image a host runs. The existing recipes under
-`crates/oneiron-container/guest/`, with their pins and receipts, stay
-authoritative until an adoption change names a new image.
+Nothing here changes which image a host runs: a host runs what its config
+pins. `guest/browser/build.sh` and `guest/checker/build.sh` produce their
+images through this builder by default, and `--dockerfile` keeps each
+one's Dockerfile recipe (see "Producers" below). The other recipes under
+`crates/oneiron-container/guest/`, with their pins and receipts, stay as
+they are.
 
 ## Files
 
@@ -32,6 +35,12 @@ authoritative until an adoption change names a new image.
 `python3 build.py validate` checks that the three agree. It needs no Linux
 host. It refuses a moving `latest`, a malformed hash or commit, a missing
 variant, a stale lock scope, and an output field on an unbuilt variant.
+
+`fetch` and `build` refuse a variant the builder cannot install yet before
+they enter a namespace or download anything: desktop-cua's external source
+build, and generic-agent's archive and npm payloads. Every tool they run
+writes to stderr. `build` prints its record JSON on stdout, whole and last,
+so stdout is one JSON document.
 
 ## Build
 
@@ -82,7 +91,10 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
    The `.deb` files come through mkosi's own apt run against our sources
    file. That file pins main, updates and security to the snapshot,
    verifies every InRelease signature with the archive keyring, and skips
-   `Valid-Until` on those sources only.
+   `Valid-Until` on those sources only. It is mkosi's build-sandbox source
+   list. The finished tools tree carries the same file as its only apt
+   source; mkosi would otherwise leave the tree a `trixie.sources` for
+   deb.debian.org, which no pin governs.
 
    The first run on a fresh mirror passes `--learn` and writes
    `packages.lock.toml`. Commit that lock. A later fetch without `--learn`
@@ -95,7 +107,11 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       tree). The tools tree is apt, dpkg, the keyring, e2fsprogs and the rest
       of `packages.toml [tools]`, from the same snapshot. Its content hash is
       the **builder identity**, `tools_tree_sha256`. The Debian base digest
-      is only its seed.
+      is only its seed. Before hashing, the builder drops ldconfig's aux
+      cache and the logs, and replaces the tree's apt sources with the
+      snapshot file. A tree kept from an earlier build is finished the same
+      way before its hash is compared, so one finished by an older builder
+      is rebuilt.
    3. mkosi builds the variant with `ToolsTree=` the tools tree.
       `mkosi.build.chroot` compiles the plan's binaries inside the image plus
       its build overlay, so they link against the glibc the image ships. It
@@ -104,11 +120,14 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
    4. `mkosi.postinst` places the guest account, pinned files, payloads and
       links. `mkosi.finalize` empties `machine-id` and removes random seeds,
       credentials, keys, apt lists and caches, logs, the ldconfig aux cache
-      and backup files. Licence files and dpkg's database stay.
+      and backup files. Licence files and dpkg's database stay. For a plan
+      with an offline Cargo store (the checker), it then normalizes the
+      store copied into the image (see "Checker store" below).
    5. The exporter refuses a tree whose files name a build-machine path.
    6. The exporter writes one deterministic `rootfs.tar`: sorted entries,
-      mtimes clamped to the epoch, and explicit ownership (below). It builds
-      both outputs from that tar:
+      mtimes clamped to the epoch, explicit ownership (below), and each
+      entry's extended attributes (below). It builds both outputs from that
+      tar:
       - `<variant>.oci.tar` is an OCI layout with `index.json` plus docker's
         `manifest.json`, so `docker load` accepts it;
       - `rootfs.ext4` comes from `mke2fs -d rootfs.tar` in the tools tree:
@@ -118,8 +137,8 @@ in the work dir), no git system config or attributes, no `TAR_OPTIONS`,
       The ext4 is refused above the engine's 4 GiB Firecracker rootfs cap;
       the cap does not move.
    7. It writes `rootfs.members.tsv`: every tar member with its type, mode,
-      owner, size, mtime and sha256 (or link target). This is the payload
-      identity a second build compares.
+      owner, size, mtime, sha256 (or link target) and xattrs. This is the
+      payload identity a second build compares.
    8. It writes the SBOM and the provenance statement (below).
 3. **Receipt.** `build.py receipt --variant base` writes `receipt.json` and
    prints the `[variants.base.outputs."linux/amd64"]` block. Paste the block
@@ -145,8 +164,29 @@ digest. Signing them is the release signature's seam (`manifest.md`).
   - the pinned payloads (Lightpanda, the Rust components) and pinned repo
     files placed in the image.
 
-  Licences are what each crate declares. A Debian package's licence is
-  `NOASSERTION`: its copyright file is not machine-read here.
+  Licences are what each crate declares. A Debian package's
+  `licenseDeclared` is read from its own `/usr/share/doc/<package>/copyright`
+  in the built image; symlinked doc directories resolve inside the image.
+  The rules:
+  - Only a DEP-5 file (`Format:` copyright-format 1.0) is read.
+  - Each Files paragraph's `License:` must be a plain list of short names
+    joined by one operator, all `or` or all `and`. A comma, a
+    `with … exception` or mixed operators leave the package `NOASSERTION`.
+  - A short name maps to an SPDX id only through `attest.DEBIAN_TO_SPDX`.
+    That one table holds the names Debian's own list defines unambiguously:
+    GPL/LGPL/AGPL by version and `+`, Expat as MIT, BSD-2/3/4-clause,
+    Apache-2.0, Artistic-2.0, CC0-1.0, ISC, MPL, OFL-1.1, Python-2.0, Zlib,
+    and SPDX's own `-only`/`-or-later` forms.
+  - Any other name with its text in the file becomes
+    `LicenseRef-Debian-<name>-<text sha256 prefix>`, and that text goes
+    under the document's `hasExtractedLicensingInfos`. Vague names such as
+    MIT, BSD, Artistic or public-domain land here.
+  - A name with no text, a missing file, or a file that is not DEP-5 leaves
+    the package `NOASSERTION`, with the reason in `licenseComments`.
+  - The Files paragraphs of one package are joined with AND: each covers
+    some of its files.
+  - `licenseConcluded` stays `NOASSERTION`. This is the packager's
+    declaration, not a legal conclusion.
 - `provenance.json` is an in-toto Statement v1 with a SLSA provenance v1
   predicate:
   - the builder: the tools tree's content hash, mkosi's pin and the builder
@@ -171,6 +211,50 @@ The existing recipes give the guest no path in the image: its HOME is the
 run-time `/tmp`. The receipt lists every non-root entry and its source.
 Ownership a maintainer script sets and no rule names stays root.
 
+**Extended attributes and file capabilities.** A maintainer script's
+`setcap` leaves a `security.capability` attribute on the file. The checker's
+`gst-ptp-helper` (libgstreamer1.0-0) is the case in today's variants. The
+exporter reads every entry's xattrs without following symlinks and writes
+each one as a PAX `SCHILY.xattr.<name>` record holding the raw value bytes.
+A value that is not UTF-8 goes out under `hdrcharset=BINARY`, byte for
+byte. The export policy:
+- `security.capability` is written as a v2 value (magic, permitted and
+  inheritable masks, no rootid), which a guest's own root reads as given.
+  Inside the builder's namespace the kernel already reads the value as v2.
+  A v3 value is translated only when its rootid is the builder's mapped
+  root (0, or the invoking uid). Any other capability value is refused.
+- Every other name is exported as it is. Today's variants carry none.
+- The OCI layer carries every exported name. The ext4 rootfs carries
+  `security.capability` only: `mke2fs -d rootfs.tar` imports through
+  libarchive, and e2fsprogs 1.47.2 keeps only that name (and
+  `gnu.translator`) from a tar.
+- `rootfs.members.tsv` adds a ninth column, `xattrs`, holding sorted
+  `name=<hex>` pairs joined by `;`. The tools tree's `tree_digest` hashes
+  the same text.
+
+**Checker store.** The checker ships the offline Cargo store at
+`/opt/queue-check/cargo-home`. A check never runs against it in place: the
+helper copies it into the plan's writable scratch `CARGO_HOME`
+(`.oneiron/checks.json`). `mkosi.finalize` normalizes the copy in the
+image, never the mirror, so that two fetches of one lock give the same
+bytes (FIX 9353):
+- it removes `.global-cache` (with `-wal` and `-shm`), cargo's SQLite record
+  of last-use times; the scratch copy recreates it;
+- it repacks every git object store, each `git/db` repo and each checkout's
+  `.git`, from its refs. The image's own git does this (`mkosi-chroot
+  /usr/bin/git`, so the tools tree carries no git) with fixed options:
+  `pack.threads=1`, `pack.window=10`, `pack.depth=50`,
+  `repack -a -d -f -F -n --no-write-bitmap-index`, and no reverse index,
+  bitmap, multi-pack index or commit-graph. The server's pack and delta
+  choices no longer reach the image, and unreachable objects go;
+- it then removes each checkout's `.git/index` and `.git/logs`;
+- it links a checkout pack that is identical to its db's pack back to that
+  pack, as the fetch left them. In runs f1 and f2 no pair was identical: the
+  checkout's index and reflogs are roots of its repack, so its pack differs
+  from the db's by a few bytes, and both stay as files of their own.
+
+Each checkout keeps its sources, `.cargo-ok`, HEAD, refs and objects.
+
 ## Rebuild from the mirror, and retention
 
 A release is rebuildable while its mirror exists. That mirror is the `blobs/`,
@@ -193,8 +277,10 @@ byte fails the fetch; nothing re-resolves.
   digest namespaces, never interchangeable:
   - `oci_index_digest`, `oci_manifest_digest` and `oci_config_digest` are
     OCI digests. `oci_config_digest` is the image id a classic-store
-    `docker load` reports; a containerd-store load reports the manifest
-    digest.
+    `docker load` reports, and the id a VM vault's guest-runtime descriptor
+    names. A containerd-store load reports the manifest digest, and there
+    the config digest does not resolve (nelly, docker 29.9.0, checked
+    10-22).
   - `oci_archive_sha256` and `ext4_sha256` are file hashes.
   - The Firecracker host pins are BLAKE3 values, computed when a host adopts
     the rootfs.
@@ -204,7 +290,10 @@ byte fails the fetch; nothing re-resolves.
 - **Boot proof**: a candidate is not qualified until a fresh boot reaches its
   protocol. Each variant needs its own boot: a browser serves CDP, a checker
   runs a check, a desktop serves MCP and a display. A receipt is provenance,
-  not a boot.
+  not a boot. An output's state is `boot-proved` when a smoke booted an
+  image whose rootfs layer is byte-identical to that output's. The output's
+  `note` names that smoke: host, time, kind, run and what it measured. The
+  proof covers exactly that leg.
 
 ## Byte fields
 
@@ -219,7 +308,7 @@ byte fails the fetch; nothing re-resolves.
 | `builder_peak_rss_bytes` | The builder's largest single process (`ru_maxrss` over the build and its waited-for children), not a sum. |
 | `ext4_refused`, `ext4_needed_bytes` | Present instead of the ext4 fields when the capacity would pass the 4 GiB cap. |
 | writable / snapshot bytes | Not an image property: both forms mount the rootfs read-only, and run-time writes land in the session's tmpfs (browser 512 MiB, checker 16 GiB by config). Only a boot measures them. |
-| guest peak RAM, cold boot | Unmeasured: they need the acceptance smoke (a boot). |
+| guest peak RAM, cold boot | Unmeasured by a build: they need the acceptance smoke (a boot). The browser's OCI Lightpanda leg sampled a peak in its smoke (its `note`); cold boot is unmeasured. |
 
 Budgets in `release.toml` are proposed engineering targets, not checks. The
 browser's 2 GiB and the desktop's 3 GiB runtime memory defaults are config
@@ -227,36 +316,58 @@ values, not image sizes. The checker's provisional 2-8 GiB payload can exceed
 the 4 GiB Firecracker cap. Its first build decides between pruning, a split,
 or a reviewed bound change.
 
-## Measured: the first built candidates (10-22)
+## Measured: the current outputs (10-22, runs f1 and f2)
 
-`release.toml` records run b6 as `built-candidate`. It ran on a fleet Linux
-host (kel) at builder commit `bb4ebe74a8`, from the learned lock (554
-packages), with tools tree `133b6c46a144…`. The budgets are RESULT.md's
-proposed payload budgets. The earlier green runs b4 (kel) and b5 (bel)
-measured the same bytes for base and browser. The checker differed by a few
-KiB in its Cargo store; see Repeatability.
+`release.toml` records run f1 (kel, builder commit `0684edada9`, verify mode
+from the committed lock, 554 packages, tools tree `8a18ff6616c5…`). Run f2
+(bel) built the same head from a fresh store and measured the same bytes
+for every variant (see Repeatability). The budgets are RESULT.md's proposed
+payload budgets.
 
-| Variant | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS |
-|---|---|---|---|---|---|---|
-| base | 37.1 MiB (38,901,760) | 105.9 MiB (110,999,048) | <= 256 MiB: within | 224.0 MiB (234,881,024) | 131.3 MiB | 2.00 GiB |
-| browser | 362.6 MiB (380,180,480) | 1,014.8 MiB (1,064,102,555) | <= 2 GiB: within | 1.17 GiB (1,258,291,200) | 1.05 GiB | 2.11 GiB |
-| checker | 953.6 MiB (999,905,280) | 2.66 GiB (2,853,390,894) | 2-8 GiB provisional: within | 3.14 GiB (3,372,220,416) | 2.95 GiB | 2.06 GiB |
+| Variant | State | Compressed transfer (OCI archive) | Unpacked filesystem (file bytes) | Payload budget | Sparse ext4 capacity | ext4 allocated | Builder peak RSS (kel) |
+|---|---|---|---|---|---|---|---|
+| base | built-candidate | 37.1 MiB (38,901,760) | 105.9 MiB (110,999,048) | <= 256 MiB: within | 224.0 MiB (234,881,024) | 131.3 MiB | 2.14 GiB |
+| browser | boot-proved (OCI, Lightpanda) | 362.6 MiB (380,180,480) | 1,014.8 MiB (1,064,102,555) | <= 2 GiB: within | 1.17 GiB (1,258,291,200) | 1.05 GiB | 2.11 GiB |
+| checker | boot-proved (OCI, offline check) | 994.0 MiB (1,042,298,880) | 2.70 GiB (2,896,004,908) | 2-8 GiB provisional: within | 3.19 GiB (3,422,552,064) | 2.99 GiB | 2.00 GiB |
 
+- **base and browser** have the same `rootfs.tar`, layer and ext4 bytes as
+  run b6. Their OCI ids are new only because the builder-commit label is
+  gone (FIX 9354).
+- **The browser is `boot-proved` for one leg.** L11-B's OCI accept smoke
+  booted b6's image on nelly (10:16 JST, kind c6, run
+  `smoke-65745c0aebf6-1022-101536`, SMOKE rc=0), and that image's layer is
+  this output's byte for byte. The smoke ran Lightpanda only and sampled a
+  Docker MemUsage peak of 11,303,649 bytes. Chromium, Firecracker and cold
+  boot were not measured. The output's `note` says exactly this.
+- **The checker is new bytes** (store normalization, the capability xattr),
+  proved by their own smoke. L11-A's acceptance smoke ran f1's image on kel
+  (12:5x JST) as an OCI container with `--network none`, uid 10001 and
+  `--memory 18g`. Its five legs: the image id, the contents (cargo and
+  rustc 1.96.1, rustfmt, clippy, no rustup), the helper hash, the source
+  copy, and an offline `cargo check --locked --workspace --all-features`.
+  The check ran from a `cp -a` scratch copy of the normalized store and
+  returned rc=0 in 620 s, so the store normalization leaves a store cargo
+  resolves offline. Peak RAM was not sampled, and Firecracker was not
+  measured.
 - **All three fit the 4 GiB Firecracker rootfs cap**, the checker by about
-  0.86 GiB. On top of the Debian closure, the checker's payload holds:
+  0.81 GiB. On top of the Debian closure, the checker's payload holds:
   - about 0.60 GiB of Rust toolchain (rustc, cargo, rust-std, rustfmt and
     clippy: 643,217,165 bytes);
-  - about 0.75 GiB of offline Cargo store (803 MB: the crates the lock names
-    for x86_64 Linux).
+  - about 0.79 GiB of offline Cargo store (846,002,586 bytes: the crates the
+    lock names for x86_64 Linux, plus the git dependencies). The store is
+    42.6 MB larger than b6's. Each git dependency's db and checkout now hold
+    their own repacked pack, about 50 MB together: the two repacks differ
+    by a few bytes, so they are no longer one hard-linked file.
 
   The store grows with `Cargo.lock`, so the cap's margin shrinks as
   dependencies are added. The cap does not move here.
-- Writable and snapshot bytes and the guest's peak RAM are unmeasured: they
-  need the acceptance smoke.
+- Writable and snapshot bytes are unmeasured. The guest's peak RAM is
+  measured only for the browser's Lightpanda leg, above; the checker's
+  smoke stayed under its 18 GiB limit unsampled.
 - The whole build job's cgroup peak, anonymous memory plus page cache, was
-  12.4 GiB on kel (13,333,639,168 bytes, run b6) and 16.0 GiB on bel (run b5),
-  under a 16 GiB booking. The fetch's largest process was 473 MiB. Book
-  `--mem 16G`.
+  15.4 GiB on kel (16,586,764,288 bytes, run f1) and 12.3 GiB on bel
+  (13,168,214,016 bytes, run f2), under a 16 GiB booking. kel and bel cap a
+  guest at 16 GiB. The fetch's largest process was 473 MiB.
 - The image's non-root and set-id paths match the pinned Debian base layer's
   for every package the variant installs:
   - `/etc/shadow` and `/etc/gshadow` are `root:shadow 0640`;
@@ -310,6 +421,30 @@ To check a manifest by hand, compare `artifacts.rootfs_ext4.sha256` with
 host's Firecracker rootfs pin must equal). Compare the OCI digests with
 `index.json` and the blobs inside `<variant>.oci.tar`.
 
+## Producers: guest/browser and guest/checker build.sh
+
+`crates/oneiron-container/guest/browser/build.sh` and
+`crates/oneiron-container/guest/checker/build.sh` each take three routes,
+chosen by flag, with no fallback between them:
+- **the image-family route (default):** `build.py fetch` (never `--learn`)
+  over every scope the lock covers, then `build`, `receipt` and `manifest`
+  for that variant, against the mirror and work dir in
+  `ONEIRON_BROWSER_IMAGES_MIRROR`/`_WORK` (`ONEIRON_CHECKER_IMAGES_…` for
+  the checker); then `docker load` of the archive;
+- **`--archive FILE`:** `docker load` of a built archive whose sha256 is the
+  variant's `oci_archive_sha256` in `release.toml`. No rebuild;
+- **`--dockerfile`:** the Dockerfile recipe as it was (host Cargo, the
+  Dockerfile, the glibc load check, amd64 or arm64).
+
+Every route prints one stdout line, the image's config digest, read from
+the archive's `manifest.json` Config the way `deploy/firecracker/build.py`
+reads it (FIX 8938). `--store-id` prints instead the id this host's docker
+store answers (`docker image inspect` `.Id`); every route also writes that
+id to stderr. A host whose docker uses the containerd image store pins the
+store id. The checker's `image-id` and `image.json` receipt name the config
+digest on every route. The image-family and `--archive` routes build no
+host fence; stage it as its own step (both READMEs).
+
 ## Candidate hand-off to the acceptance smoke
 
 A candidate goes to the lane's existing OCI acceptance smoke without touching
@@ -337,15 +472,20 @@ Booting the Firecracker rootfs is a separate step. It needs a host
 `ONEIRON_MICROVM_OCI_IMAGES` row and BLAKE3 pins for that rootfs. Nothing in
 this pack installs those.
 
-**The first candidates (10-22, run b6).** These are the `built-candidate`
-outputs in `release.toml`:
-- The browser candidate went to nelly, the L11-B acceptance host, for its
-  smoke. Its archive sha256 is `5d900355867e…` and its loaded id is
-  `sha256:90074501db23…`, the manifest digest.
-- The checker candidate stayed on its build host for L11-A. Its archive
-  sha256 is `7875f0b6cc9e…` and its loaded id is `sha256:6381c4a8221c…`.
+**The candidates (10-22).** Run b6's browser went to nelly, the L11-B
+acceptance host: archive sha256 `5d900355867e…`, loaded id
+`sha256:90074501db23…` (the manifest digest), config digest
+`sha256:7f65d68d0ec5…`. Its smoke is the browser's boot proof above. Run
+f1's outputs stayed on kel, loaded into its containerd-store docker:
+- the browser: archive sha256 `71dfd70f06ac…`, manifest
+  `sha256:afeac611ec30…`, config `sha256:7e6fee8804c1…`;
+- the checker, smoked there by L11-A: archive sha256 `27446d5730f7…`, manifest
+  `sha256:51fe794a2173…`, config `sha256:3980a4fd96a6…`, from engine
+  commit `95afa460192b…`. Its `gst-ptp-helper` reads
+  `cap_net_bind_service,cap_net_admin,cap_sys_nice=ep` under `getcap` in the
+  loaded image.
 
-The fence inside both images is `oneiron-fence` sha256 `3d6c6ef9942b…`,
+The fence inside every image is `oneiron-fence` sha256 `3d6c6ef9942b…`,
 built in the image's own trixie userspace. The browser entrypoint and the
 checker helper are the pinned repo files, byte for byte, so the Chromium
 flags and the helper are unchanged.
@@ -367,8 +507,22 @@ not call an image reproducible until that comparison holds.
 
 ### Findings (10-22)
 
-Three clean builds of the same inputs, each in a fresh store, with no mirror
-reused:
+**Runs f1 (kel) and f2 (bel), after the follow-up fixes:** base, browser
+and checker are all bit-for-bit repeatable across the two hosts. For every
+variant these are identical:
+- the lock, `rootfs.tar`, the layer and its diff_id, `rootfs.ext4`, and the
+  OCI config, manifest, index and archive;
+- every native binary;
+- every member's sha256, mode, owner, size, mtime and xattrs. The checker
+  has 86,229 entries and 71,594 files; no entry exists on only one side.
+
+The checker's one xattr is `gst-ptp-helper`'s
+`security.capability=0100000200148000000000000000000000000000` (v2,
+effective; `cap_net_bind_service`, `cap_net_admin`, `cap_sys_nice`). The
+store normalization removed every b4 to b6 difference listed below.
+
+The earlier runs were three clean builds of the same inputs, each in a fresh
+store, with no mirror reused:
 - b4 on kel learned the lock.
 - b5 on bel built in verify mode from the committed lock.
 - b6 on kel ran in verify mode after the tools-tree fix below.
@@ -390,11 +544,14 @@ sha256.
     of 3,110 entries for base, 7,667 of 10,325 for browser. No entry exists
     on only one side.
 
-  The OCI config, manifest and archive digests differ only because the config
-  carries the builder commit as a label (`dev.oneiron.image.builder-commit`),
-  and each run built a different commit of this branch. With the layer
-  identical, two base or browser builds at one commit would give one OCI
-  identity (the config is written from fixed fields).
+  The OCI config, manifest and archive digests differed only because b4 to
+  b6 carried the builder commit as a config label and manifest annotation
+  (`dev.oneiron.image.builder-commit`), and each run built a different
+  commit of this branch. Exports now leave it out (FIX 9354): an image's
+  ids are fixed by its payload. The builder commit stays in the build
+  record, the receipt (`builder.commit`), the SBOM's creator, the
+  provenance's builder id and resolved dependencies, and, through the
+  receipt's hash, `image-release.json`.
 - **checker: repeatable except inside the Cargo store's git machinery.**
   Of 86,248 entries (71,598 files), these differ:
   - 10 files have different contents: cargo's `.global-cache` (an SQLite
@@ -410,14 +567,19 @@ sha256.
   Everything else matches byte for byte: the toolchain, the Debian closure,
   every crate archive in the store, both binaries and every mode and owner.
   So `rootfs.tar`, the layer and the ext4 differ, and the unpacked size
-  differs by a few KiB (370 bytes between b4 and b5, 4,096 between b5 and b6). The checker is **not** reproducible as built. Making it
-  so needs the store's git state normalized; that is a follow-up.
+  differs by a few KiB (370 bytes between b4 and b5, 4,096 between b5 and
+  b6). As built then, the checker was **not** reproducible. The store
+  normalization ("Checker store" above) fixes that, as runs f1 and f2
+  show.
 - **Builder identity.** The first two tools trees (b4, b5) differed in two
   files only: `var/cache/ldconfig/aux-cache`, which holds library inodes and
   ctimes, and `var/log/alternatives.log`, which holds wall-clock times. The
   builder now drops both before hashing. Recomputed that way, all three
   trees (b4, b5 and b6) give the same `tools_tree_sha256`,
   `133b6c46a144fa74b37376a5406b14295bc088f15692f5888985393828d688e9`.
+  Since the tools tree carries only the snapshot sources (FIX 9355), and
+  xattrs enter its digest, f1 and f2 both give
+  `8a18ff6616c547e81c08eeba661a8e071cf1e7d74744bfa6be8284b1d49151d4`.
 - **Builder memory.** The job cgroup peaked at 13.0 GiB on kel and 16.0 GiB on
   bel. That is anonymous memory plus page cache; the largest single process
   was 2.0-2.2 GiB.
