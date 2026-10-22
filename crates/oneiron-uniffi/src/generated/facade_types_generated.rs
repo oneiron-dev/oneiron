@@ -56228,6 +56228,8 @@ pub struct DeckDiff {
 pub struct DeckReviewView {
     #[serde(rename = "head")]
     pub head: Vec<u8>,
+    #[serde(rename = "fork_head")]
+    pub fork_head: Vec<u8>,
     #[serde(rename = "head_version")]
     pub head_version: u64,
     #[serde(rename = "ok")]
@@ -56265,6 +56267,8 @@ pub struct DeckForkMergeRequest {
     pub fork_ref: String,
     #[serde(rename = "reviewed_head")]
     pub reviewed_head: Vec<u8>,
+    #[serde(rename = "reviewed_fork")]
+    pub reviewed_fork: Vec<u8>,
     #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<ApproveScope>,
     #[serde(rename = "landing", default, skip_serializing_if = "Option::is_none")]

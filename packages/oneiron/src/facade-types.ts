@@ -7099,11 +7099,11 @@ export type RenderPair = { head: RenderSide; candidate: RenderSide; changed: Nod
 /** `oneiron_docedit::live::pptx::DeckDiff` */
 export type DeckDiff = { base_version: number; head_version: number; proposal_version: number; added: NodeId[]; removed: NodeId[]; moved: NodeMove[]; text_changed: NodeId[]; formatting_changed: NodeId[]; geometry_changed: NodeId[]; payload_changed: NodeId[]; opaque_changed: OpaqueChange[]; affected_slides: NodeId[]; head_only: NodeId[]; conflicts: Conflict[]; relationships: RelationshipChange[]; renders?: RenderPair | null }
 /** `oneiron::office_body::pptx::verbs::DeckReviewView` */
-export type DeckReviewView = { head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null }
+export type DeckReviewView = { head: number[]; fork_head: number[]; head_version: number; ok: boolean; diff: DeckDiff; replay_refusals: string[]; stale_units: NodeId[]; evidence_refusal?: string | null }
 /** `oneiron_docedit::live::pptx::Landing` */
 export type Landing = "merge" | "switch"
 /** `oneiron::office_body::pptx::verbs::DeckForkMergeRequest` */
-export type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null }
+export type DeckForkMergeRequest = { artifact_ref: string; fork_ref: string; reviewed_head: number[]; reviewed_fork: number[]; scope?: ApproveScope | null; landing?: Landing | null; made_by?: unknown | null }
 /** `oneiron_docedit::live::pptx::LandingReceipt` */
 export type LandingReceipt = { proposal: string; proposer: string; settler: string; scope: ApproveScope; landing: Landing; automatic: boolean; reviewed_version: number; landed_version: number; affected: NodeId[]; switched_away: NodeId[] }
 /** `oneiron::office_body::pptx::verbs::DeckExportRequest` */
