@@ -339,8 +339,9 @@ impl<'a> MaintenanceBuilder<'a> {
         }
 
         if !self.corrupt_claim_ids.is_empty() {
-            report.corrupt_claim_repairs =
-                self.vault.reclassify_corrupt_claims(&self.corrupt_claim_ids)?;
+            report.corrupt_claim_repairs = self
+                .vault
+                .reclassify_corrupt_claims(&self.corrupt_claim_ids)?;
         }
 
         if self.do_hard_erase_sweep {
