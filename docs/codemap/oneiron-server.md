@@ -76,6 +76,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/step/secret_use.rs` | src | s | 4 crate-vis | — | `self.use` on a saved-workflow text step (FIX 2315) |
 | `src/ai_host/step_failure.rs` | src | s | 3 crate-vis | — | A failed workflow step, settled through the engine's typed failure ladder: the one door that may retry or… |
 | `src/ai_host/stewardship.rs` | src | s | 1 crate-vis | — | Follow-up drafts for due stewardship reach-outs (ARCH-0026 Represent) |
+| `src/ai_host/stewardship/draft.rs` | src | s | 5 crate-vis | — | One follow-up draft: its call over every eligible source and, when that fails, its rescue over the newest… |
+| `src/ai_host/stewardship/pace.rs` | src | s | 8 crate-vis | — | When a reach-out whose draft failed is drafted again (FIX 9465) |
 | `src/ai_host/stewardship/sources.rs` | src | s | 4 crate-vis | — | What each model a follow-up draft goes to may read of its sources (FIX 8714) |
 | `src/ai_host/sync_wake.rs` | src | s | 3 crate-vis | — | A peer's sync apply wakes the Dreamer (ARCH-0026 #wake): a turn another host wrote gets the turn producer's… |
 | `src/ai_host/test_support.rs` | src | s | 11 crate-vis | — | Shared fixtures for the AI host's tests: a rooted, granted vault and `[models]` pointed at the local fake… |
@@ -84,7 +86,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ai_host/training_offer.rs` | src | m | 2 crate-vis | — | The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads… |
 | `src/ai_host/training_offer/check.rs` | src | s | 1 crate-vis | — | The check of one approved offer's promise against the seat's metered calls: fixed code, no model call |
 | `src/ai_host/training_offer/cost.rs` | src | s | 3 crate-vis | — | Fixed-code projection on the same dated workload, with each tokenizer |
-| `src/ai_host/training_offer/pilot.rs` | src | s | 2 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
+| `src/ai_host/training_offer/draft.rs` | src | s | 1 crate-vis | — | The offer the Coach's answer names, projected from the brief it read |
+| `src/ai_host/training_offer/pilot.rs` | src | s | 1 crate-vis | — | Measured per-seat pilot evidence beside the production offer skill's brief |
 | `src/ai_host/training_offer/sources.rs` | src | s | 5 crate-vis | — | The rows a Coach brief or check is gathered from (FIX 5482), ids only |
 | `src/ai_host/training_offer/unverifiable.rs` | src | m | 5 crate-vis | — | The check's outcome when the promise cannot be read (FIX 6265, 6317, 6406, 6475, 6477) |
 | `src/ai_host/training_pack.rs` | src | s | 3 crate-vis | — | An owner-authorized training run on the host (OF-577, OF-552) |
@@ -269,7 +272,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/critical_confirm_doors.rs` | src | s | 4 crate-vis | — | Typed critical-claim confirmations under the same owner proof as claim settlement |
 | `src/api/facade/decision_ask_doors.rs` | src | s | 4 crate-vis | — | OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a… |
 | `src/api/facade/decision_band_doors.rs` | src | s | 3 crate-vis | — | The owner's live decision-band policy through the typed verb table |
-| `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
+| `src/api/facade/decision_role_asks.rs` | src | s | 2 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/deck_creation_doors.rs` | src | s | 2 crate-vis | — | The person's outline Keep and Decline use the same proof as other owner doors |
 | `src/api/facade/disclosure_doors.rs` | src | s | 5 crate-vis | — | Owner registry and reveal-settlement doors, shared by HTTP and MCP |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
@@ -350,7 +353,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/residence_doors.rs` | src | m | 5 crate-vis | — | The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`… |
 | `src/api/facade/result_doors.rs` | src | s | 4 crate-vis | — | Owner-authenticated retained-result reads |
 | `src/api/facade/retrieval_doors.rs` | src | m | 15 crate-vis | — | Typed owner-only retrieval diagnostics |
-| `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
+| `src/api/facade/role_picks.rs` | src | s | 2 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/root_request_doors.rs` | src | s | 1 crate-vis | — | The owner's root-request cancel door (FIX 5586): `vault.roots.requests.cancel` over the same engine door as… |
 | `src/api/facade/run_read_doors.rs` | src | s | 2 crate-vis | — | Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints… |
 | `src/api/facade/run_review_doors.rs` | src | s | 4 crate-vis | — | The owner's cross-kind review and run compensation, on the caller's own credential handle |
@@ -461,6 +464,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/wakes.rs` | src | s | 1 crate-vis | — | The authenticated host handoff |
 | `src/api/mcp_gateway/wire.rs` | src | s | 2 crate-vis | — | What an MCP request counts as on the wire (FIX 1085) |
 | `src/api/memory/mod.rs` | src | m | 19 crate-vis | — | The `/v1/core/memory` routes: a memory timeline, its watch and the memory verbs |
+| `src/api/memory/owner_delete.rs` | src | s | 1 crate-vis | — | The owner's own named delete through `/v1/core/memory/verbs` (FIX 1465) |
 | `src/api/memory/watch.rs` | src | s | 3 crate-vis | — | — |
 | `src/api/memory_reason.rs` | src | L | 19 crate-vis | — | ONE-207: `POST /v1/companion/memory/reason` |
 | `src/api/memory_reason/answer_admission.rs` | src | s | 3 crate-vis | — | The reasoning read's answer boundary (OF-063, Engine ruling 1231): a deep composition crosses the engine's… |
@@ -565,10 +569,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/recovery_bundle.rs` | src | m | 10 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
 | `src/api/routes.rs` | src | m | 1 crate-vis | — | The HTTP API router: every `/api`, `/v1` and facade route, with its layers in their order |
-| `src/api/run_tree.rs` | src | m | 28 crate-vis | — | The run tree routes: one run's tree of attempts, its observation and the owner's interventions |
+| `src/api/run_tree.rs` | src | m | 29 crate-vis | — | The run tree routes: one run's tree of attempts, its observation and the owner's interventions |
 | `src/api/run_tree/cancel.rs` | src | s | 3 crate-vis | — | Run-tree cancel through the caller-bound cancel door (FIX 8219) |
+| `src/api/run_tree/keyed.rs` | src | s | 1 crate-vis | — | Keyed run-tree interventions (FIX 6056) |
+| `src/api/run_tree/scoped.rs` | src | s | 3 crate-vis | — | The run tree as a caller's current read authority admits it (FIX 8220, 8221): one projector for the… |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
-| `src/api/scoped_auth.rs` | src | m | 11 crate-vis | — | Legacy owner-auth gate and scoped-read constructors for both auth flavors |
+| `src/api/scoped_auth.rs` | src | m | 12 crate-vis | — | Legacy owner-auth gate and scoped-read constructors for both auth flavors |
 | `src/api/search.rs` | src | L | 14 crate-vis | — | The search routes: vector, text and semantic search over the caller's scoped reads |
 | `src/api/search/deadline.rs` | src | s | 5 crate-vis | — | Raw search under a request's hard deadline (`deadlineMs`): the page reads on the blocking pool, and the door… |
 | `src/api/search/home_text.rs` | src | s | 3 crate-vis | — | The home's half of a text search on a device that syncs only what it opened (OF-534, FIX 3876) |
@@ -894,6 +900,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/handler/socket_stop.rs` | src | s | 5 crate-vis | — | An upgraded socket's transport under its embedded engine's stop (OF-237) |
 | `src/handler/tests.rs` | test | XL | — | — | — |
 | `src/handler/transport.rs` | src | m | 15 crate-vis | — | Guarded socket chokepoint with revocation consults on queue and flush |
+| `src/handler/window_pads.rs` | src | s | 6 crate-vis | — | The home's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/handler/window_row_tests.rs` | test | L | 1 crate-vis | — | `max_windows_per_connection` is a row, never a refusal (rule 5, OF-520): a socket past it is served, keeps a… |
 | `src/handler/window_sync.rs` | src | m | 6 crate-vis | — | WindowSync sub-tag dispatcher with selector and VV paths |
 | `src/home_candidacy.rs` | src | s | 1 crate-vis | — | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
@@ -901,8 +908,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/http_listener.rs` | src | m | 10 crate-vis | — | The TCP accept loop the server and the embedder endpoint serve through |
 | `src/http_listener/owner_admission.rs` | src | m | 17 crate-vis | — | The owner's reserve on the shared connection pool (FIX 8274) |
 | `src/http_listener/tests.rs` | test | m | 1 crate-vis | — | The listener's admission, end to end over real sockets (C4, and the rate law of ARCH-0044 C5): headers that… |
-| `src/idempotency.rs` | src | m | 8 crate-vis | — | Durable HTTP idempotency storage and replay state |
+| `src/idempotency.rs` | src | m | 9 crate-vis | — | Durable HTTP idempotency storage and replay state |
 | `src/idempotency/caller.rs` | src | s | 4 crate-vis | — | The partition a keyed non-core route keeps its caller's replays in on a vault no supervisor manages (FIX… |
+| `src/idempotency/intent.rs` | src | s | 5 crate-vis | — | The intent a keyed mutation keeps before its route runs (FIX 9527, 6056) |
 | `src/idempotency/reclaim.rs` | src | s | 2 crate-vis | — | Reclaim of expired idempotency entries (FIX 5951) |
 | `src/idempotency/request.rs` | src | m | 2 crate-vis | — | HTTP request admission, keyed replay, and response capture |
 | `src/idempotency/tests.rs` | test | m | — | — | — |

@@ -7124,7 +7124,7 @@
     },
     {
       "name": "vault.legal_holds.lift_and_erase",
-      "description": "The owner's one confirm that lifts or narrows the customer holds on the named records and erases them.",
+      "description": "The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records.",
       "input": "crate::task_verb::sdk::LegalHoldLiftAndEraseRequest",
       "output": "crate::task_verb::sdk::LegalHoldLiftAndErased",
       "call": "crate::task_verb::sdk::lift_legal_hold_and_erase_as(memory.vault(), &memory.embedded_owner(\"vault.legal_holds.lift_and_erase\")?, input)?",
@@ -16613,7 +16613,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.review",
-      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names.",
+      "description": "A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head and fork frontier a merge names.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
@@ -16646,7 +16646,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.merge",
-      "description": "A person lands a reviewed deck fork, merged or switched in, under an approval scope; a moved head, an unresolved conflict, an uncovered fork or the opener as merger refuses.",
+      "description": "A person lands a reviewed deck fork up to the fork frontier its review read, merged or switched in; later fork work waits for its own review. A moved head, a conflict or the opener as merger refuses.",
       "refs": [
         "/artifact_ref",
         "/fork_ref"
