@@ -73,6 +73,13 @@ pub(super) struct Pages {
     tops: HashMap<String, String>,
     /// The seed URLs armed on this pipe: their commits are no visits.
     seeds: HashSet<String>,
+    /// The page target of each in-page frame the browser attached as its
+    /// own target, by that frame's own session (FIX 6892).
+    pub(super) frames: HashMap<String, String>,
+    /// Each in-page frame the browser attached as its own target (an
+    /// out-of-process frame), by its own session: the session of the page
+    /// it is in, and its frame (FIX 8336).
+    oopifs: HashMap<String, (String, String)>,
 }
 
 /// An armed seed document.
@@ -99,6 +106,7 @@ impl Pipe {
         let params = &event["params"];
         match event["method"].as_str() {
             Some("Page.frameNavigated") => self.visit(event),
+            Some("Target.attachedToTarget") => self.note_oopif(event),
             Some("Target.detachedFromTarget") => {
                 if let Some(session) = params["sessionId"].as_str() {
                     self.forget_page(session);
@@ -166,6 +174,42 @@ impl Pipe {
         }
     }
 
+    /// Keeps an in-page frame the browser attached as its own target, by
+    /// its own session, under its page's session.
+    fn note_oopif(&self, event: &Value) {
+        let params = &event["params"];
+        if params.pointer("/targetInfo/type").and_then(Value::as_str) != Some("iframe") {
+            return;
+        }
+        let (Some(parent), Some(session), Some(frame)) = (
+            event["sessionId"].as_str(),
+            params["sessionId"].as_str(),
+            params
+                .pointer("/targetInfo/targetId")
+                .and_then(Value::as_str),
+        ) else {
+            return;
+        };
+        if let Ok(mut pages) = self.pages.lock() {
+            let at = (parent.to_owned(), frame.to_owned());
+            pages.oopifs.insert(session.to_owned(), at);
+        }
+    }
+
+    /// The out-of-process frames attached under page session `parent`:
+    /// each one's frame and own session.
+    pub(crate) fn oopifs(&self, parent: &str) -> Vec<(String, String)> {
+        let Ok(pages) = self.pages.lock() else {
+            return Vec::new();
+        };
+        pages
+            .oopifs
+            .iter()
+            .filter(|(_, (page, _))| page == parent)
+            .map(|(session, (_, frame))| (frame.clone(), session.clone()))
+            .collect()
+    }
+
     /// The page target watched session `session` drives.
     pub(super) fn page_of(&self, session: &str) -> Option<String> {
         self.pages.lock().ok()?.bound.get(session).cloned()
@@ -191,6 +235,11 @@ impl Pipe {
             navigations.remove(session);
         }
         self.forget_documents(session);
+        if let Ok(mut pages) = self.pages.lock() {
+            pages.frames.remove(session);
+            pages.oopifs.remove(session);
+            pages.oopifs.retain(|_, (parent, _)| parent != session);
+        }
         if let Ok(mut pages) = self.pages.lock()
             && let Some(target) = pages.bound.remove(session)
             && !pages.bound.values().any(|bound| *bound == target)

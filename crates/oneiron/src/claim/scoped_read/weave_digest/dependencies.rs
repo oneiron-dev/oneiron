@@ -2,15 +2,15 @@
 //! the sources its own checks read, each loop row's refs, and the rows a
 //! health card's Coach draft was written from (FIX 8672). The draft's
 //! diagnosis and proposal are text copied out of the agent's TASK and its
-//! sealed pads, so the card's copy depends on the agent, its TASK and that
-//! pad read's row. A hard delete of one scrubs the text from the period's
+//! sealed pads, so the card's copy depends on every row its answer froze
+//! (FIX 9220). A hard delete of one scrubs the text from the period's
 //! copy (`rewrite.rs`); a served copy whose row is gone is scrubbed again
 //! at serve, so a missed index entry never serves erased text.
 use std::collections::BTreeSet;
 
 use super::{ScopedRead, WeaveItem, WeaveReport, loop_decisions, report_sources};
 use crate::EntityId;
-use crate::dreamer_runner::maintenance::agent_health::{AgentHealthCard, AgentHealthPadRead};
+use crate::dreamer_runner::maintenance::agent_health::AgentHealthCard;
 use crate::error::Result;
 use crate::ports::TombstoneStoreRead;
 use crate::store::Store;
@@ -35,42 +35,19 @@ pub(super) fn indexed_sources(report: &WeaveReport) -> Result<BTreeSet<EntityId>
     Ok(sources)
 }
 
-/// The rows a card's Coach draft was written from, as the card names them:
-/// the agent whose sealed pads the Coach read and that read's row, and the
-/// TASK whose text and brief it read. None while the card holds no draft.
+/// The rows a card's Coach draft was written from, as its answer froze
+/// them (FIX 9220): the agent, its TASK and each pinned brief's TASK, the
+/// skills its run loaded, the observed brief's source and the pad read's
+/// row and pads. None while the card holds no draft text.
 fn draft_sources(card: &AgentHealthCard) -> BTreeSet<EntityId> {
-    let Some(ask) = card.coach.as_ref() else {
-        return BTreeSet::new();
-    };
-    let Some(answer) = ask.answer.as_ref().filter(|answer| answer.draft.is_some()) else {
-        return BTreeSet::new();
-    };
-    let mut rows = BTreeSet::from([card.subject]);
-    rows.extend(card.task);
-    rows.extend(card.observed_brief.as_ref().map(|pin| pin.task));
-    rows.extend(ask.observed_brief.as_ref().map(|pin| pin.task));
-    if let AgentHealthPadRead::Read {
-        read: Some(read), ..
-    } = &answer.pads
-    {
-        rows.insert(*read);
-    }
-    rows
+    card.draft_source_rows()
 }
 
 /// Scrubs a card's draft text, its diagnosis and proposal, from this copy
-/// and marks it; the draft's route and target and the card's other fields
-/// stay.
+/// and marks it, the copy's answer as the live card's scrub does (FIX
+/// 9221); the draft's route and target and the card's other fields stay.
 fn scrub_draft(card: &mut AgentHealthCard, draft_erased: &mut bool) {
-    if let Some(draft) = card
-        .coach
-        .as_mut()
-        .and_then(|ask| ask.answer.as_mut())
-        .and_then(|answer| answer.draft.as_mut())
-    {
-        draft.diagnosis.clear();
-        draft.proposal.clear();
-    }
+    card.scrub_coach_draft();
     *draft_erased = true;
 }
 
@@ -135,6 +112,8 @@ impl ScopedRead<'_> {
         scrub_erased_drafts_in(&self.vault.store, txn, report)?;
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         self.redact_sieve_decisions_in(txn, &policy, &filter, report);
+        // A saved card's moves are judged again for this reader (FIX 8536).
+        self.project_card_moves_in(txn, &policy, &filter, report);
         Ok(())
     }
 }

@@ -184,7 +184,7 @@ families! {
         DELETION_TOPOLOGY_DELETE_INTENT SYNC_U_ROOT USAGE_EVENT USAGE_REPAIR_RECEIPT
         VAULT_IMPORT_CONTENT VAULT_IMPORT_RECEIPT VAULT_IMPORT_STAMPS WIRE_HEALTH_CHECK
         WIRE_LIMIT_QUESTION RC42_WIRE_QUESTION RC42_WIRE_RECEIPT;
-    // side_table/decls/vault_meta_a_c.rs
+    // side_table/decls/vault_meta_a_b.rs and vault_meta_c.rs
     Class::Owner(Getter::BlobArtifact) => BLOB_ARTIFACT_HEAD BLOB_ARTIFACT_VERSION;
     Class::Owner(Getter::CodeDocument) => CODE_DOCUMENT_FRONTIER CODE_DOCUMENT_HEAD
         CODE_DOCUMENT_INGRESS CODE_DOCUMENT_PATH;
@@ -196,13 +196,18 @@ families! {
         CODEBASE_PROJECT_INDEX CODEBASE_REPO_INDEX CODEBASE_SCOPE_INDEX CODEBASE_SNAPSHOT;
     Class::Structure => BLOB_ARTIFACT_ASSET_REF BLOB_ARTIFACT_CLAIMED_HASH
         BLOB_ARTIFACT_DECK_ID_MARKS BLOB_ARTIFACT_HIGHWATER BLOB_ARTIFACT_VERSION_CLAIM
-        CHECKPOINT_CHAIN_HEAD CHECKPOINT_PAYLOAD_INSTANCE CODE_DOCUMENT_GENERATION;
+        CHECKPOINT_CHAIN_HEAD CHECKPOINT_PAYLOAD_INSTANCE COACH_DIAGNOSTIC_ISSUE_BY_KEY
+        CODE_DOCUMENT_GENERATION;
     // A code run's response owner and wait holder hold ids, status and an
     // actor's id or its erasure, never the reply (FIX 6589).
     Class::Structure => CODE_RUN_RESPONSE_OWNER CODE_RUN_WAIT_HOLDER;
     // CALLS CODE_RUN_READ_WORLD: ids, positions and enums only, but no ruling
     // makes it structure yet.
     Class::Unclassified => CODE_RUN_READ_WORLD;
+    // CALLS CODE_RUN_TYPE_DIAGNOSTICS (FIX 8277): a step's check state and
+    // measures, its diagnostics inline or in the run's own body; no ruling
+    // classes it yet.
+    Class::Unclassified => CODE_RUN_TYPE_DIAGNOSTICS;
     Class::Other(Client::Dispatch(OtherClient::Body)) => CODE_RUN_RAW_OUTPUT;
     // A blocked report's captured requests (FIX 6708) and a wait's
     // deliveries (FIX 6588); the wait index stays unclassified, as only its

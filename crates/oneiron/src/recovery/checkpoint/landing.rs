@@ -39,20 +39,7 @@ impl Vault {
         erased: &BTreeSet<EntityId>,
         budget: &dyn RecoveryWriteBudget,
     ) -> std::result::Result<(MadeDestination, ForkedCustody, Self, RestoreReport), Rejected> {
-        // A job row of another kind in the owner-retained key range would
-        // hide from that kind's scans: refused before any destination exists.
-        if image.databases["job_records"].iter().any(|(key, value)| {
-            crate::attempt_queue::foreign_row_in_owner_retained_range(key, value)
-        }) {
-            return Err(codec_error().into());
-        }
-        // A signed authority row that fails its key-free checks (an owner
-        // root or a world-key record among them), and a FACET carrying PERSON
-        // identity, are refused here as at every other write door, before any
-        // destination exists.
-        for (_, blob) in &image.databases["entities"] {
-            validate_checkpoint_entity_row(blob)?;
-        }
+        validate_image_rows_before_destination(&image)?;
         // Authenticate every ORCB row against LIVE exterior custody before
         // creating a destination. A checkpoint never carries a key copy, and
         // a row whose key an erase destroyed since is dropped, not restored.
@@ -310,6 +297,28 @@ fn validate_checkpoint_entity_row(blob: &[u8]) -> Result<()> {
         && crate::authority::validate_authority_log_entry_body_bytes(body).is_err()
     {
         return Err(codec_error());
+    }
+    Ok(())
+}
+
+/// The image rows refused before any destination exists.
+fn validate_image_rows_before_destination(
+    image: &CheckpointImage,
+) -> std::result::Result<(), Rejected> {
+    // A job row of another kind in the owner-retained key range would
+    // hide from that kind's scans: refused before any destination exists.
+    if image.databases["job_records"]
+        .iter()
+        .any(|(key, value)| crate::attempt_queue::foreign_row_in_owner_retained_range(key, value))
+    {
+        return Err(codec_error().into());
+    }
+    // A signed authority row that fails its key-free checks (an owner
+    // root or a world-key record among them), and a FACET carrying PERSON
+    // identity, are refused here as at every other write door, before any
+    // destination exists.
+    for (_, blob) in &image.databases["entities"] {
+        validate_checkpoint_entity_row(blob)?;
     }
     Ok(())
 }

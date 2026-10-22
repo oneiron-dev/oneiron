@@ -31,14 +31,21 @@
 //! is checked; each step resolves its locators on the page as it runs.
 
 mod admission;
+mod cards;
 mod draft;
 mod live_run;
 mod secret_slots;
 mod targets;
 
+pub(crate) use secret_slots::handle_form;
+
 pub use admission::{
     AdmissionRefusal, Admitted, RecentCounts, ReplayGuest, SupersedeOutcome, SupersedeRefusal,
     WorkflowSeed, validate_replay_args,
+};
+pub use cards::{
+    LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
+    LibraryRetiredInput, LibraryRetiredOutput, RetiredCard,
 };
 pub use draft::{
     DraftGap, DraftGapKind, DraftInput, DraftOutcome, DraftOutput, DraftPage, DraftStep,
@@ -148,6 +155,10 @@ pub struct ProposeOutput {
     /// The postcondition checks the page missed, by index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
+    /// Each check `unmet` names, with what its read found (FIX 8049): the
+    /// observed row, the cut it read under, the rebindings it made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missed: Vec<crate::CheckReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay: Option<BatchOutput>,
     /// The fresh guest the replay ran on, and what it took of this session.
@@ -183,68 +194,6 @@ pub struct WorkflowProof {
     pub replay_guest: ReplayGuest,
 }
 
-/// Lists the library's programs for a site: `site` (a host, as
-/// `www.example.com`), or the open page's.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LibraryFindInput {
-    #[serde(default)]
-    pub site: Option<String>,
-    /// Words the program's subgoal holds, ignoring case.
-    #[serde(default)]
-    pub subgoal: Option<String>,
-    /// The task type the program was filed under, as `node_id@tree_version`
-    /// (a card's `type_ref`): that node at that tree version only, never a
-    /// descendant or another version's node (CUA E4). A filter in another
-    /// form is refused.
-    #[serde(default)]
-    pub type_ref: Option<String>,
-}
-
-/// One library program as a planner reads it: its lifetime runs and
-/// failures, its lineage's recent outcomes, how its admission proved it,
-/// and where it came from.
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct LibraryCard {
-    pub workflow: String,
-    pub site: String,
-    pub subgoal: String,
-    /// The task type its subgoal placed at when it was filed, as
-    /// `node_id@tree_version`: the form `find`'s `type_ref` takes.
-    pub type_ref: String,
-    pub params: Vec<String>,
-    /// Those of `params` that take a secret: a run names a handle it holds.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub secret_params: Vec<SecretParam>,
-    pub runs: u32,
-    pub failures: u32,
-    /// The newest outcomes of its lineage: its own, and those of the
-    /// programs it supersedes.
-    pub recent: RecentCounts,
-    /// Whether its admission replayed with values held out from the solved
-    /// run's; one that held none out was shown on those values only.
-    pub held_out: bool,
-    /// The program this one repaired, by its `workflow` ref.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub supersedes: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed: Option<WorkflowSeed>,
-    /// When it was filed, or last refiled, as the vault records time.
-    pub filed_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_run_at: Option<u64>,
-    /// Its strict runs in a row that missed their postcondition or a
-    /// locator: the third retires it `drift`, and a strict run that met it
-    /// starts the count again.
-    pub strict_misses: u32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct LibraryFindOutput {
-    pub site: String,
-    pub workflows: Vec<LibraryCard>,
-}
-
 /// Runs a library program live with `args`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -260,6 +209,20 @@ pub struct LibraryRunInput {
     /// Strict or assisted; by default the program's own ([`default_mode`]).
     #[serde(default)]
     pub mode: Option<LibraryRunMode>,
+    /// Secret slots' arguments in typed form (FIX 8346): a name here takes
+    /// the place of the same name in `args`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
+}
+
+/// A secret slot's argument, typed (FIX 8346): `{"handle": "sc12"}` names
+/// a handle this run holds; `{"text": "sc12"}` is the slot's own text,
+/// typed or checked as text even in a handle's form.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum SecretArg {
+    Handle(String),
+    Text(String),
 }
 
 /// A library run: its batch, and the postcondition checks the page missed.
@@ -285,49 +248,6 @@ pub struct LibraryRunOutput {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unmet: Vec<usize>,
     pub batch: BatchOutput,
-}
-
-/// Takes a program out of the library: no later `open` or `find` lists it,
-/// and no run can start it.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LibraryRetireInput {
-    pub workflow: String,
-    /// Why it leaves; the library keeps it with the retire.
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-/// The program a retire took out, as its card read then.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct LibraryRetireOutput {
-    pub retired: LibraryCard,
-}
-
-/// Lists the programs retires took out of the library for a site: `site`
-/// (a host, as `www.example.com`), or the open page's.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct LibraryRetiredInput {
-    #[serde(default)]
-    pub site: Option<String>,
-}
-
-/// One retired program: the card it had when a retire took it out, when,
-/// and why.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct RetiredCard {
-    pub card: LibraryCard,
-    pub retired_at: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// A site's retired programs, the newest retire first.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct LibraryRetiredOutput {
-    pub site: String,
-    pub retired: Vec<RetiredCard>,
 }
 
 /// Where library programs are kept: the engine's vault, behind the session.
@@ -364,6 +284,22 @@ pub trait WorkflowLibrary: Send {
         workflow: &str,
         reason: Option<&str>,
     ) -> Result<Option<LibraryCard>, BrowserError>;
+    /// Whether the library's record proves `workflow` retired (FIX 8073);
+    /// false where none does, or the library keeps no retires.
+    fn is_retired(&mut self, _workflow: &str) -> Result<bool, BrowserError> {
+        Ok(false)
+    }
+    /// The refusal a proposal's `supersedes` link would meet at its filing,
+    /// read before its fresh guest starts (FIX 7876): a ref that does not
+    /// parse, or names no program of `site` the proposer may succeed. The
+    /// filing's own write checks it again; none read here passes nothing.
+    fn supersedes_refused(
+        &mut self,
+        _site: &str,
+        _supersedes: &str,
+    ) -> Result<Option<SupersedeRefusal>, BrowserError> {
+        Ok(None)
+    }
     /// The programs retires took out for `site`, the newest first.
     fn retired(&mut self, _site: &str) -> Result<Vec<RetiredCard>, BrowserError> {
         Err(BrowserError::Library(
@@ -548,18 +484,6 @@ fn missed<D: BrowserDriver + ?Sized>(
 }
 
 #[cfg(feature = "driver")]
-/// The checks the page as it is now misses, by index.
-fn unmet<D: BrowserDriver + ?Sized>(
-    driver: &mut D,
-    checks: &[ExpectInput],
-) -> Result<Vec<usize>, BrowserError> {
-    Ok(missed(driver, checks)?
-        .into_iter()
-        .map(|(index, _)| index)
-        .collect())
-}
-
-#[cfg(feature = "driver")]
 /// Puts every live handle `driver` minted among `steps` and `checks` back to
 /// its row's locator.
 fn by_locator<D: BrowserDriver + ?Sized>(
@@ -606,6 +530,15 @@ pub(crate) struct Solved {
 }
 
 #[cfg(feature = "driver")]
+impl Solved {
+    /// The program's site and the `supersedes` link the proposal names,
+    /// for the link's read before the replay (FIX 7876).
+    pub(crate) fn link(&self) -> Option<(&str, &str)> {
+        Some((&self.site, self.supersedes.as_deref()?))
+    }
+}
+
+#[cfg(feature = "driver")]
 /// A refusal by `check`, with what it found.
 fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOutput {
     ProposeOutput {
@@ -614,10 +547,25 @@ fn refused(check: WorkflowCheck, refusal: Option<AdmissionRefusal>) -> ProposeOu
         refused_by: Some(check),
         refusal,
         unmet: Vec::new(),
+        missed: Vec::new(),
         replay: None,
         replay_guest: None,
         superseded: None,
     }
+}
+
+/// A proposal refused before its replay because the library refuses its
+/// `supersedes` link to `workflow` (FIX 7876).
+#[cfg(feature = "driver")]
+pub(crate) fn supersedes_refused(workflow: String, why: SupersedeRefusal) -> ProposeOutput {
+    let refusal = AdmissionRefusal::Supersedes { workflow, why };
+    refused(WorkflowCheck::Supersedes, Some(refusal))
+}
+
+#[cfg(feature = "driver")]
+/// Checks missed, split into their indexes and their receipts.
+fn split_missed(missed: Vec<(usize, CheckReceipt)>) -> (Vec<usize>, Vec<CheckReceipt>) {
+    missed.into_iter().unzip()
 }
 
 #[cfg(feature = "driver")]
@@ -660,10 +608,12 @@ pub(crate) fn check_solved<D: BrowserDriver + ?Sized>(
     // The replay fills its steps and its checks from its own values.
     let values = if held_out { &replay_args } else { &args };
     let (steps, checks) = program.fill(values)?;
-    let missed = unmet(driver, &solved_checks)?;
+    let missed = missed(driver, &solved_checks)?;
     if !missed.is_empty() {
+        let (unmet, missed) = split_missed(missed);
         return Ok(Err(ProposeOutput {
-            unmet: missed,
+            unmet,
+            missed,
             ..refused(WorkflowCheck::Solved, None)
         }));
     }
@@ -720,7 +670,8 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         solved_url,
         solved_title,
     } = solved;
-    let replay = fresh.batch_with(
+    let step_count = steps.len();
+    let mut replay = fresh.batch_with(
         BatchInput {
             subgoal: Some(program.subgoal.clone()),
             steps,
@@ -732,15 +683,23 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
         // A replay asks no model, so a Fill's generation goes up unasked.
         &NoWriter,
     )?;
-    let missed = if replay.status == SubgoalStatus::Done {
-        unmet(fresh, &checks)?
+    // A replay that went up for no progress after its last step still
+    // meets its checks, read now (FIX 8507).
+    let at_end = live_run::no_progress_at_end(&replay, step_count);
+    let missed = if replay.status == SubgoalStatus::Done || at_end {
+        missed(fresh, &checks)?
     } else {
         Vec::new()
     };
+    if at_end && missed.is_empty() {
+        live_run::met_after_all(fresh, &mut replay);
+    }
     if replay.status != SubgoalStatus::Done || !missed.is_empty() {
         let (check, refusal) = secret_slots::replay_check(&program, &args, &replay_args, held_out);
+        let (unmet, missed) = split_missed(missed);
         return Ok(ProposeOutput {
-            unmet: missed,
+            unmet,
+            missed,
             replay: Some(replay),
             replay_guest: Some(guest),
             ..refused(check, refusal)
@@ -772,6 +731,7 @@ pub(crate) fn replay_and_file<D: BrowserDriver + ?Sized>(
             refused_by: None,
             refusal: None,
             unmet: Vec::new(),
+            missed: Vec::new(),
             replay: None,
             replay_guest: None,
             superseded,

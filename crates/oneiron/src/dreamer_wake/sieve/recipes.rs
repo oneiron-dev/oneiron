@@ -116,7 +116,7 @@ impl SieveAuditRecord {
     pub fn agrees(&self) -> bool {
         match self {
             Self::Flagged(audit) => audit.agrees,
-            Self::Window(audit) => audit.finding.discovered.is_empty(),
+            Self::Window(audit) => audit.finding.agrees(),
         }
     }
 

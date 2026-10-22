@@ -108,13 +108,23 @@ async fn answer(
                 request.seq.to_string(),
             ));
         }
-        asks.answer_with_reason(
+        // A connector elicitation's decisive ask mints the owner's consent
+        // first (FIX 8808); the answer is recorded either way.
+        let pressed = crate::connector_elicitation::press_owner_consent(
+            &server,
             &owner,
             request.seq,
-            request.answer,
-            request.reason.as_deref(),
-        )
-        .map_err(|error| OwnerError::Invalid(error.to_string()))
+            &request.answer,
+        );
+        let ask = asks
+            .answer_with_reason(
+                &owner,
+                request.seq,
+                request.answer,
+                request.reason.as_deref(),
+            )
+            .map_err(|error| OwnerError::Invalid(error.to_string()))?;
+        pressed.map(|()| ask)
     })
     .await?;
     Ok(Json(ask))

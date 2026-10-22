@@ -12,10 +12,13 @@ use crate::entity_id::EntityId;
 /// Longest stated reason a review row quotes, in bytes: READERS' bound.
 const REVIEW_REASON_SHOWN_BYTES: usize = 160;
 
-/// INBOX for `actor`, or `None` when its slice is empty. One row per item:
+/// INBOX for `actor`, or `None` when its slice is empty. One row per item,
+/// led by its sender's handle where it has an admitted one (FIX 9745), then
 /// the item handle, its kind, impact, the actor's own identity that carries
-/// it, the thread, how many identities share that thread, and the other
-/// persons on it, named by handle (PEOPLE, ARCH-0067). A concern row (OF-568)
+/// it as route metadata (none on a row the vault itself sent, such as a
+/// digest), the thread, how many identities share that thread, and the other
+/// persons on it, named by handle (PEOPLE, ARCH-0067). A comm widen ask names
+/// the widening it asks (FIX 3901). A concern row (OF-568)
 /// names the agent it is about, its signal and tone, and sits with the other
 /// concerns on that agent. Rows hold refs only; foreign message text never
 /// renders here. The one quote is a pending diary-read review's (OF-490): it
@@ -51,18 +54,29 @@ pub fn assemble_inbox_section(
                 AgentInboxItemKind::ApprovalRequired => "waiting",
                 AgentInboxItemKind::CoordinationUpdate => "update",
                 AgentInboxItemKind::Concern => "concern",
+                AgentInboxItemKind::Digest => "digest",
             };
             let via = item
                 .participants
                 .iter()
                 .find(|participant| participant.actor_ref == actor)
                 .map_or(item.identity_ref, |participant| participant.identity_ref);
-            let mut row = format!(
-                "{} {kind} impact={} via={}",
+            let mut row = String::new();
+            if let Some(sender) = item.sender {
+                row.push_str(&format!("from={} ", people.label(sender)));
+            }
+            row.push_str(&format!(
+                "{} {kind} impact={}",
                 one_line_token(&item.item_id),
-                item.impact.0,
-                via.to_hex()
-            );
+                item.impact.0
+            ));
+            if let Some(via) = via {
+                row.push_str(&format!(" via={}", via.to_hex()));
+            }
+            if let Some(widening) = &item.widening {
+                row.push(' ');
+                row.push_str(&widening.token());
+            }
             if let Some(thread) = item
                 .thread_ref
                 .as_deref()

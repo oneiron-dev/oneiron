@@ -121,6 +121,8 @@ pub struct AiHandle {
     status: Arc<StatusCell>,
     hints: Option<Arc<HintPusher>>,
     chat: ChatSettings,
+    /// The vault's `[models] prompt_layout`, if it sets one (FIX 6676).
+    prompt_layout: Option<oneiron::prompt::PromptLayout>,
     voice: Option<VoiceSettings>,
     /// The raw routes' meter: `[models]`'s, else its default, so a device
     /// with no `[models]` serves the models the mesh discovered (FIX 3229).
@@ -197,6 +199,7 @@ impl AiHandle {
                 },
                 |models| models.chat,
             ),
+            prompt_layout: models.and_then(|models| models.prompt_layout),
             voice: models.map(|models| models.voice.clone()),
             raw_budget_units: models
                 .map_or(crate::config::models::DEFAULT_RAW_BUDGET_UNITS, |models| {
@@ -263,6 +266,14 @@ impl AiHandle {
     #[must_use]
     pub fn chat_settings(&self) -> ChatSettings {
         self.chat
+    }
+
+    /// The layout a turn assembled now takes (FIX 6676): the vault's
+    /// `[models] prompt_layout` when it sets one, else the host's
+    /// `ONEIRON_PROMPT_LAYOUT`, else today's order. Read once per turn.
+    #[must_use]
+    pub(crate) fn prompt_layout(&self) -> oneiron::prompt::PromptLayout {
+        oneiron::prompt::effective_prompt_layout(self.prompt_layout)
     }
 
     /// The resolved voice settings; absent when no models are configured.

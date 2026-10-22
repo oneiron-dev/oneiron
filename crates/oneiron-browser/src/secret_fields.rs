@@ -106,6 +106,29 @@ const SECRET_PHRASES: &[(&[&str], SecretKind)] = &[
     (&["pin"], SecretKind::Password),
 ];
 
+/// The words that label a one-time code in a page's prose (FIX 8337,
+/// `otp_prose_policy`, CALLS row, open): "your code is 123456", "OTP:
+/// 4821", "verification code 77-31-09". Only the token a label names is the
+/// code, never a number alone.
+const PROSE_CODE_LABELS: &[&[&str]] = &[
+    &["one", "time", "code"],
+    &["one", "time", "password"],
+    &["one", "time", "passcode"],
+    &["one", "time", "pin"],
+    &["verification", "code"],
+    &["security", "code"],
+    &["confirmation", "code"],
+    &["login", "code"],
+    &["sign", "in", "code"],
+    &["access", "code"],
+    &["authentication", "code"],
+    &["otp"],
+    &["passcode"],
+    &["your", "code"],
+];
+/// Words that may stand between a code's label and the code.
+const PROSE_CODE_FILLERS: &[&str] = &["is", "was", "reads"];
+
 /// What one field shows the classifier: its row's role, the accessibility
 /// tree's `protected` property, its input type and autocomplete tokens
 /// (a page's DOM, none on a desktop), its label and description, and its
@@ -156,6 +179,63 @@ fn secret_field_policy(facts: &FieldFacts<'_>) -> Option<SecretKind> {
         }
     }
     card_alone(facts.value).then_some(SecretKind::Card)
+}
+
+/// The one-time codes `text` names in prose (FIX 8337): each token, of
+/// letters, digits and hyphens with a digit in it, that follows a label of
+/// [`PROSE_CODE_LABELS`] as the next word but for [`PROSE_CODE_FILLERS`].
+pub(crate) fn prose_codes(text: &str) -> Vec<&str> {
+    let words = word_spans(text);
+    let mut codes = Vec::new();
+    for at in 0..words.len() {
+        for label in PROSE_CODE_LABELS {
+            let named = words.get(at..at + label.len()).is_some_and(|run| {
+                run.iter()
+                    .zip(label.iter())
+                    .all(|((word, _), want)| word == want)
+            });
+            if !named {
+                continue;
+            }
+            let mut next = at + label.len();
+            while words
+                .get(next)
+                .is_some_and(|(word, _)| PROSE_CODE_FILLERS.contains(&word.as_str()))
+            {
+                next += 1;
+            }
+            let Some((_, start)) = words.get(next) else {
+                continue;
+            };
+            let rest = &text[*start..];
+            let end = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '-'))
+                .unwrap_or(rest.len());
+            let code = rest[..end].trim_end_matches('-');
+            if code.chars().any(|c| c.is_ascii_digit()) && !codes.contains(&code) {
+                codes.push(code);
+            }
+        }
+    }
+    codes
+}
+
+/// Each word of `text` (a run of letters and digits), lowercased, with
+/// where it starts.
+fn word_spans(text: &str) -> Vec<(String, usize)> {
+    let mut words = Vec::new();
+    let mut start = None;
+    for (at, c) in text.char_indices().chain([(text.len(), ' ')]) {
+        match (c.is_alphanumeric(), start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                words.push((text[from..at].to_lowercase(), from));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    words
 }
 
 /// Whether `text` is nothing but mask glyphs, as a concealed field shows it.
@@ -310,6 +390,8 @@ pub(crate) fn page_predicate() -> String {
         "mark": SECRET_MARK,
         "password": SecretKind::Password,
         "cardKind": SecretKind::Card,
+        "prose": PROSE_CODE_LABELS,
+        "fillers": PROSE_CODE_FILLERS,
     });
     PAGE_PREDICATE.replace("__RULES__", &rules.to_string())
 }
@@ -355,9 +437,30 @@ const PAGE_PREDICATE: &str = r##"((R) => {
     }
     return cardAlone(f.value) ? R.cardKind : null;
   };
+  const prose = (t) => {
+    const found = [];
+    const re = /[\p{L}\p{N}]+/gu;
+    let m;
+    while ((m = re.exec(t)) !== null) found.push([m[0].toLowerCase(), m.index]);
+    const spans = new Map();
+    for (let at = 0; at < found.length; at += 1) {
+      for (const label of R.prose) {
+        if (!label.every((word, i) => found[at + i] && found[at + i][0] === word)) continue;
+        let next = at + label.length;
+        while (found[next] && R.fillers.includes(found[next][0])) next += 1;
+        if (!found[next]) continue;
+        const code = /^[\p{L}\p{N}-]+/u.exec(t.slice(found[next][1]))[0].replace(/-+$/, "");
+        if (/[0-9]/.test(code)) spans.set(found[next][1], code.length);
+      }
+    }
+    let out = t;
+    for (const [at, n] of [...spans].sort((a, b) => b[0] - a[0])) out = out.slice(0, at) + R.mark + out.slice(at + n);
+    return out;
+  };
   const text = (t) => {
     if (masked(t) || cardAlone(t)) return R.mark;
-    return (t || "").replace(/[0-9][0-9 -]*[0-9]/g, (run) => (cardAlone(run) ? R.mark : run));
+    const cards = (t || "").replace(/[0-9][0-9 -]*[0-9]/g, (run) => (cardAlone(run) ? R.mark : run));
+    return prose(cards);
   };
   return {kind: kind, text: text};
 })(__RULES__)"##;

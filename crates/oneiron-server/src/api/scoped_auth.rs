@@ -305,6 +305,33 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
     Ok(vault.scoped_read(key.for_destination(&auth.destination())))
 }
 
+/// The rows of a listing `auth`'s own lane reads whole, where its connection
+/// sits (FIX 8162, 8174): a row stays only while every ref `refs` names for
+/// it resolves for that lane, every row judged in one snapshot (FIX 7645).
+/// A row with a ref the lane does not read is left out whole, never shown
+/// with that ref cut, so no answerable row changes shape. A row that names
+/// no ref stays: its own door admitted it.
+pub(crate) fn lane_reads_each<T>(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    rows: Vec<T>,
+    refs: impl Fn(&T) -> Vec<oneiron::EntityId>,
+) -> Result<Vec<T>, ApiError> {
+    if rows.is_empty() {
+        return Ok(rows);
+    }
+    let read = scoped_read_for_core_auth(vault, auth)?;
+    let sets: Vec<Vec<oneiron::EntityId>> = rows.iter().map(&refs).collect();
+    let each = read
+        .refs_readable_each(&sets)
+        .map_err(|error| super::core_engine_error("listing admission failed", error))?;
+    Ok(rows
+        .into_iter()
+        .zip(each)
+        .filter_map(|(row, admitted)| admitted.then_some(row))
+        .collect())
+}
+
 /// The legacy read lane for the credential [`check_api_auth`] admitted, where
 /// its connection sits. A verified slip reads under its own key, through the
 /// one builder, so an agent's full-scope slip reads a relationship's rows here

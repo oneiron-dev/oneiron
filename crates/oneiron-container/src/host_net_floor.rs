@@ -22,6 +22,9 @@ pub const HOST_NET_FD_FLOOR: &str = "host_net_fd_floor";
 /// The floor has no room for one more host thread: a guest call that needs
 /// a worker waits for it, or fails with `EAGAIN`.
 pub const HOST_NET_WORKER_FLOOR: &str = "host_net_worker_floor";
+/// The floor holds no room for the bytes one more piece of guest network
+/// work would hold on the host (FIX 7651): the work waits for room.
+pub const HOST_NET_BYTE_FLOOR: &str = "host_net_byte_floor";
 
 /// A host's floor for guest network work.
 pub trait HostNetFloor: Send + Sync {
@@ -29,6 +32,16 @@ pub trait HostNetFloor: Send + Sync {
     /// held until the permit drops. Never waits: a full floor is
     /// `WouldBlock` naming it ([`floor_saturated`]).
     fn acquire(&self, fds: usize, workers: usize) -> io::Result<HostNetPermit>;
+
+    /// Holds `bytes` of host memory for one piece of guest network work (a
+    /// browser's paused request and its answer, FIX 7651), until the permit
+    /// drops. Never waits: a full floor is `WouldBlock` naming
+    /// [`HOST_NET_BYTE_FLOOR`]. A floor that keeps no byte reserve charges
+    /// nothing.
+    fn acquire_bytes(&self, bytes: u64) -> io::Result<HostNetPermit> {
+        let _ = bytes;
+        Ok(HostNetPermit::new(()))
+    }
 }
 
 /// Room held on a host floor. Dropping it gives the room back.
@@ -74,7 +87,11 @@ pub fn saturated_floor(error: &io::Error) -> Option<&'static str> {
 /// The floor a name read off a wire names, if it names one.
 #[must_use]
 pub fn known_floor(name: &str) -> Option<&'static str> {
-    [HOST_NET_FD_FLOOR, HOST_NET_WORKER_FLOOR]
-        .into_iter()
-        .find(|floor| *floor == name)
+    [
+        HOST_NET_FD_FLOOR,
+        HOST_NET_WORKER_FLOOR,
+        HOST_NET_BYTE_FLOOR,
+    ]
+    .into_iter()
+    .find(|floor| *floor == name)
 }
