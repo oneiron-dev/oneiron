@@ -105,6 +105,7 @@ pub mod vocabulary;
 
 // --- Tier 3: the engine API (UNSTABLE — `stemma-mcp` + downstream consumers
 // drive these directly; they may change between minor versions) -----------------
+pub mod admission;
 pub mod docprops;
 pub mod docx;
 pub mod docx_validate;

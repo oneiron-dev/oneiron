@@ -4,7 +4,9 @@ use super::AttemptQueue;
 use crate::attempt_queue::encoding::{decode_record, ready_at};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
-use crate::attempt_queue::{AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use crate::attempt_queue::{
+    AttemptId, AttemptRecord, AttemptState, CancelMode, ClaimAttempt, ClaimOutcome,
+};
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 
@@ -78,6 +80,8 @@ impl AttemptQueue<'_> {
     /// Finds a unique retry tip in the transaction that releases the next step.
     ///
     /// A row visited twice is a cycle and refuses; a long lineage does not.
+    /// Each superseded try must have settled as a lineage continues (FIX
+    /// 9577): failed, landed by its worker, or abandoned with its evidence.
     /// The whole lineage is read; past the `[limits]` `attempt_retry_tip_rows`
     /// row the finished walk asks whether everything is okay (Rule 5).
     pub(crate) fn retry_tip_in_txn(
@@ -117,7 +121,7 @@ impl AttemptQueue<'_> {
                 || current.task_ref != next.task_ref
                 || current.dedupe_key != next.dedupe_key
                 || current.dedupe_actor_ref != next.dedupe_actor_ref
-                || current.state != crate::attempt_queue::AttemptState::Failed
+                || !current.continues_retry_lineage()
             {
                 return Err(invalid_transition("retry_tip", "lineage_mismatch"));
             }
@@ -159,5 +163,37 @@ impl AttemptQueue<'_> {
             .limit_watch
             .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
         Ok(Some(current))
+    }
+}
+
+impl AttemptRecord {
+    /// Whether this settled try may be superseded by its one retry in a
+    /// released lineage (FIX 9577): it failed; or it was cancelled by a
+    /// designed landing (never a forced stop); or it was abandoned with its
+    /// evidence, its result reference and its recorded exhaust. The retry tip
+    /// and the workflow context door read the same rule.
+    pub(crate) fn continues_retry_lineage(&self) -> bool {
+        match self.state {
+            AttemptState::Failed => true,
+            AttemptState::Cancelled => {
+                self.cancel_state
+                    .cancellation
+                    .as_ref()
+                    .is_some_and(|cancellation| {
+                        cancellation.mode == CancelMode::Landed && cancellation.grounds.is_none()
+                    })
+            }
+            AttemptState::Abandoned => {
+                self.result_ref.is_some()
+                    && self.last_error.is_some()
+                    && self.terminal_exhaust.is_some()
+            }
+            AttemptState::Queued
+            | AttemptState::Leased
+            | AttemptState::Paused
+            | AttemptState::Scheduled
+            | AttemptState::Landing
+            | AttemptState::Completed => false,
+        }
     }
 }

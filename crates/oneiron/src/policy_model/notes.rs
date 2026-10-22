@@ -12,8 +12,9 @@ use crate::error::Result;
 use crate::llm::{ContentPart, FinishReason, LlmMessage, LlmMessageRole, LlmResponse};
 
 use super::classifier_lease::ClassifierLease;
+use super::clock::PolicyCallClock;
 use super::contract::{parse_rationale_notes, rationale_notes_format};
-use super::decide::{CLEAN, SafeguardModel};
+use super::decide::{CLEAN, SAFEGUARD_READ_BUDGET, SafeguardModel};
 use super::prompt::{PolicyClassifyPrompt, response_text, retain_resolvable_rule_ids};
 use super::request::PolicyModelConfig;
 use super::verdict::PolicyPassAudit;
@@ -24,6 +25,11 @@ use super::verdict::PolicyPassAudit;
 /// asking `wording` of that answer, and its reply holds the three fields alone.
 /// A refused admission, a failed call or an unreadable reply leaves `audit` as
 /// it was; the verdict stands.
+///
+/// The notes spend what `clock` has left of the read's one
+/// [`SAFEGUARD_READ_BUDGET`], never an allowance of their own (FIX 10034): a
+/// call the spent budget cannot start never goes out, and the decided verdict
+/// stands without its notes, as it does on a failed call.
 pub(super) async fn rationale_notes(
     safeguard: SafeguardModel<'_>,
     prompt: &PolicyClassifyPrompt,
@@ -31,7 +37,11 @@ pub(super) async fn rationale_notes(
     decided: Option<&str>,
     wording: &str,
     audit: &mut PolicyPassAudit,
+    clock: &PolicyCallClock,
 ) -> Result<()> {
+    if !clock.may_start(SAFEGUARD_READ_BUDGET) {
+        return Ok(());
+    }
     let mut request = prompt.llm_request(config);
     request.envelope.response_format = rationale_notes_format();
     request.messages.push(LlmMessage {

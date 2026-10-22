@@ -8,7 +8,11 @@ use crate::attempt_queue::{
     ClaimOutcome, CompleteAttempt, FailAttempt, InterveneAttempt, SetAttemptResult,
 };
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
-use crate::error::Result;
+use crate::error::{ArtifactError, Error, Result};
+
+/// The failure a wrapper settles with when its next step's agent was
+/// disabled after the run was admitted (FIX 9567).
+const STEP_AGENT_DISABLED: &str = "workflow_step_agent_disabled";
 
 impl AgentDispatcher<'_> {
     /// Advance a saved composition after its active leaf settles. Call after
@@ -133,13 +137,45 @@ impl AgentDispatcher<'_> {
             self.settle_child_in_txn(&mut txn, &root, now)?;
             WorkflowProgress::Completed
         } else {
-            record.active = self.enqueue_workflow_step(&mut txn, &record, ordinal + 1, now)?;
-            WorkflowProgress::Advanced(record.active)
+            // FIX 9567: the successor's admission runs in a savepoint, so a
+            // successor whose agent was disabled since rolls back its own
+            // writes alone. The completed step's result stays, the wrapper
+            // fails durably with that reason, and nothing repeats it.
+            let mut savepoint = self.vault.store.env.nested_write_txn(&mut txn)?;
+            match self.enqueue_workflow_step(&mut savepoint, &record, ordinal + 1, now) {
+                Ok(next) => {
+                    savepoint.commit()?;
+                    record.active = next;
+                    WorkflowProgress::Advanced(next)
+                }
+                Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled { .. })) => {
+                    drop(savepoint);
+                    let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
+                    crate::ports::JobQueue::port_job_fail(
+                        self.vault,
+                        &mut txn,
+                        FailAttempt {
+                            id: root,
+                            lease_owner: "workflow-pump".to_owned(),
+                            attempt_count: lease.attempt_count,
+                            reason: STEP_AGENT_DISABLED.to_owned(),
+                            now,
+                        },
+                    )?;
+                    self.settle_child_in_txn(&mut txn, &root, now)?;
+                    WorkflowProgress::Stopped(root)
+                }
+                Err(error) => return Err(error),
+            }
         };
         RECORD.put(self.vault, &mut txn, &root, &record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
-        if progress == WorkflowProgress::Completed && record.intent.task.is_some() {
+        if matches!(
+            progress,
+            WorkflowProgress::Completed | WorkflowProgress::Stopped(_)
+        ) && record.intent.task.is_some()
+        {
             self.settle_bound_task_after_commit(root, now);
         }
         Ok(progress)

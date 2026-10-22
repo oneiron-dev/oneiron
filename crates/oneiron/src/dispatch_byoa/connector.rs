@@ -46,21 +46,11 @@ pub(super) const MAX_BASE_URL_LEN: usize = 2048;
 
 pub(super) const MAX_MODEL_SLUG_LEN: usize = 128;
 
-pub(super) const MAX_MODEL_SLUG_ENTRIES: usize = 512;
-
 pub(super) const MAX_SERVER_REF_LEN: usize = 512;
 
 pub(super) const MAX_PROGRAM_LEN: usize = 512;
 
-pub(super) const MAX_ARGV_ENTRIES: usize = 256;
-
 pub(super) const MAX_EGRESS_PROFILE_REF_LEN: usize = 256;
-
-pub(super) const MAX_CREDENTIAL_HANDLES: usize = 32;
-
-pub(super) const MAX_ALLOWED_HOSTS: usize = 256;
-
-pub(super) const MAX_CHECKPOINT_FRONTIER_ENTRIES: usize = 1024;
 
 pub(super) const MAX_CHECKPOINT_FRONTIER_ENTRY_LEN: usize = 1024;
 
@@ -398,8 +388,10 @@ pub struct ByoaAttemptPayload {
     #[serde(default)]
     pub official_seat: Option<OfficialSeatStamp>,
     /// A CLI attempt's checkout custody (FIX 6867, G1 PR3b), pinned by the
-    /// dispatch writer before this payload is encoded; `None` for an
-    /// endpoint or MCP attempt, and on a row dispatched before it.
+    /// dispatch writer before this payload is encoded, or, for a checkout
+    /// made live after dispatch, by its first execution's writer (FIX 9792)
+    /// and never rebound; `None` for an endpoint or MCP attempt, and for a
+    /// CLI attempt that has not started on a live checkout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_binding: Option<super::repo_binding::ByoaRepoBinding>,
     /// The bound runner work this attempt carries (OF-137), by reference

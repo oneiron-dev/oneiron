@@ -132,8 +132,30 @@ where
     I: serde::Serialize + serde::de::DeserializeOwned,
     O: serde::Serialize,
 {
+    hooked_row_admitting(vault, actor, verb, input, None, run)
+}
+
+/// [`hooked_row`], a hook's rewrite meeting `admit` too, as the row's
+/// facade door admits it (FIX 8201): a rewrite `admit` refuses meets what
+/// one the row's input check refuses meets.
+pub(crate) fn hooked_row_admitting<I, O>(
+    vault: &oneiron::Vault,
+    actor: oneiron::EntityId,
+    verb: &str,
+    input: I,
+    admit: Option<oneiron::memory::RewriteAdmit>,
+    run: impl FnOnce(I) -> OwnerResult<O>,
+) -> OwnerResult<serde_json::Value>
+where
+    I: serde::Serialize + serde::de::DeserializeOwned,
+    O: serde::Serialize,
+{
     use oneiron::task_verb::verb_hook_boundary;
     let memory = vault.memory(actor, oneiron::edge::EdgeActorClass::Human);
+    let memory = match admit {
+        Some(admit) => memory.with_rewrite_admit(admit),
+        None => memory,
+    };
     let args = hook_json(verb, &input)?;
     let mut pre =
         verb_hook_boundary::row_pre(&memory, verb, args.clone()).map_err(memory_refusal)?;

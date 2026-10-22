@@ -41,13 +41,12 @@ impl Vault {
         let writer = writer(kind, actor, made_by);
         match kind {
             OfficeBodyKind::Docx => {
-                let blocks =
-                    read_docx_blocks(&bytes, ArchiveLimits::DEFAULT).map_err(
-                        |error| match error.parse_limit_refusal() {
-                            Some(refusal) => Error::Refused(refusal.to_owned()),
-                            None => invalid("the DOCX package could not be read"),
-                        },
-                    )?;
+                // The vault's DOCX row as this writer's, not the shipped
+                // default (FIX 8763), read in the host's memory (FIX 8570).
+                let limits = self.office_docx_limits(Some(actor.entity_ref()))?;
+                let blocks = crate::office_body::document_resources()
+                    .docx(|| read_docx_blocks(&bytes, limits))
+                    .map_err(|error| docx_error(&error, "the DOCX package could not be read"))?;
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
@@ -643,16 +642,15 @@ impl Vault {
                 date,
                 group: group.finalize().to_hex()[..16].to_owned(),
             };
-            let bytes = project_docx(
-                &self.body_source(artifact, head)?,
-                &changes,
-                &revision,
-                ArchiveLimits::DEFAULT,
-            )
-            .map_err(|error| match error.parse_limit_refusal() {
-                Some(refusal) => Error::Refused(refusal.to_owned()),
-                None => invalid("the body could not be projected onto its package"),
-            })?;
+            // The vault's DOCX row, not the shipped default (FIX 8763), in
+            // the host's memory (FIX 8570).
+            let limits = self.office_docx_limits(None)?;
+            let source = self.body_source(artifact, head)?;
+            let bytes = crate::office_body::document_resources()
+                .docx(|| project_docx(&source, &changes, &revision, limits))
+                .map_err(|error| {
+                    docx_error(&error, "the body could not be projected onto its package")
+                })?;
             return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
         let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
@@ -723,5 +721,16 @@ impl Vault {
         }
         typed_body_in_txn(&self.store, txn, artifact, kind.schema(), at)?
             .ok_or(Error::CorruptedIndex("office body document missing"))
+    }
+
+    /// The vault's DOCX archive row as `holder`'s (FIX 8763): a trusted
+    /// owner's row, else the shipped one. A policy that cannot resolve keeps
+    /// the shipped default these doors read under before, so no body read
+    /// gains a refusal it did not have.
+    fn office_docx_limits(&self, holder: Option<EntityId>) -> Result<ArchiveLimits> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
+            .docx_archive_limits(holder)
+            .unwrap_or(ArchiveLimits::DEFAULT))
     }
 }

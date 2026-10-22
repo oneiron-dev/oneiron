@@ -5,15 +5,21 @@
 //! take from the same line as every other lease here, before they allocate
 //! it. A reservation that fits at once is admitted at once, as before; one
 //! that does not waits its fair turn for the host's queue wait
-//! (`limits.queue_wait_timeout_ms`), measured from that reservation, and only
-//! then refuses, typed: the machine's floor when it cannot fit even on an
-//! idle machine, else the wait that ran out. A checkpoint stops the work only
-//! at a deadline its caller gave the operation; the host adds none.
+//! (`limits.queue_wait_timeout_ms`), measured from that reservation and never
+//! past a deadline the caller gave the operation, and only then refuses,
+//! typed: the machine's floor when the work's MEASURED need cannot fit even
+//! on an idle machine, else the wait that ran out. An estimate (a declared
+//! ZIP size, a tree's node overhead, the reservation step) never meets the
+//! floor at once (Engine 10-22 20:0x): when only the estimate could never
+//! fit, the measured need is leased instead, in the reservation step, and the
+//! machine's live reading carries what the work then really allocates. A
+//! checkpoint stops the work only at a deadline its caller gave the
+//! operation; the host adds none.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use oneiron::office_body::{DocumentMemory, ResourcePort, ResourceRefusal};
+use oneiron::office_body::{DocumentMemory, RESERVE_STEP, ResourcePort, ResourceRefusal};
 
 use crate::machine::{MachineMemory, MemoryRefusal};
 
@@ -38,17 +44,37 @@ impl DocumentMemory for DocumentFloor {
 struct DocumentLease {
     memory: MachineMemory,
     wait: Duration,
-    /// A deadline the operation's caller gave it, when it has one.
+    /// A deadline the operation's caller gave it, when it has one: fixed
+    /// for the whole operation, never renewed by a nested read.
     deadline: Option<Instant>,
 }
 
+impl DocumentLease {
+    /// When one reservation stops waiting: the host's queue wait from now,
+    /// or the caller's deadline when that comes first.
+    fn until(&self) -> Instant {
+        let wait = Instant::now() + self.wait;
+        self.deadline.map_or(wait, |deadline| deadline.min(wait))
+    }
+}
+
 impl ResourcePort for DocumentLease {
-    fn reserve(&self, bytes: u64) -> Result<Box<dyn Send + Sync>, ResourceRefusal> {
-        match self.memory.lease(bytes, Instant::now() + self.wait) {
+    fn reserve(&self, bytes: u64, measured: u64) -> Result<Box<dyn Send + Sync>, ResourceRefusal> {
+        let until = self.until();
+        let leased = match self.memory.lease(bytes, until) {
+            // Only the estimate past the measured need can never fit: the
+            // measured need, in the reservation step, waits its turn instead.
+            Err(MemoryRefusal::Floor { available, .. }) if measured <= available => self
+                .memory
+                .lease(measured.max(RESERVE_STEP).min(available), until),
+            leased => leased,
+        };
+        match leased {
             Ok(lease) => Ok(Box::new(lease)),
-            Err(MemoryRefusal::Floor { needed, available }) => {
-                Err(ResourceRefusal::MemoryFloor { needed, available })
-            }
+            Err(MemoryRefusal::Floor { available, .. }) => Err(ResourceRefusal::MemoryFloor {
+                needed: measured,
+                available,
+            }),
             Err(MemoryRefusal::WaitedOut { .. }) => Err(ResourceRefusal::Deadline),
         }
     }
