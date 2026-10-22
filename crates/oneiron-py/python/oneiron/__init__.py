@@ -2145,6 +2145,21 @@ class Oneiron:
         def narrow(self, spec):
             """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
             return json.loads(_translate(lambda: self._client.vault_connectors_slates_narrow(json.dumps(spec))))
+        def scope_outcome(self, spec):
+            """The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_scope_outcome(json.dumps(spec))))
+        def revision_offers(self, spec):
+            """Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_revision_offers(json.dumps(spec))))
+        def defer_revision(self, spec):
+            """The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_defer_revision(json.dumps(spec))))
+        def accept_revision(self, spec):
+            """The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_accept_revision(json.dumps(spec))))
+        def reask_issuer(self, spec):
+            """The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_slates_reask_issuer(json.dumps(spec))))
     class _VaultConnectorsSubscriptionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5559,6 +5574,9 @@ class Oneiron:
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
             return Oneiron._SelfBrowserLibraryVerbs(self._client)
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs":
+            return Oneiron._SelfBrowserDemonstrationVerbs(self._client)
         def handover(self, spec):
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
@@ -5586,6 +5604,15 @@ class Oneiron:
         def run(self, spec):
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
             return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
+    class _SelfBrowserDemonstrationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_start(json.dumps(spec))))
+        def stop(self, spec):
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
+            return json.loads(_translate(lambda: self._client.self_browser_demonstration_stop(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -32,6 +32,7 @@ use crate::server::{HousekeepingAdmission, SyncServer};
 use oneiron::linear_sync::VaultLinearTaskStore;
 use oneiron_linear::LinearTrackerConfig;
 
+mod body_line;
 mod direct;
 mod webhook;
 
@@ -441,6 +442,15 @@ async fn spawn_bridge(
                         pulled = pulled.applied,
                         "Linear mirror pass"
                     );
+                }
+                Ok(Err(LinearSyncError::Waiting(_))) => {
+                    // FIX 8788: a full Rate window refused nothing; the TASK
+                    // stays dirty and a later pass sends it.
+                    tracing::debug!(
+                        reason = oneiron::linear_sync::LINEAR_RATE_WINDOW_REASON,
+                        "Linear mutation waits; it stays pending"
+                    );
+                    wait = Duration::from_secs(last_valid_interval);
                 }
                 Ok(Err(_)) => {
                     tracing::warn!(

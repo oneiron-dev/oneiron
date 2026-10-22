@@ -154,7 +154,7 @@ pub struct SyncServer {
     /// Host-injected acquisition ladder, initialized to native readability on first use.
     pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
-    pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
+    pub(crate) memories_cursors: Arc<Mutex<crate::api::MemoriesCursorStore>>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
     pub(crate) self_brief_sessions:
         Mutex<BTreeMap<(oneiron::EntityId, String), HostSelfBriefSession>>,
@@ -410,6 +410,11 @@ impl SyncServer {
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
+        // Provider media replies are booked on their own line (FIX 8615).
+        crate::models::install_media_reply_line(
+            config.limits.media_reply_bytes,
+            Arc::clone(wire_telemetry.limit_questions()),
+        );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
@@ -447,6 +452,11 @@ impl SyncServer {
         // OF-181: a live run that ends closes the lens cards it created.
         let live_runs: Arc<super::LiveRuns> = Arc::default();
         live_runs.close_cards_with(Arc::clone(&lens_frames));
+        // FIX 8143: a live run that ends closes its board sessions.
+        let memories_cursors = Arc::new(Mutex::new(crate::api::MemoriesCursorStore::default()));
+        live_runs.close_sessions_with(crate::api::run_session_closer(Arc::clone(
+            &memories_cursors,
+        )));
         // CUA-001: no run guest outlives a restart, so no takeover Ask can be answered.
         super::desktop_seats::clear_stale_asks(&vault);
         // FIX 3837: no connector's live exchange outlives a restart, so the
@@ -509,7 +519,7 @@ impl SyncServer {
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
             web_fetcher: std::sync::OnceLock::new(),
-            memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
+            memories_cursors,
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
             embedder: None,

@@ -1994,6 +1994,16 @@ class Oneiron:
             """The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable."""
         def narrow(self, spec: Facade.ConnectorSlateNarrowRequest) -> Facade.ConnectorSlateNarrowView:
             """The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it."""
+        def scope_outcome(self, spec: Facade.ConnectorScopeOutcomeRequest) -> Facade.ConnectorScopeOutcomeView:
+            """The owner rules on a held connector call's typed scope exceed, linked to the ask he ruled on: it folds once into that row's consent ramp and, once earned, drafts a proposed delta slate; nothing is stamped or granted."""
+        def revision_offers(self, spec: Facade.ConnectorSlateRevisionOffersRequest) -> Facade.ConnectorSlateRevisionOffersView:
+            """Lists the proposed connector slate revisions waiting on the owner: earned scope-exceed offers still standing and not held back, and issuer changes not yet accepted; listing activates nothing."""
+        def defer_revision(self, spec: Facade.ConnectorSlateRevisionDeferRequest) -> Facade.ConnectorRevisionSnoozeView:
+            """The owner holds a scope-exceed revision offer back (not now, or pinned manual) or unpins it, through the consent ramp's own answers; it never accepts the offer or mints a grant."""
+        def accept_revision(self, spec: Facade.ConnectorSlateRevisionAcceptRequest) -> Facade.ConnectorSlateRevisionAcceptedView:
+            """The owner stamps one proposed connector slate revision at the revision he reviewed, rechecked: a scope revision mints its widened grant; an issuer revision accepts the new issuer so the rows it held run again."""
+        def reask_issuer(self, spec: Facade.ConnectorIssuerReaskRequest) -> Facade.ConnectorCredentialBindingView:
+            """The owner records the issuer a catalog connector's credential slot answers for: the first is the baseline; another issuer holds only the keys and rows that depend on that slot and drafts their re-ask."""
     class _VaultConnectorsSubscriptionsVerbs:
         def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
             """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
@@ -3991,6 +4001,8 @@ class Oneiron:
             """Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt."""
         @property
         def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
+        @property
+        def demonstration(self) -> "Oneiron._SelfBrowserDemonstrationVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.BrowserHandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
         def switch_engine(self, spec: Facade.LiveRunRequest[Facade.SwitchEngineInput]) -> Facade.BrowserSwitchEngineOutput:
@@ -4008,6 +4020,11 @@ class Oneiron:
             """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
         def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.BrowserLibraryRunOutput:
             """Runs a replay library program in the attached run's browser, strict (rules only; a model step or fill generation asks up at zero tokens) or assisted; receipts name fill text_source; no_progress hands up; 3 strict misses retire it drift."""
+    class _SelfBrowserDemonstrationVerbs:
+        def start(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStartInput]) -> Facade.BrowserDemonstrationStartOutput:
+            """Starts recording a demonstration in the attached run's Chromium browser: page acts become replay steps, secret text never leaves the page; returns its id, or the running one with already_running."""
+        def stop(self, spec: Facade.LiveRunRequest[Facade.DemonstrationStopInput]) -> Facade.BrowserDemonstrationStopOutput:
+            """Stops a demonstration in the attached run's browser, or takes one that ended, once: recorded steps, named gaps, stop_cause, and an unfiled draft for the subgoal and postcondition given."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""

@@ -673,8 +673,10 @@ fn parse_digest(text: &str) -> Result<[u8; 32]> {
 
 /// The owner's own archive's custody records, each restored under its own id
 /// through the custody registration door, in the import's transaction. A
-/// record already here byte for byte is unchanged; any other collision is
-/// refused, never overwritten. A record the archive carried as its handle
+/// record already here, its value opened, the same as the archive's is
+/// unchanged; any other collision is refused, never overwritten; one the
+/// comparison cannot read stays as it is, skipped, warned (CALLS `KS-6
+/// archive same id`). A record the archive carried as its handle
 /// only is returned as a missing secret to re-enter; one an admitted revoke
 /// ended is counted as skipped (FIX 4852).
 fn restore_secrets_in_txn<R: Read + Seek>(
@@ -718,17 +720,21 @@ fn restore_secrets_in_txn<R: Read + Seek>(
         if let Some(existing) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &id)?
         {
-            if existing.get(ENTITY_METADATA_HEADER_LEN..) == Some(body.as_slice())
-                && EntityMetadataHeader::parse(&existing).is_some_and(|header| {
-                    header.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
-                })
-            {
-                unchanged += 1;
-                continue;
+            match crate::secret_custody::archive_same_custody_in_txn(
+                &vault.store,
+                &id,
+                &existing,
+                &record,
+            ) {
+                crate::secret_custody::ArchiveSameId::Same => unchanged += 1,
+                crate::secret_custody::ArchiveSameId::Pending => skipped += 1,
+                crate::secret_custody::ArchiveSameId::Different => {
+                    return Err(invalid(
+                        "import ID collides with a different custody record",
+                    ));
+                }
             }
-            return Err(invalid(
-                "import ID collides with a different custody record",
-            ));
+            continue;
         }
         if crate::secret_custody::restore_secret_custody_in_txn(vault, wtxn, &id, &mut record)? {
             restored += 1;

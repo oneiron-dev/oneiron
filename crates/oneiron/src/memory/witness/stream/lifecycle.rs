@@ -77,7 +77,12 @@ impl Memory<'_> {
                 ),
                 gated,
             ),
-            FinishReason::Length | FinishReason::ContentFiltered | FinishReason::Other { .. } => (
+            // A terminal that disagreed with what the stream showed keeps
+            // the shown text, incomplete (FIX 8617).
+            FinishReason::Length
+            | FinishReason::ContentFiltered
+            | FinishReason::Other { .. }
+            | FinishReason::Incomplete { .. } => (
                 (
                     StreamFinality::Partial,
                     StreamFinalityReason::ExplicitFinalize,

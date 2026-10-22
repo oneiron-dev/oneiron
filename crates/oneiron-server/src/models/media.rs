@@ -49,6 +49,8 @@ use super::voxcpm2_speech::VoxCpm2Speech;
 use super::walk::provider_down;
 use super::{LoggedReceipts, ladder_locality, undeclared_run};
 
+mod booked;
+mod fit;
 mod jobs;
 
 use jobs::{JobRow, JobStore, erased_poll, submit_stamps};
@@ -1248,8 +1250,11 @@ fn media_backends(
             // OpenAI-compatible wire below.
             ProviderKind::Soniox => soniox::live_backend(provider),
             _ => ProviderHttp::new(provider, KeyStyle::Bearer).map(|http| {
-                Arc::new(OpenAiMediaBackend::new(MediaHttp { http }, wire_models))
-                    as Arc<dyn MediaBackend>
+                Arc::new(OpenAiMediaBackend::new(
+                    MediaHttp { http },
+                    wire_models,
+                    provider.base_url.clone(),
+                )) as Arc<dyn MediaBackend>
             }),
         };
         match built {
@@ -1349,7 +1354,9 @@ fn media_rung(
             backend: Arc::new(NoChat),
         },
         media: Some(MediaRung {
-            backend: Arc::clone(backend),
+            // Its calls hold their replies' bytes until each answer leaves
+            // the adapter (FIX 8615).
+            backend: Arc::new(booked::BookedReplies(Arc::clone(backend))),
             row,
             caps: caps.clone(),
         }),

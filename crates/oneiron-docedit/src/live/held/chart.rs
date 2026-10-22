@@ -7,16 +7,18 @@
 //! measured before it is expanded (FIX 8589).
 
 mod families;
+mod special;
 
 pub(crate) use families::{flag, plot as plot_settings, view};
+pub(crate) use special::{Evidence, evidence, fill, same_named, split};
 
 use super::{C, FRAME_DATA, children};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, R};
 use crate::live::LiveError;
 use crate::live::pptx::{
-    ChartCategories, ChartCategory, ChartKind, ChartSeries, ChartSource, NodeId, NodePayload,
-    SeriesBinding, draws_categories, effective_categories,
+    ChartCategories, ChartCategory, ChartKind, ChartPlot, ChartSeries, ChartSource, NodeId,
+    NodePayload, SeriesBinding, draws_categories, effective_categories,
 };
 use crate::native_patch::{Count, chart_data, declared, level_cache};
 use crate::ooxml::XmlTree;
@@ -56,6 +58,10 @@ pub(crate) fn plot_family(name: &str) -> Option<ChartKind> {
         "pie3DChart" => ChartKind::Pie3D,
         "area3DChart" => ChartKind::Area3D,
         "bubbleChart" => ChartKind::Bubble,
+        "stockChart" => ChartKind::Stock,
+        "surfaceChart" => ChartKind::Surface,
+        "surface3DChart" => ChartKind::Surface3D,
+        "ofPieChart" => ChartKind::OfPie,
         _ => return None,
     })
 }
@@ -601,14 +607,31 @@ pub(crate) fn label(cell: &Cell) -> String {
     }
 }
 
+/// The stock and of-pie plots of the chart a chart frame at `frame` of
+/// `part` relates, without identities ([`evidence`]); none for any other
+/// frame.
+pub(crate) fn chart_evidence(
+    package: &Package,
+    part: &str,
+    tree: &XmlTree,
+    frame: usize,
+) -> Vec<Evidence> {
+    chart_part(package, part, tree, frame)
+        .and_then(|chart| xml::read(package, &chart).ok())
+        .map_or_else(Vec::new, |(_, chart)| evidence(&chart))
+}
+
 /// Name each series of an imported chart from `mint`, in its part's own
 /// order, then each category point of the chart's set and of each series'
 /// own, and the binding that order takes: each series and the category
-/// identities it draws; `None` for any other payload. Called once, at
+/// identities it draws; `None` for any other payload. Then each stock
+/// plot's prices and each of-pie plot's custom split (`read`, its part's
+/// plots as [`evidence`] reads them) take those identities. Called once, at
 /// import.
 pub(crate) fn bind(
     payload: &mut Option<NodePayload>,
     mut mint: impl FnMut() -> NodeId,
+    read: &[Evidence],
 ) -> Option<SeriesBinding> {
     let Some(chart @ NodePayload::Chart { .. }) = payload else {
         return None;
@@ -618,12 +641,13 @@ pub(crate) fn bind(
         family,
         categories,
         series,
+        plots,
         ..
     } = chart
     else {
         return None;
     };
-    Some(SeriesBinding {
+    let binding = SeriesBinding {
         series: series.iter().filter_map(|line| line.id).collect(),
         categories: series
             .iter()
@@ -635,5 +659,22 @@ pub(crate) fn bind(
                 }
             })
             .collect(),
-    })
+    };
+    for (named, _) in special::named(read, &binding) {
+        let at = match plots
+            .iter()
+            .position(|plot| plot.is(named.family, named.nth))
+        {
+            Some(at) => at,
+            None => {
+                plots.push(ChartPlot::new(named.family, named.nth));
+                plots.len() - 1
+            }
+        };
+        plots[at].stock = named.stock.or(plots[at].stock);
+        if named.custom_split.is_some() {
+            plots[at].custom_split = named.custom_split;
+        }
+    }
+    Some(binding)
 }

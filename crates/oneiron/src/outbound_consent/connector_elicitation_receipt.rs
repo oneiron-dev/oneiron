@@ -13,7 +13,9 @@
 
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
-use crate::store::{GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord};
+use crate::store::{
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
+};
 
 use super::execution::ConnectorElicitationBinding;
 
@@ -28,6 +30,9 @@ const RECEIPT_REASON: &str = "gate.connector.elicitation_answer";
 
 /// The actor class a receipt names its principal under.
 const RECEIPT_ACTOR_CLASS: &str = "connector_caller";
+
+/// The bytes a split detail's part keeps for its ` part=i/n=` index.
+const PART_LABEL_ROOM: usize = 48;
 
 /// The most dispositions one detail line lists, so each stays well within
 /// the gate notice's body bound; a longer round takes more lines, in order.
@@ -100,10 +105,11 @@ impl ConnectorElicitationReceipt<'_> {
     /// The receipt's audit lines: ids, digests and dispositions.
     fn details(&self) -> Vec<String> {
         let binding = self.binding;
-        let mut details = vec![
-            format!("connector name={}", binding.name),
-            format!("connector server={}", binding.server),
-            format!("connector tool={}", binding.tool),
+        let mut details = Vec::new();
+        push_split(&mut details, "connector name", &binding.name);
+        push_split(&mut details, "connector server", &binding.server);
+        push_split(&mut details, "connector tool", &binding.tool);
+        details.extend([
             format!(
                 "call principal={} grant={} key={} endpoint_digest={} parent_intent={}",
                 binding.principal_ref,
@@ -121,7 +127,7 @@ impl ConnectorElicitationReceipt<'_> {
                 self.egress.as_str(),
                 bytes_to_hex_lower(&self.answer_digest),
             ),
-        ];
+        ]);
         for (at, chunk) in self
             .dispositions
             .chunks(DISPOSITIONS_PER_DETAIL)
@@ -135,6 +141,33 @@ impl ConnectorElicitationReceipt<'_> {
             details.push(format!("dispositions from={from} {}", listed.join(",")));
         }
         details
+    }
+}
+
+/// `label=value` as one detail line or, when that line would pass the gate
+/// notice's body bound, `value` split at char boundaries across consecutive
+/// `label part=i/n=chunk` lines, never cut (FIX 9101).
+fn push_split(details: &mut Vec<String>, label: &str, value: &str) {
+    let whole = format!("{label}={value}");
+    if whole.len() <= GATE_SYSTEM_NOTICE_BODY_MAX_LEN {
+        details.push(whole);
+        return;
+    }
+    // Every part keeps its label and index within the bound; any char (4
+    // bytes at most) fits the room left.
+    let room = GATE_SYSTEM_NOTICE_BODY_MAX_LEN
+        .saturating_sub(label.len() + PART_LABEL_ROOM)
+        .max(4);
+    let mut chunks = Vec::new();
+    let mut rest = value;
+    while !rest.is_empty() {
+        let end = rest.floor_char_boundary(room.min(rest.len()));
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    let total = chunks.len();
+    for (at, chunk) in chunks.into_iter().enumerate() {
+        details.push(format!("{label} part={}/{total}={chunk}", at + 1));
     }
 }
 

@@ -16,20 +16,27 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{SideKey, SideTableDbs};
-use crate::store::ResponseCarriage;
+use crate::store::{ResponseCarriage, ResponseScan};
 
 /// What a checkpoint carries of the STEP row `value`: a settled step's
 /// kept body, its evidence with the body taken as the stub its erased
-/// disposition keeps whole. `None` for a step that keeps no body and for a
-/// row that does not decode.
-pub(crate) fn program_step_carriage(value: &[u8]) -> Option<ResponseCarriage> {
-    let mut step = STEP.decode_value(value).ok()?;
-    let StepState::Settled { result, .. } = &mut step.state else {
-        return None;
+/// disposition keeps whole. No response for a step that keeps no body; a
+/// row that does not decode, or whose evidence does not encode, is carried
+/// whole as an opaque response (FIX 6227).
+pub(crate) fn program_step_carriage(value: &[u8]) -> ResponseScan {
+    let Ok(mut step) = STEP.decode_value(value) else {
+        return ResponseScan::opaque_row();
     };
-    result.take()?;
-    let stub = STEP.encode_value(&step).ok()?;
-    Some(ResponseCarriage {
+    let StepState::Settled { result, .. } = &mut step.state else {
+        return ResponseScan::NotResponse;
+    };
+    if result.take().is_none() {
+        return ResponseScan::NotResponse;
+    }
+    let Ok(stub) = STEP.encode_value(&step) else {
+        return ResponseScan::opaque_row();
+    };
+    ResponseScan::Decoded(ResponseCarriage {
         keep: 0,
         retired: stub.len(),
         stub,

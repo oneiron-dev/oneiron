@@ -118,6 +118,14 @@ pub trait SlideRenderer: Send + Sync {
         let _ = bytes;
         Ok(())
     }
+    /// Name `reserved` of the bytes admitted allocated, as the `actual` bytes
+    /// the caller now holds (FIX 8240): an exact reservation made, what an
+    /// estimate came to, room left unused (`actual` 0), or bytes read before
+    /// their size was known (`reserved` 0). Only bookkeeping: it never waits
+    /// or refuses. A renderer that keeps no account of memory ignores it.
+    fn materialized(&self, reserved: u64, actual: u64) {
+        let _ = (reserved, actual);
+    }
 }
 
 /// User-configured display words, including the severity words in comments.
@@ -308,7 +316,7 @@ pub struct SlideReviewRun {
 /// clock (a cut, no rung able to take it), or the presence step's when it left
 /// a Box or Point question unanswered; none when the host had no image, or no
 /// rung reads one for a Box or Point question.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     pub decision: Option<TypedDecision>,
@@ -324,7 +332,9 @@ pub struct SlideUnitRefusal {
     pub offer: Option<PptxCommentTarget>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// On the wire as its variant name (`MissingShape`, ...), the words a
+/// review's refusals have always carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SlideUnitRefusalReason {
     /// No shape on the slide carries the creation id.
     MissingShape,
