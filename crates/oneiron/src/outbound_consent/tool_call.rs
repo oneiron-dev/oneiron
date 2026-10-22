@@ -360,8 +360,11 @@ pub fn prepare_tool_call(
     super::tool_schema::validate(schema, &checked, &call.tool)?;
     let mut headers = BTreeMap::new();
     let mut requirements = Vec::new();
-    for (parameter, name) in declared_headers(schema, &checked, &call.tool)? {
-        let name = canonical_header(name)?;
+    for (parameter, names) in declared_headers(schema, &checked, &call.tool)? {
+        let names = names
+            .into_iter()
+            .map(canonical_header)
+            .collect::<Result<std::collections::BTreeSet<_>>>()?;
         if destructive_hint && parameter == "dry_run" {
             return Err(invalid_schema());
         }
@@ -372,14 +375,21 @@ pub fn prepare_tool_call(
         if !value.bytes().all(|c| c == b'\t' || (32..=126).contains(&c)) {
             return Err(invalid_schema());
         }
-        if headers.insert(name.clone(), value.to_owned()).is_some() {
-            return Err(invalid_schema());
+        // Each header the parameter is named under carries it, each under its
+        // own header grant; one header two values would need refuses.
+        for name in names {
+            if headers
+                .insert(name.clone(), value.to_owned())
+                .is_some_and(|before| before != value)
+            {
+                return Err(invalid_schema());
+            }
+            requirements.push(HeaderGrantRequirement {
+                parameter: parameter.to_owned(),
+                header: name,
+                data_class: ToolGrantDataClass::XMcpHeader,
+            });
         }
-        requirements.push(HeaderGrantRequirement {
-            parameter: parameter.to_owned(),
-            header: name,
-            data_class: ToolGrantDataClass::XMcpHeader,
-        });
     }
     requirements.sort_by(|a, b| a.parameter.cmp(&b.parameter));
     // The frozen content's own class raises the tool's (FIX 8807): every
@@ -452,16 +462,16 @@ pub(super) fn invalid_schema() -> Error {
 }
 
 /// Each `x-mcp-header` parameter `schema` declares where `value` meets it,
-/// with the header name it names: its own for `true`, the given one for a
-/// string. A branch's annotation counts as the root's does (FIX 8810);
-/// `false` declares none, and any other annotation or one parameter under two
-/// names refuses.
+/// with every header name it names there: its own for `true`, the given one
+/// for a string. A branch's annotation counts as the root's does, and a
+/// parameter two branches name differently goes under each name (FIX
+/// 8810); `false` declares none, and any other annotation refuses.
 fn declared_headers<'a>(
     schema: &'a Value,
     value: &Value,
     tool: &str,
-) -> Result<BTreeMap<&'a str, &'a str>> {
-    let mut declared = BTreeMap::new();
+) -> Result<BTreeMap<&'a str, std::collections::BTreeSet<&'a str>>> {
+    let mut declared: BTreeMap<&str, std::collections::BTreeSet<&str>> = BTreeMap::new();
     for properties in super::tool_schema::applicable_properties(schema, Some((value, tool)))? {
         for (parameter, property) in properties {
             let name = match property.get("x-mcp-header") {
@@ -470,12 +480,7 @@ fn declared_headers<'a>(
                 Some(Value::String(name)) => name.as_str(),
                 Some(_) => return Err(invalid_schema()),
             };
-            if declared
-                .insert(parameter.as_str(), name)
-                .is_some_and(|before| before != name)
-            {
-                return Err(invalid_schema());
-            }
+            declared.entry(parameter.as_str()).or_default().insert(name);
         }
     }
     Ok(declared)
