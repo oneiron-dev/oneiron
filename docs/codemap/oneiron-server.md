@@ -280,11 +280,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 14 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 12 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
+| `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader ([`question_answers`]), as the… |
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
-| `src/api/facade/host_doors.rs` | src | XL | 186 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 187 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
@@ -327,6 +328,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/root_request_doors.rs` | src | s | 1 crate-vis | — | The owner's root-request cancel door (FIX 5586): `vault.roots.requests.cancel` over the same engine door as… |
 | `src/api/facade/run_read_doors.rs` | src | s | 2 crate-vis | — | Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints… |
 | `src/api/facade/run_review_doors.rs` | src | s | 4 crate-vis | — | The owner's cross-kind review and run compensation, on the caller's own credential handle |
+| `src/api/facade/runner_seat_doors.rs` | src | s | 2 crate-vis | — | The owner's runner seat quota doors (FIX 7451): `vault.runners.seats.quotas` and… |
 | `src/api/facade/saved_query_doors.rs` | src | s | 2 crate-vis | — | `self.saved_query.evaluate`, under the caller's own credential |
 | `src/api/facade/seal_doors.rs` | src | s | 6 crate-vis | — | Owner-authorized seal lifecycle, shared by generated HTTP, SDK and MCP calls |
 | `src/api/facade/search_home_doors.rs` | src | s | 1 crate-vis | — | `vault.search.bm25`'s facade door (FIX 3876): the page is read on the call's own caller surface, the one a… |
@@ -866,6 +868,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/custody.rs` | src | s | 1 crate-vis | — | `residence.custody.status`, `.frames`, `.put` and `.commit`: this home as the residence target of its… |
 | `src/livequery/residence/home_handoff.rs` | src | s | 1 crate-vis | — | `residence.home_handoff.status`, `.part`, `.commit` and `.cancel`: this node as the new home a home handoff… |
 | `src/livequery/residence/machine_history.rs` | src | s | 1 crate-vis | — | `residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine… |
+| `src/livequery/residence/pages.rs` | src | s | 1 crate-vis | — | A residence search served in pages (FIX 8865): a search for more hits than one page carries is never refused… |
 | `src/livequery/residence/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/livequery/routing.rs` | src | s | 5 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
 | `src/livequery/rpc.rs` | src | s | 5 crate-vis | — | The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the… |
