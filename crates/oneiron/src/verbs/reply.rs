@@ -42,8 +42,9 @@ pub struct AiReplyReader {
 pub struct AiReplyCompanion {
     #[serde(default)]
     pub person_ref: Option<String>,
+    /// The PERSON at the relationship's other end (FIX 871).
     #[serde(default)]
-    pub persona_ref: Option<String>,
+    pub counterpart_person_ref: Option<String>,
     #[serde(default)]
     pub expression: Option<String>,
 }

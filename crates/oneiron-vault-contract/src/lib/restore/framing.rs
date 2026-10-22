@@ -19,9 +19,11 @@ use super::facts::ManagedRestoreIdentity;
 use crate::{CtlResponse, MAX_CTL_LINE};
 
 /// Why a cold managed restore failed; snake_case. The engine's own
-/// admission reasons, then the managed start's.
+/// admission reasons, then the managed start's. Each is a string but
+/// `checkpoint_sequence_below_floor`, which carries its two numbers;
+/// [`Self::as_str`] names every one as a string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum RestoreFailureReason {
     SourceIdentityMismatch,
     DataKeyMismatch,
@@ -32,6 +34,14 @@ pub enum RestoreFailureReason {
     ArtifactIntegrityInvalid,
     CodecInvalid,
     BackupRegistryBindingMismatch,
+    /// The artifact's signed checkpoint sequence (`observed`) is below the
+    /// plan's `wake_sequence_floor` (`floor`), refused before its manifest
+    /// opens (FIX 969): `{"checkpoint_sequence_below_floor":{"floor":N,
+    /// "observed":M}}`, both required.
+    CheckpointSequenceBelowFloor {
+        floor: u64,
+        observed: u64,
+    },
     CustodyRequirementInvalid,
     CustodyLineageMismatch,
     CustodyHeadInvalid,
@@ -79,6 +89,61 @@ pub enum RestoreFailureReason {
     /// An added recipient's escrow report waits for the next start; a
     /// receipt's spool state, never a failed restore by itself.
     EscrowSpoolPending,
+}
+
+impl RestoreFailureReason {
+    /// The reason's snake_case name, a string for every one, for a log
+    /// field or a record keyed by reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SourceIdentityMismatch => "source_identity_mismatch",
+            Self::DataKeyMismatch => "data_key_mismatch",
+            Self::ArtifactIdentityMismatch => "artifact_identity_mismatch",
+            Self::ArtifactKindMismatch => "artifact_kind_mismatch",
+            Self::SignerUntrusted => "signer_untrusted",
+            Self::SignatureInvalid => "signature_invalid",
+            Self::ArtifactIntegrityInvalid => "artifact_integrity_invalid",
+            Self::CodecInvalid => "codec_invalid",
+            Self::BackupRegistryBindingMismatch => "backup_registry_binding_mismatch",
+            Self::CheckpointSequenceBelowFloor { .. } => "checkpoint_sequence_below_floor",
+            Self::CustodyRequirementInvalid => "custody_requirement_invalid",
+            Self::CustodyLineageMismatch => "custody_lineage_mismatch",
+            Self::CustodyHeadInvalid => "custody_head_invalid",
+            Self::AnchorUnavailable => "anchor_unavailable",
+            Self::AnchorMissing => "anchor_missing",
+            Self::AnchorInvalid => "anchor_invalid",
+            Self::CustodyLogIncomplete => "custody_log_incomplete",
+            Self::CustodyDiverged => "custody_diverged",
+            Self::CustodyHeadTooOld => "custody_head_too_old",
+            Self::CustodyKeyMissing => "custody_key_missing",
+            Self::CustodyOwnerKeyRequired => "custody_owner_key_required",
+            Self::BodyCustodyUnavailable => "body_custody_unavailable",
+            Self::ClaimReceiptInvalid => "claim_receipt_invalid",
+            Self::AnchorMoved => "anchor_moved",
+            Self::CustodyLandingFailed => "custody_landing_failed",
+            Self::ManagedDekMacMismatch => "managed_dek_mac_mismatch",
+            Self::DerivationOwnerMismatch => "derivation_owner_mismatch",
+            Self::PageCustodyInvalid => "page_custody_invalid",
+            Self::RecipientBindingInvalid => "recipient_binding_invalid",
+            Self::RecipientReused => "recipient_reused",
+            Self::LastWrap => "last_wrap",
+            Self::RetirementAuthorityInvalid => "retirement_authority_invalid",
+            Self::StorageIo => "storage_io",
+            Self::StartupFailed => "startup_failed",
+            Self::RestoreInputInvalid => "restore_input_invalid",
+            Self::CredentialsRejected => "credentials_rejected",
+            Self::DescriptorAlias => "descriptor_alias",
+            Self::IsolationUnproven => "isolation_unproven",
+            Self::DestinationNotFresh => "destination_not_fresh",
+            Self::WriterLeaseHeld => "writer_lease_held",
+            Self::DestinationMoved => "destination_moved",
+            Self::DiskCapacity => "disk_capacity",
+            Self::Cancelled => "cancelled",
+            Self::OutcomeUncertain => "outcome_uncertain",
+            Self::EscrowSpoolPending => "escrow_spool_pending",
+        }
+    }
 }
 
 /// The step of a cold managed restore a frame names; snake_case. A
@@ -347,9 +412,13 @@ pub fn identity_fits(identity: &ManagedRestoreIdentity) -> bool {
         offset: u64::MAX,
         data: String::new(),
     };
+    // The longest reason on the wire: its two numbers at their widest.
     let failed = ManagedRestoreResultFrame::Failed {
         identity: Some(identity.clone()),
-        reason: RestoreFailureReason::BackupRegistryBindingMismatch,
+        reason: RestoreFailureReason::CheckpointSequenceBelowFloor {
+            floor: u64::MAX,
+            observed: u64::MAX,
+        },
         phase: ManagedRestorePhase::CustodyAdmission,
         destination_state: ManagedRestoreDestination::CommittedNotServing,
     };

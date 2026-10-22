@@ -131,7 +131,7 @@ pub(super) fn in_place(
             first: match (&line.x, kind.draws_x(), line.set) {
                 (Some(x), true, _) => Some(First {
                     levels: std::slice::from_ref(x),
-                    numeric: true,
+                    numeric: !line.x_text,
                     set: None,
                 }),
                 (None, false, Some(set)) => wanted.sets.get(set).map(|held| First {
@@ -505,13 +505,13 @@ impl<'b> Plan<'b> {
     }
 
     /// Whether `line` is the chart's own cells (named by a reference, or
-    /// planned) and they hold the numbers `cells` already.
-    fn holds(&self, line: &Line, cells: &[Cell]) -> bool {
+    /// planned) and they hold `cells` already, as numbers when `numeric`.
+    fn holds(&self, line: &Line, cells: &[Cell], numeric: bool) -> bool {
         line.keys()
             .zip(cells)
             .all(|(key, cell)| match self.planned.get(&key) {
                 Some(planned) => planned.cell == *cell,
-                None => self.named.contains(&key) && same(self.stored(&key), cell, true),
+                None => self.named.contains(&key) && same(self.stored(&key), cell, numeric),
             })
     }
 
