@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1200 code-mode rows (1160 host rows, 40 run rows), 4119 declarations.
+// Census: 1200 code-mode rows (1160 host rows, 40 run rows), 4124 declarations.
 // Replies: 1080 fully typed, 116 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
@@ -3178,7 +3178,10 @@ declare namespace Sdk {
   type TakeoverRecord = { by: string; asked?: string | null; taken_at_ms: number; returned_at_ms: number; inputs: number };
   type WindowSwitchCause = "opened" | "closed";
   type WindowSwitch = { window: string; app: string; title: string; from: string; why: WindowSwitchCause };
-  type DesktopAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: WindowSwitch | null };
+  type SessionSeccomp = "runtime_default" | "guest_sandbox" | "engine_fence";
+  type SessionFenceProof = { ruleset_hash: string; seccomp_hash: string; network_routes: string[]; network_evidence_digest: string; sandbox_generation: string; launcher_digest: string };
+  type SessionManifest = { backend: string; runtime: string; image: string; argv_digest: string; network: string; seccomp: SessionSeccomp; generation: string; fence_proof?: SessionFenceProof | null; fence_unproven?: boolean };
+  type DesktopAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: WindowSwitch | null; session_manifest?: SessionManifest | null };
   type RowSplice = { start: number; delete_count: number };
   type RowGapField = "href" | "level" | "datetime";
   type RowGapReason = "no_dom_node" | "stale_node" | "outside_dom_read" | "read_failed" | "unresolvable";
@@ -3195,7 +3198,7 @@ declare namespace Sdk {
   type NoEffectReason = "no_observable_change";
   type ActionFact = { kind: "click_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "type_no_effect"; engine: BrowserEngine; target: ActionTarget; reason: NoEffectReason; window_ms: number } | { kind: "navigate_no_effect"; engine: BrowserEngine; url: string; reason: NoEffectReason; window_ms: number };
   type SwitchComponent = "url" | "cookies" | "cookie" | "local_storage" | "session_storage" | "storage" | "scroll" | "tab";
-  type StoragePhase = "pre_input" | "post_act" | "exit" | "hand_back" | "switch_export";
+  type StoragePhase = "pre_input" | "post_act" | "exit" | "hand_back" | "switch_export" | "fresh_export";
   type SwitchCarried = { component: SwitchComponent; origin?: string | null; count?: number | null; phase?: StoragePhase | null; after_receipt?: number | null };
   type SwitchLoss = "never_sampled" | "context_lost" | "read_exception" | "departure_tail_unobserved" | "evicted_oldest" | "cross_origin_frame" | "opaque_origin" | "effective_origin_mismatch" | "engine_refuses" | "engine_ignores" | "limit" | "host_capacity" | "read_failed" | "seed_failed" | "readback_mismatch" | "redirected" | "not_web_page" | "other_tab";
   type SwitchNotCarried = { component: SwitchComponent; origin?: string | null; cookies?: string[]; attribute?: string | null; count?: number | null; phase?: StoragePhase | null; after_receipt?: number | null; reason: SwitchLoss };
@@ -3213,7 +3216,8 @@ declare namespace Sdk {
   type WorkflowSeed = { pack: string; pinned_ref: string; path: string; digest: string; license: string };
   type LibraryCard = { workflow: string; site: string; subgoal: string; type_ref: string; params: string[]; secret_params?: SecretParam[]; runs: number; failures: number; recent: RecentCounts; held_out: boolean; supersedes?: string | null; seed?: WorkflowSeed | null; filed_at: number; last_run_at?: number | null; strict_misses: number };
   type PartialTree = { reason: string; visited: number; pending: number; walk_ms: number };
-  type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null };
+  type DialogAnswerFailure = { tab?: string | null; kind: string; accept: boolean; error: string };
+  type Observation2 = { seq: number; scope: string; base_seq?: number | null; url: string; title: string; full: boolean; splice?: RowSplice | null; rows: Row[]; offset?: number | null; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean; partial?: PartialTree | null; walk_next?: string | null; rebound?: Rebound | null; fact?: ActionFact | null; dialogs?: DialogAnswerFailure[] };
   type ObservationPage = Observation2 & { next?: string | null };
   type ObservationBase = { scope: string; seq: number };
   type ObserveInput = { base?: ObservationBase | null; full?: boolean; cursor?: string | null };
@@ -3242,7 +3246,8 @@ declare namespace Sdk {
   type BatchInput = { subgoal?: string | null; steps: BatchStep[]; base?: ObservationBase | null; until_ms?: number | null; no_model?: boolean };
   type SubgoalStatus = "done" | "NEEDS_AGENT" | "NEEDS_YOU";
   type CheckReceipt = { expect: ExpectInput; observed: ExpectOutput };
-  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null };
+  type DestinationRefusal = { reason: string; message: string };
+  type FailedStepReceipt = { step?: number | null; stop_cause: BatchStopCause; missed?: CheckReceipt[]; observation?: Observation2 | null; error?: string | null; refusal?: DestinationRefusal | null; next?: string | null };
   type StepRebound = { step: number; rebound: Rebound };
   type BatchOutput = { status: SubgoalStatus; completed: number; failed_step?: number | null; error?: string | null; stop_cause?: BatchStopCause | null; failed_receipt?: FailedStepReceipt | null; elapsed_ms: number; observation?: Observation2 | null; receipts?: EffectReceipt[]; decisions?: unknown[]; until_ms?: number | null; next?: string | null; rebindings?: StepRebound[] };
   type WindowsInput = { app?: string | null };
@@ -4012,7 +4017,7 @@ declare namespace Sdk {
   type PressedThrough = { seq: number; effect_class: string };
   type DraftOutput = { site?: string | null; origin?: string | null; after_seq: number; through_seq: number; proposal: ProposeInput; slot_candidates?: SlotCandidate[]; gaps?: DraftGap[]; pressed_through?: PressedThrough[]; complete: boolean };
   type DemonstrationOutput = { id: DemonstrationId; source: DemonstrationSource; label?: string | null; origin?: string | null; steps: RecordedStep[]; gaps?: RecordingGap[]; started_at_ms: number; stopped_at_ms: number; stop_cause: DemonstrationStopCause; draft: DraftOutput };
-  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null };
+  type BrowserAnswer<T> = T & { takeover?: TakeoverRecord | null; switched?: TabSwitch | null; engine?: BrowserEngine | null; demonstration?: DemonstrationOutput | null; session_manifest?: SessionManifest | null };
   type BrowserObservationPage = BrowserAnswer<ObservationPage>;
   type BrowserFindOutput = BrowserAnswer<FindOutput>;
   type BrowserWaitForOutput = BrowserAnswer<WaitForOutput>;

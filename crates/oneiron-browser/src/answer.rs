@@ -130,7 +130,9 @@ impl<T> DesktopAnswer<T> {
 
 /// What a guest session proved about its fence, as the run's door names it
 /// on every answer (FIX 5705): the container's own session manifest, as it
-/// reads on the wire. The door sends that manifest; this is its shape.
+/// reads on the wire. The door sends that manifest; this is its shape. Its
+/// guest-image release evidence (FIX 8253) rides beside these fields,
+/// undeclared here.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionManifest {
     pub backend: String,
@@ -147,10 +149,6 @@ pub struct SessionManifest {
     /// Non-Linux or explicitly unfenced sessions never claim isolation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
-    /// The guest-image release the launch saw (FIX 8253): evidence only,
-    /// in the container's own shape.
-    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
-    pub image_release: serde_json::Value,
 }
 
 /// Evidence the session verified before its guest made its first network

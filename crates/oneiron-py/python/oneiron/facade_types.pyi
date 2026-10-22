@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1149 facade rows, 4064 declarations.
+Census: 1149 facade rows, 4069 declarations.
 Inputs: 1084 of 1149 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1035 of 1149 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
@@ -20394,6 +20394,24 @@ class DemonstrationOutput(TypedDict):
     stopped_at_ms: int
     stop_cause: DemonstrationStopCause
     draft: DraftOutput
+SessionSeccomp = Literal["runtime_default", "guest_sandbox", "engine_fence"]
+class SessionFenceProof(TypedDict):
+    ruleset_hash: str
+    seccomp_hash: str
+    network_routes: list[str]
+    network_evidence_digest: str
+    sandbox_generation: str
+    launcher_digest: str
+class SessionManifest(TypedDict):
+    backend: str
+    runtime: str
+    image: str
+    argv_digest: str
+    network: str
+    seccomp: SessionSeccomp
+    generation: str
+    fence_proof: NotRequired[SessionFenceProof | None]
+    fence_unproven: NotRequired[bool]
 BrowserAnswerItem = dict[str, Any]
 BrowserAnswer = BrowserAnswerItem[T]
 class RowSplice(TypedDict):
@@ -20468,7 +20486,7 @@ class ActionFactNavigateNoEffect(TypedDict):
     window_ms: int
 ActionFact = ActionFactClickNoEffect | ActionFactTypeNoEffect | ActionFactNavigateNoEffect
 SwitchComponent = Literal["url", "cookies", "cookie", "local_storage", "session_storage", "storage", "scroll", "tab"]
-StoragePhase = Literal["pre_input", "post_act", "exit", "hand_back", "switch_export"]
+StoragePhase = Literal["pre_input", "post_act", "exit", "hand_back", "switch_export", "fresh_export"]
 class SwitchCarried(TypedDict):
     component: SwitchComponent
     origin: NotRequired[str | None]
@@ -20547,6 +20565,11 @@ class PartialTree(TypedDict):
     visited: int
     pending: int
     walk_ms: int
+class DialogAnswerFailure(TypedDict):
+    tab: NotRequired[str | None]
+    kind: str
+    accept: bool
+    error: str
 class Observation2(TypedDict):
     seq: int
     scope: str
@@ -20564,6 +20587,7 @@ class Observation2(TypedDict):
     walk_next: NotRequired[str | None]
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
+    dialogs: NotRequired[list[DialogAnswerFailure]]
 class ObservationPage(Observation2):
     next: NotRequired[str | None]
 BrowserObservationPage = BrowserAnswer[ObservationPage]
@@ -20671,12 +20695,17 @@ SubgoalStatus = Literal["done", "NEEDS_AGENT", "NEEDS_YOU"]
 class CheckReceipt(TypedDict):
     expect: ExpectInput
     observed: ExpectOutput
+class DestinationRefusal(TypedDict):
+    reason: str
+    message: str
 class FailedStepReceipt(TypedDict):
     step: NotRequired[int | None]
     stop_cause: BatchStopCause
     missed: NotRequired[list[CheckReceipt]]
     observation: NotRequired[Observation2 | None]
     error: NotRequired[str | None]
+    refusal: NotRequired[DestinationRefusal | None]
+    next: NotRequired[str | None]
 class StepRebound(TypedDict):
     step: int
     rebound: Rebound
