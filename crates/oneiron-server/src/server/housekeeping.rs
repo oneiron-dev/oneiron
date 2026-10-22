@@ -349,22 +349,20 @@ impl SyncServer {
         self.housekeeping_passes.hold(run);
     }
 
-    /// The upkeep under this host's root: the managed issuer, or the one the
-    /// configured host secret derives. A host with neither attests nothing.
-    /// The derived root is held on the vault handle, so the device sync's
-    /// steady pass attests with it the images its home writes (FIX 4882).
+    /// The upkeep under this host's root: the managed issuer, or this
+    /// install's own self-host root issuer (FIX-LIST 3018). A host with
+    /// neither attests nothing. The self-host root is held on the vault
+    /// handle, so the device sync's steady pass attests with it the images
+    /// its home writes (FIX 4882).
     fn upkeep_authority_checkpoint(&self) -> oneiron::Result<AuthorityCheckpointUpkeep> {
         if let Some(issuer) = self.managed_issuer.as_ref() {
             return self.vault().upkeep_authority_checkpoint(issuer);
         }
-        let Some(secret) = self.config.auth_secret.as_deref() else {
+        let Some(issuer) = self.host_root_issuer.as_ref() else {
             return Ok(AuthorityCheckpointUpkeep::Idle);
         };
-        let issuer = Arc::new(oneiron::authority::HostSlipIssuer::from_secret(
-            secret.as_bytes(),
-        )?);
-        self.vault().hold_checkpoint_root_signer(issuer.clone());
-        self.vault().upkeep_authority_checkpoint(&issuer)
+        self.vault().hold_checkpoint_root_signer(Arc::clone(issuer));
+        self.vault().upkeep_authority_checkpoint(issuer)
     }
 
     /// Runs every engine sweep now, as the owner asked, on a pass the host

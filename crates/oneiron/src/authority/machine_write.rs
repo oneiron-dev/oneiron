@@ -56,7 +56,7 @@ impl Vault {
             .machine_history_issuer
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Some(HostSlipIssuer::from_secret(issuer.secret())?);
+            Some(issuer.duplicate()?);
         Ok(())
     }
 

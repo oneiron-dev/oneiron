@@ -34,23 +34,36 @@ impl SyncServer {
         vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
-        // An empty configured secret mints nothing either: it carries no key
-        // material, and every upgrade bearing it (or nothing) still 401s at
-        // the auth door, so booting rootless here is fail-closed, not open.
+        // An empty configured secret mints nothing either, and every upgrade
+        // bearing it (or nothing) still 401s at the auth door, so booting
+        // rootless here is fail-closed, not open. The configured secret
+        // admits rooting; the root signs with this install's own issuer seed
+        // for the vault (FIX-LIST 3018), drawn only for a vault no root has
+        // reached. An install holding no seed serves rootless, said once.
         let issuer = match host_root_secret(&vault, &config) {
-            Some(secret) => {
-                let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
-                vault.ensure_host_root_slip(&issuer)?;
-                // The engine's MACHINE writers sign with host-held keys (ONE-1634).
-                vault.provision_engine_machine_identities(&issuer)?;
-                Some(issuer)
-            }
+            Some(_) => match vault.bootstrap_host_slip_issuer() {
+                Ok(issuer) => {
+                    vault.ensure_host_root_slip(&issuer)?;
+                    // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+                    vault.provision_engine_machine_identities(&issuer)?;
+                    Some(Arc::new(issuer))
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        reason = %error,
+                        "this install holds no host issuer seed for the vault, so it serves without \
+                         signing as its root; reads and sync go on"
+                    );
+                    None
+                }
+            },
             None => None,
         };
         // This install's own machine profile, before any request is admitted,
         // so it carries the owner's acts from its first start (FIX 4648):
         // self-hosted and embedded serving alike. A start goes on without it.
-        vault.ensure_serving_install_profile_at_start(issuer.as_ref(), "serve");
+        vault.ensure_serving_install_profile_at_start(issuer.as_deref(), "serve");
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -249,6 +262,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            host_root_issuer: issuer,
             policy_doors: Default::default(),
             account_keys: None,
             mcp_registry,

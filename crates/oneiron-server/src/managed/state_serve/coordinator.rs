@@ -101,18 +101,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
     server_config.hosted_private_origins = managed.hosted_private_origins.clone();
-    // Stable, domain-separated custody from the verified vault DEK, not the
-    // per-spawn callback token or caller-controlled HTTP identity headers.
-    // A fresh spawn with the same DEK must recover the same logged host root.
-    let mut issuer_key = blake3::derive_key(
-        "oneiron/managed-supervisor-host-authority/v2",
-        &credentials.dek,
-    );
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
-    issuer_key.fill(0);
-    let readiness = provision_host_authority(
+    // The host root signs with this vault's own independent issuer seed,
+    // kept in this install's keystore slot under the supervisor's key
+    // directory (FIX-LIST 3018): never the delivered DEK, which escrow
+    // recipients hold, nor the per-spawn token or caller headers. A fresh
+    // spawn of this install loads the same seed, so the same logged root.
+    let (issuer, readiness) = provision_host_authority(
         &vault,
-        &issuer,
         &config.keystore,
         settled.keystore_unbound,
         &managed.data_dir,

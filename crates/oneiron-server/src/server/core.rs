@@ -101,6 +101,11 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// The self-host root's issuer, loaded at construction from this
+    /// install's own issuer seed for the vault when a host secret is
+    /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
+    /// where this install holds no seed. Never the managed issuer.
+    pub(crate) host_root_issuer: Option<Arc<oneiron::authority::HostSlipIssuer>>,
     pub(crate) policy_doors: super::policy_doors::PolicyDoors,
     /// Node-side account API key verifier (OF-448), installed by a host
     /// that supplies the control-plane checker. `None`: account keys are
@@ -501,13 +506,22 @@ impl SyncServer {
     }
 
     /// Whether boot rooted this vault and provisioned the engine's machine
-    /// writers (the Dreamer among them): from the configured secret, or on
-    /// a managed vault from its DEK-derived issuer, which managed boot sets
-    /// once it has provisioned them (FIX 7261). Never on a blind relay.
+    /// writers (the Dreamer among them): with this install's own issuer
+    /// seed where a host secret is configured, or on a managed vault with
+    /// the issuer managed boot sets once it has provisioned them (FIX 7261,
+    /// FIX-LIST 3018). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
-        host_root_secret(&self.vault, &self.config).is_some()
+        self.host_root_issuer.is_some()
             || (self.managed_issuer.is_some()
                 && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
+    }
+
+    /// The issuer this host signs with as the vault's root: the managed
+    /// issuer, else the self-host root's loaded at construction.
+    pub(crate) fn host_issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        self.managed_issuer
+            .as_ref()
+            .or(self.host_root_issuer.as_deref())
     }
 
     /// Install the host's extraction egress predicate. An absent predicate

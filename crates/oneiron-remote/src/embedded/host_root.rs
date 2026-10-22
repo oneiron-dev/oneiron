@@ -12,7 +12,7 @@
 
 use std::path::Path;
 
-use oneiron::authority::{AuthorityTier, HostSlipIssuer, LocalOpenProfile, ROLE_CLOUD};
+use oneiron::authority::{AuthorityTier, LocalOpenProfile, ROLE_CLOUD};
 use oneiron::memory::MemoryError;
 use oneiron::{EdgeActorClass, HostingPrivacyPosture, Vault};
 
@@ -54,7 +54,7 @@ impl EmbeddedClient {
         }
         let shared = open_shared(path, options)?;
         if SDK_HOST_ROOT_REFUSES_HOSTED {
-            refuse_hosted_root(&shared, host_root_secret)?;
+            refuse_hosted_root(&shared)?;
         }
         let profile = shared
             .vault()
@@ -97,7 +97,7 @@ impl HostRootProfile {
 /// provider's, naming why. Marks are read as the fold holds them, never
 /// relabelled: a hosted root is stamped `ROLE_CLOUD` and `CloudCustodial`
 /// when it is minted, and the opener's local default does not erase that.
-fn refuse_hosted_root(shared: &SharedVault, host_root_secret: &[u8]) -> Result<(), MemoryError> {
+fn refuse_hosted_root(shared: &SharedVault) -> Result<(), MemoryError> {
     let vault: &Vault = shared.vault();
     match vault.privacy_posture() {
         HostingPrivacyPosture::SelfHostLocal => {}
@@ -117,7 +117,12 @@ fn refuse_hosted_root(shared: &SharedVault, host_root_secret: &[u8]) -> Result<(
             ));
         }
     }
-    let issuer = HostSlipIssuer::from_secret(host_root_secret)?;
+    // The root this install signs with is its own issuer seed for the
+    // vault (FIX-LIST 3018), not one the secret derives. With none here the
+    // profile door after this guard answers for the missing key.
+    let Ok(issuer) = vault.load_host_slip_issuer() else {
+        return Ok(());
+    };
     let fold = vault.authority_fold()?;
     let provider_held = fold.roster.get(&issuer.public_key()).is_some_and(|row| {
         row.roles & ROLE_CLOUD != 0 || row.tier == AuthorityTier::CloudCustodial

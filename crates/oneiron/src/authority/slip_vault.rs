@@ -14,6 +14,7 @@ mod connect_lifecycle;
 pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
 pub use connect::ConnectOffer;
+mod issuer_custody;
 mod issuer_seed;
 pub use issuer_seed::{HostSlipIssuer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT};
 
@@ -221,7 +222,7 @@ impl Vault {
         let mut fold = self.authority_fold_readonly_in_txn(txn)?;
         let mut pending = Vec::new();
         if fold.append_sequences.is_empty() {
-            let recovery = blake3::derive_key("oneiron/host-genesis-recovery/v2", issuer.secret());
+            let recovery = issuer.genesis_recovery();
             let genesis = issuer.sign_entry(
                 None,
                 0,

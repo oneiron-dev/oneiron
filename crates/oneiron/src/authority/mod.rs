@@ -133,6 +133,7 @@ mod support_receipt;
 mod task_actor;
 mod vault_api;
 mod weave_admin;
+mod withdrawn_grant;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
@@ -306,7 +307,10 @@ pub use slip_renewal::{
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
-pub use slip_vault::{ConnectOffer, ConnectRescopeOffer, HostSlipIssuer};
+pub use slip_vault::{
+    ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
+    HostSlipIssuer,
+};
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
@@ -316,6 +320,10 @@ pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
+};
+pub(crate) use withdrawn_grant::{
+    ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, mark_if_withdrawn_grant_in_txn,
+    mark_withdrawn_grant_in_txn,
 };
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by

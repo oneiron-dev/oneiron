@@ -13,27 +13,28 @@ use subtle::ConstantTimeEq;
 use super::args::ManagedError;
 use crate::config::KeystoreInstall;
 
-/// The host's authority on a vault past its open gates: its logged root and
-/// the engine's MACHINE writers, which sign with host-held keys (ONE-1634).
-/// Then this install's key slots, only where the supervisor put them, and
-/// with them the host's own node in the roster: never the owner's, never a
-/// world key's recipient. A restart keeps a node the owner answered for since
-/// as he answered (FIX 4648).
+/// The host's authority on a vault past its open gates. First this
+/// install's key slots, only where the supervisor put them: the host root's
+/// issuer is this vault's own independent seed in one of them (FIX-LIST
+/// 3018), drawn when this install roots a new vault and loaded on every
+/// later spawn, never minted again. Then its logged root and the engine's
+/// MACHINE writers, which sign with host-held keys (ONE-1634), and the
+/// host's own node in the roster: never the owner's, never a world key's
+/// recipient. A restart keeps a node the owner answered for since as he
+/// answered (FIX 4648).
 ///
-/// The readiness it returns names each signing facility the vault serves
-/// without (WILL-PLAN L14 row 17): the supervisor's key directory, where the
-/// owner did not turn the keystore off (`keystore_unbound`), a keystore that
-/// would not open, signing keys that did not load, and a node the roster
-/// did not take. None of them stops the start.
+/// The readiness it returns names each other signing facility the vault
+/// serves without (WILL-PLAN L14 row 17): the supervisor's key directory,
+/// where the owner did not turn the keystore off (`keystore_unbound`), a
+/// keystore that would not open, signing keys that did not load, and a
+/// node the roster did not take. Only the root's own issuer seed stops the
+/// start when it is missing: a managed vault serves under its root.
 pub(super) fn provision_host_authority(
     vault: &oneiron::Vault,
-    issuer: &oneiron::authority::HostSlipIssuer,
     keystore: &crate::config::KeystoreConfig,
     keystore_unbound: bool,
     data_dir: &Path,
-) -> oneiron::Result<ManagedReadiness> {
-    vault.ensure_host_root_slip(issuer)?;
-    vault.provision_engine_machine_identities(issuer)?;
+) -> oneiron::Result<(oneiron::authority::HostSlipIssuer, ManagedReadiness)> {
     let mut missing = Vec::new();
     let mut lacks = |facility, reason| missing.push(FacilityNotice { facility, reason });
     if keystore_unbound {
@@ -42,7 +43,11 @@ pub(super) fn provision_host_authority(
             FacilityReason::MissingBinding,
         );
     }
-    match keystore.install(vault, data_dir) {
+    let installed = keystore.install(vault, data_dir);
+    let issuer = vault.bootstrap_host_slip_issuer()?;
+    vault.ensure_host_root_slip(&issuer)?;
+    vault.provision_engine_machine_identities(&issuer)?;
+    match installed {
         KeystoreInstall::Off => {}
         KeystoreInstall::Unavailable => {
             lacks(ManagedFacility::DeviceKeystore, FacilityReason::OpenFailed);
@@ -54,7 +59,7 @@ pub(super) fn provision_host_authority(
                     FacilityReason::PrepareFailed,
                 );
             }
-            if let Err(error) = vault.provision_host_node(issuer) {
+            if let Err(error) = vault.provision_host_node(&issuer) {
                 tracing::warn!(
                     kind = ?error.kind(),
                     reason = %error,
@@ -67,7 +72,7 @@ pub(super) fn provision_host_authority(
             }
         }
     }
-    Ok(ManagedReadiness::from_missing(missing))
+    Ok((issuer, ManagedReadiness::from_missing(missing)))
 }
 
 /// Logs each facility a vault that came up degraded serves without, once,
