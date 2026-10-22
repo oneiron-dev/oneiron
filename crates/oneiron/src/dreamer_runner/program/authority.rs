@@ -3,13 +3,19 @@
 //! Grant refs and the effective scope's digest), never a bearer secret, and
 //! judged again against the live vault before anything is admitted. Neither
 //! the operator root nor a Dreamer stamp stands in for the actor.
+//!
+//! A slip's turn also seals the exact signed instrument its request was
+//! admitted on, as queued turn actions keep theirs (FIX 8717). Each binding
+//! verifies it again, every caveat included, and the program runs under
+//! that live, verified view: its scope, ceiling and verbs bind every read
+//! and effect the program makes, never the actor's broader native surface.
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::authority::VerifiedSlip;
+use crate::authority::{InvocationSlipBinding, VerifiedSlip};
 use crate::dreamer_runner::{DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerMilestoneClaim};
-use crate::error::{Error, Result};
+use crate::error::{ClaimError, Error, Result};
 use crate::write_envelope::WriteEnvelope;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
@@ -37,13 +43,16 @@ pub(crate) struct TurnProgramAuthority {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Proof {
     /// The caller's own verified capability slip, by id: the slip it was
-    /// delegated from, the FEDERATION_GRANT it was minted under, and the
-    /// digest of the effective scope it was admitted with.
+    /// delegated from, the FEDERATION_GRANT it was minted under, the digest
+    /// of the effective scope it was admitted with, and the instrument the
+    /// request presented, which is no authority on its own: each judgment
+    /// verifies it again in its own snapshot (FIX 8717).
     Slip {
         slip_id: [u8; 32],
         parent: Option<[u8; 32]>,
         grant: Option<EntityId>,
         scope_digest: [u8; 32],
+        instrument: InvocationSlipBinding,
     },
     /// A self-hosted vault's host credential acting as the vault's owner
     /// (FIX 2222): the host root by id, or the explicit local dev mode.
@@ -55,12 +64,14 @@ enum Proof {
 
 impl TurnProgramAuthority {
     /// A caller's own slip: one that allows writes and that its holder, the
-    /// actor, still holds. A transferred, single-use, invitee or support slip
+    /// actor, still holds, with `instrument`, the signed instrument its
+    /// request kept. A transferred, single-use, invitee or support slip
     /// seals nothing, so its turn wakes no program.
     pub(crate) fn slip(
         actor: EntityId,
         class: EdgeActorClass,
         proof: &VerifiedSlip,
+        instrument: &InvocationSlipBinding,
     ) -> Option<Self> {
         let claims = proof.claims();
         let writes = proof.allows_verb("write") || proof.allows_verb("core:write");
@@ -93,6 +104,7 @@ impl TurnProgramAuthority {
                 parent: claims.parent_id,
                 grant,
                 scope_digest,
+                instrument: instrument.clone(),
             },
         })
     }
@@ -151,59 +163,117 @@ impl TurnProgramAuthority {
     /// Whether this authority still stands in `txn`: the actor is a live
     /// authority-bearing row whose binding no revocation took, and its
     /// witness still holds (the same slip live and held by the actor under
-    /// the same delegation and live Grant; the host action still acting as
-    /// this owner). `false` is a lapse; `Err` is a failure to judge it.
+    /// the same delegation and live Grant, its kept instrument verifying
+    /// again; the host action still acting as this owner). `false` is a
+    /// lapse; `Err` is a failure to judge it.
     pub(super) fn stands_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        Ok(matches!(
+            self.standing_in_txn(vault, txn)?,
+            Standing::Stands(_)
+        ))
+    }
+
+    /// [`Self::stands_in_txn`], with the slip's live, verified view when it
+    /// stands on one: the scope, ceiling and verbs the program runs under.
+    fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
         let writer = WriteActor::new(self.actor, self.class()?);
         if let Err(error) = vault.verify_native_write_actor_in_txn(txn, &writer) {
-            return lapsed(error);
+            return lapsed(error).map(Standing::of);
         }
         match &self.proof {
             Proof::Slip {
                 slip_id,
                 parent,
                 grant,
+                instrument,
                 ..
             } => {
                 if !vault.capability_slip_id_is_live_in_txn(txn, slip_id)? {
-                    return Ok(false);
+                    return Ok(Standing::Lapsed);
                 }
                 let fold = vault.authority_view_readonly_in_txn(txn)?;
                 let Some(mint) = fold.slips.mints.get(slip_id) else {
-                    return Ok(false);
+                    return Ok(Standing::Lapsed);
                 };
                 let claims = &mint.action.claims;
                 if claims.holder_ref != self.actor.to_hex()
                     || claims.parent_id != *parent
                     || claims.grant_ref != grant.as_ref().map(EntityId::to_hex)
                 {
-                    return Ok(false);
+                    return Ok(Standing::Lapsed);
                 }
-                match grant {
-                    Some(grant) => {
-                        Ok(
-                            crate::vault::live_entity_row_in_txn(&vault.store, txn, grant)?
-                                .is_live(),
-                        )
-                    }
-                    None => Ok(true),
+                if let Some(grant) = grant
+                    && !crate::vault::live_entity_row_in_txn(&vault.store, txn, grant)?.is_live()
+                {
+                    return Ok(Standing::Lapsed);
                 }
+                self.live_instrument_in_txn(vault, txn, slip_id, instrument)
             }
             Proof::HostAction { root } => {
                 match vault.host_action_owner_in_txn(txn, None) {
                     Ok(owner) if owner == self.actor => {}
-                    Ok(_) => return Ok(false),
+                    Ok(_) => return Ok(Standing::Lapsed),
                     Err(error) if crate::authority::host_action_refused(&error) => {
-                        return Ok(false);
+                        return Ok(Standing::Lapsed);
                     }
                     Err(error) => return Err(error),
                 }
                 match root {
-                    Some(root) => vault.capability_slip_id_is_live_in_txn(txn, root),
-                    None => Ok(true),
+                    Some(root) => vault
+                        .capability_slip_id_is_live_in_txn(txn, root)
+                        .map(Standing::of),
+                    None => Ok(Standing::Stands(None)),
                 }
             }
-            Proof::Native => Ok(true),
+            Proof::Native => Ok(Standing::Stands(None)),
+        }
+    }
+
+    /// The kept instrument verified again in `txn` (FIX 8717): every caveat,
+    /// its holder's signature and its standing at this snapshot's clock. It
+    /// must still be the sealed slip, held by the actor untransferred and
+    /// allowing writes, as it was at the seal; any other answer is a lapse.
+    fn live_instrument_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        slip_id: &[u8; 32],
+        instrument: &InvocationSlipBinding,
+    ) -> Result<Standing> {
+        let verified = match vault.invocation_slip_in_txn(txn, instrument) {
+            Ok(verified) => verified,
+            Err(Error::Record(_) | Error::Claim(_) | Error::InvalidClaimBody(_)) => {
+                return Ok(Standing::Lapsed);
+            }
+            Err(error) => return Err(error),
+        };
+        let claims = verified.claims();
+        if claims.slip_id != *slip_id
+            || claims.holder_ref != self.actor.to_hex()
+            || verified.is_transferred()
+            || !(verified.allows_verb("write") || verified.allows_verb("core:write"))
+        {
+            return Ok(Standing::Lapsed);
+        }
+        Ok(Standing::Stands(Some(verified)))
+    }
+}
+
+/// What a sealed authority stands on at one revision.
+enum Standing {
+    /// It lapsed: the program takes the lapse's hold.
+    Lapsed,
+    /// It stands, with the slip's live, verified view when it is a slip's.
+    Stands(Option<VerifiedSlip>),
+}
+
+impl Standing {
+    /// A judgment with no proof of its own: `true` stands, `false` lapsed.
+    fn of(stands: bool) -> Self {
+        if stands {
+            Self::Stands(None)
+        } else {
+            Self::Lapsed
         }
     }
 }
@@ -324,9 +394,12 @@ impl Vault {
             return Err(invalid());
         }
         let pin = row.definition.ok_or_else(invalid)?;
-        if !row.wake.authority.stands_in_txn(self, txn)? {
-            return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
-        }
+        let proof = match row.wake.authority.standing_in_txn(self, txn)? {
+            Standing::Stands(proof) => proof,
+            Standing::Lapsed => {
+                return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
+            }
+        };
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
         }
@@ -335,17 +408,45 @@ impl Vault {
             admission: stamp.admission,
             code_run: super::run::turn_program_code_run(&stamp.admission)?,
             pin,
+            proof,
         }))
     }
 }
 
 /// One program attempt bound for one entry: the waking actor it runs as,
-/// the code run its admission fixed, and the pinned program it runs.
+/// the code run its admission fixed, the pinned program it runs, and, for a
+/// slip's turn, that slip's live, verified view, which bounds every read
+/// and effect of the run (FIX 8717). `None` for a host action's or the
+/// in-process host's turn, which run on the actor's own surface.
 pub(crate) struct TurnProgramBinding {
     pub(crate) actor: WriteActor,
     pub(crate) admission: [u8; 32],
     pub(crate) code_run: EntityId,
     pub(crate) pin: ProgramRecipePin,
+    pub(crate) proof: Option<VerifiedSlip>,
+}
+
+/// In a program write's own reservation commit, the waking authority its
+/// attempt's admission sealed must still stand (FIX 8717): a write is
+/// never reserved under a lapsed or revoked credential.
+pub(crate) fn require_program_authority_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<()> {
+    let stamp = ATTEMPT.get(vault, txn, &attempt)?.ok_or_else(invalid)?;
+    let row = ADMISSION
+        .get(vault, txn, &stamp.admission)?
+        .ok_or_else(invalid)?;
+    if stamp.attempt_id != *attempt.as_bytes() || row.wake.authority.actor() != stamp.actor {
+        return Err(invalid());
+    }
+    if !row.wake.authority.stands_in_txn(vault, txn)? {
+        return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+            reason: "a program's waking authority no longer stands",
+        }));
+    }
+    Ok(())
 }
 
 /// What binding one program attempt for an entry found.

@@ -16,14 +16,16 @@ pub(crate) async fn mcp_gateway(
     connection: Extensions,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(
+    // What a tool's answer holds (a deck preview's renderer) is kept until
+    // the reply is encoded (FIX 8238).
+    crate::api::answer_hold::until_encoded(mcp_endpoint(
         McpSurfaceMode::Primary,
         headers,
         locality,
         connection,
         server,
         body,
-    )
+    ))
     .await
 }
 
@@ -38,14 +40,16 @@ pub(crate) async fn mcp_tool_first_gateway(
     connection: Extensions,
     body: Bytes,
 ) -> impl IntoResponse {
-    mcp_endpoint(
+    // What a tool's answer holds (a deck preview's renderer) is kept until
+    // the reply is encoded (FIX 8238).
+    crate::api::answer_hold::until_encoded(mcp_endpoint(
         McpSurfaceMode::ToolFirst,
         headers,
         locality,
         connection,
         server,
         body,
-    )
+    ))
     .await
 }
 

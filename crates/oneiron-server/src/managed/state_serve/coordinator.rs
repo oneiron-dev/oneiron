@@ -225,6 +225,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let write_admission = Arc::new(admission::Admission::default());
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
     let control = admission::dreamer_control(&write_admission, &reap_gate);
+    // `--no-hooks` turns verb hooks off before any worker starts, so a queued
+    // Continue or Retry taken up below runs none (FIX 9480).
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
         sync_server,
         config.models.as_ref(),
@@ -324,9 +329,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         drop(hooks_stopped);
         None
     };
-    if !config.hooks {
-        sync_server.vault().suppress_verb_hooks();
-    }
 
     // The owner's `[linear]` mirror and webhook mapping, as plain serve
     // starts them, each pass admitted like a served write and holding it
@@ -387,7 +389,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // quiescent. These and the workers below count as other background
     // passes, unless named (FIX 6902).
     let admitted = || state.background_admission(WriteKind::BackgroundOther);
-    let background = sync_server.spawn_serve_background(admitted());
+    // Held here until stopped: on a start that fails below as on a clean
+    // stop, its admitted passes end before the process does (FIX 9538).
+    let mut background = Some(sync_server.spawn_serve_background(admitted()));
     // Surface events drain under the same admission (OF-218).
     let connector_events = sync_server.spawn_connector_event_worker(admitted());
     // Approved sends leave under the same admission (OF-187).
@@ -617,7 +621,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // Drain observation writes without thawing a previously quiescent process.
         let telemetry_drained = state.freeze();
         // No new durable background work from here on.
-        background.stop().await;
+        if let Some(background) = background.take() {
+            background.stop().await;
+        }
         connector_events.abort();
         let _ = connector_events.await;
         connector_sends.abort();
@@ -678,6 +684,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     .await;
     // Still running only when an error left the scope before its join.
+    if let Some(background) = background {
+        background.stop().await;
+    }
     if let Some(tagging) = tagging {
         shutdown.trigger();
         let _ = tagging.await;

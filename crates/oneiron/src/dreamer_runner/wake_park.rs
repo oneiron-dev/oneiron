@@ -17,19 +17,9 @@ pub struct DreamerCheckpointDue {
     /// When it parked, in Unix seconds.
     pub parked_at: u64,
     /// When the next local pass may resume it, in Unix seconds: when it
-    /// parked, or its retry delay later for a Retry park.
+    /// parked, or the vault's resolved Retry pause later for a Retry park
+    /// (FIX 8716).
     pub due_at: u64,
-}
-
-impl DreamerParkedAttemptRecord {
-    /// When a later wake pass may resume this park as the same try, in
-    /// store-clock seconds; `None` for a park no later pass resumes.
-    #[must_use]
-    pub fn later_pass_due_at(&self) -> Option<u64> {
-        self.cause
-            .later_pass_resume_delay()
-            .map(|delay| self.parked_at.saturating_add(delay))
-    }
 }
 
 impl DreamerRunnerStore<'_> {
@@ -39,6 +29,8 @@ impl DreamerRunnerStore<'_> {
     /// a due park grants no ownership.
     pub fn checkpoint_resumes_due(&self) -> Result<Vec<DreamerCheckpointDue>> {
         let rtxn = self.vault.store.env.read_txn()?;
+        // The resume writer reads the same row in its own snapshot.
+        let retry_secs = self.vault.dreamer_retry_park_secs_in_txn(&rtxn)?;
         let mut due = Vec::new();
         for park in self.checkpoint_parks_in_txn(&rtxn)? {
             let Some(attempt) = self.attempts.get_in_txn(&rtxn, park.attempt_id)? else {
@@ -50,7 +42,7 @@ impl DreamerRunnerStore<'_> {
                 due.push(DreamerCheckpointDue {
                     attempt,
                     parked_at: park.parked_at,
-                    due_at: park.later_pass_due_at().unwrap_or(park.parked_at),
+                    due_at: park.later_pass_due_at(retry_secs).unwrap_or(park.parked_at),
                 });
             }
         }
@@ -65,7 +57,7 @@ impl DreamerRunnerStore<'_> {
         let mut parks = Vec::new();
         for row in PARKED.iter_from(&self.vault.store, txn, &[])? {
             let (_, park) = row?;
-            if park.cause.later_pass_resume_delay().is_some() {
+            if park.cause.resumes_on_later_pass() {
                 parks.push(park);
             }
         }

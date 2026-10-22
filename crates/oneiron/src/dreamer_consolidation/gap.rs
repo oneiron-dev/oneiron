@@ -1,3 +1,7 @@
+//! Reflection gaps: missed follow-ups, open threads, unacted intents, contradictions.
+//! Entry: `ReflectionGap`, with `scan_reflection_gaps`.
+//! Definitions are local; intent handling sits in the intent child.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;

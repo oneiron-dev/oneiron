@@ -1,3 +1,7 @@
+//! The durable connector-send task substrate.
+//! Entry: `ConnectorSendTask`.
+//! Defines its own items.
+
 use crate::ports::EntityStoreRead;
 use serde::{Deserialize, Serialize};
 
