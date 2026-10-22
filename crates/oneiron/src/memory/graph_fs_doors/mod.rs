@@ -1,5 +1,6 @@
 //! Typed read-only file-face verbs. All operations open the caller's own
 //! Memory read lane; a mount is a content selector, not an authority token.
+mod repo_projection;
 mod types;
 pub use types::*;
 
