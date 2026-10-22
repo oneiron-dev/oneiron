@@ -9,21 +9,24 @@ impl Vault {
     /// snapshot/update bytes.
     ///
     /// Discrimination order — the hook stays inert for everything else:
-    /// type byte FIRST (non-CLAIM ⇒ `None`), then the predicate (non-
-    /// `edge.provenance` Claim ⇒ `None`). A bodiless 25 B Claim shell ⇒
-    /// `None`: every local SoftErase commits the D16 edge refresh in the
-    /// SAME transaction that scrubs the body, so a shell's subject edge is
-    /// already consistent and the refs the sweep would need are gone with
-    /// the body. A type-0 record whose NON-empty body fails
+    /// type byte FIRST (non-CLAIM ⇒ `NotApplicable`), then the predicate
+    /// (non-`edge.provenance` Claim ⇒ `NotApplicable`). A bodiless 25 B Claim
+    /// shell ⇒ `NotApplicable`: every local SoftErase commits the D16 edge
+    /// refresh in the SAME transaction that scrubs the body, so a shell's
+    /// subject edge is already consistent and the refs the sweep would need
+    /// are gone with the body. A type-0 record whose NON-empty body fails
     /// claim/provenance decoding fails CLOSED with the decoder's typed error
     /// — the ONE-1104 invariant (every type-0 write is validated) is broken
-    /// and the delete must not guess.
+    /// and the delete must not guess — unless the erase is `hard` and an
+    /// owner's maintenance pass classified this exact version (FIX 7800,
+    /// ARCH-0038's audited repair): that takes the audited exception.
     pub(in crate::deletion) fn capture_provenance_delete(
         &self,
         id: &EntityId,
-    ) -> Result<Option<CapturedProvenanceDelete>> {
+        hard: bool,
+    ) -> Result<ProvenanceCapture> {
         let rtxn = self.store.env.read_txn()?;
-        self.capture_provenance_delete_in_txn(&rtxn, id)
+        self.capture_provenance_delete_in_txn(&rtxn, id, hard)
     }
 
     /// [`Self::capture_provenance_delete`] against a caller-owned snapshot, so
@@ -33,40 +36,33 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
-    ) -> Result<Option<CapturedProvenanceDelete>> {
+        hard: bool,
+    ) -> Result<ProvenanceCapture> {
         let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, rtxn, id)?
         else {
-            return Ok(None);
+            return Ok(ProvenanceCapture::NotApplicable);
         };
         let header =
             EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
         if header.entity_type != ENTITY_TYPE_CLAIM {
-            return Ok(None);
+            return Ok(ProvenanceCapture::NotApplicable);
         }
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         if body.is_empty() {
-            return Ok(None);
+            return Ok(ProvenanceCapture::NotApplicable);
         }
-        let wrapper = crate::claim::decode_claim_body(body, true)?;
-        if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
-            return Ok(None);
-        }
-        let ClaimSubject::Edge {
-            source,
-            kind,
-            target,
-        } = wrapper.subject
-        else {
-            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
-                "edge.provenance claim subject is not a 33-byte EdgeRef",
-            )));
+        let error = match decode_provenance_capture(body) {
+            Ok(Some(captured)) => return Ok(ProvenanceCapture::Captured(captured)),
+            Ok(None) => return Ok(ProvenanceCapture::NotApplicable),
+            Err(error) => error,
         };
-        let record = decode_edge_provenance_body(&wrapper.value)?;
-        Ok(Some(CapturedProvenanceDelete {
-            subject: EdgeRef::new(source, kind, target),
-            source_revision_ref: record.source_revision_ref,
-            body_snapshot_ref: record.body_snapshot_ref,
-        }))
+        // FIX 7800: a hard erase of the version a maintenance pass classified
+        // takes the audited exception; any other keeps the decoder's error.
+        if !hard {
+            return Err(error);
+        }
+        let corrupt = super::corrupt::corrupt_capture_in_txn(&self.store, rtxn, id, &raw)?;
+        corrupt.map(ProvenanceCapture::CaptureFailed).ok_or(error)
     }
 
     /// ARCH-0038 DELETE interplay (D16), run in the SAME transaction that
@@ -166,4 +162,30 @@ impl Vault {
             None => downgrade_edge_to_bare(&self.store, wtxn, subject),
         }
     }
+}
+
+/// The strict capture decode of a non-empty CLAIM `body`: its `edge.provenance`
+/// subject and sweep refs, `None` for any other predicate. Bytes alone, no
+/// read: every error is the body's own corruption.
+pub(super) fn decode_provenance_capture(body: &[u8]) -> Result<Option<CapturedProvenanceDelete>> {
+    let wrapper = crate::claim::decode_claim_body(body, true)?;
+    if wrapper.predicate != PREDICATE_EDGE_PROVENANCE {
+        return Ok(None);
+    }
+    let ClaimSubject::Edge {
+        source,
+        kind,
+        target,
+    } = wrapper.subject
+    else {
+        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+            "edge.provenance claim subject is not a 33-byte EdgeRef",
+        )));
+    };
+    let record = decode_edge_provenance_body(&wrapper.value)?;
+    Ok(Some(CapturedProvenanceDelete {
+        subject: EdgeRef::new(source, kind, target),
+        source_revision_ref: record.source_revision_ref,
+        body_snapshot_ref: record.body_snapshot_ref,
+    }))
 }
