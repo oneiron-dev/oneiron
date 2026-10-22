@@ -18,8 +18,6 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 
-use serde_json::json;
-
 use super::cancel::StepCancellation;
 use super::driver::EngineNativeExecutor;
 use super::host::RecordingJsHost;
@@ -37,15 +35,20 @@ use super::types::{
     JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
 };
 use crate::code_run::{
-    AgentVerbAnswer, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
-    CodeRunStepCheckpoint, ExecutorStorage, ProgramCheckpointTail, ProgramResumeCall,
-    ProgramResumeCommit, ProgramResumeWait, SelfCall, SelfDispatchOutcome, SelfDurableWait,
-    SelfSkillCall, load_program_checkpoint_tail, program_resume_call,
+    CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunStepCheckpoint,
+    ExecutorStorage, ProgramCheckpointTail, ProgramResumeCommit, ProgramResumeWait, SelfCall,
+    SelfDispatchOutcome, SelfDurableWait, SelfSkillCall, load_program_checkpoint_tail,
+    program_resume_call,
 };
 use crate::code_sandbox::ProposalSpoolFloor;
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::entity_id::EntityId;
 use crate::{Error, Vault};
+
+mod injection;
+
+use self::injection::SettledCall;
+pub(super) use self::injection::{InjectedAnswer, ProgramInjection};
 
 /// What the guest of a call reads once its entry holds.
 pub(super) const PROGRAM_RESUME_HELD: &str = "program_resume_held";
@@ -57,10 +60,6 @@ const CHECKPOINT_BEHIND: &str = "the run's resume checkpoint is not the one its 
 const PIN_CHANGED: &str = "the run's resume checkpoint pins another program";
 const ROW_MISSING: &str = "a settled call's row is not in the run's record";
 const REPLY_MISSING: &str = "a settled wait's reply is not in the run's record";
-const DIVERGED: &str = "the pinned source made another call where an earlier entry settled one";
-const NESTED_CALLABLE: &str = "a callable the pinned entry calls cannot resume inside it";
-const UNREADABLE: &str = "a settled call's row does not decode";
-const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
 const PREPARATION_CHANGED: &str = "the run's resume checkpoint pins another preparation";
 
 const FINISHED: &str = "the pinned entry finished";
@@ -88,98 +87,6 @@ pub(crate) enum PinnedProgramRun {
     Ran(Box<EngineExecutorOutcome>),
     /// It ran nothing new and committed nothing, for this reason.
     Held(&'static str),
-}
-
-/// The calls one pinned entry answers instead of issuing them, in the order
-/// the pinned source makes them.
-pub(super) struct ProgramInjection {
-    /// Whether the entry's own pinned call went by: it is always issued.
-    entered: bool,
-    calls: VecDeque<SettledCall>,
-    /// The calls answered so far, as the entry's checkpoint lists them.
-    answered: Vec<ProgramResumeCall>,
-    /// Why the entry holds, once a call did not line up.
-    held: Option<&'static str>,
-}
-
-/// One call an earlier entry settled: its row, as listed, and the delivered
-/// reply that answers it when it parked on a wait.
-struct SettledCall {
-    row: CodeRunBridgeCall,
-    listed: ProgramResumeCall,
-    reply: Option<serde_json::Value>,
-}
-
-/// What the bridge does with one call of a pinned entry.
-pub(super) enum InjectedAnswer {
-    /// Issue it.
-    Live,
-    /// Answer it so: an earlier entry settled it.
-    Settled {
-        outcome: Box<SelfDispatchOutcome>,
-        view: Option<serde_json::Value>,
-    },
-    /// Refuse it, as every call after it: the entry holds.
-    Hold,
-}
-
-impl ProgramInjection {
-    /// The answer for `call`, the next call the pinned source makes. A call
-    /// that is not the settled one in its place, a settled row that does not
-    /// decode, or a callable called inside the entry holds the entry.
-    pub(super) fn answer(&mut self, call: &SelfCall) -> InjectedAnswer {
-        if !self.entered {
-            self.entered = true;
-            return InjectedAnswer::Live;
-        }
-        if self.held.is_some() {
-            return InjectedAnswer::Hold;
-        }
-        let Some(settled) = self.calls.pop_front() else {
-            return InjectedAnswer::Live;
-        };
-        if matches!(call, SelfCall::SkillsCall(_)) {
-            return self.hold(NESTED_CALLABLE);
-        }
-        let outcome = match settled.row.program_answer_for(call) {
-            Ok(Some(outcome)) => outcome,
-            Ok(None) => return self.hold(DIVERGED),
-            Err(_) => return self.hold(UNREADABLE),
-        };
-        self.answered.push(settled.listed);
-        let Some(reply) = settled.reply else {
-            return InjectedAnswer::Settled {
-                outcome: Box::new(outcome),
-                view: None,
-            };
-        };
-        // The call parked on a wait whose reply is delivered: the reply is
-        // its answer, as a verb's output reads.
-        InjectedAnswer::Settled {
-            view: Some(json!({ "output": reply.clone() })),
-            outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
-                output: reply,
-                rows: None,
-            })),
-        }
-    }
-
-    fn hold(&mut self, why: &'static str) -> InjectedAnswer {
-        self.held = Some(why);
-        InjectedAnswer::Hold
-    }
-
-    /// The calls the entry answered, once it ended: a held entry, or one
-    /// whose source ended before every settled call, holds instead.
-    fn settle(self) -> Result<Vec<ProgramResumeCall>, &'static str> {
-        if let Some(held) = self.held {
-            return Err(held);
-        }
-        if !self.calls.is_empty() {
-            return Err(UNCONSUMED);
-        }
-        Ok(self.answered)
-    }
 }
 
 impl RecordingJsHost<'_, '_> {
@@ -528,6 +435,7 @@ impl<'a> EngineNativeExecutor<'a> {
         )
         .with_recoverable_outputs(&self.storage, &record, recoverable)?
         .with_skill_executor(&config.model)
+        .with_result_share(&self.result_share)
         .with_program_injection(injection);
         let pinned = SelfCall::SkillsCall(SelfSkillCall {
             skill: entry.skill,

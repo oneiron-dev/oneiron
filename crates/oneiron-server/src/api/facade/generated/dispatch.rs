@@ -1218,9 +1218,13 @@ async fn vault_shape_apply(
     oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
     let ran = async {
-        let (output, listed) =
-            super::host_doors::vault_shape_apply(server, auth, facade_door_input(&mut hooks)?)
-                .await;
+        let (output, listed) = super::host_doors::vault_shape_apply(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -1463,7 +1467,7 @@ async fn cancel(
         "cancel",
         oneiron::memory::RoomTurnHandle::serves("cancel"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    facade_admit_receipted(server, call, actor, class, "cancel", &value, &["task_ref"])?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(server, call, actor, class, "cancel", value, &producers)?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -2316,7 +2320,15 @@ async fn tasks_update(
         "tasks.update",
         oneiron::memory::RoomTurnHandle::serves("tasks.update"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.update",
+        &value,
+        &["task_ref"],
+    )?;
     let (server, owned) = (Arc::clone(server), call.owned());
     tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
@@ -2350,7 +2362,15 @@ async fn tasks_accept(
         "tasks.accept",
         oneiron::memory::RoomTurnHandle::serves("tasks.accept"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "tasks.accept",
+        &value,
+        &["task_ref"],
+    )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -3037,7 +3057,15 @@ async fn vault_tagging_status(
         "vault.tagging.status",
         oneiron::memory::RoomTurnHandle::serves("vault.tagging.status"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.status",
+        &value,
+        &["turn_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3065,7 +3093,15 @@ async fn vault_tagging_tags(
         "vault.tagging.tags",
         oneiron::memory::RoomTurnHandle::serves("vault.tagging.tags"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.tags",
+        &value,
+        &["turn_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -3093,7 +3129,15 @@ async fn vault_tagging_history(
         "vault.tagging.history",
         oneiron::memory::RoomTurnHandle::serves("vault.tagging.history"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "turn_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tagging.history",
+        &value,
+        &["turn_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18689,7 +18733,15 @@ async fn vault_artifacts_units(
         "vault.artifacts.units",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.units"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.units",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18717,7 +18769,15 @@ async fn vault_artifacts_anchors_pin(
         "vault.artifacts.anchors.pin",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.anchors.pin"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.anchors.pin",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18745,7 +18805,15 @@ async fn vault_artifacts_threads_open(
         "vault.artifacts.threads.open",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.open"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.open",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18773,7 +18841,15 @@ async fn vault_artifacts_threads_comment(
         "vault.artifacts.threads.comment",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.comment"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.comment",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18801,7 +18877,15 @@ async fn vault_artifacts_threads_read(
         "vault.artifacts.threads.read",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.read"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.read",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18829,7 +18913,15 @@ async fn vault_artifacts_threads_list(
         "vault.artifacts.threads.list",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.list"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.list",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18857,8 +18949,15 @@ async fn vault_artifacts_threads_assign(
         "vault.artifacts.threads.assign",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.assign"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "assignee_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.assign",
+        &value,
+        &["artifact_ref", "assignee_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -18886,7 +18985,15 @@ async fn vault_artifacts_threads_state(
         "vault.artifacts.threads.state",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.threads.state"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.threads.state",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -23996,7 +24103,15 @@ async fn vault_artifacts_inspect_deck(
         "vault.artifacts.inspect_deck",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.inspect_deck"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.inspect_deck",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -29396,7 +29511,15 @@ async fn vault_calendar_transcript_ingest(
         "vault.calendar.transcript.ingest",
         oneiron::memory::RoomTurnHandle::serves("vault.calendar.transcript.ingest"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "source_blob_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.transcript.ingest",
+        &value,
+        &["source_blob_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30520,7 +30643,15 @@ async fn vault_artifacts_body_import(
         "vault.artifacts.body.import",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.import"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.import",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30548,7 +30679,15 @@ async fn vault_artifacts_body_head(
         "vault.artifacts.body.head",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.head"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.head",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30576,7 +30715,15 @@ async fn vault_artifacts_body_read(
         "vault.artifacts.body.read",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.read"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.read",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30604,7 +30751,15 @@ async fn vault_artifacts_body_commits(
         "vault.artifacts.body.commits",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.commits"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.commits",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30632,7 +30787,15 @@ async fn vault_artifacts_body_edit(
         "vault.artifacts.body.edit",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.edit"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.edit",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30660,7 +30823,15 @@ async fn vault_artifacts_body_fork_open(
         "vault.artifacts.body.fork.open",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.open"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.open",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30688,7 +30859,15 @@ async fn vault_artifacts_body_fork_edit(
         "vault.artifacts.body.fork.edit",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.edit"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.edit",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30716,7 +30895,15 @@ async fn vault_artifacts_body_fork_diff(
         "vault.artifacts.body.fork.diff",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.diff"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.diff",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30744,7 +30931,15 @@ async fn vault_artifacts_body_fork_merge(
         "vault.artifacts.body.fork.merge",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.merge"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.merge",
+        &value,
+        &["artifact_ref"],
+    )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -30774,7 +30969,15 @@ async fn vault_artifacts_body_fork_discard(
         "vault.artifacts.body.fork.discard",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.discard"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.fork.discard",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30802,7 +31005,15 @@ async fn vault_artifacts_body_proposal_read(
         "vault.artifacts.body.proposal.read",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.proposal.read"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.proposal.read",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30830,7 +31041,15 @@ async fn vault_artifacts_body_proposal_settle(
         "vault.artifacts.body.proposal.settle",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.proposal.settle"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.proposal.settle",
+        &value,
+        &["artifact_ref"],
+    )?;
     let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke_in_turn(
@@ -30860,7 +31079,15 @@ async fn vault_artifacts_body_export(
         "vault.artifacts.body.export",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.export"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.export",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30888,7 +31115,15 @@ async fn vault_artifacts_body_preview(
         "vault.artifacts.body.preview",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.preview"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.preview",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30916,7 +31151,15 @@ async fn vault_artifacts_body_deck_review(
         "vault.artifacts.body.deck.review",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.review"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.review",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30944,7 +31187,15 @@ async fn vault_artifacts_body_deck_merge(
         "vault.artifacts.body.deck.merge",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.merge"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.merge",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -30972,7 +31223,15 @@ async fn vault_artifacts_body_deck_export(
         "vault.artifacts.body.deck.export",
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.deck.export"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.artifacts.body.deck.export",
+        &value,
+        &["artifact_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -33558,7 +33817,15 @@ async fn vault_notes_from_entity(
         "vault.notes.from_entity",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.from_entity"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "source_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.from_entity",
+        &value,
+        &["source_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -33630,7 +33897,15 @@ async fn vault_notes_fork(
         "vault.notes.fork",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.fork"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.fork",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -33996,7 +34271,15 @@ async fn vault_notes_edit(
         "vault.notes.edit",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.edit"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.edit",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34024,7 +34307,15 @@ async fn vault_notes_seal(
         "vault.notes.seal",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.seal"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.seal",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34052,7 +34343,15 @@ async fn vault_notes_lifecycle(
         "vault.notes.lifecycle",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.lifecycle"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.lifecycle",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34080,7 +34379,15 @@ async fn vault_notes_set_overrides(
         "vault.notes.set_overrides",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.set_overrides"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.set_overrides",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34108,7 +34415,15 @@ async fn vault_notes_defaults(
         "vault.notes.defaults",
         oneiron::memory::RoomTurnHandle::serves("vault.notes.defaults"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.defaults",
+        &value,
+        &["note_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34136,7 +34451,15 @@ async fn vault_tasks_linear_mapping(
         "vault.tasks.linear.mapping",
         oneiron::memory::RoomTurnHandle::serves("vault.tasks.linear.mapping"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tasks.linear.mapping",
+        &value,
+        &["task_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -34205,7 +34528,15 @@ async fn vault_tasks_linear_provenance(
         "vault.tasks.linear.provenance",
         oneiron::memory::RoomTurnHandle::serves("vault.tasks.linear.provenance"),
     )?;
-    facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    facade_admit_receipted(
+        server,
+        call,
+        actor,
+        class,
+        "vault.tasks.linear.provenance",
+        &value,
+        &["task_ref"],
+    )?;
     let producers = oneiron::memory::ProducerRows::default();
     let output = facade_invoke(
         server,
@@ -35431,7 +35762,8 @@ async fn self_browser_batch(
     let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.browser.batch", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "self.browser.batch", value).await?;
+    let (mut hooks, decided) =
+        facade_hooks_pre_counted(server, call, "self.browser.batch", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::self_browser_batch(
             server,
@@ -35456,7 +35788,8 @@ async fn self_browser_batch(
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post_counted(server, hooks, "self.browser.batch", output, decided)
+            .await?,
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
@@ -35761,7 +36094,8 @@ async fn self_browser_library_run(
     let caller = facade_actor(server, auth)?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.browser.library.run", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "self.browser.library.run", value).await?;
+    let (mut hooks, decided) =
+        facade_hooks_pre_counted(server, call, "self.browser.library.run", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::self_browser_library_run(
             server,
@@ -35786,7 +36120,14 @@ async fn self_browser_library_run(
         }
     };
     Ok(FacadeCallOutput {
-        value: facade_hooks_post(server, hooks, output).await?,
+        value: facade_hooks_post_counted(
+            server,
+            hooks,
+            "self.browser.library.run",
+            output,
+            decided,
+        )
+        .await?,
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
@@ -36361,6 +36702,16 @@ async fn self_focus_unsubscribe(
     Ok(FacadeCallOutput::unlisted(
         facade_hooks_post(server, hooks, output).await?,
     ))
+}
+/// The nested `readable` paths of each facade row that declares one (2690):
+/// a hook's rewrite of one meets its credential read check again.
+const NESTED_READABLE: &[(&str, &[&str])] = &[];
+/// [`NESTED_READABLE`]'s paths for `verb`; none for a row that declares none.
+pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
+    match NESTED_READABLE.iter().find(|(row, _)| *row == verb) {
+        Some((_, paths)) => *paths,
+        None => &[],
+    }
 }
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run

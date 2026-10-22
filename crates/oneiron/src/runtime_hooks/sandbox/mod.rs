@@ -15,7 +15,7 @@ pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit/hook/hook.wit", world: "hook" });
 }
 
-use super::{HookBodyRun, HookBodyRuntime, HookRunContext, HookVerdictCall};
+use super::{HookBodyRun, HookBodyRuntime, HookBodyUsage, HookRunContext, HookVerdictCall};
 use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
 use crate::{Error, Result};
 use std::sync::mpsc;
@@ -156,11 +156,14 @@ impl HookSandbox {
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
         verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
+        // A body refused before its worker starts used nothing (FIX 9332).
         let budget_ms = context.budget_ms();
         if budget_ms == 0 || budget_ms > MAX_BUDGET_MS {
+            context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook budget_ms is out of bounds"));
         }
         if body.len() > self.budget.message_bytes || input_json.len() > self.budget.message_bytes {
+            context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook body or input exceeds the message limit"));
         }
         // Wasmtime needs 'static store data, so the body runs on a scoped
@@ -170,10 +173,12 @@ impl HookSandbox {
         let (events, requests) = mpsc::sync_channel(1);
         let budget = self.budget;
         let pre = &self.pre;
+        // Unavailable until the worker's end measures it.
+        context.body_starts();
         std::thread::scope(|scope| {
             scope.spawn(move || {
-                let result = execute(pre, budget, body, input_json, events.clone());
-                let _ = events.send(Event::Finished(result));
+                let (result, usage) = execute(pre, budget, body, input_json, events.clone());
+                let _ = events.send(Event::Finished(result, usage));
             });
             serve_reads(&requests, read, verdict, context)
         })
@@ -220,7 +225,9 @@ enum Event {
         request: String,
         reply: mpsc::SyncSender<std::result::Result<String, String>>,
     },
-    Finished(Result<HookBodyRun>),
+    /// The body's end: its result, and what it used, measured on every path
+    /// it took (FIX 9332).
+    Finished(Result<HookBodyRun>, HookBodyUsage),
 }
 
 type Reply<T> = std::result::Result<T, String>;
@@ -323,13 +330,14 @@ fn link_imports(linker: &mut Linker<State>) -> Result<()> {
     Ok(())
 }
 
+/// Runs the body on a fresh Store: its result, beside what it used.
 fn execute(
     pre: &bindings::HookPre<State>,
     budget: ComponentBudget,
     body: &str,
     input_json: &str,
     events: mpsc::SyncSender<Event>,
-) -> Result<HookBodyRun> {
+) -> (Result<HookBodyRun>, HookBodyUsage) {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
         .memories(1)
@@ -350,37 +358,58 @@ fn execute(
         },
     );
     store.limiter(|state| &mut state.limits);
-    store
-        .set_fuel(budget.fuel)
-        .map_err(|_| failure("hook fuel setup failed"))?;
-    let hook = pre
-        .instantiate(&mut store)
-        .map_err(|_| failure("hook component instantiation refused"))?;
-    // Wasmtime performs canonical post-return inside the call.
-    let ran = hook.call_run_hook(&mut store, body, input_json);
-    let fuel_used = budget.fuel.saturating_sub(store.get_fuel().unwrap_or(0));
+    if store.set_fuel(budget.fuel).is_err() {
+        // No fuel, no body: it used nothing.
+        return (
+            Err(failure("hook fuel setup failed")),
+            HookBodyUsage::NOT_RUN,
+        );
+    }
+    let ran = match pre.instantiate(&mut store) {
+        // Wasmtime performs canonical post-return inside the call.
+        Ok(hook) => Ok(hook.call_run_hook(&mut store, body, input_json)),
+        Err(_) => Err(failure("hook component instantiation refused")),
+    };
+    // What the body used, read before its Store drops on every path it took,
+    // a failed instantiation, a trap, a guest error and a missing emit
+    // included (FIX 9332). A fuel read that fails measured nothing: its count
+    // is unavailable, never a number.
+    let usage = HookBodyUsage {
+        fuel_used: store
+            .get_fuel()
+            .ok()
+            .map(|left| budget.fuel.saturating_sub(left)),
+        host_calls: Some(store.data().host_calls),
+    };
     let state = store.into_data();
-    match ran {
-        Err(error) => Err(match state.trap {
+    let result = match ran {
+        Err(error) => Err(error),
+        Ok(Err(error)) => Err(match state.trap {
             Some(reason) => failure(reason),
             None => trap_failure(&error),
         }),
-        Ok(Err(message)) => Err(guest_failure(&message)),
-        Ok(Ok(())) => Ok(HookBodyRun {
-            outcome_json: state
-                .outcome
-                .ok_or(failure("hook body emitted no outcome"))?,
-            fuel_used,
-            host_calls: state.host_calls,
-        }),
-    }
+        Ok(Ok(Err(message))) => Err(guest_failure(&message)),
+        Ok(Ok(Ok(()))) => match state.outcome {
+            Some(outcome_json) => Ok(HookBodyRun {
+                outcome_json,
+                // A run that succeeded keeps its plain count, as before: one
+                // whose fuel did not read counts its whole budget spent.
+                fuel_used: usage.fuel_used.unwrap_or(budget.fuel),
+                host_calls: state.host_calls,
+            }),
+            None => Err(failure("hook body emitted no outcome")),
+        },
+    };
+    (result, usage)
 }
 
 /// Answers the worker's reads and verdicts until the body ends. The budget
 /// stops nothing (FIX 8842): it waits on the body however long it runs,
 /// runs each admitted callback to its end, measured on `context`, and sends
 /// its answer even when late. Only the worker's end, or its channel closing
-/// without one, ends the wait.
+/// without one, ends the wait. The end's usage goes on `context` before its
+/// result returns; a channel that closes without an end leaves it
+/// unavailable (FIX 9332).
 fn serve_reads(
     requests: &mpsc::Receiver<Event>,
     read: &mut dyn FnMut(&str) -> Reply<String>,
@@ -395,7 +424,10 @@ fn serve_reads(
             Ok(Event::Verdict { request, reply }) => {
                 let _ = reply.send(context.verdict(|| verdict(&request)));
             }
-            Ok(Event::Finished(result)) => return result,
+            Ok(Event::Finished(result, usage)) => {
+                context.report_usage(usage);
+                return result;
+            }
             Err(mpsc::RecvError) => return Err(failure("hook worker stopped without an end")),
         }
     }

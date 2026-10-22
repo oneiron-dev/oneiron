@@ -83,6 +83,116 @@ pub(super) fn facade_admit_readable_ref(
     }
 }
 
+/// The values at a `readable` `path` of `value` (2690): `.` steps into an
+/// object's field, and a step suffixed `[*]` into every item of the array
+/// that field holds. A step that finds nothing, or no array under `[*]`,
+/// yields nothing there.
+fn readable_values<'v>(value: &'v serde_json::Value, path: &str) -> Vec<&'v serde_json::Value> {
+    let mut at = vec![value];
+    for step in path.split('.') {
+        let (field, every) = match step.strip_suffix("[*]") {
+            Some(field) => (field, true),
+            None => (step, false),
+        };
+        let mut next = Vec::new();
+        for value in at {
+            match value.get(field) {
+                Some(serde_json::Value::Array(items)) if every => next.extend(items),
+                Some(found) if !every => next.push(found),
+                _ => {}
+            }
+        }
+        at = next;
+    }
+    at
+}
+
+/// [`facade_admit_readable_ref`] at a nested `path` (2690), such as
+/// `reviewed[*].artifact_ref`: each entity id there meets the same check and
+/// the same NOT_FOUND. A value that is not an entity id is left for the
+/// engine to refuse, as a top-level ref's is.
+pub(super) fn facade_admit_readable_path(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    value: &serde_json::Value,
+    path: &str,
+) -> Result<(), FacadeApiError> {
+    for found in readable_values(value, path) {
+        let Some(id) = found.as_str().and_then(|id| EntityId::from_hex(id).ok()) else {
+            continue;
+        };
+        if !auth
+            .can_read_entity(vault, &id)
+            .map_err(MemoryError::from)?
+        {
+            return Err(MemoryError::from(oneiron::Error::EntityNotFound).into());
+        }
+    }
+    Ok(())
+}
+
+/// The readable check a row's `readable` entry names: a nested path's walk,
+/// or a top-level field's own check.
+fn facade_admit_readable(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    value: &serde_json::Value,
+    readable: &str,
+) -> Result<(), FacadeApiError> {
+    if readable.contains(['.', '[']) {
+        facade_admit_readable_path(vault, auth, value, readable)
+    } else {
+        facade_admit_readable_ref(vault, auth, value, readable)
+    }
+}
+
+/// The readable checks of a row that declares record refs (FIX 1210): a ref
+/// the caller cannot read is refused with the same NOT_FOUND, never the
+/// SDK's invented-reference status, after the row's own record-ref check
+/// ran alone on the memory its engine call would have run on, so the
+/// refusal is receipted as the SDK receipts it (none inside an anonymous
+/// off-record session). No effect runs, and a receipt that could not be
+/// written is logged, never the call's answer. A call in a room turn keeps
+/// its NOT_FOUND unreceipted.
+pub(super) fn facade_admit_receipted(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    verb: &str,
+    value: &serde_json::Value,
+    readable: &[&str],
+) -> Result<(), FacadeApiError> {
+    let auth = call.auth();
+    let Err(refused) = readable
+        .iter()
+        .try_for_each(|readable| facade_admit_readable(&server.vault, auth, value, readable))
+    else {
+        return Ok(());
+    };
+    if refused.body.error.code == MEMORY_CODE_NOT_FOUND && matches!(call.room_turn(), Ok(None)) {
+        crate::server::blocking(|| {
+            let memory = facade_invocation(
+                credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
+                call,
+            );
+            let receipted = memory.map(|memory| {
+                oneiron::task_verb::sdk::receipt_declared_refs(&memory, verb, value.clone())
+            });
+            if let Ok(Err(error)) = receipted
+                && error.code == MEMORY_CODE_INTERNAL
+            {
+                tracing::warn!(
+                    %verb,
+                    error = %error.message,
+                    "a refused ref's receipt was not written"
+                );
+            }
+        });
+    }
+    Err(refused)
+}
+
 /// Re-admits each top-level `*_ref` field a hook's rewrite changed, as the
 /// route admitted the caller's own refs ([`facade_admit_readable_ref`]): a
 /// rewrite may not point the verb at an entity this credential cannot read.
@@ -105,6 +215,26 @@ pub(super) fn facade_admit_rewritten(
     Ok(())
 }
 
+/// Re-admits each nested readable path of the row (2690) whose values a
+/// hook's rewrite changed, as [`facade_admit_rewritten`] re-admits a
+/// changed top-level ref: a rewrite may not point the verb at an entity this
+/// credential cannot read. The reason refuses the rewrite.
+fn facade_admit_rewritten_paths(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+    original: &serde_json::Value,
+    rewritten: &serde_json::Value,
+    paths: &[&str],
+) -> Result<(), String> {
+    for path in paths {
+        if readable_values(original, path) != readable_values(rewritten, path) {
+            facade_admit_readable_path(vault, auth, rewritten, path)
+                .map_err(|refusal| refusal.body.error.message)?;
+        }
+    }
+    Ok(())
+}
+
 /// [`facade_admit_rewritten`] against the caller's `original` args, as a
 /// row's rewrite admission.
 pub(super) fn facade_rewrite_admit(
@@ -115,6 +245,13 @@ pub(super) fn facade_rewrite_admit(
     let (vault, auth, original) = (Arc::clone(&server.vault), auth.clone(), original.clone());
     Arc::new(move |verb: &str, rewritten: &serde_json::Value| {
         facade_admit_rewritten(&vault, &auth, &original, rewritten)?;
+        facade_admit_rewritten_paths(
+            &vault,
+            &auth,
+            &original,
+            rewritten,
+            dispatch::nested_readable_paths(verb),
+        )?;
         // A courtesy answer's rewritten reply_to meets its door's own check
         // here, so a bad one gives way to the caller's (FIX 5140).
         crate::owner::courtesy_delete::check_rewritten_reply_to(verb, rewritten)
