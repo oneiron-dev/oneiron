@@ -28491,12 +28491,31 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 8,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 4,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BindingMoveLink",
+      "BindingMoveState",
+      "BindingNotApplied",
+      "BindingSource",
+      "PendingEmbedderBinding"
+     ],
+     "path": "src/embed/binding_move.rs",
+     "purpose": "An owner-approved embedder binding, staged through a space move (OF-577, FIX 857 O3b PR B; ARCH-0053 R13: a…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 3,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -28649,7 +28668,7 @@
      "purpose": "A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =…",
      "surface": {
       "const": 5,
-      "crate-vis": 4,
+      "crate-vis": 8,
       "enum": 4,
       "fn": 11,
       "struct": 5,
@@ -58348,18 +58367,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferSwitchReceipt",
       "OfferSwitchUndo",
+      "SwitchApplication",
       "SwitchOwner"
      ],
      "path": "src/skill_optimize/offer_switch.rs",
      "purpose": "An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo)",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1,
+      "crate-vis": 5,
+      "enum": 2,
       "fn": 5,
       "struct": 2
      }
@@ -66283,6 +66303,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "RoleSwapOutcome",
       "SwapExpectation",
       "TrainingEvalInput",
       "ViewedSwap"
@@ -66290,8 +66311,8 @@
      "path": "src/training_pack/promotion.rs",
      "purpose": "Held-out scoring releases a counted cohort",
      "surface": {
-      "crate-vis": 4,
-      "enum": 1,
+      "crate-vis": 5,
+      "enum": 2,
       "fn": 7,
       "struct": 2
      }
@@ -73512,7 +73533,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -74487,7 +74508,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4824,
+   "source_files": 4825,
    "test_files": 902
   },
   "oneiron-android": {
