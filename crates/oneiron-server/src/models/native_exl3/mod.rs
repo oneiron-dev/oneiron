@@ -287,11 +287,10 @@ async fn begin(
             } else {
                 // Another incarnation answered, or the worker drains: the
                 // call ran nowhere.
-                Err(OpenAiCompatTransportError::Connection)
+                Err(transport::refusal(&refusal))
             }
         }
-        Err(Start::NotSent) => Err(OpenAiCompatTransportError::Connection),
-        Err(Start::Cut) => Err(OpenAiCompatTransportError::StreamCut),
+        Err(Start::NotSent(error) | Start::Cut(error)) => Err(error),
     }
 }
 
@@ -313,7 +312,7 @@ async fn execute(
         match sent.call.next().await {
             Ok(Event::Final(last)) => break last,
             Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut) => return Err(OpenAiCompatTransportError::StreamCut),
+            Err(Cut(error)) => return Err(error),
         }
     };
     report(&route, &last);
@@ -457,13 +456,13 @@ pub(super) async fn qualify(
         .await
         .map_err(|start| match start {
             Start::Refused(_) => WorkerFailure::InvalidReply,
-            Start::NotSent | Start::Cut => WorkerFailure::Unreachable,
+            Start::NotSent(_) | Start::Cut(_) => WorkerFailure::Unreachable,
         })?;
     let last = loop {
         match call.next().await {
             Ok(Event::Final(last)) => break last,
             Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut) => return Err(WorkerFailure::Unreachable),
+            Err(Cut(_)) => return Err(WorkerFailure::Unreachable),
         }
     };
     let target = request.get("model").and_then(JsonValue::as_str);
@@ -587,10 +586,9 @@ impl Live {
                     report(&self.route, &last);
                     self.finish(last);
                 }
-                Err(Cut) => {
+                Err(Cut(error)) => {
                     self.finished = true;
-                    self.pending
-                        .push_back(Err(OpenAiCompatTransportError::StreamCut));
+                    self.pending.push_back(Err(error));
                 }
             }
         }
@@ -603,7 +601,11 @@ impl Live {
     fn finish(&mut self, mut last: JsonValue) {
         if last.get("outcome").and_then(JsonValue::as_str) != Some("done") {
             let frame = if self.streamed {
-                Err(OpenAiCompatTransportError::StreamCut)
+                let error = last.get("error").cloned().unwrap_or_default();
+                tracing::warn!(%error, "native EXL3 call ended with an error mid-reply");
+                Err(OpenAiCompatTransportError::EndedWithError(
+                    error.to_string(),
+                ))
             } else {
                 Ok(OpenAiCompatStreamFrame::Status(error_reply(&last)))
             };
