@@ -5,21 +5,29 @@
 //!   encoded, the stored checkout the connector names: its id, epoch and
 //!   holder, its repo with the pin, and its TASK ([`ByoaRepoBinding`]), when
 //!   the lease is live at the vault's time and for the TASK the dispatch
-//!   names; otherwise the attempt enqueues unbound and execute's unbound
-//!   check judges it (FIX 7197). The same writer reserves a pinned epoch
+//!   names; otherwise the attempt enqueues unbound (FIX 7197) and its first
+//!   execution binds it. The same writer reserves a pinned epoch
 //!   for the attempt the queue returns, so two live tries never share one
 //!   writable checkout epoch, the same agent's included. A dedupe hit
 //!   compares the stored binding and never rebinds it.
-//! - **Execute** checks, in a short writer before staging or spawning,
-//!   the acquired attempt, the stored binding, the TASK's standing and the
-//!   lease at the vault's time, and saves the generation that runs. No
-//!   writer spans the child.
+//! - **Execute** checks, in one short writer before staging or spawning
+//!   ([`start_execution`]), the acquired attempt and its current payload.
+//!   An attempt enqueued unbound binds there (FIX 9792): the checkout its
+//!   connector names, now live at the vault's time for its TASK, is pinned,
+//!   its epoch reserved for the attempt and the binding saved in the
+//!   attempt's payload, and in its bound work's when that holds none yet,
+//!   through the queue's leased-payload door. A stored binding is never
+//!   rebound. Then, for either path, the binding, the TASK's standing and
+//!   the lease at the vault's time are checked and the generation that
+//!   runs is saved. No writer spans the child.
 //! - **Capture** compares the same binding and generation in its result
 //!   writer. A canonical terminal retry still returns its receipt first. A
 //!   fresh Completed capture whose checkout went stale while the attempt
 //!   still held its own lease keeps its exhaust, taint and result ref but
 //!   lands Abandoned with `repo_stale_lease`: never Completed, publishable
-//!   or settleable. A lost attempt lease is refused as before.
+//!   or settleable. So does a fresh Completed capture of a running CLI
+//!   attempt that holds no custody, which never started on a checkout
+//!   (FIX 9792). A lost attempt lease is refused as before.
 //! - **Next seat** claims a fresh checkout of the same repo, TASK and
 //!   holder through the shipped claim path, under an id derived from the
 //!   spent attempt and the seat; the successor's own dispatch pins and
@@ -29,28 +37,32 @@
 //!   from is the host's policy: the fresh checkout materializes at the
 //!   repo's pin, and nothing is published for it.
 //!
-//! A row dispatched before this binding (`repo_binding: None`) keeps the
-//! execute check it had. Endpoint and MCP attempts have no checkout.
+//! A CLI row stored with no binding (`repo_binding: None`) binds at its
+//! execution like any unbound dispatch. Endpoint and MCP attempts have no
+//! checkout.
+
+mod execution;
 
 use serde::{Deserialize, Serialize};
 
-use super::connector::{ByoaAttemptPayload, ByoaConnectorSpec, CliSandboxSpec};
-use super::dispatcher::ByoaExecutionFence;
+use super::connector::ByoaConnectorSpec;
 use super::error::{ByoaResult, ERR_EXECUTION_CHECKOUT, invalid};
 use super::exhaust::{ByoaExhaustEnvelope, ByoaTerminalDisposition, decode_byoa_record};
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState, EnqueueOutcome};
+use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, EnqueueOutcome};
 use crate::checkout::lease::attempt_binding::{
-    CHECKOUT_BINDING_SHARED, attempt_holds_in_txn, reserve_attempt_in_txn, start_attempt_in_txn,
+    CHECKOUT_BINDING_SHARED, attempt_holds_in_txn, reserve_attempt_in_txn,
 };
 use crate::checkout::lease::transactions::claim_in_txn;
 use crate::checkout::lease::{
-    CheckoutClaimRequest, CheckoutError, CheckoutFactSink, CheckoutId, CheckoutLeaseAct,
-    CheckoutLeaseService, CheckoutLeaseState, CheckoutLiveness, CheckoutTaskClass, load_act_in_txn,
+    CheckoutClaimRequest, CheckoutError, CheckoutId, CheckoutLeaseAct, CheckoutLeaseState,
+    CheckoutTaskClass, load_act_in_txn,
 };
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::federation::RepoAccessRefusal;
+
+pub(super) use self::execution::{StartedCliExecution, start_execution};
 
 /// The checkout epoch is already held by another attempt.
 const ERR_CHECKOUT_SHARED: &str = "the byoa checkout epoch is held by another attempt";
@@ -109,8 +121,8 @@ fn checkout_error(error: CheckoutError) -> super::error::ByoaError {
 /// `txn`, for the TASK `task_ref` names when it names one. `None` for an
 /// endpoint or MCP connector, and for a checkout that is missing, not live
 /// at the vault's time, or claimed for another TASK: that attempt enqueues
-/// unbound and execute's unbound check judges it, as before the binding, so
-/// a checkout made live between enqueue and execute still runs (FIX 7197).
+/// unbound, so a checkout made live between enqueue and execute still runs
+/// (FIX 7197), and its execution pins it here then ([`start_execution`]).
 ///
 /// # Errors
 /// A store failure; [`ERR_EXECUTION_CHECKOUT`] for a checkout row that does
@@ -172,13 +184,28 @@ pub(super) fn reserve_in_txn(
             };
         }
     };
+    reserve_epoch_in_txn(vault, txn, pinned, attempt.id)
+}
+
+/// Reserves `binding`'s epoch for `attempt` in the writer `txn`: the same
+/// attempt again is the same reservation, another attempt is refused.
+///
+/// # Errors
+/// [`ERR_CHECKOUT_SHARED`] when another attempt holds the epoch,
+/// [`ERR_EXECUTION_CHECKOUT`] for a lease no longer live; a store failure.
+fn reserve_epoch_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &ByoaRepoBinding,
+    attempt: AttemptId,
+) -> ByoaResult<()> {
     match reserve_attempt_in_txn(
         vault,
         txn,
-        pinned.checkout_id()?,
-        pinned.epoch,
-        &pinned.holder,
-        attempt.id,
+        binding.checkout_id()?,
+        binding.epoch,
+        &binding.holder,
+        attempt,
     )
     .map_err(checkout_error)?
     {
@@ -188,90 +215,14 @@ pub(super) fn reserve_in_txn(
     }
 }
 
-/// The checkout a CLI attempt executes against, judged in a short writer
-/// before its job is staged or its sandbox spawned: the attempt still holds
-/// `fence`'s lease, its stored binding names `spec`'s checkout at a live
-/// epoch for the same holder and TASK, the TASK still stands, and the
-/// running generation is saved on the lease. A row stored with no binding
-/// keeps today's check through `checkouts`.
-///
-/// # Errors
-/// [`ERR_EXECUTION_CHECKOUT`] when any of those fails; the attempt queue's
-/// lease refusal; a store failure.
-pub(super) fn start_execution<F: CheckoutFactSink, L: CheckoutLiveness>(
-    vault: &Vault,
-    fence: &ByoaExecutionFence,
-    record: &AttemptRecord,
-    payload: &ByoaAttemptPayload,
-    spec: &CliSandboxSpec,
-    checkouts: &CheckoutLeaseService<'_, F, L>,
-    now: u64,
-) -> ByoaResult<CheckoutLeaseAct> {
-    let Some(binding) = payload.repo_binding.as_ref() else {
-        let checkout = checkouts
-            .get(spec.checkout_id)
-            .map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))?
-            .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
-        if checkout.state != CheckoutLeaseState::Active
-            || now < checkout.updated_at
-            || checkout
-                .lease_expires_at
-                .is_some_and(|expiry| now >= expiry)
-            || record
-                .task_ref
-                .as_ref()
-                .is_some_and(|task| *task != checkout.task_ref.to_hex())
-        {
-            return Err(invalid(ERR_EXECUTION_CHECKOUT));
-        }
-        return Ok(checkout);
-    };
-    let checkout = binding.checkout_id()?;
-    if checkout != spec.checkout_id {
-        return Err(invalid(ERR_EXECUTION_CHECKOUT));
-    }
-    let task = EntityId::from_bytes(binding.task)?;
-    vault.try_with_write_txn_grouped(|txn| {
-        let current = AttemptQueue::new(vault)
-            .get_in_write_txn(txn, fence.attempt_id)?
-            .ok_or_else(|| invalid(ERR_EXECUTION_CHECKOUT))?;
-        AttemptQueue::check_result_lease(
-            &current,
-            &fence.lease_owner,
-            fence.attempt_count,
-            "execute_byoa",
-        )?;
-        if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &task)?.is_live()
-            || vault
-                .task_standing_in(txn, task)?
-                .is_none_or(|standing| standing.cancelled)
-        {
-            return Err(invalid(ERR_EXECUTION_CHECKOUT));
-        }
-        let lease = start_attempt_in_txn(
-            vault,
-            txn,
-            checkout,
-            binding.epoch,
-            &binding.holder,
-            fence.attempt_id,
-            fence.attempt_count,
-        )
-        .map_err(checkout_error)?
-        .map_err(|_| invalid(ERR_EXECUTION_CHECKOUT))?;
-        if lease.task_ref != task || lease.repo_ref.canonical() != binding.repo_ref {
-            return Err(invalid(ERR_EXECUTION_CHECKOUT));
-        }
-        Ok(lease)
-    })
-}
-
 /// Marks a stale capture of `record` (CALL "FIX 6867 stale capture"),
 /// read in the capture's result writer `txn`: a fresh Completed capture of
 /// a running bound attempt whose checkout no longer stands for it at its
-/// generation, or the retry of one already landed so (Abandoned with
-/// `repo_stale_lease`), becomes Abandoned with `repo_stale_lease`; its
-/// exhaust, taint and result ref are kept. Any other capture is untouched.
+/// saved epoch and generation, of a running CLI attempt that holds no
+/// custody at all (FIX 9792), or the retry of one already landed so
+/// (Abandoned with `repo_stale_lease`), becomes Abandoned with
+/// `repo_stale_lease`; its exhaust, taint and result ref are kept. Any
+/// other capture, an endpoint's or MCP's among them, is untouched.
 ///
 /// # Errors
 /// A payload that does not decode; a store failure.
@@ -283,13 +234,16 @@ pub(super) fn mark_stale_capture_in_txn<E>(
     reason: &mut String,
 ) -> ByoaResult<()> {
     let payload = decode_byoa_record(record)?;
-    let Some(binding) = payload.repo_binding.as_ref() else {
-        return Ok(());
-    };
-    if envelope.disposition != ByoaTerminalDisposition::Completed {
+    let cli = matches!(payload.connector, ByoaConnectorSpec::CliSandbox(_));
+    if envelope.disposition != ByoaTerminalDisposition::Completed
+        || (!cli && payload.repo_binding.is_none())
+    {
         return Ok(());
     }
-    let stale = if record.state.is_running() {
+    let stale = if !record.state.is_running() {
+        record.state == AttemptState::Abandoned
+            && record.last_error.as_deref() == Some(repo_stale_lease_reason())
+    } else if let Some(binding) = payload.repo_binding.as_ref() {
         !attempt_holds_in_txn(
             vault,
             txn,
@@ -301,8 +255,9 @@ pub(super) fn mark_stale_capture_in_txn<E>(
         )
         .map_err(checkout_error)?
     } else {
-        record.state == AttemptState::Abandoned
-            && record.last_error.as_deref() == Some(repo_stale_lease_reason())
+        // A running CLI attempt with no custody never started on a
+        // checkout: its completion cannot certify success.
+        true
     };
     if stale {
         envelope.disposition = ByoaTerminalDisposition::Abandoned;
