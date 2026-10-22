@@ -194,6 +194,20 @@ pub(crate) fn resolve_consent_basis(
     resolve_consent_basis_in_txn(vault, &txn, actor, event_ref, recipient)
 }
 
+/// [`resolve_consent_basis`] in the caller's transaction, for a restore's
+/// comparison of the invitations a live and a restored vault would send
+/// (FIX 8824): the very resolver the invitation door asks, by sending actor,
+/// EVENT and recipient.
+pub(crate) fn recovery_invite_consent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    event_ref: EntityId,
+    recipient: &str,
+) -> Result<Option<CalendarInviteConsentBasis>, CalendarError> {
+    resolve_consent_basis_in_txn(vault, txn, actor, event_ref, recipient)
+}
+
 fn resolve_consent_basis_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

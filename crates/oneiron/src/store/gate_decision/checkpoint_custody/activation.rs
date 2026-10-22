@@ -64,7 +64,8 @@ struct ArchivePrune {
     /// Each retired body file, queued for the collector.
     files: Vec<[u8; 32]>,
     assets: BTreeSet<EntityId>,
-    responses: BTreeSet<Vec<u8>>,
+    /// Each retired response's carrier, with the instance it was bound to.
+    responses: BTreeMap<Vec<u8>, [u8; 16]>,
     /// The body rows that stay, read back under the forked custody.
     kept: Rows,
 }
@@ -186,7 +187,7 @@ impl Store {
         let mut wtxn = self.env.past_seal_write_txn()?;
         let forked = self.fork_gate_custody_to_in_txn(&mut wtxn, &custody, &root)?;
         let committed = self
-            .prune_bodies_in_txn(&mut wtxn, &prune)
+            .prune_bodies_in_txn(&mut wtxn, &prune, source)
             .and_then(|()| self.drop_erased_gate_decisions_in_txn(&mut wtxn, custody.erased()))
             .and_then(|()| crate::world_keys::drop_pad_rows_in_txn(self, &mut wtxn, &erased_pads))
             .and_then(|()| self.read_back_in_txn(&wtxn))
@@ -217,8 +218,16 @@ impl Store {
 
     /// Applies `prune` in `wtxn`: its row deletions and rewrites, each
     /// pruned inline ASSET's shell, and each pruned response's erased
-    /// disposition, then the step response pins it leaves (FIX 6225).
-    fn prune_bodies_in_txn(&self, wtxn: &mut heed::RwTxn<'_>, prune: &ArchivePrune) -> Result<()> {
+    /// disposition, then the step response pins it leaves (FIX 6225). A
+    /// keyed entry its own caller's erase retired goes, as that erase dropped
+    /// it live and a cold restore drops it; `source`'s erase receipts say
+    /// whose erase retired it (FIX 7470, 9066).
+    fn prune_bodies_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        prune: &ArchivePrune,
+        source: &LiveCustody,
+    ) -> Result<()> {
         destination::delete_vault_meta_in_txn(&self.env, wtxn, &prune.deleted)?;
         for (key, value) in &prune.rewritten {
             self.side_vault_meta().put(wtxn, key, value)?;
@@ -232,7 +241,7 @@ impl Store {
                 self.port_entity_scrub(wtxn, entity, ScrubbedRecord::Shell, at)?;
             }
         }
-        for carrier in &prune.responses {
+        for (carrier, instance) in &prune.responses {
             let Some((db, key)) = carrier_row(carrier) else {
                 continue;
             };
@@ -248,9 +257,20 @@ impl Store {
             let Some(family) = ResponseFamily::of_row(db, key, &value) else {
                 continue;
             };
-            if let Some(carriage) = family.carriage(key, &value) {
-                family.retire_in_txn(self, wtxn, key, &carriage)?;
+            let Some((carriage, _)) = family.scan(key, &value).carriage() else {
+                continue;
+            };
+            let caller = (family == ResponseFamily::Http)
+                .then(|| carriage.stub.get(..carriage.retired))
+                .flatten()
+                .and_then(crate::store::http_erase_drop_caller);
+            if caller.is_some_and(|caller| source.erased_by(&caller, instance)) {
+                let row = std::str::from_utf8(key)
+                    .map_err(|_| Error::CorruptedIndex("sync_state row key"))?;
+                self.side_sync_state()?.delete(wtxn, row)?;
+                continue;
             }
+            family.retire_in_txn(self, wtxn, key, &carriage)?;
         }
         // A step claim whose response's artifact version rests in a body its
         // source retired takes its erased disposition too, and every pin

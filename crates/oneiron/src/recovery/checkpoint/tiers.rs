@@ -46,7 +46,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 b"outbound:authorized_recovery_lease:v1",
                 b"vault_archived:v1",
                 // A store's backup incarnation is its own: a restored store
-                // mints a fresh one (the backup watermark).
+                // mints a fresh one (the backup watermark), and counts every
+                // commit until a classed write stamps one (FIX 6730).
+                b"backup:change:v1",
                 b"backup:incarnation:v1",
                 // A repair's staged authority rows are this device's own
                 // progress, never an image's (OF-469).

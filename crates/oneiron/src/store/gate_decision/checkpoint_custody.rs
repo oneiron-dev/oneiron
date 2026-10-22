@@ -18,6 +18,7 @@
 mod activation;
 mod destination;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use heed::types::Bytes;
@@ -92,13 +93,15 @@ fn live_only_at(home: &Path) -> Result<Vec<u8>> {
 }
 
 /// The `vault_meta` rows a vault's live custody state is read from: its
-/// custody binding, its archive mark, its store identity, its key-retirement
-/// intents, and its host orders, whose target index the intents read.
+/// custody binding, its archive mark, its store identity, its body erase
+/// receipts (FIX 9066), its key-retirement intents, and its host orders,
+/// whose target index the intents read.
 fn live_custody_prefixes() -> Vec<&'static [u8]> {
     let mut prefixes = vec![
         key_custody::binding_key(),
         ARCHIVED.decl().prefix,
         STORE_IDENTITY.decl().prefix,
+        side_table::PROVENANCE_BODY_ERASED.prefix,
     ];
     prefixes.extend(
         retirement_prefixes()
@@ -162,6 +165,9 @@ pub(crate) struct LiveCustody {
     rows: Rows,
     /// Its whole host-order family, for the vault a restore makes beside it.
     host_holds: Rows,
+    /// The key of each of its body erase receipts: the erasing owner, then
+    /// the instance its erase retired (FIX 9066).
+    erased_by: BTreeSet<Vec<u8>>,
 }
 
 impl LiveCustody {
@@ -175,8 +181,12 @@ impl LiveCustody {
         let mut store_identity = None;
         let mut intents = Vec::new();
         let mut host_holds = Vec::new();
+        let mut erased_by = BTreeSet::new();
+        let receipts = side_table::PROVENANCE_BODY_ERASED.prefix;
         for (key, value) in rows {
-            if key == ARCHIVED.decl().prefix {
+            if let Some(receipt) = key.strip_prefix(receipts) {
+                erased_by.insert(receipt.to_vec());
+            } else if key == ARCHIVED.decl().prefix {
                 mark = Some(value);
             } else if key == STORE_IDENTITY.decl().prefix {
                 store_identity = Some(value);
@@ -200,7 +210,21 @@ impl LiveCustody {
             store_identity,
             rows: intents,
             host_holds,
+            erased_by,
         })
+    }
+
+    /// Whether `owner`'s erase retired `instance` here, by its erase
+    /// receipt: an archive's prune drops a keyed entry its own caller's
+    /// erase retired, as a cold restore does (FIX 7470, 9066).
+    pub(crate) fn erased_by(
+        &self,
+        owner: &crate::entity_id::EntityId,
+        instance: &[u8; 16],
+    ) -> bool {
+        let mut key = owner.as_bytes().to_vec();
+        key.extend_from_slice(instance);
+        self.erased_by.contains(&key)
     }
 
     /// Where its custody is: its binding's root, or beside its own root

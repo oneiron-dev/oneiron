@@ -15,9 +15,10 @@
 //!   bound), claimed before its first byte and set to what is left at each
 //!   frame;
 //! - a rehearsal's copy, at the bytes of the bodies and rows its image
-//!   carries, claimed before the copy is made or opened, the rest set before
-//!   each body lands and before the rows do (the custody fork lands with
-//!   them);
+//!   carries, each row at the length it lands at with its inline body or
+//!   response back in it (`landing_lengths`, FIX 6025, 6232), claimed before
+//!   the copy is made or opened, the rest set before each body lands and
+//!   before the rows do (the custody fork lands with them);
 //! - with them, from the same start, the bound on everything the copy writes
 //!   past them (FIX 5613, `write_estimate`): its pages, the index rows it
 //!   stages, its reopen, its rebuilt indexes and projections, the pages its
@@ -31,6 +32,7 @@ use std::path::Path;
 
 use super::CheckpointImage;
 use super::carried_bodies::SealedFile;
+use super::landing_lengths::LandingRowLengths;
 use super::write_estimate::RestoreWriteEstimate;
 use crate::store::PageLayout;
 use crate::{Error, Result, VaultConfig};
@@ -132,10 +134,11 @@ pub(super) struct RestoreRoom<'b> {
 
 impl<'b> RestoreRoom<'b> {
     /// The room `image` takes as it lands under `config`, claimed on
-    /// `budget`.
+    /// `budget`, each row at the length `lengths` says it lands at.
     pub(super) fn new(
         budget: &'b dyn RecoveryWriteBudget,
         image: &CheckpointImage,
+        lengths: &LandingRowLengths,
         config: &VaultConfig,
     ) -> Self {
         let bodies = image
@@ -145,14 +148,14 @@ impl<'b> RestoreRoom<'b> {
             .map(|(index, (_, len))| landing_len(*len, image.sealed_bodies.get(&(index as u64))))
             .fold(0_u64, u64::saturating_add);
         let derived = if budget.floored() {
-            RestoreWriteEstimate::of(image, config, PageLayout::for_new_env()).total()
+            RestoreWriteEstimate::of(image, lengths, config, PageLayout::for_new_env()).total()
         } else {
             0
         };
         Self {
             budget,
             bodies,
-            rows: rows_len(image),
+            rows: rows_len(image, lengths),
             derived,
             landed_rows: 0,
             payload: 0,
@@ -203,7 +206,8 @@ impl<'b> RestoreRoom<'b> {
     /// rows a sealed copy's bodies added among them.
     pub(super) fn landing_rows(&mut self, image: &CheckpointImage) -> Result<()> {
         self.bodies = 0;
-        self.rows = rows_len(image).saturating_add(self.payload);
+        let landed = LandingRowLengths::default();
+        self.rows = rows_len(image, &landed).saturating_add(self.payload);
         hold(self.budget, self.rows.saturating_add(self.derived))
     }
 
@@ -223,12 +227,15 @@ impl<'b> RestoreRoom<'b> {
     }
 }
 
-/// The bytes of every row `image` carries, keys and values.
-fn rows_len(image: &CheckpointImage) -> u64 {
+/// The bytes of every row `image` carries, keys and values, each value at
+/// the length `lengths` says it lands at.
+fn rows_len(image: &CheckpointImage, lengths: &LandingRowLengths) -> u64 {
     image
         .databases
-        .values()
-        .flatten()
-        .map(|(key, value)| (key.len() as u64).saturating_add(value.len() as u64))
+        .iter()
+        .flat_map(|(name, rows)| rows.iter().map(move |row| (name, row)))
+        .map(|(name, (key, value))| {
+            (key.len() as u64).saturating_add(lengths.value_len(name, key, value))
+        })
         .fold(0_u64, u64::saturating_add)
 }

@@ -176,13 +176,19 @@ pub(super) fn program_run_in_txn(
 }
 
 /// One STEP row of a program's run, for its reads. A row that does not
-/// decode reads as absent.
+/// decode reads as absent; the erased marker of a retired body that never
+/// decoded answers `ResponseErased`, never absent (FIX 6227).
 pub(super) fn program_step_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     key: &(EntityId, EntityId),
 ) -> Result<Option<TurnProgramStep>> {
-    STEP.get_lenient(vault, txn, key)
+    let Some(raw) = STEP.get_borrowed(vault, txn, key)? else {
+        return Ok(None);
+    };
+    let family = crate::store::ResponseFamily::ProgramStep;
+    let raw = crate::store::ResponseRead::of(family, &STEP.key_bytes(key), &raw).present()?;
+    Ok(STEP.decode_value(raw).ok())
 }
 
 /// One page of a program run's STEP rows, for its reads.

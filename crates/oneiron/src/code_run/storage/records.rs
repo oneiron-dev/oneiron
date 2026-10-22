@@ -10,7 +10,8 @@ use crate::secret_rotation::{
 use crate::session_overlay::RouteTarget;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::{
-    BodyDir, BodyFile, BodyKeyRow, BodySink, StagedBodyKey, SunkBody, body_key_row_in_txn,
+    BodyDir, BodyFile, BodyKeyRow, BodySink, ResponseFamily, ResponseRead, StagedBodyKey, SunkBody,
+    body_key_row_in_txn,
 };
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
@@ -278,16 +279,23 @@ impl Vault {
         run_id: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
         let rtxn = self.store.env.read_txn()?;
-        REPLAY_RECORDS.get(&self.store, &rtxn, run_id)
+        self.get_code_run_replay_record_in_txn(&rtxn, run_id)
     }
 
-    /// [`Self::get_code_run_replay_record`] in the caller's snapshot.
+    /// [`Self::get_code_run_replay_record`] in the caller's snapshot. The
+    /// erased marker of a retired record that never decoded answers
+    /// `ResponseErased` before any decode (FIX 6227).
     pub(crate) fn get_code_run_replay_record_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         run_id: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
-        REPLAY_RECORDS.get(&self.store, rtxn, run_id)
+        let Some(raw) = REPLAY_RECORDS.get_borrowed(&self.store, rtxn, run_id)? else {
+            return Ok(None);
+        };
+        let key = REPLAY_RECORDS.key_bytes(run_id);
+        let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
+        REPLAY_RECORDS.decode_value(raw).map(Some)
     }
 
     /// The taint refs and secret-scan reason of the occurrence of `output`

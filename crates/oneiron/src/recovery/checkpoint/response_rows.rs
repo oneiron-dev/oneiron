@@ -17,6 +17,11 @@
 //! the erase's shell, deindexed and marked deleted, a wait's reply its erased
 //! form, an agent dispatch's attempt row its text-free form, and a captured
 //! request nothing at all (FIX 6588, 7115, 6708).
+//!
+//! A row its family recognizes that does not decode travels the same way,
+//! whole and opaque (FIX 6227): its descriptor says so, a live instance
+//! lands its exact bytes, and a retired one leaves the explicit erased
+//! marker (a claim, its shell).
 
 use std::collections::BTreeSet;
 
@@ -42,11 +47,13 @@ pub(super) enum Noted {
     /// A response with no instance bound to its bytes yet.
     Unbound,
     /// A response bound to `instance`: the image row holds the stub, and
-    /// the bytes after `keep`, whose BLAKE3 is `digest`, travel sealed.
+    /// the bytes after `keep`, whose BLAKE3 is `digest`, travel sealed;
+    /// `opaque` when the row does not decode (FIX 6227).
     Bound {
         carriage: ResponseCarriage,
         instance: [u8; 16],
         digest: [u8; 32],
+        opaque: bool,
     },
 }
 
@@ -87,7 +94,7 @@ impl ResponseCensus {
         let Some(family) = ResponseFamily::of_row(db, key, value) else {
             return Ok(Noted::Not);
         };
-        let Some(carriage) = family.carriage(key, value) else {
+        let Some((carriage, opaque)) = family.scan(key, value).carriage() else {
             return Ok(Noted::Not);
         };
         let carrier = response_carrier(db, key);
@@ -109,6 +116,7 @@ impl ResponseCensus {
                 carriage,
                 instance: binding.instance,
                 digest,
+                opaque,
             }),
             _ => {
                 self.unbound.push(carrier);
@@ -133,12 +141,12 @@ impl ResponseCensus {
 }
 
 /// The carried inline body of a bound response, and the stub its row
-/// travels as.
+/// travels as; `opaque` for a row that does not decode (FIX 6227).
 pub(super) fn carry(
     database: &str,
     key: &[u8],
     value: &[u8],
-    (carriage, instance, digest): (ResponseCarriage, [u8; 16], [u8; 32]),
+    (carriage, instance, digest, opaque): (ResponseCarriage, [u8; 16], [u8; 32], bool),
 ) -> Result<(CarriedInline, Vec<u8>, Vec<u8>)> {
     let body = value[carriage.keep..].to_vec();
     // A queue row lands unleased (FIX 7115): the length it lands at.
@@ -155,6 +163,7 @@ pub(super) fn carry(
         stored_len: 0,
         retired: Some(u32::try_from(carriage.retired).map_err(|_| codec_error())?),
         landed_len,
+        opaque,
         superseded: false,
     };
     Ok((carried, body, carriage.stub))
@@ -198,7 +207,7 @@ pub(super) fn bind_in_txn(
     let Some(family) = ResponseFamily::of_row(db, key, &value) else {
         return Ok(Vec::new());
     };
-    let Some(carriage) = family.carriage(key, &value) else {
+    let Some((carriage, opaque)) = family.scan(key, &value).carriage() else {
         return Ok(Vec::new());
     };
     let digest = *blake3::hash(&value[carriage.keep..]).as_bytes();
@@ -216,7 +225,21 @@ pub(super) fn bind_in_txn(
         }
         return bind_response_in_txn(store, txn, carrier, bound, &owners);
     }
-    let owners = family.owners(store, txn, key, &value)?;
+    let owners = if opaque {
+        // An opaque response's owners are what its key proves (FIX 6227);
+        // the rest are reported, never invented.
+        let owners = family.opaque_owners(store, txn, key, &value)?;
+        if !owners.proved() {
+            tracing::warn!(
+                ?family,
+                "an undecodable response is bound under the owners its key proves; the ones \
+                 its row stamps are not known"
+            );
+        }
+        owners.into_ids()
+    } else {
+        family.owners(store, txn, key, &value)?
+    };
     bind_response_in_txn(
         store,
         txn,
@@ -245,7 +268,7 @@ pub(super) fn release_stale_in_txn(
         let holds = match carrier_row(carrier) {
             Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
                 ResponseFamily::of_row(db, key, &value)
-                    .and_then(|family| family.carriage(key, &value))
+                    .and_then(|family| family.scan(key, &value).carriage())
                     .is_some()
             }),
             None => false,

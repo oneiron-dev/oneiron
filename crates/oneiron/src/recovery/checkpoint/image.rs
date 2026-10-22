@@ -34,6 +34,10 @@ pub(super) struct CheckpointImage {
     /// (KS-2A).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) inline_bodies: Vec<carried_bodies::CarriedInline>,
+    /// The checkpoint sequence its artifact's verified commitment signs, set
+    /// as the artifact opens (OF-570 (e)); never in an image.
+    #[serde(skip)]
+    pub(super) checkpoint_sequence: Option<u64>,
 }
 
 impl CheckpointImage {
@@ -81,7 +85,9 @@ pub(super) fn decode_image(
     artifact::SealedBodies<'_>,
     Option<crate::store::CustodyRequirement>,
 )> {
-    let image: CheckpointImage = rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
+    let mut image: CheckpointImage =
+        rmp_serde::from_slice(&opened.image).map_err(|_| codec_error())?;
+    image.checkpoint_sequence = Some(opened.sequence);
     if image.version != IMAGE_VERSION
         || image.created_at != opened.created_at
         || !carried_bodies::matches_artifact(&image, &opened.bodies.list())

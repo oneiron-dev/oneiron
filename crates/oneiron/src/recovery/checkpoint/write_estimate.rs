@@ -29,6 +29,7 @@
 //! (`write_budget`), so a step's own pages are never claimed twice.
 
 use super::CheckpointImage;
+use super::landing_lengths::LandingRowLengths;
 use crate::analyzer::MultilingualAnalyzer;
 use crate::batch::{EntityMetadataHeader, LONG_INTERVAL_THRESHOLD_SECS};
 use crate::bm25::TextTree;
@@ -63,16 +64,22 @@ pub(super) struct RestoreWriteEstimate {
 }
 
 impl RestoreWriteEstimate {
-    /// The bound for `image` restored under `config`, in pages of `layout`.
+    /// The bound for `image` restored under `config`, in pages of `layout`,
+    /// each row at the length `lengths` says it lands at (FIX 6025, 6232).
     /// Working it out never refuses a restore.
-    pub(super) fn of(image: &CheckpointImage, config: &VaultConfig, layout: PageLayout) -> Self {
+    pub(super) fn of(
+        image: &CheckpointImage,
+        lengths: &LandingRowLengths,
+        config: &VaultConfig,
+        layout: PageLayout,
+    ) -> Self {
         let mut landed = 0_u64;
         let mut row_bytes = 0_u64;
         let mut vault_meta = 0_u64;
         for (name, rows) in &image.databases {
             let mut tree = TreeRows::default();
             for (key, value) in rows {
-                let (key, value) = (key.len() as u64, value.len() as u64);
+                let (key, value) = (key.len() as u64, lengths.value_len(name, key, value));
                 layout.add(&mut tree, key, value);
                 row_bytes = row_bytes.saturating_add(key).saturating_add(value);
             }

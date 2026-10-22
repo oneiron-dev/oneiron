@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
+use super::opaque_response::{OPAQUE_ERASED, ResponseOwners, ResponseScan};
 use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
@@ -231,6 +232,21 @@ impl ResponseFamily {
         }
     }
 
+    /// The database the family's rows rest in.
+    pub(crate) const fn database(self) -> ResponseDb {
+        match self {
+            Self::StepClaim => ResponseDb::Entities,
+            Self::Http | Self::MediaJob | Self::MediaPart => ResponseDb::SyncState,
+            Self::AttemptPayload => ResponseDb::Attempts,
+            Self::ProgramStep
+            | Self::StepState
+            | Self::Replay
+            | Self::BlockedCapture
+            | Self::WaitDelivery
+            | Self::WaitSettled => ResponseDb::VaultMeta,
+        }
+    }
+
     /// Whether the family's response is shared by every holder its
     /// obligations name, so one holder's erase owes its retirement to the
     /// final holder's release (FIX 6588).
@@ -238,35 +254,83 @@ impl ResponseFamily {
         self == Self::WaitSettled
     }
 
-    /// What a checkpoint carries of the row `key`: `None` when it holds no
-    /// response (a bodyless step, a state with no payload, a claim whose
-    /// response rests in an artifact, an erased reply, a dispatch with no
-    /// text, a row that does not decode).
-    pub(crate) fn carriage(self, key: &[u8], value: &[u8]) -> Option<ResponseCarriage> {
+    /// What a checkpoint carries of the row `key`, the one scanner every
+    /// census, binding, stale and retire path reads it through: no response
+    /// (a bodyless step, a state with no payload, a claim whose response
+    /// rests in an artifact, an erased reply or marker, a dispatch with no
+    /// text), a decoded one, or, for a STEP, step-state, replay or step
+    /// claim row that does not decode, an opaque one (FIX 6227).
+    pub(crate) fn scan(self, key: &[u8], value: &[u8]) -> ResponseScan {
         let whole = |stub: Vec<u8>| ResponseCarriage {
             keep: 0,
             retired: stub.len(),
             stub,
         };
+        // An opaque response's erased form holds nothing.
+        if value == OPAQUE_ERASED {
+            return ResponseScan::NotResponse;
+        }
         match self {
             Self::ProgramStep => crate::dreamer_runner::program_step_carriage(value),
             Self::StepState => crate::llm::step_state_carriage(value),
             Self::StepClaim => crate::llm::step_claim_carriage(value),
             Self::Replay => crate::code_run::replay_carriage(value),
-            Self::Http => crate::store::http_carriage(value).map(whole),
-            Self::MediaJob => crate::store::media_job_carriage(value).map(whole),
-            Self::MediaPart => crate::store::media_part_carriage(value).map(whole),
+            Self::Http => ResponseScan::decoded(crate::store::http_carriage(value).map(whole)),
+            Self::MediaJob => {
+                ResponseScan::decoded(crate::store::media_job_carriage(value).map(whole))
+            }
+            Self::MediaPart => {
+                ResponseScan::decoded(crate::store::media_part_carriage(value).map(whole))
+            }
             // The whole row; nothing stays once retired: the row goes.
-            Self::BlockedCapture => {
-                crate::self_heal::blocked_reports::blocked_capture_stub(key, value).map(whole)
-            }
+            Self::BlockedCapture => ResponseScan::decoded(
+                crate::self_heal::blocked_reports::blocked_capture_stub(key, value).map(whole),
+            ),
             Self::WaitDelivery | Self::WaitSettled => {
-                crate::code_run::wait_reply_stub(value).map(whole)
+                ResponseScan::decoded(crate::code_run::wait_reply_stub(value).map(whole))
             }
-            Self::AttemptPayload => {
-                crate::attempt_queue::attempt_payload_stub(key, value).map(whole)
-            }
+            Self::AttemptPayload => ResponseScan::decoded(
+                crate::attempt_queue::attempt_payload_stub(key, value).map(whole),
+            ),
         }
+    }
+
+    /// Who owns the opaque response in the row `key`, as far as its key
+    /// proves (FIX 6227): a claim's is its own id; a STEP row's its run and
+    /// step, a replay record's its run and the actor a program's run runs
+    /// as, the rest of what their rows stamp unknown; a step-state row's
+    /// none.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn opaque_owners(
+        self,
+        store: &Store,
+        txn: &RoTxn<'_>,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<ResponseOwners> {
+        if self == Self::Replay {
+            let Some(run) = key
+                .strip_prefix(side_table::CODE_RUN_REPLAY.prefix)
+                .and_then(|raw| <[u8; 16]>::try_from(raw).ok())
+                .and_then(|raw| EntityId::from_bytes(raw).ok())
+            else {
+                return Ok(ResponseOwners::Unknown);
+            };
+            let mut owners = vec![run];
+            owners.extend(crate::dreamer_runner::program_run_actor_in_txn(
+                store, txn, &run,
+            )?);
+            return Ok(ResponseOwners::Partial(owners));
+        }
+        let owners = self.owners(store, txn, key, value)?;
+        Ok(match self {
+            Self::StepClaim => ResponseOwners::Known(owners),
+            _ if owners.is_empty() => ResponseOwners::Unknown,
+            _ => ResponseOwners::Partial(owners),
+        })
     }
 
     /// Who owns the row's response, by the stamps written with it.
@@ -350,7 +414,8 @@ impl ResponseFamily {
     /// Leaves the live row `key` its erased disposition in `wtxn`, as
     /// `carriage` names it: an activation's prune of a row whose instance
     /// its source retired. A `vault_meta` row takes its stub as far as the
-    /// disposition keeps it; a claim, the erase's shell beside its markers.
+    /// disposition keeps it (an opaque one's, its erased marker); a claim,
+    /// the erase's shell beside its markers.
     ///
     /// # Errors
     ///
