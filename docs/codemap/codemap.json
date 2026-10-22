@@ -2297,6 +2297,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/leased_payload.rs",
+     "purpose": "A running row's payload rewritten in place by the worker holding its lease (FIX 9792): the one door through…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AttemptQueue"
      ],
@@ -22544,14 +22554,14 @@
      "purpose": "Connector shapes, wire enums, attempt-payload codec, and serde adapters",
      "surface": {
       "const": 5,
-      "crate-vis": 24,
+      "crate-vis": 19,
       "enum": 5,
       "fn": 12,
       "struct": 6
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ByoEndpointBackendFactory",
@@ -22563,10 +22573,21 @@
      "path": "src/dispatch_byoa/dispatcher.rs",
      "purpose": "Dispatcher organ with dispatch, execute, authorize, and capture doors",
      "surface": {
-      "crate-vis": 6,
-      "fn": 11,
+      "crate-vis": 5,
+      "fn": 10,
       "struct": 2,
       "trait": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/dispatcher/terminal.rs",
+     "purpose": "The terminal capture door, moved whole from the dispatcher: a terminated executor's exhaust folded into one…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -22592,7 +22613,7 @@
      "path": "src/dispatch_byoa/error.rs",
      "purpose": "Error enum, literal refusal reasons, result alias, and the invalid() constructor",
      "surface": {
-      "crate-vis": 49,
+      "crate-vis": 46,
       "enum": 1,
       "type": 1
      }
@@ -22738,6 +22759,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/repo_binding/execution.rs",
+     "purpose": "A CLI attempt's execution custody, judged in one short writer before its job is staged or its sandbox…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -22788,7 +22819,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ByoaInputStager",
@@ -22801,6 +22832,26 @@
       "fn": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/staged_input/dispatch.rs",
+     "purpose": "A staged job stored and its first attempt landed in one write (FIX 7613)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dispatch_byoa/staged_input/erase.rs",
+     "purpose": "A staged job's artifact erased with its TASK (FIX 7502, 7614)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -55658,7 +55709,7 @@
      "path": "src/secret_rotation.rs",
      "purpose": "SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build…",
      "surface": {
-      "const": 5,
+      "const": 4,
       "crate-vis": 11,
       "enum": 2,
       "fn": 8,
@@ -74901,7 +74952,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -75307,7 +75358,7 @@
      "purpose": "Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2)"
     },
     "dispatch_byoa": {
-     "files": 24,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76378,9 +76429,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 143,
+   "over_bar": 142,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4982,
+   "source_files": 4987,
    "test_files": 902
   },
   "oneiron-android": {
