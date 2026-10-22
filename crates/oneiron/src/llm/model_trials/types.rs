@@ -101,14 +101,16 @@ pub struct TrialObservation {
     pub candidate: TrialReading,
 }
 
+/// A held-out case's measured reads. A cost is `None` only for an arm whose
+/// provider outcome is unknown (FIX 9920): its spend is not known, never zero.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrialMeasurement {
     pub answer: EntityId,
     pub incumbent: Option<TypedDecision>,
     pub candidate: Option<TypedDecision>,
-    pub incumbent_cost: ModelCostReceipt,
-    pub candidate_cost: ModelCostReceipt,
+    pub incumbent_cost: Option<ModelCostReceipt>,
+    pub candidate_cost: Option<ModelCostReceipt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -124,6 +126,10 @@ pub struct TrialEvidence {
     pub incumbent_cost_per_thousand: f64,
     pub candidate_cost_per_thousand: f64,
     pub trial_cost: f64,
+    /// Arms sent with no reading back (FIX 9920). While nonzero, the costs
+    /// above are the known billed spend only, and the losses are unknown.
+    #[serde(default)]
+    pub unknown_arms: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -196,8 +202,80 @@ pub struct ModelTrial {
     pub admission: TrialAdmission,
     pub prepared_at: u64,
     pub execution_started: bool,
+    /// Where its paid reads stand (FIX 9920); see
+    /// [`ModelTrial::progress_counts`].
+    #[serde(default)]
+    pub execution: ModelTrialExecutionState,
+    /// The run that last claimed it: each claim takes the next.
+    #[serde(default)]
+    pub run: u32,
+    /// Every arm sent, each kept before the next send.
+    #[serde(default)]
+    pub arms: Vec<TrialArmProgress>,
     pub evidence: Option<TrialEvidence>,
     pub receipt: Option<ModelTrialReceipt>,
+}
+
+/// Which of a held-out case's two reads an arm is.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialArm {
+    Incumbent,
+    Candidate,
+}
+
+/// Where a trial's paid reads stand, inside its own row (FIX 9920).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelTrialExecutionState {
+    /// No run has claimed it.
+    #[default]
+    NotStarted,
+    /// A run holds it and sends the arms not yet sent.
+    Running,
+    /// A run stopped on an arm whose provider outcome it does not know. A
+    /// later run sends only the arms never sent; the trial then measures
+    /// with that arm unknown.
+    Interrupted,
+    /// Every arm is read or unknown, and the evidence is recorded.
+    Measured,
+}
+
+/// Why an arm's provider outcome is unknown. Content-free: never the
+/// executor's error text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialArmFailure {
+    /// The executor returned an error after the arm was handed to it.
+    ExecutorError,
+    /// The run that sent it stopped, or a later run claimed the trial, while
+    /// the send was in flight.
+    Interrupted,
+}
+
+/// One sent arm's outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrialArmOutcome {
+    /// Handed to the executor; no result is kept yet.
+    Sending,
+    /// Billed, and kept before the next send.
+    Completed { reading: TrialReading },
+    /// Sent with no reading back: its spend is unknown, never zero, and it
+    /// is never sent again.
+    Unknown { failure: TrialArmFailure },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TrialArmProgress {
+    pub answer: EntityId,
+    pub arm: TrialArm,
+    /// The run that sent it.
+    pub run: u32,
+    pub outcome: TrialArmOutcome,
 }
 
 /// A picker reads the measured pin beside the current backend price. A pin

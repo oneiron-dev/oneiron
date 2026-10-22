@@ -18,17 +18,19 @@
 //! (WILL-PLAN L01 rows 01-03, FIX 8849). Everywhere, "erase confirmed"
 //! stands apart from "erase completed" (C4, row 04).
 
+mod confirmation;
 mod held_scrubs;
+mod pending_delete;
 mod types;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
+pub use confirmation::{LiftAndEraseShownState, ShownCustomerHold};
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::ConfirmedEraseOutcome;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, LegalHoldState, Result};
 use crate::memory::Memory;
@@ -232,163 +234,6 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let now = self.store.clock.now_recorded_at();
         hold_store::owner_events_in_txn(&self.store, &txn, now)
-    }
-
-    /// The owner's one confirm: [`LIFT_AND_ERASE_TITLE`], showing
-    /// [`LIFT_AND_ERASE_PROMPT`]. Lifts every customer hold on `records`
-    /// (a hold naming more keeps the rest) and erases them through the
-    /// owner delete rail; the confirm, the lift and each scope change are
-    /// logged first, in one transaction, so the choice is recorded whatever
-    /// the erase does. A host order is never lifted here: its records keep
-    /// their bytes, read as retained for law with the order's bound, the
-    /// erase waits, and it runs once Oneiron lifts the order. An erase that
-    /// ran reads erased once its receipt is complete, and
-    /// [`ERASE_COMPLETION_PENDING`] with its receipt while its historical
-    /// sweep is queued, wherever the bytes live; a record a secret order
-    /// keeps reads that, and nothing more (C2, C4, WILL-PLAN L01 row 04).
-    ///
-    /// # Errors
-    /// The owner proof no longer holds, or no record is named. A record's
-    /// own erase failure is its [`LiftAndEraseStatus::Failed`].
-    pub fn confirm_lift_legal_hold_and_erase(
-        &self,
-        owner: &AuthenticatedOwner,
-        records: &[EntityId],
-    ) -> Result<LiftAndEraseOutcome> {
-        let records: BTreeSet<EntityId> = records.iter().copied().collect();
-        if records.is_empty() {
-            return Err(Error::InvalidConfig(
-                "lift and erase names the records".into(),
-            ));
-        }
-        let (actor, kept, holds) = self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            let who = HoldActor::owner(actor);
-            let now = self.store.clock.now_recorded_at();
-            // Each customer hold on these records, with what leaves it.
-            let mut lifting: BTreeMap<EntityId, (LegalHold, Vec<LegalHoldTarget>)> =
-                BTreeMap::new();
-            // Each kept record, with the host orders on it the owner may see.
-            let mut kept: BTreeMap<EntityId, Vec<LegalHold>> = BTreeMap::new();
-            for record in &records {
-                let target = LegalHoldTarget::Record(*record);
-                for hold in hold_store::holds_on_in_txn(&self.store, txn, &target)? {
-                    hold_store::link_erase_in_txn(&self.store, txn, record, &hold)?;
-                    if hold.kind == LegalHoldKind::HostOrder {
-                        hold_store::log_in_txn(
-                            &self.store,
-                            txn,
-                            &hold,
-                            LegalHoldEventKind::LiftAndEraseConfirmed,
-                            LegalHoldReason::CompletionPending,
-                            vec![target],
-                            &who,
-                            now,
-                            None,
-                        )?;
-                        let seen = kept.entry(*record).or_default();
-                        if hold.owner_may_see(now) {
-                            seen.push(hold);
-                        }
-                        continue;
-                    }
-                    let leaving: Vec<LegalHoldTarget> = hold
-                        .targets
-                        .iter()
-                        .filter(|named| hold_store::names_id(named, record))
-                        .copied()
-                        .collect();
-                    let (_, left) = lifting
-                        .entry(hold.hold_id)
-                        .or_insert_with(|| (hold, Vec::new()));
-                    left.extend(leaving);
-                }
-            }
-            for (mut hold, leaving) in lifting.values().cloned() {
-                hold_store::log_in_txn(
-                    &self.store,
-                    txn,
-                    &hold,
-                    LegalHoldEventKind::LiftAndEraseConfirmed,
-                    LegalHoldReason::OwnerConfirmed,
-                    leaving.clone(),
-                    &who,
-                    now,
-                    None,
-                )?;
-                hold.targets.retain(|named| !leaving.contains(named));
-                // A hold left naming nothing is lifted, keeping its last scope.
-                let event = if hold.targets.is_empty() {
-                    hold.targets.clone_from(&leaving);
-                    hold.lifted_at = Some(now);
-                    LegalHoldEventKind::Lifted
-                } else {
-                    LegalHoldEventKind::ScopeChanged
-                };
-                let reason = if hold.stands() {
-                    LegalHoldReason::ScopeNarrowedByErase
-                } else {
-                    LegalHoldReason::OwnerConfirmed
-                };
-                hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-                hold_store::log_in_txn(
-                    &self.store,
-                    txn,
-                    &hold,
-                    event,
-                    reason,
-                    leaving,
-                    &who,
-                    now,
-                    None,
-                )?;
-            }
-            for record in kept.keys() {
-                hold_store::put_pending_erase_in_txn(
-                    &self.store,
-                    txn,
-                    record,
-                    Some(actor.to_hex()),
-                    now,
-                )?;
-            }
-            // A birth these holds kept from an erased actor's scrub goes with
-            // them (FIX 6280), and so does each Gate decision scrub they kept
-            // (FIX 7993, 7994); a row another hold still names keeps its own.
-            self.settle_held_scrubs_in_txn(txn)?;
-            Ok((actor, kept, lifting.into_keys().collect::<Vec<_>>()))
-        })?;
-        // The lifts committed: a delete they deferred asks again (FIX 1488),
-        // and an erase they kept from completing completes (FIX 5844).
-        self.note_backup_hold_recheck();
-        self.finish_redaction_erases_logged();
-        let memory = self.memory(actor, EdgeActorClass::Human);
-        let hard = crate::memory::SafeDeleteReason::UserHardDelete;
-        let now = self.store.clock.now_recorded_at();
-        let mut statuses = Vec::with_capacity(records.len());
-        let mut failed = false;
-        for record in records {
-            let status = match kept.get(&record) {
-                Some(seen) => kept_status(seen, now),
-                None => match memory.owner_confirmed_erase(owner, record, hard) {
-                    Ok(receipt) => erase_status(&memory, owner, receipt.receipt_ref),
-                    Err(error) => {
-                        failed = true;
-                        LiftAndEraseStatus::Failed {
-                            message: error.message,
-                        }
-                    }
-                },
-            };
-            statuses.push((record, status));
-        }
-        if failed {
-            self.flush_legal_hold_refusals_after_failure();
-        }
-        Ok(LiftAndEraseOutcome {
-            holds,
-            records: statuses,
-        })
     }
 
     /// Host-only door (C1): Oneiron holds records on an authority order.
@@ -614,10 +459,14 @@ impl Vault {
         })
     }
 
-    /// Runs each owner-confirmed erase whose record nothing holds now.
-    /// A failed one stays for the next pass. One whose row went before its
-    /// writer ran is cancelled: nothing erased, counted or dropped (FIX 6337).
-    /// A released gate-decision partition runs it too.
+    /// Runs each owner erase that waits whose record nothing holds now, as
+    /// its request asked: an explicit lift-and-erase hard, an owner's plain
+    /// delete under its own reason (FIX 1465), and in a shared vault with
+    /// two or more Owners an explicit one only once its own `erase` act
+    /// completed (FIX 9781). A failed one stays for the next pass. One
+    /// whose request went or was replaced before its writer ran is
+    /// cancelled: nothing erased, counted or dropped (FIX 6337). A released
+    /// gate-decision partition runs it too.
     pub(crate) fn run_due_legal_hold_erases(&self) -> Result<u64> {
         // What a released hold kept from an erase's scrubs goes first,
         // whether or not an erase waits (FIX 6280, 6386, 7993, 7994): then
@@ -628,11 +477,27 @@ impl Vault {
         })?;
         self.finish_redaction_erases_logged();
         let mut erased = 0_u64;
-        for record in due {
-            match self.due_confirmed_erase(&record) {
+        for (record, pending) in due {
+            match self.erase_act_cleared(&record, &pending) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        "a confirmed erase stays pending on its veto window"
+                    );
+                    continue;
+                }
+            }
+            match self.due_confirmed_erase(&record, &pending) {
                 Ok(ConfirmedEraseOutcome::Completed(_)) => {
                     self.with_write_txn_grouped(|txn| {
-                        hold_store::drop_pending_erase_in_txn(&self.store, txn, &record)
+                        hold_store::drop_pending_erase_in_txn(
+                            &self.store,
+                            txn,
+                            &record,
+                            &pending.generation,
+                        )
                     })?;
                     erased = erased.saturating_add(1);
                 }

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1155 facade rows, 4091 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1107.
+// UniFFI census: 1157 facade rows, 4112 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1109.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13495,6 +13495,8 @@ pub enum WeaveReaderKind {
     Owner,
     #[serde(rename = "agent")]
     Agent,
+    #[serde(rename = "admin")]
+    Admin,
 }
 
 /// `oneiron::claim::scoped_read::weave_serve::WeaveReaderRef`.
@@ -22390,6 +22392,15 @@ pub struct RecordEraseConfirmRequest {
     pub also_same_bytes: Option<bool>,
 }
 
+/// `oneiron::memory::claims::DeleteRequestState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WireDeleteRequestState {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "completion_pending")]
+    CompletionPending,
+}
+
 /// `oneiron::memory::claims::DeleteReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireDeleteReceipt {
@@ -22403,6 +22414,8 @@ pub struct WireDeleteReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub receipt_ref: Option<String>,
+    #[serde(rename = "state")]
+    pub state: WireDeleteRequestState,
 }
 
 /// `oneiron::verbs::record_erase::EraseSameBytesRow`.
@@ -23204,8 +23217,12 @@ pub struct SufficiencyInput {
     pub set_changed: bool,
     #[serde(rename = "rubric_changed")]
     pub rubric_changed: bool,
-    #[serde(rename = "canary_diverged")]
-    pub canary_diverged: bool,
+    #[serde(
+        rename = "canary_diverged",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub canary_diverged: Option<bool>,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::UnknownReason`.
@@ -23230,6 +23247,8 @@ pub enum UnknownReason {
     RubricChanged,
     #[serde(rename = "canary_diverged")]
     CanaryDiverged,
+    #[serde(rename = "no_canary")]
+    NoCanary,
 }
 
 /// `oneiron::skill_optimize::eval_set::sufficiency::SufficiencyVerdict`.
@@ -26187,6 +26206,233 @@ pub struct CleanupRunView {
     pub digest: Option<String>,
 }
 
+/// `oneiron::vault_cleanup::review_types::CleanupReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupReviewRequest {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupReviewCounts`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupReviewCounts {
+    #[serde(rename = "total")]
+    pub total: u64,
+    #[serde(rename = "claimless_extraction_persons")]
+    pub claimless_extraction_persons: u64,
+    #[serde(rename = "empty_summaries")]
+    pub empty_summaries: u64,
+    #[serde(rename = "completed_tasks")]
+    pub completed_tasks: u64,
+    #[serde(rename = "completed_attempts")]
+    pub completed_attempts: u64,
+    #[serde(rename = "retained_notes")]
+    pub retained_notes: u64,
+    #[serde(rename = "erased")]
+    pub erased: u64,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupItemState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupItemState {
+    #[serde(rename = "erased")]
+    Erased,
+    #[serde(rename = "eligible")]
+    Eligible,
+    #[serde(rename = "changed")]
+    Changed,
+    #[serde(rename = "gone")]
+    Gone,
+    #[serde(rename = "unreadable")]
+    Unreadable,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupReviewEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupReviewEvidence {
+    #[serde(rename = "rule")]
+    pub rule: String,
+    #[serde(rename = "holds_now")]
+    pub holds_now: bool,
+    #[serde(
+        rename = "live_claims",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub live_claims: Option<u64>,
+    #[serde(rename = "linked_edges")]
+    pub linked_edges: Vec<String>,
+    #[serde(
+        rename = "extraction_minted",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub extraction_minted: Option<bool>,
+    #[serde(rename = "since", default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<u64>,
+    #[serde(rename = "keep_days", default, skip_serializing_if = "Option::is_none")]
+    pub keep_days: Option<u64>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalEntityView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalEntityView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<WireEntityView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalNoteReadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalNoteReadView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<NoteReadView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupReviewContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupReviewContent {
+    #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<ScopedReadResultOptionalEntityView>,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<ScopedReadResultOptionalNoteReadView>,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<crate::WireJson>,
+    #[serde(rename = "refused")]
+    pub refused: Vec<String>,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupAcceptEffect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupAcceptEffect {
+    #[serde(rename = "archive")]
+    Archive,
+    #[serde(rename = "skip")]
+    Skip,
+    #[serde(rename = "nothing")]
+    Nothing,
+    #[serde(rename = "fails")]
+    Fails,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupReviewItem`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupReviewItem {
+    #[serde(rename = "slot")]
+    pub slot: u64,
+    #[serde(rename = "state")]
+    pub state: CleanupItemState,
+    #[serde(rename = "entity", default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<CleanupKind>,
+    #[serde(rename = "revision", default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<CleanupReviewEvidence>,
+    #[serde(rename = "content", default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<CleanupReviewContent>,
+    #[serde(rename = "accept")]
+    pub accept: CleanupAcceptEffect,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupReviewView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupReviewView {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "read_at")]
+    pub read_at: u64,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "task_retention_days")]
+    pub task_retention_days: u64,
+    #[serde(rename = "counts")]
+    pub counts: CleanupReviewCounts,
+    #[serde(rename = "items")]
+    pub items: Vec<CleanupReviewItem>,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupItemDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupItemDecision {
+    #[serde(rename = "accept")]
+    Accept,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupItemChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupItemChoice {
+    #[serde(rename = "slot")]
+    pub slot: u64,
+    #[serde(rename = "decision")]
+    pub decision: CleanupItemDecision,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupDecideRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupDecideRequest {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "choices")]
+    pub choices: Vec<CleanupItemChoice>,
+    #[serde(
+        rename = "expected_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expected_revision: Option<String>,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupItemResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupItemResult {
+    #[serde(rename = "archived")]
+    Archived,
+    #[serde(rename = "skipped")]
+    Skipped,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "erased")]
+    Erased,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupItemOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupItemOutcome {
+    #[serde(rename = "slot")]
+    pub slot: u64,
+    #[serde(rename = "entity", default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(rename = "kind", default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<CleanupKind>,
+    #[serde(rename = "outcome")]
+    pub outcome: CleanupItemResult,
+}
+
+/// `oneiron::vault_cleanup::review_types::CleanupDecideView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupDecideView {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "items")]
+    pub items: Vec<CleanupItemOutcome>,
+    #[serde(rename = "digest", default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
 /// `oneiron::memory::archive_delete_wire::ArchiveDeletePreviewRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -26571,6 +26817,8 @@ pub enum LegalHoldEventKind {
     DeleteRefused,
     #[serde(rename = "lift_and_erase_confirmed")]
     LiftAndEraseConfirmed,
+    #[serde(rename = "erase_confirmed")]
+    EraseConfirmed,
     #[serde(rename = "erase_completed")]
     EraseCompleted,
     #[serde(rename = "lifted")]
@@ -26646,12 +26894,60 @@ pub struct LegalHoldEvent {
     pub request_id: Option<String>,
 }
 
+/// `oneiron::deletion::legal_hold::confirmation::ShownCustomerHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ShownCustomerHold {
+    #[serde(rename = "hold_id")]
+    pub hold_id: String,
+    #[serde(rename = "targets")]
+    pub targets: Vec<LegalHoldTarget>,
+    #[serde(rename = "placed_by", default, skip_serializing_if = "Option::is_none")]
+    pub placed_by: Option<String>,
+    #[serde(rename = "placed_at")]
+    pub placed_at: u64,
+    #[serde(
+        rename = "matter_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub matter_ref: Option<String>,
+}
+
+/// `oneiron::deletion::legal_hold::confirmation::LiftAndEraseShownState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiftAndEraseShownState {
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(
+        rename = "claim_free_partition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claim_free_partition: Option<bool>,
+    #[serde(rename = "holds")]
+    pub holds: Vec<ShownCustomerHold>,
+}
+
 /// `oneiron::verbs::legal_hold::LegalHoldLiftAndEraseRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct LegalHoldLiftAndEraseRequest {
     #[serde(rename = "records")]
     pub records: Vec<String>,
+    #[serde(
+        rename = "claim_free_partition",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub claim_free_partition: Option<bool>,
+    #[serde(rename = "shown_state")]
+    pub shown_state: LiftAndEraseShownState,
 }
 
 /// `oneiron::deletion::legal_hold::types::ErasePendingReason`.
@@ -26661,6 +26957,8 @@ pub enum ErasePendingReason {
     HistoricalSweep,
     #[serde(rename = "custody_retirement")]
     CustodyRetirement,
+    #[serde(rename = "veto_window")]
+    VetoWindow,
 }
 
 /// `oneiron_contracts::error::legal_hold::LegalHoldBoundKind`.
@@ -26758,6 +27056,8 @@ pub struct LegalHoldLiftAndErased {
     pub holds: Vec<String>,
     #[serde(rename = "records")]
     pub records: Vec<LegalHoldErasedRecord>,
+    #[serde(rename = "changed", default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<LiftAndEraseShownState>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteSendRequest`.
@@ -26829,6 +27129,28 @@ pub enum CooperativeDeletionDispositionKind {
     Decline,
 }
 
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteHold`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteHold {
+    #[serde(rename = "hold")]
+    pub hold: String,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(rename = "records")]
+    pub records: Vec<String>,
+    #[serde(rename = "lifted", default, skip_serializing_if = "Option::is_none")]
+    pub lifted: Option<String>,
+}
+
+/// `oneiron::verbs::courtesy_delete::CourtesyDeleteRecordProgress`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CourtesyDeleteRecordProgress {
+    #[serde(rename = "record")]
+    pub record: String,
+    #[serde(rename = "state")]
+    pub state: String,
+}
+
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CourtesyDeleteChoice {
@@ -26846,6 +27168,12 @@ pub struct CourtesyDeleteChoice {
     pub deleted: Vec<String>,
     #[serde(rename = "recorded")]
     pub recorded: String,
+    #[serde(rename = "holds")]
+    pub holds: Vec<CourtesyDeleteHold>,
+    #[serde(rename = "excluded")]
+    pub excluded: Vec<String>,
+    #[serde(rename = "progress")]
+    pub progress: Vec<CourtesyDeleteRecordProgress>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteIncoming`.
@@ -26881,6 +27209,8 @@ pub struct CourtesyDeleteIncoming {
         skip_serializing_if = "Option::is_none"
     )]
     pub reply_status: Option<String>,
+    #[serde(rename = "holds")]
+    pub holds: Vec<CourtesyDeleteHold>,
 }
 
 /// `oneiron::verbs::courtesy_delete::CourtesyDeleteAnswerRequest`.
@@ -46854,6 +47184,8 @@ pub enum ModelStepResult {
         #[serde(rename = "trap_ref")]
         trap_ref: String,
     },
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::llm::step::public::ModelStepReceipt`.
@@ -48420,6 +48752,19 @@ pub enum TrialAdmission {
     AskExploration,
 }
 
+/// `oneiron::llm::model_trials::types::ModelTrialExecutionState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ModelTrialExecutionState {
+    #[serde(rename = "not_started")]
+    NotStarted,
+    #[serde(rename = "running")]
+    Running,
+    #[serde(rename = "interrupted")]
+    Interrupted,
+    #[serde(rename = "measured")]
+    Measured,
+}
+
 /// `oneiron::llm::catalog_doors::types::ModelTrialEvidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -48446,6 +48791,8 @@ pub struct ModelTrialEvidence {
     pub candidate_cost_per_thousand: f64,
     #[serde(rename = "trial_cost")]
     pub trial_cost: f64,
+    #[serde(rename = "unknown_arms")]
+    pub unknown_arms: u64,
 }
 
 /// `oneiron::llm::model_trials::types::PairedQualityInterval`.
@@ -48566,6 +48913,14 @@ pub struct ModelTrialView {
     pub prepared_at: u64,
     #[serde(rename = "execution_started")]
     pub execution_started: bool,
+    #[serde(rename = "execution")]
+    pub execution: ModelTrialExecutionState,
+    #[serde(rename = "arms_completed")]
+    pub arms_completed: u64,
+    #[serde(rename = "arms_unknown")]
+    pub arms_unknown: u64,
+    #[serde(rename = "arms_total")]
+    pub arms_total: u64,
     #[serde(rename = "evidence", default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<ModelTrialEvidence>,
     #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
@@ -60771,15 +61126,6 @@ pub struct NoteReadRequest {
     pub version: Option<NoteVersion>,
     #[serde(rename = "spans", default, skip_serializing_if = "Option::is_none")]
     pub spans: Option<Vec<NoteReadSpan>>,
-}
-
-/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalNoteReadView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultOptionalNoteReadView {
-    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
-    pub value: Option<NoteReadView>,
-    #[serde(rename = "narrowing")]
-    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::note::reads::NoteAccessRequest`.

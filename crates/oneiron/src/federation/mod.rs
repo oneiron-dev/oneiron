@@ -86,6 +86,8 @@ pub use shared_creation::{
     InitialSharedMember, SharedTrainingSetup, SharedTrainingSetupAnswer,
     SharedTrainingSetupQuestion, SharedVaultCreation, SharedVaultPreset,
 };
+// A courtesy ask's recipient copies, read in the caller's writer (FIX 2927).
+pub(crate) mod courtesy_scope;
 mod foreign_world;
 pub(crate) use foreign_world::PactDelivery;
 pub use foreign_world::pact_foreign_world;

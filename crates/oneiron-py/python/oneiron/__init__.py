@@ -2879,6 +2879,12 @@ class Oneiron:
         def run(self, spec):
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
             return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews one open cleanup proposal item by item with full disclosure: each slot's state, entity, kind, evidence, revision, accept effect and full content; erased, gone and unreadable slots stay as typed facts."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_review(json.dumps(spec))))
+        def decide(self, spec):
+            """The owner decides one open cleanup proposal per item in one complete verdict, an accept or a reject for every slot; accepted slots archive as a whole accept does, rejected ones stay and are recorded as rejected."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_decide(json.dumps(spec))))
     class _VaultArchiveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2925,7 +2931,7 @@ class Oneiron:
             """The owner-visible legal hold log, oldest first."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_log(json.dumps({} if spec is None else spec))))
         def lift_and_erase(self, spec):
-            """The owner's one confirm that lifts or narrows the customer holds on the named records and erases them."""
+            """The owner's one confirm, bound to the state it showed, that lifts or narrows the customer holds on the named records, and on the claim-free gate partition when asked, and erases the records."""
             return json.loads(_translate(lambda: self._client.vault_legal_holds_lift_and_erase(json.dumps(spec))))
     class _VaultCourtesyDeleteVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -4513,13 +4519,13 @@ class Oneiron:
             """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_nominate(json.dumps(spec))))
         def get(self, spec):
-            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+            """Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_get(json.dumps(spec))))
         def approve(self, spec):
             """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_approve(json.dumps(spec))))
         def run(self, spec):
-            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+            """Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."""
             return json.loads(_translate(lambda: self._client.vault_models_trials_run(json.dumps(spec))))
         def complete(self, spec):
             """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
@@ -4528,7 +4534,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def propose(self, spec):
-            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+            """Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it."""
             return json.loads(_translate(lambda: self._client.vault_models_bindings_propose(json.dumps(spec))))
         def get(self, spec):
             """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
@@ -5734,10 +5740,10 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def submit(self, spec):
-            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            """Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."""
             return json.loads(_translate(lambda: self._client.ai_steps_submit(json.dumps(spec))))
         def receipt(self, spec):
-            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."""
             return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
     class _AiStreamsVerbs:
         def __init__(self, client: _NativeClient) -> None:
