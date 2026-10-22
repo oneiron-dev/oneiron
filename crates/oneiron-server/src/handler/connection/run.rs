@@ -15,6 +15,7 @@ use super::super::ephemeral::late_join_presence;
 use super::super::protocol_close::internal_fault_close;
 use super::super::socket_stop::StoppingTransport;
 use super::super::transport::GuardedTransport;
+use super::super::window_pads::send_released;
 use super::{
     ConnEvent, MAX_VERB_CALLS_IN_FLIGHT, privileged_sync_message, session_credential_revoked,
     session_gone, should_forward_broadcast, window_delivery, window_update_withheld,
@@ -319,7 +320,7 @@ pub(super) async fn handle_connection(
                             should_forward_broadcast(protocol_version, &data).then_some(data)
                         };
                         if let Some(frame) = frame
-                            && !transport.send_binary(frame).await
+                            && !send_released(&server, &conn_state, &mut transport, frame).await
                         {
                             break;
                         }
@@ -433,7 +434,7 @@ pub(super) async fn handle_connection(
                     transport.app_jti = None;
                     continue;
                 }
-                let sent = transport.send_binary(data).await;
+                let sent = send_released(&server, &conn_state, &mut transport, data).await;
                 transport.app_jti = None;
                 if !sent {
                     break;
