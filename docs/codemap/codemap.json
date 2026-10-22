@@ -5089,7 +5089,7 @@
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 6,
       "fn": 4,
       "re-export": 7,
@@ -5216,6 +5216,16 @@
      "surface": {
       "crate-vis": 1,
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/research/source_erase.rs",
+     "purpose": "An erased row out of a research campaign's kept confirmation release (FIX 6933): the source rows of its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -21624,13 +21634,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/legal_hold/held_scrubs.rs",
+     "purpose": "What a legal hold kept an erase from scrubbing, settled once it lifts (FIX 6386, 7993, 7994)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "fn": 14,
       "re-export": 1
      }
@@ -37177,6 +37197,7 @@
      "path": "src/llm/catalog_doors/mod.rs",
      "purpose": "Catalog refresh is evidence, never permission to route",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "re-export": 1
      }
@@ -38225,7 +38246,7 @@
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 16,
       "re-export": 2,
@@ -38273,6 +38294,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/registry/source_erase.rs",
+     "purpose": "An erased row out of the registry rows' source sets (FIX 6933)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -49765,7 +49796,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 9,
       "struct": 3
@@ -58037,7 +58068,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "enum": 4,
       "fn": 8,
       "mod": 1,
@@ -58183,6 +58214,16 @@
      "surface": {
       "fn": 12,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/erase.rs",
+     "purpose": "An erased row out of the eval cases' source sets (FIX 6933): each case's own set and every label's on it",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -58645,7 +58686,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "mod": 2,
       "re-export": 18
      }
@@ -58658,7 +58699,7 @@
      "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 9,
       "re-export": 1
      }
@@ -58728,7 +58769,7 @@
      "path": "src/skill_optimize/offer_pilot.rs",
      "purpose": "Per-seat candidate pins and externally measured pilot evidence for OF-577",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 14,
       "struct": 9
      }
@@ -59389,7 +59430,7 @@
      "path": "src/store/channel_identity_receipts.rs",
      "purpose": "Append-only channel-identity lifecycle receipt ledger",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 2
      }
@@ -59542,7 +59583,7 @@
      "purpose": "An erased actor out of the Gate decision ledger (FIX 4230, 4231)",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1
      }
     },
@@ -59603,7 +59644,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 28,
       "fn": 1
      }
     },
@@ -59625,6 +59666,16 @@
      "purpose": "The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/ledger/held_scrubs.rs",
+     "purpose": "What an erase owes a Gate decision a legal hold keeps (FIX 7993, 7994)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -60161,7 +60212,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "mod": 1,
       "re-export": 17
      }
@@ -60665,6 +60716,17 @@
      "purpose": "The MESSAGE rows a kept TURN lacks after a window demotion (OF-534, FIX 3859)",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/usage_sources.rs",
+     "purpose": "An erased row out of the stored usage events' source sets (FIX 6933)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -63332,13 +63394,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/row_birth/actor_erase.rs",
      "purpose": "An erased actor's births leave the window carriers (FIX 6279)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -66715,7 +66777,7 @@
      "path": "src/training_pack/actor_erase.rs",
      "purpose": "An erased owner out of the training rows that name it (FIX 3520): the runs, and the role-swap receipts in…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -73571,7 +73633,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -73942,7 +74004,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74320,7 +74382,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 128,
+     "files": 129,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74761,7 +74823,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 61,
+     "files": 62,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74796,7 +74858,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 140,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75029,7 +75091,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4868,
+   "source_files": 4874,
    "test_files": 902
   },
   "oneiron-android": {
