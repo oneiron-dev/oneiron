@@ -463,11 +463,11 @@ pub use crate::llm::{
     AutoCheckCandidateOwned, AutoCheckDecisions, AutoCheckNotes, AutoCheckOutcome,
     BoundedAutoChecker, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, CallClass, CallEnvelope,
     CallPurpose, ContentPart, DeterministicFallback, FatalLlmError, FinishReason, ImageContent,
-    LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage,
-    LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmStream,
-    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality, ModelTierRef,
-    PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError, TierPrecedence,
-    UnsupportedCapability,
+    IncompleteReason, LlmBackend, LlmCapability, LlmCatalogEntry, LlmError, LlmGenerateFuture,
+    LlmInputUsage, LlmMessage, LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult,
+    LlmStream, LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelLocality,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, ResponseFormat, RetryableLlmError,
+    TierPrecedence, UnsupportedCapability,
 };
 pub use crate::memory::{
     AdmitImportedClaimInput, BlobArtifactInput, CalendarInviteSurfaceInput,
