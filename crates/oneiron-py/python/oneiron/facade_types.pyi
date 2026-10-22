@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1139 facade rows, 3996 declarations.
-Inputs: 1073 of 1139 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1025 of 1139 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1142 facade rows, 4001 declarations.
+Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
@@ -5635,6 +5635,33 @@ class ProxyConnectorRevokeWriteRequest(TypedDict):
     actor: str
     key: str
     revision: int
+class ConnectorSlateRedraftRequest(TypedDict):
+    slate_ref: str
+    expected_revision: int
+    instruction: str
+class ConnectorSlateRedraftReplyProposed(TypedDict):
+    status: Literal["proposed"]
+    slate_ref: str
+    expected_revision: int
+    proposed: dict[str, SlateDisposition]
+    rationale: dict[str, str]
+class ConnectorSlateRedraftReplyUnavailable(TypedDict):
+    status: Literal["unavailable"]
+    code: str
+    reason: str
+ConnectorSlateRedraftReply = ConnectorSlateRedraftReplyProposed | ConnectorSlateRedraftReplyUnavailable
+class ConnectorSlateNarrowRequest(TypedDict):
+    key_ref: str
+    expected_revision: int
+    narrows: NotRequired[dict[str, SlateDisposition]]
+    facets: NotRequired[list[str] | None]
+class ConnectorSlateNarrowView(TypedDict):
+    key_ref: str
+    slate_ref: str
+    slate_revision: int
+    settings: dict[str, SlateDisposition]
+    facets: NotRequired[list[str] | None]
+    narrows: dict[str, SlateHolderNarrow]
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str
@@ -8940,6 +8967,9 @@ class ConsentActReceipt(TypedDict):
     reason_code: str
     grant_ref: NotRequired[str | None]
     diff_handle: list[int]
+class ConnectorCallApproveOnceRequest(TypedDict):
+    call_ref: str
+    approval_digest: str
 class DenyConsentRequest(TypedDict):
     effect_digest: str
 class ActionEnvelopeRequest(TypedDict):

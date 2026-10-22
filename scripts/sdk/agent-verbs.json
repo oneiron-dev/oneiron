@@ -4245,6 +4245,34 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.slates.redraft",
+      "description": "The owner asks the configured drafter to re-draft one connector grant slate: it proposes changed rows with rationale at the reviewed revision and stamps or grants nothing; with no drafter it answers unavailable.",
+      "input": "ConnectorSlateRedraftRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateRedraftReply",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.slates.redraft\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.slates.narrow",
+      "description": "The holder of a connector key tightens rows or facets of what its own key's calls meet, with no stamp; it never widens or changes a shared catalog slate, and the owner's ruling on a row reverses it.",
+      "input": "ConnectorSlateNarrowRequest",
+      "output": "crate::task_verb::sdk::ConnectorSlateNarrowView",
+      "call": "crate::task_verb::sdk::narrow_connector_slate_embedded(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.connectors.subscriptions.put",
       "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
@@ -7283,6 +7311,21 @@
       "input": "crate::consent::lifecycle::ApproveOnceRequest",
       "output": "crate::consent::lifecycle::ConsentActReceipt",
       "call": "crate::consent::lifecycle::approve_once(memory.vault(), &memory.embedded_owner(\"vault.consent.approve_once\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.calls.approve_once",
+      "description": "The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent.",
+      "input": "ConnectorCallApproveOnceRequest",
+      "output": "crate::consent::lifecycle::ConsentActReceipt",
+      "call": "crate::task_verb::sdk::approve_connector_call_once(memory.vault(), &memory.embedded_owner(\"vault.connectors.calls.approve_once\")?, input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
