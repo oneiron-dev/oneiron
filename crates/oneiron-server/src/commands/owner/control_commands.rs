@@ -142,7 +142,9 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
                     task_type: args.task_type,
                 },
                 |request: LearningSettingPut| {
-                    Ok(doors::put_learning_setting_as_owner(&vault, &owner, request)?)
+                    Ok(doors::put_learning_setting_as_owner(
+                        &vault, &owner, request,
+                    )?)
                 },
             )?
         }
@@ -158,7 +160,9 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
                 task_type: args.task_type,
             },
             |request: LearningSettingClear| {
-                Ok(doors::clear_learning_setting_as_owner(&vault, &owner, request)?)
+                Ok(doors::clear_learning_setting_as_owner(
+                    &vault, &owner, request,
+                )?)
             },
         )?,
     };
@@ -208,7 +212,9 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
                 proposal_id: args.proposal_id,
             },
             |answer: WidenProposalAnswer| {
-                Ok(doors::approve_widen_proposal_as_owner(&vault, &owner, &answer)?)
+                Ok(doors::approve_widen_proposal_as_owner(
+                    &vault, &owner, &answer,
+                )?)
             },
         )?,
         WidenProposalsCommand::Decline(args) => hooked_row(
@@ -219,7 +225,9 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
                 proposal_id: args.proposal_id,
             },
             |answer: WidenProposalAnswer| {
-                Ok(doors::decline_widen_proposal_as_owner(&vault, &owner, &answer)?)
+                Ok(doors::decline_widen_proposal_as_owner(
+                    &vault, &owner, &answer,
+                )?)
             },
         )?,
     };

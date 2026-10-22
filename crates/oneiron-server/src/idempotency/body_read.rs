@@ -28,7 +28,7 @@ pub(super) async fn keyed_body(
     limit: usize,
 ) -> Result<Bytes, ApiError> {
     let declared = body.size_hint().lower();
-    if usize::try_from(declared).map_or(true, |declared| declared > limit) {
+    if declared > u64::try_from(limit).unwrap_or(u64::MAX) {
         return Err(too_large(headers, limit, declared));
     }
     let mut read = Vec::new();
@@ -37,11 +37,8 @@ pub(super) async fn keyed_body(
         let frame = frame.map_err(|error| unreadable(&error))?;
         if frame.len() > limit - read.len() {
             let sent = read.len().saturating_add(frame.len());
-            return Err(too_large(
-                headers,
-                limit,
-                u64::try_from(sent).unwrap_or(u64::MAX),
-            ));
+            let sent = u64::try_from(sent).unwrap_or(u64::MAX);
+            return Err(too_large(headers, limit, sent));
         }
         read.extend_from_slice(&frame);
     }

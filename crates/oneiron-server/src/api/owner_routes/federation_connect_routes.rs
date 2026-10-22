@@ -32,10 +32,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 /// `GET /v1/owner/federation/connect`: this vault's id and host key, what a
 /// peer's owner names to offer it a pact.
-async fn identity(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> OwnerReply<Value> {
+async fn identity(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
     let (_, actor) = hooked_owner(&auth, &server)?;
     let identity = blocking(move || {
         hooked_row(

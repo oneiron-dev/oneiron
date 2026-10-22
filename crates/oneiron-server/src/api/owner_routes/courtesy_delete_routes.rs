@@ -12,7 +12,9 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::task_verb::sdk::{CourtesyDeleteAnswerRequest, CourtesyDeleteSendRequest, EmptyRequest};
+use oneiron::task_verb::sdk::{
+    CourtesyDeleteAnswerRequest, CourtesyDeleteSendRequest, EmptyRequest,
+};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};

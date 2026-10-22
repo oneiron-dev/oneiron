@@ -118,10 +118,7 @@ pub(super) fn facade_admit_readable_path(
     path: &str,
 ) -> Result<(), FacadeApiError> {
     for found in readable_values(value, path) {
-        let Some(id) = found
-            .as_str()
-            .and_then(|id| EntityId::from_hex(id).ok())
-        else {
+        let Some(id) = found.as_str().and_then(|id| EntityId::from_hex(id).ok()) else {
             continue;
         };
         if !auth

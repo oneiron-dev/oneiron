@@ -1336,12 +1336,17 @@ def facade_dispatch(facade_rows):
         if 'attachment' not in r: continue
         handler = r['name'].replace('.', '_') + '_attachment'
         disposition = json.dumps(f'attachment; filename="{r["attachment"]}"')
+        # The route's answer, encoded inside its answer scope (FIX 8238); only
+        # an answer, never a refusal, is named an attachment.
         routes += f'''async fn {handler}(
             auth: CoreAuth, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
             headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
-        ) -> Result<impl IntoResponse, FacadeApiError> {{
-            let answer = facade_route(auth, State(server), uri, headers, payload).await?;
-            Ok(([(axum::http::header::CONTENT_DISPOSITION, {disposition})], answer))
+        ) -> Response {{
+            let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+            if answer.extensions().get::<FacadeApiError>().is_none() {{
+                answer.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_static({disposition}));
+            }}
+            answer
         }}\n'''
     routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'

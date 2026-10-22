@@ -46,7 +46,9 @@ async fn list(
             "vault.craft_candidates",
             request,
             |request: CraftCandidatesRequest| -> OwnerResult<CraftCandidatesView> {
-                Ok(actor_claims::craft_candidates_as_owner(vault, &owner, &request)?)
+                Ok(actor_claims::craft_candidates_as_owner(
+                    vault, &owner, &request,
+                )?)
             },
         )
     })

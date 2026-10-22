@@ -73,7 +73,9 @@ async fn put(
             "vault.settings.learning.put",
             request,
             |request: LearningSettingPut| -> OwnerResult<LearningSettingsView> {
-                Ok(doors::put_learning_setting_as_owner(vault, &owner, request)?)
+                Ok(doors::put_learning_setting_as_owner(
+                    vault, &owner, request,
+                )?)
             },
         )
     })
@@ -98,7 +100,9 @@ async fn clear(
             "vault.settings.learning.clear",
             request,
             |request: LearningSettingClear| -> OwnerResult<LearningSettingsView> {
-                Ok(doors::clear_learning_setting_as_owner(vault, &owner, request)?)
+                Ok(doors::clear_learning_setting_as_owner(
+                    vault, &owner, request,
+                )?)
             },
         )
     })

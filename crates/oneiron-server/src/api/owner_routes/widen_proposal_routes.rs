@@ -48,7 +48,9 @@ async fn list(
             "vault.widen_proposals",
             request,
             |request: WidenProposalsRequest| -> OwnerResult<WidenProposalsView> {
-                Ok(widen_doors::widen_proposals_as_owner(vault, &owner, &request)?)
+                Ok(widen_doors::widen_proposals_as_owner(
+                    vault, &owner, &request,
+                )?)
             },
         )
     })
@@ -73,7 +75,9 @@ async fn approve(
             "vault.widen_proposals.approve",
             answer,
             |answer: WidenProposalAnswer| -> OwnerResult<WidenProposalView> {
-                Ok(widen_doors::approve_widen_proposal_as_owner(vault, &owner, &answer)?)
+                Ok(widen_doors::approve_widen_proposal_as_owner(
+                    vault, &owner, &answer,
+                )?)
             },
         )
     })
@@ -97,7 +101,9 @@ async fn decline(
             "vault.widen_proposals.decline",
             answer,
             |answer: WidenProposalAnswer| -> OwnerResult<WidenProposalView> {
-                Ok(widen_doors::decline_widen_proposal_as_owner(vault, &owner, &answer)?)
+                Ok(widen_doors::decline_widen_proposal_as_owner(
+                    vault, &owner, &answer,
+                )?)
             },
         )
     })
