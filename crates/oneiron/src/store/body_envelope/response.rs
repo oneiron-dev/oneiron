@@ -216,6 +216,9 @@ pub(crate) enum ResponseFamily {
     /// query, the candidate and every row its evidence came from; a retired
     /// memo leaves nothing (FIX 10089).
     SavedQueryMemo,
+    /// The reply assertions a MESSAGE born whole kept (FIX 10260), carried
+    /// whole: an owner's erase retires the row.
+    MessageReplyAssertions,
     /// A row of the voice reference bank (FIX 8972): a pack, an identity,
     /// its incarnation, a target pointer, the current render decision, a
     /// recorded render event or an owner index entry, carried whole and
@@ -239,6 +242,10 @@ impl ResponseFamily {
                     Self::ModelStepSubmission,
                 ),
                 (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
+                (
+                    &side_table::MESSAGE_REPLY_ASSERTIONS,
+                    Self::MessageReplyAssertions,
+                ),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -278,6 +285,7 @@ impl ResponseFamily {
             | Self::WaitSettled
             | Self::ModelStepSubmission
             | Self::SavedQueryMemo
+            | Self::MessageReplyAssertions
             | Self::VoiceBank => ResponseDb::VaultMeta,
         }
     }
@@ -319,6 +327,9 @@ impl ResponseFamily {
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
+            Self::MessageReplyAssertions => ResponseScan::decoded(
+                crate::memory::reply_assertions_stub(value).map(ResponseCarriage::whole),
+            ),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
     }
@@ -405,6 +416,7 @@ impl ResponseFamily {
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
+            Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
@@ -454,7 +466,7 @@ impl ResponseFamily {
                 Ok(())
             }
             // A retired bank row goes, as the bank's erase deletes it live.
-            Self::BlockedCapture | Self::VoiceBank => {
+            Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -507,7 +519,7 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
-            Self::BlockedCapture | Self::VoiceBank => {
+            Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

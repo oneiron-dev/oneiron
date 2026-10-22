@@ -3,6 +3,7 @@
 //! `memory::witness::stream` defines the stream state; `lifecycle` defines `TerminalGate`.
 
 use super::*;
+use crate::memory::witness::reply_assertions::admitted_reply_assertions_in_txn as admitted_in_txn;
 
 fn admit_terminal(gate: TerminalGate<'_>, txn: &heed::RwTxn<'_>) -> MemoryResult<()> {
     if gate.is_some_and(|admit| !admit(txn)) {
@@ -110,8 +111,10 @@ fn terminal_write(
             seed.message_id.to_hex(),
             seed.generation.to_hex()
         ),
+        reply_assertions: crate::llm::ReplyAssertions::default(),
     };
-    let memory = vault.memory(seed.actor, seed.class()?);
+    // The opener's own proof, restored, reads every link below (FIX 1667).
+    let memory = super::super::reader::terminal_memory(vault, seed)?;
     // OF-063 prose links (Engine ruling 10-17): a continuation's appended
     // text is read for the links its AI writer cannot resolve, receipt-only,
     // before the writer opens, and receipted only once the finalize has
@@ -157,6 +160,10 @@ fn terminal_write(
         vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
             admit_terminal(gate, txn)?;
             reply_assertions::judge_in_txn(lane.as_ref(), txn, assertions, &unread)?;
+            // Judged: this generation keeps its seed's and its terminal's
+            // set on its own receipt; the birth envelope stays (FIX 10258).
+            receipt.reply_assertions =
+                admitted_in_txn(&vault.store, txn, &[&seed.assertions, assertions])?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
             admission::authorize(vault, txn, seed, &text)?;
@@ -275,6 +282,13 @@ fn terminal_write(
                                 )
                                 .apply(txn)?;
                         }
+                        // The turn's set, seed and terminal, was admitted in
+                        // this write: its receipt keeps it (FIX 10260).
+                        receipt.reply_assertions = admitted_in_txn(
+                            &vault.store,
+                            txn,
+                            &[&turn.assertions],
+                        )?;
                         storage::finish(vault, txn, seed, &receipt)?;
                         Ok(())
                     },

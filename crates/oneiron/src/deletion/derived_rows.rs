@@ -34,6 +34,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::llm::erase_submissions_in_txn,
     // FIX 10089: every verdict memo the erased row is a source of.
     crate::saved_query::erase_memos_for_source_in_txn,
+    // FIX 10260: a MESSAGE's kept reply assertions.
+    crate::memory::erase_reply_assertions_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
 ];
