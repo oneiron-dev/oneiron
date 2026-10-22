@@ -18,6 +18,7 @@ use super::input::{
 };
 use crate::Vault;
 use crate::authority::OwnerWorkRefusal;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::SecretCustodyRecord;
 use crate::store::Store;
@@ -222,11 +223,11 @@ pub(super) fn check_register_in_txn(
     txn: &heed::RoTxn<'_>,
     framed: Option<String>,
     attached: Option<Attached>,
-    record: &SecretCustodyRecord,
+    (record, binder): (&SecretCustodyRecord, &EntityId),
 ) -> Result<RegisterVerdict> {
     let strict = |snapshot: Option<&str>| -> Result<RegisterVerdict> {
         Ok(
-            match recheck_manifest_snapshot_in_txn(store, txn, record, snapshot)? {
+            match recheck_manifest_snapshot_in_txn(store, txn, record, snapshot, binder)? {
                 Some(refusal) => RegisterVerdict::Refuse(refusal),
                 None => RegisterVerdict::Register(None),
             },
@@ -256,7 +257,7 @@ pub(super) fn check_register_in_txn(
                 (
                     CustodyManifestUnstatedMulti::AttachEveryPublishedHolderSelects,
                     CustodyManifestUnstated::ReportNeverRefuse,
-                ) => judge_unstated_in_txn(store, txn, record, published)?,
+                ) => judge_unstated_in_txn(store, txn, (record, binder), published)?,
             };
             Ok(RegisterVerdict::Register(Some(check)))
         }
@@ -271,7 +272,7 @@ pub(super) fn check_register_in_txn(
 fn judge_unstated_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    record: &SecretCustodyRecord,
+    (record, binder): (&SecretCustodyRecord, &EntityId),
     mut published: Vec<AttachedManifest>,
 ) -> Result<CustodyRegisterCheck> {
     if record.manifest_ref.is_empty() {
@@ -288,7 +289,8 @@ fn judge_unstated_in_txn(
     };
     let named = published.swap_remove(index);
     let disagrees =
-        recheck_manifest_snapshot_in_txn(store, txn, record, Some(named.text.as_str()))?.is_some();
+        recheck_manifest_snapshot_in_txn(store, txn, record, Some(named.text.as_str()), binder)?
+            .is_some();
     Ok(if disagrees {
         unchecked(CustodyUncheckedReason::Disagrees, vec![named.manifest_ref])
     } else {

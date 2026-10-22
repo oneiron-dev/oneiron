@@ -26,12 +26,13 @@ mod merge;
 mod table;
 mod table_ops;
 
-pub(crate) use chart::draws_categories;
 pub use chart::{
     BarDirection, BarShape, CategoryField, ChartCategories, ChartCategory, ChartEdit, ChartKind,
-    ChartPlot, ChartSeries, ChartSource, ChartView, PlotGrouping, SeriesBinding, SeriesField,
-    SizeRepresents, effective_categories,
+    ChartPlot, ChartSeries, ChartSource, ChartView, OfPieType, PlotGrouping, SeriesBinding,
+    SeriesField, SizeRepresents, SplitType, StockOrder, StockRoles, SurfaceBand,
+    effective_categories,
 };
+pub(crate) use chart::{draws_categories, lines_and_bars, surface};
 pub use merge::{diff, preflight, preflight_merged};
 pub use table::{MergeFault, TableBinding, TableBody, TableEdit, TableMerge};
 pub(crate) use table::{UNBOUND_GRID, positions};
@@ -577,7 +578,8 @@ impl LiveDeck {
                         None,
                     ),
                 };
-                let series = held::bind(&mut payload, || deck.mint());
+                let special = held::chart_evidence(package, &slide.part, &tree, shape.node.index);
+                let series = held::bind(&mut payload, || deck.mint(), &special);
                 let node = deck.nodes.get_mut(id).expect("shape inserted above");
                 node.preset = held::shape_preset(&tree, shape);
                 node.payload = payload;

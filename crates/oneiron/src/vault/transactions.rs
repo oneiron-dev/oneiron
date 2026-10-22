@@ -12,7 +12,8 @@ use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{
-    Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows, validate_embedding_model_id,
+    BackupWriteClass, Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows,
+    validate_embedding_model_id,
 };
 #[cfg(feature = "sync")]
 use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
@@ -450,6 +451,22 @@ impl Vault {
         F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
         E: From<Error>,
     {
+        self.write_txn_door_classed(callback, BackupWriteClass::Content, f)
+    }
+
+    /// [`Self::write_txn_door`] for a write of `class` (FIX 6730): one that
+    /// changes no content runs as a group of its own and moves no backup
+    /// watermark (`store::backup_change`).
+    fn write_txn_door_classed<F, T, E>(
+        &self,
+        callback: Callback,
+        class: BackupWriteClass,
+        f: F,
+    ) -> std::result::Result<T, E>
+    where
+        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
+        E: From<Error>,
+    {
         // Scan checks raised since the last write are kept first, in a write
         // of their own (no scan opens one). It takes the writer where this
         // write is about to, holding nothing more: no answer exists yet to
@@ -465,7 +482,7 @@ impl Vault {
             proactivity_changed,
             (task_ids, rows, room_joins, pad_windows, settled_tasks),
             retirement_staged,
-        ) = self.store.group_write_as(callback, None, |wtxn| {
+        ) = self.store.group_write_classed(callback, class, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
                 Ok(staged) => staged,
                 Err(err) => return Rows::Discard(Err(E::from(err))),
@@ -615,6 +632,28 @@ impl Vault {
         check_generic_sync_state_key(key)?;
         self.with_write_txn_grouped(|wtxn| {
             crate::side_table::host_sync_state_put(self, wtxn, key, value)
+        })
+    }
+
+    /// Writes each of `rows` to `sync_state` in one write, as
+    /// [`Self::sync_state_put`] writes one (FIX 6730): when every key is a
+    /// host's telemetry (a wire window's counters, a wire or `[limits]`
+    /// question, the managed ledger's revision) the commit moves no backup
+    /// watermark, so an idle host reuses its backup; any other key makes the
+    /// whole write content. Refuses an undeclared key, as `sync_state_put`
+    /// does.
+    #[doc(hidden)]
+    #[cfg(feature = "sync")]
+    pub fn sync_state_put_telemetry_batch(&self, rows: &[(&str, &[u8])]) -> Result<()> {
+        for (key, _) in rows {
+            check_generic_sync_state_key(key)?;
+        }
+        let class = crate::store::telemetry_batch_class(rows.iter().map(|(key, _)| *key));
+        self.write_txn_door_classed(Callback::Audited, class, |wtxn| {
+            for (key, value) in rows {
+                crate::side_table::host_sync_state_put(self, wtxn, key, value)?;
+            }
+            Ok(())
         })
     }
 

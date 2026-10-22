@@ -30,6 +30,8 @@ fn issue_id(actor: EntityId, request: &ReportRequest) -> Result<EntityId> {
     )
 }
 
+/// One issue as `txn` reads it, its disclosure the effective view its basis
+/// and the live consent registry give (FIX 8747).
 pub(super) fn read(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -49,12 +51,13 @@ pub(super) fn read(
     if header.entity_type != ENTITY_TYPE_ISSUE {
         return Err(invalid("report reference is not an ISSUE"));
     }
-    let issue: ReportIssue =
+    let mut issue: ReportIssue =
         rmp_serde::from_slice(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])
             .map_err(|_| Error::CorruptedIndex("report issue body"))?;
     if issue.issue_ref != id.to_hex() {
         return Err(Error::CorruptedIndex("report issue identity"));
     }
+    vault.project_report_disclosure_in_txn(txn, &mut issue)?;
     Ok(Some(issue))
 }
 
@@ -98,6 +101,11 @@ impl Vault {
             EngineLimit::MaintenanceTextBytes,
             request.longest_text() as u64,
         );
+        // Every evidence reference is kept; how many is measured (FIX 8746).
+        let _ = self.measure_limit(
+            EngineLimit::MaintenanceRowItems,
+            request.evidence_refs.len() as u64,
+        );
         let id = issue_id(actor, &request)?;
         // Routing uses installed publisher provenance, not a caller-chosen destination.
         let artifact_route = self.report_artifact_route(&request.subject_ref)?;
@@ -114,7 +122,7 @@ impl Vault {
             }
             let route =
                 self.report_route_in_txn(txn, &request.subject_ref, artifact_route.clone())?;
-            let disclosure = self.report_disclosure_in_txn(txn, &route, request.carries_text())?;
+            let disclosure = super::routing::report_disclosure(&route, request.carries_text());
             let mut issue = ReportIssue {
                 issue_ref: id.to_hex(),
                 actor_ref: actor.to_hex(),
@@ -123,7 +131,10 @@ impl Vault {
                 route,
                 review: ReportReview::default(),
                 disclosure,
+                disclosure_basis: None,
             };
+            // A standing grant live for this publisher approves its text now.
+            self.project_report_disclosure_in_txn(txn, &mut issue)?;
             if let Some(vector) = embedding {
                 if let Some(root) =
                     self.ingest_report_feedback_in_txn(txn, &issue, vector, dedup)?

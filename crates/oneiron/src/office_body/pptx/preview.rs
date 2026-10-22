@@ -18,11 +18,13 @@
 //! refused, any ask its read filed kept.
 //!
 //! The memory a preview allocates is admitted to the host's renderer before
-//! it is (FIX 7653, [`SlideRenderer::admit`]): the package and the copy it
-//! keeps, each picture, the export, the kept drawings it copies and each
-//! slide's base64. A size known only once read is admitted as soon as it is.
-//! Every named slide is still drawn; only a real floor or the render's
-//! deadline refuses, typed by the host.
+//! it is (FIX 7653, [`SlideRenderer::admit`]): the copy the package keeps,
+//! the export, the kept drawings it copies and each slide's base64. Each is
+//! named allocated, at what it came to, once made, and bytes read before
+//! their size was known (the package, each picture) are named allocated as
+//! read, with no wait (FIX 8240, [`SlideRenderer::materialized`]). Every
+//! named slide is still drawn; only a real floor or the render's deadline
+//! refuses, typed by the host.
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -217,6 +219,14 @@ impl Memory<'_> {
             room,
             Instant::now(),
         );
+        // The copies taken are named allocated, outside the cache's lock, and
+        // the room they did not use, a miss's whole, given back (FIX 8240).
+        if room > 0 {
+            let copied = held.as_ref().map_or(0, |(_, images, _)| {
+                images.values().map(Vec::len).fold(0, usize::saturating_add)
+            });
+            renderer.materialized(len(room), len(copied));
+        }
         // The rows the answer is drawn from (FIX 5455): the package the deck
         // projects over, read now, and the live-born pictures' assets of the
         // export the slides were drawn from, which a held entry kept.
@@ -274,8 +284,12 @@ impl Memory<'_> {
                 let image = images
                     .get(&slide)
                     .ok_or_else(|| failed("a named slide was not drawn"))?;
-                // Its base64 is admitted before it is made (FIX 7653).
-                renderer.admit(base64_bytes(image.len()))?;
+                // Its base64 is admitted before it is made (FIX 7653), and
+                // named allocated, at its length, once it is (FIX 8240).
+                let estimate = base64_bytes(image.len());
+                renderer.admit(estimate)?;
+                let content_base64 = base64::engine::general_purpose::STANDARD.encode(image);
+                renderer.materialized(estimate, len(content_base64.len()));
                 Ok(DeckPreviewSlide {
                     slide,
                     media_type: if image.starts_with(&[0xFF, 0xD8, 0xFF]) {
@@ -285,7 +299,7 @@ impl Memory<'_> {
                     }
                     .to_owned(),
                     image_hash: review_image_key(image),
-                    content_base64: base64::engine::general_purpose::STANDARD.encode(image),
+                    content_base64,
                 })
             })
             .collect::<MemoryResult<Vec<_>>>();
@@ -366,13 +380,15 @@ impl Vault {
             (head, body, candidate, lifted)
         };
         let (bytes, rows) = self.deck_source_listing(artifact, &source, body.retained)?;
-        // The package read whole, and the copy its retained form keeps, are
-        // admitted before that copy is made: the read's size is known only
-        // once it is read.
+        // The package, its size known only once read whole, is named
+        // allocated as read; the copy its retained form keeps is admitted
+        // before it is made, and named allocated once it is (FIX 8240).
         let source_bytes = len(bytes.len());
-        renderer.admit(source_bytes.saturating_mul(2))?;
+        renderer.materialized(0, source_bytes);
+        renderer.admit(source_bytes)?;
         let package = Package::open(&bytes, self.docedit_package_limits()?)
             .map_err(|_| invalid("the PPTX package could not be read"))?;
+        renderer.materialized(source_bytes, source_bytes);
         let deck = candidate.unwrap_or(body.deck);
         let key = export_key(
             &deck,
@@ -394,7 +410,8 @@ impl Vault {
 
     /// The export `projection` keys, its live-born pictures' assets read
     /// now, beside the rows each asset it resolved is (FIX 5455). Each
-    /// picture's bytes and the export are admitted to `renderer` (FIX 7653).
+    /// picture's bytes are named allocated to `renderer` as read, and the
+    /// export admitted before it is made (FIX 7653, FIX 8240).
     fn project_preview(
         &self,
         artifact: &EntityId,
@@ -411,19 +428,13 @@ impl Vault {
                 rows: RefCell::new(Vec::new()),
                 renderer,
                 admitted: Cell::new(0),
-                refused: RefCell::new(None),
             };
             let assets = HeldAssets::resolve(&listing, &[&projection.deck]);
-            // A picture its memory was refused for ends the projection: it
-            // is never projected without it.
-            if let Some(refused) = listing.refused.into_inner() {
-                return Err(refused);
-            }
             (assets, listing.rows.into_inner(), listing.admitted.get())
         };
         // The export writes the package's parts and its pictures again: that
-        // much is admitted before it is made, and what it came to past that
-        // once it is.
+        // much is admitted before it is made, and what it came to named
+        // allocated in its place once it is (FIX 8240).
         let estimate = projection.source_bytes.saturating_add(pictures);
         renderer.admit(estimate)?;
         let export = project(
@@ -434,32 +445,25 @@ impl Vault {
             &assets,
         )
         .map_err(live)?;
-        let made = len(export.bytes.len());
-        if made > estimate {
-            renderer.admit(made - estimate)?;
-        }
+        renderer.materialized(estimate, len(export.bytes.len()));
         Ok((export, rows))
     }
 }
 
 /// [`VaultAssets`], listing the rows of each picture asset it resolves: the
 /// image artifact, the version CLAIM and the ASSET, read in its transaction.
-/// Each picture's bytes are admitted to the renderer as soon as they are
-/// read (FIX 7653); the first refusal is kept, and nothing resolves after it.
+/// Each picture's bytes are named allocated to the renderer as soon as they
+/// are read, with no wait (FIX 7653, FIX 8240).
 struct ListingAssets<'v, 't, 'r> {
     held: VaultAssets<'v, 't>,
     rows: RefCell<Vec<EntityId>>,
     renderer: &'r dyn SlideRenderer,
-    /// The picture bytes admitted so far.
+    /// The picture bytes read so far.
     admitted: Cell<u64>,
-    refused: RefCell<Option<Error>>,
 }
 
 impl Assets for ListingAssets<'_, '_, '_> {
     fn resolve(&self, asset: &AssetRef) -> Option<(AssetRecord, Vec<u8>)> {
-        if self.refused.borrow().is_some() {
-            return None;
-        }
         let resolved = self.held.resolve(asset)?;
         let artifact = EntityId::from_hex(&resolved.0.artifact).ok()?;
         let version = self
@@ -470,10 +474,7 @@ impl Assets for ListingAssets<'_, '_, '_> {
         let asset_row =
             crate::blob_artifact::blob_artifact_asset_entity_id(&version.content_hash).ok()?;
         let bytes = len(resolved.1.len());
-        if let Err(refused) = self.renderer.admit(bytes) {
-            *self.refused.borrow_mut() = Some(refused);
-            return None;
-        }
+        self.renderer.materialized(0, bytes);
         self.admitted.set(self.admitted.get().saturating_add(bytes));
         self.rows
             .borrow_mut()
