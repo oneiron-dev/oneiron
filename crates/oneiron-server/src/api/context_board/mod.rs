@@ -22,7 +22,8 @@ mod standing;
 mod turn_actions;
 
 pub(crate) use board::{
-    ContextBoardProjectControls, ContextBoardRenderBudget, ContextBoardRoomControls,
+    BoardSectionSource, ContextBoardProjectControls, ContextBoardRenderBudget,
+    ContextBoardRoomControls,
 };
 pub(crate) use cursor::*;
 pub(crate) use explain::*;
@@ -183,6 +184,11 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_context: Option<ChatContextCapture>,
+    /// What each rendered section was read from (DESIGN-V2 R2); never on
+    /// the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    chat_sources: Vec<BoardSectionSource>,
 }
 
 /// Session prefix: API level, entity counts by numeric type, latest activity.
@@ -523,6 +529,10 @@ pub(crate) async fn context_board_hydrate(
     // What a chat turn's context records keep of this render (FIX 6921).
     let chat_context =
         chat_emit::capture_chat_context(&auth, memories.as_ref(), &parts.authority, &board_render);
+    // What each rendered section was read from (DESIGN-V2 R2), beside the
+    // text, which it never changes.
+    let chat_sources =
+        board::section_sources(&parts.sections, memories.as_ref(), hits, &observed_reads);
 
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
@@ -588,6 +598,7 @@ pub(crate) async fn context_board_hydrate(
         self_brief,
         board_turn: None,
         chat_context,
+        chat_sources,
     };
     match board_turn {
         // The turn's record is part of the response the budget counts, so the
@@ -809,6 +820,8 @@ pub(crate) struct ChatBoard {
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
+    /// What each section of `block` was read from (DESIGN-V2 R2).
+    pub(crate) sections: Vec<BoardSectionSource>,
 }
 
 /// The board for a chat turn's `query`, hydrated as `ai.reply` hydrates its
@@ -842,5 +855,6 @@ pub(crate) async fn chat_board(
         block: context.board,
         rows: served.0.rows,
         context: context.chat_context,
+        sections: context.chat_sources,
     })
 }
