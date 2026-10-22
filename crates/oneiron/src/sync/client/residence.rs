@@ -16,7 +16,7 @@ pub(crate) use bundle::relay_sealed_bundle;
 pub use bundle::{PadAdmissionReport, SealedBundleRelay};
 pub(crate) use checkpoint_roots::exchange_checkpoint_roots;
 pub use index::ResidenceIndexWindow;
-pub use kit_fetch::fetch_sealed_bundle_with_kit;
+pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
 
 use std::{collections::HashSet, time::Duration};

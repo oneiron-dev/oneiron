@@ -135,13 +135,14 @@ pub use oneiron_model::llm::limit;
 pub use oneiron_model::llm::{
     BrokerIsolation, BudgetDenied, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_ON_DEVICE_SAFEGUARD_TIER, DEFAULT_SAFEGUARD_MODEL_BINDING, DeterministicFallback,
-    FatalLlmError, FinishReason, ImageContent, LlmBackend, LlmCapability, LlmCatalogCost,
-    LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage, LlmMessageRole,
-    LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream, LlmStreamEvent,
-    LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality, ModelTierRef,
-    PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM, ReasoningEffort,
-    ResponseFormat, RetryableLlmError, SafeguardModelBinding, SafeguardModelBindingError,
-    SingleRouteBackend, SingleSend, SpentKind, TierPrecedence, UnsupportedCapability,
+    FatalLlmError, FinishReason, ImageContent, IncompleteReason, LlmBackend, LlmCapability,
+    LlmCatalogCost, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmInputUsage, LlmMessage,
+    LlmMessageRole, LlmOutputUsage, LlmRequest, LlmResponse, LlmResult, LlmRole, LlmStream,
+    LlmStreamEvent, LlmStreamResult, LlmToolSpec, LlmUsage, ModelId, ModelIdError, ModelLocality,
+    ModelTierRef, PinnedConfigViolation, PinnedModelConfig, REASONING_BUDGET_PARAM,
+    ReasoningEffort, ResponseFormat, RetryableLlmError, SafeguardModelBinding,
+    SafeguardModelBindingError, SingleRouteBackend, SingleSend, SpentKind, TierPrecedence,
+    UnsupportedCapability,
 };
 
 #[cfg(test)]

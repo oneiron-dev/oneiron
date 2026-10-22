@@ -31,7 +31,7 @@ mod request;
 mod response;
 pub mod wav;
 
-pub use backend::{AiMediaDoor, ImageMedia, MediaBackend};
+pub use backend::{AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility};
 pub use caps::{AiOperation, MediaCaps, Modality, NativeUnit};
 pub use request::{MediaPart, MediaRequest, MediaVoice};
 pub use response::{MediaJobState, MediaResponse, MediaUsage};

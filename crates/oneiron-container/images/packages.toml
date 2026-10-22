@@ -153,9 +153,29 @@ packages = [
   "perl", "pkg-config", "python3",
 ]
 files = [{ pin = "checker-helper", dest = "/usr/local/bin/oneiron-queue-check", mode = "0555" }]
-payloads = [{ pin = "checker-rust", dest = "/opt/rust" }]
+# The frozen check plan (.oneiron/checks.json) runs `cargo` with
+# PATH=/opt/cargo/bin:..., RUSTUP_HOME=/opt/rustup and RUSTUP_TOOLCHAIN=1.96;
+# the helper itself (checker.py) needs only python3 and the store below. The
+# pinned components sit where rustup-init put that toolchain, and
+# /opt/cargo/bin links to them in place of rustup's proxies (no rustup binary:
+# a plain cargo ignores RUSTUP_TOOLCHAIN and runs the rustc beside it on PATH).
+payloads = [{ pin = "checker-rust", dest = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu" }]
+links = [
+  { path = "/opt/cargo/bin/cargo", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/cargo" },
+  { path = "/opt/cargo/bin/cargo-clippy", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/cargo-clippy" },
+  { path = "/opt/cargo/bin/cargo-fmt", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/cargo-fmt" },
+  { path = "/opt/cargo/bin/clippy-driver", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/clippy-driver" },
+  { path = "/opt/cargo/bin/rustc", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/rustc" },
+  { path = "/opt/cargo/bin/rustdoc", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/rustdoc" },
+  { path = "/opt/cargo/bin/rustfmt", target = "/opt/rustup/toolchains/1.96-x86_64-unknown-linux-gnu/bin/rustfmt" },
+]
 trees = [{ kind = "cargo-store", dest = "/opt/queue-check/cargo-home" }]
-image = { env = ["PATH=/opt/rust/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"], entrypoint = ["/usr/local/bin/oneiron-queue-check"] }
+# The Dockerfile's ENV, with HOME=/tmp from the guest plumbing.
+image = { env = [
+  "CARGO_HOME=/opt/cargo",
+  "PATH=/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+  "RUSTUP_HOME=/opt/rustup",
+], entrypoint = ["/usr/local/bin/oneiron-queue-check"] }
 
 [variants.generic-agent]
 # Shell, CA roots, the guest agent and a small starter runtime: Python from

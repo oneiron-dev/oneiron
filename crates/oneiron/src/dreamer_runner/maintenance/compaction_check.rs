@@ -14,7 +14,11 @@
 //! check records `stale_evidence`; a receipt or replay it cannot read is
 //! `unreadable_evidence`. The six deterministic gate checks already ran
 //! before the summary landed. Only then does the judge read the summary
-//! against the span and answer `supported` or `mismatch`.
+//! against the span and answer `supported` or `mismatch`. With the host's
+//! decisions lent, that reply is a diagnostic kept for the conflicts and
+//! reason it cites, and the shared decision ladder's typed answer alone is
+//! the verdict ([`support`], FIX 8713); without them the judge's own verdict
+//! stands, recorded as untyped.
 //!
 //! The verdict is a Dreamer finding about the agent, citing the agent, its
 //! filed step and the summary, with the hashes, revisions, the steps each
@@ -35,9 +39,7 @@ use crate::compaction::{
     CompactionEvidence, CompactionExecution, CompactionLanding, CompactionStepRef,
 };
 use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkCause, DreamerRunnerStore};
-use crate::dreamer_wake::{
-    DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
-};
+use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::inbox::{
     NOTIFICATION_PRODUCER_FINDING, NotificationEvent, NotificationKind, NotificationSource,
@@ -45,14 +47,15 @@ use crate::inbox::{
 use crate::llm::manifest::ModelRole;
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
-    DurableStepError, DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome,
-    TierPrecedence, call_as_step,
+    DurableStepResult, HostInferenceContext, LlmBackend, LlmMessage, LlmMessageRole, LlmRequest,
+    LlmResponse, ModelId, ModelTierRef, ResponseFormat, StepOutcome, TierPrecedence, call_as_step,
 };
 use crate::{EntityId, Error, Result, Vault};
 
 mod conversation;
+mod support;
 pub(crate) use conversation::declare_conversation_check_in_txn;
+pub use support::CompactionCheckDecisions;
 
 /// The maintenance facet a self-written landing's check rides.
 pub const COMPACTION_CHECK_FACET: &str = "dreamer.compaction_check";
@@ -62,6 +65,10 @@ pub const COMPACTION_CHECK_PREDICATE: &str = "dreamer.compaction_check.verdict";
 
 /// The payload key the declaration rides under.
 const DECLARATION_KEY: &str = "declaration";
+
+/// A finding's reason when the diagnostic step's reply did not read: the
+/// typed verdict stands without its conflicts.
+const NO_DIAGNOSTIC: &str = "diagnostic_unreadable";
 
 /// What a check records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,6 +178,27 @@ impl CompactionCheckDeclaration {
         )]))
     }
 
+    /// The landing's kind, as the support question is keyed.
+    const fn landing_kind(&self) -> &'static str {
+        match self.landing {
+            CompactionLanding::Epoch { .. } => "epoch",
+            CompactionLanding::Fold { .. } => "fold",
+        }
+    }
+
+    /// The records a finding cites: the writer, its filed step and, while
+    /// `words_live`, an epoch's summary.
+    fn cited(&self, words_live: bool) -> Vec<EntityId> {
+        let mut evidence = vec![self.writer];
+        if let Some(step) = &self.step {
+            evidence.push(step.claim);
+        }
+        if let (CompactionLanding::Epoch { summary, .. }, true) = (self.landing, words_live) {
+            evidence.push(summary);
+        }
+        evidence
+    }
+
     fn from_input(input: &Value) -> Result<Self> {
         let invalid = || Error::InvalidConfig("invalid compaction check declaration".into());
         let json = input
@@ -216,6 +244,10 @@ pub struct CompactionCheckModel<'a> {
     pub role: ModelRole,
     /// The host's rubric: prompt data, never engine prose.
     pub rubric: &'a str,
+    /// The host's decision path for the typed support verdict (FIX 8713);
+    /// `None` before the host staffs one, when the judge's own verdict
+    /// stands, recorded as untyped.
+    pub decisions: Option<CompactionCheckDecisions<'a>>,
 }
 
 /// A check whose host lends no judge stays queued, never judged as passed.
@@ -258,25 +290,43 @@ pub async fn run_compaction_check(
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         }
     };
-    let request = judge_request(&model, &declaration, &read, judge_locality(&model)?)?;
+    let locality = judge_locality(&model)?;
+    let request = judge_request(&model, &declaration, &read, locality)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
     };
-    let Some(judged) = judgment(&judging.response, &declaration) else {
-        return Ok(judging.unjudged());
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
+    let (cited, state) = (declaration.cited(true), judge_input(&declaration, &read));
+    let ask = support::Ask {
+        kind: declaration.landing_kind(),
+        subject: declaration.writer,
+        evidence: &cited,
+        state: &state,
+        locality,
     };
+    let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
+        Ok(verdict) => verdict,
+        Err(parked) => return Ok(parked),
+    };
+    let (reason, conflicts) = judged.map_or_else(
+        || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
+        |judged| (judged.reason, judged.conflicts),
+    );
     let settled = Settled {
-        verdict: judged.verdict,
-        reason: judged.reason,
-        conflicts: judged.conflicts,
+        verdict: verdict.verdict,
+        reason,
+        conflicts,
         evidence_now: Some(declaration.evidence_revision.clone()),
         words_live: true,
         judge: Some(judging.judge(&model)),
+        diagnostic,
+        decision: verdict.decision,
     };
     record(ctx.vault, attempt_id, &declaration, &settled, now)?;
     Ok(DreamerAttemptExecution::Completed {
-        completed_units: judging.units,
+        completed_units: verdict.spend.units,
     })
 }
 
@@ -307,20 +357,6 @@ impl Judging {
             "usage_in": self.response.usage.input.total,
             "usage_out": self.response.usage.output.total,
         })
-    }
-
-    /// The attempt parked, its spend kept, when the judge wrote no verdict.
-    fn unjudged(&self) -> DreamerAttemptExecution {
-        DreamerAttemptExecution::ParkWithSpend {
-            reason: "the check judge wrote no verdict".to_owned(),
-            cause: DreamerParkCause::Other,
-            completed_units: self.units,
-            step_hashes: if self.memoized {
-                Vec::new()
-            } else {
-                vec![self.step_hash]
-            },
-        }
     }
 }
 
@@ -377,37 +413,15 @@ async fn ask_judge(
 /// waits for one.
 type StepAnswer = std::result::Result<(LlmResponse, bool), DreamerAttemptExecution>;
 
-/// [`StepAnswer`] from the durable step's outcome.
+/// [`StepAnswer`] from the durable step's outcome: nothing was spent before
+/// it, so a step that did not finish parks with only its own spend.
 fn step_answer(outcome: DurableStepResult<StepOutcome>) -> Result<StepAnswer> {
-    let parked = |reason: &str, cause: DreamerParkCause| -> Result<StepAnswer> {
-        Ok(Err(DreamerAttemptExecution::Park {
-            reason: reason.to_owned(),
-            cause,
-        }))
-    };
     match outcome {
         Ok(StepOutcome::Finished {
             response, memoized, ..
         }) => Ok(Ok((response, memoized))),
-        Ok(StepOutcome::Trapped { .. }) => {
-            parked("durable step trapped for resume", DreamerParkCause::Signal)
-        }
-        Err(DurableStepError::SpentFinalizeRefused { usage }) => {
-            Ok(Err(DreamerAttemptExecution::ParkWithSpend {
-                reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                cause: DreamerParkCause::Checkpoint,
-                completed_units: usage.input.total.saturating_add(usage.output.total),
-                step_hashes: Vec::new(),
-            }))
-        }
-        Err(DurableStepError::DeadlineHardCut) => {
-            parked(DREAMER_HARD_CUT_PARK_REASON, DreamerParkCause::Checkpoint)
-        }
-        Err(DurableStepError::FinalizeRefused) => {
-            parked("wake pass finalize window", DreamerParkCause::Checkpoint)
-        }
-        Err(DurableStepError::Engine(error)) => Err(error),
-        Err(other) => parked(&other.to_string(), DreamerParkCause::of_step(&other)),
+        Ok(StepOutcome::Trapped { .. }) => Ok(Err(support::Spend::default().trapped())),
+        Err(error) => support::Spend::default().parked_on(error).map(Err),
     }
 }
 
@@ -434,6 +448,13 @@ struct Settled {
     evidence_now: Option<String>,
     words_live: bool,
     judge: Option<serde_json::Value>,
+    /// The diagnostic step's own verdict, when its reply read: provenance
+    /// beside the verdict, which it may disagree with.
+    diagnostic: Option<CompactionCheckVerdict>,
+    /// The typed ladder's decision with its receipt; `None` for a verdict
+    /// the reads settled, or the judge's own when no host decisions were
+    /// lent (FIX 8713).
+    decision: Option<serde_json::Value>,
 }
 
 impl Settled {
@@ -445,6 +466,8 @@ impl Settled {
             evidence_now: None,
             words_live: false,
             judge: None,
+            diagnostic: None,
+            decision: None,
         }
     }
 
@@ -512,7 +535,24 @@ fn judge_request(
     read: &Ready,
     locality: crate::llm::ModelLocality,
 ) -> Result<LlmRequest> {
-    let schema = serde_json::json!({
+    let input = judge_input(declaration, read);
+    judge_call(model, diagnostic_schema(), &input, locality)
+}
+
+/// What the judge reads: the span, the summary and the span's retained
+/// words, whole.
+fn judge_input(declaration: &CompactionCheckDeclaration, read: &Ready) -> serde_json::Value {
+    serde_json::json!({
+        "span": {"first": declaration.first, "last": declaration.last},
+        "summary": read.summary,
+        "evidence": read.evidence,
+    })
+}
+
+/// The diagnostic reply's shape: a verdict, the conflicts by step and a
+/// reason.
+fn diagnostic_schema() -> serde_json::Value {
+    serde_json::json!({
         "type": "object", "additionalProperties": false,
         "required": ["verdict", "conflicts", "reason"],
         "properties": {
@@ -527,13 +567,7 @@ fn judge_request(
             }},
             "reason": {"type": "string"}
         }
-    });
-    let input = serde_json::json!({
-        "span": {"first": declaration.first, "last": declaration.last},
-        "summary": read.summary,
-        "evidence": read.evidence,
-    });
-    judge_call(model, schema, &input, locality)
+    })
 }
 
 /// The judge's call for `input` under `schema`: the host's rubric first,
@@ -547,7 +581,22 @@ fn judge_call(
 ) -> Result<LlmRequest> {
     let input = serde_json::to_string(input)
         .map_err(|_| Error::InvariantViolation("the check input did not encode"))?;
-    Ok(LlmRequest {
+    let mut request = judge_shell(model, schema, locality);
+    request.messages.push(LlmMessage {
+        role: LlmMessageRole::User,
+        content: vec![ContentPart::Text { text: input }],
+    });
+    Ok(request)
+}
+
+/// The judge's request with the host's rubric and no input yet, its reply
+/// shaped by `schema`; the typed read adds its own turn and shape.
+fn judge_shell(
+    model: &CompactionCheckModel<'_>,
+    schema: serde_json::Value,
+    locality: crate::llm::ModelLocality,
+) -> LlmRequest {
+    LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
             seat_effort: None,
@@ -564,23 +613,17 @@ fn judge_call(
             locality,
         }
         .with_purpose_defaults(),
-        messages: vec![
-            LlmMessage {
-                role: LlmMessageRole::System,
-                content: vec![ContentPart::Text {
-                    text: model.rubric.to_owned(),
-                }],
-            },
-            LlmMessage {
-                role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: input }],
-            },
-        ],
+        messages: vec![LlmMessage {
+            role: LlmMessageRole::System,
+            content: vec![ContentPart::Text {
+                text: model.rubric.to_owned(),
+            }],
+        }],
         tools: Vec::new(),
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
         host_segments: None,
-    })
+    }
 }
 
 /// The judge's verdict, or `None` for a reply that is not one. A conflict
@@ -655,22 +698,15 @@ fn record(
         "conflicts": settled.conflicts,
         "judge": settled.judge,
         "reason": settled.reason,
+        "diagnostic_verdict": settled.diagnostic.map(CompactionCheckVerdict::as_str),
+        "decision": settled.decision,
     });
-    let mut evidence = vec![declaration.writer];
-    if let Some(step) = &declaration.step {
-        evidence.push(step.claim);
-    }
-    if let (CompactionLanding::Epoch { summary, .. }, true) =
-        (declaration.landing, settled.words_live)
-    {
-        evidence.push(summary);
-    }
     emit_finding(
         vault,
         attempt,
         declaration.writer,
         &value,
-        &evidence,
+        &declaration.cited(settled.words_live),
         settled.verdict,
         now,
     )

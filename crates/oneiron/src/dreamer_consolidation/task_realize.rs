@@ -17,7 +17,7 @@
 
 use super::confession::{confession_ask, parse_confession};
 use super::step_charge::StepChargeTally;
-use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::dreamer_runner::{
     DREAMER_TASK_REALIZE_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
@@ -40,6 +40,8 @@ use crate::task_verb::QueueTaskBrief;
 use crate::{Vault, WriteActor};
 use std::collections::BTreeMap;
 
+mod landing;
+
 /// Why a TASK's realization parks on a host that lends no Dreamer model.
 pub const TASK_REALIZE_UNLENT_PARK_REASON: &str = "task realization needs a lent Dreamer model";
 
@@ -59,6 +61,9 @@ pub struct TaskRealizeModel<'a> {
     /// The host's wording, else
     /// [`TASK_REALIZE_INSTRUCTION`](crate::llm::decision::catalogue::TASK_REALIZE_INSTRUCTION).
     pub instruction: &'a str,
+    /// The host's wording of the confession ask (FIX 8696), after the
+    /// brief's objectives.
+    pub confession: &'a str,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -166,7 +171,7 @@ pub async fn run_task_realize(
         request.messages.push(LlmMessage {
             role: LlmMessageRole::User,
             content: vec![ContentPart::Text {
-                text: confession_ask(&objectives),
+                text: confession_ask(&objectives, model.confession),
             }],
         });
     }
@@ -246,35 +251,16 @@ pub async fn run_task_realize(
         // Retry asks again (FIX 7431, OF-193a).
         Err(reason) => return charges.park_refused_reply(ctx.vault, record.id, step_hash, reason),
     };
-    let answer = answer.as_str();
-    let mut notes = Vec::new();
-    for part in super::note_parts::parts(answer, crate::note::MAX_NOTE_BYTES) {
-        notes.push(
-            ctx.vault
-                .create_note(RESULT_NOTE_KIND, part, model.actor)
-                .map_err(|error| invalid(&format!("result note: {error}")))?,
-        );
-    }
-    let (&note, continuations) = notes
-        .split_first()
-        .ok_or_else(|| invalid("the answer landed no note"))?;
-    if !continuations.is_empty() {
-        ctx.vault
-            .try_with_actor_content_write_txn(model.actor, |content| {
-                let mut batch = ctx.vault.batch_in();
-                for part in continuations {
-                    batch = batch.edge(part, EdgeKind::Mentions, &note, 1.0);
-                }
-                content.apply_batch(batch)
-            })?;
-    }
-    AttemptQueue::new(ctx.vault).set_result(SetAttemptResult {
-        id: record.id,
-        lease_owner: record.lease_owner.clone().unwrap_or_default(),
-        attempt_count: record.attempt_count,
-        result_ref: AttemptResultRef::new(note.to_hex())?,
-        now: ctx.now_ms / 1_000,
-    })?;
+    // The NOTE parts and the row's result commit together, under ids the
+    // attempt derives, so a replay never writes a second NOTE (FIX 1334).
+    landing::land_answer(
+        ctx.vault,
+        record,
+        model.actor,
+        RESULT_NOTE_KIND,
+        &super::note_parts::parts(&answer, crate::note::MAX_NOTE_BYTES),
+        ctx.now_ms / 1_000,
+    )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
     })
@@ -324,7 +310,7 @@ pub(crate) fn task_realize_confession(
     if objectives.is_empty() {
         return Ok(None);
     }
-    let Some((author, answer)) = stored_answer(vault, note)? else {
+    let Some((author, answer)) = stored_answer(vault, &record, note)? else {
         return Ok(None);
     };
     let Some(objectives) = parse_confession(answer.as_bytes(), &objectives) else {
@@ -372,11 +358,16 @@ pub(crate) fn seal_task_realize_confession_in_txn(
 }
 
 /// A realization's answer as it was stored, whole: its result NOTE, then
-/// each continuation part its author linked `Mentions` to it, in the order
-/// they were written (ids ascend), beside the Dreamer that authored it.
-/// `None` when the result is no readable NOTE, or its author was erased: no
-/// one is no Dreamer, so no answer is bound to them (FIX 6072).
-fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, String)>> {
+/// each continuation part in the order it was written, the part ids
+/// `record`'s attempt derives (FIX 1334), each one its author linked
+/// `Mentions` to the result, beside the Dreamer that authored it. `None`
+/// when the result is no readable NOTE, or its author was erased: no one is
+/// no Dreamer, so no answer is bound to them (FIX 6072).
+fn stored_answer(
+    vault: &Vault,
+    record: &AttemptRecord,
+    note: EntityId,
+) -> Result<Option<(EntityId, String)>> {
     let Some(crate::note::NoteBody {
         kind,
         author_ref,
@@ -389,19 +380,21 @@ fn stored_answer(vault: &Vault, note: EntityId) -> Result<Option<(EntityId, Stri
     let Some(author_ref) = author_ref.id() else {
         return Ok(None);
     };
-    for part in vault.sources(
+    let linked = vault.sources(
         &note,
         EdgeKind::Mentions,
         Some(crate::registry::ENTITY_TYPE_NOTE),
-    )? {
-        if part <= note {
-            continue;
+    )?;
+    for index in 1.. {
+        let part = landing::part_id(record, index)?;
+        if !linked.contains(&part) {
+            break;
         }
-        if let Some(body) = vault.read_note(&part)?
-            && body.author_ref.is(author_ref)
-            && body.kind == kind
-        {
-            answer.push_str(&body.markdown);
+        match vault.read_note(&part)? {
+            Some(body) if body.author_ref.is(author_ref) && body.kind == kind => {
+                answer.push_str(&body.markdown);
+            }
+            _ => break,
         }
     }
     Ok(Some((author_ref, answer)))

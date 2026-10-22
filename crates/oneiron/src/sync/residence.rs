@@ -31,11 +31,19 @@ pub use authority_tail::{
 };
 pub(crate) use bundle::holds_sealed_bundle;
 pub use bundle::{
-    SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt,
-    SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, SealedBundleStage,
-    commit_sealed_bundle, replace_sealed_bundle_pads, sealed_bundle_commit_receipt,
-    sealed_bundle_generations, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
-    sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
+    BundlePartRead, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX,
+    SealedBundleCommitReceipt, SealedBundleEntry, SealedBundleIndex, SealedBundleKitRoot,
+    SealedBundleObject, SealedBundleStage, commit_sealed_bundle, replace_sealed_bundle_pads,
+    sealed_bundle_commit_receipt, sealed_bundle_generations, sealed_bundle_index,
+    sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex,
+    sealed_generation_hex, stage_sealed_bundle_part,
+};
+#[allow(unused_imports, reason = "02A2 wires the object copy (L02)")]
+pub(crate) use bundle::{
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
+    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
+    refill_pad_object,
 };
 pub use bundle_access::{
     PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
@@ -64,7 +72,8 @@ pub use home_handoff::{
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KitBundleFetch, kit_bundle_fetch_origin, kit_sealed_bundle_part,
+    KIT_PAD_INDEX_FETCH_PATH, KitBundleFetch, KitPadIndexFetch, kit_bundle_fetch_origin,
+    kit_sealed_bundle_index, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,

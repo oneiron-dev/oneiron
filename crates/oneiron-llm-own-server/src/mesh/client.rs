@@ -2,22 +2,20 @@
 //! it; with none, the call waits and says why, trying again until one does.
 
 use std::collections::BTreeMap;
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use oneiron::authority::PeerMachine;
 use oneiron::{
-    BudgetLease, FatalLlmError, LlmCatalogEntry, LlmGenerateFuture, LlmRequest, LlmResponse,
-    LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, RetryableLlmError, Vault,
+    BudgetLease, FatalLlmError, LlmCatalogEntry, LlmError, LlmGenerateFuture, LlmRequest,
+    LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, RetryableLlmError, Vault,
 };
 use oneiron_mesh_transport::{MachineId, MeshConnection, MeshTransport};
 use tokio::runtime::Handle;
-use tokio::sync::mpsc;
-use tokio::task::AbortHandle;
 
 use super::catalog::{CatalogRefresh, merge, mesh_row, prune};
+use super::pump::{AbortOnDrop, Demand, demand};
+use super::staging::{BookedBody, Booking, StagingBudget};
 use super::{Batch, LLM_ALPN, Reply, Request, exchange, lock, put, take};
 use crate::OwnServerTransport;
 
@@ -98,6 +96,9 @@ impl std::fmt::Debug for MeshLlmTransport {
 struct Leg {
     transport: Arc<dyn MeshTransport>,
     nodes: Arc<dyn LlmNodes>,
+    /// The bytes this transport's calls hold at once: replies taken and
+    /// stream batches not yet read (FIX 8619).
+    budget: StagingBudget,
     /// Why calls wait now; `None` while a node takes them.
     waiting: Mutex<Option<String>>,
     /// The machine each node's last authenticated handshake proved.
@@ -108,17 +109,20 @@ struct Leg {
 type Absent = String;
 
 impl MeshLlmTransport {
-    /// Calls go out on `runtime`, which drives `transport`.
+    /// Calls go out on `runtime`, which drives `transport`, holding at most
+    /// `budget`'s bytes at once: the host's, or [`StagingBudget::default`].
     #[must_use]
     pub fn new(
         transport: Arc<dyn MeshTransport>,
         nodes: Arc<dyn LlmNodes>,
         runtime: Handle,
+        budget: StagingBudget,
     ) -> Self {
         Self {
             leg: Arc::new(Leg {
                 transport,
                 nodes,
+                budget,
                 waiting: Mutex::new(None),
                 proofs: Mutex::default(),
             }),
@@ -175,15 +179,6 @@ impl MeshLlmTransport {
     }
 }
 
-/// Stops the spawned call when the caller lets it go.
-struct AbortOnDrop(AbortHandle);
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.0.abort();
-    }
-}
-
 impl OwnServerTransport for MeshLlmTransport {
     fn generate<'a>(
         &'a self,
@@ -204,26 +199,13 @@ impl OwnServerTransport for MeshLlmTransport {
 
     fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let leg = Arc::clone(&self.leg);
-        let (send, receive) = mpsc::unbounded_channel();
+        let (pump, end) = demand();
         let task = self
             .runtime
-            .spawn(async move { leg.stream(request, send).await });
-        Ok(LlmStream::new(Received {
-            receive,
-            _guard: AbortOnDrop(task.abort_handle()),
-        }))
-    }
-}
-
-struct Received {
-    receive: mpsc::UnboundedReceiver<LlmResult<LlmStreamEvent>>,
-    _guard: AbortOnDrop,
-}
-
-impl futures_core::Stream for Received {
-    type Item = LlmResult<LlmStreamEvent>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.receive.poll_recv(cx)
+            .spawn(async move { leg.stream(request, &pump).await });
+        Ok(LlmStream::new(
+            end.guarded(AbortOnDrop(task.abort_handle())),
+        ))
     }
 }
 
@@ -253,8 +235,10 @@ impl Leg {
                 .map_err(|err| err.to_string())?
             {
                 Reply::Catalog(carried) => {
-                    let bytes = take(&*conn, carried).await.map_err(|err| err.to_string())?;
-                    serde_json::from_slice(&bytes)
+                    let body = take(&*conn, carried, &self.budget)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    serde_json::from_slice(&body.bytes)
                         .map_err(|_| "its catalog does not decode".to_owned())
                 }
                 Reply::Refused(why) => Err(why),
@@ -350,8 +334,10 @@ impl Leg {
                 .map_err(|err| err.to_string())?
             {
                 Reply::Generated(Ok(carried)) => {
-                    let bytes = take(&*conn, carried).await.map_err(|err| err.to_string())?;
-                    Ok(serde_json::from_slice(&bytes)
+                    let body = take(&*conn, carried, &self.budget)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    Ok(serde_json::from_slice(&body.bytes)
                         .map_err(|_| FatalLlmError::InvalidRequest.into()))
                 }
                 Reply::Generated(Err(error)) => Ok(Err(error)),
@@ -364,15 +350,12 @@ impl Leg {
         answer
     }
 
-    async fn stream(
-        &self,
-        request: LlmRequest,
-        send: mpsc::UnboundedSender<LlmResult<LlmStreamEvent>>,
-    ) {
+    async fn stream(&self, request: LlmRequest, pump: &Demand) {
         let body = match serde_json::to_vec(&request) {
             Ok(body) => body,
             Err(_) => {
-                let _ = send.send(Err(FatalLlmError::InvalidRequest.into()));
+                pump.hand(Err(FatalLlmError::InvalidRequest.into()), None)
+                    .await;
                 return;
             }
         };
@@ -381,26 +364,28 @@ impl Leg {
         loop {
             let mut tried = Vec::new();
             for machine in self.nodes(&mut tried) {
-                match self.stream_on(machine, &body, &send).await {
+                match self.stream_on(machine, &body, pump).await {
                     Ok(()) => return,
                     Err(why) => tried.push(format!("node {}: {why}", machine.to_hex())),
                 }
             }
-            if send.is_closed() {
+            if pump.is_closed() {
                 return;
             }
             self.wait(&model, &tried, &mut pause).await;
         }
     }
 
-    /// Runs the stream on one node, passing its events on. `Err` when the
-    /// node did not take it, or broke before any event went out: the next
-    /// node runs it from the start.
+    /// Runs the stream on one node, passing its events on as the caller
+    /// takes them (FIX 8619): the node is asked for its next batch only once
+    /// the caller has taken every event handed so far. `Err` when the node
+    /// did not take it, or broke before any event went out: the next node
+    /// runs it from the start.
     async fn stream_on(
         &self,
         machine: MachineId,
         body: &[u8],
-        send: &mpsc::UnboundedSender<LlmResult<LlmStreamEvent>>,
+        pump: &Demand,
     ) -> Result<(), Absent> {
         let conn = self.dial(machine).await?;
         let ran = async {
@@ -413,7 +398,7 @@ impl Leg {
             {
                 Reply::Started(Ok(id)) => id,
                 Reply::Started(Err(error)) => {
-                    let _ = send.send(Err(error));
+                    pump.hand(Err(error), None).await;
                     return Ok(());
                 }
                 Reply::Refused(why) => return Err(why),
@@ -422,38 +407,41 @@ impl Leg {
             self.taken();
             let mut flowed = false;
             loop {
-                if send.is_closed() {
+                let Some(room) = pump.room().await else {
                     let _ = exchange(&*conn, &Request::Cancel { stream: id }).await;
                     return Ok(());
-                }
+                };
                 // Once events flow, a broken node ends the stream: its
                 // events cannot be taken back. Before, another node can run it.
-                let cut = |flowed: bool| {
+                let Some((events, end, booking)) = self.next_batch(&*conn, id).await else {
                     if !flowed {
                         return Err("broke before its first event".to_owned());
                     }
-                    let _ = send.send(Err(RetryableLlmError::StreamCut.into()));
-                    Ok(())
+                    room.hand(Err(RetryableLlmError::StreamCut.into()), None);
+                    return Ok(());
                 };
-                let (events, end) = match exchange(&*conn, &Request::Next { stream: id }).await {
-                    Ok(Reply::Events { events, end }) => (events, end),
-                    _ => return cut(flowed),
-                };
-                let batch = match take(&*conn, events)
-                    .await
-                    .ok()
-                    .and_then(|bytes| rmp_serde::from_slice::<Batch>(&bytes).ok())
-                {
-                    Some(batch) => batch,
-                    None => return cut(flowed),
-                };
-                for event in batch.events {
+                let (mut room, mut booking, last) = (Some(room), Some(booking), events.len());
+                for (n, event) in events.into_iter().enumerate() {
                     let event = event.and_then(|json| {
                         serde_json::from_str::<LlmStreamEvent>(&json)
                             .map_err(|_| FatalLlmError::InvalidRequest.into())
                     });
                     let failed = event.is_err();
-                    if send.send(event).is_err() || failed {
+                    // The batch's bytes stay booked until its last event, or
+                    // the error that ends it, is taken.
+                    let closes = if failed || n + 1 == last {
+                        booking.take()
+                    } else {
+                        None
+                    };
+                    let handed = match room.take() {
+                        Some(room) => {
+                            room.hand(event, closes);
+                            true
+                        }
+                        None => pump.hand(event, closes).await,
+                    };
+                    if !handed || failed {
                         return Ok(());
                     }
                     flowed = true;
@@ -466,6 +454,22 @@ impl Leg {
         .await;
         conn.close();
         ran
+    }
+
+    /// The node's next batch of stream `id`'s events, whether it is the
+    /// last, and the booking of its bytes; `None` when the node broke.
+    async fn next_batch(
+        &self,
+        conn: &dyn MeshConnection,
+        id: u64,
+    ) -> Option<(Vec<Result<String, LlmError>>, bool, Booking)> {
+        let Ok(Reply::Events { events, end }) = exchange(conn, &Request::Next { stream: id }).await
+        else {
+            return None;
+        };
+        let BookedBody { bytes, booking } = take(conn, events, &self.budget).await.ok()?;
+        let batch = rmp_serde::from_slice::<Batch>(&bytes).ok()?;
+        Some((batch.events, end, booking))
     }
 }
 
@@ -570,17 +574,17 @@ impl OwnServerTransport for MeshPeerTransport {
     fn stream<'a>(&'a self, request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
         let body = serde_json::to_vec(&request).map_err(|_| FatalLlmError::InvalidRequest)?;
         let (leg, machine) = (Arc::clone(&self.leg), self.machine);
-        let (send, receive) = mpsc::unbounded_channel();
+        let (pump, end) = demand();
         let task = self.runtime.spawn(async move {
             // The node did not take the stream, or broke before its first
             // event: nothing went out, and no other node runs it.
-            if leg.stream_on(machine, &body, &send).await.is_err() {
-                let _ = send.send(Err(RetryableLlmError::ServerError.into()));
+            if leg.stream_on(machine, &body, &pump).await.is_err() {
+                pump.hand(Err(RetryableLlmError::ServerError.into()), None)
+                    .await;
             }
         });
-        Ok(LlmStream::new(Received {
-            receive,
-            _guard: AbortOnDrop(task.abort_handle()),
-        }))
+        Ok(LlmStream::new(
+            end.guarded(AbortOnDrop(task.abort_handle())),
+        ))
     }
 }

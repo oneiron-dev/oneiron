@@ -314,7 +314,8 @@ pub(crate) async fn context_board_hydrate(
         req.session.as_ref().and_then(|s| s.session_id.as_deref()),
         req.project.as_ref(),
     )?;
-    let standing = standing::standing_prefix(&server, &auth, req.standing.as_ref()).await?;
+    let (standing, standing_claims) =
+        standing::standing_prefix(&server, &auth, req.standing.as_ref(), targets.room_id()).await?;
     if let Some(prefix) = &standing
         && let Some(retrieval) = &mut req.retrieval
     {
@@ -670,7 +671,7 @@ pub(crate) async fn context_board_hydrate(
     // A replay re-admits each row it named beyond its documents: every
     // notification, rider row (those its overflow counts too), pack source,
     // named or stamped contact, named reader definition and discovered
-    // capability.
+    // capability, and what each INBOX row rests on (FIX 8145).
     let mut admit: Vec<_> = response
         .notifications
         .iter()
@@ -680,6 +681,7 @@ pub(crate) async fn context_board_hydrate(
     admit.extend(pack_sources);
     admit.extend(named_refs);
     admit.extend(parts.named);
+    admit.extend(parts.inbox);
     admit.extend(scratchpad_pad);
     if let Some(pack) = &response.pack {
         admit.extend(pack.replay_admits());
@@ -700,10 +702,15 @@ pub(crate) async fn context_board_hydrate(
             .chain(standing)
             .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
     );
+    // The standing block's text is its CLAIMs' (FIX 8148): a replay admits
+    // each again under the caller's read and clamp, and an erase of one
+    // retires the kept response.
+    served.extend(standing_claims.iter().copied());
     Ok((
         axum::Extension(crate::idempotency::ServedRows {
             rows: served,
             admit: Some(admit),
+            sources: standing_claims,
         }),
         Json(response),
     ))
