@@ -1,3 +1,7 @@
+//! Booking anti-abuse rule amendments and their owner-stamped activation.
+//! Entry: `amendment_direction`.
+//! Defines its own items.
+
 use super::evaluation::scoped_rules;
 use super::rules::{
     AmendmentDirection, BookingAntiAbuseRule, BookingAntiAbuseRuleRow,

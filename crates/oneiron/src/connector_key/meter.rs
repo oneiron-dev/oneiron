@@ -1,3 +1,7 @@
+//! Effector budget windows, usage rows and the budget charge facade.
+//! Entry: `EffectorBudgetRead`.
+//! Windows and usage are defined here; charging lives in `charge`.
+
 use std::io::Cursor;
 
 use rmpv::Value;

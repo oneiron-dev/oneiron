@@ -1,3 +1,7 @@
+//! Connector-send attempt execution.
+//! Entry: `Vault::run_connector_task_executor`.
+//! Defines its own items.
+
 use super::OutboundDeliveryWindowDecision;
 use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,

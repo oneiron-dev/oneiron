@@ -1,3 +1,7 @@
+//! Private booking anti-abuse rows, keys and digests.
+//! Entry: `BOOKING_ANTI_ABUSE_META_PREFIX`.
+//! Defines its own items.
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 

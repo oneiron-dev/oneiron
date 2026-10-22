@@ -1,3 +1,7 @@
+//! Skill hub import, update and dependency doors.
+//! Entry: `Vault::sync_skill_from_hub`.
+//! Defines its own items.
+
 use rmpv::Value;
 
 use crate::Vault;

@@ -1,3 +1,7 @@
+//! Built-in outbound capability manifests.
+//! Entry: `build_outbound_capability_manifests`.
+//! Defines its own items.
+
 use serde_json::{Value, json};
 
 use super::capability::{

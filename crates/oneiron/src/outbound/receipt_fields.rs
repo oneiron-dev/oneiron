@@ -1,3 +1,7 @@
+//! Outbound receipt field projection.
+//! Entry: `dispatch_result_receipt`.
+//! Defines its own items.
+
 use std::collections::BTreeMap;
 
 use super::OutboundDeliveryWindowDecision;
