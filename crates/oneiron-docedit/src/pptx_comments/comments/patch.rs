@@ -14,10 +14,12 @@ pub fn comment_patch(
     edits: &[PptxCommentEdit],
     mints: SlideMints<'_>,
     limits: &PptxCommentLimits,
+    resources: &Resources,
 ) -> Result<PptxCommentEffects, PptxError> {
     if !limits.valid() {
         return Err(PptxError::InvalidPatch);
     }
+    let limits = &Codec { limits, resources };
     let archive = Archive::read(base, limits)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
     resolve_positions(base, &archive.parts, &mut inspection, limits);

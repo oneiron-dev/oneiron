@@ -3,11 +3,12 @@
 //! parse owns parsing; this module owns the node types and query methods.
 //!
 //! Namespace-aware XML spans for surgical edits. Unknown markup stays byte-identical.
-//! DTDs/entities, excessive depth and malformed XML fail closed; no resource is fetched.
+//! DTDs/entities and malformed XML fail closed; no resource is fetched. Depth
+//! and counts are observations: the parse reserves memory as it grows.
 
 mod parse;
 
-use super::model::{PatchResult, PptxCommentLimits, PptxError};
+use super::model::{Codec, PatchResult, PptxError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
@@ -150,20 +151,14 @@ impl Xml<'_> {
         n.empty || self.text[at..n.close_start].trim().is_empty()
     }
 
+    /// The walk keeps its open elements on a heap stack, not the call
+    /// stack, so a part nests as deep as its memory allows (FIX 8596).
     fn fingerprint_with(&self, node: usize, skip: &impl Fn(&Xml<'_>, usize) -> bool) -> [u8; 32] {
         fn field(hash: &mut blake3::Hasher, text: &str) {
             hash.update(&(text.len() as u64).to_le_bytes());
             hash.update(text.as_bytes());
         }
-        fn visit(
-            xml: &Xml<'_>,
-            node: usize,
-            hash: &mut blake3::Hasher,
-            skip: &impl Fn(&Xml<'_>, usize) -> bool,
-        ) {
-            if skip(xml, node) {
-                return;
-            }
+        fn header(xml: &Xml<'_>, node: usize, hash: &mut blake3::Hasher) {
             let n = &xml.nodes[node];
             field(hash, &n.ns);
             field(hash, &n.name);
@@ -175,26 +170,41 @@ impl Xml<'_> {
                 field(hash, &a.value);
             }
             hash.update(&[0]);
-            let mut at = n.open_end;
-            for &i in &n.children {
-                let child = &xml.nodes[i];
-                let text = &xml.text[at..child.start];
-                if !text.trim().is_empty() {
-                    field(hash, text);
-                }
-                visit(xml, i, hash, skip);
-                at = child.end;
-            }
-            if !n.empty {
-                let text = &xml.text[at..n.close_start];
-                if !text.trim().is_empty() {
-                    field(hash, text);
-                }
-            }
-            hash.update(&[1]);
         }
         let mut hash = blake3::Hasher::new();
-        visit(self, node, &mut hash, skip);
+        // Each open element: its node, its next child, and where the text
+        // before that child starts.
+        let mut open: Vec<(usize, usize, usize)> = Vec::new();
+        if !skip(self, node) {
+            header(self, node, &mut hash);
+            open.push((node, 0, self.nodes[node].open_end));
+        }
+        while let Some(&(id, next, at)) = open.last() {
+            let n = &self.nodes[id];
+            if let Some(&child) = n.children.get(next) {
+                let c = &self.nodes[child];
+                let text = &self.text[at..c.start];
+                if !text.trim().is_empty() {
+                    field(&mut hash, text);
+                }
+                if let Some(top) = open.last_mut() {
+                    *top = (id, next + 1, c.end);
+                }
+                if !skip(self, child) {
+                    header(self, child, &mut hash);
+                    open.push((child, 0, c.open_end));
+                }
+            } else {
+                if !n.empty {
+                    let text = &self.text[at..n.close_start];
+                    if !text.trim().is_empty() {
+                        field(&mut hash, text);
+                    }
+                }
+                hash.update(&[1]);
+                open.pop();
+            }
+        }
         *hash.finalize().as_bytes()
     }
 

@@ -86,6 +86,10 @@ pub enum HostError {
     InputNotFound { artifact: String, version: u64 },
     #[error("input media type {0} is not in the organ's grant")]
     MediaTypeNotGranted(String),
+    /// The call's typed body is of a kind the organ's install grant does not
+    /// name (FIX 7985).
+    #[error("a {0} body is not in the organ's grant")]
+    KindNotGranted(String),
     /// An ask handler tried to call an organ. Nesting could wait on the
     /// outer call's own permit and seat, and a cycle has no depth bound.
     #[error("an ask handler may not call an organ")]

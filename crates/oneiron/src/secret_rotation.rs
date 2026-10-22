@@ -107,10 +107,6 @@ pub const POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY: &str = "secret.taint.allow_stale
 /// text discipline the artifact bodies already keep.
 pub const SECRET_TAINT_REF_MAX_BYTES: usize = 512;
 
-/// Upper bound on how many refs one piece of exhaust may carry. An action
-/// boundary that consumed more secrets than this is not a taint problem.
-pub const SECRET_TAINT_REFS_MAX: usize = 64;
-
 fn invalid_body(reason: &'static str) -> Error {
     Error::Secret(SecretError::InvalidSecretRotationBody(reason))
 }
@@ -345,7 +341,7 @@ pub(crate) fn taint_refs_to_value(refs: &[SecretTaintRef]) -> Value {
 /// [`ArtifactError::InvalidBlobArtifactBody`](crate::error::ArtifactError::InvalidBlobArtifactBody), a sidecar row says
 /// [`SecretError::InvalidSecretRotationBody`](crate::error::SecretError::InvalidSecretRotationBody)) instead of importing a foreign
 /// error class. Validation is strict: bounded non-empty names, `u32`
-/// generations, a bounded ref count, and no duplicate secret names — a
+/// generations, and no duplicate secret names — a
 /// duplicated name would let one body assert two different generations for
 /// one secret, which has no honest read.
 #[must_use]
@@ -353,9 +349,6 @@ pub(crate) fn taint_refs_from_value(value: &Value) -> Option<Vec<SecretTaintRef>
     let Value::Array(items) = value else {
         return None;
     };
-    if items.len() > SECRET_TAINT_REFS_MAX {
-        return None;
-    }
     let mut refs: Vec<SecretTaintRef> = Vec::with_capacity(items.len());
     for item in items {
         let Value::Map(entries) = item else {
@@ -382,9 +375,6 @@ pub(crate) fn taint_refs_from_value(value: &Value) -> Option<Vec<SecretTaintRef>
 /// a durable row. Attaching a malformed ref would mint exhaust nobody can
 /// derive a state for.
 pub(crate) fn validate_taint_refs(refs: &[SecretTaintRef]) -> Result<()> {
-    if refs.len() > SECRET_TAINT_REFS_MAX {
-        return Err(invalid_body("too many taint refs for one piece of exhaust"));
-    }
     for (index, r) in refs.iter().enumerate() {
         if r.secret_ref.is_empty() || r.secret_ref.len() > SECRET_TAINT_REF_MAX_BYTES {
             return Err(invalid_body(

@@ -9,6 +9,7 @@ use oneiron_organ_protocol::OrganIdentity;
 use crate::budget::Room;
 use crate::error::{HostError, Unavailable};
 use crate::process::OrganProcess;
+use crate::sandbox::OrganIsolation;
 use crate::spec::{HostConfig, OrganSpec, OrganTier};
 
 const CRASH_WINDOW: Duration = Duration::from_secs(600);
@@ -38,6 +39,10 @@ pub struct OrganStatus {
     pub spawns: u64,
     pub recent_crashes: usize,
     pub net_isolated: bool,
+    /// What the live process's start isolated it with: its namespaces and
+    /// its descendant fence, as they came out (FIX 7886, 7887). `None`
+    /// while no process is up.
+    pub isolation: Option<OrganIsolation>,
     /// Spawn to `hello_ack`, for the last start.
     pub last_spawn: Option<Duration>,
 }
@@ -142,6 +147,37 @@ impl Slot {
         Ok(process)
     }
 
+    /// Why this slot would start no process now, if it would not: its
+    /// condition, its backoff, its tier. The one decision a start keeps and
+    /// the catalogue reads (FIX 7888).
+    fn refusal(&self, state: &SlotState) -> Option<HostError> {
+        if let Some(reason) = &state.unavailable {
+            return Some(self.unavailable(reason.clone()));
+        }
+        if let Some(not_before) = state.not_before {
+            let now = Instant::now();
+            if now < not_before {
+                return Some(HostError::Backoff {
+                    organ: self.spec.name.clone(),
+                    retry_after: not_before - now,
+                });
+            }
+        }
+        (self.spec.tier == OrganTier::ThirdParty)
+            .then(|| self.unavailable(Unavailable::ThirdPartyUnconfined))
+    }
+
+    /// Whether a call could start here now: a live process, or a start the
+    /// slot would make. A cold slot counts; nothing is started to tell.
+    pub(crate) fn startable(&self) -> bool {
+        let state = self.lock();
+        let warm = state
+            .process
+            .as_ref()
+            .is_some_and(|process| process.is_alive());
+        warm || self.refusal(&state).is_none()
+    }
+
     /// Starts a process under `spec`, once the backoff has passed, and
     /// tracks it.
     fn start(
@@ -152,17 +188,8 @@ impl Slot {
         room: &Room,
         deadline: Option<Instant>,
     ) -> Result<Arc<OrganProcess>, HostError> {
-        if let Some(not_before) = state.not_before {
-            let now = Instant::now();
-            if now < not_before {
-                return Err(HostError::Backoff {
-                    organ: self.spec.name.clone(),
-                    retry_after: not_before - now,
-                });
-            }
-        }
-        if self.spec.tier == OrganTier::ThirdParty {
-            return Err(self.unavailable(Unavailable::ThirdPartyUnconfined));
+        if let Some(refused) = self.refusal(state) {
+            return Err(refused);
         }
         let slot = Arc::downgrade(self);
         let forget = move || {
@@ -299,6 +326,7 @@ impl Slot {
             spawns: state.spawns,
             recent_crashes: state.crashes.len(),
             net_isolated: live.is_some_and(|process| process.net_isolated),
+            isolation: live.map(|process| process.isolation.clone()),
             last_spawn: state.last_spawn,
         }
     }

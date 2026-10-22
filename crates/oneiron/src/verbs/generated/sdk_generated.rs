@@ -8791,7 +8791,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::code_run_doors::CodeRunModelHealCountView,
         >(),
         "vault.code.type_diagnostics" => crate::code_run::vault_read::request_schema::<
-            Option<crate::code_run::ProgramStepFeedback>,
+            Option<crate::code_run::ProgramStepFeedbackRelease>,
         >(),
         "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_wait_doors::CodeWaitReceiptView,
@@ -29659,7 +29659,7 @@ pub fn vault_code_model_heal_count(
 pub fn vault_code_type_diagnostics(
     memory: &Memory<'_>,
     input: crate::memory::code_run_doors::CodeRunTypeDiagnosticsRequest,
-) -> MemoryResult<Option<crate::code_run::ProgramStepFeedback>> {
+) -> MemoryResult<Option<crate::code_run::ProgramStepFeedbackRelease>> {
     memory.code_run_type_diagnostics_as(
         &memory.embedded_owner("vault.code.type_diagnostics")?,
         input,

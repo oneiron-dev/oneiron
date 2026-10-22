@@ -1782,7 +1782,7 @@ export interface FacadeResults {
   "vault.code.oplog": Facade.CodeMutationLog;
   "execute_code": Facade.ForeignCodeRunResult;
   "vault.code.model_heal_count": Facade.CodeRunModelHealCountView;
-  "vault.code.type_diagnostics": Facade.ProgramStepFeedback | null;
+  "vault.code.type_diagnostics": Facade.ProgramStepFeedbackRelease | null;
   "vault.code.waits.resolve": Facade.CodeWaitReceiptView;
   "vault.code.waits.receipt": Facade.CodeWaitReceiptView | null;
   "vault.results.status": Facade.ResultRunStatus;
@@ -2958,7 +2958,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.oplog": { description: "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "execute_code": { description: "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.model_heal_count": { description: "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.code.type_diagnostics": { description: "Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.code.type_diagnostics": { description: "Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.resolve": { description: "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.waits.receipt": { description: "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.results.status": { description: "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.", scope: "Read", proposes: false, hostDoor: true, section: false },
@@ -5205,7 +5205,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         oplog: (input: Facade.CodeRepoRequest, options?: O): FacadeReturns<"vault.code.oplog">[K] => invoke("vault.code.oplog", input, options, newInvocation()),
         /** Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy. */
         model_heal_count: (input: Facade.CodeRunModelHealCountRequest, options?: O): FacadeReturns<"vault.code.model_heal_count">[K] => invoke("vault.code.model_heal_count", input, options, newInvocation()),
-        /** Read the type feedback of one code-mode program step by its check_ref as the owner: its check as it stands (complete, pending, failed or unavailable) with every diagnostic, and its preparation note. Never runs a program again. */
+        /** Read the type feedback of one code-mode program step by its check_ref as the owner, released whole: its check as it stands and every diagnostic; an MCP release hold gives it withheld, with no text. Never runs a program again. */
         type_diagnostics: (input: Facade.CodeRunTypeDiagnosticsRequest, options?: O): FacadeReturns<"vault.code.type_diagnostics">[K] => invoke("vault.code.type_diagnostics", input, options, newInvocation()),
         waits: {
           /** Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken. */
