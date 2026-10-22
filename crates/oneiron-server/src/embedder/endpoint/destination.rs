@@ -107,7 +107,19 @@ pub(super) fn partition_released_rows(
         return Ok(allowed);
     }
     let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
-    let released = pods.release.released(&rows)?;
+    // A release the vault could not read keeps every row home: they embed on
+    // the on-device primary, and the batch still runs.
+    let released = match pods.release.released(&rows) {
+        Ok(released) => released,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                rows = rows.len(),
+                "world release unread; the batch embeds on-device"
+            );
+            return Ok(vec![false; inputs.len()]);
+        }
+    };
     if released.len() != rows.len() {
         return Err(oneiron::Error::InvariantViolation(
             "the vault judged another number of rows than it was asked",

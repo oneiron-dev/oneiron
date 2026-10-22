@@ -214,11 +214,12 @@ pub(crate) fn transform_on_disk(config: &EmbedderConfig) -> Option<String> {
 
 /// The transform descriptor of the local model, fetching and verifying its
 /// metadata files when they are not on this host. No weights are fetched.
-/// A ref is resolved to its commit first, and the descriptor bound to it, as
-/// a load binds its own (FIX 9489).
+/// A ref is resolved to the commit it names now, and the descriptor bound to
+/// it, as a load binds its own (FIX 9489): `reembed` takes the new weights
+/// here.
 pub(crate) fn resolve_transform(config: &EmbedderConfig) -> oneiron::Result<String> {
     let models = model_manager::ModelManager::default();
-    let resolved = models.resolve_local_revision(&config.local)?;
+    let resolved = models.resolve_local_revision(&config.local, None)?;
     let dir = models.ensure_metadata(resolved.config())?;
     Ok(resolved.bind_transform(LocalModelSpec::read(&dir, config)?.transform()))
 }
@@ -234,7 +235,7 @@ fn prepare_with_manager(
     // A named device must fail before an expensive first-use download, not
     // after fetching the entire checkpoint and discovering no GPU is usable.
     let device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
-    let resolved = models.resolve_local_revision(&config.local)?;
+    let resolved = models.resolve_local_revision(&config.local, None)?;
     models.ensure_all(resolved.config())?;
     Ok(device::device_label(&device))
 }
@@ -257,6 +258,23 @@ impl LocalEmbedder {
         )
     }
 
+    /// [`Self::load`] of the commit `resolved` names. A vault's worker passes
+    /// the one its pinned transform names, so a hub ref that moved keeps
+    /// serving the vault's weights (FIX 9489).
+    pub(super) fn load_resolved(
+        config: &EmbedderConfig,
+        models: &model_manager::ModelManager,
+        resolved: &model_manager::ResolvedLocalRevision,
+    ) -> oneiron::Result<std::sync::Arc<Self>> {
+        Self::load_resolved_at(
+            config,
+            models,
+            resolved,
+            device::run_dtype(config.local.quant),
+            Q8Kernel::Tiled,
+        )
+    }
+
     /// [`Self::load`] with the activation precision and the Q8_0 kernel named
     /// rather than derived. The parity rows use it to run unquantised f32, the
     /// one precision that separates a port error from rounding, and to hold
@@ -267,10 +285,20 @@ impl LocalEmbedder {
         dtype: DType,
         kernel: Q8Kernel,
     ) -> oneiron::Result<std::sync::Arc<Self>> {
+        let resolved = models.resolve_local_revision(&config.local, None)?;
+        Self::load_resolved_at(config, models, &resolved, dtype, kernel)
+    }
+
+    fn load_resolved_at(
+        config: &EmbedderConfig,
+        models: &model_manager::ModelManager,
+        resolved: &model_manager::ResolvedLocalRevision,
+        dtype: DType,
+        kernel: Q8Kernel,
+    ) -> oneiron::Result<std::sync::Arc<Self>> {
         let run_device = device::resolve_device(config.local.device, &config.local.auto_devices)?;
         // One commit for every file, the cache path, the record and the
         // transform (FIX 9489).
-        let resolved = models.resolve_local_revision(&config.local)?;
         let dir = models.ensure_all(resolved.config())?;
         let spec = LocalModelSpec::read(&dir, config)?;
         let tokenizer = Tokenizer::from_file(dir.join("tokenizer.json")).map_err(|e| {
