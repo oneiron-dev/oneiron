@@ -3,10 +3,12 @@
 use serde_json::Value as JsonValue;
 
 mod answer;
+mod json_tokens;
 #[cfg(test)]
 mod tests;
 
 pub use self::answer::CallableSkillAnswer;
+pub(crate) use self::json_tokens::AnswerMemory;
 
 use crate::attempt_queue::AttemptRecord;
 use crate::claim::ClaimSource;
@@ -202,6 +204,7 @@ pub fn execute_callable_skill(
         at,
         &StepCancellation::never(),
         &mut Vec::new(),
+        None,
     )
 }
 
@@ -212,10 +215,12 @@ pub fn execute_callable_skill(
 /// with [`crate::error::CodeError::CodeStepCancelled`] and writes no
 /// success witness. `loaded_from` lists, as each is read, the skill whose
 /// contract admits the call and the entity its load chose: the stored
-/// source the answer, or a refusal after that read, is made from.
+/// source the answer, or a refusal after that read, is made from. `memory`
+/// is the caller's result share, which the answer check holds its buffers
+/// on (FIX 10149); `None` where the caller has no run share.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token and source list"
+    reason = "the caller lends its existing lease, runtime, host, deterministic step identity, step token, source list and result share"
 )]
 pub(crate) fn execute_callable_skill_cancellable(
     vault: &std::sync::Arc<Vault>,
@@ -231,6 +236,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     at: u64,
     parent: &StepCancellation,
     loaded_from: &mut Vec<EntityId>,
+    memory: Option<AnswerMemory<'_>>,
 ) -> Result<CallableSkillAnswer> {
     // Validate before appending a manifest entry; failed argument admission
     // must not assert that the body was loaded.
@@ -335,7 +341,7 @@ pub(crate) fn execute_callable_skill_cancellable(
     // not stream) follows what was streamed, as a store host takes it.
     answer.write(outcome.observation.as_bytes())?;
     let digest = answer
-        .check(&call.returns)?
+        .check(&call.returns, memory)?
         .ok_or(invalid("callable skill return differs from its contract"))?;
     // The call has finished: it leaves the live set unless a cancel landed
     // first, which fails it with no success witness.
