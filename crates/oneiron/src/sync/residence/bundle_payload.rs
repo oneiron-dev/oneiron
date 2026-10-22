@@ -436,7 +436,8 @@ impl WindowManager {
     /// adopted, read after the history so it covers every parent the history
     /// names that is not held, the signed authority history, then
     /// each of `windows` that is a base window or a window of a world read
-    /// everywhere; and the worlds the bundle carries for `holder`
+    /// everywhere whose sealed-copy setting lets `holder` keep it (FIX 8886);
+    /// and the worlds the bundle carries for `holder`
     /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
     /// branch (its key wraps) never rides the base (FIX 3871): only the reader
     /// capsule of a private world the bundle carries for `holder` seals it
@@ -463,7 +464,7 @@ impl WindowManager {
             let public: BTreeSet<EntityId> = windows
                 .iter()
                 .filter_map(WindowKey::world)
-                .filter(|world| everywhere(*world))
+                .filter(|world| everywhere(*world) && fold.base_section_carries(*world, holder))
                 .collect();
             let mut authority = Vec::with_capacity(history.len());
             for bytes in history {

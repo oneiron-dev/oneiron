@@ -1,7 +1,9 @@
 //! Versioned questions, scoped answer receipts, and bound outcome labels.
 
+mod answers;
 mod arrival;
 mod artifact_refresh;
+mod ask_history;
 mod backfill;
 mod graph_ask;
 mod health_ask;
@@ -18,12 +20,14 @@ mod windows;
 #[cfg(test)]
 mod standing_tests;
 
+pub use answers::question_answers;
 pub(crate) use arrival::{project_arrivals_in_txn, unit_watched_in_txn};
 pub use artifact_refresh::{ArtifactAskRecord, ArtifactAskStanding, artifact_ask_records};
 pub use artifact_refresh::{
     ArtifactRefreshBatch, ArtifactRefreshFailure, refresh_artifact_question_now,
     refresh_due_artifact_questions, refresh_due_artifact_questions_while,
 };
+pub(crate) use ask_history::erase_ask_history_actor_in_txn;
 pub use backfill::schedule_backfill;
 pub use graph_ask::validate_decision as validate_unit_decision;
 pub use graph_ask::{
@@ -44,12 +48,12 @@ pub(crate) use recipe::run_graph_question_with_proposals;
 pub use recipe::{GraphQuestionInput, GraphQuestionRef, run_graph_question};
 pub use records::*;
 pub(crate) use refresh::answer_records_in_txn;
-pub(crate) use refresh::principal_actor;
 pub use refresh::{
     RefreshBatch, RefreshFailure, answer_records, refresh_due_questions,
     refresh_due_questions_by_role, refresh_due_questions_by_role_while, refresh_due_questions_with,
     refresh_question, refresh_question_with, standing_ask_route,
 };
+pub(crate) use refresh::{principal_actor, principal_lane, standing_asker_for_question};
 pub use standing::{StandingAnswer, backfill_standing_answer, standing_source_frontier};
 pub(crate) use store::read_question_in_txn;
 pub use store::{

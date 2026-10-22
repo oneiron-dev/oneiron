@@ -10,7 +10,7 @@ use super::{WorkflowProgram, WorkflowProof};
 #[cfg(feature = "driver")]
 use crate::{
     BatchInput, BrowserDriver, BrowserError, CheckReceipt, FailedStepReceipt, FieldWriter,
-    ObserveInput, RoutineDecider, SubgoalStatus, stop::elapsed_ms,
+    ObserveInput, RoutineDecider, StepStop, SubgoalStatus, stop::elapsed_ms,
 };
 use crate::{BatchStopCause, FIELD_WRITER, STRICT_DENIED, StrictDenied};
 use schemars::JsonSchema;
@@ -208,6 +208,15 @@ pub(crate) fn run<D: BrowserDriver + ?Sized>(
             ..ObserveInput::default()
         })?;
         let code = POSTCONDITION_UNMET.to_owned();
+        // The session's history notes the miss after the run's steps (CUA
+        // E7), so a draft of them never takes the run for one that worked.
+        driver.note_stop(StepStop {
+            step: "postcondition".to_owned(),
+            cause: cause.clone(),
+            error: code.clone(),
+            receipt: None,
+            effect_class: None,
+        });
         batch.status = SubgoalStatus::NeedsAgent;
         batch.error = Some(code.clone());
         batch.stop_cause = Some(cause.clone());

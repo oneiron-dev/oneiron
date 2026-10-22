@@ -15,6 +15,11 @@
 //! URL or a name. A row whose config changed gets a new supervisor once the
 //! old one has drained and stopped; a row that is no longer configured keeps
 //! its supervisor, since another runtime in the process may still use it.
+//!
+//! A managed EXL3 worker's launch also has a native socket (DESIGN-V2 §8,
+//! V2-R1): its provider's calls to it go there ([`native_route`],
+//! `models/native_exl3`), its qualification asks there, and its activity
+//! poll reads its stats there.
 mod bundle;
 mod install;
 mod launch_manifest;
@@ -24,11 +29,12 @@ mod probe;
 mod process;
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use oneiron::llm::{WorkerMode, WorkerStatus};
+use oneiron::llm::{WorkerKind, WorkerMode, WorkerStatus};
 use oneiron_driver::{
     DeclaredEnvelope, DeviceLedger, InferenceWorker, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
@@ -56,6 +62,41 @@ struct Hosted {
     row: WorkerConfig,
     provider: ProviderConfig,
     worker: InferenceWorker,
+    /// A managed launch's record slot, which names its native socket.
+    slot: Option<Arc<LaunchSlot>>,
+}
+
+impl Hosted {
+    /// A managed EXL3 worker's launch slot: a launch whose record may name a
+    /// native socket.
+    fn native_slot(&self) -> Option<&Arc<LaunchSlot>> {
+        if self.row.mode == WorkerMode::Managed && self.row.kind == WorkerKind::Exl3 {
+            self.slot.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+/// A managed EXL3 worker's native route: its supervisor, and the slot its
+/// launcher records each launch in, the launch's socket among it.
+#[derive(Clone)]
+pub(super) struct NativeRoute {
+    pub(super) worker: InferenceWorker,
+    slot: Arc<LaunchSlot>,
+}
+
+impl NativeRoute {
+    /// The current launch's native socket and the digest of its launch
+    /// manifest; `None` when it has no socket.
+    pub(super) fn launch(&self) -> Option<(PathBuf, String)> {
+        let record = self.slot.lock().unwrap_or_else(PoisonError::into_inner);
+        let record = record.as_ref()?;
+        Some((
+            record.native_socket.clone()?,
+            record.manifest_sha256.clone(),
+        ))
+    }
 }
 
 /// Marks this process as the one that launches managed workers, and starts
@@ -101,11 +142,12 @@ pub(super) fn configure(
             let worker = match current {
                 Some(worker) => worker,
                 None => {
-                    let worker = host.supervisor(row, provider);
+                    let (worker, slot) = host.supervisor(row, provider);
                     let hosted = Hosted {
                         row: row.clone(),
                         provider: provider.clone(),
                         worker: worker.clone(),
+                        slot,
                     };
                     match workers.insert(row.id.clone(), hosted) {
                         Some(old) => replaced.push((old.worker, worker.clone())),
@@ -162,6 +204,44 @@ pub(super) fn managed_worker(provider: &str, wire_model: &str) -> Option<Inferen
         .map(|hosted| hosted.worker.clone())
 }
 
+/// Whether a managed EXL3 worker this process launches is bound to
+/// `provider`: its chat transport then reaches that worker over its native
+/// socket (`models/native_exl3`).
+pub(super) fn serves_native(provider: &str) -> bool {
+    let Some(host) = HOST.get() else {
+        return false;
+    };
+    if !host.launch_permitted.load(Ordering::Relaxed) {
+        return false;
+    }
+    host.lock()
+        .values()
+        .any(|hosted| hosted.native_slot().is_some() && hosted.row.binding.provider == provider)
+}
+
+/// The native route of the managed EXL3 worker a call on `provider` with
+/// `wire_model` is bound to, when this process launches it and its current
+/// launch has a native socket. `None` leaves the call on HTTP, as today.
+pub(super) fn native_route(provider: &str, wire_model: &str) -> Option<NativeRoute> {
+    let host = HOST.get()?;
+    if !host.launch_permitted.load(Ordering::Relaxed) {
+        return None;
+    }
+    let route = {
+        let workers = host.lock();
+        let hosted = workers.values().find(|hosted| {
+            hosted.native_slot().is_some()
+                && hosted.row.binding.provider == provider
+                && hosted.row.binding.model == wire_model
+        })?;
+        NativeRoute {
+            worker: hosted.worker.clone(),
+            slot: Arc::clone(hosted.native_slot()?),
+        }
+    };
+    route.launch().is_some().then_some(route)
+}
+
 impl WorkerHost {
     /// Starts a new supervisor's work: a managed worker launches where this
     /// process may launch, an external one is probed once.
@@ -195,8 +275,13 @@ impl WorkerHost {
         )
     }
 
-    /// A new supervisor for `row`, bound to `provider`.
-    fn supervisor(&self, row: &WorkerConfig, provider: &ProviderConfig) -> InferenceWorker {
+    /// A new supervisor for `row`, bound to `provider`, with a managed
+    /// launch's record slot.
+    fn supervisor(
+        &self,
+        row: &WorkerConfig,
+        provider: &ProviderConfig,
+    ) -> (InferenceWorker, Option<Arc<LaunchSlot>>) {
         let spec = WorkerSpec {
             worker_id: row.id.clone(),
             model: row.model.clone(),
@@ -217,7 +302,7 @@ impl WorkerHost {
                     row.clone(),
                     launch.clone(),
                     Arc::clone(&self.stores),
-                    slot,
+                    Arc::clone(&slot),
                 ));
                 let policy = WorkerPolicy {
                     idle_stop: launch.idle_stop_secs.map(Duration::from_secs),
@@ -227,7 +312,10 @@ impl WorkerHost {
                     .device
                     .as_deref()
                     .map(|device| (self.ledger(device), declared(launch.envelope)));
-                InferenceWorker::managed(spec, launcher, probe, policy, device)
+                (
+                    InferenceWorker::managed(spec, launcher, probe, policy, device),
+                    Some(slot),
+                )
             }
             _ => {
                 let probe = Arc::new(HouseProbe::new(
@@ -236,7 +324,7 @@ impl WorkerHost {
                     &row.binding.model,
                     None,
                 ));
-                InferenceWorker::external(spec, probe)
+                (InferenceWorker::external(spec, probe), None)
             }
         }
     }

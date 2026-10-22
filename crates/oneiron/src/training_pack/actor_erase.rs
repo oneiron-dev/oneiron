@@ -8,19 +8,7 @@ use crate::error::Result;
 
 /// Whether `id`'s entity is no actor, so its erase has no one to take out of
 /// the training rows.
-fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if let Some(raw) = vault.get_raw_in(txn, id)?
-        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-    {
-        return Ok(!matches!(
-            header.entity_type,
-            crate::registry::ENTITY_TYPE_PERSON
-                | crate::registry::ENTITY_TYPE_MACHINE
-                | crate::registry::ENTITY_TYPE_AGENT_DEF
-        ));
-    }
-    Ok(false)
-}
+use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the training runs (FIX 3520). A run it prepared that
 /// has not gone to the host yet (prepared, or authorized and not

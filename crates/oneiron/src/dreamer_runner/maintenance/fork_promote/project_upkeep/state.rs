@@ -1,12 +1,14 @@
 //! The project tree upkeep journal: one row per project and body of its
 //! evidence, naming the Candidate revision minted for it, the project's tree
 //! in force it revises, the reserve its fit left out, what was stored and
-//! scored, and how it settled. The tree bytes live in the Candidate's
-//! package alone. A settled row keeps its evidence from minting again.
+//! scored, what the project's goal said of a scalar win and why (FIX 8706),
+//! and how it settled. The tree bytes live in the Candidate's package
+//! alone. A settled row keeps its evidence from minting again.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use super::admission::UpkeepGoal;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillRecord;
 use crate::team::TeamReceipt;
@@ -77,6 +79,9 @@ pub(super) struct UpkeepRow {
     pub(super) scores: Option<(f32, f32)>,
     pub(super) opened_at: u64,
     pub(super) settled_at: Option<u64>,
+    /// What the project's goal said of the Candidate's scalar win, and why;
+    /// `None` until a win was put to it.
+    pub(super) goal: Option<UpkeepGoal>,
 }
 
 impl UpkeepRow {
@@ -97,6 +102,7 @@ impl UpkeepRow {
             scores: None,
             opened_at: at,
             settled_at: None,
+            goal: None,
         }
     }
 

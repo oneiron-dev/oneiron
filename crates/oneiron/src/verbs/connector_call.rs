@@ -609,3 +609,37 @@ pub fn connector_call_status_read(
         )),
     }
 }
+
+/// `vault.connectors.calls.approve_once` (FIX 990): the owner's press on one
+/// held connector call, by its ref and the exact digest he reviewed.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorCallApproveOnceRequest {
+    /// The held call's ref, 32 hex.
+    pub call_ref: String,
+    /// The approve-once digest the call's current ask names (its status and
+    /// its owner question), 64 lower-hex.
+    pub approval_digest: String,
+}
+
+/// `vault.connectors.calls.approve_once`: the owner's approve-once press on
+/// exactly the held call's current ask. It mints the consent door's own
+/// exact-digest marker, grants nothing standing and sends nothing; the
+/// call's next resume runs it.
+///
+/// # Errors
+///
+/// A malformed ref, a call that is not held or whose ask moved since it was
+/// reviewed, the owner check's and the consent door's own refusals.
+pub fn approve_connector_call_once(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: ConnectorCallApproveOnceRequest,
+) -> MemoryResult<crate::consent::lifecycle::ConsentActReceipt> {
+    let call_ref = EntityId::from_hex(&input.call_ref)
+        .map_err(|_| MemoryError::bad_request("call_ref must be 32 hex"))?;
+    vault
+        .approve_connector_call_once(owner, &call_ref, &input.approval_digest)
+        .map(Into::into)
+        .map_err(connector_call_error)
+}

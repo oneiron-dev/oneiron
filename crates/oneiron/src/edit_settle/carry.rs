@@ -850,9 +850,16 @@ impl Vault {
         Ok(due)
     }
 
-    /// The actor a wake asks as: the withdrawn answers' principal.
+    /// The actor a wake asks as: the withdrawn answers' principal, under the
+    /// class its standing question's version keeps (FIX 1588).
     pub fn answer_wake_actor(&self, wake: &UnitWithdrawal) -> Result<WriteActor> {
-        crate::llm::decision::questions::principal_actor(self, wake.principal)
+        let question = &wake.question;
+        crate::llm::decision::questions::standing_asker_for_question(
+            self,
+            question.id,
+            question.version,
+            wake.principal,
+        )
     }
 
     /// Wakes one withdrawal's proposer: the ask's question is asked again of
@@ -1122,13 +1129,24 @@ impl Vault {
             }
         };
         let proposed = match &proposal {
-            Some(proposal) => Some(self.retain_edit_proposal(
-                &wake.artifact,
-                proposal,
-                wake.made_by.as_ref(),
-                actor,
-                now,
-            )?),
+            Some(proposal) => {
+                // The carried envelope is admitted through the principal's
+                // own read as the fresh proposal waits (FIX 1229).
+                let reader = match &wake.made_by {
+                    Some(_) => Some(super::MadeByReader::Lane(
+                        crate::llm::decision::questions::principal_lane(self, wake.principal)?,
+                    )),
+                    None => None,
+                };
+                Some(self.retain_edit_proposal(
+                    &wake.artifact,
+                    proposal,
+                    wake.made_by.as_ref(),
+                    reader,
+                    actor,
+                    now,
+                )?)
+            }
             None => None,
         };
         Ok((proposed, reask_ref))

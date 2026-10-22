@@ -12,9 +12,10 @@
 //! Candidate forked from the tree in force, journaled with it in one write,
 //! holding the reshaped tree counted on the fit runs alone, with no held-out
 //! count carried. The host's judge scores it against the tree in force on
-//! the project's held-out runs; a strict win puts it in force for the
-//! project, with its OF-023 revert row and the journal's settlement, in one
-//! transaction. The tree it revised stays active and listed behind it, so
+//! the project's held-out runs; a strict win is put to the project's goal
+//! record ([`admission`], FIX 8706), and one the goal does not rule out goes
+//! in force for the project, with its OF-023 revert row and the journal's
+//! settlement, the goal's verdict and basis among it, in one transaction. The tree it revised stays active and listed behind it, so
 //! the revert takes only the new revision off. A loss, a win, or the owner's
 //! revert of the win settles that evidence for good; new teams name new
 //! evidence. No judge, no held-out run yet, or a judge that abstains leaves
@@ -26,10 +27,12 @@
 //! in. The donor is a read only: it is never counted into a revision, and
 //! the evidence a revision is minted for does not name it, so a settled
 //! revision stays settled whatever the vault head does.
+mod admission;
 mod state;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use self::admission::UpkeepGoalVerdict;
 use self::state::{StoredCandidate, UpkeepKey, UpkeepRow, UpkeepState};
 use super::super::applied;
 use super::super::coach::COACH_FORK_PROMOTE_FACET;
@@ -211,6 +214,22 @@ fn judged(held_out_teams: &BTreeSet<String>, reserve: &BTreeSet<String>) -> Vec<
     held_out
 }
 
+/// The replay of `record`, a version of the tree in force's skill, on
+/// `held_out`.
+fn replay_case<'a>(
+    incumbent: &'a Incumbent,
+    record: &'a SkillRecord,
+    held_out: &'a [String],
+) -> HeldOutReplayCase<'a> {
+    HeldOutReplayCase {
+        skill: incumbent.id,
+        skill_id: &incumbent.record.skill_id,
+        version: &record.version,
+        instructions: &record.desc,
+        held_out_receipts: held_out,
+    }
+}
+
 /// `skill`'s reserve in `txn`, as the gate reads it.
 fn reserve_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, skill: &EntityId) -> Result<Vec<String>> {
     Ok(
@@ -294,14 +313,7 @@ impl Upkeep<'_> {
         // The reserve as it stood when scored, which the write checks again.
         let scored_reserve = held_out_receipts(vault, &incumbent.id)?;
         let score = |record: &SkillRecord| -> Result<Option<f32>> {
-            let case = HeldOutReplayCase {
-                skill: incumbent.id,
-                skill_id: &incumbent.record.skill_id,
-                version: &record.version,
-                instructions: &record.desc,
-                held_out_receipts: &held_out,
-            };
-            match judge.score(&case) {
+            match judge.score(&replay_case(&incumbent, record, &held_out)) {
                 Ok(score) if (0.0..=1.0).contains(&score) => Ok(Some(score)),
                 Ok(_) => Err(refused("invalid host held-out score")),
                 // A judge that abstains rules nothing: the revision stays open.
@@ -326,9 +338,23 @@ impl Upkeep<'_> {
         if !PROJECT_TREE_FORK_ADMITS {
             return Ok(());
         }
+        // The owner's goal rules the scalar win before it goes in force.
+        let goal = admission::judge_goal(
+            vault,
+            judge,
+            project,
+            &replay_case(&incumbent, &incumbent.record, &held_out),
+            &replay_case(&incumbent, &record, &held_out),
+        )?;
+        if goal.verdict == UpkeepGoalVerdict::Failed {
+            let mut lost = row.settled(UpkeepState::Lost, Some(scores), self.now);
+            lost.goal = Some(goal);
+            return state::put(vault, &key, &lost);
+        }
         let admitted = vault.with_write_txn_grouped(|txn| {
             // What the judge scored is what goes in force: the project's tree
-            // in force, the Candidate's stored bytes and the reserve.
+            // in force, the Candidate's stored bytes, the reserve and the
+            // project's goal claim.
             let current = vault.read_skill_record_in_txn(txn, &row.candidate)?;
             if team_shape_skill_in_force_in_txn(vault, txn, Some(project))? != Some(incumbent.id)
                 || !row
@@ -336,6 +362,7 @@ impl Upkeep<'_> {
                     .as_ref()
                     .is_some_and(|stored| stored.holds(&current))
                 || reserve_in_txn(vault, txn, &incumbent.id)? != scored_reserve
+                || !admission::holds_in_txn(vault, txn, project, &goal)?
             {
                 return Ok(false);
             }
@@ -359,9 +386,10 @@ impl Upkeep<'_> {
                 self.actor,
                 self.now,
             )?;
-            let won = row
+            let mut won = row
                 .clone()
                 .settled(UpkeepState::Won, Some(scores), self.now);
+            won.goal = Some(goal.clone());
             state::put_in_txn(vault, txn, &key, &won)?;
             Ok(true)
         })?;

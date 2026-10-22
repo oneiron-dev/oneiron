@@ -262,6 +262,12 @@ impl OneironClient {
                 "vault.budgets.rsi.hold.resume" => remote_agent_verb_output::<
                     oneiron::llm::rsi_doors::RsiLineView,
                 >(client, verb, &input),
+                "vault.runners.seats.quotas" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerSeatQuotasView,
+                >(client, verb, &input),
+                "vault.runners.seats.top_up" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerSeatTopUpReceipt,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
@@ -841,6 +847,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.connectors.proxy.revoke_write" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ProxyConnectorRegistration,
+                >(client, verb, &input),
+                "vault.connectors.slates.redraft" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateRedraftReply,
+                >(client, verb, &input),
+                "vault.connectors.slates.narrow" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorSlateNarrowView,
                 >(client, verb, &input),
                 "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
                     oneiron::connector_key::ChannelMessageSubscription,
@@ -1482,6 +1494,9 @@ impl OneironClient {
                     oneiron::policy_model::doors::HostedRelayDecision,
                 >(client, verb, &input),
                 "vault.consent.approve_once" => remote_agent_verb_output::<
+                    oneiron::consent::lifecycle::ConsentActReceipt,
+                >(client, verb, &input),
+                "vault.connectors.calls.approve_once" => remote_agent_verb_output::<
                     oneiron::consent::lifecycle::ConsentActReceipt,
                 >(client, verb, &input),
                 "vault.consent.deny" => remote_agent_verb_output::<
@@ -2697,7 +2712,7 @@ impl OneironClient {
                     Option<oneiron::llm::decision::questions::QuestionRecord>,
                 >(client, verb, &input),
                 "vault.questions.answers" => remote_agent_verb_output::<
-                    Vec<oneiron::receipt::QuestionAnswer>,
+                    oneiron::receipt::QuestionAnswersReply,
                 >(client, verb, &input),
                 "vault.questions.refresh" => remote_agent_verb_output::<
                     Vec<oneiron::receipt::QuestionAnswer>,
@@ -3471,6 +3486,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "self.browser.library.find" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserLibraryFindOutput,
+                >(client, verb, &input),
+                "self.browser.library.draft" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryDraftOutput,
                 >(client, verb, &input),
                 "self.browser.library.propose" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserLibraryProposeOutput,
@@ -4459,6 +4477,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.budgets.rsi.hold.resume", value)
+    }
+    pub fn vault_runners_seats_quotas(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerSeatQuotasRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerSeatQuotasView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.quotas", value)
+    }
+    pub fn vault_runners_seats_top_up(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerSeatCreditTopUpRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerSeatTopUpReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.top_up", value)
     }
     pub fn vault_fanout_resume(
         &self,
@@ -6821,6 +6863,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.connectors.proxy.revoke_write", value)
+    }
+    pub fn vault_connectors_slates_redraft(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateRedraftRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateRedraftReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.redraft", value)
+    }
+    pub fn vault_connectors_slates_narrow(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorSlateNarrowRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorSlateNarrowView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.slates.narrow", value)
     }
     pub fn vault_connectors_subscriptions_put(
         &self,
@@ -9350,6 +9416,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consent.approve_once", value)
+    }
+    pub fn vault_connectors_calls_approve_once(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest,
+    ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.calls.approve_once", value)
     }
     pub fn vault_consent_deny(
         &self,
@@ -14180,7 +14258,7 @@ impl OneironClient {
     pub fn vault_questions_answers(
         &self,
         input: &oneiron::receipt::QuestionAnswersRequest,
-    ) -> Result<Vec<oneiron::receipt::QuestionAnswer>, MemoryError> {
+    ) -> Result<oneiron::receipt::QuestionAnswersReply, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -17310,6 +17388,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.browser.library.find", value)
+    }
+    pub fn self_browser_library_draft(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryDraftInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryDraftOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.draft", value)
     }
     pub fn self_browser_library_propose(
         &self,

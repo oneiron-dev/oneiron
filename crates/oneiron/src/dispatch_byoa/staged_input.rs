@@ -111,10 +111,11 @@ pub(super) fn carry_staged_input(
     connector
 }
 
-/// The task a CLI seat is handed for a bound work whose task first landed
-/// as its staged job (FIX 7449): a pointer to the file the job is staged
-/// as, never the job's text.
-pub(super) fn staged_job_pointer(pin: &StagedInputPin) -> String {
+/// The task a CLI run is handed when its job is staged (FIX 7449, 7503): a
+/// pointer to the file the job is staged as, never the job's text. A bound
+/// work's CLI seat whose task first landed as its staged job gets it, and so
+/// does a dev-time Coach runner.
+pub(crate) fn staged_job_pointer(pin: &StagedInputPin) -> String {
     format!(
         "Your task is the JSON job in `{}` in the working directory. Read it first.",
         pin.name

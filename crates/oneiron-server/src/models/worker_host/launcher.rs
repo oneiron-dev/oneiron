@@ -187,12 +187,21 @@ impl ProcessLauncher {
                 ));
             }
         };
+        // The socket this launch's record names, if any: its activity poll
+        // reads the worker's stats there.
+        let native = self
+            .slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|record| record.native_socket.clone());
         spawn(
             &program,
             &args,
             &installation.bundle_dir,
             &env,
             &self.health(),
+            native,
         )
     }
 
@@ -207,14 +216,15 @@ impl ProcessLauncher {
         }
     }
 
-    /// Writes the launch manifest and fills the probe's slot; returns the
-    /// manifest's path.
+    /// Writes the launch manifest and fills the probe's slot, with the
+    /// launch's native socket when it has one; returns the manifest's path.
     fn record(
         &self,
         installation: &Installation,
         manifest: &LaunchManifest<'_>,
         llama_alias: Option<String>,
         pins: CacheIdentity,
+        native_socket: Option<PathBuf>,
     ) -> Result<PathBuf, LaunchFailure> {
         let dir = installation.runtime_root.join("launch").join(&self.row.id);
         let (path, manifest_sha256) = launch_manifest::write(&dir, manifest).map_err(|error| {
@@ -227,6 +237,7 @@ impl ProcessLauncher {
             manifest_sha256,
             llama_alias,
             pins,
+            native_socket,
         });
         Ok(path)
     }
@@ -249,6 +260,8 @@ impl ProcessLauncher {
             python_version: Some(env.python_version.as_str()),
         };
         let runtime = build.digest();
+        let nonce = launch_nonce();
+        let socket = native_socket(&installation.runtime_root, &self.row.id, &nonce);
         let manifest = LaunchManifest {
             backend_model: Some(exl3.model.as_str()),
             bundle_sha256: &installation.bundle_sha256,
@@ -259,7 +272,7 @@ impl ProcessLauncher {
             env_freeze_sha256: Some(env.freeze_sha256.as_str()),
             env_lock_sha256: Some(env.lock_sha256.as_str()),
             kind: WorkerKind::Exl3,
-            launch_nonce: launch_nonce(),
+            launch_nonce: nonce,
             llama_identity_sha256: None,
             model: self.row.model.as_str(),
             native_binary_sha256: None,
@@ -279,7 +292,7 @@ impl ProcessLauncher {
             template: digest(exl3.template.as_deref()),
             ..CacheIdentity::default()
         };
-        let path = self.record(installation, &manifest, None, pins)?;
+        let path = self.record(installation, &manifest, None, pins, socket.clone())?;
         let mut args = vec![
             installation
                 .bundle_dir
@@ -304,6 +317,9 @@ impl ProcessLauncher {
             "--launch-manifest".to_owned(),
             path.display().to_string(),
         ]);
+        if let Some(socket) = &socket {
+            args.extend(["--native-socket".to_owned(), socket.display().to_string()]);
+        }
         args.extend(self.launch.args.iter().cloned());
         Ok((env.python.clone(), args))
     }
@@ -417,7 +433,7 @@ impl ProcessLauncher {
             worker_id: &self.row.id,
         };
         let pins = pins.clone();
-        self.record(installation, &manifest, Some(alias_text), pins)?;
+        self.record(installation, &manifest, Some(alias_text), pins, None)?;
         args.extend(prepared);
         Ok((server.binary.clone(), args))
     }
@@ -545,13 +561,15 @@ async fn prepare_identity(
         .collect())
 }
 
-/// Starts the worker in the bundle directory with `env` alone.
+/// Starts the worker in the bundle directory with `env` alone; `native` is
+/// its native socket, where its activity is read.
 fn spawn(
     program: &Path,
     args: &[String],
     dir: &Path,
     env: &[(String, String)],
     health: &str,
+    native: Option<PathBuf>,
 ) -> Result<Box<dyn RunningWorker>, LaunchFailure> {
     #[cfg(unix)]
     {
@@ -564,23 +582,100 @@ fn spawn(
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-        let worker =
-            super::process::ProcessWorker::spawn(command, health.to_owned()).map_err(|error| {
-                transient(
-                    WorkerFailure::LoadFailed,
-                    format!("starting {}: {error}", program.display()),
-                )
-            })?;
+        let spawned = super::process::ProcessWorker::spawn(command, health.to_owned(), native);
+        let worker = spawned.map_err(|error| {
+            transient(
+                WorkerFailure::LoadFailed,
+                format!("starting {}: {error}", program.display()),
+            )
+        })?;
         Ok(Box::new(worker))
     }
     #[cfg(not(unix))]
     {
-        let _ = (program, args, dir, env, health);
+        let _ = (program, args, dir, env, health, native);
         Err(permanent(
             WorkerFailure::LoadFailed,
             "managed workers run on Unix only".to_owned(),
         ))
     }
+}
+
+/// The hex digits of the launch nonce a native socket's name carries.
+#[cfg(unix)]
+const SOCKET_LAUNCH_DIGITS: usize = 16;
+
+/// The room a Unix socket address has for its path, the closing NUL
+/// included: an operating system's own limit, not a policy.
+#[cfg(target_os = "linux")]
+const SOCKET_PATH_ROOM: usize = 108;
+#[cfg(all(unix, not(target_os = "linux")))]
+const SOCKET_PATH_ROOM: usize = 104;
+
+/// An EXL3 launch's native socket (DESIGN-V2 R1),
+/// `<runtime root>/sock/<worker id>-<launch>.sock`, `<launch>` the first 16
+/// hex digits of its nonce: its folder made this user's alone (0700) and
+/// cleared of this worker's earlier launches' sockets. `None`, with a
+/// warning naming the worker, when the path does not fit a Unix socket
+/// address here or the folder cannot be made: that launch serves over HTTP
+/// alone, as before.
+fn native_socket(runtime_root: &Path, worker_id: &str, nonce: &str) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        let launch = nonce.get(..SOCKET_LAUNCH_DIGITS).unwrap_or(nonce);
+        let dir = runtime_root.join("sock");
+        let path = dir.join(format!("{worker_id}-{launch}.sock"));
+        let length = path.as_os_str().len();
+        if length >= SOCKET_PATH_ROOM {
+            tracing::warn!(
+                worker = %worker_id,
+                length,
+                room = SOCKET_PATH_ROOM,
+                "the native socket path does not fit a Unix socket address; this launch serves over HTTP alone (a shorter runtime_root gives it one)"
+            );
+            return None;
+        }
+        if let Err(error) = socket_dir(&dir, worker_id) {
+            tracing::warn!(
+                worker = %worker_id,
+                %error,
+                "the native socket folder could not be made; this launch serves over HTTP alone"
+            );
+            return None;
+        }
+        Some(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (runtime_root, worker_id, nonce);
+        None
+    }
+}
+
+/// Makes `dir` this user's alone and removes the sockets of `worker_id`'s
+/// earlier launches from it: names of exactly `<worker id>-<16 hex>.sock`,
+/// never another worker's whose id `worker_id` begins.
+#[cfg(unix)]
+fn socket_dir(dir: &Path, worker_id: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::create_dir_all(dir)?;
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        let name = entry.file_name();
+        let earlier = name
+            .to_str()
+            .and_then(|name| name.strip_prefix(worker_id))
+            .and_then(|rest| rest.strip_prefix('-'))
+            .and_then(|rest| rest.strip_suffix(".sock"))
+            .is_some_and(|launch| {
+                launch.len() == SOCKET_LAUNCH_DIGITS
+                    && launch.bytes().all(|byte| byte.is_ascii_hexdigit())
+            });
+        if earlier {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(())
 }
 
 /// `names` from this process's environment, each one set.
