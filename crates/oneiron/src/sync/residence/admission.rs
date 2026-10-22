@@ -78,6 +78,9 @@ impl<'v> ResidenceAdmission<'v> {
     /// Storage errors.
     pub fn allows_item(&self, id: EntityId) -> Result<bool> {
         let txn = self.vault.store.env.read_txn()?;
+        // FIX 7608 slice 4: a marked repo item's copy id is judged as its source.
+        let id =
+            crate::sync::selector::secret_projection::stored_item_in_txn(&self.vault, &txn, id)?;
         self.context.allows_item(&txn, &id)
     }
 
