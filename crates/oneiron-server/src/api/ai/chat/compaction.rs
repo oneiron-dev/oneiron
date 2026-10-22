@@ -219,7 +219,14 @@ pub(super) fn enter(
         Some(source) => Some(source),
         None if recalled => None,
         None => log.as_ref().and_then(|log| {
-            capture_seed(mode.agent(), reader, log, instructions_digest, craft, admitted)
+            capture_seed(
+                mode.agent(),
+                reader,
+                log,
+                instructions_digest,
+                craft,
+                admitted,
+            )
         }),
     };
     if let Some(log) = log {

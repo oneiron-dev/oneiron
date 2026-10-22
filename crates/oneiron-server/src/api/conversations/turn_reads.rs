@@ -51,8 +51,7 @@ pub(super) fn core_turn_for_read(
     let row = if owner {
         owner_row.filter(|(entity_type, _, _)| *entity_type == ENTITY_TYPE_TURN)
     } else {
-        read
-            .get_entity_parts_with_receipt(id, None)
+        read.get_entity_parts_with_receipt(id, None)
             .map_err(failed)?
             .value
     };
@@ -131,7 +130,11 @@ pub(super) fn core_list_conversation_turns(
         CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
         CountMode::Exact => ResponseMeta::new(listed.total.unwrap_or_default(), CountMode::Exact),
     };
-    Ok(Json(PaginatedResponse::new(items, listed.next_cursor, meta)))
+    Ok(Json(PaginatedResponse::new(
+        items,
+        listed.next_cursor,
+        meta,
+    )))
 }
 
 /// One page of `conversation`'s live turns the TURN doors serve, read in

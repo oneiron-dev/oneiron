@@ -6,11 +6,12 @@ use super::{
     Arc, BTreeMap, BTreeSet, BrokerSite, BudgetExhaustionPolicy, BudgetGuard, BudgetLease,
     FatalLlmError, HostAccount, KeyDoor, LlmBackend, LlmError, LlmGenerateFuture, LlmRequest,
     LlmResult, LlmStreamResult, LoggedReceipts, MEDIA_RUN, MediaHttp, MediaRow, MediaRuntime,
-    MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns, OfferLadder,
-    OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse, OpenAiMediaMethod,
-    OpenAiMediaTransport, OpenAiMediaTransportFuture, RunReceiptSink, RungStatus, SeatScope,
-    SeatState, SeatStatus, SingleRouteBackend, SingleSend, Wire, ladder_locality, media_backends,
-    media_rung, media_seat_model, soniox, transport, voice_cloners,
+    MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns,
+    OfferLadder, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
+    OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture, RunReceiptSink,
+    RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend, Wire,
+    ladder_locality, media_backends, media_rung, media_seat_model, soniox, transport,
+    voice_cloners,
 };
 
 impl SingleSend for NoChat {}
@@ -133,7 +134,9 @@ impl MediaRuntime {
                 let provider = &config.providers[&model.provider];
                 let mut entry = RungStatus::new(model, provider);
                 match backends.get(&model.provider).and_then(|backend| {
-                    media_rung(provider, backend, model, position, *operation, &seat.caps, budgets)
+                    media_rung(
+                        provider, backend, model, position, *operation, &seat.caps, budgets,
+                    )
                 }) {
                     Some(rung) => {
                         rows.push((rung.model.clone(), model.clone(), provider.locality));

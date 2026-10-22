@@ -16,8 +16,8 @@ use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
 mod reply_line;
 
-use reply_line::{read_booked, read_whole};
 pub(super) use reply_line::{ReplyBytes, charge_read, holding_replies};
+use reply_line::{read_booked, read_whole};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
