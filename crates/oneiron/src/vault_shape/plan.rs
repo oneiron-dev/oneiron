@@ -2,6 +2,7 @@
 //! between a seed and the vault, one item per declared name that differs.
 //! Plan writes nothing; apply re-reads the same frontier and refuses a plan
 //! whose frontier has moved, so what the owner approved is what they saw.
+use super::approval::{ShapeApprovalDependencies, approval_dependencies};
 use super::live::{LiveShape, ShapeSources};
 use super::reach::{ShapePlanReach, reach_projection};
 use super::seed::{hex, seed_digest};
@@ -286,14 +287,16 @@ impl Vault {
         &self,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeRead> {
-        let seed = self.shape_seed()?;
         let live = self.read_live_shape(visible)?;
+        // The stored seed and the open applies read as the live rows do
+        // (FIX 10199).
+        let (seed, applies) = self.visible_seed_and_applies(&live.withheld, visible)?;
         Ok(ShapeRead {
             seed,
             live: ShapeSeed {
                 rows: live.rows.into_iter().map(|(row, _)| row).collect(),
             },
-            applies: self.open_shape_applies()?,
+            applies,
         })
     }
 
@@ -318,6 +321,7 @@ impl Vault {
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapePlan> {
         self.plan_shape_into(seed, visible, &mut ShapeSources::off())
+            .map(|(plan, _)| plan)
     }
 
     /// [`Self::plan_shape_visible`], listing in `sources` the rows its
@@ -325,26 +329,33 @@ impl Vault {
     /// [`Self::read_live_shape_into`] lists them, and each person a reach
     /// line is named from. Its manifest projection lists the stored
     /// manifests its own writer folds, and re-reads the sending identities'
-    /// heads, listed there; the bytes it projects are the caller's.
+    /// heads, listed there; the bytes it projects are the caller's. Beside
+    /// the plan: what its reach stood on, which an apply pins (FIX 10200).
     pub(super) fn plan_shape_into(
         &self,
         seed: Option<&ShapeSeed>,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
         sources: &mut ShapeSources,
-    ) -> Result<ShapePlan> {
+    ) -> Result<(ShapePlan, ShapeApprovalDependencies)> {
         let stored = self.shape_seed()?;
-        let (seed, seed_id) = match (seed, stored) {
+        let (seed, seed_id, stored_seed) = match (seed, stored) {
             (Some(seed), stored) => {
                 let id = stored
                     .filter(|stored| stored.seed == *seed)
                     .map(|stored| stored.id);
-                (seed.clone(), id)
+                (seed.clone(), id, false)
             }
-            (None, Some(stored)) => (stored.seed, Some(stored.id)),
-            (None, None) => (ShapeSeed::default(), None),
+            (None, Some(stored)) => (stored.seed, Some(stored.id), true),
+            (None, None) => (ShapeSeed::default(), None, false),
         };
         seed.validate()?;
         let live = self.read_live_shape_into(visible, sources)?;
+        // The stored seed reads as the caller's read admits it (FIX 10199).
+        let seed = if stored_seed {
+            self.visible_seed(&seed, &live.withheld, visible)?
+        } else {
+            seed
+        };
         let frontier = frontier(&seed, &live)?;
         let by_target: BTreeMap<ShapeTarget, &ShapeRow> = live
             .rows
@@ -353,8 +364,14 @@ impl Vault {
             .collect();
 
         let mut pending = Vec::new();
+        let read = self.store.env.read_txn()?;
         for (index, row) in seed.rows.iter().enumerate() {
             let target = row.target();
+            // A declaration withheld from the caller is not missing
+            // structure to create (FIX 10199): it plans as nothing.
+            if self.shape_target_withheld(&read, &target, &live.withheld, visible)? {
+                continue;
+            }
             let before = by_target.get(&target).copied();
             let (change, after) = match (row, before) {
                 (ShapeRow::Retire { .. }, None) => continue,
@@ -368,6 +385,7 @@ impl Vault {
             };
             pending.push((target, index, change, before, after));
         }
+        drop(read);
         // Retire lines land last; the rest go structure first, then seed order.
         pending.sort_by_key(|(target, index, change, ..)| {
             (*change == ShapeChange::Retire, target.rank(), *index)
@@ -428,14 +446,18 @@ impl Vault {
                 .named(&mut name)?,
             unresolved,
         );
-        Ok(ShapePlan {
-            seed_id,
-            seed,
-            frontier,
-            items,
-            undeclared,
-            summary,
-            reach,
-        })
+        let pin = approval_dependencies(&live);
+        Ok((
+            ShapePlan {
+                seed_id,
+                seed,
+                frontier,
+                items,
+                undeclared,
+                summary,
+                reach,
+            },
+            pin,
+        ))
     }
 }

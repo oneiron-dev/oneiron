@@ -13,6 +13,7 @@ and under the current policy nothing new refuses an install or a launch.
 | `image-release.sig.json` | The detached signature envelope. It is absent today. |
 | `release-manifest.schema.json` | The closed wire description: the manifest, plus `$defs.signature_envelope`. |
 | `imagebuild/release_manifest.py` | The emitter (`build.py manifest`). |
+| `deploy/firecracker/release.py` | The standalone Firecracker vault image's emitter: offline, over that image's built kernel and rootfs. |
 | `oneiron_container::image_release` | The reader: the types, `verify_release`, the verifier seam, and the policy. |
 
 ## Emit
@@ -47,6 +48,41 @@ Source pins (the kernel config and the unversioned contract sources) come from
 the receipt's inputs, which the builder checked against the engine tree.
 Contract revisions are the ones `release.toml [inputs.contracts]` pins.
 
+Two VM capability facts are measured from `rootfs.tar`, never copied from a
+source constant (FIX 9344): `vm_trusted_organ_builds_revision` is the
+revision `release.toml` pins for the vault init when the image holds that
+init at its pinned sha256, else 0; `vm_guest_runtime_revision` is 1 only when
+the image holds the guest runtime's descriptor and every file it names at its
+sha256, else 0, and a descriptor whose files do not all match is refused. The
+current vault recipe stages no guest runtime, so its images name 0. Neither
+fact gates an install, a launch or a boot.
+
+### The standalone Firecracker vault image
+
+```sh
+python3 deploy/firecracker/release.py --kernel vmlinux --kernel-receipt kernel-receipt.json \
+  --rootfs engine.ext4 --rootfs-receipt rootfs-receipt.json --release-inputs inputs.json \
+  --output OUT [--signer-cmd CMD] [--b3sum PATH]
+```
+
+`deploy/firecracker/build.py` builds this image outside the family builder.
+`release.py` emits its manifest offline, over the kernel and engine image
+that build already made: it builds nothing and makes no vault or config disk,
+so no mutable disk or secret goes into a release. It copies both into `OUT`
+as `vmlinux` and `rootfs.ext4`, measures each again (SHA-256, and BLAKE3
+through `b3sum`; without one it emits nothing), and checks each against its
+receipt. What the receipts do not hold comes from `--release-inputs`, a JSON
+file pinned for that build: `engine` (`commit`, `version`), the SHA-256 of
+each engine binary that build made (`engine_binaries`, checked against the
+rootfs receipt's inventory), and the contract revisions and source pins at
+that commit; nothing is read from the current checkout. The two capability
+facts come from the rootfs receipt's measured inventory. `receipt.json`
+keeps both receipts and the inputs as `provenance`. The manifest names no
+OCI form (`artifacts.oci: null`), since this image has none, and binds its
+own rootfs and kernel bytes instead; its snapshot is not qualified. It
+shares the emitter's schema check, exact-byte write and signing seam: with
+no `--signer-cmd`, no envelope is written.
+
 ## Wire
 
 All fields are required, and unknown fields are refused at every level. A
@@ -61,8 +97,8 @@ No path is absolute on the host.
 | `variant`, `arch` | Pack A's spelling (`base`, `vault`, `browser`, `desktop-cua`, `checker`, `generic-agent`); `"linux/amd64"`. |
 | `generation` | The engine commit's first 12 hex, `-`, then the receipt sha256's first 16 hex. |
 | `engine` | `commit` (40 hex) and the workspace `version`. |
-| `contracts` | Guest protocol version, checker helper header version, WIT world, the eight vault contract revisions, `storage` (`abi_version`, `schema_version`, vault variant only, else `null`), and `unversioned` source pins for the native session, fence wire, fence supervisor and relay. |
-| `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. |
+| `contracts` | Guest protocol version, checker helper header version, WIT world, `vault` (the eight vault contract revisions, then the two measured VM capability facts `vm_trusted_organ_builds_revision` and `vm_guest_runtime_revision`, 0 or 1), `storage` (`abi_version`, `schema_version`, vault variant only, else `null`), and `unversioned` source pins for the native session, fence wire, fence supervisor and relay. |
+| `artifacts.oci` | `reference` (a tag, not an identity), `index_digest`, `manifest_digest`, `config_digest` (the image id), `layer_digest`, `layer_diff_id`, and `archive` (a file). These identities are distinct: none stands in for another. Required: `null` only for the standalone Firecracker vault image, which names its kernel image; every builder output names its real OCI form. |
 | `artifacts.rootfs_ext4` | A file: `path`, `bytes`, `sha256`, `blake3`. |
 | `artifacts.kernel` | `config` (source pin) and `image` (a file, or `null`: the family builds no kernel). |
 | `binaries` | `guest`, `fence`, `relay`: `{path, sha256}` inside the image, or `null` when the variant has none. A variant's other binaries are not roles here: desktop-cua's `cua-driver` and generic-agent's Bun, tsrs and launchers are bound by the rootfs hashes, and named with their pins and measured hashes in the receipt (`inputs.payloads`, `installed`, `source_builds`, `native`) and the SBOM. |
@@ -134,7 +170,9 @@ verify_release(manifest_bytes, envelope: Option<&[u8]>, &ObservedArtifacts,
 
 The function parses the manifest. It compares each digest the **caller**
 measured with the manifest's value; the module itself reads no file and
-hashes nothing. It checks the host's observed capabilities against `host`,
+hashes nothing. Against a manifest with no OCI form, an observed OCI digest
+is `not_in_manifest`, never a match; the rootfs and kernel digests are what
+bind such a manifest to the bytes in use. It checks the host's observed capabilities against `host`,
 and reads the signature. The result is never a bare success. Its `signature`
 is one of:
 

@@ -7,7 +7,6 @@
 
 use crate::edit::xml::{escape_attribute, set_attribute, splice, writable};
 use crate::ooxml::{SPREADSHEET_MAIN as SML, XmlTree, escape_text};
-use crate::retained_opc::XmlLimits;
 use crate::xlsx_error::XlsxBodyError;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -393,11 +392,11 @@ fn check_color(color: &XlsxColor) -> Result<()> {
 /// names of the named cell styles it added because the workbook lacked them.
 pub(crate) fn write_formats(
     bytes: &[u8],
-    limits: XmlLimits,
+    resources: &crate::resource::Resources,
     formats: &[XlsxFormat],
     styles: usize,
 ) -> Result<(Vec<u32>, Option<Vec<u8>>, Vec<String>)> {
-    let tree = XmlTree::parse(bytes, limits)?;
+    let tree = XmlTree::parse(bytes, resources)?;
     tree.root(SML, "styleSheet")
         .map_err(|_| refused("the stylesheet is not SpreadsheetML"))?;
     let mut num_fmts = List::read(&tree, "numFmts", "numFmt")?;

@@ -2,17 +2,20 @@
 //! in the viewBox at 1px = 9,525 EMU; the group's transform places the
 //! viewBox in the slide. Refused classes are found over the whole document
 //! before any geometry is read, so a gradient in `defs` is named as a
-//! gradient, not as an unsupported `defs`.
+//! gradient, not as an unsupported `defs`. Node, depth and segment counts
+//! are observations (FIX 8574): the tree and each shape's geometry reserve
+//! their memory through the operation's port, and groups nest on a heap
+//! stack, not the call stack.
 
 use super::geometry::{self, Linear, MAX_PX, emu};
 use super::path::{self, Affine};
 use super::{
-    Cap, Drawing, Extent, Frame, Geometry, GraphicError, GraphicLimits, Join, NativeShape, Preset,
-    Refused, Solid, Stroke, fit,
+    Cap, Drawing, Extent, Frame, Geometry, GraphicError, Join, NativeShape, Preset, Refused, Solid,
+    Stroke, fit,
 };
 use crate::design_plan::Rect;
-use crate::ooxml::{Node, XmlTree};
-use crate::retained_opc::XmlLimits;
+use crate::ooxml::{Node, XmlError, XmlTree};
+use crate::resource::{Resources, bytes_of};
 
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 /// ST_LineWidth's ceiling, in EMU.
@@ -38,19 +41,15 @@ const PAINT: &[&str] = &[
 pub(super) fn compile(
     bytes: &[u8],
     bounds: Rect,
-    limits: &GraphicLimits,
+    resources: &Resources,
 ) -> Result<Drawing, GraphicError> {
     instructions(bytes)?;
-    let xml_limits = XmlLimits {
-        max_depth: limits.svg_depth,
-        max_nodes: limits.svg_nodes,
-    };
-    let tree = XmlTree::parse(bytes, xml_limits).map_err(|error| GraphicError::Svg {
-        at: 0,
-        element: String::new(),
-        refused: match error.0 {
-            "XML node or depth limit" => Refused::Limit,
-            other => Refused::Malformed(other),
+    let tree = XmlTree::parse(bytes, resources).map_err(|error| match error {
+        XmlError::Resource(refusal) => GraphicError::Resource(refusal),
+        XmlError::Invalid(reason) => GraphicError::Svg {
+            at: 0,
+            element: String::new(),
+            refused: Refused::Malformed(reason),
         },
     })?;
     for (at, node) in tree.nodes.iter().enumerate() {
@@ -62,9 +61,8 @@ pub(super) fn compile(
     let view = document(&tree)?;
     let mut compiler = Compiler {
         tree: &tree,
-        limits,
+        resources,
         view,
-        segments: 0,
         shapes: Vec::new(),
     };
     let style = Style::default().inherit(0, &tree.nodes[0])?;
@@ -81,6 +79,9 @@ pub(super) fn compile(
 }
 
 fn refuse(at: usize, node: &Node, refused: Refused) -> GraphicError {
+    if let Refused::Resource(refusal) = refused {
+        return GraphicError::Resource(refusal);
+    }
     GraphicError::Svg {
         at,
         element: node.name.clone(),
@@ -361,21 +362,35 @@ fn alpha(opacity: f64) -> u32 {
 
 struct Compiler<'t> {
     tree: &'t XmlTree,
-    limits: &'t GraphicLimits,
+    resources: &'t Resources,
     view: Rect,
-    segments: usize,
     shapes: Vec<NativeShape>,
 }
 
 impl Compiler<'_> {
+    /// Compile `root`'s children in document order. Each open group waits
+    /// on a heap stack with its next child, the style and the transform it
+    /// passes down, so nesting costs memory, reserved, not call stack.
     fn children(
         &mut self,
-        parent: usize,
+        root: usize,
         style: &Style,
         transform: Affine,
     ) -> Result<(), GraphicError> {
         let tree = self.tree;
-        for (at, node) in tree.children(parent) {
+        let mut open: Vec<(usize, usize, Style, Affine)> = vec![(root, 0, *style, transform)];
+        while let Some(&(parent, next, style, transform)) = open.last() {
+            let Some(&at) = tree.nodes[parent].children.get(next) else {
+                open.pop();
+                continue;
+            };
+            if let Some(top) = open.last_mut() {
+                top.1 = next + 1;
+            }
+            let node = &tree.nodes[at];
+            self.resources
+                .checkpoint()
+                .map_err(GraphicError::Resource)?;
             if node.namespace != SVG_NS {
                 return Err(refuse(at, node, Refused::Element));
             }
@@ -406,7 +421,12 @@ impl Compiler<'_> {
             };
             let transform = transform.then(local);
             if node.name == "g" {
-                self.children(at, &style, transform)?;
+                // The group's frame, reserved before the stack grows.
+                let _hold = self
+                    .resources
+                    .reserve(bytes_of::<(usize, usize, Style, Affine)>(2))
+                    .map_err(GraphicError::Resource)?;
+                open.push((at, 0, style, transform));
             } else {
                 self.shape(node, &style, transform)
                     .map_err(|refused| refuse(at, node, refused))?;
@@ -444,10 +464,13 @@ impl Compiler<'_> {
             }
             _ => {
                 let subpaths = geometry::subpaths(node)?;
-                self.segments += subpaths.iter().map(|sub| sub.segs.len()).sum::<usize>();
-                if self.segments > self.limits.segments {
-                    return Err(Refused::Limit);
-                }
+                // The shape's segments, as its spec keeps them, reserved
+                // before the spec is built: a count is no refusal.
+                let segments = subpaths.iter().map(|sub| sub.segs.len()).sum::<usize>();
+                let _hold = self
+                    .resources
+                    .reserve(bytes_of::<super::Segment>(segments.saturating_mul(2)))
+                    .map_err(Refused::Resource)?;
                 let (frame, specs) =
                     geometry::custom(&subpaths, transform, fill.is_some(), stroke.is_some())?;
                 (frame, Geometry::Custom(specs), f64::INFINITY)
@@ -473,7 +496,7 @@ impl Compiler<'_> {
         }
         if let Geometry::Custom(specs) = &geometry {
             for spec in specs.iter().filter(|spec| spec.fill) {
-                if !geometry::one_outline(&spec.segments, self.limits.fill_edges)? {
+                if !geometry::one_outline(&spec.segments, self.resources)? {
                     return Err(Refused::FillRule);
                 }
             }

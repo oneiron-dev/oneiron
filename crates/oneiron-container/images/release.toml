@@ -216,6 +216,15 @@ vm_anchor_wire_revision = 1
 vm_anchor_proxy_revision = 1
 vm_network_revision = 1
 vm_managed_profile_revision = 1
+# The trusted organ builds capability (FIX 7889, FIX 9344): the revision the
+# pinned vault-init carries when it hands each line of the config drive's
+# trusted-organ-builds to the engine. A fact, never a gate: the emitter names
+# it only when rootfs.tar holds that init, and 0 for an image without it.
+vm_trusted_organ_builds_revision = 1
+# vm_guest_runtime_revision (FIX 7671, FIX 9344) is not pinned here: the
+# emitter measures it from rootfs.tar, 1 only when the image holds the whole
+# guest runtime and its descriptor, else 0. This recipe stages none, so its
+# images name 0. A fact, never a gate.
 defined_in = "crates/oneiron-vault-contract/src/lib/{version,vm_provision,vm_outbox,vm_restore,vm_anchor,vm}.rs"
 
 [inputs.contracts.storage]

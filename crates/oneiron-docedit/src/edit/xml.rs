@@ -33,7 +33,7 @@ pub(crate) fn splice(bytes: &[u8], mut edits: Vec<Splice>) -> Result<Vec<u8>, Ed
 /// Parse a part's current bytes.
 pub(crate) fn read(package: &Package, part: &str) -> Result<(Vec<u8>, XmlTree), EditRefusal> {
     let bytes = package.part(part)?.ok_or(EditRefusal::Missing("part"))?;
-    let tree = XmlTree::parse(&bytes, package.limits().xml)?;
+    let tree = XmlTree::parse(&bytes, package.resources())?;
     Ok((bytes, tree))
 }
 

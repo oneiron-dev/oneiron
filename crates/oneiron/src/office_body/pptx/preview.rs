@@ -36,7 +36,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::{invalid, live, open_record};
+use super::{live, open_record};
 use crate::Vault;
 use crate::edit_roundtrip::VaultAssets;
 use crate::edit_roundtrip::slides_review::{SlideRenderer, review_image_key};
@@ -242,11 +242,15 @@ impl Memory<'_> {
             }
             None => {
                 let (export, assets) = vault.project_preview(&artifact, &projection, renderer)?;
-                let count = Package::open(&export.bytes, vault.docedit_package_limits()?)
-                    .ok()
-                    .and_then(|package| DeckView::read(&package).ok())
-                    .map(|view| u64::try_from(view.slides.len()).unwrap_or(u64::MAX))
-                    .ok_or_else(|| failed("the deck's export could not be read back"))?;
+                let count = Package::open(
+                    &export.bytes,
+                    vault.docedit_package_limits()?,
+                    &crate::office_body::document_resources(),
+                )
+                .ok()
+                .and_then(|package| DeckView::read(&package).ok())
+                .map(|view| u64::try_from(view.slides.len()).unwrap_or(u64::MAX))
+                .ok_or_else(|| failed("the deck's export could not be read back"))?;
                 (count, BTreeMap::new(), Some((export, assets)))
             }
         };
@@ -419,8 +423,17 @@ impl Vault {
         let source_bytes = len(bytes.len());
         renderer.materialized(0, source_bytes);
         renderer.admit(source_bytes)?;
-        let package = Package::open(&bytes, self.docedit_package_limits()?)
-            .map_err(|_| invalid("the PPTX package could not be read"))?;
+        let package = Package::open(
+            &bytes,
+            self.docedit_package_limits()?,
+            &crate::office_body::document_resources(),
+        )
+        .map_err(|error| {
+            crate::office_body::document_error(
+                error.resource(),
+                "the PPTX package could not be read",
+            )
+        })?;
         renderer.materialized(source_bytes, source_bytes);
         let key = export_key(
             &deck,
