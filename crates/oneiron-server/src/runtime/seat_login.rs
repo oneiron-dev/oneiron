@@ -420,6 +420,20 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
+                // The host's claim on the run ended under it (FIX 9320): its
+                // process stops, and nothing it would still print is kept.
+                Ok(None)
+                    if self
+                        .stop
+                        .as_ref()
+                        .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst)) =>
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ByoaError::Backend(
+                        "official seat stopped: its claim ended".to_owned(),
+                    ));
+                }
                 Ok(None) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(25));
                 }

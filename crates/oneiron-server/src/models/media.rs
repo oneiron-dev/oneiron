@@ -37,6 +37,7 @@ use super::broker_media::broker_media_backend;
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
+use super::host_budgets::ModelHostBudgets;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
@@ -576,8 +577,12 @@ fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     provider
 }
 
-/// The clone wire of each configured hosted speech provider, by name.
-fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
+/// The clone wire of each configured hosted speech provider, by name, its
+/// replies holding their bytes on `budgets` (FIX 9321).
+fn voice_cloners(
+    config: &ModelsConfig,
+    budgets: &ModelHostBudgets,
+) -> BTreeMap<String, Arc<HostedCloner>> {
     let mut cloners = BTreeMap::new();
     for (name, provider) in &config.providers {
         let built = match provider.kind {
@@ -606,6 +611,7 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
                         wire,
                         locality: provider.locality,
                         connector,
+                        budgets: budgets.clone(),
                     }),
                 );
             }
@@ -617,7 +623,8 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
     cloners
 }
 
-/// `model` on `provider` as a media rung at `position` for `operation`.
+/// `model` on `provider` as a media rung at `position` for `operation`, its
+/// calls' replies holding their bytes on `budgets` (FIX 9321).
 fn media_rung(
     provider: &ProviderConfig,
     backend: &Arc<dyn MediaBackend>,
@@ -625,6 +632,7 @@ fn media_rung(
     position: usize,
     operation: AiOperation,
     caps: &MediaCaps,
+    budgets: &ModelHostBudgets,
 ) -> Option<LadderRung> {
     let row = catalog_entry(model, provider).ok()?.with_media(caps);
     let binding = match media_offer(provider, row.model.clone(), operation) {
@@ -647,8 +655,8 @@ fn media_rung(
         },
         media: Some(MediaRung {
             // Its calls hold their replies' bytes until each answer leaves
-            // the adapter (FIX 8615).
-            backend: Arc::new(booked::BookedReplies(Arc::clone(backend))),
+            // the adapter (FIX 8615), on the vault's line (FIX 9321).
+            backend: Arc::new(booked::BookedReplies(Arc::clone(backend), budgets.clone())),
             row,
             caps: caps.clone(),
         }),
