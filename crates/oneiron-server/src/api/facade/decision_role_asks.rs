@@ -18,6 +18,7 @@ use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND};
 use serde::Deserialize;
 
 use super::{FacadeApiError, facade_actor, facade_input, facade_json};
+use crate::api::scoped_auth::lane_reads_each;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
@@ -43,12 +44,31 @@ async fn asks(
 ) -> Result<Json<Vec<DecisionAsk>>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let (actor, _) = facade_actor(&server, &auth)?;
-    let vault = Arc::clone(&server.vault);
-    let asks = tokio::task::spawn_blocking(move || vault.decision_asks_held_by(actor))
-        .await
-        .map_err(|_| internal())?
-        .map_err(engine)?;
+    let asks = tokio::task::spawn_blocking(move || -> Result<_, FacadeApiError> {
+        let asks = server.vault.decision_asks_held_by(actor).map_err(engine)?;
+        // FIX 8174: of the asks at a role the principal holds, the ones the
+        // credential's own lane reads whole, at its destination.
+        Ok(lane_reads_each(
+            &server.vault,
+            &auth,
+            asks,
+            decision_ask_refs,
+        )?)
+    })
+    .await
+    .map_err(|_| internal())??;
     Ok(Json(asks))
+}
+
+/// The rows a decision ask names (FIX 8174): the evidence it carries and the
+/// work it decides. The person it is for is the role chain's, which the role
+/// check already answers.
+pub(crate) fn decision_ask_refs(ask: &DecisionAsk) -> Vec<oneiron::EntityId> {
+    ask.evidence
+        .iter()
+        .copied()
+        .chain(ask.correlation)
+        .collect()
 }
 
 /// `POST /v1/core/decisions/asks/answer`: a role holder's answer to one ask,
