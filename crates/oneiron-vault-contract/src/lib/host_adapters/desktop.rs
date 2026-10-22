@@ -23,11 +23,16 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::SystemTime,
 };
 use tokio::sync::Notify;
 use zeroize::Zeroizing;
+
+mod power;
 
 type Hook = Box<dyn FnMut() -> anyhow::Result<()> + Send>;
 
@@ -127,11 +132,54 @@ struct AwakeState {
     program: &'static str,
     args: Vec<String>,
     policy: AwakePolicy,
-    held: Mutex<(usize, Option<Child>)>,
+    /// What a PluggedIn assertion follows the power source by (FIX 9547).
+    watch: power::Watch,
+    /// The host's notice that power-source changes are not observed, said
+    /// at most once.
+    notice: OnceLock<Box<dyn Fn() + Send + Sync>>,
+    told: AtomicBool,
+    held: Mutex<Held>,
+}
+
+impl AwakeState {
+    /// One assertion: the child that holds the machine awake while it runs.
+    fn assertion(&self) -> Option<Child> {
+        Command::new(self.program)
+            .args(&self.args)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+    }
+
+    /// Says once, through the host's notice, that power-source changes are
+    /// not observed here.
+    fn unobserved(&self) {
+        if let Some(notice) = self.notice.get()
+            && !self.told.swap(true, Ordering::Relaxed)
+        {
+            notice();
+        }
+    }
+}
+
+/// The holders, the one assertion they share and, under PluggedIn, the
+/// power observer their set started.
+#[derive(Default)]
+struct Held {
+    holders: usize,
+    /// Moves on at each first holder, so an ended set's observer changes
+    /// nothing.
+    generation: u64,
+    assertion: Option<Child>,
+    observer: Option<power::PowerObserver>,
 }
 
 /// One idle-sleep assertion shared by every live pass: the first holder
-/// takes it and the last one out releases it.
+/// takes it and the last one out releases it. Under PluggedIn it follows the
+/// power source while held: released on battery, taken again on mains.
 #[derive(Clone, Default)]
 pub struct KeepAwake(Option<Arc<AwakeState>>);
 impl KeepAwake {
@@ -150,40 +198,61 @@ impl KeepAwake {
             .map(String::from)
             .to_vec(),
             policy,
+            power::UDEV_WATCH,
         )
     }
     /// A PreventUserIdleSystemSleep assertion; `-i` leaves display sleep be.
     pub fn launchd(policy: AwakePolicy) -> Self {
-        Self::with("/usr/bin/caffeinate", vec!["-i".to_owned()], policy)
+        Self::with(
+            "/usr/bin/caffeinate",
+            vec!["-i".to_owned()],
+            policy,
+            power::PMSET_WATCH,
+        )
     }
-    fn with(program: &'static str, args: Vec<String>, policy: AwakePolicy) -> Self {
+    fn with(
+        program: &'static str,
+        args: Vec<String>,
+        policy: AwakePolicy,
+        watch: power::Watch,
+    ) -> Self {
         Self(Some(Arc::new(AwakeState {
             program,
             args,
             policy,
-            held: Mutex::new((0, None)),
+            watch,
+            notice: OnceLock::new(),
+            told: AtomicBool::new(false),
+            held: Mutex::new(Held::default()),
         })))
+    }
+    /// Calls `notice`, once, if this host's power-source changes cannot be
+    /// observed, so a PluggedIn assertion follows only the source sampled as
+    /// its holders began (FIX 9547). The first notice set stands.
+    pub fn on_unobserved(&self, notice: impl Fn() + Send + Sync + 'static) {
+        if let Some(state) = &self.0 {
+            let _ = state.notice.set(Box::new(notice));
+        }
     }
     /// Holds the machine awake until the guard drops.
     pub fn hold(&self) -> AwakeGuard {
-        if let Some(state) = &self.0
-            && let Ok(mut held) = state.held.lock()
-        {
-            held.0 += 1;
-            let allowed = match state.policy {
-                AwakePolicy::Never => false,
-                AwakePolicy::Always => true,
-                AwakePolicy::PluggedIn => on_mains_power(),
-            };
-            if held.0 == 1 && allowed {
-                held.1 = Command::new(state.program)
-                    .args(&state.args)
-                    .env_clear()
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .ok();
+        if let Some(state) = &self.0 {
+            let mut observe = None;
+            if let Ok(mut held) = state.held.lock() {
+                held.holders += 1;
+                if held.holders == 1 {
+                    held.generation = held.generation.wrapping_add(1);
+                    match state.policy {
+                        AwakePolicy::Never => {}
+                        AwakePolicy::Always => held.assertion = state.assertion(),
+                        // The set's observer takes it on mains power.
+                        AwakePolicy::PluggedIn => observe = Some(held.generation),
+                    }
+                }
+            }
+            // Started outside the lock: it samples the source and spawns.
+            if let Some(generation) = observe {
+                power::PowerObserver::start(state, generation);
             }
         }
         AwakeGuard(self.0.clone())
@@ -193,44 +262,28 @@ impl KeepAwake {
 pub struct AwakeGuard(Option<Arc<AwakeState>>);
 impl Drop for AwakeGuard {
     fn drop(&mut self) {
-        if let Some(state) = &self.0
-            && let Ok(mut held) = state.held.lock()
-        {
-            held.0 = held.0.saturating_sub(1);
-            if held.0 == 0
-                && let Some(mut child) = held.1.take()
-            {
-                let _ = child.kill();
-                let _ = child.wait();
+        let Some(state) = &self.0 else {
+            return;
+        };
+        let mut ended = (None, None);
+        if let Ok(mut held) = state.held.lock() {
+            held.holders = held.holders.saturating_sub(1);
+            if held.holders == 0 {
+                ended = (held.assertion.take(), held.observer.take());
             }
         }
+        // Reaped and joined outside the lock, which the observer takes.
+        release(ended.0);
+        drop(ended.1);
     }
 }
 
-/// A machine with no battery counts as plugged in.
-fn on_mains_power() -> bool {
-    if cfg!(target_os = "macos") {
-        return Command::new("/usr/bin/pmset")
-            .args(["-g", "batt"])
-            .env_clear()
-            .stderr(Stdio::null())
-            .output()
-            .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("'AC Power'"));
+/// Ends an assertion or observer child: killed, then reaped.
+fn release(child: Option<Child>) {
+    if let Some(mut child) = child {
+        let _ = child.kill();
+        let _ = child.wait();
     }
-    let Ok(supplies) = std::fs::read_dir("/sys/class/power_supply") else {
-        return true;
-    };
-    let mut battery = false;
-    for supply in supplies.flatten() {
-        let read =
-            |file: &str| std::fs::read_to_string(supply.path().join(file)).unwrap_or_default();
-        match read("type").trim() {
-            "Mains" if read("online").trim() == "1" => return true,
-            "Battery" => battery = true,
-            _ => {}
-        }
-    }
-    !battery
 }
 
 /// The cgroup v2 ceilings systemd set for this unit, read back.

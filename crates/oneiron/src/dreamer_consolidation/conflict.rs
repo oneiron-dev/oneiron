@@ -1,3 +1,7 @@
+//! Conflict and bucket identities for consolidation candidates and swarm returns.
+//! Entry: `ConsolidationBucketKey`, with `plan_candidate_buckets`.
+//! Definitions are local to this module.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rmpv::Value;

@@ -1,5 +1,5 @@
 //! The scoped export door.
-use super::{Scope, ScopedRecord, admits, disclosure_scope_for_stored_row};
+use super::{Scope, ScopedRecord, disclosure_scope_for_stored_row, note_world};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
 use crate::provenance::birth::{WithheldKey, row_birth_in_txn};
@@ -81,8 +81,15 @@ impl Vault {
                 id,
                 h.entity_type,
                 &raw[ENTITY_METADATA_HEADER_LEN..],
-            )? && admits(&scope, selector, slip, channel, "export")
-                && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
+            )? && note_world::admits_at(
+                &self.store,
+                &txn,
+                id,
+                h.entity_type,
+                &scope,
+                [selector, slip, channel],
+                "export",
+            ) && crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
                 && self.epoch_fence_in(&txn, id, &raw, [selector, slip, channel], "export")?
                 && self.text_fence_in(
                     &txn,

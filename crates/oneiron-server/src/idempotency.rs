@@ -398,6 +398,7 @@ impl fmt::Display for IdempotencyStoreError {
     }
 }
 
+mod body_read;
 mod caller;
 mod intent;
 mod reclaim;

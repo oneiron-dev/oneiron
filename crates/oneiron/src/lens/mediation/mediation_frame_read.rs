@@ -220,10 +220,13 @@ impl LensRenderFrame {
         let pinned = resolved.document_frontier.as_ref().ok_or_else(|| {
             Error::InvalidConfig("lens span was not rendered from an entity document".into())
         })?;
-        let anchor =
-            scoped_read
-                .vault()
-                .entity_text_anchor(resolved.target.entity_id(), start, end)?;
+        // In the caller's sight: a reader other than the owner selects in the
+        // text with each lifted key as its handle, and the span keeps that
+        // selection widened so it splits no handle (FIX 2936; C-ANCHOR).
+        let masked = !scoped_read.actor_key().reads_as_vault_owner();
+        let vault = scoped_read.vault();
+        let (anchor, (start, end)) =
+            vault.entity_text_anchor_in_sight(resolved.target.entity_id(), start, end, masked)?;
         if anchor.frontier() != pinned {
             return Err(Error::InvalidConfig(
                 "lens span document changed since render".into(),
