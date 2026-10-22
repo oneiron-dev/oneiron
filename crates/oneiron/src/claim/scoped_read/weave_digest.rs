@@ -287,6 +287,10 @@ struct WireDigest {
     lens: Option<WeaveLensRender>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lens_refused: Option<WeaveLensRefusal>,
+    /// A due Owner schedule's publication (FIX 1259): the schedule basis it
+    /// rendered from, rechecked before the period reaches a model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scheduled_basis: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -406,6 +410,7 @@ impl WireDigest {
                 .collect::<Result<Vec<_>>>()?,
             lens: None,
             lens_refused: None,
+            scheduled_basis: None,
         })
     }
     fn into_report(self) -> Result<ScopedReadResult<WeaveReport>> {
@@ -960,6 +965,12 @@ impl Vault {
             WeaveDigestReader::Person(id) => (EdgeActorClass::Human, WeaveReader::Person(id)),
             WeaveDigestReader::Agent(id) => (EdgeActorClass::Agent, WeaveReader::Agent(id)),
             WeaveDigestReader::Owner(owner) => {
+                // A due Owner schedule's period reads under its schedule's
+                // binding and the live-owner census (FIX 1259).
+                if let Some(scheduled) = self.scheduled_owner_period_for_lens(owner, scheduled_for)
+                {
+                    return scheduled;
+                }
                 let key = self
                     .memory(owner, EdgeActorClass::Human)
                     .read_key()

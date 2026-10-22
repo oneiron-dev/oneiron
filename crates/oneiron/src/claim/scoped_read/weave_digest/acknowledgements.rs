@@ -19,11 +19,14 @@
 //! own acknowledgement count. A check that does not answer adds nothing:
 //! the old refusal and the old count stand.
 
+use std::collections::BTreeSet;
+
 use super::super::ScopedRead;
 use super::WEAVE_DIGEST_NOTIFICATION_PRODUCER;
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
+use crate::federation::{Scope, ScopeAxis};
 use crate::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_NOTIFICATION;
@@ -180,6 +183,14 @@ impl ScopedRead<'_> {
         let Some(raw) = vault.store.port_entity_raw(txn, &notice)? else {
             return Ok(None);
         };
+        // The notice's own record position, under the ack operation (as
+        // the shared content writer judges a write at a row's position).
+        let Some(mut position) =
+            crate::federation::record_scope::scope_for_blob(&vault.store, txn, notice, &raw)?
+        else {
+            return Ok(None);
+        };
+        position.verbs = ScopeAxis::Some(BTreeSet::from([WEAVE_OWNER_ACK_VERB.to_owned()]));
         let delegator = match WEAVE_OWNER_ACK_DELEGATOR {
             AckDelegator::RecipientOwner => owner,
         };
@@ -192,8 +203,12 @@ impl ScopedRead<'_> {
             {
                 continue;
             }
-            // The SAME Grant admits the notice's record position.
-            if self.grant_admits_position_in(txn, &notice, &raw, &standing.grant.authority_scope)? {
+            // The SAME Grant admits the ack at the notice's record position.
+            if standing
+                .grant
+                .authority_scope
+                .admits(WEAVE_OWNER_ACK_VERB, &position, &Scope::top())
+            {
                 return Ok(Some(standing.id));
             }
         }
@@ -214,6 +229,10 @@ impl Vault {
         body: &NotificationBody,
         owner: EntityId,
     ) -> bool {
+        // Only `owner`'s own weave due notice counts an agent's ack.
+        if owner_due_notice(body) != Some(owner) {
+            return false;
+        }
         for (key, acked) in &body.acked_by {
             let Ok(agent) = EntityId::from_hex(key) else {
                 continue;

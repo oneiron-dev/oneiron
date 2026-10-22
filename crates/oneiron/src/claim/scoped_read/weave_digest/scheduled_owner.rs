@@ -21,11 +21,12 @@
 
 use super::super::ScopedRead;
 use super::super::weave_lens::snapshot_still_served;
+use super::{SCHEDULE_PREFIX, StoredWeaveDigest};
 use super::{
     WeaveDigestReader, WireDigest, WireSchedule, dependencies, digest_key, digest_row_in,
     index_source_in_txn, invalid, put_digest_row_in_txn, sources_live_in_txn,
 };
-use crate::edge::EdgeActorClass;
+use crate::claim::ScopedReadActorKey;
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
@@ -46,6 +47,14 @@ pub(in crate::claim::scoped_read) struct ScheduledOwner {
     owner: EntityId,
     key: Vec<u8>,
     schedule: Vec<u8>,
+}
+
+/// The parts of an Owner schedule a scheduled period stands on: its cadence
+/// and its recipe, never its due time or hold, so the cadence's own advance
+/// keeps it. A digest of their serialized form.
+fn schedule_basis(wire: &WireSchedule) -> Result<String> {
+    let bytes = serde_json::to_vec(&(wire.cadence, &wire.recipe)).map_err(|_| invalid())?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
 }
 
 impl ScheduledOwner {
@@ -137,25 +146,23 @@ impl Vault {
         }
         let cadence = wire.cadence;
         let next_due_at = wire.next_boundary_after(now)?;
+        let basis = schedule_basis(&wire)?;
         let row = wire.into_row(reader)?;
-        // His own read, never a human's narrower one, as his background
-        // lens reads his periods.
-        let read_key = self
-            .memory(owner, EdgeActorClass::Human)
-            .read_key()
-            .map_err(|error| Error::InvalidConfig(format!("weave digest reader: {error}")))?;
-        if read_key.vault_owner_ref() != Some(owner) {
-            return Ok(false);
-        }
-        let read = self.scoped_read(read_key);
+        // His own Owner lane, never a human's narrower one, its owner proved
+        // in each read by the live-owner census rather than an actor binding:
+        // a live co-Owner with none reads as himself.
+        let read = self.scoped_read(ScopedReadActorKey::vault_owner_by_census(owner));
         let report = {
             // Its grants judge at the refreshed persisted clock (FIX 8671).
             let txn = read.grant_read_txn()?;
             read.weave_report_for_scheduled_owner_in_txn(&txn, &scheduled, &row.recipe)?
         };
         let sources = dependencies::indexed_sources(&report.value)?;
-        let bytes =
-            serde_json::to_vec(&WireDigest::from_report(now, &report)?).map_err(|_| invalid())?;
+        // The period keeps the schedule it rendered from, rechecked before
+        // the period reaches a model.
+        let mut published = WireDigest::from_report(now, &report)?;
+        published.scheduled_basis = Some(basis);
+        let bytes = serde_json::to_vec(&published).map_err(|_| invalid())?;
         let next = serde_json::to_vec(&WireSchedule {
             next_due_at,
             ..WireSchedule::from_row(&row)
@@ -217,6 +224,59 @@ impl Vault {
         // own write after the notice's; never his open.
         self.note_owner_weave_digest_notice(owner, scheduled_for, cadence, notice, now);
         Ok(true)
+    }
+
+    /// A scheduled Owner period as the lens's generate step reads it, before
+    /// any model sees it; `None` when the period is no scheduled publication
+    /// (or does not read here), so the owner's existing read serves it.
+    pub(super) fn scheduled_owner_period_for_lens(
+        &self,
+        owner: EntityId,
+        scheduled_for: u64,
+    ) -> Option<Result<Option<StoredWeaveDigest>>> {
+        let reader = WeaveDigestReader::Owner(owner);
+        let basis = {
+            let txn = self.store.env.read_txn().ok()?;
+            let raw =
+                digest_row_in(&self.store, &txn, &digest_key(reader, scheduled_for)).ok()??;
+            serde_json::from_slice::<WireDigest>(&raw)
+                .ok()?
+                .scheduled_basis?
+        };
+        Some(self.scheduled_owner_lens_read(owner, scheduled_for, &basis))
+    }
+
+    /// [`Self::scheduled_owner_period_for_lens`] for a period published
+    /// from the schedule `basis`: in this pre-model snapshot his schedule
+    /// must still stand on that basis (its cadence's advance aside) and the
+    /// live-owner census still count him; else no model sees the period.
+    fn scheduled_owner_lens_read(
+        &self,
+        owner: EntityId,
+        scheduled_for: u64,
+        basis: &str,
+    ) -> Result<Option<StoredWeaveDigest>> {
+        let reader = WeaveDigestReader::Owner(owner);
+        let read = self.scoped_read(ScopedReadActorKey::vault_owner_by_census(owner));
+        // Its grants judge at the refreshed persisted clock (FIX 8671).
+        let txn = read.grant_read_txn()?;
+        let current = match self
+            .store
+            .vault_meta
+            .get(&txn, &reader.key(SCHEDULE_PREFIX))?
+        {
+            Some(bytes) => match serde_json::from_slice::<WireSchedule>(bytes) {
+                Ok(wire) => Some(schedule_basis(&wire)?),
+                Err(_) => None,
+            },
+            None => None,
+        };
+        if current.as_deref() != Some(basis)
+            || !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &owner)?
+        {
+            return Ok(None);
+        }
+        read.saved_weave_digest_in_txn(&txn, reader, scheduled_for, None)
     }
 
     /// Today's Owner arm, and the scheduled render's fallback: a due row

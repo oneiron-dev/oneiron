@@ -61,6 +61,9 @@ pub struct ScopedReadActorKey {
     /// Set only on an owner key held to a request's own owner proof; see
     /// [`Self::guarded_by_owner_proof`].
     owner_proof: Option<Box<crate::consent::AuthenticatedOwner>>,
+    /// Set only on a due Owner schedule's owner key (FIX 1259); see
+    /// [`Self::vault_owner_by_census`].
+    owner_by_census: bool,
 }
 
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
@@ -378,6 +381,7 @@ impl ScopedReadActorKey {
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
+            owner_by_census: false,
         })
     }
 
@@ -416,7 +420,29 @@ impl ScopedReadActorKey {
             destination: crate::settings::ReadDestination::on_device(),
             host_action: None,
             owner_proof: None,
+            owner_by_census: false,
         }
+    }
+
+    /// The vault owner's own key for a due Owner schedule's recorded Owner
+    /// (FIX 1259): [`Self::vault_owner`], whose owner binding each read
+    /// proves by the live-owner census in its own snapshot (`owner` a live
+    /// Owner of this vault, his PERSON live) instead of an owner actor
+    /// binding, so a live co-Owner with none reads as his own Owner lane and
+    /// no wider. Only a schedule's recorded-Owner binding builds one; it is
+    /// no owner proof and authorizes no act.
+    #[must_use]
+    pub(crate) fn vault_owner_by_census(owner: EntityId) -> Self {
+        Self {
+            owner_by_census: true,
+            ..Self::vault_owner(owner)
+        }
+    }
+
+    /// Whether this owner key's binding is the live-owner census
+    /// ([`Self::vault_owner_by_census`]).
+    pub(crate) fn owner_by_census(&self) -> bool {
+        self.owner_by_census
     }
 
     /// This key, held to the host action it was built for (FIX 2222): every
