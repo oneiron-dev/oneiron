@@ -22,7 +22,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::lower_hex_of;
-use crate::{ManagedTrainingSetting, WakeEntry, validate_wake_entries};
+use crate::LedgerReportHead;
 
 /// The one [`IdleReapWire`] schema this crate reads.
 pub const IDLE_REAP_SCHEMA_VERSION: u32 = 1;
@@ -50,12 +50,10 @@ pub struct IdleReapWire {
     /// The admitted writes in flight when the attempt froze the vault, by
     /// kind: the same on every call that joins it.
     pub in_flight_at_freeze: IdleReapInFlight,
-    /// The wake ledger's revision, as `PrepareReap.ledger_rev`.
-    pub ledger_rev: u64,
-    /// The wake entries at `ledger_rev`, as `PrepareReap.next_wake`.
-    pub next_wake: Vec<WakeEntry>,
-    /// The vault's training setting at `ledger_rev`, as `PrepareReap.training`.
-    pub training: ManagedTrainingSetting,
+    /// The wake ledger report the freeze holds, as `PrepareReap.ledger`: its
+    /// entries and training setting are read with `ledger_page` (FIX 9549),
+    /// the same report on every call that joins the attempt.
+    pub ledger: LedgerReportHead,
     /// The backup taken or reused before the reap, or why there is none.
     pub backup: IdleBackupWire,
 }
@@ -183,15 +181,14 @@ impl IdleBackupFailure {
 }
 
 impl IdleReapWire {
-    /// Shape check after parsing: the schema, the wake entries' bounds, the
-    /// training setting, and the backup's fields as its state requires them.
+    /// Shape check after parsing: the schema, the ledger report's head, and
+    /// the backup's fields as its state requires them.
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
             self.schema_version == IDLE_REAP_SCHEMA_VERSION,
             "unrecognized idle_reap schema_version"
         );
-        validate_wake_entries(&self.next_wake)?;
-        self.training.validate()?;
+        self.ledger.validate()?;
         self.backup.validate()
     }
 }
