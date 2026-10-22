@@ -45947,11 +45947,22 @@
      "purpose": "The generic connector call (ONE-2510): one tool on one catalogued connector, through the scoped-MCP prepare…",
      "surface": {
       "const": 1,
-      "crate-vis": 20,
+      "crate-vis": 19,
       "enum": 2,
-      "fn": 9,
+      "fn": 7,
       "struct": 8,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call/rows.rs",
+     "purpose": "The rows a connector call's passes pick (FIX 5455): the listing a call and its resume answer beside their…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
      }
     },
     {
@@ -45990,6 +46001,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_erase.rs",
+     "purpose": "An actor's erase reaches every connector call row that keeps what the actor asked (FIX 9159): the held or…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "ConnectorCallInput"
      ],
@@ -45997,7 +46018,7 @@
      "purpose": "A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon…",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -46086,7 +46107,7 @@
      "path": "src/outbound_consent/mod.rs",
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "mod": 1,
       "re-export": 11
      }
@@ -46179,9 +46200,9 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 4
      }
     },
@@ -46192,7 +46213,7 @@
      "path": "src/outbound_consent/tool_schema.rs",
      "purpose": "Fail-closed structural JSON Schema subset for resolved outbound descriptors",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -73158,7 +73179,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 21,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -73783,7 +73804,7 @@
    },
    "over_bar": 154,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4758,
+   "source_files": 4760,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95364,9 +95385,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/connector_call_host/live_exchange.rs",
-     "purpose": "The live half of the call host: the worker that owns an exchange once its send returned, and the reply…",
+     "purpose": "The live half of the call host: the worker that owns an exchange once its send returned",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 18
      }
     },
     {
@@ -95377,6 +95398,16 @@
      "purpose": "What one send presents, and everything its connector says cleared of that value inside the door (FIX 7646…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_call_host/reply_read.rs",
+     "purpose": "The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream…",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -95397,6 +95428,16 @@
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)",
      "surface": {
       "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_elicitation/owner.rs",
+     "purpose": "The owner's ruling on an answer under `always ask` (FIX 3837, 3842): the ask raised or reused for exactly…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -101524,7 +101565,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -101538,10 +101579,10 @@
      "purpose": "The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery…"
     },
     "connector_elicitation": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510)"
     },
     "control_keys": {
@@ -101890,7 +101931,7 @@
    },
    "over_bar": 52,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1117,
+   "source_files": 1119,
    "test_files": 182
   },
   "oneiron-spawn": {
