@@ -5,6 +5,7 @@ use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_claim_body};
+use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
 /// One actual tier-2 load. Native record-only skills have no file tree.
@@ -155,8 +156,7 @@ impl Vault {
             // The requested skill is the incumbent arm. An exploration trial
             // of its open proposal may route this attempt to the proposal,
             // reserving the run's charge in this same transaction.
-            let routed =
-                super::exploration_trial::route_in_txn(self, txn, attempt, skill, &record, at)?;
+            let routed = exploration_trial::route_in_txn(self, txn, attempt, skill, &record, at)?;
             let (entity, record, source_files) = match routed.load {
                 Some(trial) => (trial.entity, trial.record, trial.source_files),
                 None => {
@@ -208,7 +208,7 @@ impl Vault {
         // queue opens its own. The load stands either way, and the Coach
         // queues an ask that did not land here.
         if let Some(proposal) = ask
-            && let Err(error) = super::exploration_trial::queue_trial_ask(self, &proposal)
+            && let Err(error) = exploration_trial::queue_trial_ask(self, &proposal)
         {
             tracing::warn!(%error, "an exploration trial's overrun ask is not queued yet");
         }

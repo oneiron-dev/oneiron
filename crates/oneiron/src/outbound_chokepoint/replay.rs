@@ -429,6 +429,14 @@ pub(super) fn recovery_governance(
     {
         return Ok(RecoveryGovernance::Block("connector_manifest_drift"));
     }
+    // FIX 988: a row that depends on a credential binding whose issuer
+    // changed sends nothing until the owner accepts its re-ask.
+    if connector_key::connector_issuer_hold_in_txn(&vault.store, &txn, key_ref, &key, &record.tool)?
+    {
+        return Ok(RecoveryGovernance::Block(
+            connector_key::CONNECTOR_ISSUER_HOLD_REASON,
+        ));
+    }
     // A per-grant key's call meets its catalog connector's charter too, as
     // the gate read it at admission.
     let catalog_charter = connector_key::catalog_charter_in_txn(&vault.store, &txn, &key)?;

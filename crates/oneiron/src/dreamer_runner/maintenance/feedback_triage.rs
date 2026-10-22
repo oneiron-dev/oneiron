@@ -3,7 +3,10 @@
 //! ran it, each finding citing the note's evidence ASSET; the revision's
 //! result and its acknowledgement commit in that same write. An empty answer
 //! is a result: it commits with no finding. No review state moves here, and
-//! no note is closed.
+//! no note is closed. The sweep's lease on a long GitHub walk is the `lease`
+//! child's (FIX 7628).
+mod lease;
+
 use super::proposals;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::feedback::{

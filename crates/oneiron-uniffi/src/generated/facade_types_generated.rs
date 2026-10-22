@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1142 facade rows, 4015 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1094.
+// UniFFI census: 1147 facade rows, 4034 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1099.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -582,6 +582,27 @@ pub enum ReportDisclosure {
     Denied,
 }
 
+/// `oneiron::feedback::report::disclosure::ReportDisclosureBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "basis")]
+#[serde(deny_unknown_fields)]
+pub enum ReportDisclosureBasis {
+    #[serde(rename = "issue_once")]
+    IssueOnce {
+        #[serde(rename = "publisher_ref")]
+        publisher_ref: String,
+        #[serde(rename = "request_digest")]
+        request_digest: String,
+        #[serde(rename = "decided_at")]
+        decided_at: u64,
+    },
+    #[serde(rename = "standing_grant")]
+    StandingGrant {
+        #[serde(rename = "grant_ref")]
+        grant_ref: String,
+    },
+}
+
 /// `oneiron::feedback::report::ReportReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -608,6 +629,12 @@ pub struct ReportReceipt {
     pub route: ReportRoute,
     #[serde(rename = "disclosure")]
     pub disclosure: ReportDisclosure,
+    #[serde(
+        rename = "disclosure_basis",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure_basis: Option<ReportDisclosureBasis>,
 }
 
 /// `oneiron::feedback::bundle::FeedbackCategory`.
@@ -774,6 +801,12 @@ pub struct ReportIssue {
     pub review: ReportReview,
     #[serde(rename = "disclosure")]
     pub disclosure: ReportDisclosure,
+    #[serde(
+        rename = "disclosure_basis",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disclosure_basis: Option<ReportDisclosureBasis>,
 }
 
 /// `oneiron::verbs::feedback::ReportRouteRequest`.
@@ -17222,6 +17255,324 @@ pub struct ConnectorSlateNarrowView {
     pub facets: Option<Vec<String>>,
     #[serde(rename = "narrows")]
     pub narrows: std::collections::HashMap<String, SlateHolderNarrow>,
+}
+
+/// `oneiron::connector_key::slate_scope_signal::ConnectorScopeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorScopeOutcome {
+    #[serde(rename = "approved_untouched")]
+    ApprovedUntouched,
+    #[serde(rename = "approved_amended")]
+    ApprovedAmended,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorScopeOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorScopeOutcomeRequest {
+    #[serde(rename = "signal_ref")]
+    pub signal_ref: String,
+    #[serde(rename = "linked_ruling")]
+    pub linked_ruling: String,
+    #[serde(rename = "outcome")]
+    pub outcome: ConnectorScopeOutcome,
+}
+
+/// `oneiron::connector_key::slate_scope_signal::ConnectorScopeExceed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorScopeExceed {
+    #[serde(rename = "endpoint")]
+    Endpoint {
+        #[serde(rename = "requested")]
+        requested: String,
+    },
+    #[serde(rename = "payload_class")]
+    PayloadClass {
+        #[serde(rename = "requested")]
+        requested: DataClass,
+        #[serde(rename = "ceiling")]
+        ceiling: DataClass,
+    },
+    #[serde(rename = "tool_data_class")]
+    ToolDataClass {
+        #[serde(rename = "requested")]
+        requested: String,
+    },
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorScopeSignalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorScopeSignalView {
+    #[serde(rename = "signal_ref")]
+    pub signal_ref: String,
+    #[serde(rename = "call_ref")]
+    pub call_ref: String,
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "key_ref")]
+    pub key_ref: String,
+    #[serde(rename = "grant_id")]
+    pub grant_id: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "exceed")]
+    pub exceed: ConnectorScopeExceed,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+    #[serde(rename = "ruling", default, skip_serializing_if = "Option::is_none")]
+    pub ruling: Option<ConnectorScopeOutcome>,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorScopeOutcomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorScopeOutcomeView {
+    #[serde(rename = "signal")]
+    pub signal: ConnectorScopeSignalView,
+    #[serde(rename = "untouched_streak")]
+    pub untouched_streak: u32,
+    #[serde(rename = "amended")]
+    pub amended: u32,
+    #[serde(rename = "rejected")]
+    pub rejected: u32,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionOffersRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSlateRevisionOffersRequest {
+    #[serde(rename = "connector", default, skip_serializing_if = "Option::is_none")]
+    pub connector: Option<String>,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionCauseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ConnectorSlateRevisionCauseView {
+    #[serde(rename = "manifest_drift")]
+    ManifestDrift,
+    #[serde(rename = "scope_exceed")]
+    ScopeExceed {
+        #[serde(rename = "signal_ref")]
+        signal_ref: String,
+        #[serde(rename = "key_ref")]
+        key_ref: String,
+        #[serde(rename = "actor")]
+        actor: String,
+        #[serde(rename = "generation")]
+        generation: String,
+        #[serde(rename = "tool")]
+        tool: String,
+        #[serde(rename = "exceed")]
+        exceed: ConnectorScopeExceed,
+    },
+    #[serde(rename = "credential_issuer_changed")]
+    CredentialIssuerChanged {
+        #[serde(rename = "binding_ref")]
+        binding_ref: String,
+        #[serde(rename = "expected_generation")]
+        expected_generation: u64,
+        #[serde(rename = "old_issuer")]
+        old_issuer: String,
+        #[serde(rename = "new_issuer")]
+        new_issuer: String,
+        #[serde(rename = "proposed_credential_ref")]
+        proposed_credential_ref: String,
+        #[serde(rename = "dependent_rows")]
+        dependent_rows: Vec<String>,
+    },
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionOfferView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSlateRevisionOfferView {
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+    #[serde(
+        rename = "proposal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_revision: Option<u64>,
+    #[serde(rename = "prior_ref", default, skip_serializing_if = "Option::is_none")]
+    pub prior_ref: Option<String>,
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "reask")]
+    pub reask: Vec<String>,
+    #[serde(rename = "cause")]
+    pub cause: ConnectorSlateRevisionCauseView,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionOffersView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSlateRevisionOffersView {
+    #[serde(rename = "offers")]
+    pub offers: Vec<ConnectorSlateRevisionOfferView>,
+}
+
+/// `oneiron::connector_key::slate_revision::ConnectorRevisionDeferral`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectorRevisionDeferral {
+    #[serde(rename = "not_now")]
+    NotNow,
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+    #[serde(rename = "unpin")]
+    Unpin,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionDeferRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSlateRevisionDeferRequest {
+    #[serde(rename = "signal_ref")]
+    pub signal_ref: String,
+    #[serde(rename = "deferral")]
+    pub deferral: ConnectorRevisionDeferral,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorRevisionSnoozeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum ConnectorRevisionSnoozeView {
+    #[serde(rename = "surfacing")]
+    Surfacing,
+    #[serde(rename = "snoozed")]
+    Snoozed {
+        #[serde(rename = "count")]
+        count: u8,
+        #[serde(rename = "next_eligible_at")]
+        next_eligible_at: u64,
+    },
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionAcceptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorSlateRevisionAcceptRequest {
+    #[serde(rename = "slate_ref")]
+    pub slate_ref: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorRevisionGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorRevisionGrantView {
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "grant_id")]
+    pub grant_id: String,
+    #[serde(rename = "key_id")]
+    pub key_id: String,
+    #[serde(rename = "key_connector")]
+    pub key_connector: String,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorSlateRevisionAcceptedView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSlateRevisionAcceptedView {
+    #[serde(rename = "slate_ref")]
+    pub slate_ref: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "cause")]
+    pub cause: ConnectorSlateRevisionCauseView,
+    #[serde(rename = "grants")]
+    pub grants: Vec<ConnectorRevisionGrantView>,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorBindingDependentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorBindingDependentView {
+    #[serde(rename = "key_ref")]
+    pub key_ref: String,
+    #[serde(rename = "tool", default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorIssuerReaskRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorIssuerReaskRequest {
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "slot")]
+    pub slot: String,
+    #[serde(rename = "issuer")]
+    pub issuer: String,
+    #[serde(rename = "credential_ref")]
+    pub credential_ref: String,
+    #[serde(rename = "expected_generation")]
+    pub expected_generation: u64,
+    #[serde(
+        rename = "dependents",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dependents: Option<Vec<ConnectorBindingDependentView>>,
+    #[serde(rename = "witness")]
+    pub witness: String,
+}
+
+/// `oneiron::verbs::connector_slate_revision::ConnectorCredentialBindingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorCredentialBindingView {
+    #[serde(rename = "binding_ref")]
+    pub binding_ref: String,
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "slot")]
+    pub slot: String,
+    #[serde(rename = "issuer")]
+    pub issuer: String,
+    #[serde(rename = "credential_ref")]
+    pub credential_ref: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "dependents")]
+    pub dependents: Vec<ConnectorBindingDependentView>,
+    #[serde(
+        rename = "changed_to",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub changed_to: Option<String>,
+    #[serde(
+        rename = "change_state",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub change_state: Option<String>,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
 }
 
 /// `oneiron::verbs::host::ChannelSubscriptionRequest`.
@@ -46926,8 +47277,8 @@ pub enum ConnectorCallReply {
     AwaitingInput {
         #[serde(rename = "handle")]
         handle: String,
-        #[serde(rename = "call_ref", default, skip_serializing_if = "Option::is_none")]
-        call_ref: Option<String>,
+        #[serde(rename = "call_ref")]
+        call_ref: String,
         #[serde(rename = "source")]
         source: String,
         #[serde(rename = "foreign")]

@@ -217,11 +217,11 @@ fn measure_with_owner(
             .map_err(|_| invalid("live goal-axis row encoding failed"))?;
         vault.store.vault_meta.put(txn, &key(proposal), &bytes)?;
         // The live runs are measured: the trial routes no more of them.
-        crate::skill::close_exploration_trial_in_txn(
+        crate::skill_optimize::exploration_trial::close_exploration_trial_in_txn(
             vault,
             txn,
             proposal,
-            crate::skill::ExplorationTrialClose::ReportStored,
+            crate::skill_optimize::exploration_trial::ExplorationTrialClose::ReportStored,
         )
     })?;
     Ok(report)

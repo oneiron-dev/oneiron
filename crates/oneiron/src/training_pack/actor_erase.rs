@@ -3,12 +3,9 @@
 
 use super::{ROLES, RUNS, SWAPS, TrainingState};
 use crate::Vault;
+use crate::deletion::names_no_actor;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-
-/// Whether `id`'s entity is no actor, so its erase has no one to take out of
-/// the training rows.
-use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the training runs (FIX 3520). A run it prepared that
 /// has not gone to the host yet (prepared, or authorized and not
