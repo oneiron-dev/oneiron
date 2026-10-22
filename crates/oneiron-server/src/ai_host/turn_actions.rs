@@ -194,7 +194,13 @@ async fn act(
     let lead = messages.len();
     let at = vault.now_recorded_at();
     let craft = blocking(|| {
-        snapshot_craft_scoped(vault, &vault.memory(actor, class), &context.agent, at, layout)
+        snapshot_craft_scoped(
+            vault,
+            &vault.memory(actor, class),
+            &context.agent,
+            at,
+            layout,
+        )
     });
     let (shown, today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
         craft.map(|craft| (craft.message, craft.entries)).unzip()
