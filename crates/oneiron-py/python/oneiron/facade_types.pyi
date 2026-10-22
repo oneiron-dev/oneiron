@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1142 facade rows, 4007 declarations.
-Inputs: 1076 of 1142 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1028 of 1142 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1147 facade rows, 4025 declarations.
+Inputs: 1081 of 1147 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1033 of 1147 fully typed, 114 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
@@ -5663,6 +5663,121 @@ class ConnectorSlateNarrowView(TypedDict):
     settings: dict[str, SlateDisposition]
     facets: NotRequired[list[str] | None]
     narrows: dict[str, SlateHolderNarrow]
+ConnectorScopeOutcome = Literal["approved_untouched", "approved_amended", "rejected"]
+class ConnectorScopeOutcomeRequest(TypedDict):
+    signal_ref: str
+    linked_ruling: str
+    outcome: ConnectorScopeOutcome
+class ConnectorScopeExceedEndpointBody(TypedDict):
+    requested: str
+class ConnectorScopeExceedEndpoint(TypedDict):
+    endpoint: ConnectorScopeExceedEndpointBody
+class ConnectorScopeExceedPayloadClassBody(TypedDict):
+    requested: DataClass
+    ceiling: DataClass
+class ConnectorScopeExceedPayloadClass(TypedDict):
+    payload_class: ConnectorScopeExceedPayloadClassBody
+class ConnectorScopeExceedToolDataClassBody(TypedDict):
+    requested: str
+class ConnectorScopeExceedToolDataClass(TypedDict):
+    tool_data_class: ConnectorScopeExceedToolDataClassBody
+ConnectorScopeExceed = ConnectorScopeExceedEndpoint | ConnectorScopeExceedPayloadClass | ConnectorScopeExceedToolDataClass
+class ConnectorScopeSignalView(TypedDict):
+    signal_ref: str
+    call_ref: str
+    connector: str
+    tool: str
+    key_ref: str
+    grant_id: str
+    actor: str
+    exceed: ConnectorScopeExceed
+    observed_at: int
+    ruling: NotRequired[ConnectorScopeOutcome | None]
+    proposal_ref: NotRequired[str | None]
+class ConnectorScopeOutcomeView(TypedDict):
+    signal: ConnectorScopeSignalView
+    untouched_streak: int
+    amended: int
+    rejected: int
+    proposal_ref: NotRequired[str | None]
+class ConnectorSlateRevisionOffersRequest(TypedDict):
+    connector: NotRequired[str | None]
+class ConnectorSlateRevisionCauseViewManifestDrift(TypedDict):
+    kind: Literal["manifest_drift"]
+class ConnectorSlateRevisionCauseViewScopeExceed(TypedDict):
+    kind: Literal["scope_exceed"]
+    signal_ref: str
+    key_ref: str
+    actor: str
+    generation: str
+    tool: str
+    exceed: ConnectorScopeExceed
+class ConnectorSlateRevisionCauseViewCredentialIssuerChanged(TypedDict):
+    kind: Literal["credential_issuer_changed"]
+    binding_ref: str
+    expected_generation: int
+    old_issuer: str
+    new_issuer: str
+    proposed_credential_ref: str
+    dependent_rows: list[str]
+ConnectorSlateRevisionCauseView = ConnectorSlateRevisionCauseViewManifestDrift | ConnectorSlateRevisionCauseViewScopeExceed | ConnectorSlateRevisionCauseViewCredentialIssuerChanged
+class ConnectorSlateRevisionOfferView(TypedDict):
+    proposal_ref: NotRequired[str | None]
+    proposal_revision: NotRequired[int | None]
+    prior_ref: NotRequired[str | None]
+    connector: str
+    reask: list[str]
+    cause: ConnectorSlateRevisionCauseView
+class ConnectorSlateRevisionOffersView(TypedDict):
+    offers: list[ConnectorSlateRevisionOfferView]
+ConnectorRevisionDeferral = Literal["not_now", "manual_pinned", "unpin"]
+class ConnectorSlateRevisionDeferRequest(TypedDict):
+    signal_ref: str
+    deferral: ConnectorRevisionDeferral
+class ConnectorRevisionSnoozeViewSurfacing(TypedDict):
+    state: Literal["surfacing"]
+class ConnectorRevisionSnoozeViewSnoozed(TypedDict):
+    state: Literal["snoozed"]
+    count: int
+    next_eligible_at: int
+class ConnectorRevisionSnoozeViewManualPinned(TypedDict):
+    state: Literal["manual_pinned"]
+ConnectorRevisionSnoozeView = ConnectorRevisionSnoozeViewSurfacing | ConnectorRevisionSnoozeViewSnoozed | ConnectorRevisionSnoozeViewManualPinned
+class ConnectorSlateRevisionAcceptRequest(TypedDict):
+    slate_ref: str
+    expected_revision: int
+class ConnectorRevisionGrantView(TypedDict):
+    tool: str
+    grant_id: str
+    key_id: str
+    key_connector: str
+class ConnectorSlateRevisionAcceptedView(TypedDict):
+    slate_ref: str
+    revision: int
+    cause: ConnectorSlateRevisionCauseView
+    grants: list[ConnectorRevisionGrantView]
+class ConnectorBindingDependentView(TypedDict):
+    key_ref: str
+    tool: NotRequired[str | None]
+class ConnectorIssuerReaskRequest(TypedDict):
+    connector: str
+    slot: str
+    issuer: str
+    credential_ref: str
+    expected_generation: int
+    dependents: NotRequired[list[ConnectorBindingDependentView]]
+    witness: str
+class ConnectorCredentialBindingView(TypedDict):
+    binding_ref: str
+    connector: str
+    slot: str
+    issuer: str
+    credential_ref: str
+    generation: int
+    dependents: list[ConnectorBindingDependentView]
+    changed_to: NotRequired[str | None]
+    change_state: NotRequired[str | None]
+    proposal_ref: NotRequired[str | None]
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str
