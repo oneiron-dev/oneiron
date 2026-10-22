@@ -80,7 +80,11 @@ pub enum PackDriftResolution {
         /// Receipt row recording the rewrite and its notices.
         receipt_ref: EntityId,
     },
-    /// A meaning-changing rewrite needs the owner's answer; nothing changed.
+    /// A meaning-changing rewrite needs the owner's answer. When its pack
+    /// move dropped the predicate, the query is paused in the same commit
+    /// (FIX 10088): it never keeps evaluating a removed predicate while the
+    /// owner decides. The owner accepts a valid replacement through
+    /// [`crate::saved_query::update_saved_query`], which resumes it.
     ProposalRequired {
         /// Proposal row the owner rules on.
         proposal_ref: EntityId,
@@ -218,7 +222,10 @@ pub fn repair_pack_drift(
                 "pack drift touches no predicate this saved query reads",
             ));
         }
-        run_ladder_in_txn(vault, wtxn, record, kind, &drift, &map, Resume::Yes, now)
+        let removed = BTreeSet::new();
+        run_ladder_in_txn(
+            vault, wtxn, record, kind, &drift, &map, &removed, Resume::Yes, now,
+        )
     })
 }
 
@@ -233,6 +240,7 @@ enum Resume {
 }
 
 /// The ladder over one loaded record, in the caller's write transaction.
+/// `removed` names the predicates the pack move dropped.
 #[allow(clippy::too_many_arguments)]
 fn run_ladder_in_txn(
     vault: &Vault,
@@ -241,12 +249,14 @@ fn run_ladder_in_txn(
     kind: u8,
     drift: &PackDrift,
     map: &PackMigrationMap,
+    removed: &BTreeSet<String>,
     resume: Resume,
     now: u64,
 ) -> Result<PackDriftResolution> {
     let query_ref = record.query_ref;
     let mut unmapped = Vec::new();
     let mut proposals = Vec::new();
+    let mut proposed_removed = Vec::new();
     let mut renames = BTreeMap::new();
     let mut notices = Vec::new();
     for predicate in &drift.affected_predicates {
@@ -254,6 +264,9 @@ fn run_ladder_in_txn(
             None => unmapped.push(predicate.clone()),
             Some(PackPredicateRewrite::SemanticsChanging { to, note }) => {
                 proposals.push(format!("{predicate} -> {to} ({note})"));
+                if removed.contains(predicate) {
+                    proposed_removed.push(predicate.clone());
+                }
             }
             Some(PackPredicateRewrite::Rename { to }) => {
                 renames.insert(predicate.clone(), to.clone());
@@ -277,8 +290,25 @@ fn run_ladder_in_txn(
     }
     if !proposals.is_empty() {
         let summary = format!("proposal: {}", proposals.join("; "));
-        return record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)
-            .map(|proposal_ref| PackDriftResolution::ProposalRequired { proposal_ref });
+        let proposal_ref = record_repair_in_txn(vault, wtxn, query_ref, drift, &summary, now)?;
+        // The released pause (FIX 10088): a proposal about a predicate the
+        // move removed pauses the query in the proposal's own commit, naming
+        // the proposal; one paused already keeps its earlier cause beside it.
+        // Archived and disabled queries, and renames, are left as they were.
+        let pausable = matches!(
+            record.definition.lifecycle,
+            SavedQueryLifecycle::Active | SavedQueryLifecycle::Paused { .. }
+        );
+        if !proposed_removed.is_empty() && pausable {
+            let error = format!(
+                "{moved} removed predicate(s) {}; repair proposal {} waits for the owner's \
+                 replacement through update_saved_query",
+                proposed_removed.join(", "),
+                proposal_ref.to_hex()
+            );
+            pause_record_in_txn(vault, wtxn, record, kind, &error, resume, now)?;
+        }
+        return Ok(PackDriftResolution::ProposalRequired { proposal_ref });
     }
     let migrated = SavedQueryDefinition {
         filter: rewrite_predicates(&record.definition.filter, &renames),
@@ -378,6 +408,11 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
         | PackPredicateRewrite::SemanticsChanging { to, .. }) = rewrite;
         moved.to_predicates.contains(to) || !moved.from_predicates.contains(to)
     });
+    let removed: BTreeSet<String> = moved
+        .from_predicates
+        .difference(moved.to_predicates)
+        .cloned()
+        .collect();
     let touched: BTreeSet<&String> = moved
         .from_predicates
         .difference(moved.to_predicates)
@@ -415,8 +450,9 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
         if drift.affected_predicates.is_empty() {
             continue;
         }
-        let resolution =
-            run_ladder_in_txn(vault, wtxn, record, kind, &drift, &map, Resume::No, now)?;
+        let resolution = run_ladder_in_txn(
+            vault, wtxn, record, kind, &drift, &map, &removed, Resume::No, now,
+        )?;
         repaired.push((query_ref, resolution));
     }
     Ok(repaired)
@@ -426,28 +462,40 @@ pub(crate) fn repair_saved_queries_after_pack_move_in_txn(
 fn pause_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    mut record: SavedQueryRecord,
+    record: SavedQueryRecord,
     kind: u8,
     error: String,
     unmapped_predicates: Vec<String>,
     resume: Resume,
     now: u64,
 ) -> Result<PackDriftResolution> {
-    // Under a pack move, a query already paused keeps the cause it was
-    // paused for beside the new one.
-    let shown = match (&record.definition.lifecycle, resume) {
-        (SavedQueryLifecycle::Paused { error: earlier }, Resume::No) => {
-            format!("{earlier}; {error}")
-        }
-        _ => error.clone(),
-    };
-    record.definition.lifecycle = SavedQueryLifecycle::Paused { error: shown };
-    record.updated_at = now;
-    store_record_in_txn(vault, wtxn, &record, kind)?;
+    pause_record_in_txn(vault, wtxn, record, kind, &error, resume, now)?;
     Ok(PackDriftResolution::Paused {
         error,
         unmapped_predicates,
     })
+}
+
+/// The pause's lifecycle write. Under a pack move, a query already paused
+/// keeps the cause it was paused for beside the new one.
+fn pause_record_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    mut record: SavedQueryRecord,
+    kind: u8,
+    error: &str,
+    resume: Resume,
+    now: u64,
+) -> Result<()> {
+    let shown = match (&record.definition.lifecycle, resume) {
+        (SavedQueryLifecycle::Paused { error: earlier }, Resume::No) => {
+            format!("{earlier}; {error}")
+        }
+        _ => error.to_owned(),
+    };
+    record.definition.lifecycle = SavedQueryLifecycle::Paused { error: shown };
+    record.updated_at = now;
+    store_record_in_txn(vault, wtxn, &record, kind)
 }
 
 fn record_repair_in_txn(

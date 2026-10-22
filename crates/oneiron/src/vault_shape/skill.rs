@@ -42,12 +42,13 @@ impl ShapeSkillSource {
 }
 
 impl Vault {
-    /// Imports the skill `source` carries, as `owner`, and checks it is the
-    /// skill the row declares. A source carrying another skill or version
-    /// refuses the item; what it imported stays a candidate, and plans as
-    /// undeclared. `sources` lists that candidate as soon as it lands,
-    /// beside either refusal; an import refused before it lands one reads
-    /// rows it does not name, so they are unknown.
+    /// Imports the skill `source` carries, as `owner`, once it is the skill
+    /// the row declares. The fetched package's id and the row's version are
+    /// checked before any skill write (FIX 10202), and the import commits
+    /// that same package: a source carrying another skill or version refuses
+    /// the item and leaves skill state unchanged. `sources` lists the
+    /// candidate as soon as it lands; an import refused before it lands one
+    /// reads rows it does not name, so they are unknown.
     pub(super) fn import_shape_skill(
         &self,
         owner: &AuthenticatedOwner,
@@ -64,7 +65,7 @@ impl Vault {
         owner.revalidate(self)?;
         let imported = match source {
             ShapeSkillSource::Library { subtree } => {
-                self.import_default_hub_skill(subtree, occurred, now)
+                self.import_default_hub_skill_expecting(subtree, skill_id, version, occurred, now)
             }
             ShapeSkillSource::Hub {
                 hub,
@@ -76,7 +77,9 @@ impl Vault {
                 .map_err(|_| invalid("a hub is named by entity id hex"))
                 .and_then(|hub| {
                     let pin = hub_pin(pin_type, pin_value)?;
-                    self.import_skill_from_hub_ref(owner, hub, folder, pin, publisher)
+                    self.import_skill_from_hub_ref_expecting(
+                        owner, hub, folder, pin, publisher, skill_id, version,
+                    )
                 }),
         };
         let entity = imported.inspect_err(|_| sources.unknown())?;
@@ -84,6 +87,8 @@ impl Vault {
         let record = self
             .get_skill_record(&entity)?
             .ok_or_else(|| invalid("the import left no skill record"))?;
+        // The checked import read this before it wrote; a deduplicated
+        // import answers with the skill it found, read again here.
         if record.skill_id != skill_id || version.is_some_and(|version| version != record.version) {
             return Err(invalid(format!(
                 "the source carries {} version {}, not the row's skill; it stays a candidate",
@@ -103,18 +108,20 @@ impl Vault {
     }
 
     /// Moves an imported skill to the version the row pins, as `owner`:
-    /// the owner's hub sync refetches what the skill's tracked ref names
-    /// and applies it through the policy check. The item lands only when
-    /// that applied the pinned version. A widening revision waits as the
-    /// sync's own proposal, and a local skill's version moves only with its
-    /// content, so both refuse the item with the reason.
+    /// the owner's hub sync refetches what the skill's tracked ref names,
+    /// checks it carries this skill at the pinned version before it marks
+    /// the ref or moves the skill (FIX 10202), and applies that same package
+    /// through the policy check. The item lands only when that applied the
+    /// pinned version. A widening revision waits as the sync's own proposal,
+    /// and a local skill's version moves only with its content, so both
+    /// refuse the item with the reason.
     pub(super) fn update_shape_skill(
         &self,
         owner: &AuthenticatedOwner,
         entity: EntityId,
         version: &str,
     ) -> Result<String> {
-        match self.sync_skill_from_hub_ref(owner, &entity)? {
+        match self.sync_skill_from_hub_ref_expecting(owner, &entity, version)? {
             HubSyncDisposition::Applied => {}
             HubSyncDisposition::Proposed { proposal_id, .. } => {
                 return Err(invalid(format!(
