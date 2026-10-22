@@ -10,16 +10,17 @@
 //! the home the call wore. A receipt that changed, a withdrawn summary or a
 //! turn whose fingerprint moved is `stale_evidence`; a span it cannot read is
 //! `unreadable_evidence`; a turn whose MESSAGE is away from this replica
-//! waits. The span is read again once the judge answered, so drift during
-//! the judgment is stale too. A mismatch reaches the agent's inbox; nothing
-//! here rewrites its words or its byline.
+//! waits. The verdict is reached as a run's is ([`super::support`]). The
+//! span is read again once it was, so drift during the judgment is stale
+//! too. A mismatch reaches the agent's inbox; nothing here rewrites its
+//! words or its byline.
 
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    COMPACTION_CHECK_FACET, CompactionCheckModel, CompactionCheckVerdict, Settled, ask_judge,
-    emit_finding, judge_call, judge_locality, unix_now,
+    COMPACTION_CHECK_FACET, CompactionCheckModel, CompactionCheckVerdict, NO_DIAGNOSTIC, Settled,
+    ask_judge, emit_finding, judge_call, judge_locality, support, unix_now,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
@@ -122,6 +123,19 @@ impl ConversationCheckDeclaration {
             .collect()
     }
 
+    /// The records a finding cites: the writer, its filed step and, while
+    /// `words_live`, the summary.
+    fn cited(&self, words_live: bool) -> Vec<EntityId> {
+        let mut evidence = vec![self.writer];
+        if let Some(step) = &self.step {
+            evidence.push(step.claim);
+        }
+        if words_live {
+            evidence.push(self.summary);
+        }
+        evidence
+    }
+
     /// One digest over every pin, in order: what the finding names as the
     /// evidence it declared and read.
     fn pins_digest(&self) -> String {
@@ -183,47 +197,55 @@ pub(super) async fn run_conversation_check(
             });
         }
     };
-    let request = judge_request(
-        &model,
-        &declaration,
-        &summary,
-        &evidence,
-        judge_locality(&model)?,
-    )?;
+    let locality = judge_locality(&model)?;
+    let input = judge_input(&declaration, &summary, &evidence);
+    let request = judge_request(&model, &input, locality)?;
     let judging = match ask_judge(attempt, ctx, &model, request, declaration.writer).await? {
         Ok(judging) => judging,
         Err(parked) => return Ok(parked),
     };
-    let Some(judged) = judgment(&judging.response, &declaration) else {
-        return Ok(judging.unjudged());
+    let judged = judgment(&judging.response, &declaration);
+    let diagnostic = judged.as_ref().map(|judged| judged.verdict);
+    let cited = declaration.cited(true);
+    let ask = support::Ask {
+        kind: "conversation",
+        subject: declaration.writer,
+        evidence: &cited,
+        state: &input,
+        locality,
+    };
+    let verdict = match support::verdict(attempt, ctx, &model, &judging, diagnostic, &ask).await? {
+        Ok(verdict) => verdict,
+        Err(parked) => return Ok(parked),
     };
     let mut settled = match read(ctx.vault, &declaration)? {
-        Reading::Ready { .. } => Settled {
-            verdict: judged.verdict,
-            reason: judged.reason,
-            conflicts: judged.conflicts,
-            evidence_now: Some(declaration.pins_digest()),
-            words_live: true,
-            judge: None,
-        },
+        Reading::Ready { .. } => {
+            let (reason, conflicts) = judged.map_or_else(
+                || (NO_DIAGNOSTIC.to_owned(), Vec::new()),
+                |judged| (judged.reason, judged.conflicts),
+            );
+            Settled {
+                verdict: verdict.verdict,
+                reason,
+                conflicts,
+                evidence_now: Some(declaration.pins_digest()),
+                words_live: true,
+                judge: None,
+                diagnostic,
+                decision: verdict.decision,
+            }
+        }
         Reading::Settled(settled) => settled,
         Reading::Deferred => {
-            return Ok(DreamerAttemptExecution::ParkWithSpend {
-                reason: SPAN_NOT_RESIDENT.to_owned(),
-                cause: DreamerParkCause::Signal,
-                completed_units: judging.units,
-                step_hashes: if judging.memoized {
-                    Vec::new()
-                } else {
-                    vec![judging.step_hash]
-                },
-            });
+            return Ok(verdict
+                .spend
+                .park_with_spend(SPAN_NOT_RESIDENT, DreamerParkCause::Signal));
         }
     };
     settled.judge = Some(judging.judge(&model));
     record(ctx.vault, attempt_id, &declaration, &settled, now)?;
     Ok(DreamerAttemptExecution::Completed {
-        completed_units: judging.units,
+        completed_units: verdict.spend.units,
     })
 }
 
@@ -293,9 +315,7 @@ fn render(turns: &[ConversationTurnSpan], texts: &[String]) -> String {
 /// was cut from, its conflicts citing turns by their place in the span.
 fn judge_request(
     model: &CompactionCheckModel<'_>,
-    declaration: &ConversationCheckDeclaration,
-    summary: &str,
-    evidence: &str,
+    input: &serde_json::Value,
     locality: crate::llm::ModelLocality,
 ) -> Result<LlmRequest> {
     let schema = serde_json::json!({
@@ -314,12 +334,21 @@ fn judge_request(
             "reason": {"type": "string"}
         }
     });
-    let input = serde_json::json!({
+    judge_call(model, schema, input, locality)
+}
+
+/// What the judge reads: the span's length in turns, the summary and the
+/// span's words, whole.
+fn judge_input(
+    declaration: &ConversationCheckDeclaration,
+    summary: &str,
+    evidence: &str,
+) -> serde_json::Value {
+    serde_json::json!({
         "span": {"turns": declaration.turns.len()},
         "summary": summary,
         "evidence": evidence,
-    });
-    judge_call(model, schema, &input, locality)
+    })
 }
 
 /// The judge's verdict and its reason, each conflict citing the span's
@@ -403,20 +432,15 @@ fn record(
         "conflicts": settled.conflicts,
         "judge": settled.judge,
         "reason": settled.reason,
+        "diagnostic_verdict": settled.diagnostic.map(CompactionCheckVerdict::as_str),
+        "decision": settled.decision,
     });
-    let mut evidence = vec![declaration.writer];
-    if let Some(step) = &declaration.step {
-        evidence.push(step.claim);
-    }
-    if settled.words_live {
-        evidence.push(declaration.summary);
-    }
     emit_finding(
         vault,
         attempt,
         declaration.writer,
         &value,
-        &evidence,
+        &declaration.cited(settled.words_live),
         settled.verdict,
         now,
     )

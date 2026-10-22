@@ -216,7 +216,7 @@ pub(crate) use ledger::{
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,
 };
-pub(crate) use project_goal::project_goal_revision_proposals_in_txn;
+pub(crate) use project_goal::{project_axes, project_goal_revision_proposals_in_txn};
 
 #[cfg(test)]
 pub(super) use admission::optimizer_origin_marker_key;

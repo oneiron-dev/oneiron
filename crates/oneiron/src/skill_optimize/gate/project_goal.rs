@@ -84,7 +84,7 @@ pub(super) fn project_goal_in_txn(
 }
 
 /// The project's axes as gate axes: primary, floor and cost, in that order.
-pub(super) fn project_axes(record: &GoalRecord) -> Vec<GoalAxisSpec> {
+pub(crate) fn project_axes(record: &GoalRecord) -> Vec<GoalAxisSpec> {
     let kinded = |axes: &[GoalAxis], kind: GoalAxisKind| {
         axes.iter()
             .map(|axis| GoalAxisSpec {

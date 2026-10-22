@@ -5,7 +5,6 @@
 //! Each digest is stored once, under a stable locator with a content hash
 //! (FIX 2332), and every read, answer and delivery of it is its viewer's
 //! own view, screened of private thread words they do not read (FIX 6411).
-use super::applied::{MaintenanceInverse, MaintenanceRevert};
 use super::invalid;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::limit_ask::EngineLimit;
@@ -14,10 +13,13 @@ use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Re
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod after_notice;
+mod policy;
 mod private_sources;
 mod urgent;
 mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
+pub use policy::{ProactivityPolicyBasis, ProactivityPolicyFiling};
+pub(super) use policy::{ProactivityPolicyInverse, revert_policy_in_txn};
 pub use private_sources::DigestPrivateSource;
 use urgent::DigestAudience;
 pub use urgent::{
@@ -35,20 +37,16 @@ const DIGEST: SideTable<[u8; 32], ProactivityDigest, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_DIGEST);
 const PRESENTATION: SideTable<(), ProactivityPresentation, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_PRESENTATION);
-const POLICY_CONFIRMED: SideTable<EntityId, [u8; 32], side_table::Raw> =
-    SideTable::new(&side_table::DREAMER_PROACTIVITY_CONFIRMED);
 /// Per-recipient time of the last digest that delivered judge or eval label asks.
 const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
-/// verb. It changes NO settings until the owner confirms its exact revision.
-/// A Dreamer-born one applies at once instead (OF-023), through
-/// [`Vault::apply_dreamer_proactivity_policy`], and the owner reverts it.
+/// verb. It changes NO settings until the owner confirms its exact revision;
+/// a Dreamer-born one too ([`Vault::apply_dreamer_proactivity_policy`]). Only
+/// the field a Coach's live digest-settings Grant covers applies at once
+/// ([`Vault::file_coach_proactivity_policy`], FIX 8712), and the owner
+/// reverts it.
 pub const PROACTIVITY_POLICY_REQUEST_PREDICATE: &str = "dreamer.proactivity.policy_request";
-/// The cadence row's name in a revert's settings list.
-const CADENCE_ROW: &str = "cadence";
-/// The presentation row's name in a revert's settings list.
-const PRESENTATION_ROW: &str = "presentation";
 /// Producer name of a delivered digest's inbox NOTIFICATION.
 pub const DIGEST_NOTIFICATION_PRODUCER: &str = "dreamer.digest";
 /// The derived group pending training offers (OF-577) render under.
@@ -322,88 +320,6 @@ impl Vault {
         })?;
         self.store.notify_proactivity_changes();
         Ok(())
-    }
-
-    /// Resolve an agent-authored, still-pending policy claim for exact owner
-    /// review. An ordinary claim alone has no settings authority.
-    pub fn proactivity_policy_proposal(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        claim_ref: EntityId,
-    ) -> Result<ProactivityPolicyProposal> {
-        let txn = self.store.env.read_txn()?;
-        let actor = super::validate_person_in_txn(self, &txn, owner)?;
-        load_policy_proposal(self, &txn, actor, claim_ref)
-    }
-
-    /// Confirm the exact proposal the host showed the authenticated owner.
-    /// Both policy rows and a replay marker commit together; an agent claim
-    /// cannot edit either row directly, nor replay an old confirmation.
-    pub fn confirm_proactivity_policy_proposal(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        claim_ref: EntityId,
-        expected_revision: [u8; 32],
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            let actor = super::validate_owner_in_txn(self, txn, owner)?;
-            if POLICY_CONFIRMED.contains(&self.store, &*txn, &claim_ref)? {
-                return Err(invalid());
-            }
-            let proposal = load_policy_proposal(self, &*txn, actor, claim_ref)?;
-            if proposal.revision != expected_revision {
-                return Err(invalid());
-            }
-            proposal.request.presentation.measure(self);
-            CADENCE.put(&self.store, txn, &(), &proposal.request.cadence)?;
-            PRESENTATION.put(self, txn, &(), &proposal.request.presentation)?;
-            POLICY_CONFIRMED.put(&self.store, txn, &claim_ref, &expected_revision)?;
-            Ok(())
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(())
-    }
-
-    /// Applies a Dreamer-born policy request at once (OF-023, owner ruling
-    /// 10-18: "autoapply + revert rather than holdout"): the one exception to
-    /// the owner-only cadence and presentation rows. The request is checked as
-    /// the owner setters check it; `attempt` must be a verified Dreamer
-    /// attempt, never the Coach's, and `evidence` the records it read. Both
-    /// rows, the request's finding at Auto, the prior rows as its inverse and
-    /// the receipt commit together; a replay returns the finding and applies
-    /// nothing. When the Gate parks the finding, it lands Proposed and changes
-    /// nothing until the owner confirms it, as an agent's request does.
-    pub fn apply_dreamer_proactivity_policy(
-        &self,
-        attempt: crate::attempt_queue::AttemptId,
-        request: &ProactivityPolicyRequest,
-        evidence: &[EntityId],
-        now: u64,
-    ) -> Result<EntityId> {
-        request.claim_value()?;
-        let stamp = self
-            .dreamer_attempt_authority(attempt)?
-            .ok_or_else(invalid)?;
-        let subject = crate::vault::embedded_owner_actor_id()?;
-        let value = serde_json::to_value(request).map_err(|_| invalid())?;
-        let finding = super::proposals::land(self, &stamp.facet, attempt, |landing| {
-            self.with_write_txn_grouped(|txn| {
-                landing.land_in_txn(
-                    self,
-                    txn,
-                    &super::proposals::Finding {
-                        subject,
-                        predicate: PROACTIVITY_POLICY_REQUEST_PREDICATE,
-                        value: &value,
-                        evidence,
-                    },
-                    now,
-                    |txn| apply_policy_in_txn(self, txn, request),
-                )
-            })
-        })?;
-        self.store.notify_proactivity_changes();
-        Ok(finding)
     }
 
     /// Subscribe before the first deadline read. Every notification means
@@ -972,103 +888,4 @@ impl crate::store::Store {
             *suspended = Some(generation);
         }
     }
-}
-
-/// The shared rows one Dreamer-born policy request replaced (OF-023): each
-/// row's prior value (`None`: unset, so the defaults) and the value applied.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ProactivityPolicyInverse {
-    prior_cadence: Option<ProactivityCadence>,
-    prior_presentation: Option<ProactivityPresentation>,
-    cadence: ProactivityCadence,
-    presentation: ProactivityPresentation,
-}
-
-/// The Dreamer's setter: the owner setters' checks, then both rows, in the
-/// finding's write. Returns the prior rows as the inverse.
-fn apply_policy_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    request: &ProactivityPolicyRequest,
-) -> Result<MaintenanceInverse> {
-    request.claim_value()?;
-    request.presentation.measure(vault);
-    let inverse = ProactivityPolicyInverse {
-        prior_cadence: CADENCE.get(&vault.store, &*txn, &())?,
-        prior_presentation: PRESENTATION.get(&vault.store, &*txn, &())?,
-        cadence: request.cadence.clone(),
-        presentation: request.presentation.clone(),
-    };
-    CADENCE.put(&vault.store, txn, &(), &request.cadence)?;
-    PRESENTATION.put(vault, txn, &(), &request.presentation)?;
-    Ok(MaintenanceInverse::ProactivityPolicy(Box::new(inverse)))
-}
-
-/// Puts back each row the request applied that still holds what it applied;
-/// a row a later write changed is left as it is and listed. The caller
-/// signals the change after commit.
-pub(super) fn revert_policy_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    inverse: &ProactivityPolicyInverse,
-    out: &mut MaintenanceRevert,
-) -> Result<()> {
-    if CADENCE.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.cadence) {
-        match &inverse.prior_cadence {
-            Some(row) => CADENCE.put(&vault.store, txn, &(), row)?,
-            None => {
-                CADENCE.delete(&vault.store, txn, &())?;
-            }
-        }
-        out.settings.push(CADENCE_ROW.to_owned());
-    } else {
-        out.left_alone.push(CADENCE_ROW.to_owned());
-    }
-    if PRESENTATION.get(&vault.store, &*txn, &())?.as_ref() == Some(&inverse.presentation) {
-        match &inverse.prior_presentation {
-            Some(row) => PRESENTATION.put(vault, txn, &(), row)?,
-            None => {
-                PRESENTATION.delete(&vault.store, txn, &())?;
-            }
-        }
-        out.settings.push(PRESENTATION_ROW.to_owned());
-    } else {
-        out.left_alone.push(PRESENTATION_ROW.to_owned());
-    }
-    Ok(())
-}
-
-fn load_policy_proposal(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    owner: EntityId,
-    claim_ref: EntityId,
-) -> Result<ProactivityPolicyProposal> {
-    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &claim_ref)?
-        .ok_or_else(invalid)?;
-    let header = EntityMetadataHeader::parse(&raw).ok_or_else(invalid)?;
-    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-        || raw.len() == ENTITY_METADATA_HEADER_LEN
-    {
-        return Err(invalid());
-    }
-    let body = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-    if body.predicate != PROACTIVITY_POLICY_REQUEST_PREDICATE
-        || body.subject != crate::ClaimSubject::Entity(owner)
-        || body.source != Some(ClaimSource::Generated)
-        || body.approval != ClaimApprovalStatus::Proposed
-        || body.lifecycle != ClaimLifecycleStatus::Active
-        || body.stale
-        || crate::claim::session_claim_producer(&body).is_none()
-    {
-        return Err(invalid());
-    }
-    let value = body.value.as_str().ok_or_else(invalid)?;
-    let request: ProactivityPolicyRequest = serde_json::from_str(value).map_err(|_| invalid())?;
-    request.claim_value()?;
-    Ok(ProactivityPolicyProposal {
-        request,
-        revision: *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes(),
-    })
 }

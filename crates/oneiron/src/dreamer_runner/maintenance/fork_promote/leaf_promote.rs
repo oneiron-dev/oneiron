@@ -16,7 +16,7 @@
 //! on the owner.
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes};
+use super::super::type_tree_gate::{TreeReplayScorer, record_team_shape_outcomes, team_leader};
 use super::{
     ForkPromoteReport, PROMOTE_SKILL_PREFIX, Pass, UpstreamSeat, by_path, fork_files, next_version,
     open_forks, refused,
@@ -47,9 +47,9 @@ struct Upstream {
     tree: TaskTypeTree,
     /// The head's open local forks, by skill id.
     open: BTreeMap<String, EntityId>,
-    /// Whether the head's reserve holds a held-out run, once this pass has
-    /// offered the settled teams to it.
-    reserve: Option<bool>,
+    /// The leader pack receipts the head's reserve holds, once this pass has
+    /// offered the settled teams to it ([`Self::prepare`]).
+    reserve: Option<BTreeSet<String>>,
 }
 
 impl Upstream {
@@ -88,6 +88,19 @@ impl Upstream {
             package,
             reserve: None,
         }))
+    }
+
+    /// Offers the settled teams to the head's reserve, which the
+    /// confirmation replay reads, and reads the leader pack receipts it
+    /// holds, once per head: before any leaf is counted, so no team of a
+    /// reserved leader counts as a run elsewhere (FIX 8705). A head a merge
+    /// puts in force is read afresh, and its reserve with it.
+    fn prepare(&mut self, vault: &Vault, settled: &[TeamReceipt]) -> Result<()> {
+        if self.reserve.is_none() {
+            record_team_shape_outcomes(vault, &self.head, &self.record, settled)?;
+            self.reserve = Some(held_out_receipts(vault, &self.head)?.into_iter().collect());
+        }
+        Ok(())
     }
 }
 
@@ -168,11 +181,24 @@ pub(super) fn run(
                 continue;
             }
             report.leaves += 1;
+            // A reserve that cannot be read counts nothing; as an offer's
+            // refusal, it leaves this leaf for a later night.
+            match upstream.prepare(vault, settled) {
+                Ok(()) => {}
+                Err(
+                    Error::Artifact(ArtifactError::InvalidSkillBody(_)) | Error::InvalidConfig(_),
+                ) => {
+                    report.promote_refused += 1;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
             if let Some(node) = scratch.nodes.get_mut(&leaf.node_id) {
                 node.held_out_runs = 0;
                 node.held_out_wins = 0;
             }
-            for won in elsewhere(settled, &upstream.tree, project, parent_id, axis, winner) {
+            let split = (parent_id, axis, winner);
+            for won in elsewhere(settled, &upstream, project, split) {
                 scratch.record_held_out(&leaf.node_id, won)?;
             }
             let mut promoted = upstream.tree.clone();
@@ -227,29 +253,39 @@ pub(super) fn run(
 }
 
 /// One entry per settled team outside `project` (a team in no project is
-/// outside every one) placed under `parent` in `vault_tree` whose pick on
-/// `axis` is `winner`: whether it succeeded. A team that picked otherwise,
-/// or names no pick on that decision, is not a run; a team counts once.
+/// outside every one) placed under `parent` in `upstream`'s tree whose pick
+/// on `axis` is `winner`: whether it succeeded. A team that picked
+/// otherwise, or names no pick on that decision, is not a run; a team
+/// counts once. Every team of a leader whose pack receipt `upstream`'s
+/// reserve holds is left out: those runs are the confirmation replay's
+/// held-out evidence, never the leaf's.
 fn elsewhere(
     settled: &[TeamReceipt],
-    vault_tree: &TaskTypeTree,
+    upstream: &Upstream,
     project: EntityId,
-    parent: &str,
-    axis: DecisionAxis,
-    winner: &str,
+    (parent, axis, winner): (&str, DecisionAxis, &str),
 ) -> Vec<bool> {
+    let reserved = |team: &TeamReceipt| {
+        team_leader(&team.team_ref).is_some_and(|leader| {
+            upstream.reserve.as_ref().is_some_and(|reserve| {
+                reserve.contains(&crate::receipt::attempt_pack_receipt_id(&leader))
+            })
+        })
+    };
     let mut seen = BTreeSet::new();
     let mut runs = Vec::new();
     for team in settled {
         let Some(outcome) = &team.outcome else {
             continue;
         };
-        let placed = vault_tree
+        let placed = upstream
+            .tree
             .resolve_ref(&TaskTypeRef::from(&team.type_ref))
             .is_some_and(|node| node.node_id == parent);
         if team.project != Some(project)
             && placed
             && pick(team, axis) == Some(winner)
+            && !reserved(team)
             && seen.insert(team.team_ref.as_str())
         {
             runs.push(outcome.success);
@@ -281,10 +317,11 @@ fn pick(team: &TeamReceipt, axis: DecisionAxis) -> Option<&str> {
 }
 
 /// Offers `offer`'s leaf, which `promoted` adds to the head's tree, to the
-/// head. The head's reserve takes the settled teams first, since the replay
-/// reads its held-out runs. Bytes no merge has seen go into the project's
-/// promote fork and are submitted from it; bytes already submitted are asked
-/// again only while no merge has ruled on them.
+/// head. The head's reserve took the settled teams before the leaf was
+/// counted ([`Upstream::prepare`]), since the replay reads its held-out
+/// runs. Bytes no merge has seen go into the project's promote fork and are
+/// submitted from it; bytes already submitted are asked again only while no
+/// merge has ruled on them.
 fn offer_leaf(
     vault: &Vault,
     lent: &Lent<'_>,
@@ -292,16 +329,7 @@ fn offer_leaf(
     promoted: &TaskTypeTree,
     offer: &Offer<'_>,
 ) -> Result<Ruling> {
-    let reserved = match upstream.reserve {
-        Some(reserved) => reserved,
-        None => {
-            record_team_shape_outcomes(vault, &upstream.head, &upstream.record, lent.settled)?;
-            let reserved = !held_out_receipts(vault, &upstream.head)?.is_empty();
-            upstream.reserve = Some(reserved);
-            reserved
-        }
-    };
-    if !reserved {
+    if upstream.reserve.as_ref().is_none_or(BTreeSet::is_empty) {
         return Ok(Ruling::Unscored);
     }
     let occurred = TimeRange {

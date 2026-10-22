@@ -12,7 +12,8 @@
 //! the finding's row, which takes the patch's inverse under the owner's
 //! receipt. The Coach's other findings and the Healer's keep the run tray. A curator
 //! rung the owner approved in the run tray applies once, as the Dreamer, with
-//! its row and receipt here too (FIX 3223).
+//! its row and receipt here too (FIX 3223). So does the digest rhythm a
+//! Coach's live Grant covers (FIX 8712), its receipt naming the Grant.
 //!
 //! A kind is one `MaintenanceInverse` variant carrying the before-state its
 //! effect changed, one arm in `MaintenanceInverse::label` and one arm in
@@ -183,6 +184,12 @@ impl MaintenanceInverse {
             Self::ProjectTreeFork { .. } => "project_tree_fork",
             Self::ActionMode { .. } => "action_mode",
         }
+    }
+
+    /// Whether the revert leaves the finding standing: a Coach's digest
+    /// request whose uncovered fields still wait on the owner (FIX 8712).
+    fn keeps_finding(&self) -> bool {
+        matches!(self, Self::ProactivityPolicy(inverse) if inverse.keeps_finding())
     }
 
     /// Undoes the effect, in the revert's transaction, as `owner`, whose
@@ -373,6 +380,37 @@ pub(super) fn record_in_txn(
         facet,
         actor,
         inverse,
+        None,
+        now,
+    )
+}
+
+/// [`record_in_txn`] for a Coach's write its live Grant `grant` covered
+/// (FIX 8712): the receipt names the Grant beside the Coach.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one granted finding's attempt, facet, writer, inverse and Grant"
+)]
+pub(super) fn record_granted_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    finding: EntityId,
+    attempt: AttemptId,
+    facet: &str,
+    actor: WriteActor,
+    inverse: MaintenanceInverse,
+    grant: EntityId,
+    now: u64,
+) -> Result<()> {
+    record_finding_in_txn(
+        vault,
+        txn,
+        finding,
+        Some(attempt),
+        facet,
+        actor,
+        inverse,
+        Some(grant),
         now,
     )
 }
@@ -395,7 +433,9 @@ pub(super) fn record_approved_in_txn(
     inverse: MaintenanceInverse,
     now: u64,
 ) -> Result<()> {
-    record_finding_in_txn(vault, txn, finding, attempt, facet, actor, inverse, now)
+    record_finding_in_txn(
+        vault, txn, finding, attempt, facet, actor, inverse, None, now,
+    )
 }
 
 #[expect(
@@ -410,6 +450,7 @@ fn record_finding_in_txn(
     facet: &str,
     actor: WriteActor,
     inverse: MaintenanceInverse,
+    grant: Option<EntityId>,
     now: u64,
 ) -> Result<()> {
     let target = MaintenanceTarget::Finding(finding);
@@ -425,6 +466,7 @@ fn record_finding_in_txn(
         finding_revision.to_vec(),
         now,
     );
+    receipt.grant_ref = grant.map(|grant| grant.to_hex());
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -720,6 +762,7 @@ impl Vault {
             row.inverse
                 .revert_in_txn(self, txn, owner_actor, owner, now, &mut out)?;
             if let Some(finding) = target.finding()
+                && !row.inverse.keeps_finding()
                 && self
                     .get_claim_in_txn(&*txn, &finding)?
                     .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)

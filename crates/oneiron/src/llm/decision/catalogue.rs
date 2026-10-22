@@ -420,6 +420,16 @@ pub const URGENT_DIGEST_HARM: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does the retained span support what an agent's self-written compaction summary says (FIX
+/// 4465 B and D, FIX 8713)? The fixed choices are supported and mismatch; an abstain leaves the
+/// summary unjudged and never touches it. Keyed by the landing's kind and the host rubric's
+/// digest.
+pub const COMPACTION_SUPPORT: QuestionFamily = QuestionFamily {
+    name: "dreamer.compaction.support",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// Every registered family.
 pub const FAMILIES: &[QuestionFamily] = &[
     TELEMETRY_ANOMALY,
@@ -465,4 +475,5 @@ pub const FAMILIES: &[QuestionFamily] = &[
     SIEVE_CONFIDENCE,
     NIGHTLY_LINK,
     URGENT_DIGEST_HARM,
+    COMPACTION_SUPPORT,
 ];

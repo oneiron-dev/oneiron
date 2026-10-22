@@ -64,7 +64,8 @@ pub const PROJECT_TREE_FORK_ADMITS: bool = true;
 /// project is outside every one) placed under the leaf's parent whose pick
 /// on the leaf's decision (its pattern, or its one model) is the leaf's
 /// winner is one run, won when the team succeeded; a team that picked
-/// otherwise is not counted. A leaf with at least
+/// otherwise, or whose leader the head's reserve holds, is not counted
+/// (the reserve is the merge replay's held-out evidence). A leaf with at least
 /// [`crate::task_type::PROMOTE_MIN_HELD_OUT_RUNS`] such runs, won by a
 /// strict majority, goes to the merge. `false` offers nothing.
 pub const PROJECT_LEAF_PROMOTES: bool = true;
@@ -133,7 +134,8 @@ pub struct ForkPromoteReport {
     pub pending_consent: u32,
     /// Held-up leaves a door refused, that the judge abstained on, that the
     /// merge ruled out (not useful upstream, or no strict win on the replay),
-    /// or whose same bytes a merge already ruled on.
+    /// or whose same bytes a merge already ruled on; and leaves counted while
+    /// a door refused the head's reserve, before any run was read.
     pub promote_refused: u32,
     /// Held-up leaves with nothing to rule them: no judge, no seat or agent
     /// to ask for, or no held-out run on the head yet.
