@@ -18827,6 +18827,7 @@ class ProgramRunView(TypedDict):
     held_by_try: list[ProgramHeldView]
     run: NotRequired[ProgramRunStateView | None]
     steps: list[ProgramStepView]
+    erased_steps: list[str]
     undecodable_steps: int
     next_cursor: NotRequired[str | None]
     withheld: list[str]

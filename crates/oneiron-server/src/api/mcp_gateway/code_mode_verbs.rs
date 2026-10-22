@@ -49,6 +49,7 @@ mod dispatch;
 mod field_writer;
 mod guests;
 mod library;
+mod program_admission;
 mod reader;
 mod receipt_evidence;
 mod secret_custody;
@@ -147,6 +148,9 @@ pub(crate) struct RunGuests {
     /// The payer the attached live run bills (FIX 8902), for a caller whose
     /// door bound no line of its own: its Fill writer bills it.
     payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    /// The admission job this run is (CUA E8b): what it files is kept
+    /// against the job, placed by rule alone, and it captures no evidence.
+    admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and
@@ -293,6 +297,9 @@ struct VaultLibrary {
     /// The caller's solved-run scope, which a program it files covers its
     /// group in (CUA E8a); none for a library that files nothing.
     scope: Option<oneiron::browser_library::SolvedRunScope>,
+    /// The admission job its filing files for (CUA E8b): placed by rule
+    /// alone, and kept against the job in the filing's write.
+    admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for

@@ -88,12 +88,15 @@ pub struct TurnProgramHost {
 }
 
 /// One program entry a host is asked to bind: the program's leased try, the
-/// waking actor it runs as, its code run and its task.
+/// waking actor it runs as, its code run and its task, and, for a slip's
+/// turn, that slip's live, verified view: the door the host lends binds
+/// every row it serves to it (FIX 8717).
 pub struct TurnProgramRequest<'r> {
     pub attempt: &'r AttemptRecord,
     pub actor: WriteActor,
     pub code_run: EntityId,
     pub task: &'r str,
+    pub proof: Option<&'r crate::authority::VerifiedSlip>,
 }
 
 /// A host's binding of turn program entries to its runtime and credential
@@ -207,6 +210,7 @@ async fn run_program(
         actor: binding.actor,
         code_run: binding.code_run,
         task: &task,
+        proof: binding.proof.as_ref(),
     };
     let Some(host) = runtime.bind(vault, &request) else {
         return hold(ctx, attempt, ProgramHold::Unbound);
@@ -333,6 +337,7 @@ async fn enter(
         format!("turn-program:{}", binding.code_run.to_hex()),
         attempt,
         binding.pin.skill,
+        binding.proof.clone(),
     )?
     .with_callable_skills(lent)?
     .with_agent_verb_door(door);

@@ -2068,9 +2068,9 @@ export type HookOutcomeKind = "continue" | "rewrite" | "skip" | "ask" | "add_blo
 export type HookRenderClass = "deterministic_eager" | "generative"
 /** `oneiron::skill_hub::pack_catalog::hooks::HookSelector` */
 export type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass }
-/** `oneiron::skill_hub::pack_catalog::hooks::HookAuthor` */
+/** `oneiron::skill_hub::pack_catalog::hooks::author::HookAuthor` */
 export type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string }
-/** `oneiron::skill_hub::pack_catalog::hooks::PackHookBinding` */
+/** `oneiron::skill_hub::pack_catalog::hooks::bindings::PackHookBinding` */
 export type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor }
 /** `oneiron::runtime_hooks::grant::HookGrant` */
 export type HookGrant = { reader: string; reader_class: HookActorClass; predicates?: string[]; worlds?: string[] }
@@ -6128,13 +6128,13 @@ export type LiveVoiceUsageRequest = { session_ref: string; generation: number }
 export type LiveVoiceUsage = { session_ref: string; utterance_id: string; generation: number; run: string; terminal: boolean; metering_enabled: boolean; settlements: RunRungSettlement[] }
 /** `oneiron::outbound_consent::tool_call::MutationIntent` */
 export type MutationIntent = "preview" | "explicit_mutation"
-/** `oneiron::outbound_consent::connector_call::ConnectorCallRequest` */
+/** `oneiron::outbound_consent::connector_call_types::ConnectorCallRequest` */
 export type ConnectorCallRequest = { name: string; tool: string; arguments?: unknown; mutation?: MutationIntent }
 /** `oneiron::verbs::live_voice::LiveVoiceToolRequest` */
 export type LiveVoiceToolRequest = { session_ref: string; call: ConnectorCallRequest }
 /** `oneiron::verbs::connector_call::ConnectorToolResult` */
 export type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null }
-/** `oneiron::outbound_consent::connector_call::ConnectorQuestion` */
+/** `oneiron::outbound_consent::connector_call_types::ConnectorQuestion` */
 export type ConnectorQuestion = { key: string; message: string; requested_schema: unknown }
 /** `oneiron::verbs::connector_call::ConnectorCallReply` */
 export type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] }
@@ -7275,7 +7275,7 @@ export type ProgramStepState = "issued" | "settled" | "uncertain"
 /** `oneiron::dreamer_runner::program::read::views::ProgramStepView` */
 export type ProgramStepView = { step_ref: string; attempt: string; issue: ProgramStepIssueView; state: ProgramStepState; result_digest?: string | null; uncertain?: string | null; at: number }
 /** `oneiron::dreamer_runner::program::read::views::ProgramRunView` */
-export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
+export type ProgramRunView = { root: string; admission: string; actor: EntityId; actor_class: string; code_run: string; definition?: ProgramRecipePin | null; root_created_at?: number | null; tries: ProgramTryView[]; queue?: ProgramQueueView | null; held?: ProgramHeldView | null; held_by_try: ProgramHeldView[]; run?: ProgramRunStateView | null; steps: ProgramStepView[]; erased_steps: string[]; undecodable_steps: number; next_cursor?: string | null; withheld: string[] }
 /** `oneiron::dreamer_runner::program::read::views::SettledProgramStepRequest` */
 export type SettledProgramStepRequest = { root: string; step_ref: string }
 /** `oneiron::dreamer_runner::program::read::views::ProgramResultAvailability` */
