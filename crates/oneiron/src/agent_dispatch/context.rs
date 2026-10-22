@@ -2,16 +2,25 @@
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::context_projection::{
-    CONTEXT_PROJECTION_MAX_ANCESTORS, ContextResolutionRequest, ContextSpec,
-    ResolvedContextProjection, resolve_context_spec, validate_spec_narrows,
+    ContextResolutionRequest, ContextSpec, ResolvedContextProjection, resolve_context_spec,
+    validate_spec_narrows,
 };
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 
 use super::codec::record_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use crate::error::ArtifactError;
+
+/// One ancestor walk's dispatch levels (spec and scope, nearest first), the
+/// first wrapper's member and every wrapper's binder.
+type AncestorChain = (
+    Vec<(ContextSpec, crate::pipeline::WorldScope)>,
+    Option<EntityId>,
+    Vec<crate::write_envelope::WriteActor>,
+);
 
 impl AgentDispatcher<'_> {
     /// Resolves the requested descriptor against LIVE state, folding the
@@ -121,17 +130,69 @@ impl AgentDispatcher<'_> {
         &self,
         attempt: AttemptId,
     ) -> Result<Option<ResolvedContextProjection>> {
+        // Every ancestor is read, however many (rule 5): past its threshold
+        // row the walk asks whether everything is okay, counted on every way
+        // out. No read transaction is held here; like each ancestor read
+        // below, the threshold read opens its own.
+        let mut walk = ScanCount::start_at(
+            EngineScan::DispatchAncestorRows,
+            attempt.as_bytes(),
+            self.vault
+                .scan_threshold(EngineScan::DispatchAncestorRows)?,
+        );
+        let mut seen = std::collections::HashSet::new();
+        let walked = self.ancestor_chain(attempt, &mut seen);
+        walk.rows(seen.len());
+        walk.finish(self.vault);
+        let Some((chain, member, binders)) = walked? else {
+            return Ok(None);
+        };
+        if chain.is_empty() {
+            return Ok(None);
+        }
+
+        let mut projection = None;
+        // Root-down: each level narrows the one above it.
+        for (index, (spec, ancestor_scope)) in chain.iter().rev().enumerate() {
+            if index > 0 {
+                validate_spec_narrows(&chain[chain.len() - index].0, spec)?;
+            }
+            projection = Some(resolve_context_spec(
+                self.vault,
+                ContextResolutionRequest {
+                    spec: spec.clone(),
+                    parent: projection,
+                    context_from: Vec::new(),
+                    world_scope: Some(ancestor_scope.clone()),
+                },
+            )?);
+        }
+        let projection = match (projection, member) {
+            (Some(projection), Some(member)) => Some(self.member_context(projection, member)?),
+            (projection, _) => projection,
+        };
+        projection
+            .map(|projection| self.binder_context(projection, &binders))
+            .transpose()
+    }
+
+    /// The walk [`Self::resolve_ancestor_projection`] counts, each attempt it
+    /// reads in `seen`: every dispatch level's spec and scope, the first
+    /// wrapper's member and every wrapper's binder. `None` when `attempt`
+    /// itself is no dispatch lineage.
+    fn ancestor_chain(
+        &self,
+        attempt: AttemptId,
+        seen: &mut std::collections::HashSet<AttemptId>,
+    ) -> Result<Option<AncestorChain>> {
         let queue = AttemptQueue::new(self.vault);
         let mut chain: Vec<(ContextSpec, crate::pipeline::WorldScope)> = Vec::new();
         let mut member = None;
         let mut binders = Vec::new();
         let mut cursor = Some(attempt);
-        let mut seen = std::collections::HashSet::new();
         while let Some(id) = cursor {
-            if chain.len() >= CONTEXT_PROJECTION_MAX_ANCESTORS || !seen.insert(id) {
-                return Err(super::widen_record::invalid(
-                    "context ancestor bound or cycle",
-                ));
+            if !seen.insert(id) {
+                return Err(super::widen_record::invalid("context ancestor cycle"));
             }
             let Some(record) = queue.get(id)? else {
                 if chain.is_empty() {
@@ -163,32 +224,6 @@ impl AgentDispatcher<'_> {
             ));
             cursor = decode_dreamer_attempt_payload(&record.payload)?.parent_attempt;
         }
-        if chain.is_empty() {
-            return Ok(None);
-        }
-
-        let mut projection = None;
-        // Root-down: each level narrows the one above it.
-        for (index, (spec, ancestor_scope)) in chain.iter().rev().enumerate() {
-            if index > 0 {
-                validate_spec_narrows(&chain[chain.len() - index].0, spec)?;
-            }
-            projection = Some(resolve_context_spec(
-                self.vault,
-                ContextResolutionRequest {
-                    spec: spec.clone(),
-                    parent: projection,
-                    context_from: Vec::new(),
-                    world_scope: Some(ancestor_scope.clone()),
-                },
-            )?);
-        }
-        let projection = match (projection, member) {
-            (Some(projection), Some(member)) => Some(self.member_context(projection, member)?),
-            (projection, _) => projection,
-        };
-        projection
-            .map(|projection| self.binder_context(projection, &binders))
-            .transpose()
+        Ok(Some((chain, member, binders)))
     }
 }
