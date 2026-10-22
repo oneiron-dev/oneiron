@@ -1,26 +1,49 @@
 //! The typed pack that decides which listed claim each extracted candidate
-//! corrects: one question per candidate and option group, over `none` and
+//! corrects: per candidate, one question per option group, over `none` and
 //! the claims the listing shows about its subject. Its call shows every
 //! question, subject and claim by a call-local label (FIX 7506 P2), field by
 //! field, never by rewriting inside a value; its decisions keep the
 //! canonical options. A candidate that restates a listed claim unchanged
 //! reinforces it and is never asked whether it corrects it (FIX 8295).
+//!
+//! Every value rides whole (Rule 5, FIX 7637): a pack whose state does not
+//! fit one read is asked in pages, in its own order, each page holding some
+//! candidates and some of the claims listed for them, every candidate with
+//! its own groups over the claims on that page. A candidate whose groups
+//! name more than one claim gets one final choice over those claims (FIX
+//! 8693).
 
-use super::super::decisions::{id_options, named_id};
+use super::super::decisions::{FinalChoice, StatePart, id_options};
 use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
+use crate::dreamer_consolidation::settle::decision_pages::{json_len, measure_state, split_pages};
 use crate::dreamer_consolidation::value_projection::rmpv_to_json;
-use crate::llm::decision::AnswerContract;
+use crate::error::Result;
 use crate::llm::decision::catalogue::CORRECTION;
+use crate::llm::decision::{AnswerContract, DecisionQuestion, MAX_DECISION_STATE_BYTES};
+
+/// One claim the listing shows that a candidate may correct: its id, its
+/// subject, and its predicate and value as the listing writes them.
+type Listed<'r> = (EntityId, EntityId, &'r str, &'r str);
+
+/// One read of the correction pack: its questions, the candidate each asks
+/// about by position, the call's labels and the state it reads.
+struct CorrectionRead {
+    questions: Vec<DecisionQuestion>,
+    owners: Vec<usize>,
+    labels: CallLabelMap,
+    state: serde_json::Value,
+}
 
 impl ConsolidationExecutor<'_> {
     /// Which listed claim each parsed candidate corrects, in order. A
     /// candidate whose subject the listing shows claims about, that its child
-    /// may read and write, gets one question over `none` and those claims'
-    /// ids, all candidates in one pack; one with no such claim, or no answer,
-    /// corrects none. The pack's ask goes to its candidates' project's route,
-    /// or to the owners when they span projects. None when the step trapped.
+    /// may read and write, gets one question per option group over `none` and
+    /// those claims' ids, all candidates in one pack, or in its pages; one
+    /// with no such claim, or no answer, corrects none. The pack's ask goes
+    /// to its candidates' project's route, or to the owners when they span
+    /// projects. None when the step trapped.
     pub(in crate::dreamer_consolidation) async fn decide_corrections(
         &self,
         step_ctx: &DurableStepContext<'_>,
@@ -29,49 +52,35 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<Vec<Correction>>> {
-        let mut labels = CallLabelMap::default();
-        let mut questions = Vec::new();
-        // Each candidate's question indexes, and every listed claim asked about.
-        let mut asks: Vec<Vec<usize>> = vec![Vec::new(); parsed.len()];
-        let mut listed: Vec<(EntityId, EntityId, &str, &str)> = Vec::new();
+        // Each (candidate position, listed claim) pair asked, and every
+        // listed claim asked about, once.
+        let mut entries: Vec<(usize, usize)> = Vec::new();
+        let mut listed: Vec<Listed<'_>> = Vec::new();
         let pins = resources.pins();
         for (position, candidate) in parsed.iter().enumerate() {
-            let shown: Vec<_> = pins
+            let shown = pins
                 .correctable(candidate.subject, candidate.scope)
-                .filter(|(claim, ..)| !reinforces(candidate, resources, *claim))
-                .collect();
-            let ids: Vec<EntityId> = shown.iter().map(|(claim, ..)| *claim).collect();
-            for (group, (options, wire_options)) in
-                id_options(&ids, true, &mut labels).into_iter().enumerate()
-            {
-                let (position_key, group_key) = (position.to_string(), group.to_string());
-                let question = CORRECTION.question(
-                    &[position_key.as_bytes(), group_key.as_bytes()],
-                    self.decisions.correction_wording.clone(),
-                    AnswerContract::Choice { options },
-                )?;
-                labels.show_choices(question.id, wire_options);
-                asks[position].push(questions.len());
-                questions.push(question);
-            }
+                .filter(|(claim, ..)| !reinforces(candidate, resources, *claim));
             for (claim, predicate, value) in shown {
-                if !listed.iter().any(|row| row.0 == claim) {
-                    listed.push((claim, candidate.subject, predicate, value));
-                }
+                let at = match listed.iter().position(|row| row.0 == claim) {
+                    Some(at) => at,
+                    None => {
+                        listed.push((claim, candidate.subject, predicate, value));
+                        listed.len() - 1
+                    }
+                };
+                entries.push((position, at));
             }
         }
-        if questions.is_empty() {
+        if entries.is_empty() {
             return Ok(Some(parsed.iter().map(|_| Correction::none()).collect()));
         }
-        // Every question is labelled before the state names any, so each
-        // request the pack splits into reads the same labels.
-        self.label_questions(&mut labels, &questions);
-        let state = correction_state(parsed, &asks, &questions, &listed, &mut labels);
+        let reads = self.correction_reads(parsed, &entries, &listed)?;
         let asked: Vec<&ParsedCandidate<'_>> = parsed
             .iter()
-            .zip(&asks)
-            .filter(|(_, asked)| !asked.is_empty())
-            .map(|(candidate, _)| candidate)
+            .enumerate()
+            .filter(|(position, _)| entries.iter().any(|entry| entry.0 == *position))
+            .map(|(_, candidate)| candidate)
             .collect();
         // The pack reads the listed claims and candidates drawn from these
         // turns. The turns also keep one extraction's asks apart from
@@ -93,27 +102,227 @@ impl ConsolidationExecutor<'_> {
         // The pack is the attempt's one correction read: the attempt names it.
         let key =
             EntityId::from_bytes(*step_ctx.attempt_id.as_bytes()).map_err(crate::Error::from)?;
-        let Some(decided) = self
-            .decide(
-                step_ctx, pass, resources, &to, key, &questions, &evidence, &state, &labels,
-                charges,
-            )
-            .await?
-        else {
-            return Ok(None);
+        let mut groups: Vec<Vec<KeptDecision>> = vec![Vec::new(); parsed.len()];
+        for read in &reads {
+            measure_state(step_ctx.vault, &read.state);
+            let Some(decided) = self
+                .decide(
+                    step_ctx,
+                    pass,
+                    resources,
+                    &to,
+                    key,
+                    &read.questions,
+                    &evidence,
+                    &read.state,
+                    &read.labels,
+                    charges,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            for (decision, position) in decided.into_iter().zip(&read.owners) {
+                if let Some(kept) = groups.get_mut(*position) {
+                    kept.push(decision);
+                }
+            }
+        }
+        let mut corrections = Vec::with_capacity(parsed.len());
+        for (position, mut decisions) in groups.into_iter().enumerate() {
+            if decisions.is_empty() {
+                corrections.push(Correction::none());
+                continue;
+            }
+            let position_key = position.to_string();
+            let key_parts: [&[u8]; 1] = [position_key.as_bytes()];
+            let choice = FinalChoice {
+                family: &CORRECTION,
+                key: &key_parts,
+                wording: &self.decisions.correction_wording,
+                none: true,
+            };
+            let state = |shortlist: &[EntityId],
+                         questions: &[DecisionQuestion],
+                         labels: &mut CallLabelMap| {
+                let rows: Vec<Listed<'_>> = shortlist
+                    .iter()
+                    .filter_map(|id| listed.iter().find(|row| row.0 == *id).copied())
+                    .collect();
+                let asks: [(usize, Vec<usize>); 1] = [(position, (0..questions.len()).collect())];
+                correction_state(parsed, &asks, questions, &rows, StatePart::Final, labels)
+            };
+            let Some((corrects, finals)) = self
+                .choose_identity(
+                    step_ctx, pass, resources, &to, key, &evidence, &choice, &decisions, &state,
+                    charges,
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            decisions.extend(finals);
+            corrections.push(Correction {
+                corrects,
+                decisions,
+            });
+        }
+        Ok(Some(corrections))
+    }
+
+    /// The pack's reads over `entries`: one whole read when its state fits
+    /// the ladder's bound, else pages in order. A page takes the next pair
+    /// while its candidate's row (once per page) and its listed claim's row
+    /// (once per page), each measured with full ids, keep the page within
+    /// the bound; a pair wider than a page has a page of its own.
+    fn correction_reads(
+        &self,
+        parsed: &[ParsedCandidate<'_>],
+        entries: &[(usize, usize)],
+        listed: &[Listed<'_>],
+    ) -> Result<Vec<CorrectionRead>> {
+        let whole = self.correction_read(parsed, entries, listed, StatePart::Whole)?;
+        if json_len(&whole.state) <= MAX_DECISION_STATE_BYTES {
+            return Ok(vec![whole]);
+        }
+        let candidate_bytes = |position: usize| {
+            parsed.get(position).map_or(0, |candidate| {
+                json_len(&serde_json::json!({
+                    "questions": ["Q0000"],
+                    "subject": candidate.subject.to_hex(),
+                    "predicate": candidate.predicate.as_deref(),
+                    "value": candidate.value.to_string(),
+                }))
+                .saturating_add(1)
+            })
         };
-        Ok(Some(
-            asks.iter()
-                .map(|asked| {
-                    let decisions: Vec<KeptDecision> =
-                        asked.iter().map(|&at| decided[at].clone()).collect();
-                    Correction {
-                        corrects: named_id(decisions.iter().collect()),
-                        decisions,
-                    }
+        let listed_bytes = |at: usize| {
+            listed
+                .get(at)
+                .map_or(0, |(claim, subject, predicate, value)| {
+                    json_len(&serde_json::json!({
+                        "claim": claim.to_hex(),
+                        "subject": subject.to_hex(),
+                        "predicate": predicate,
+                        "value": value,
+                    }))
+                    .saturating_add(1)
                 })
-                .collect(),
-        ))
+        };
+        let frame = json_len(&correction_state(
+            parsed,
+            &[],
+            &[],
+            &[],
+            StatePart::Page { page: 0, pages: 2 },
+            &mut CallLabelMap::default(),
+        ));
+        let pages = split_pages(
+            frame,
+            entries,
+            |page, (position, at)| {
+                let candidate = if page.iter().any(|entry| entry.0 == position) {
+                    0
+                } else {
+                    candidate_bytes(position)
+                };
+                let claim = if page.iter().any(|entry| entry.1 == at) {
+                    0
+                } else {
+                    listed_bytes(at)
+                };
+                candidate.saturating_add(claim)
+            },
+            |_, _| true,
+        );
+        if pages.len() == 1 {
+            return Ok(vec![whole]);
+        }
+        let count = pages.len();
+        pages
+            .iter()
+            .enumerate()
+            .map(|(page, entries)| {
+                self.correction_read(
+                    parsed,
+                    entries,
+                    listed,
+                    StatePart::Page { page, pages: count },
+                )
+            })
+            .collect()
+    }
+
+    /// One read over `entries`: each candidate they name, in order, with one
+    /// question per option group over the listed claims they pair it with,
+    /// keyed by its position and group (and page, on a paged read), and the
+    /// state over those candidates and claims.
+    fn correction_read(
+        &self,
+        parsed: &[ParsedCandidate<'_>],
+        entries: &[(usize, usize)],
+        listed: &[Listed<'_>],
+        part: StatePart,
+    ) -> Result<CorrectionRead> {
+        let page = match part {
+            StatePart::Page { page, .. } => Some(page.to_string()),
+            StatePart::Whole | StatePart::Final => None,
+        };
+        let mut positions: Vec<usize> = Vec::new();
+        let mut shown: Vec<usize> = Vec::new();
+        for &(position, at) in entries {
+            if !positions.contains(&position) {
+                positions.push(position);
+            }
+            if !shown.contains(&at) {
+                shown.push(at);
+            }
+        }
+        let mut labels = CallLabelMap::default();
+        let mut questions = Vec::new();
+        let mut owners = Vec::new();
+        let mut asks: Vec<(usize, Vec<usize>)> = Vec::new();
+        for position in positions {
+            let ids: Vec<EntityId> = entries
+                .iter()
+                .filter(|entry| entry.0 == position)
+                .filter_map(|entry| listed.get(entry.1).map(|row| row.0))
+                .collect();
+            let mut asked = Vec::new();
+            for (group, (options, wire_options)) in
+                id_options(&ids, true, &mut labels).into_iter().enumerate()
+            {
+                let (position_key, group_key) = (position.to_string(), group.to_string());
+                let mut key: Vec<&[u8]> = vec![position_key.as_bytes(), group_key.as_bytes()];
+                if let Some(page) = &page {
+                    key.extend([b"page".as_slice(), page.as_bytes()]);
+                }
+                let question = CORRECTION.question(
+                    &key,
+                    self.decisions.correction_wording.clone(),
+                    AnswerContract::Choice { options },
+                )?;
+                labels.show_choices(question.id, wire_options);
+                asked.push(questions.len());
+                owners.push(position);
+                questions.push(question);
+            }
+            asks.push((position, asked));
+        }
+        // Every question is labelled before the state names any, so each
+        // request the read splits into reads the same labels.
+        self.label_questions(&mut labels, &questions);
+        let rows: Vec<Listed<'_>> = shown
+            .iter()
+            .filter_map(|at| listed.get(*at).copied())
+            .collect();
+        let state = correction_state(parsed, &asks, &questions, &rows, part, &mut labels);
+        Ok(CorrectionRead {
+            questions,
+            owners,
+            labels,
+            state,
+        })
     }
 }
 
@@ -156,83 +365,52 @@ impl Correction {
     }
 }
 
-/// The candidates and the listed claims as the correction pack reads them:
-/// each candidate with its questions, subject, predicate and value, each
-/// value as its JSON text, cut shorter (halving) until the whole fits. Each
-/// question, subject and claim goes by its label in `labels`.
+/// The candidates and the listed claims as one read of the correction pack
+/// takes them: each candidate `asks` names with its questions, subject,
+/// predicate and value, and each of `listed`, every value whole as its JSON
+/// text, marked as `part`'s. Each question, subject and claim goes by its
+/// label in `labels`.
 fn correction_state(
     parsed: &[ParsedCandidate<'_>],
-    asks: &[Vec<usize>],
-    questions: &[crate::llm::decision::DecisionQuestion],
-    listed: &[(EntityId, EntityId, &str, &str)],
+    asks: &[(usize, Vec<usize>)],
+    questions: &[DecisionQuestion],
+    listed: &[Listed<'_>],
+    part: StatePart,
     labels: &mut CallLabelMap,
 ) -> serde_json::Value {
-    let values: Vec<String> = parsed
-        .iter()
-        .map(|candidate| candidate.value.to_string())
-        .collect();
-    let longest = values
-        .iter()
-        .map(String::len)
-        .chain(listed.iter().map(|row| row.3.len()))
-        .max()
-        .unwrap_or(0);
     let mut candidates = Vec::new();
-    for ((candidate, asked), value) in parsed.iter().zip(asks).zip(&values) {
-        if asked.is_empty() {
+    for (position, asked) in asks {
+        let Some(candidate) = parsed.get(*position) else {
             continue;
-        }
+        };
         let refs: Vec<String> = asked
             .iter()
-            .map(|&at| {
-                labels
-                    .assign(LabelKind::Question, questions[at].id)
-                    .to_string()
-            })
+            .filter_map(|at| questions.get(*at))
+            .map(|question| labels.assign(LabelKind::Question, question.id).to_string())
             .collect();
         let subject = labels
             .assign(LabelKind::Entity, candidate.subject)
             .to_string();
-        candidates.push((refs, subject, candidate.predicate.as_deref(), value));
+        candidates.push(serde_json::json!({
+            "questions": refs,
+            "subject": subject,
+            "predicate": candidate.predicate.as_deref(),
+            "value": candidate.value.to_string(),
+        }));
     }
-    let listed: Vec<(String, String, &str, &str)> = listed
+    let listed: Vec<serde_json::Value> = listed
         .iter()
         .map(|(claim, subject, predicate, value)| {
-            (
-                labels.assign(LabelKind::Claim, *claim).to_string(),
-                labels.assign(LabelKind::Entity, *subject).to_string(),
-                *predicate,
-                *value,
-            )
+            serde_json::json!({
+                "claim": labels.assign(LabelKind::Claim, *claim).to_string(),
+                "subject": labels.assign(LabelKind::Entity, *subject).to_string(),
+                "predicate": predicate,
+                "value": value,
+            })
         })
         .collect();
-    crate::llm::decision::fit_state(longest, |cut| {
-        let candidates: Vec<serde_json::Value> = candidates
-            .iter()
-            .map(|(refs, subject, predicate, value)| {
-                serde_json::json!({
-                    "questions": refs,
-                    "subject": subject,
-                    "predicate": predicate,
-                    "value": crate::llm::decision::cut_text(value, cut),
-                })
-            })
-            .collect();
-        let listed: Vec<serde_json::Value> = listed
-            .iter()
-            .map(|(claim, subject, predicate, value)| {
-                serde_json::json!({
-                    "claim": claim,
-                    "subject": subject,
-                    "predicate": predicate,
-                    "value": crate::llm::decision::cut_text(value, cut),
-                })
-            })
-            .collect();
-        serde_json::json!({
-            "candidates": candidates,
-            "listed": listed,
-            "cut_at_bytes": cut,
-        })
-    })
+    part.mark(serde_json::json!({
+        "candidates": candidates,
+        "listed": listed,
+    }))
 }

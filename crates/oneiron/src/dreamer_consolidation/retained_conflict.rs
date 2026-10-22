@@ -286,13 +286,14 @@ impl RetainedAlternative {
     /// the projection its branch read where the TURN has moved on: a
     /// citation whose source moved, left the Dreamer's reach or lost the
     /// words it named refuses. Its trust never rises above what its round
-    /// verified.
+    /// verified. It is learned at `now_ms` in Unix seconds, as every claim's
+    /// times are (FIX 8695, FIX 10356).
     fn proposal_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         landing: EntityId,
-        now: u64,
+        now_ms: u64,
     ) -> Result<(PromotionCandidate, VerifiedEvidenceSet)> {
         let entry = &self.entry;
         let mut candidate = ClaimCandidate::new(
@@ -366,7 +367,7 @@ impl RetainedAlternative {
                 supersedes: None,
                 evidence_meet: evidence.meet(),
                 occurred,
-                learned_at: now,
+                learned_at: now_ms / 1_000,
                 decisions: decisions(field(entry, "decisions")?)?,
             },
             evidence,
@@ -380,6 +381,8 @@ impl RetainedAlternative {
 /// its marker stays open. Words from an import are staged in that import's
 /// review instead, never landed (FIX 5754), linked by `link` to the conflict
 /// it was kept for (FIX 6152). `keep_as` says how it lands (FIX 5753).
+/// `now_ms` is the settlement's clock: Unix milliseconds from both
+/// `Memory::settle_conflict` callers.
 pub(super) fn land_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -387,9 +390,9 @@ pub(super) fn land_in_txn(
     landing: EntityId,
     link: KeptConflictLink,
     keep_as: KeepAs<'_>,
-    now: u64,
+    now_ms: u64,
 ) -> Result<KeptLanding> {
-    let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, landing, now)?;
+    let (proposal, evidence) = alternative.proposal_in_txn(vault, txn, landing, now_ms)?;
     let run = crate::dreamer_promotion::DreamerRunContext {
         run_id: crate::entity_id::bytes_to_hex_lower(alternative.attempt.as_bytes()),
         attempt_id: alternative.attempt,
@@ -397,7 +400,7 @@ pub(super) fn land_in_txn(
             crate::dreamer_runner::authority::dreamer_actor_id()?,
             EdgeActorClass::System,
         ),
-        now_ms: now,
+        now_ms,
     };
     crate::dreamer_promotion::land_kept_alternative_in_txn(
         vault, txn, &run, proposal, &evidence, link, keep_as,

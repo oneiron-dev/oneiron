@@ -34,7 +34,6 @@ use rmpv::Value;
 pub(crate) mod keep_approval;
 
 use self::keep_approval::KeepAs;
-use super::call_labels::LabelledRungs;
 use super::retained_conflict::RetainedAlternative;
 use super::retained_keep::{ConflictSettleOutcome, KeptAlternative, SettlementApplied, StagedKeep};
 use super::support::invalid_consolidation;
@@ -44,8 +43,7 @@ use crate::claim::{
 };
 use crate::error::{Error, Result};
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung,
-    Reversibility,
+    DecisionBand, DecisionBandPolicy, DecisionDial, DecisionLadder, DecisionRung,
 };
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
@@ -53,8 +51,8 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::write_envelope::{WriteActor, WriteEnvelope};
 use crate::{ClaimBody, EntityId, TimeRange, Vault};
 
+pub(super) mod decision_pages;
 mod decision_projection;
-use decision_projection::SettleAsk;
 
 /// The marker-value keys that name a contradiction's claims: the
 /// consolidation marker's prior heads and candidates, and the older
@@ -64,7 +62,8 @@ const MEMBER_KEYS: [&str; 4] = ["prior_head", "prior_heads", "candidates", "memb
 /// reconciliation task settles it, never this door.
 const REPO_CONFLICT_KIND: &str = "repo_branch";
 /// The most members one ladder question offers to keep, under the Choice
-/// contract's 64 options with hold-both, dismiss and escalate beside them.
+/// contract's 64 options with hold-both, dismiss and escalate beside them;
+/// past it the members split into more questions (FIX 7636).
 const MAX_KEEP_OPTIONS: usize = 61;
 /// The resolution key naming the retained alternative a Keep landed.
 pub(super) const MATERIALIZED_KEY: &str = "materialized";
@@ -916,8 +915,8 @@ const KEEP_PREFIX: &str = "keep:";
 /// wording of the question, and the call's clock. A provider sees the marker
 /// and its members as evidence ids; the contested predicates and each member's
 /// predicate, value, source, approval and window are its state, each member by
-/// a call-local label (FIX 7506). Past the ladder's bound, each member rides
-/// by label with a preview of its value.
+/// a call-local label (FIX 7506). Each value rides whole; past the ladder's
+/// bound the members are asked in pages (`decision_pages`).
 pub struct ConflictSettleDecisions<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -929,38 +928,15 @@ pub struct ConflictSettleDecisions<'a> {
 
 impl ConflictSettleDecisions<'_> {
     /// Rules on one open conflict: `None` when the ladder abstains, escalates
-    /// or answers outside the vocabulary. The ask is
-    /// `decision_projection`'s: past the ladder's state bound, every member
-    /// is still asked about, by label with its value's text cut to fit. Only
-    /// a standing member can be kept.
+    /// or answers outside the vocabulary. The asks are `decision_pages`':
+    /// every member is asked about whole, in pages past one ask's bound,
+    /// and every standing member can be kept.
     pub fn rule(
         &self,
         vault: &Vault,
         conflict: &OpenConflict,
     ) -> Result<Option<ConflictSettlement>> {
-        let ask = SettleAsk::of(vault, conflict, &self.wording)?;
-        let mut evidence = vec![conflict.marker];
-        evidence.extend(conflict.members.iter().copied());
-        // Each model rung reads the members by the ask's own labels; the
-        // question, its answer and the settlement stay canonical (FIX 7506).
-        let rungs = LabelledRungs::of(&self.ladder, &ask.labels);
-        let ladder = rungs.ladder(&self.ladder);
-        // Keeping one closes the others, so a cut abstains rather than taking
-        // a held answer.
-        let decision = ladder.run(
-            &ask.question,
-            self.principal,
-            &evidence,
-            &ask.state,
-            self.dial,
-            &self.bands,
-            Reversibility::OutboundEffect,
-            self.deadline,
-        )?;
-        let DecisionAnswer::Choice(answer) = &decision.answer else {
-            return Ok(None);
-        };
-        Ok(ask.settlement(answer))
+        decision_pages::rule(self, vault, conflict)
     }
 }
 

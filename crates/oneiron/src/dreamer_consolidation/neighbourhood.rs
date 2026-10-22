@@ -20,6 +20,8 @@
 //! a nightly child's thing first, and every head about each that the branch
 //! may hold, newest first. Nothing is dropped for room: a child's listing is
 //! split into stable pages ([`pages`]), and each page goes to its own call.
+//! Each listed value rides whole (Rule 5, FIX 10358): a head wider than a
+//! page has a page of its own.
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,9 +41,6 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON, EN
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Result, Vault};
 
-/// A listed value is cut here: enough to recognise the fact, not to replay a
-/// long body into every later pass.
-const VALUE_BYTES: usize = 96;
 /// A label is cut here.
 const LABEL_BYTES: usize = 64;
 /// Names of up to four words ("Mary Ann van Dyke").
@@ -555,7 +554,7 @@ fn listable(
         id,
         version,
         predicate: prior.body.predicate.clone(),
-        value: cut(&rmpv_to_json(&prior.body.value).to_string(), VALUE_BYTES),
+        value: rmpv_to_json(&prior.body.value).to_string(),
         rel: prior.body.rel,
     })
 }
