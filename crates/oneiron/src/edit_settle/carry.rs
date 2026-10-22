@@ -867,7 +867,10 @@ impl Vault {
     /// answers wait as a fresh proposal for Keep. A changed slide is asked
     /// over `renderer`'s render of it on the head; with no renderer the wake
     /// fails. The asked units are marked woken whatever the answers, so each
-    /// is asked again once; a wake that fails is held, then tried again.
+    /// is asked again once; a wake that fails is held, then tried again. The
+    /// ask runs outside any transaction; its proposal, its entry in a standing
+    /// question's ask log and the wake's marks commit in one (FIX 9174), and a
+    /// failed ask is logged on its own.
     #[expect(clippy::too_many_arguments)]
     pub fn wake_answer_proposer(
         &self,
@@ -880,41 +883,114 @@ impl Vault {
         now: u64,
     ) -> Result<Option<PendingProposalView>> {
         let key = settlement_key_parts(&wake.artifact, &wake.proposal_ref);
-        let woke = self.reask(wake, actor, decider, dial, policy, renderer, now);
-        let (proposed, reask_ref) = match woke {
-            Ok(woke) => woke,
-            Err(error) => {
-                let _ = self.with_write_txn(|wtxn| {
-                    if let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, &key)? {
-                        row.retry_at = Some(now.saturating_add(FAILED_WAKE_HOLD_SECS));
-                        WITHDRAWALS.put(&self.store, wtxn, &key, &row)?;
-                    }
-                    Ok(())
-                });
-                return Err(error);
+        let mut read = None;
+        let woke = self.reask(wake, actor, decider, dial, policy, renderer, now, &mut read);
+        // A wake that asked nothing (a replay, or no unit left) logs no ask.
+        let asked = !matches!(woke, Ok((Reasked::Nothing, _)));
+        let committed = woke.and_then(|(reasked, reask_ref)| {
+            self.commit_reask(wake, &key, actor, now, reasked, &reask_ref, read.as_deref())
+        });
+        if let Err(error) = &committed {
+            let _ = self.with_write_txn(|wtxn| {
+                if let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, &key)? {
+                    row.retry_at = Some(now.saturating_add(FAILED_WAKE_HOLD_SECS));
+                    WITHDRAWALS.put(&self.store, wtxn, &key, &row)?;
+                }
+                Ok(())
+            });
+            if asked && let Some(read) = &read {
+                crate::llm::decision::questions::record_failed_standing_reask(
+                    self,
+                    &standing_reask(wake, read, now),
+                    error.kind(),
+                );
             }
+        }
+        committed
+    }
+
+    /// Commits what a wake's ask made in ONE transaction (FIX 9174): its
+    /// proposal, held for Keep under `reask_ref`; its entry in the standing
+    /// question's ask log; and the wake's marks (each asked unit woken, the
+    /// ref listed, the hold cleared). A wake that asked nothing (a replay of
+    /// one already asked) marks the wake alone and logs no ask.
+    #[expect(clippy::too_many_arguments)]
+    fn commit_reask(
+        &self,
+        wake: &UnitWithdrawal,
+        key: &(EntityId, [u8; 32]),
+        actor: WriteActor,
+        now: u64,
+        reasked: Reasked,
+        reask_ref: &str,
+        read: Option<&[(EntityId, u64)]>,
+    ) -> Result<Option<PendingProposalView>> {
+        let (asked, proposal) = match reasked {
+            Reasked::Nothing => (false, None),
+            Reasked::Asked(proposal) => (true, proposal),
+        };
+        // The carried envelope is admitted through the principal's own read as
+        // the fresh proposal waits (FIX 1229), its grant clock settled before
+        // the commit opens.
+        let lane = match (&proposal, &wake.made_by) {
+            (Some(_), Some(made_by)) => self.edit_retention_lane(
+                &wake.artifact,
+                Some(made_by),
+                actor,
+                Some(super::MadeByReader::Lane(
+                    crate::llm::decision::questions::principal_lane(self, wake.principal)?,
+                )),
+            )?,
+            _ => None,
         };
         let units: Vec<&WithdrawnUnit> = wake.answers.iter().map(|answer| &answer.unit).collect();
         self.with_write_txn(|wtxn| {
-            let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, &key)? else {
-                return Ok(());
+            let proposed = match &proposal {
+                Some(proposal) => Some(self.retain_edit_proposal_in_txn(
+                    wtxn,
+                    &wake.artifact,
+                    proposal,
+                    wake.made_by.as_ref(),
+                    lane.as_ref(),
+                    actor,
+                    now,
+                )?),
+                None => None,
+            };
+            if asked && let Some(read) = read {
+                crate::llm::decision::questions::record_standing_reask_in_txn(
+                    self,
+                    wtxn,
+                    &standing_reask(wake, read, now),
+                    proposed.as_ref().map(|_| reask_ref),
+                    None,
+                )?;
+            }
+            let Some(mut row) = WITHDRAWALS.get(&self.store, wtxn, key)? else {
+                return Ok(proposed);
             };
             for answer in &mut row.answers {
                 if answer.woken_at.is_none() && units.contains(&&answer.unit) {
                     answer.woken_at = Some(now);
                 }
             }
-            if !row.reask_refs.contains(&reask_ref) {
-                row.reask_refs.push(reask_ref.clone());
+            if !row
+                .reask_refs
+                .iter()
+                .any(|known| known.as_str() == reask_ref)
+            {
+                row.reask_refs.push(reask_ref.to_owned());
             }
             row.retry_at = None;
-            WITHDRAWALS.put(&self.store, wtxn, &key, &row)?;
-            Ok(())
-        })?;
-        Ok(proposed)
+            WITHDRAWALS.put(&self.store, wtxn, key, &row)?;
+            Ok(proposed)
+        })
     }
 
-    /// The ask a wake makes, and the ref its proposal waits under.
+    /// The ask a wake makes, and the ref its proposal waits under. Nothing is
+    /// retained here (FIX 9174): [`Self::commit_reask`] commits what it made.
+    /// `read` takes the head versions the ask reads once it passes the replay
+    /// guard, so a failed ask is logged as the ask it was.
     #[expect(clippy::too_many_arguments)]
     fn reask(
         &self,
@@ -925,7 +1001,8 @@ impl Vault {
         policy: &DecisionBandPolicy,
         renderer: Option<&dyn SlideRenderer>,
         now: u64,
-    ) -> Result<(Option<PendingProposalView>, String)> {
+        read: &mut Option<Vec<(EntityId, u64)>>,
+    ) -> Result<(Reasked, String)> {
         let head = self
             .blob_artifact_head(&wake.artifact)?
             .ok_or(Error::EntityNotFound)?;
@@ -940,8 +1017,22 @@ impl Vault {
                 .blob_artifact_settlement(&wake.artifact, &reask_ref)?
                 .is_some()
         {
-            return Ok((None, reask_ref));
+            return Ok((Reasked::Nothing, reask_ref));
         }
+        // What this ask reads, for its standing question's log (FIX 9174).
+        let files: Vec<EntityId> = wake
+            .answers
+            .iter()
+            .filter_map(|answer| match answer.unit {
+                WithdrawnUnit::FolderItem { file, .. } => Some(file),
+                _ => None,
+            })
+            .collect();
+        let mut versions = self.observed_versions(&wake.artifact, &files)?;
+        if let Some(first) = versions.first_mut() {
+            first.1 = head.version;
+        }
+        *read = Some(versions);
         let ask = ArtifactAsk {
             question: &wake.question,
             principal: wake.principal,
@@ -971,7 +1062,7 @@ impl Vault {
                     .collect();
                 let (Some(first), Some(last)) = (rows.first().copied(), rows.last().copied())
                 else {
-                    return Ok((None, reask_ref));
+                    return Ok((Reasked::Nothing, reask_ref));
                 };
                 self.ask_blob_artifact_sheet_rows(
                     &wake.artifact,
@@ -1013,7 +1104,7 @@ impl Vault {
                     })
                     .collect();
                 if items.is_empty() {
-                    return Ok((None, reask_ref));
+                    return Ok((Reasked::Nothing, reask_ref));
                 }
                 self.ask_folder_items_into_sheet(
                     &wake.artifact,
@@ -1038,7 +1129,7 @@ impl Vault {
                     })
                     .collect();
                 if blocks.is_empty() {
-                    return Ok((None, reask_ref));
+                    return Ok((Reasked::Nothing, reask_ref));
                 }
                 self.ask_blob_artifact_paragraphs(
                     &wake.artifact,
@@ -1078,7 +1169,7 @@ impl Vault {
                     })
                     .collect();
                 if targets.is_empty() {
-                    return Ok((None, reask_ref));
+                    return Ok((Reasked::Nothing, reask_ref));
                 }
                 let renderer = renderer.ok_or_else(|| {
                     Error::InvalidConfig("no slide renderer on this host".to_owned())
@@ -1128,28 +1219,7 @@ impl Vault {
                     .proposal
             }
         };
-        let proposed = match &proposal {
-            Some(proposal) => {
-                // The carried envelope is admitted through the principal's
-                // own read as the fresh proposal waits (FIX 1229).
-                let reader = match &wake.made_by {
-                    Some(_) => Some(super::MadeByReader::Lane(
-                        crate::llm::decision::questions::principal_lane(self, wake.principal)?,
-                    )),
-                    None => None,
-                };
-                Some(self.retain_edit_proposal(
-                    &wake.artifact,
-                    proposal,
-                    wake.made_by.as_ref(),
-                    reader,
-                    actor,
-                    now,
-                )?)
-            }
-            None => None,
-        };
-        Ok((proposed, reask_ref))
+        Ok((Reasked::Asked(proposal), reask_ref))
     }
 
     /// The refs the wakes of `proposal_ref`'s withdrawn answers asked again under, for a
@@ -1200,6 +1270,33 @@ impl Vault {
         }
         let due = changed.saturating_add(quiet);
         Ok(Some(row.retry_at.map_or(due, |retry| retry.max(due))))
+    }
+}
+
+/// What a wake's ask made, before anything commits (FIX 9174).
+enum Reasked {
+    /// Nothing was asked: a replay of a wake already asked, or no unit left.
+    Nothing,
+    /// The ask ran: its answers' proposal, none when no unit was answered.
+    Asked(Option<EditProposal>),
+}
+
+/// `wake`'s re-ask at `now` of the head versions it `read`, as its standing
+/// question's ask log keeps it (FIX 9174): the withdrawn answers' proposal is
+/// its parent.
+fn standing_reask<'a>(
+    wake: &'a UnitWithdrawal,
+    read: &'a [(EntityId, u64)],
+    now: u64,
+) -> crate::llm::decision::questions::StandingReask<'a> {
+    crate::llm::decision::questions::StandingReask {
+        question: wake.question.id,
+        question_version: wake.question.version,
+        principal: wake.principal,
+        artifact: wake.artifact,
+        parent_proposal_ref: &wake.proposal_ref,
+        versions: read,
+        asked_at: now,
     }
 }
 

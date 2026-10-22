@@ -240,6 +240,15 @@ pub const ASSET_BODY_HELD: &[u8] = b"oneiron/asset-body-held/v1";
 /// key byte, custody id, handle or time is a part.
 pub const REPO_SECRET_MARK: &[u8] = b"oneiron:repo-secret-mark:v1";
 
+/// The Files world of one install (`note::files`, FIX 6942). Parts: the
+/// install's MACHINE id, then a u64 little-endian counter: the first whose id
+/// is outside the foreign-world range.
+pub const FILES_WORLD: &[u8] = b"oneiron.files.world.v1";
+
+/// One folder source of a Files world (`note::files`, FIX 6942). Parts: the
+/// source install's MACHINE id, its Files world, the canonical folder.
+pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 55] = [
