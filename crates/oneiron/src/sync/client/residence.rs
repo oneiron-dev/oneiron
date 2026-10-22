@@ -614,9 +614,8 @@ impl SyncClient {
             return Err(refused());
         }
         let pads = promoted_pads::checked_pads(window, &reply.pads)?;
-        let snapshot = base64::engine::general_purpose::STANDARD
-            .decode(reply.snapshot)
-            .map_err(|_| refused())?;
+        // Its envelope's pads reach custody first (FIX 7107).
+        let snapshot = self.promotion_snapshot(window, &reply.snapshot)?;
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
             return Err(refused());
         }
@@ -773,9 +772,8 @@ impl SyncClient {
             return Err(refused());
         }
         let pads = promoted_pads::checked_pads(window, &reply.pads)?;
-        let snapshot = base64::engine::general_purpose::STANDARD
-            .decode(reply.snapshot)
-            .map_err(|_| refused())?;
+        // Its envelope's pads reach custody first (FIX 7107).
+        let snapshot = self.promotion_snapshot(window, &reply.snapshot)?;
         // The world's pads reach custody here before the snapshot (FIX 6706).
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
