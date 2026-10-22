@@ -1,7 +1,11 @@
 //! Settling a run's permits: an answer pays its usage or its reservation, a
 //! started call that failed pays its reservation, and every settlement the
-//! meter refuses goes on the receipt.
-use super::super::{BudgetSettlement, InferenceCallReceipt, LlmUsage, answered_units_wide};
+//! meter refuses goes on the receipt, with the inference receipts the call
+//! reported or its lease observed (FIX 9065).
+use super::super::{
+    BudgetSettlement, InferenceCallObservation, InferenceCallReceipt, LlmUsage,
+    answered_units_wide,
+};
 use super::admission::{RunDenied, RunInner};
 use super::declaration::LeaseUnit;
 use super::host::{UnitRate, Unpriced, convert};
@@ -28,7 +32,9 @@ impl RunInner {
     /// permit's drop call this, once. `stream` is a metered stream's audio,
     /// for the receipt. `provided` is the inference receipts a call reported
     /// beside its quantity (a media call's), listed after those an answer's
-    /// usage holds; neither changes what the call is charged.
+    /// usage holds, and then what the lease observed of requests that never
+    /// reported ([`settled_inference_calls`]); none changes what the call is
+    /// charged.
     pub(super) fn settle(
         &self,
         permit: &RunPermit,
@@ -97,11 +103,13 @@ impl RunInner {
         let allocation_error = allocation
             .as_ref()
             .and_then(|(_, settled)| settled.as_ref().err().cloned());
-        let mut inference_calls = match outcome {
+        let mut reported = match outcome {
             CallOutcome::Answered(usage) => usage.inference_calls(),
             _ => Vec::new(),
         };
-        inference_calls.extend(provided);
+        reported.extend(provided);
+        let inference_calls =
+            settled_inference_calls(reported, permit.lease.inference_observations());
         self.record(
             permit.revision,
             RunEvent::Settled {
@@ -132,6 +140,33 @@ impl RunInner {
             (Ok(settlement), None) => Ok(settlement),
         }
     }
+}
+
+/// The inference receipts a settled call records (FIX 9065): those it
+/// reported (an answer's usage, then any provided beside it), then each
+/// request its lease observed that never reached a final receipt, in the order
+/// they began. A request's final receipt is the one its answer reports, so it
+/// is not counted again. A call that reported none (a failed, cancelled or
+/// dropped one) records everything its lease observed, final or partial. What
+/// no native source measured stays absent.
+fn settled_inference_calls(
+    reported: Vec<InferenceCallReceipt>,
+    observed: Vec<InferenceCallObservation>,
+) -> Vec<InferenceCallReceipt> {
+    if reported.is_empty() {
+        return observed
+            .into_iter()
+            .map(InferenceCallObservation::into_receipt)
+            .collect();
+    }
+    let mut calls = reported;
+    calls.extend(
+        observed
+            .into_iter()
+            .filter(|observation| !observation.is_final())
+            .map(InferenceCallObservation::into_receipt),
+    );
+    calls
 }
 
 /// What a finished call charges a meter. Admission priced the same units
