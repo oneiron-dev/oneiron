@@ -29,6 +29,7 @@ use super::super::doors::{
     put_secret_custody_in_txn, read_secret_custody_admission_in_txn, read_secret_custody_in_txn,
     refuse_bindings_wider_than_live_floor, register_secret_in_txn, resolve_secret_ref_in_txn,
 };
+use super::super::owner_door::default_import_fetch_actor;
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{Enactment, custody_portable, write_custody_transition_in_txn};
 use super::super::types::{SecretBinding, SecretCustodyRecord, SecretCustodyStatus};
@@ -302,7 +303,7 @@ impl Vault {
                                 txn,
                                 framed,
                                 attached,
-                                &record.0,
+                                (&record.0, &request.act.owner),
                             )? {
                                 RegisterVerdict::Register(check) => Taken { record, check },
                                 RegisterVerdict::Refuse(refusal) => {
@@ -315,6 +316,11 @@ impl Vault {
                         return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                     }
                 };
+                // FIX 7592: an import-fetch binding that names no actor, a
+                // surface-sealed register's included, takes the revalidated
+                // requesting Owner's, after its manifest check.
+                let mut taken = taken;
+                default_import_fetch_actor(&mut taken.record.0.bindings, &request.act.owner);
                 self.register_from_in_txn(txn, id, *generation, taken, enactment, at)
             }
             CustodyChange::Rotate => {
@@ -357,6 +363,11 @@ impl Vault {
                         return Ok(Some(Enacted::refused(OwnerWorkRefusal::InvalidInput)));
                     }
                 };
+                // FIX 7592: so does a bind's decoded bindings.
+                let mut bindings = bindings;
+                if let Some(bindings) = &mut bindings {
+                    default_import_fetch_actor(bindings, &request.act.owner);
+                }
                 let rewrap = Rewrap {
                     id,
                     generation: *generation,

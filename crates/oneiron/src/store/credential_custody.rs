@@ -24,7 +24,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject,
+    CustodyBinding, CustodyKind, CustodyPlan, CustodySecret, CustodySubject, Requirement,
 };
 
 /// The width of every KS-6 key: an AES-256-GCM key (CALLS `KS-6 leaf ids`,
@@ -79,33 +79,57 @@ fn copy_leaf(kind: CustodyKind, secret: &[u8]) -> Result<CredentialLeaf> {
     Ok(leaf)
 }
 
-/// Plans each credential value `values` names (record id, generation),
-/// sealed under the custody `plan` binds, through that one plan (KS-6 part
-/// 1, an archived vault's activation): optional, so a key its source lacks
-/// or cannot read is not copied, warned, and the row keeps its sealed value
-/// as its source does. Part 2 makes the permitted ones required (CALLS
-/// `KS-6 required restore set`).
-pub(crate) fn plan_credential_values(
+/// What a restore's or an activation's plan finds for one credential value
+/// its rows commit to (KS-6 part 2, CALLS `KS-6 required restore set`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlannedCredential {
+    /// The custody the plan takes holds its key live: a fork copies it.
+    Live,
+    /// Destroyed there, or committed to be: the erase stands.
+    Retired,
+    /// No custody the plan takes holds it, affirmatively: no entry there,
+    /// or no custody at all.
+    Missing,
+}
+
+/// Plans credential `credential`'s value at `generation` through `plan`,
+/// the restore's or activation's one plan, by its exact id: a fork copies
+/// that generation alone (CALLS `KS-6 required restore set`,
+/// ExactPermittedCommittedRefs). A missing key is never refused here: what
+/// the row needs decides.
+///
+/// # Errors
+/// Custody faults, never absence.
+pub(crate) fn plan_credential_value(
     plan: &mut CustodyPlan,
-    values: &[(EntityId, u32)],
-) -> Result<()> {
-    let Some(source) = plan.source().cloned() else {
-        return Ok(());
+    credential: &EntityId,
+    generation: u32,
+) -> Result<PlannedCredential> {
+    let id = match plan.source() {
+        Some(source) => value_subject(source, credential)?.at(u64::from(generation)),
+        None => return Ok(PlannedCredential::Missing),
     };
-    let mut absent = 0_usize;
-    for (credential, generation) in values {
-        let id = value_subject(&source, credential)?.at(u64::from(*generation));
-        if plan.require_present(&id)?.is_none() {
-            absent = absent.saturating_add(1);
-        }
-    }
-    if absent > 0 {
-        tracing::warn!(
-            absent,
-            "credential values whose custody keys the source does not hold stay sealed"
-        );
-    }
-    Ok(())
+    Ok(match plan.require_exact_present(&id)? {
+        Some(Requirement::Live) => PlannedCredential::Live,
+        Some(Requirement::Retired) => PlannedCredential::Retired,
+        None => PlannedCredential::Missing,
+    })
+}
+
+/// The key credential `credential`'s value at `generation` is sealed
+/// under, read strictly from the custody `binding` names: an activation's
+/// read-back from the custody it forked, before that binding commits.
+///
+/// # Errors
+/// The key is not there to read.
+pub(crate) fn credential_value_leaf_in(
+    binding: &CustodyBinding,
+    credential: &EntityId,
+    generation: u32,
+) -> Result<CredentialLeaf> {
+    let id = value_subject(binding, credential)?.at(u64::from(generation));
+    let secret = crate::store::key_custody::LocalCustody::at(binding).read(&id)?;
+    copy_leaf(CustodyKind::CredentialValue, secret.expose())
 }
 
 impl Store {
@@ -159,33 +183,6 @@ impl Store {
             .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
         copy_leaf(CustodyKind::CredentialValue, custody.read(&id)?.expose())
-    }
-
-    /// The key a restored row still in its image's carrier form is sealed
-    /// under at `generation`, taken again from this store's custody before
-    /// its value opens (KS-6, `CUSTODY_RESEAL_PENDING`): read, or minted,
-    /// published and journaled, under the binding the store holds, with no
-    /// LMDB write and no guard, so any reader may take it. Its row seals
-    /// under it on the next pass or write.
-    ///
-    /// # Errors
-    /// An archived vault; no custody here yet; a retired key, never minted
-    /// again; custody faults.
-    pub(crate) fn retake_credential_value_leaf(
-        &self,
-        credential: &EntityId,
-        generation: u32,
-    ) -> Result<()> {
-        if self.core.gate_custody_archived() {
-            return Err(Error::Store(StoreError::ArchivedVault));
-        }
-        let custody = self
-            .core
-            .key_custody
-            .local()
-            .ok_or_else(|| CustodyKind::CredentialValue.corrupt())?;
-        let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
-        custody.get_or_create(&id).map(drop)
     }
 
     /// Mints the key of one new carrier instance of credential `credential`
