@@ -4,8 +4,10 @@
 //! established again now: a native agent by its grant, a credential caller
 //! by the binding its request was admitted on, verified again against
 //! current authority (`kept_instrument_auth`), and for a connector its
-//! registration as it stands now, at the ceiling it was admitted at. No
-//! other caller is acted as: never the host, the owner or the Coach.
+//! registration as it stands now, at the ceiling it was admitted at, and a
+//! person with no credential only as this vault's live recorded owner,
+//! proved afresh at each call (`managed_owner_proof`). No other caller is
+//! acted as: never the host, a stand-in owner or the Coach.
 //!
 //! The job's run is a new run, the job's own: each call takes the write
 //! origin its leased try binds (`HostSelfDispatcher::program_admission_origin`)
@@ -36,6 +38,10 @@ enum JobCaller {
     Agent(WriteActor),
     /// A connector's credential, through its registration as it stands now.
     Mcp(McpCallContext),
+    /// This vault's live recorded owner, with no credential: proved afresh
+    /// at each call (`managed_owner_proof`), on the owner's surface on this
+    /// device under the job's run origin.
+    Owner(WriteActor),
     /// A facade credential: established again at each call, at the verb's
     /// own door.
     Facade {
@@ -48,7 +54,7 @@ enum JobCaller {
 impl JobCaller {
     fn actor(&self) -> WriteActor {
         match self {
-            Self::Agent(actor) => *actor,
+            Self::Agent(actor) | Self::Owner(actor) => *actor,
             Self::Mcp(context) => WriteActor::new(context.actor_ref, context.actor_class),
             Self::Facade { writer, .. } => *writer,
         }
@@ -199,6 +205,31 @@ impl RunGuests {
                     agent.entity_ref(),
                 )
             }
+            JobCaller::Owner(owner) => {
+                // The owner is proved again at each call; once they are not
+                // the live recorded owner, the job acts no more.
+                if owner_proof(server, *owner).is_none() {
+                    return Err(ProgramAdmissionOutcome::CredentialUnavailable {
+                        cause: CallerUnavailable::ContextUnavailable,
+                    });
+                }
+                let memory = server
+                    .vault
+                    .memory(owner.entity_ref(), owner.actor_class())
+                    .at(CallerLocality::OnDevice)
+                    .with_host_origin(origin.clone())
+                    .with_invocation(invocation);
+                let asker = VerdictAsker::Agent(*owner, None);
+                self.call(
+                    server,
+                    runtime,
+                    &call,
+                    &origin,
+                    &memory,
+                    asker,
+                    owner.entity_ref(),
+                )
+            }
             JobCaller::Mcp(context) => {
                 // The connector's binding and live credential at each call,
                 // as code mode's browser door checks them.
@@ -328,8 +359,28 @@ fn established(
                 }
             }
         }
+        // A person is acted for only as this vault's live recorded owner.
+        AdmissionCaller::Person(person) => match owner_proof(server, *person) {
+            Some(_) => Ok(JobCaller::Owner(*person)),
+            None => Err(CallerUnavailable::ContextUnavailable),
+        },
         AdmissionCaller::Unsupported => Err(CallerUnavailable::ContextUnavailable),
     }
+}
+
+/// The owner's proof for `person`, made afresh: a person this vault records
+/// as its owner, while that owner is live, as a managed owner's request is
+/// proved. `None` for anyone else.
+fn owner_proof(
+    server: &SyncServer,
+    person: WriteActor,
+) -> Option<oneiron::consent::AuthenticatedOwner> {
+    if person.actor_class() != oneiron::EdgeActorClass::Human {
+        return None;
+    }
+    crate::api::managed_owner_proof(server, person.entity_ref())
+        .ok()
+        .flatten()
 }
 
 /// The credential `reference` names, from the binding `witness` its

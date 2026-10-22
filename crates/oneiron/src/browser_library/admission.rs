@@ -216,8 +216,11 @@ pub enum AdmissionCaller {
         reference: VerbAskCredentialRef,
         witness: Option<InvocationSlipBinding>,
     },
-    /// No door rebuilds it: a caller with no credential that is no agent's
-    /// own run.
+    /// A person with no credential: the host acts for them only while they
+    /// are this vault's live recorded owner, proved afresh at each use.
+    Person(WriteActor),
+    /// No door rebuilds it: a caller with no credential that is no person
+    /// and no agent's own run.
     Unsupported,
 }
 
@@ -348,9 +351,10 @@ pub fn admission_sources(
 
 /// Who `callers`, one job's sources' authority rows, were captured under
 /// (CUA E8b, CALLS row "source kinds"): a credential caller by the
-/// reference its rows keep, with the first binding still kept; a native
-/// agent when every source run is that agent's own pumped run; any other
-/// caller is none a door rebuilds.
+/// reference its rows keep, with the first binding still kept; a person
+/// with no credential, whom the host proves its live owner at use or acts
+/// for not at all; a native agent when every source run is that agent's
+/// own pumped run; any other caller is none a door rebuilds.
 fn source_caller(
     vault: &Vault,
     actor: WriteActor,
@@ -364,8 +368,10 @@ fn source_caller(
             witness,
         });
     }
-    if actor.actor_class() != EdgeActorClass::Agent {
-        return Ok(AdmissionCaller::Unsupported);
+    match actor.actor_class() {
+        EdgeActorClass::Human => return Ok(AdmissionCaller::Person(actor)),
+        EdgeActorClass::Agent => {}
+        EdgeActorClass::System => return Ok(AdmissionCaller::Unsupported),
     }
     for caller in callers {
         if !native_agent_run(vault, caller.run_id, actor.entity_ref())? {
