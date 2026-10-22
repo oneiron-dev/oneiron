@@ -487,6 +487,8 @@ impl Vault {
                 Ok(staged) => staged,
                 Err(err) => return Rows::Discard(Err(E::from(err))),
             };
+            // A credential erase this write stages finishes after it (KS-6 part 2).
+            let credentials_before = crate::store::credential_erases_staged();
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
             let (result, postcommit) = {
                 let _active_write_txn = crate::store::active_write_txn_guard();
@@ -530,7 +532,8 @@ impl Vault {
                         postcommit.pad_windows,
                         postcommit.settled_tasks,
                     ),
-                    staged != retirements_before,
+                    staged != retirements_before
+                        || crate::store::credential_erases_staged() != credentials_before,
                 )),
                 Err(err) => Rows::Discard(Err(E::from(err))),
             }
