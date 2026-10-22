@@ -40,16 +40,20 @@ impl Vault {
             locality,
         )?;
         current(self, &txn, &revision)?;
+        // An unknown comparison stays an owner-reviewable offer, marked by its
+        // receipt's Unknown action and quality (FIX 9901). A proposal is only
+        // ever settled by the owner's accept; nothing approves it for them.
         if trial.receipt.as_ref().is_none_or(|receipt| {
             !matches!(
                 receipt.action,
                 ModelTrialAction::Offer
                     | ModelTrialAction::AutoApprove
                     | ModelTrialAction::AskTradeoff
+                    | ModelTrialAction::Unknown
             )
         }) {
             return Err(invalid(
-                "model binding proposal needs a sufficient held-out trial offer",
+                "model binding proposal needs a completed held-out trial offer",
             ));
         }
         let manifest = read_manifest(&self.store, &txn)?.ok_or(Error::EntityNotFound)?;
@@ -167,12 +171,8 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let principal = owner.revalidate_in_txn(self, &txn)?;
         let mut row = proposal(self, &txn, principal, input.proposal)?;
-        if row.status == status {
-            return Ok(row);
-        }
-        if row.status != ModelBindingStatus::Proposed {
-            return Err(invalid("model binding proposal is already settled"));
-        }
+        // The trial and its sources are read for this caller's locality before
+        // any settled answer, a replay's included (FIX 9902).
         let (_, trial) = owned_trial(
             self,
             &txn,
@@ -183,6 +183,12 @@ impl Vault {
             },
             locality,
         )?;
+        if row.status == status {
+            return Ok(row);
+        }
+        if row.status != ModelBindingStatus::Proposed {
+            return Err(invalid("model binding proposal is already settled"));
+        }
         if status == ModelBindingStatus::Accepted {
             if crate::llm::decision::questions::read_question_in_txn(
                 self,

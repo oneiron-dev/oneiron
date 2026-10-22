@@ -152,24 +152,26 @@ impl Vault {
         };
         let principal = trial.request.principal;
         let answers = answer_records(self, principal, input.question)?;
-        let observations = self.execute_model_trial(&trial, |record, backend, case| {
-            owner.revalidate(self)?;
-            let answer = answers
-                .iter()
-                .find(|answer| answer.claim == case.answer)
-                .ok_or(Error::EntityNotFound)?;
-            let context = trial_unit_context(self, principal, locality, answer)?;
-            execute(record, backend, &context)
-        })?;
+        // The owner and the case's still-readable sources are checked before
+        // every real send, ahead of its mark: a refusal there leaves the arm
+        // unsent for a later run. Each finished arm is kept before the next
+        // send (FIX 9920).
+        self.resume_trial_execution(
+            &trial,
+            |case| {
+                owner.revalidate(self)?;
+                let answer = answers
+                    .iter()
+                    .find(|answer| answer.claim == case.answer)
+                    .ok_or(Error::EntityNotFound)?;
+                trial_unit_context(self, principal, locality, answer)
+            },
+            |record, backend, _, context| execute(record, backend, context),
+        )?;
         let mut txn = self.store.env.write_txn()?;
         owned_trial(self, &txn, owner, &input, locality)?;
-        self.record_model_trial_measurements_in_txn(
-            &mut txn,
-            principal,
-            input.question,
-            input.trial,
-            locality,
-            observations,
+        self.record_trial_progress_measurements_in_txn(
+            &mut txn, principal, input.question, input.trial, locality,
         )?;
         let stored = self
             .model_trial_in_txn(&txn, principal, input.question, input.trial, locality)?

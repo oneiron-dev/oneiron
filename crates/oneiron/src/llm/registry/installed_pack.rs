@@ -61,10 +61,9 @@ impl CatalogSeed {
         {
             return Err(invalid("installed model catalog has no scan evidence"));
         }
+        // Further source facets beside the catalog data install too (FIX
+        // 9921); the hash, scan and receipt checks above bind every file.
         let files = source.files();
-        if files.len() != 2 {
-            return Err(invalid("model catalog has unexpected source facets"));
-        }
         let bytes = files
             .iter()
             .find(|file| file.path == "knowledge/catalog.json")

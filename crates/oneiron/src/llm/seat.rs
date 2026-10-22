@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::time::Instant;
 
 mod decisions;
-pub use decisions::{SeatDecisions, SeatNotes};
+pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
 mod policy;
 pub use policy::{SeatPolicy, SeatPrecedence};
 mod run;
@@ -12,6 +12,7 @@ pub use run::TaskSeatReceipt;
 
 use serde::{Deserialize, Serialize};
 
+use super::decision::TypedDecision;
 use super::registry::ModelWireFormat;
 use super::{CallPurpose, LlmCapability, ModelId, ModelLocality, ReasoningEffort};
 use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
@@ -282,16 +283,26 @@ pub struct SeatCandidate {
 }
 
 /// Plain-language choice receipt; retained on the seat even if policies change.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Beside the model, effort and why, it keeps the pick's complete typed reads
+/// (FIX 9926), carried with the seat on reuse and resume.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SeatChoiceReceipt {
     pub model: ModelId,
     pub effort: ReasoningEffort,
     pub why: String,
     pub reused: bool,
+    /// Every model-pick read of the birth, in the order asked: one for 64 or
+    /// fewer candidates; for more, each round's batch reads, the final last.
+    #[serde(default)]
+    pub model_decisions: Vec<TypedDecision>,
+    /// The effort pick's read; `None` when that pick did not run (a holder
+    /// fixed the effort, or the model has one rung).
+    #[serde(default)]
+    pub effort_decision: Option<TypedDecision>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ModelSeat {
     id: u64,
     kind: SeatKind,
@@ -519,7 +530,7 @@ impl SeatPool {
             decisions.budget.min(at.saturating_duration_since(started))
         });
         let deadline = RetrievalDeadline::hard(started, budget);
-        let (index, picked) = decisions.pick_before(task, &candidates, &deadline)?;
+        let (index, picked, readings) = decisions.pick_before(task, &candidates, &deadline)?;
         let candidate = &candidates[index];
         let effort = policy.choose(
             composed,
@@ -556,6 +567,8 @@ impl SeatPool {
                 effort,
                 why,
                 reused: false,
+                model_decisions: readings.model_decisions,
+                effort_decision: readings.effort_decision,
             },
             warm: true,
         };

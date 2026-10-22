@@ -66,7 +66,7 @@ pub(super) async fn generate(
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
         let response =
-            super::execute::generate_with_retry(backend, request, lease, max_retries).await?;
+            super::retry::generate_with_retry(backend, request, lease, max_retries).await?;
         let Some(Err(error)) = check.map(|check| check(&response)) else {
             return Ok(response);
         };
@@ -156,7 +156,7 @@ pub(super) async fn generate(
             &correction.lease
         };
         let mut response =
-            match super::execute::generate_with_retry(backend, &wire, active_lease, max_retries)
+            match super::retry::generate_with_retry(backend, &wire, active_lease, max_retries)
                 .await
             {
                 Ok(response) => response,

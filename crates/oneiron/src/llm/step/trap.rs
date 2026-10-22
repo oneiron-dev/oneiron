@@ -177,7 +177,9 @@ pub(super) fn register_wait_in_txn(
 
 /// Writes the resume SIGNAL (`→sent`). The body MUST carry the suspended
 /// step's hash; a mismatched hash is rejected here (defense in depth) and
-/// again independently at consume (the security boundary, ruling L8).
+/// again independently at consume (the security boundary, ruling L8). A
+/// matching duplicate on a `Sent` or `Consumed` trap returns its head id
+/// unchanged (FIX 9931); a step-only trap still refuses this door.
 pub fn send_trap_signal(
     vault: &Vault,
     trap_claim_id: &EntityId,
@@ -201,6 +203,15 @@ fn send_trap_signal_in_txn(
     require_attempt_scoped_signal_in_txn(vault, wtxn, trap_claim_id)?;
     if head.step_hash != step_hash {
         return Err(invalid_trap("dreamer trap signal hash mismatch"));
+    }
+    // A matching signal for a trap already signalled is a delivery of the
+    // first one (FIX 9931): it answers the chain's head and writes nothing,
+    // so no transition or wake runs twice.
+    if matches!(
+        head.state,
+        DreamerTrapState::Sent | DreamerTrapState::Consumed
+    ) {
+        return Ok(head_id);
     }
     if !head.state.may_transition_to(DreamerTrapState::Sent) {
         return Err(invalid_trap("dreamer trap signal on non-waiting trap"));

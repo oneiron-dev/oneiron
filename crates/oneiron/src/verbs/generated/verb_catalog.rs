@@ -12791,10 +12791,10 @@ impl AgentVerb {
                 "The owner retires one positive skill proposal once the optimizer has drafted from it or declined it."
             }
             Self::AiStepsSubmit => {
-                "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
+                "Submit or resume one owner-bound durable model step with declared transport attempts (past the retry schedule its last interval paces), deterministic fallback and a schema-validated JSON result."
             }
             Self::AiStepsReceipt => {
-                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
+                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease; after an owner erase only the receipt metadata and an erased result remain."
             }
             Self::AiStreamsOpen => {
                 "Open one owner-bound shared model stream under a stable key: a single admitted producer starts (or the standing stream answers), and a replay never starts a second one."
@@ -12872,19 +12872,19 @@ impl AgentVerb {
                 "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."
             }
             Self::VaultModelsTrialsGet => {
-                "Reads a retained held-out trial, its catalog revision, independent labels and measured cost."
+                "Reads a retained held-out trial, its catalog revision, independent labels, measured cost and how many of its paid arms are read or unknown."
             }
             Self::VaultModelsTrialsApprove => {
                 "Approves exploration for a held-out model trial only; leaves its role binding unchanged."
             }
             Self::VaultModelsTrialsRun => {
-                "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."
+                "Runs the pinned arms not yet sent through decide and normal leases on the original held-out frontier, keeping each billed read before the next send; a rerun resumes unsent arms, never an arm of unknown outcome."
             }
             Self::VaultModelsTrialsComplete => {
                 "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."
             }
             Self::VaultModelsBindingsPropose => {
-                "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."
+                "Proposes a role model change from a completed held-out trial offer, an explicitly unknown one included for the owner to review, retaining catalog revision and real trial cost without activating it."
             }
             Self::VaultModelsBindingsGet => {
                 "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."

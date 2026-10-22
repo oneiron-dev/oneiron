@@ -119,34 +119,80 @@ fn loss(value: &Option<crate::llm::decision::TypedDecision>, label: bool) -> Opt
     Some((value.probability? - if label { 1.0 } else { 0.0 }).powi(2))
 }
 
+/// One held-out case's two kept reads. `None` is an arm whose provider
+/// outcome is unknown (FIX 9920).
+pub(super) struct CaseReads {
+    pub(super) answer: EntityId,
+    pub(super) incumbent: Option<TrialReading>,
+    pub(super) candidate: Option<TrialReading>,
+}
+
+/// An arm's checked decision and cost; an unknown arm has neither.
+fn arm(
+    trial: &ModelTrial,
+    backend: &PricedModelBackend,
+    input: Option<TrialReading>,
+    unknown: &mut usize,
+) -> Result<(
+    Option<crate::llm::decision::TypedDecision>,
+    Option<ModelCostReceipt>,
+)> {
+    let Some(input) = input else {
+        *unknown += 1;
+        return Ok((None, None));
+    };
+    let (decision, cost) = reading(trial, backend, input)?;
+    Ok((decision, Some(cost)))
+}
+
 pub(super) fn measure(
     trial: &ModelTrial,
     observations: Vec<TrialObservation>,
 ) -> Result<TrialEvidence> {
-    if observations.len() != trial.cases.len() {
+    measure_reads(
+        trial,
+        observations
+            .into_iter()
+            .map(|observation| CaseReads {
+                answer: observation.answer,
+                incumbent: Some(observation.incumbent),
+                candidate: Some(observation.candidate),
+            })
+            .collect(),
+    )
+}
+
+/// The trial's evidence from one kept read pair per case. An unknown arm
+/// leaves its case without a decision or a known cost: the losses are then
+/// unknown, and the costs are the known billed spend (FIX 9920).
+pub(super) fn measure_reads(trial: &ModelTrial, reads: Vec<CaseReads>) -> Result<TrialEvidence> {
+    if reads.len() != trial.cases.len() {
         return Err(invalid(
             "trial needs one billed observation per held-out case",
         ));
     }
     let mut by_answer = BTreeMap::new();
-    for observation in observations {
-        let id = observation.answer;
-        if by_answer.insert(id, observation).is_some() {
+    for read in reads {
+        let id = read.answer;
+        if by_answer.insert(id, read).is_some() {
             return Err(invalid("duplicate held-out measurement"));
         }
     }
     let mut measurements = Vec::new();
     let mut families = BTreeMap::<&str, (f64, f64, f64)>::new();
     let mut complete = true;
+    let mut unknown_arms = 0;
     let (mut incumbent_cost, mut candidate_cost) = (0.0, 0.0);
     for case in &trial.cases {
         let input = by_answer
             .remove(&case.selection.answer)
             .ok_or_else(|| invalid("held-out measurement missing"))?;
-        let (incumbent, old_cost) = reading(trial, &trial.incumbent, input.incumbent)?;
-        let (candidate, new_cost) = reading(trial, &trial.candidate, input.candidate)?;
-        incumbent_cost += old_cost.cost;
-        candidate_cost += new_cost.cost;
+        let (incumbent, old_cost) =
+            arm(trial, &trial.incumbent, input.incumbent, &mut unknown_arms)?;
+        let (candidate, new_cost) =
+            arm(trial, &trial.candidate, input.candidate, &mut unknown_arms)?;
+        incumbent_cost += old_cost.as_ref().map_or(0.0, |cost| cost.cost);
+        candidate_cost += new_cost.as_ref().map_or(0.0, |cost| cost.cost);
         let family = families.entry(&case.selection.source_family).or_default();
         match (loss(&incumbent, case.label), loss(&candidate, case.label)) {
             (Some(old), Some(new)) => {
@@ -204,6 +250,7 @@ pub(super) fn measure(
         incumbent_cost_per_thousand,
         candidate_cost_per_thousand,
         trial_cost,
+        unknown_arms,
     })
 }
 

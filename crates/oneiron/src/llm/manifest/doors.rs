@@ -168,7 +168,8 @@ impl Vault {
     /// the device. Every other role, route, the verdict and the seat policy
     /// stay. The proof, the saved teacher approval and the manifest guards
     /// run here as a replace runs them, and so does the rest of that write: a
-    /// stale encoder export is dropped and resident route overrides clear.
+    /// stale encoder export is dropped, and a resident route override stays
+    /// only while the new pins still admit it (FIX 9919).
     /// The returned manifest is the one this transaction published. A vault
     /// with no manifest is refused.
     pub fn bind_oneironer_as_owner(

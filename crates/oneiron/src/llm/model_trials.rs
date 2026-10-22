@@ -4,7 +4,9 @@
 //! activation offer, but this module never edits a route or a historical answer.
 
 mod evidence;
+mod progress;
 mod types;
+pub use progress::TrialProgressCounts;
 pub use types::*;
 
 use crate::claim::CallerLocality;
@@ -144,6 +146,9 @@ impl Vault {
             admission,
             prepared_at: now,
             execution_started: false,
+            execution: ModelTrialExecutionState::NotStarted,
+            run: 0,
+            arms: Vec::new(),
             evidence: None,
             receipt: None,
         };
@@ -237,8 +242,9 @@ impl Vault {
         Ok(trial)
     }
 
-    /// Claim before any paid work. A crash leaves the claim for explicit host
-    /// recovery, rather than silently replaying already billed model calls.
+    /// Claim before any paid work. Each claim takes the next run: the arms
+    /// it sends are the ones never sent, and an arm an earlier run left in
+    /// flight reads unknown and is never sent again (FIX 9920).
     pub fn claim_model_trial(
         &self,
         principal: EntityId,
@@ -263,8 +269,8 @@ impl Vault {
         let previous = self
             .model_trial_in_txn(txn, principal, question, id, locality)?
             .ok_or(Error::EntityNotFound)?;
-        if previous.admission != TrialAdmission::Ready || previous.execution_started {
-            return Err(invalid("model trial needs approval or was already started"));
+        if previous.admission != TrialAdmission::Ready || previous.evidence.is_some() {
+            return Err(invalid("model trial needs approval or is already measured"));
         }
         if backend(self, txn, &previous.request.incumbent)? != previous.incumbent
             || backend(self, txn, &previous.request.candidate)? != previous.candidate
@@ -277,7 +283,7 @@ impl Vault {
             ));
         }
         let mut trial = previous.clone();
-        trial.execution_started = true;
+        progress::claim(&mut trial);
         replace(self, txn, &previous, &trial)?;
         Ok(trial)
     }
@@ -286,13 +292,16 @@ impl Vault {
     /// It must replay the pinned frontier, not substitute a later live source.
     /// Failed/cut reads return a TrialReading with no decision and real usage.
     /// Over-budget plans remain one recoverable ask without calling the executor.
+    /// Each completed arm is kept before the next send; an executor error
+    /// keeps that arm unknown and returns, and a later call resumes the arms
+    /// never sent (FIX 9920).
     pub fn run_model_trial(
         &self,
         principal: EntityId,
         question: EntityId,
         id: EntityId,
         locality: CallerLocality,
-        execute: impl FnMut(
+        mut execute: impl FnMut(
             &QuestionRecord,
             &PricedModelBackend,
             &TrialCaseInput,
@@ -308,41 +317,19 @@ impl Vault {
             return Ok(Some(evidence));
         }
         let trial = self.claim_model_trial(principal, question, id, locality)?;
-        let observations = self.execute_model_trial(&trial, execute)?;
-        self.record_model_trial_measurements(principal, question, id, locality, observations)
+        self.resume_trial_execution(
+            &trial,
+            |_| Ok(()),
+            |record, backend, case, _| execute(record, backend, case),
+        )?;
+        let mut txn = self.store.env.write_txn()?;
+        let measured = self.record_trial_progress_measurements_in_txn(
+            &mut txn, principal, question, id, locality,
+        )?;
+        txn.commit()?;
+        measured
             .map(Some)
-    }
-
-    pub(super) fn execute_model_trial(
-        &self,
-        trial: &ModelTrial,
-        mut execute: impl FnMut(
-            &QuestionRecord,
-            &PricedModelBackend,
-            &TrialCaseInput,
-        ) -> Result<TrialReading>,
-    ) -> Result<Vec<TrialObservation>> {
-        let record = read_question(
-            self,
-            trial.request.principal,
-            trial.request.question,
-            Some(trial.request.question_version),
-        )?
-        .ok_or(Error::EntityNotFound)?;
-        let mut observations = Vec::new();
-        for case in &trial.cases {
-            let input = TrialCaseInput {
-                answer: case.selection.answer,
-                unit: case.unit,
-                source_frontier: case.source_frontier,
-            };
-            observations.push(TrialObservation {
-                answer: input.answer,
-                incumbent: execute(&record, &trial.incumbent, &input)?,
-                candidate: execute(&record, &trial.candidate, &input)?,
-            });
-        }
-        Ok(observations)
+            .ok_or(Error::ConcurrentWrite("model trial arms are still in flight"))
     }
 
     /// Commit the billed reads before asking eval authoring for its sufficiency
@@ -393,6 +380,7 @@ impl Vault {
         }
         let mut trial = previous.clone();
         trial.evidence = Some(measured.clone());
+        trial.execution = ModelTrialExecutionState::Measured;
         replace(self, txn, &previous, &trial)?;
         Ok(measured)
     }
@@ -543,6 +531,11 @@ impl Vault {
                 &measurement.candidate_cost
             } else {
                 &measurement.incumbent_cost
+            };
+            // An arm with unknown spend projects no price (FIX 9920); its
+            // trial's quality is Unknown, so this is not reached.
+            let Some(cost) = cost else {
+                return Ok(None);
             };
             projected_cost += current.cost_receipt(cost.usage.clone(), cost.units)?.cost;
         }

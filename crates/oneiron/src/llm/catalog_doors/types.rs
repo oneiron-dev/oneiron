@@ -1,8 +1,8 @@
 //! Typed catalog evidence, held-out trials and owner-reviewed role bindings.
 use crate::llm::manifest::{ModelBinding, ModelRole};
 use crate::llm::model_trials::{
-    FrozenTrialCase, ModelTrial, ModelTrialReceipt, ModelTrialRequest, TrialAdmission,
-    TrialAssessment,
+    FrozenTrialCase, ModelTrial, ModelTrialExecutionState, ModelTrialReceipt, ModelTrialRequest,
+    TrialAdmission, TrialAssessment,
 };
 use crate::llm::registry::{CatalogSeed, ModelRegistryRow, ModelScoreDiff, ScoreSnapshot};
 use crate::{EntityId, ModelId};
@@ -92,6 +92,9 @@ pub struct ModelTrialEvidence {
     pub incumbent_cost_per_thousand: f64,
     pub candidate_cost_per_thousand: f64,
     pub trial_cost: f64,
+    /// Arms sent with no reading back: while nonzero the costs above are the
+    /// known billed spend only, and the comparison is unknown (FIX 9920).
+    pub unknown_arms: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -109,12 +112,22 @@ pub struct ModelTrialView {
     pub admission: TrialAdmission,
     pub prepared_at: u64,
     pub execution_started: bool,
+    /// Where its paid reads stand (FIX 9920): an interrupted trial resumes
+    /// the arms never sent on its next run.
+    pub execution: ModelTrialExecutionState,
+    /// Arms whose billed reading is kept, of `arms_total` (two per case).
+    pub arms_completed: usize,
+    /// Arms sent with no reading back: their spend is unknown, and they are
+    /// never sent again.
+    pub arms_unknown: usize,
+    pub arms_total: usize,
     pub evidence: Option<ModelTrialEvidence>,
     pub receipt: Option<ModelTrialReceipt>,
 }
 
 impl ModelTrialView {
     pub(super) fn of(catalog_revision: String, trial: ModelTrial) -> Self {
+        let progress = trial.progress_counts();
         Self {
             catalog_revision,
             id: trial.id,
@@ -128,6 +141,10 @@ impl ModelTrialView {
             admission: trial.admission,
             prepared_at: trial.prepared_at,
             execution_started: trial.execution_started,
+            execution: progress.state,
+            arms_completed: progress.completed,
+            arms_unknown: progress.unknown,
+            arms_total: progress.total,
             evidence: trial.evidence.map(|value| ModelTrialEvidence {
                 measurements_hash: value.measurements_hash,
                 incumbent_loss: value.incumbent_loss,
@@ -136,6 +153,7 @@ impl ModelTrialView {
                 incumbent_cost_per_thousand: value.incumbent_cost_per_thousand,
                 candidate_cost_per_thousand: value.candidate_cost_per_thousand,
                 trial_cost: value.trial_cost,
+                unknown_arms: value.unknown_arms,
             }),
             receipt: trial.receipt,
         }
