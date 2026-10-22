@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1154 facade rows, 4091 declarations.
-Inputs: 1089 of 1154 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1038 of 1154 fully typed, 116 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1155 facade rows, 4102 declarations.
+Inputs: 1090 of 1155 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1039 of 1155 fully typed, 116 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -3437,10 +3437,16 @@ WithheldRole = Literal["input", "prompt", "trigger"]
 class WithheldRef(TypedDict):
     handle: str
     role: WithheldRole
+class RoomEvidenceRef(TypedDict):
+    supplied: str
+    turn: NotRequired[str | None]
+class RoomEvidence(TypedDict):
+    refs: list[RoomEvidenceRef]
 class RowBirth(TypedDict):
     made_by: MadeBy
     content_hash: str
     withheld: NotRequired[list[WithheldRef]]
+    room_evidence: NotRequired[RoomEvidence | None]
 class ScopedExportRecord(TypedDict):
     record: RecordRef
     position: RecordPosition
@@ -7263,6 +7269,7 @@ class CreateNoteRequest(TypedDict):
 class OffRecordNoteRequest(TypedDict):
     session_ref: str
     note: CreateNoteRequest
+    evidence_turn_refs: NotRequired[list[str]]
 class OffRecordClaimRequest(TypedDict):
     session_ref: str
     claim: ScopedClaimInput
@@ -10859,6 +10866,67 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeRunTypeDiagnosticsRequest(TypedDict):
+    check_ref: str
+class ProgramStepIdentity(TypedDict):
+    run: str
+    program_seq: int
+    invocation: int
+class ProgramPreparationNote(TypedDict):
+    code: str
+    detail: NotRequired[str | None]
+class TypeCheckFacts(TypedDict):
+    language: str
+    file: str
+    backend: str
+    pin: str
+    action_digest: NotRequired[str | None]
+    elapsed_us: NotRequired[int | None]
+    peak_memory_bytes: NotRequired[int | None]
+class DiagnosticMeasures(TypedDict):
+    count: int
+    bytes: int
+class TypeDiagnostic(TypedDict):
+    file: NotRequired[str | None]
+    line: int
+    column: int
+    category: str
+    code: int
+    message: str
+    message_bytes: int
+class DiagnosticCollectionInline(TypedDict):
+    form: Literal["inline"]
+    diagnostics: list[TypeDiagnostic]
+class DiagnosticCollectionStored(TypedDict):
+    form: Literal["stored"]
+    handle: str
+    occurrence: str
+    byte_len: int
+DiagnosticCollection = DiagnosticCollectionInline | DiagnosticCollectionStored
+class TypeDiagnosticsComplete(TypedDict):
+    state: Literal["complete"]
+    check: TypeCheckFacts
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsPending(TypedDict):
+    state: Literal["pending"]
+    check: TypeCheckFacts
+class TypeDiagnosticsFailed(TypedDict):
+    state: Literal["failed"]
+    check: TypeCheckFacts
+    failure: str
+    measures: DiagnosticMeasures
+    diagnostics: DiagnosticCollection
+class TypeDiagnosticsUnavailable(TypedDict):
+    state: Literal["unavailable"]
+    reason: str
+    detail: NotRequired[str | None]
+TypeDiagnostics = TypeDiagnosticsComplete | TypeDiagnosticsPending | TypeDiagnosticsFailed | TypeDiagnosticsUnavailable
+class ProgramStepFeedback(TypedDict):
+    step: ProgramStepIdentity
+    check_ref: str
+    preparation_note: NotRequired[ProgramPreparationNote | None]
+    type_diagnostics: TypeDiagnostics
 class CodeWaitTarget(TypedDict):
     run_id: EntityId
     wait_id: EntityId
@@ -20012,6 +20080,8 @@ class FoldHistoryStep(TypedDict):
     step: int
     code: str
     console: str
+    type_diagnostics: NotRequired[TypeDiagnostics | None]
+    preparation_note: NotRequired[ProgramPreparationNote | None]
 class FoldHistory(TypedDict):
     run: str
     completed_steps: int

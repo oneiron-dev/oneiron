@@ -25,11 +25,13 @@ mod skill_call;
 mod stack_floor;
 mod store;
 mod turn_hooks;
+mod type_feedback;
 mod types;
 mod wire;
 
 pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
+pub use self::code_check::TypeFeedback;
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
