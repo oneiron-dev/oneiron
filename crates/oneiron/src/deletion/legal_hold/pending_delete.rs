@@ -78,7 +78,10 @@ impl Vault {
             }
             // What the due run will refuse is never accepted: the ordinary
             // delete runs instead, and refuses as it does today.
-            if self.delete_admission_in_txn(txn, id, reason, false).is_err() {
+            if self
+                .delete_admission_in_txn(txn, id, reason, false)
+                .is_err()
+            {
                 return Ok(false);
             }
             let generation = self.store.clock.entity_id()?;

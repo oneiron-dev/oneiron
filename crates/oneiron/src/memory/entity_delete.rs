@@ -1,7 +1,9 @@
 //! Owner-bound preview and one-call unshare-before-delete confirmation.
 
 use super::support::verify_deletion_authority_in_txn;
-use super::{DeleteReceipt, DeleteRequestState, Memory, MemoryError, MemoryResult, SafeDeleteReason};
+use super::{
+    DeleteReceipt, DeleteRequestState, Memory, MemoryError, MemoryResult, SafeDeleteReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::{
     DeleteEntityOptions, DeleteEntityPreview, DeletionGateContext, GuestRevokeAuthority,

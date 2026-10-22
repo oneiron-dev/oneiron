@@ -452,8 +452,8 @@ pub(crate) async fn core_memory_verb(
             };
             // The proven owner's delete of a record only secret orders keep
             // waits, accepted, instead of being refused (FIX 1465).
-            let pending = owner_delete::owner_pending_delete(&server, &auth, &id, reason)
-                .map_err(failed)?;
+            let pending =
+                owner_delete::owner_pending_delete(&server, &auth, &id, reason).map_err(failed)?;
             let (outcome, state) = if pending {
                 let state = oneiron::memory::DeleteRequestState::CompletionPending;
                 ((true, None, None), state)

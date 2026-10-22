@@ -35,15 +35,7 @@ use crate::store::legal_hold::{self as hold_store, HoldActor, PendingErase, Pend
 /// One standing customer hold as the confirm showed it, whole: a hold
 /// widened since is not narrowed on an old confirm.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct ShownCustomerHold {
