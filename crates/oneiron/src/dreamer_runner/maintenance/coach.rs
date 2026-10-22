@@ -30,8 +30,12 @@ use crate::skill_attribution::{
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
 
+// A paired eval measurement's job, queued per request (FIX 574).
+mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
+
+pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
 /// Host-run Coach queue kind. The payload `job_type` names the facet.
 pub const COACH_HOST_QUEUE_KIND: &str = "coach.host";
@@ -68,6 +72,11 @@ pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
 pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
+/// One paired eval measurement (FIX 574, OF-578), queued for the host when it
+/// is asked for. The host reads it through
+/// [`Vault::coach_eval_measurement_target`], then generates, scores and
+/// records its legs. Input: `{measurement: <64 hex>}`.
+pub const COACH_EVAL_MEASUREMENT_FACET: &str = "coach.eval_measurement";
 /// One owner-authorized training run, queued for the host when the owner
 /// authorizes it; the host trains, then evaluates, or records why it cannot.
 /// Input: `{run: <32 hex>, spec: <64 hex>}`.

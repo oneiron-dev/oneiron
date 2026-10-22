@@ -42,6 +42,7 @@ mod dreamer;
 pub(crate) use dreamer::DreamerControl;
 mod dreamer_thing;
 mod eval_authoring;
+mod eval_measurement;
 pub(crate) mod failure_signals;
 mod feedback_report_delivery;
 mod feedback_triage;

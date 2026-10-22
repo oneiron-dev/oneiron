@@ -89,7 +89,7 @@ pub(super) fn read_cards(
             detectable_effect: None,
             set_changed,
             rubric_changed,
-            canary_diverged,
+            canary_diverged: Some(canary_diverged),
         })
         .ok();
         if kind.verdict == NotWorse::NotWorse && (set_changed || rubric_changed || canary_diverged)

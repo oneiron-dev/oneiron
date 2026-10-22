@@ -231,11 +231,14 @@ pub(super) fn draft(
             // No seat took the call: the next night asks again.
             return Ok(());
         };
-        let Some(draft) =
+        let Some(mut draft) =
             parse_answer(&text).and_then(|answer| brief.draft(answer, offer_skill.clone(), now))
         else {
             continue;
         };
+        // An exact Final paired measurement of this pair supplies its own
+        // card (FIX 574); without one the grounded evidence stands.
+        super::eval_measurement::attach_measured_card(vault, &mut draft, now)?;
         // The offer also reads the pilots its options were grounded on, each
         // its own option's exact pilot from the brief (FIX 7021, 9469): its
         // set, `None` when any such pilot's measurement set is unknown.

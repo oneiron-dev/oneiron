@@ -187,6 +187,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_EVAL_EXPOSURE, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_FAMILY, CONTENT),
     (&t::SKILL_OPTIMIZE_EVAL_LABEL_ASK, CONTENT),
+    // A restore cannot make a claimed measurement fresh: its exposures were
+    // counted and its legs paid on the live vault.
+    (&t::SKILL_OPTIMIZE_EVAL_MEASUREMENT, LIVE),
     (&t::SKILL_OPTIMIZE_EVAL_ROOT, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_LABEL, CONTENT),
