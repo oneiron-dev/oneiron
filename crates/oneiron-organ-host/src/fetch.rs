@@ -25,7 +25,8 @@ use std::sync::mpsc;
 use std::thread;
 
 use oneiron_organ_protocol::{
-    AskCode, AskRefusal, ByteBuf, FetchAnswer, FetchAsk, FetchMethod, Hash32,
+    AskCode, AskRefusal, ByteBuf, FetchAnswer, FetchAsk, FetchMethod, Hash32, Value, from_value,
+    to_value,
 };
 use reqwest::Url;
 
@@ -48,12 +49,9 @@ fn failed(detail: impl Into<String>) -> AskRefusal {
 }
 
 /// Reads a fetch ask as the wire carries it: named fields, enums by name.
-fn parse(value: &rmpv::Value) -> Result<(FetchAsk, Url), AskRefusal> {
-    let not_a_fetch =
-        |err: &dyn std::fmt::Display| refused(AskCode::BadRequest, format!("not a fetch: {err}"));
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| not_a_fetch(&err))?;
-    let ask: FetchAsk = rmp_serde::from_slice(&bytes).map_err(|err| not_a_fetch(&err))?;
+fn parse(value: &Value) -> Result<(FetchAsk, Url), AskRefusal> {
+    let ask: FetchAsk = from_value(value)
+        .map_err(|err| refused(AskCode::BadRequest, format!("not a fetch: {err}")))?;
     let url = Url::parse(&ask.url)
         .map_err(|err| refused(AskCode::BadRequest, format!("the url: {err}")))?;
     Ok((ask, url))
@@ -68,16 +66,15 @@ fn origin(url: &Url) -> String {
     )
 }
 
-/// A wire value read as `T`, as the wire names its fields.
-pub(crate) fn decode<T: serde::de::DeserializeOwned>(value: &rmpv::Value) -> Option<T> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).ok()?;
-    rmp_serde::from_slice(&bytes).ok()
+/// A wire value read as `T`, as the wire names its fields, through the
+/// protocol's codec, which does not recurse over the value's depth.
+pub(crate) fn decode<T: serde::de::DeserializeOwned>(value: &Value) -> Option<T> {
+    from_value(value).ok()
 }
 
 /// The bytes of a fetch ask's purpose, kept whole: 0 for a value that is
 /// not a fetch.
-pub(crate) fn purpose_bytes(value: &rmpv::Value) -> u64 {
+pub(crate) fn purpose_bytes(value: &Value) -> u64 {
     decode::<FetchAsk>(value).map_or(0, |ask| ask.purpose.len() as u64)
 }
 
@@ -110,7 +107,7 @@ fn allowed(url: &Url, grant: &FetchGrant) -> Result<(), AskRefusal> {
 /// The host's own check of a fetch's first hop, before any handler runs.
 /// Returns what the receipt records of the target either way.
 pub(crate) fn first_hop(
-    value: &rmpv::Value,
+    value: &Value,
     grant: &FetchGrant,
 ) -> (Option<FetchTarget>, Result<(), AskRefusal>) {
     let (_, url) = match parse(value) {
@@ -307,9 +304,7 @@ async fn fetch(
             content_type,
             final_url: url.to_string(),
         };
-        let encoded = rmp_serde::to_vec_named(&answer)
-            .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
-        let value = rmpv::decode::read_value(&mut encoded.as_slice())
+        let value = to_value(&answer)
             .map_err(|err| refused(AskCode::Failed, format!("answer: {err}")))?;
         return Ok(Answered {
             value,

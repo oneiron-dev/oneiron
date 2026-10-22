@@ -18,7 +18,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::Instant;
 
-use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk};
+use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk, Value};
 
 use crate::budget::NativeRefusal;
 use crate::handlers::{Answered, AskHandler, AskRequest};
@@ -107,19 +107,13 @@ impl AskHandler for MemoryGrow {
 }
 
 /// A `memory.grow` ask's value, as the wire names its fields.
-fn decode(value: &rmpv::Value) -> Result<MemoryAsk, AskRefusal> {
-    let bad = |err: &dyn fmt::Display| {
-        AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}"))
-    };
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|err| bad(&err))?;
-    rmp_serde::from_slice(&bytes).map_err(|err| bad(&err))
+fn decode(value: &Value) -> Result<MemoryAsk, AskRefusal> {
+    oneiron_organ_protocol::from_value(value)
+        .map_err(|err| AskRefusal::new(AskCode::BadRequest, format!("not a memory ask: {err}")))
 }
 
 /// The answer as a wire value, with named fields.
-fn encode(answer: &MemoryAnswer) -> Result<rmpv::Value, AskRefusal> {
-    let failed =
-        |err: &dyn fmt::Display| AskRefusal::new(AskCode::Failed, format!("answer: {err}"));
-    let bytes = rmp_serde::to_vec_named(answer).map_err(|err| failed(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| failed(&err))
+fn encode(answer: &MemoryAnswer) -> Result<Value, AskRefusal> {
+    oneiron_organ_protocol::to_value(answer)
+        .map_err(|err| AskRefusal::new(AskCode::Failed, format!("answer: {err}")))
 }

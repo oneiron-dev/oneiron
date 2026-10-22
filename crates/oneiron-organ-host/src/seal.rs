@@ -50,7 +50,7 @@ use oneiron::blob_artifact::esign::{
 use oneiron::skill_hub::pack_catalog::PackOrganBinary;
 use oneiron_organ_protocol::seal::SealRevisionClassification;
 use oneiron_organ_protocol::{
-    ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32,
+    ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal, ByteBuf, FrameError, Hash32, Value,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -452,7 +452,7 @@ impl HostedSealer<'_> {
         })
     }
 
-    fn call(&self, verb: &str, schema: u32, args: rmpv::Value) -> OrganCall {
+    fn call(&self, verb: &str, schema: u32, args: Value) -> OrganCall {
         OrganCall {
             organ: self.settings.organ.clone(),
             verb: verb.to_owned(),
@@ -703,15 +703,11 @@ fn name<T: Serialize>(value: &T) -> String {
 }
 
 /// MessagePack with named fields, so the organ reads it by name.
-fn to_value<T: Serialize>(value: &T) -> Result<rmpv::Value, AskRefusal> {
-    let failed =
-        |err: &dyn std::fmt::Display| AskRefusal::new(AskCode::Failed, format!("encode: {err}"));
-    let bytes = rmp_serde::to_vec_named(value).map_err(|err| failed(&err))?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|err| failed(&err))
+fn to_value<T: Serialize>(value: &T) -> Result<Value, AskRefusal> {
+    oneiron_organ_protocol::to_value(value)
+        .map_err(|err| AskRefusal::new(AskCode::Failed, format!("encode: {err}")))
 }
 
-fn from_value<T: DeserializeOwned>(value: &rmpv::Value) -> Result<T, EsignSealerError> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value).map_err(|_| reply_invalid())?;
-    rmp_serde::from_slice(&bytes).map_err(|_| reply_invalid())
+fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, EsignSealerError> {
+    oneiron_organ_protocol::from_value(value).map_err(|_| reply_invalid())
 }

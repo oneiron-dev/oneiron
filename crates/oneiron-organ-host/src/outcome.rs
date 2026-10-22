@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 #[cfg(unix)]
 use oneiron_organ_protocol::MappedRegion;
-use oneiron_organ_protocol::{Hash32, TypedBody};
+use oneiron_organ_protocol::{Hash32, TypedBody, Value};
 
 use crate::budget::Kept;
 use crate::receipt::CallReceipt;
@@ -18,7 +18,7 @@ use crate::receipt::CallReceipt;
 pub struct OrganOutcome {
     pub body: Option<TypedBody>,
     pub outputs: Vec<OrganOutput>,
-    pub report: rmpv::Value,
+    pub report: Value,
     pub receipt: CallReceipt,
 }
 

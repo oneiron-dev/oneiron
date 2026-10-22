@@ -120,6 +120,18 @@ pub fn from_value<T: DeserializeOwned>(value: &Value) -> Result<T, CodecError> {
     from_slice(&to_vec(value)?)
 }
 
+/// What a receiver takes to read `value` at its peak: the encoding's bytes,
+/// and at most what decoding them allocates beside them
+/// ([`Shape::decoded`]), counted as it is written, with nothing allocated.
+///
+/// # Errors
+/// As [`to_vec`].
+pub fn read_cost<T: Serialize + ?Sized>(value: &T) -> Result<u64, CodecError> {
+    let mut measure = Measure::default();
+    value.serialize(&mut ser::Serializer::new(&mut measure))?;
+    Ok(measure.len.saturating_add(measure.shape.decoded()))
+}
+
 /// Where an encoder writes.
 pub(crate) trait Sink {
     fn put(&mut self, bytes: &[u8]);
@@ -137,6 +149,38 @@ struct Count(u64);
 impl Sink for Count {
     fn put(&mut self, bytes: &[u8]) {
         self.0 = self.0.saturating_add(bytes.len() as u64);
+    }
+}
+
+/// A sink that reads the shape of what it is given as it comes: the
+/// encoder puts each header whole, then the bytes it carries, if any.
+#[derive(Default)]
+struct Measure {
+    len: u64,
+    shape: Shape,
+    /// The bytes the last header carries still to come.
+    carried: u64,
+}
+
+impl Sink for Measure {
+    fn put(&mut self, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        self.len = self.len.saturating_add(bytes.len() as u64);
+        if self.carried > 0 {
+            self.carried = self.carried.saturating_sub(bytes.len() as u64);
+            return;
+        }
+        self.shape.values += 1;
+        match Reader::new(bytes).header() {
+            Ok(Header::Str(len) | Header::Bin(len) | Header::Ext(_, len)) => {
+                self.shape.payload = self.shape.payload.saturating_add(len);
+                self.carried = len;
+            }
+            Ok(Header::Array(len) | Header::Map(len)) if len > 0 => self.shape.containers += 1,
+            _ => {}
+        }
     }
 }
 
@@ -314,6 +358,23 @@ pub(crate) enum Token<'a> {
     Map(u64),
 }
 
+/// One value's header: a scalar, or the length of what a string, binary,
+/// extension, array or map holds.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Header {
+    Nil,
+    Bool(bool),
+    Uint(u64),
+    Int(i64),
+    F32(f32),
+    F64(f64),
+    Str(u64),
+    Bin(u64),
+    Ext(i8, u64),
+    Array(u64),
+    Map(u64),
+}
+
 /// Reads tokens from bytes in order.
 #[derive(Debug)]
 pub(crate) struct Reader<'a> {
@@ -366,62 +427,72 @@ impl<'a> Reader<'a> {
             .fold(0u64, |value, byte| (value << 8) | u64::from(*byte)))
     }
 
-    fn ext(&mut self, len: u64) -> Result<Token<'a>, CodecError> {
-        let kind = self.byte()? as i8;
-        Ok(Token::Ext(kind, self.take(len)?))
+    /// The next value's header: its marker, and the length or scalar that
+    /// follows it, but not the bytes a string, binary or extension carries.
+    ///
+    /// # Errors
+    /// The bytes end inside it, or it is a long length of no known kind.
+    pub(crate) fn header(&mut self) -> Result<Header, CodecError> {
+        let marker = self.byte()?;
+        Ok(match marker {
+            0x00..=0x7f => Header::Uint(u64::from(marker)),
+            0x80..=0x8f => Header::Map(u64::from(marker & 0x0f)),
+            0x90..=0x9f => Header::Array(u64::from(marker & 0x0f)),
+            0xa0..=0xbf => Header::Str(u64::from(marker & 0x1f)),
+            0xc0 => Header::Nil,
+            0xc1 => self.long()?,
+            0xc2 => Header::Bool(false),
+            0xc3 => Header::Bool(true),
+            0xc4..=0xc6 => Header::Bin(self.be(1 << (marker - 0xc4))?),
+            0xc7..=0xc9 => {
+                let len = self.be(1 << (marker - 0xc7))?;
+                Header::Ext(self.byte()? as i8, len)
+            }
+            0xca => Header::F32(f32::from_bits(self.be(4)? as u32)),
+            0xcb => Header::F64(f64::from_bits(self.be(8)?)),
+            0xcc..=0xcf => Header::Uint(self.be(1 << (marker - 0xcc))?),
+            0xd0 => Header::Int(i64::from(self.be(1)? as u8 as i8)),
+            0xd1 => Header::Int(i64::from(self.be(2)? as u16 as i16)),
+            0xd2 => Header::Int(i64::from(self.be(4)? as u32 as i32)),
+            0xd3 => Header::Int(self.be(8)? as i64),
+            0xd4..=0xd8 => Header::Ext(self.byte()? as i8, 1 << (marker - 0xd4)),
+            0xd9..=0xdb => Header::Str(self.be(1 << (marker - 0xd9))?),
+            0xdc | 0xdd => Header::Array(self.be(2 << (marker - 0xdc))?),
+            0xde | 0xdf => Header::Map(self.be(2 << (marker - 0xde))?),
+            0xe0..=0xff => Header::Int(i64::from(marker as i8)),
+        })
     }
 
-    fn long(&mut self) -> Result<Token<'a>, CodecError> {
+    fn long(&mut self) -> Result<Header, CodecError> {
         let kind = self.byte()?;
         let len = self.be(8)?;
         Ok(match kind {
-            0 => Token::Str(self.take(len)?),
-            1 => Token::Bin(self.take(len)?),
-            2 => Token::Array(len),
-            3 => Token::Map(len),
-            4 => self.ext(len)?,
+            0 => Header::Str(len),
+            1 => Header::Bin(len),
+            2 => Header::Array(len),
+            3 => Header::Map(len),
+            4 => Header::Ext(self.byte()? as i8, len),
             _ => return Err(CodecError::Invalid("an unknown kind of long length")),
         })
     }
 
-    /// The next token.
+    /// The next token: its header, with the bytes it carries.
     ///
     /// # Errors
     /// The bytes end inside it, or it is a long length of no known kind.
     pub(crate) fn token(&mut self) -> Result<Token<'a>, CodecError> {
-        let marker = self.byte()?;
-        Ok(match marker {
-            0x00..=0x7f => Token::Uint(u64::from(marker)),
-            0x80..=0x8f => Token::Map(u64::from(marker & 0x0f)),
-            0x90..=0x9f => Token::Array(u64::from(marker & 0x0f)),
-            0xa0..=0xbf => Token::Str(self.take(u64::from(marker & 0x1f))?),
-            0xc0 => Token::Nil,
-            0xc1 => self.long()?,
-            0xc2 => Token::Bool(false),
-            0xc3 => Token::Bool(true),
-            0xc4..=0xc6 => {
-                let len = self.be(1 << (marker - 0xc4))?;
-                Token::Bin(self.take(len)?)
-            }
-            0xc7..=0xc9 => {
-                let len = self.be(1 << (marker - 0xc7))?;
-                self.ext(len)?
-            }
-            0xca => Token::F32(f32::from_bits(self.be(4)? as u32)),
-            0xcb => Token::F64(f64::from_bits(self.be(8)?)),
-            0xcc..=0xcf => Token::Uint(self.be(1 << (marker - 0xcc))?),
-            0xd0 => Token::Int(i64::from(self.be(1)? as u8 as i8)),
-            0xd1 => Token::Int(i64::from(self.be(2)? as u16 as i16)),
-            0xd2 => Token::Int(i64::from(self.be(4)? as u32 as i32)),
-            0xd3 => Token::Int(self.be(8)? as i64),
-            0xd4..=0xd8 => self.ext(1 << (marker - 0xd4))?,
-            0xd9..=0xdb => {
-                let len = self.be(1 << (marker - 0xd9))?;
-                Token::Str(self.take(len)?)
-            }
-            0xdc | 0xdd => Token::Array(self.be(2 << (marker - 0xdc))?),
-            0xde | 0xdf => Token::Map(self.be(2 << (marker - 0xde))?),
-            0xe0..=0xff => Token::Int(i64::from(marker as i8)),
+        Ok(match self.header()? {
+            Header::Nil => Token::Nil,
+            Header::Bool(flag) => Token::Bool(flag),
+            Header::Uint(integer) => Token::Uint(integer),
+            Header::Int(integer) => Token::Int(integer),
+            Header::F32(float) => Token::F32(float),
+            Header::F64(float) => Token::F64(float),
+            Header::Str(len) => Token::Str(self.take(len)?),
+            Header::Bin(len) => Token::Bin(self.take(len)?),
+            Header::Ext(kind, len) => Token::Ext(kind, self.take(len)?),
+            Header::Array(len) => Token::Array(len),
+            Header::Map(len) => Token::Map(len),
         })
     }
 

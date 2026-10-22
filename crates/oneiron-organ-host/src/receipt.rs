@@ -4,7 +4,7 @@
 
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
-use oneiron_organ_protocol::{AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion};
+use oneiron_organ_protocol::{AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion, to_vec};
 use serde::{Deserialize, Serialize};
 
 use crate::spec::CallClass;
@@ -163,10 +163,11 @@ pub(crate) fn measured_notes(vault: &Vault, notes: Notes) -> Notes {
 }
 
 fn encoded_len(locator: &Locator) -> usize {
-    rmp_serde::to_vec_named(locator).map_or(usize::MAX, |bytes| bytes.len())
+    oneiron_organ_protocol::encoded_len(locator)
+        .map_or(usize::MAX, |len| usize::try_from(len).unwrap_or(usize::MAX))
 }
 
-/// blake3 of a value's MessagePack encoding.
+/// blake3 of a value's MessagePack encoding, in the protocol's codec.
 pub(crate) fn digest<T: Serialize>(value: &T) -> Hash32 {
-    rmp_serde::to_vec_named(value).map_or_else(|_| Hash32([0; 32]), |bytes| Hash32::of(&bytes))
+    to_vec(value).map_or_else(|_| Hash32([0; 32]), |bytes| Hash32::of(&bytes))
 }

@@ -72,6 +72,17 @@ pub fn frame_body_len<T: Serialize + ?Sized>(msg: &T) -> Result<u64, FrameError>
     codec::encoded_len(msg).map_err(FrameError::Encode)
 }
 
+/// What the receiver of `msg` takes to read it, at its peak: the
+/// message's frames and the value they decode into, at once, counted with
+/// nothing allocated. A sender reserves it for a receiver that cannot book
+/// its own read (FIX 6195).
+///
+/// # Errors
+/// The message does not encode.
+pub fn frame_read_cost<T: Serialize + ?Sized>(msg: &T) -> Result<u64, FrameError> {
+    codec::read_cost(msg).map_err(FrameError::Encode)
+}
+
 /// [`super::recv_frame_polled`], booked: `booking` makes room for each
 /// frame, then for the message's value ([`FrameBooking`]). Returns the
 /// message's encoded length too.
