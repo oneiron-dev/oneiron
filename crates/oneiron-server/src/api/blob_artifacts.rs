@@ -287,6 +287,19 @@ fn owner_actor(auth: &CoreAuth, server: &SyncServer) -> Result<WriteActor, ApiEr
     actor(auth, None)
 }
 
+/// The writer a proposal route holds its proposal as (FIX 2222): a
+/// self-hosted root or the dev mode proposes as the owner its host action
+/// binds, and a hosted operator's root is refused, typed, with no fallback
+/// to another actor. Any other credential writes as its bound principal.
+fn proposal_writer(server: &SyncServer, auth: &CoreAuth) -> Result<WriteActor, ApiError> {
+    match super::host_action::host_action_of(server.vault(), auth) {
+        Some(action) => action
+            .map(|action| action.actor())
+            .map_err(super::host_action::host_action_refusal),
+        None => actor(auth, None),
+    }
+}
+
 /// `POST /v1/core/artifacts` as the `vault.artifacts.create` row (OF-181):
 /// an action when the credential binds one that writes as this actor and
 /// the body fits one action argument (64 MiB), else through the row's own
@@ -746,7 +759,7 @@ pub(super) async fn propose_deck(
     payload: Result<Json<ProposeDeck>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let request = json_payload(payload)?;
     let transaction = request.transaction.canonical();
@@ -810,7 +823,7 @@ pub(super) async fn propose_output(
     payload: Result<Json<ProposeOutput>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
-    let actor = actor(&auth, None)?;
+    let actor = proposal_writer(&server, &auth)?;
     let id = parse_entity_id_param(&artifact, "artifact")?;
     let request = json_payload(payload)?;
     let output = NativeOutput {
