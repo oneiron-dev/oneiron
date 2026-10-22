@@ -159,6 +159,12 @@ const DECISIONS: &[(&str, Check)] = &[
         "calendar invitation consent",
         loosened::<consent::CalendarInviteConsent>,
     ),
+    // The same decision per send, through the invitation door's resolver
+    // (FIX 8824): one booking a recipient keeps never stands for another.
+    (
+        "calendar invitation consent",
+        loosened::<consent::CalendarInviteSendConsent>,
+    ),
     (
         "world selection authority",
         loosened::<worlds::WorldSelections>,
