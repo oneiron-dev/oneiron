@@ -101181,7 +101181,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ModelRuntime",
@@ -101190,8 +101190,8 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 18,
-      "fn": 20,
+      "crate-vis": 14,
+      "fn": 1,
       "re-export": 14,
       "struct": 2
      }
@@ -101378,6 +101378,17 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/runtime.rs",
+     "purpose": "Model runtime construction and accessors",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 19
      }
     },
     {
@@ -104581,7 +104592,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104721,9 +104732,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 39,
+   "over_bar": 38,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1200,
+   "source_files": 1201,
    "test_files": 182
   },
   "oneiron-spawn": {
