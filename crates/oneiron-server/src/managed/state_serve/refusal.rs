@@ -3,7 +3,7 @@
 use super::REAP_PAUSE_REFUSAL;
 use crate::managed::ManagedError;
 
-/// [`writes_frozen_response`](super::writes_frozen_response)'s body.
+/// [`writes_frozen_response`](super::ingress::writes_frozen_response)'s body.
 pub(super) fn writes_frozen_body(error: &ManagedError) -> serde_json::Value {
     let refusal = REAP_PAUSE_REFUSAL;
     serde_json::json!({

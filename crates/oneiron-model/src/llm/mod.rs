@@ -22,6 +22,7 @@ mod cache;
 mod call;
 mod defaults;
 mod inference;
+mod inference_observation;
 pub use defaults::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -85,6 +86,8 @@ pub use self::inference::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
     WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
 };
+// FIX 9065: what each physical request measured, published on its lease while it runs.
+pub use self::inference_observation::{InferenceCallObservation, InferenceObservationId};
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 

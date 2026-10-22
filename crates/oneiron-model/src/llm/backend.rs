@@ -8,7 +8,11 @@ use std::task::{Context, Poll};
 
 use futures_core::Stream;
 
-use super::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent, RetryableLlmError};
+use super::inference_observation::InferenceObservations;
+use super::{
+    InferenceCallObservation, InferenceObservationId, LlmError, LlmRequest, LlmResponse,
+    LlmStreamEvent, RetryableLlmError,
+};
 
 pub type LlmResult<T> = std::result::Result<T, LlmError>;
 
@@ -132,6 +136,10 @@ pub struct BudgetLease {
     // Allocation identity, not the caller's diagnostic ID, proves provenance.
     // Keeping it alive in leases prevents reuse after the issuing guard drops.
     pub(super) guard_identity: Arc<()>,
+    /// What the call's physical requests measured (FIX 9065), shared by the
+    /// lease's clones. Not part of its identity: equality and hash stay the
+    /// id and the issuing guard.
+    observations: Arc<InferenceObservations>,
 }
 
 impl fmt::Debug for BudgetLease {
@@ -165,7 +173,39 @@ impl BudgetLease {
         Self {
             id: id.into(),
             guard_identity,
+            observations: Arc::default(),
         }
+    }
+
+    /// Begins the observation of one physical request this lease's call sends
+    /// (FIX 9065). An adapter begins one per request, before it leaves, and
+    /// publishes what it measures through [`Self::observe_inference_call`]
+    /// while the request runs, so a call cut before it returns still settles
+    /// that evidence.
+    #[must_use]
+    pub fn begin_inference_observation(&self) -> InferenceObservationId {
+        self.observations.begin()
+    }
+
+    /// Records what request `id` measured: its progress so far
+    /// ([`InferenceCallObservation::Partial`]), or its final receipt
+    /// ([`InferenceCallObservation::Final`]), in place of what it recorded
+    /// before. A final receipt is never replaced by a partial one, and an id
+    /// another lease began is ignored. A measurement no native source made is
+    /// left absent, never zero.
+    pub fn observe_inference_call(
+        &self,
+        id: InferenceObservationId,
+        observation: InferenceCallObservation,
+    ) {
+        self.observations.observe(id, observation);
+    }
+
+    /// What this lease's requests measured, in the order they began; a request
+    /// that recorded nothing is left out.
+    #[must_use]
+    pub fn inference_observations(&self) -> Vec<InferenceCallObservation> {
+        self.observations.snapshot()
     }
 
     /// A lease no guard issued, for tests that need one without a budget. Compiled only

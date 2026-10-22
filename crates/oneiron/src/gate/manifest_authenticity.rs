@@ -61,6 +61,34 @@ pub(crate) fn manifest_is_seeded_default(
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
+/// Who stands behind one trusted manifest's numeric policy rows (Engine
+/// 10-22 C1). Generic local trust is not holder authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::gate) enum PolicyRowOrigin {
+    /// The untouched engine seed: shipped values, a fallback only.
+    Seeded,
+    /// Bytes an authenticated owner or holder door wrote, by the exact-body
+    /// holder proof: they replace the fallback.
+    Authored,
+    /// Any other trusted manifest: it only narrows.
+    Narrowing,
+}
+
+pub(in crate::gate) fn policy_row_origin(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<PolicyRowOrigin> {
+    Ok(if manifest_is_seeded_default(store, txn, id, body)? {
+        PolicyRowOrigin::Seeded
+    } else if retention_holder_verified(store, txn, id, body)? {
+        PolicyRowOrigin::Authored
+    } else {
+        PolicyRowOrigin::Narrowing
+    })
+}
+
 /// Marks the body hashed `hash` at `id` as the engine's seeded default,
 /// untouched by any local re-authoring.
 pub(in crate::gate) fn mark_seeded(
