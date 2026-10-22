@@ -45,6 +45,11 @@ pub(super) struct ConnState {
     /// The machine this socket's upgrade proved, independent of its actor.
     /// Read it through [`Self::peer_machine`], which asks the fold again.
     proven_machine: oneiron::authority::PeerMachine,
+    /// Window pad envelopes still coming in on this socket (FIX 7107).
+    pub(super) window_pads: oneiron::sync::transport::WindowPadAssembly,
+    /// Windows the peer could not install sealed pads for: they go to it as
+    /// today's carrier.
+    pub(super) window_pad_carrier: std::collections::HashSet<WindowKey>,
 }
 
 impl ConnState {
@@ -65,6 +70,8 @@ impl ConnState {
             residence_index: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
+            window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
+            window_pad_carrier: std::collections::HashSet::new(),
         }
     }
 

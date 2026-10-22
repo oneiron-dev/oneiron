@@ -13,19 +13,21 @@ use crate::sync::transport::TransportError;
 use crate::sync::transport::{self, window_sub_tags};
 use crate::sync::types::WindowKey;
 
-/// A write on the opened-item lane carries its durable queue sequence;
-/// the home replies only after the Loro import is persisted.
-pub(super) fn residence_update_frame(
-    seq: u64,
-    window: &str,
-    update: &[u8],
-) -> Result<Vec<u8>, TransportError> {
-    if seq == 0 || update.is_empty() {
-        return Err(TransportError::InvalidPayload("invalid residence update"));
-    }
-    let mut payload = seq.to_be_bytes().to_vec();
-    payload.extend_from_slice(update);
-    transport::encode_window_sync(window, window_sub_tags::RESIDENCE_UPDATE, &payload).into_result()
+/// Whether `next` fits a node batch alone. A window write's first frame may
+/// pass a member's room by its envelope header's allowance (FIX 7107): it
+/// then goes as a frame of its own, never refused for it.
+pub(super) fn fits_alone(next: &[u8]) -> bool {
+    next.len().saturating_add(5) <= transport::MAX_DECODED_PAYLOAD_BYTES
+}
+
+/// Whether all of `next`, one window write's frames, fit the node batch
+/// `frames` of `size` bytes after its members.
+pub(super) fn fits_all(frames: &[Vec<u8>], size: usize, next: &[Vec<u8>]) -> bool {
+    let total = next
+        .iter()
+        .fold(size, |total, frame| total.saturating_add(4 + frame.len()));
+    frames.len() + next.len() <= transport::MAX_NODE_BATCH_MEMBERS
+        && total <= transport::MAX_DECODED_PAYLOAD_BYTES
 }
 
 /// FIX 922 item 11 call: a forced world window the home may not read is settled for this home,
@@ -160,8 +162,12 @@ impl ConvergenceSession {
     /// converged.
     pub(super) fn note_progress(&mut self, client: &SyncClient) {
         let force_resync = &self.force_resync;
-        self.pending
-            .retain(|key| force_resync.contains(key) || client.window_converged(key) != Some(true));
+        // A sealed update the home has not answered is owed its receipt too (FIX 7107).
+        self.pending.retain(|key| {
+            force_resync.contains(key)
+                || client.window_converged(key) != Some(true)
+                || client.window_pads_owed(key)
+        });
         self.settle_unreadable(client);
     }
 

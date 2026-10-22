@@ -27,6 +27,7 @@ mod device_only;
 mod egress;
 mod forward;
 mod history_free;
+mod pad_custody;
 mod project_history;
 mod rebootstrap;
 mod replacement;
@@ -67,6 +68,10 @@ pub use self::history_free::{
     WindowExport, export_promotion_snapshot, export_window_replacement,
     export_window_replacement_for, export_window_since, export_window_since_for,
     export_window_updates_since, promotion_baseline, update_reaches_below_root,
+};
+pub use self::pad_custody::{
+    PreparedWindowPads, WINDOW_PAD_PART_REPAIR, WindowPadPartRepair, admit_window_pads,
+    carrier_window_pads, prepare_window_pads, promotion_window_pads,
 };
 pub(crate) use self::rebootstrap::{prepare_rebootstrap, reject_held_rebootstrap};
 pub use self::replacement::{PreparedReplacement, ReplacementConflict, prepare_replacement};

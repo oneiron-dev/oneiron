@@ -41,9 +41,21 @@ pub(super) async fn handle_window_sync(
     // fail-closed even if a future caller bypasses the wire decoder.
     let key = WindowKey::try_new(window_key)
         .ok_or(ProtocolError::InvalidPayload("invalid window key"))?;
+    // A window's bytes come in their envelope, put back together on this socket (FIX 7107).
+    let envelope = match super::window_pads::accept(conn_state, &key, sub_tag, payload)? {
+        super::window_pads::Inbound::Frame => None,
+        super::window_pads::Inbound::Done => return Ok(ControlFlow::Continue(())),
+        super::window_pads::Inbound::Envelope(sub_tag, envelope) => Some((sub_tag, envelope)),
+    };
+    let (sub_tag, payload) = envelope
+        .as_ref()
+        .map_or((sub_tag, payload), |(sub_tag, envelope)| {
+            (*sub_tag, envelope.payload.as_slice())
+        });
 
     // Enforce max_update_payload BEFORE the window doc is fetched/created:
-    // an oversized update must not mutate any server state.
+    // an oversized update must not mutate any server state. An envelope's
+    // payload is judged, never its header or capsule.
     if matches!(
         sub_tag,
         window_sub_tags::UPDATE
@@ -300,18 +312,12 @@ pub(super) async fn handle_window_sync(
             }
         }
         window_sub_tags::UPDATE | window_sub_tags::RESIDENCE_UPDATE => {
-            let (residence_seq, update) = if sub_tag == window_sub_tags::RESIDENCE_UPDATE {
-                let (seq, update) = payload
-                    .split_at_checked(8)
-                    .ok_or(ProtocolError::InvalidPayload("short residence update"))?;
-                let seq = u64::from_be_bytes(seq.try_into().expect("length checked"));
-                if seq == 0 || update.is_empty() {
-                    return Err(ProtocolError::InvalidPayload("invalid residence update"));
-                }
-                (Some(seq), update)
-            } else {
-                (None, payload)
-            };
+            // The envelope's header holds a residence update's sequence, and
+            // only its.
+            let envelope = envelope.as_ref().map(|(_, envelope)| envelope).ok_or(
+                ProtocolError::InvalidPayload("window update outside its envelope"),
+            )?;
+            let (residence_seq, update) = (envelope.queue_seq, payload);
             // Admission runs on an isolated document before Observer B or
             // persistence can see the input. Rejected diagnostics must never
             // be relayed as raw history, even if a later export would scrub.
@@ -368,6 +374,21 @@ pub(super) async fn handle_window_sync(
                 .map_err(map_selector_filter_err)?;
                 write_auth = Some(auth);
             }
+            // The pads it owes reach custody here before it persists (FIX
+            // 7107). Pads that did not install leave nothing persisted,
+            // imported or relayed: the device is told, and sends the same
+            // bytes again as the carrier (KEEP TODAY).
+            let receipt = super::window_pads::admit(server, &key, envelope);
+            if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
+                direct_tx
+                    .send(super::window_pads::receipt_frame(
+                        window_key, sub_tag, &receipt,
+                    )?)
+                    .map_err(|_| {
+                        ProtocolError::Persistence("window pad receipt channel closed".into())
+                    })?;
+                return Ok(ControlFlow::Continue(()));
+            }
             // Durability BEFORE the observed import and fan-out (ARCH-0023b
             // Observer A duty: "MUST persist synchronously"; FIX 5999).
             // `subscribe_local_update` does not fire for imports, so the update
@@ -408,15 +429,10 @@ pub(super) async fn handle_window_sync(
                         })?;
                 let _ = crate::broadcast::broadcast(&server.broadcast_tx, conn_id, broadcast_msg);
             }
-            if let Some(seq) = residence_seq {
-                let mut ack = seq.to_be_bytes().to_vec();
-                ack.extend_from_slice(blake3::hash(update).as_bytes());
-                let frame =
-                    protocol::encode_window_sync(window_key, window_sub_tags::RESIDENCE_ACK, &ack)
-                        .into_result()
-                        .map_err(|e| {
-                            ProtocolError::InvalidPayload(protocol::transport_err_msg(e))
-                        })?;
+            // The acknowledgment is the update's receipt; a sealed owner-lane
+            // update is answered with its receipt too.
+            if residence_seq.is_some() || receipt.binding.sidecar_digest.is_some() {
+                let frame = super::window_pads::receipt_frame(window_key, sub_tag, &receipt)?;
                 direct_tx.send(frame).map_err(|_| {
                     ProtocolError::Persistence("residence acknowledgment channel closed".into())
                 })?;

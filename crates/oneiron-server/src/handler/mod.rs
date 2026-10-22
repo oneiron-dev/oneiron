@@ -26,6 +26,7 @@ mod protocol_close;
 mod residence_socket_tests;
 mod socket_stop;
 mod transport;
+mod window_pads;
 #[cfg(test)]
 pub(crate) mod window_row_tests;
 mod window_sync;

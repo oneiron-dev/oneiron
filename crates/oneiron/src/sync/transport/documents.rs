@@ -177,9 +177,14 @@ fn validate_node_member(frame: &[u8]) -> Result<(), TransportError> {
         Some(&TAG_DOCUMENT) => decode_document(&frame[1..]).map(|_| ()),
         Some(&super::TAG_WINDOW_SYNC) => {
             let (_, kind, payload) = super::decode_window_sync(&frame[1..])?;
+            // A window write's envelope is read before any member dispatches;
+            // its parts may follow it in the same batch.
             match kind {
-                super::window_sub_tags::UPDATE if !payload.is_empty() => Ok(()),
-                super::window_sub_tags::RESIDENCE_UPDATE if payload.len() > 8 => Ok(()),
+                super::window_sub_tags::UPDATE
+                | super::window_sub_tags::RESIDENCE_UPDATE
+                | super::window_sub_tags::WINDOW_PAD_PART => {
+                    super::validate_window_pad_member(kind, payload)
+                }
                 _ => Err(TransportError::InvalidPayload(
                     "batch requires window writes",
                 )),

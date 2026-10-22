@@ -349,6 +349,11 @@ pub(super) fn promote(
         .promoted_pads(&window)
         .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
     rows.extend(pads.iter().map(|pad| pad.id));
+    // The snapshot goes in its window pad envelope, sealed for the machine
+    // that asked (FIX 7107); the pad rows still carry each pad.
+    let snapshot =
+        oneiron::sync::window::promotion_window_pads(&server.vault, peer, &window, &snapshot)
+            .map_err(|_| AppError::internal_server_error("window promotion unavailable"))?;
     Ok((
         json!({
             "window": window.as_str(),
