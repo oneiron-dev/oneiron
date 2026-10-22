@@ -81,6 +81,11 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// The SHA-256 of `bytes`, as the worker hashes its serialized state.
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
 fn body_name(id: &SnapshotId) -> String {
     format!("{}{BODY_SUFFIX}", id.to_hex())
 }
@@ -187,7 +192,7 @@ impl Vault {
     ) -> Result<Option<SnapshotId>> {
         let keepable = publish.dependencies.precise
             && publish.manifest.compatibility.complete()
-            && Sha256::digest(plaintext).as_slice() == publish.snapshot_sha256;
+            && sha256(plaintext) == publish.snapshot_sha256;
         if !keepable || !self.snapshot_admission_holds(admission) {
             return Ok(None);
         }
@@ -373,7 +378,7 @@ impl Vault {
             .and_then(|sealed| open_snapshot(&key, wrapped, &aad, &sealed).ok())
             .filter(|plaintext| {
                 plaintext.len() as u64 == record.plaintext_bytes
-                    && Sha256::digest(&plaintext[..]).as_slice() == record.snapshot_sha256
+                    && sha256(plaintext) == record.snapshot_sha256
             });
         Ok(Some(plaintext))
     }
