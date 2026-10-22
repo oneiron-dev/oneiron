@@ -145,7 +145,11 @@ fn rebuilt_sheet(package: &Package, book: &str, mode: &Mode) -> Option<String> {
     if !matches!(mode, Mode::Rebuild(Some(_))) {
         return None;
     }
-    dataset::free_sheet(&package.part(book).ok()??, package.limits())
+    dataset::free_sheet(
+        &package.part(book).ok()??,
+        package.limits(),
+        package.resources(),
+    )
 }
 
 /// [`chart`]'s rewrite: into the chart's own workbook as `in_place` edits
@@ -188,7 +192,8 @@ fn rewrite(
                 None if *source == ChartSource::Literal => None,
                 None => {
                     let dataset = workbook_dataset(&wanted);
-                    let workbook = chart_workbook(&dataset, SHEET, package.limits())?;
+                    let workbook =
+                        chart_workbook(&dataset, SHEET, package.limits(), package.resources())?;
                     let (book, embedded) = convert::embed_workbook(package, chart, workbook)?;
                     done.extend(embedded);
                     Some(book)
@@ -622,17 +627,24 @@ fn rewrite(
             Some(edit) => (edit.bytes, edit.notes),
             None => {
                 let limits = package.limits();
+                let resources = package.resources().clone();
                 // The chart's own workbook keeps every other sheet, name and
                 // table; where its editor refuses, the rebuild is afresh.
                 let kept = beside.as_deref().and_then(|name| {
-                    dataset::beside(&package.part(book).ok()??, &dataset, name, limits)
+                    dataset::beside(
+                        &package.part(book).ok()??,
+                        &dataset,
+                        name,
+                        limits,
+                        &resources,
+                    )
                 });
                 if kept.is_none() {
                     beside = None;
                 }
                 let workbook = match kept {
                     Some(workbook) => workbook,
-                    None => chart_workbook(&dataset, &sheet, limits)?,
+                    None => chart_workbook(&dataset, &sheet, limits, &resources)?,
                 };
                 (Some(workbook), Vec::new())
             }

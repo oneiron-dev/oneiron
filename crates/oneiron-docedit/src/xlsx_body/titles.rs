@@ -29,7 +29,7 @@ impl Book {
         let Some(bytes) = self.package.part(&part)? else {
             return Ok(());
         };
-        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let tree = XmlTree::parse(&bytes, self.package.resources())?;
         let Some(edits) = worksheet_titles(&bytes, &tree, old, new) else {
             return self.drop_part_titles();
         };
