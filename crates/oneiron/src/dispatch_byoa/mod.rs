@@ -29,7 +29,11 @@
 //! ([`ByoaDispatcher::bind_runner_work_in_txn`]) moves from seat to seat by
 //! reference ([`RunnerWorkBinding`]), whatever each seat's connector shape;
 //! its outcome is read back by id ([`runner_work_outcome`]), and each seat's
-//! quota as its captures read it ([`runner_seat_quotas`]). A vendor login
+//! quota as its captures read it ([`runner_seat_quotas`]). A work a spend
+//! parked moves on only by an explicit resume
+//! ([`ByoaDispatcher::resume_runner_work_in_txn`]), and a seat whose credit
+//! is spent waits for its owner's top-up ([`RunnerSeatCreditTopUpRequest`]).
+//! A vendor login
 //! never crosses this seam; it stays with the official CLI on a runtime its
 //! vendor's terms allow ([`hosted_seat_bound`]).
 //!
@@ -65,12 +69,19 @@ pub use seat::{
 };
 mod seat_quota;
 pub use seat_quota::{RunnerSeatQuota, runner_seat_quotas};
+mod owner_doors;
+pub use owner_doors::{
+    RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
+    RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt,
+};
 mod work_binding;
 pub use work_binding::{
     BindRunnerWork, RunnerSeatChoice, RunnerTaskSource, RunnerWorkBinding, RunnerWorkBindingId,
     RunnerWorkBound, RunnerWorkErrorKind, RunnerWorkOutcome, RunnerWorkTerminal,
     runner_work_outcome,
 };
+mod work_resume;
+pub use work_resume::{ResumeRunnerWork, RunnerWorkResume};
 mod connector;
 mod dispatcher;
 mod error;
@@ -79,10 +90,12 @@ mod host_claim;
 pub mod official_seats;
 mod record;
 mod repo_binding;
+mod seat_candidate;
 mod staged_input;
 mod stream;
 mod validate;
 mod work_hand_off;
+mod work_usage;
 
 pub use self::official_seats::{
     ANTHROPIC_API_BASE_URL, ClaudeAgentSdkSeatAdapter, ClaudeCodeSeatAdapter, CodexSeatAdapter,
@@ -113,8 +126,8 @@ pub use self::exhaust::{
     read_checkpoint_frontier,
 };
 pub use self::repo_binding::ByoaRepoBinding;
-pub(crate) use self::staged_input::erase_staged_input_in_txn;
 pub use self::staged_input::{ByoaInputStager, StagedInputPin};
+pub(crate) use self::staged_input::{erase_staged_input_in_txn, staged_job_pointer};
 pub use self::stream::{ByoaStream, ByoaStreamWriter};
 pub use self::validate::validate_connector;
 

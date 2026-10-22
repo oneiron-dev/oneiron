@@ -31,17 +31,22 @@ fn bad() -> ApiError {
         Some("standing"),
     )
 }
+/// The standing prefix a board reserves, with the CLAIMs its compiled text
+/// holds (FIX 8148): assembly metadata a keyed replay keeps as the response's
+/// sources, never part of the prefix. A board in room `room_id` compiles the
+/// block inside that room's audience (FIX 8147).
 pub(super) async fn standing_prefix(
     server: &SyncServer,
     auth: &CoreAuth,
     controls: Option<&StandingSessionControls>,
-) -> Result<Option<StandingSessionPrefix>, ApiError> {
+    room_id: Option<oneiron::EntityId>,
+) -> Result<(Option<StandingSessionPrefix>, Vec<oneiron::EntityId>), ApiError> {
     let actor_ref = auth.principal_ref().unwrap_or(auth.principal());
     let Ok(actor) = oneiron::EntityId::from_hex(actor_ref) else {
         return if controls.is_some() {
             Err(bad())
         } else {
-            Ok(None)
+            Ok((None, Vec::new()))
         };
     };
     let mut blocks = server.vault.standing_blocks(actor).map_err(|_| bad())?;
@@ -58,7 +63,7 @@ pub(super) async fn standing_prefix(
         blocks.retain(|block| readable.contains(&block.world()));
     }
     if blocks.is_empty() && controls.is_none() {
-        return Ok(None);
+        return Ok((None, Vec::new()));
     }
     // A classless or mistyped slip cannot skip a configured agent floor.
     if auth.actor_class() != Some("agent") {
@@ -87,18 +92,33 @@ pub(super) async fn standing_prefix(
             .require_access_grants(Some(actor)),
     }
     .for_destination(&destination);
+    // A room's block is compiled inside the room's audience, as every read a
+    // room turn makes is (ARCH-0067 §8): that read, narrowed to the room as
+    // its pins are, and the clamp its members' clearance makes. The agent's
+    // own read and a live owner add no term, as in the room's own meet.
+    let read = server.vault.scoped_read(reader);
+    let (read, disclosure) = match room_id {
+        Some(room) => {
+            let audience =
+                crate::api::resolve_core_audience(&server.vault, auth, read, Some(room))?;
+            (audience.read, audience.disclosure)
+        }
+        None => (read, None),
+    };
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
         .vault
-        .begin_standing_block_session(
+        .begin_standing_block_session_under(
             handle,
-            reader,
+            &read,
+            disclosure.as_ref(),
             controls.token_budget,
             controls.block_tokens.unwrap_or(handle.token_floor()),
             &mut cache,
         )
         .map_err(|_| bad())?;
-    Ok(Some(StandingSessionPrefix {
+    drop(cache);
+    let prefix = StandingSessionPrefix {
         handle: pinned.block,
         world_ref: handle.world().to_hex(),
         compiled: String::from_utf8(pinned.compiled).map_err(|_| bad())?,
@@ -111,5 +131,6 @@ pub(super) async fn standing_prefix(
             .into_iter()
             .map(|id| id.to_hex())
             .collect(),
-    }))
+    };
+    Ok((Some(prefix), pinned.retained_claims))
 }

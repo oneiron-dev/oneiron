@@ -74,6 +74,21 @@ impl Vault {
         Ok(Some((version, blob_version_rows(&record)?)))
     }
 
+    /// The rows `artifact_id`'s `version` is ([`blob_version_rows`]), from
+    /// its metadata in the caller's snapshot `rtxn` (FIX 8063): what a
+    /// listing that reads other rows in that snapshot admits beside them.
+    /// `None` when the artifact has no such version.
+    pub(crate) fn blob_artifact_version_rows_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        artifact_id: &EntityId,
+        version: u64,
+    ) -> Result<Option<Vec<EntityId>>> {
+        self.blob_artifact_version_metadata_in_txn(rtxn, artifact_id, version)?
+            .map(|record| blob_version_rows(&record))
+            .transpose()
+    }
+
     /// Whether `id` is one of `artifact`'s own version rows in `rtxn`, a
     /// version's CLAIM or its content's ASSET (FIX 8245): a version record
     /// of `artifact` names it, and that record is bound to its persisted

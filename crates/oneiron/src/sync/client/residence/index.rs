@@ -75,8 +75,14 @@ impl SyncClient {
                 let mut cursor: Option<String> = None;
                 let mut revision: Option<String> = None;
                 let mut items = Vec::new();
-                let mut restarted = false;
-                for _ in 0..budgets.max_index_pages {
+                // The page count is a work slice, not a ceiling: past it the
+                // scan yields and goes on, keeping what it read (FIX 8867).
+                let mut pages = 0usize;
+                loop {
+                    pages = pages.wrapping_add(1);
+                    if pages % budgets.max_index_pages == 0 {
+                        tokio::task::yield_now().await;
+                    }
                     let value = match rpc
                         .request(
                             "residence.index",
@@ -88,10 +94,7 @@ impl SyncClient {
                         .await
                     {
                         Ok(value) => value,
-                        Err(TransportError::IndexRevisionChanged) => {
-                            restarted = true;
-                            break;
-                        }
+                        Err(TransportError::IndexRevisionChanged) => break,
                         Err(error) => return Err(error),
                     };
                     let reply: IndexReply = serde_json::from_value(value).map_err(|_| refused())?;
@@ -137,9 +140,6 @@ impl SyncClient {
                 }
                 if complete.is_some() {
                     break;
-                }
-                if !restarted {
-                    return Err(refused());
                 }
             }
             let items = complete.ok_or(TransportError::IndexRevisionChanged)?;

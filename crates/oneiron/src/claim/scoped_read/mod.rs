@@ -62,6 +62,7 @@ pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
+pub use weave_report::sieve_score::RedactedSieveDecision;
 pub use weave_report::{
     WeaveItem, WeaveReader, WeaveReport, WeaveSection, WeaveSectionKind, WeaveSectionSpec,
 };
@@ -84,6 +85,8 @@ mod records_cover;
 pub use actor_key::{CallerLocality, ScopedReadActorKey};
 #[cfg(feature = "sync")]
 mod residence;
+#[cfg(feature = "sync")]
+mod residence_page;
 #[cfg(feature = "sync")]
 mod selected_search;
 pub(crate) use actor_key::{RoomTerms, RoomTurnCeiling, TurnTerms, meet_clearance};

@@ -38,6 +38,9 @@ use crate::repo_mutation::{
 use crate::{EntityId, TimeRange, Vault};
 
 mod files;
+pub(crate) mod projected;
+pub(crate) mod projected_files;
+pub(crate) mod projected_source;
 mod reads;
 use files::prepare_push_candidate_documents;
 
@@ -240,6 +243,7 @@ impl Vault {
                     source_digest: digest,
                     resolved: None,
                     hold: Some(held),
+                    projected: None,
                 },
             )?,
             Ok(prepared) => {
@@ -394,6 +398,7 @@ impl Vault {
                     files: files.into_iter().map(|file| file.0).collect(),
                 }),
                 hold: None,
+                projected: None,
             },
             fork: CodeRevisionFork::new(
                 fork_session,
