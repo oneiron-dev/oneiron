@@ -34,8 +34,9 @@ use crate::team::{
     PlannedSpawnRequest, SpawnPhase, TeamRunBinding, record_team_start_in_txn,
 };
 
+use super::super::planner::launch_budget;
 use super::super::types::{
-    AgentDispatchOutcome, AgentDispatchTarget, AgentSpawnContext, DispatchAgent, SpawnOverride,
+    AgentDispatchOutcome, AgentDispatchTarget, AgentSpawnContext, DispatchAgent,
 };
 use super::super::widen_record::invalid;
 use super::super::{AgentDispatcher, SpawnPlanReceipt, TeamRunStamp, team_pattern};
@@ -170,8 +171,9 @@ impl AgentDispatcher<'_> {
     /// `load` first, and one that moved is kept as the intent's refusal. The
     /// runner runs with no writer held. Its own refusal, an
     /// [`Error::Refused`] that names what to fund or configure, answers as
-    /// it is; any other error it returns is a host fault, logged and
-    /// answered with a fixed refusal. Either, or a start that does not brief
+    /// it is, as does its wait on rested offers,
+    /// [`Error::ProviderUnavailable`]; any other error it returns is a host
+    /// fault, logged and answered with a fixed refusal. Either, or a start that does not brief
     /// the whole team, leaves the intent planned, so the next ask runs it
     /// again.
     fn start_pattern(
@@ -200,7 +202,9 @@ impl AgentDispatcher<'_> {
                     error = %error,
                     "a pattern runner wrote no start for a planned team"
                 );
-                if matches!(error, Error::Refused(_)) {
+                // A wait on rested offers stays typed (FIX 9535): the
+                // intent stays planned, and the same ask continues it.
+                if matches!(error, Error::Refused(_) | Error::ProviderUnavailable { .. }) {
                     error
                 } else {
                     invalid(RUNNER_FAILED)
@@ -279,7 +283,7 @@ impl AgentDispatcher<'_> {
         // at the root), narrowed to the ask's budget as a leased planned
         // spawn's is, under its parent's scope or the host's root scope.
         // Members reserve under the leader and name none.
-        let budget = narrowed(leader.budget, plan.asked.budget_cap_units.as_ref());
+        let budget = narrowed(leader.budget, launch_budget(&plan.asked, &plan.plan));
         let leader = AgentSpawnContext {
             budget,
             ..planned_context(leader, plan, leader_spec)
@@ -454,9 +458,9 @@ fn planned_context(
 }
 
 /// The group's one cap: the carve its asker set, narrowed by the ask's
-/// budget, seed or pin, and never widened by it.
-fn narrowed(carve: Option<u64>, asked: Option<&SpawnOverride<u64>>) -> Option<u64> {
-    let asked = asked.map(|cap| *cap.value());
+/// pinned budget, or by the budget a seeded ask resolved to and the plan was
+/// fitted under (FIX 9561); never widened by it.
+fn narrowed(carve: Option<u64>, asked: Option<u64>) -> Option<u64> {
     match (carve, asked) {
         (Some(carve), Some(asked)) => Some(carve.min(asked)),
         (carve, asked) => carve.or(asked),

@@ -9,17 +9,19 @@
 //!
 //! The models a definition runs on are the owner's too (FIX 4472): its
 //! `models` list, `compaction_model`, `model_tier` and `dreaming_model`. A
-//! model choice decides which provider reads the agent's context, so any
-//! change to one, clearing it included, is the owner's.
+//! model choice decides which provider reads the agent's context, so a change
+//! that leaves the grant the definition holds, clearing a choice included, is
+//! the owner's. A change within it is any writer's (FIX 9558): the list
+//! narrowed to models it already names, or the compaction model moved to one
+//! of them.
 
 use super::codec::decode_agent_definition;
 use super::id_pin::is_agent_id_in_txn;
-use super::models::AgentModel;
 use super::types::AgentDefinition;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::{ModelId, ModelTierRef};
+use crate::llm::ModelId;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -35,9 +37,9 @@ const fn approval_rank(status: ClaimApprovalStatus) -> u8 {
 }
 
 /// Whether `updated` gives back authority `prior` does not hold: it turns the
-/// definition on, moves its approval up, makes it active again, or changes
-/// its model choices. `None` is an agent id whose row was deleted, which
-/// holds none.
+/// definition on, moves its approval up, makes it active again, or takes a
+/// model choice outside the grant `prior` holds. `None` is an agent id whose
+/// row was deleted, which holds none.
 fn widens(prior: Option<&AgentDefinition>, updated: &AgentDefinition) -> bool {
     let (enabled, approval, active) = prior.map_or(
         (false, approval_rank(ClaimApprovalStatus::Rejected), false),
@@ -53,25 +55,29 @@ fn widens(prior: Option<&AgentDefinition>, updated: &AgentDefinition) -> bool {
         || approval_rank(updated.approval_status) > approval
         || (updated.lifecycle_status == ClaimLifecycleStatus::Active && !active)
         || prior.map_or(has_model_choice(updated), |prior| {
-            model_choices(prior) != model_choices(updated)
+            !models_within_grant(prior, updated)
         })
 }
 
-/// The owner's model choices on a definition (FIX 4472), compared whole.
-fn model_choices(
-    def: &AgentDefinition,
-) -> (
-    &[AgentModel],
-    Option<&ModelId>,
-    Option<&ModelTierRef>,
-    Option<&ModelTierRef>,
-) {
-    (
-        &def.models,
-        def.compaction_model.as_ref(),
-        def.model_tier.as_ref(),
-        def.dreaming_model.as_ref(),
-    )
+/// Whether `updated`'s model choices stay within the grant `prior` holds
+/// (FIX 9558): its list the same, or a non-empty list of models `prior`
+/// lists (each entry's `when` reworded or not); its compaction model the
+/// same, or one `prior` lists; its tier and dreaming model the same. A
+/// cleared choice falls back to the house route, outside the grant.
+fn models_within_grant(prior: &AgentDefinition, updated: &AgentDefinition) -> bool {
+    let listed = |model: &ModelId| prior.models.iter().any(|entry| entry.model_ref == *model);
+    let models = updated.models == prior.models
+        || (!updated.models.is_empty()
+            && updated.models.iter().all(|entry| listed(&entry.model_ref)));
+    let compaction = match (&updated.compaction_model, &prior.compaction_model) {
+        (None, None) => true,
+        (Some(model), held) => held.as_ref() == Some(model) || listed(model),
+        (None, Some(_)) => false,
+    };
+    models
+        && compaction
+        && updated.model_tier == prior.model_tier
+        && updated.dreaming_model == prior.dreaming_model
 }
 
 /// Whether a definition names any model choice of its own.

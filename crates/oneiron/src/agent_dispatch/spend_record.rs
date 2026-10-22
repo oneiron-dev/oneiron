@@ -15,9 +15,6 @@ use super::widen_record::invalid;
 pub(super) const SCOPE: SideTable<String, SpendScope, LegacyJson> =
     SideTable::new(&side_table::AGENT_DISPATCH_SPEND_SCOPE);
 
-/// Ancestor walks are bounded: a launch tree is never deeper than this.
-pub(super) const MAX_SPEND_DEPTH: usize = 256;
-
 /// A spend scope's id. A root scope's id is its launch id; a child scope's id
 /// is the child's attempt id, in lowercase hex.
 #[derive(

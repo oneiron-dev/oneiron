@@ -24,6 +24,7 @@ mod intent;
 mod learning;
 mod root_plan;
 mod team_launch;
+mod width_outcomes;
 
 use std::collections::BTreeMap;
 
@@ -40,7 +41,8 @@ use crate::task_type::{PlacementDecisions, TaskTypeRef, TypeTree};
 use crate::team::payoff::planner_card_in_txn;
 use crate::team::{PAYOFF_AXIS, PatternSkill, PatternSkillRef, pattern_skills};
 
-use self::learning::{Donor, admitted, measured, width_rows};
+use self::learning::{Donor, admitted, measured};
+use self::width_outcomes::WidthOutcomes;
 use super::planner::{
     AvailableModel, PatternCandidate, PlanBudget, PlannerDecisions, PlannerEvidence,
     PlannerQuestionContext, PlannerRung, PlannerThresholds, ShapeQuote, SkillRevisionRef,
@@ -362,8 +364,14 @@ impl AgentDispatcher<'_> {
         }
 
         // Cost: the launch statement dispatch freezes, per seat AGENT_DEF,
-        // under the caller's scope and the spawn's budget ask.
-        let budget_ask = need.budget_cap_units.as_ref().map(|over| *over.value());
+        // under the caller's scope and the spawn's pinned budget. A seeded
+        // budget is a prior the plan resolves per shape (FIX 9561), not a
+        // cap stated here.
+        let budget_ask = need
+            .budget_cap_units
+            .as_ref()
+            .filter(|over| over.is_pin())
+            .map(|over| *over.value());
         let mut models: Vec<AvailableModel> = Vec::with_capacity(seats.len());
         let mut budget = PlanBudget::UNMETERED;
         {
@@ -438,6 +446,9 @@ impl AgentDispatcher<'_> {
             }
         }
 
+        // Every team receipt, read once before the snapshot below (its read
+        // opens its own) and folded at one evaluation time (FIX 9568).
+        let outcomes = WidthOutcomes::read(self.vault, at, !patterns.is_empty())?;
         // The tree in force and every measured read: one snapshot.
         let txn = self.vault.store.env.read_txn()?;
         let tree = load_team_type_tree_in_txn(self.vault, &txn, project)?;
@@ -487,16 +498,16 @@ impl AgentDispatcher<'_> {
                             .insert(model.model.clone(), measured(&entry.read));
                     }
                 }
-                for (skill, width, row) in width_rows(&card.rows, &card.executor_mix) {
+                for ((skill, width), (wins, losses)) in outcomes.folded(&type_ref, &card) {
                     if let Some(candidate) = admitted(&mut patterns, skill) {
                         let cell = candidate
                             .widths
                             .entry(width)
                             .or_default()
                             .entry(model.model.clone())
-                            .or_insert((0, 0));
-                        cell.0 = cell.0.saturating_add(row.wins);
-                        cell.1 = cell.1.saturating_add(row.losses);
+                            .or_insert((0.0, 0.0));
+                        cell.0 += wins;
+                        cell.1 += losses;
                     }
                 }
                 cards.push((model.model.clone(), card));
@@ -507,7 +518,7 @@ impl AgentDispatcher<'_> {
         // measured outcomes (FIX 5496). A donor read that fails lends
         // nothing: the reads above stand as they are.
         if let Some(donor) = &donor {
-            match donor.lend(self.vault, &txn, &reads, &cards, &patterns) {
+            match donor.lend(self.vault, &txn, &reads, &cards, &patterns, &outcomes) {
                 Ok((lent_solo, lent_patterns)) => {
                     solo = lent_solo;
                     patterns = lent_patterns;

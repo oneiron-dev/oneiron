@@ -4,18 +4,25 @@ use crate::ports::EntityStoreRead;
 use rmpv::Value;
 
 use crate::agent_def::{
-    AgentCeiling, AgentDefinition, decode_agent_definition, encode_agent_definition,
+    AgentCeiling, AgentDefinition, bind_delegation_parent_in_txn, decode_agent_definition,
+    delegation_parent_in_txn, encode_agent_definition,
 };
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::dreamer_runner::decode_dreamer_attempt_payload;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gate::PolicyApprovalCeiling;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::Store;
 use crate::temporal::TimeRange;
 
+use super::codec::record_dispatch_input;
 use super::dispatch::AgentDispatcher;
 use super::types::{
-    AGENT_DISPATCH_COMPAT_DEPTH_CAP, ATTENUATED_FORK_ID_DOMAIN, AgentDispatchInput,
-    AgentDispatchTarget, AttenuatedDispatchTarget, restrict_agent_ceiling,
+    ATTENUATED_FORK_ID_DOMAIN, AgentDispatchInput, AgentDispatchTarget, AttenuatedDispatchTarget,
+    restrict_agent_ceiling,
 };
 use crate::error::ArtifactError;
 
@@ -64,10 +71,15 @@ impl AgentDispatcher<'_> {
             return Ok(unattenuated(ceiling, requested_definition));
         };
         // The parent's ACTUAL target row, read live — its own attenuated fork
-        // when it was itself clamped, which is what makes this hold recursively.
-        let parent_ceiling = self
-            .dispatchable_definition_in_txn(wtxn, &parent_input.target)?
-            .ceiling;
+        // when it was itself clamped — met with the bound the gate reads off
+        // it at every write and off every agent above it (FIX 9559).
+        let parent_row = self.dispatchable_definition_in_txn(wtxn, &parent_input.target)?;
+        let parent_ceiling = self.live_parent_ceiling_in_txn(
+            wtxn,
+            parent_attempt,
+            parent_input.target.agent_definition_ref()?,
+            parent_row.ceiling,
+        )?;
         let effective_child_ceiling =
             restrict_agent_ceiling(requested_definition.ceiling, parent_ceiling);
         if effective_child_ceiling == requested_definition.ceiling {
@@ -176,6 +188,7 @@ impl AgentDispatcher<'_> {
                     "attenuated fork id is occupied by a foreign row",
                 )));
             }
+            bind_delegation_parent_in_txn(&self.vault.store, wtxn, &fork_ref, parent_attempt)?;
             return Ok(stored);
         }
 
@@ -202,7 +215,112 @@ impl AgentDispatcher<'_> {
                     "attenuated fork row could not be registered",
                 ))
             })?;
+        // The delegation the fork was minted under is the id's for good: its
+        // pin keeps it across every later put, delete and restore.
+        bind_delegation_parent_in_txn(&self.vault.store, wtxn, &fork_ref, parent_attempt)?;
         Ok(fork)
+    }
+
+    /// The ceiling `parent_attempt`'s children answer to, read live (FIX
+    /// 9559): its target row's stored ceiling, met with the bound the gate
+    /// reads off that row at every write and with the same bound of every
+    /// agent above it on its delegation chain. Every ancestor is read,
+    /// however many (rule 5): past its row the walk asks whether everything
+    /// is okay, counted on every way out.
+    fn live_parent_ceiling_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_attempt: AttemptId,
+        parent_target: EntityId,
+        parent_row_ceiling: AgentCeiling,
+    ) -> Result<AgentCeiling> {
+        let store = &self.vault.store;
+        let scope = [parent_attempt.as_bytes().as_slice(), b"delegation"].concat();
+        let mut walk = ScanCount::start(store, txn, EngineScan::DispatchAncestorRows, &scope)?;
+        let mut seen = std::collections::HashSet::new();
+        let ceiling = self.delegation_chain_ceiling(
+            txn,
+            parent_attempt,
+            parent_target,
+            parent_row_ceiling,
+            &mut seen,
+        );
+        walk.rows(seen.len());
+        walk.defer(store);
+        ceiling
+    }
+
+    /// The walk [`Self::live_parent_ceiling_in_txn`] counts, each attempt it
+    /// reads in `seen`. The chain follows each target's pinned delegation
+    /// parent, else its attempt's recorded parent (a workflow wrapper
+    /// crossed), and ends at the first attempt that is no agent dispatch or
+    /// does not read. A chain that comes back on itself proves no grant and
+    /// holds at `Proposed`.
+    fn delegation_chain_ceiling(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent_attempt: AttemptId,
+        parent_target: EntityId,
+        parent_row_ceiling: AgentCeiling,
+        seen: &mut std::collections::HashSet<AttemptId>,
+    ) -> Result<AgentCeiling> {
+        let store = &self.vault.store;
+        let queue = AttemptQueue::new(self.vault);
+        let mut ceiling = restrict_agent_ceiling(
+            parent_row_ceiling,
+            live_row_ceiling(store, txn, parent_target),
+        );
+        let mut attempt = parent_attempt;
+        let mut target = parent_target;
+        seen.insert(attempt);
+        loop {
+            let next = match delegation_parent_in_txn(store, txn, &target)? {
+                Some(parent) => Some(parent),
+                None => {
+                    let recorded = queue.get_in_txn(txn, attempt)?.and_then(|row| {
+                        decode_dreamer_attempt_payload(&row.payload)
+                            .ok()
+                            .and_then(|payload| payload.parent_attempt)
+                    });
+                    self.workflow_authority_parent_in_txn(txn, recorded)
+                        .ok()
+                        .flatten()
+                }
+            };
+            let Some(next) = next else {
+                break;
+            };
+            if !seen.insert(next) {
+                return Ok(AgentCeiling::Proposed);
+            }
+            let Some(next_target) = queue
+                .get_in_txn(txn, next)?
+                .as_ref()
+                .and_then(record_dispatch_input)
+                .and_then(|input| input.target.agent_definition_ref().ok())
+            else {
+                break;
+            };
+            ceiling = restrict_agent_ceiling(ceiling, live_row_ceiling(store, txn, next_target));
+            attempt = next;
+            target = next_target;
+        }
+        Ok(ceiling)
+    }
+}
+
+/// The bound the gate reads off agent row `id` at every write
+/// ([`crate::gate::agent_definition_ceiling_for_actor`]): its stored ceiling
+/// met with its fork parent row's, its lifecycle and its foreign chain. A row
+/// that bears no definition bound adds none here.
+fn live_row_ceiling(store: &Store, txn: &heed::RoTxn<'_>, id: EntityId) -> AgentCeiling {
+    match crate::gate::agent_definition_ceiling_for_actor(
+        store,
+        txn,
+        crate::WriteActor::new(id, EdgeActorClass::Agent),
+    ) {
+        Some(PolicyApprovalCeiling::Proposed) => AgentCeiling::Proposed,
+        Some(PolicyApprovalCeiling::Auto) | None => AgentCeiling::Auto,
     }
 }
 
@@ -244,16 +362,19 @@ pub(super) fn source_content_fingerprint(source: &AgentDefinition) -> Result<bla
     Ok(blake3::hash(&encoded))
 }
 
-/// MALFORMED IS NOT ZERO: a parent whose depth cannot be read is a schema-v1
-/// (or non-dispatch) lineage, and the CONFIGURED compatibility cap answers for
-/// it — bounded, not unbounded, and not a refusal. Only a STORED `Some(0)` is
-/// the exhausted lineage.
-pub(super) fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<u64> {
+/// The depth a child of `parent` persists: one less than the parent's
+/// explicit slice, refused only once that slice is spent. A parent with no
+/// explicit slice (a lineage under no owner-set depth, or an attempt that is
+/// no agent dispatch) bounds nothing (FIX 9560): `None`.
+pub(super) fn child_depth_from(parent: Option<AgentDispatchInput>) -> Result<Option<u64>> {
     parent
         .and_then(|input| input.depth_remaining)
-        .unwrap_or(u64::from(AGENT_DISPATCH_COMPAT_DEPTH_CAP))
-        .checked_sub(1)
-        .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
-            "agent dispatch recursion depth is exhausted",
-        )))
+        .map(|depth| {
+            depth
+                .checked_sub(1)
+                .ok_or(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                    "agent dispatch recursion depth is exhausted",
+                )))
+        })
+        .transpose()
 }

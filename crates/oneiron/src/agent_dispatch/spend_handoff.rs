@@ -16,9 +16,11 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::AgentDispatcher;
-use super::spend_record::{MAX_SPEND_DEPTH, SCOPE, SpendScope, SpendScopeId, SpendState};
+use super::spend_lease::observe_spend_walk;
+use super::spend_record::{SCOPE, SpendScope, SpendScopeId, SpendState};
 use super::widen_record::invalid;
 use crate::attempt_queue::AttemptQueue;
+use crate::scan_check::EngineScan;
 use crate::side_table::{self, SideTableDecl};
 use crate::sync::home_handoff::{
     HomeFence, HomeMove, HomeTable, TableAdopt, froze_home_state_in_txn,
@@ -82,7 +84,16 @@ impl HomeTable for FreeTimeSpendRows {
         _fence: &HomeFence,
         rows: Self,
     ) -> Result<TableAdopt> {
-        let carried = carried_trees(rows.scopes)?;
+        let mut longest = 0;
+        let carried = carried_trees(rows.scopes, &mut longest);
+        observe_spend_walk(
+            &vault.store,
+            txn,
+            EngineScan::SpendAncestorScopes,
+            &[],
+            longest,
+        );
+        let carried = carried?;
         if froze_home_state_in_txn(vault, txn)?
             && selected_in_txn(vault, txn)?
                 .keys()
@@ -137,13 +148,22 @@ impl HomeTable for FreeTimeSpendRows {
                 all.entry(scope.scope.clone()).or_insert(scope);
             }
         }
-        Ok(all
+        let mut longest = 0;
+        let managed: Vec<Vec<u8>> = all
             .iter()
-            .filter(
-                |(_, scope)| matches!(root_of(&all, scope), Ok(Some(root)) if roots.contains(root)),
-            )
+            .filter(|(_, scope)| {
+                matches!(root_of(&all, scope, &mut longest), Ok(Some(root)) if roots.contains(root))
+            })
             .map(|(id, _)| SCOPE.key_bytes(&id.0))
-            .collect())
+            .collect();
+        observe_spend_walk(
+            &vault.store,
+            txn,
+            EngineScan::SpendAncestorScopes,
+            &[],
+            longest,
+        );
+        Ok(managed)
     }
 }
 
@@ -159,17 +179,42 @@ fn selected_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeMap<SpendScope
         .map(|row| row.map(|(_, scope)| (scope.scope.clone(), scope)))
         .collect::<Result<BTreeMap<_, _>>>()?;
     let mut selected = BTreeMap::new();
-    for (id, scope) in &all {
-        if root_of(&all, scope)?.is_some_and(|root| roots.contains(root)) {
-            selected.insert(id.clone(), scope.clone());
-        }
-    }
+    let mut longest = 0;
+    let chosen = select_trees(&all, &roots, &mut selected, &mut longest);
+    observe_spend_walk(
+        &vault.store,
+        txn,
+        EngineScan::SpendAncestorScopes,
+        &[],
+        longest,
+    );
+    chosen?;
     Ok(selected)
 }
 
+/// Each scope of `all` whose parents lead to one of `roots`, into
+/// `selected`; the longest walk in `longest`.
+fn select_trees(
+    all: &BTreeMap<SpendScopeId, SpendScope>,
+    roots: &BTreeSet<SpendScopeId>,
+    selected: &mut BTreeMap<SpendScopeId, SpendScope>,
+    longest: &mut usize,
+) -> Result<()> {
+    for (id, scope) in all {
+        if root_of(all, scope, longest)?.is_some_and(|root| roots.contains(root)) {
+            selected.insert(id.clone(), scope.clone());
+        }
+    }
+    Ok(())
+}
+
 /// The carried scopes by id, refused unless each is one of a whole carried
-/// tree: one row per scope, and its parents all carried up to its root.
-fn carried_trees(scopes: Vec<SpendScope>) -> Result<BTreeMap<SpendScopeId, SpendScope>> {
+/// tree: one row per scope, and its parents all carried up to its root. The
+/// longest parent walk lands in `longest`.
+fn carried_trees(
+    scopes: Vec<SpendScope>,
+    longest: &mut usize,
+) -> Result<BTreeMap<SpendScopeId, SpendScope>> {
     let mut carried = BTreeMap::new();
     for scope in scopes {
         if carried.insert(scope.scope.clone(), scope).is_some() {
@@ -177,30 +222,38 @@ fn carried_trees(scopes: Vec<SpendScope>) -> Result<BTreeMap<SpendScopeId, Spend
         }
     }
     for scope in carried.values() {
-        if root_of(&carried, scope)?.is_none() {
+        if root_of(&carried, scope, longest)?.is_none() {
             return Err(invalid("a carried spend scope's parent is not carried"));
         }
     }
     Ok(carried)
 }
 
-/// The root `scope` spends under, walking its parents within `scopes`;
-/// `None` when a parent is not among them.
+/// The root `scope` spends under, walking its parents within `scopes`,
+/// however many (rule 5), each once: `None` when a parent is not among
+/// them, an error when a parent comes back. The walk's length raises
+/// `longest`.
 fn root_of<'a>(
     scopes: &'a BTreeMap<SpendScopeId, SpendScope>,
     scope: &'a SpendScope,
+    longest: &mut usize,
 ) -> Result<Option<&'a SpendScopeId>> {
+    let mut seen = BTreeSet::from([&scope.scope]);
     let mut current = scope;
-    for _ in 0..MAX_SPEND_DEPTH {
+    let root = loop {
         let Some(parent) = &current.parent else {
-            return Ok(Some(&current.scope));
+            break Ok(Some(&current.scope));
         };
+        if !seen.insert(parent) {
+            break Err(invalid("spend scope ancestor cycle"));
+        }
         let Some(next) = scopes.get(parent) else {
-            return Ok(None);
+            break Ok(None);
         };
         current = next;
-    }
-    Err(invalid("spend scope ancestor bound"))
+    };
+    *longest = (*longest).max(seen.len());
+    root
 }
 
 /// Whether the carried `scope` follows `here`, the same scope further on:

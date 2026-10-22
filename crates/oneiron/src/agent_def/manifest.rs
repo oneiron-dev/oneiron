@@ -387,8 +387,9 @@ pub(crate) fn seed_system_agent_definitions(
     )
 }
 
-/// Convergent reconciliation over the stored rows: create what is missing,
-/// never overwrite what exists, fail closed on a foreign occupant. LMDB write
+/// Convergent reconciliation over the stored rows: create what is missing
+/// and was never deleted, never overwrite what exists, fail closed on a
+/// foreign occupant. LMDB write
 /// serialization plus deterministic ids makes concurrent opens converge — the
 /// later writer observes the first writer's committed row and writes nothing.
 pub(super) fn reconcile_system_agent_definitions_in(
@@ -426,6 +427,11 @@ pub(super) fn reconcile_system_agent_definitions_in(
                     ));
                 }
             }
+            // The owner's deletion of a seeded row is durable (FIX 10204):
+            // no later open brings it back. Only an authorized restore, which
+            // clears the deletion, does.
+            None if crate::ports::TombstoneStoreRead::port_deletion_state(store, wtxn, &id)?
+                .deleted => {}
             None => {
                 let mut definition = seed.definition_row(legacy_enabled)?;
                 // A deleted seeded row comes back no wider than the narrowest

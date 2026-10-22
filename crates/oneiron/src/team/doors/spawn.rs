@@ -96,6 +96,11 @@ pub struct SpawnIntentRequest {
     /// narrows what may be spent.
     #[serde(default)]
     pub budget_cap_units: Option<SpawnAskKnob<u64>>,
+    /// Leave the balance out of the cost envelope a planned team's pattern
+    /// run reads (FIX 9536). Off by default: the run reads the whole
+    /// envelope, which the host enforces either way.
+    #[serde(default)]
+    pub balance_free_prompt: bool,
 }
 
 /// Where the owner's planned spawn stands: its phase, the type the engine
@@ -192,6 +197,7 @@ fn planned_request(input: SpawnIntentRequest) -> MemoryResult<PlannedSpawnReques
             .budget_cap_units
             .map(|knob| knob.into_override(Ok))
             .transpose()?,
+        balance_free_prompt: input.balance_free_prompt,
     };
     Ok(PlannedSpawnRequest {
         intent_key: input.intent_key,

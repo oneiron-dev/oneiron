@@ -2,15 +2,14 @@
 
 use super::types::{
     AGENT_DESC_MAX_BYTES, AGENT_DISPLAY_NAME_MAX_BYTES, AGENT_ID_MAX_BYTES,
-    AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MAX_LIST_ENTRIES,
-    AGENT_MODEL_TIER_MAX_BYTES, AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES, AgentDefinition,
-    CONTEXT_BUDGET_SPLIT_KEYS, CompactionOwnership, ContextBudgetSplit, KEY_DEP_MIN_VERSION,
-    KEY_DEP_SKILL_ID, KEY_MCP_KEY, KEY_MCP_MIN_VERSION, KEY_PROFILE_BUDGET_SPLIT,
-    KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS,
-    KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS,
-    KEY_PROFILE_WINDOW_TOKEN_BUDGET, MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES,
-    MAX_MEMORY_PROFILE_VERBATIM_PINS, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef, MemoryProfile,
-    OUTPUT_DECAY_KEYS,
+    AGENT_INSTRUCTIONS_MAX_BYTES, AGENT_LOGICAL_ID_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES,
+    AGENT_REF_KEY_MAX_BYTES, AGENT_VERSION_MAX_BYTES, AgentDefinition, CONTEXT_BUDGET_SPLIT_KEYS,
+    CompactionOwnership, ContextBudgetSplit, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_MCP_KEY,
+    KEY_MCP_MIN_VERSION, KEY_PROFILE_BUDGET_SPLIT, KEY_PROFILE_COMPACTION,
+    KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS, KEY_PROFILE_OPTIONAL_MEMORY,
+    KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
+    MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES, MCP_REF_KEYS, MEMORY_PROFILE_KEYS, McpRef,
+    MemoryProfile, OUTPUT_DECAY_KEYS,
 };
 use crate::claim::ClaimSource;
 use crate::error::{ArtifactError, Error, Result};
@@ -246,11 +245,6 @@ pub(super) fn decode_skill_dependencies(value: &Value) -> Result<Vec<SkillDepend
             "skills must be a MessagePack array",
         )));
     };
-    if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "skills must contain at most 64 entries",
-        )));
-    }
     values.iter().map(decode_skill_dependency).collect()
 }
 
@@ -320,11 +314,6 @@ pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
             "connectors must be a MessagePack array",
         )));
     };
-    if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "connectors must contain at most 64 entries",
-        )));
-    }
     values
         .iter()
         .map(|value| {
@@ -343,11 +332,6 @@ pub(super) fn decode_mcp_refs(value: &Value) -> Result<Vec<McpRef>> {
             "codeModeMcps must be a MessagePack array",
         )));
     };
-    if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "codeModeMcps must contain at most 64 entries",
-        )));
-    }
     values.iter().map(decode_mcp_ref).collect()
 }
 
@@ -546,11 +530,6 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
             "memory_profile output_decay overview_after_turns must not exceed stub_after_turns",
         )));
     }
-    if profile.verbatim_pins.len() > MAX_MEMORY_PROFILE_VERBATIM_PINS {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "memory_profile verbatim_pins holds at most 64 pins",
-        )));
-    }
     for (index, pin) in profile.verbatim_pins.iter().enumerate() {
         validate_text_field(
             pin,
@@ -599,11 +578,6 @@ fn validate_provenance(provenance: &Value) -> Result<()> {
 }
 
 fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
-    if skills.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "skills must contain at most 64 entries",
-        )));
-    }
     let mut seen = HashSet::new();
     for dependency in skills {
         validate_text_field(
@@ -628,11 +602,6 @@ fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
 }
 
 fn validate_connectors(connectors: &[String]) -> Result<()> {
-    if connectors.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "connectors must contain at most 64 entries",
-        )));
-    }
     let mut seen = HashSet::new();
     for connector in connectors {
         validate_text_field(
@@ -650,11 +619,6 @@ fn validate_connectors(connectors: &[String]) -> Result<()> {
 }
 
 fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
-    if mcps.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
-            "codeModeMcps must contain at most 64 entries",
-        )));
-    }
     let mut seen = HashSet::new();
     for mcp in mcps {
         validate_text_field(

@@ -15,20 +15,28 @@
 //!
 //! A scope whose parent closed while it stayed open (a child outliving its
 //! spawner) settles into, and tops up from, the nearest open ancestor, which
-//! absorbed the closed parent's holds.
+//! absorbed the closed parent's holds. A closed hard ancestor stays a cap
+//! boundary for its subtree (FIX 9563): no more than its room is drawn
+//! through it, and the child's settlement is tallied there too, while only
+//! the open ancestor pays, so nothing is charged twice.
 
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::run_admission::{DeclaredMaximum, JobMaximum, MaximumShown};
 use crate::llm::{BudgetExhaustionPolicy, BudgetGuard};
 
+use self::ancestry::{Host, ScopeWalk};
 use super::AgentDispatcher;
 use super::spend_record::{
-    ChildSpend, MAX_SPEND_DEPTH, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope,
-    SpendScopeId, SpendSettlement, SpendSignal, SpendState,
+    ChildSpend, SCOPE, SpendPayer, SpendRead, SpendRefused, SpendScope, SpendScopeId,
+    SpendSettlement, SpendSignal, SpendState,
 };
 use super::widen_record::invalid;
+
+mod ancestry;
+
+pub(super) use self::ancestry::observe as observe_spend_walk;
 
 impl AgentDispatcher<'_> {
     /// Opens a launch's root scope under the cap the customer set and was
@@ -431,29 +439,6 @@ impl AgentDispatcher<'_> {
         SCOPE.get(&self.vault.store, &txn, &scope.0)
     }
 
-    /// `scope` and the root it spends under, in the caller's snapshot; `None`
-    /// when no such scope exists. The root's payer is the only consent a tree
-    /// carries (OF-531): a cap or an open scope is none.
-    pub(crate) fn scope_with_root_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScopeId,
-    ) -> Result<Option<(SpendScope, SpendScope)>> {
-        let Some(row) = SCOPE.get(&self.vault.store, txn, &scope.0)? else {
-            return Ok(None);
-        };
-        let mut root = row.clone();
-        for _ in 0..MAX_SPEND_DEPTH {
-            let Some(parent) = root.parent.clone() else {
-                return Ok(Some((row, root)));
-            };
-            root = SCOPE
-                .get(&self.vault.store, txn, &parent.0)?
-                .ok_or_else(|| invalid("spend scope ancestor is missing"))?;
-        }
-        Err(invalid("spend scope ancestor bound"))
-    }
-
     /// The payer consent the root of `scope`'s tree carries (OF-531), with
     /// that root's id: the PERSON a call spending under `scope` bills. `None`
     /// when the root carries none, as a launch no room pays for. A missing
@@ -518,7 +503,10 @@ impl AgentDispatcher<'_> {
         let charged_to = match &scope.parent {
             None => None,
             Some(_) => {
-                let mut host = self.open_parent_in_txn(txn, &scope)?;
+                let Host {
+                    mut host,
+                    boundaries,
+                } = self.host_in_txn(txn, &scope)?;
                 // The host held this child's whole cap; it now holds the
                 // child's own open children instead, and pays what it spent.
                 host.held_units = host
@@ -527,6 +515,16 @@ impl AgentDispatcher<'_> {
                     .saturating_add(scope.held_units);
                 host.spent_units = host.spent_units.saturating_add(scope.spent_units);
                 SCOPE.put(&self.vault.store, txn, &host.scope.0, &host)?;
+                // Each closed hard scope passed keeps its subtree's tally the
+                // same way: the host alone pays, so nothing counts twice.
+                for mut boundary in boundaries {
+                    boundary.held_units = boundary
+                        .held_units
+                        .saturating_sub(scope.cap_units)
+                        .saturating_add(scope.held_units);
+                    boundary.spent_units = boundary.spent_units.saturating_add(scope.spent_units);
+                    SCOPE.put(&self.vault.store, txn, &boundary.scope.0, &boundary)?;
+                }
                 Some(host.scope)
             }
         };
@@ -559,118 +557,6 @@ impl AgentDispatcher<'_> {
         let settlement = self.settle_child_in_txn(&mut txn, child, now)?;
         txn.commit()?;
         Ok(settlement)
-    }
-
-    pub(super) fn scope_for_attempt_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        attempt: AttemptId,
-    ) -> Result<Option<SpendScopeId>> {
-        let queue = AttemptQueue::new(self.vault);
-        let mut cursor = attempt;
-        for _ in 0..1024 {
-            let id = SpendScopeId::for_attempt(&cursor);
-            if SCOPE.contains(&self.vault.store, txn, &id.0)? {
-                return Ok(Some(id));
-            }
-            match queue.get_in_txn(txn, cursor)?.and_then(|row| row.retry_of) {
-                Some(previous) => cursor = previous,
-                None => return Ok(None),
-            }
-        }
-        Err(invalid("spend scope retry lineage bound"))
-    }
-
-    /// The scope that books `scope`'s spend: itself when open, else its
-    /// nearest open ancestor; when nothing above is open either, itself.
-    pub(super) fn effective_scope_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScopeId,
-    ) -> Result<SpendScope> {
-        let row = SCOPE
-            .get(&self.vault.store, txn, &scope.0)?
-            .ok_or_else(|| invalid("spend scope is missing"))?;
-        if row.state == SpendState::Open {
-            return Ok(row);
-        }
-        Ok(self.nearest_open_above_in_txn(txn, &row)?.unwrap_or(row))
-    }
-
-    /// The scope that books for `scope`'s parent: its nearest open ancestor;
-    /// when every ancestor is closed, the direct parent keeps the books.
-    pub(super) fn open_parent_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScope,
-    ) -> Result<SpendScope> {
-        if let Some(open) = self.nearest_open_above_in_txn(txn, scope)? {
-            return Ok(open);
-        }
-        let parent = scope
-            .parent
-            .as_ref()
-            .ok_or_else(|| invalid("spend scope has no parent"))?;
-        SCOPE
-            .get(&self.vault.store, txn, &parent.0)?
-            .ok_or_else(|| invalid("spend scope ancestor is missing"))
-    }
-
-    fn nearest_open_above_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScope,
-    ) -> Result<Option<SpendScope>> {
-        let mut cursor = scope.parent.clone();
-        for _ in 0..MAX_SPEND_DEPTH {
-            let Some(id) = cursor else {
-                return Ok(None);
-            };
-            let row = SCOPE
-                .get(&self.vault.store, txn, &id.0)?
-                .ok_or_else(|| invalid("spend scope ancestor is missing"))?;
-            if row.state == SpendState::Open {
-                return Ok(Some(row));
-            }
-            cursor = row.parent;
-        }
-        Err(invalid("spend scope ancestor bound"))
-    }
-
-    /// What `scope` may spend: its own local units, plus, while it is soft,
-    /// its open ancestors' up to and including the nearest hard one.
-    pub(super) fn available_from_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScope,
-    ) -> Result<u64> {
-        let mut total = 0u64;
-        let mut current = scope.clone();
-        for _ in 0..MAX_SPEND_DEPTH {
-            total = total.saturating_add(current.local_available());
-            if current.hard || current.parent.is_none() {
-                return Ok(total);
-            }
-            current = self.open_parent_in_txn(txn, &current)?;
-        }
-        Err(invalid("spend scope ancestor bound"))
-    }
-
-    /// The hard scope whose cap binds `scope`: itself when hard, else its
-    /// nearest hard open ancestor.
-    pub(super) fn binding_cap_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        scope: &SpendScope,
-    ) -> Result<SpendScope> {
-        let mut current = scope.clone();
-        for _ in 0..MAX_SPEND_DEPTH {
-            if current.hard || current.parent.is_none() {
-                return Ok(current);
-            }
-            current = self.open_parent_in_txn(txn, &current)?;
-        }
-        Err(invalid("spend scope ancestor bound"))
     }
 
     fn spend_in_txn(
@@ -719,47 +605,80 @@ impl AgentDispatcher<'_> {
     }
 
     /// Makes `need` units local to `scope`, topping a soft scope up from its
-    /// open ancestors, and returns it for the caller to spend or hold from and
-    /// write. The ancestors' moves are written here, and only once the whole
-    /// chain is known to cover `need`: a refusal writes nothing.
+    /// open ancestors, no more through a closed hard scope than its room
+    /// (FIX 9563), and returns it for the caller to spend or hold from and
+    /// write. The ancestors' and boundaries' moves are written here, and only
+    /// once the whole chain is known to cover `need`: a refusal writes
+    /// nothing. The chain is read however long it is (rule 5).
     fn make_local_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         scope: SpendScope,
         need: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
-        // Each entry draws its deficit from the next one up.
-        let mut chain: Vec<(SpendScope, u64)> = Vec::new();
+        // Each entry draws its deficit from the next one up, through the
+        // closed hard scopes between them.
+        let mut chain: Vec<(SpendScope, u64, Vec<SpendScope>)> = Vec::new();
+        let from = scope.scope.clone();
+        let mut hosts = std::collections::HashSet::from([from.clone()]);
+        let mut walk = ScopeWalk::default();
         let mut current = scope;
         let mut wanted = need;
         let mut reachable = 0u64;
-        loop {
+        let drawn = loop {
             let local = current.local_available();
             reachable = reachable.saturating_add(local);
             if local >= wanted {
-                chain.push((current, 0));
-                break;
+                chain.push((current, 0, Vec::new()));
+                break Ok(());
             }
-            if current.hard || current.parent.is_none() || chain.len() >= MAX_SPEND_DEPTH {
-                return Err(SpendRefused::OverCap {
+            if current.hard || current.parent.is_none() {
+                break Err(SpendRefused::OverCap {
                     scope: current.scope,
                     available_units: reachable,
                     asked_units: need,
                 });
             }
             let deficit = wanted - local;
-            let parent = self.open_parent_in_txn(txn, &current)?;
-            chain.push((current, deficit));
-            current = parent;
+            let hop = match self.host_in_walk(txn, &current, &mut walk) {
+                Ok(hop) => hop,
+                Err(error) => break Err(error.into()),
+            };
+            if !hosts.insert(hop.host.scope.clone()) {
+                break Err(invalid("spend scope ancestor cycle").into());
+            }
+            if let Some(boundary) = hop
+                .boundaries
+                .iter()
+                .find(|boundary| boundary.local_available() < deficit)
+            {
+                break Err(SpendRefused::OverCap {
+                    scope: boundary.scope.clone(),
+                    available_units: reachable.saturating_add(boundary.local_available()),
+                    asked_units: need,
+                });
+            }
+            chain.push((current, deficit, hop.boundaries));
+            current = hop.host;
             wanted = deficit;
-        }
+        };
+        walk.finish(&self.vault.store, txn, &from);
+        drawn?;
         for index in 0..chain.len() - 1 {
             let deficit = chain[index].1;
             chain[index].0.cap_units = chain[index].0.cap_units.saturating_add(deficit);
+            for boundary in &mut chain[index].2 {
+                boundary.held_units = boundary.held_units.saturating_add(deficit);
+            }
             chain[index + 1].0.held_units = chain[index + 1].0.held_units.saturating_add(deficit);
         }
-        for (ancestor, _) in &chain[1..] {
-            SCOPE.put(&self.vault.store, txn, &ancestor.scope.0, ancestor)?;
+        for (index, (scope, _, boundaries)) in chain.iter().enumerate() {
+            if index > 0 {
+                SCOPE.put(&self.vault.store, txn, &scope.scope.0, scope)?;
+            }
+            for boundary in boundaries {
+                SCOPE.put(&self.vault.store, txn, &boundary.scope.0, boundary)?;
+            }
         }
         Ok(chain.swap_remove(0).0)
     }

@@ -7,13 +7,16 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_SKILL};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::serialize::ExportBody;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, decode_skill_record};
 use crate::store::Store;
 
-// Work bound for source composition reads; never silently truncate a hashed tree.
-const SOURCE_SCAN_LIMIT: usize = 100_000;
+// Rows a source composition read takes past which it asks whether everything
+// is okay: the count it once refused past. The read never truncates a hashed
+// tree and never refuses for its count (rule 5).
+const SOURCE_SCAN_CHECK: u64 = 100_000;
 
 /// Frozen source-tree identity recorded at an agent's genuine local birth:
 /// which source it was captured from, and the skill content hash that source
@@ -162,55 +165,81 @@ fn read_portable_skills(
     def: &AgentDefinition,
 ) -> Result<Vec<(EntityId, crate::skill::SkillRecord)>> {
     let mut skills = Vec::new();
-    if !def.skills.is_empty() {
-        for (scanned, entry) in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-            store,
-            txn,
-            ENTITY_TYPE_SKILL,
-            None,
-        )?
-        .enumerate()
-        {
-            if scanned >= SOURCE_SCAN_LIMIT {
-                return Err(Error::IndexOverflow("agent source skills"));
-            }
-            let row_id = entry?;
-            if excluded(store, txn, &row_id)? {
-                continue;
-            }
-            let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &row_id)?
-                .ok_or(Error::CorruptedIndex("agent skill index"))?;
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("agent skill header"))?;
-            if header.entity_type != ENTITY_TYPE_SKILL {
-                return Err(Error::CorruptedIndex("agent skill type"));
-            }
-            if let Ok(record) = decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]) {
-                skills.push((row_id, record));
-            }
-        }
+    if def.skills.is_empty() {
+        return Ok(skills);
     }
+    // Every SKILL row is read, however many (rule 5): past its row the scan
+    // asks whether everything is okay, counted on every way out.
+    let mut count = source_count(store, txn, EngineScan::AgentBirthSkillRows, &[]);
+    let read = skill_rows_into(store, txn, &mut count, &mut skills);
+    count.defer(store);
+    read?;
     Ok(skills)
 }
+
+fn skill_rows_into(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    count: &mut ScanCount,
+    skills: &mut Vec<(EntityId, crate::skill::SkillRecord)>,
+) -> Result<()> {
+    for entry in
+        crate::ports::EntityStoreRead::port_entity_ids_by_type(store, txn, ENTITY_TYPE_SKILL, None)?
+    {
+        count.row();
+        let row_id = entry?;
+        if excluded(store, txn, &row_id)? {
+            continue;
+        }
+        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &row_id)?
+            .ok_or(Error::CorruptedIndex("agent skill index"))?;
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("agent skill header"))?;
+        if header.entity_type != ENTITY_TYPE_SKILL {
+            return Err(Error::CorruptedIndex("agent skill type"));
+        }
+        if let Ok(record) = decode_skill_record(&raw[ENTITY_METADATA_HEADER_LEN..]) {
+            skills.push((row_id, record));
+        }
+    }
+    Ok(())
+}
+
 fn read_portable_knowledge(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     source_id: &EntityId,
 ) -> Result<Vec<ExportEntity>> {
     let mut claims = Vec::new();
-    for (scanned, entry) in store
-        .port_edges(
-            txn,
-            source_id,
-            EdgeDirection::In,
-            Some(crate::edge::EdgeKind::ClaimOf),
-            None,
-        )?
-        .enumerate()
-    {
-        if scanned >= SOURCE_SCAN_LIMIT {
-            return Err(Error::IndexOverflow("agent selected knowledge"));
-        }
+    // Every ClaimOf edge is read, however many (rule 5), counted on every
+    // way out.
+    let mut count = source_count(
+        store,
+        txn,
+        EngineScan::AgentBirthClaimOfRows,
+        source_id.as_bytes(),
+    );
+    let read = knowledge_rows_into(store, txn, source_id, &mut count, &mut claims);
+    count.defer(store);
+    read?;
+    Ok(claims)
+}
+
+fn knowledge_rows_into(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    source_id: &EntityId,
+    count: &mut ScanCount,
+    claims: &mut Vec<ExportEntity>,
+) -> Result<()> {
+    for entry in store.port_edges(
+        txn,
+        source_id,
+        EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
+        count.row();
         let row_id = entry?.target;
         if excluded(store, txn, &row_id)? {
             continue;
@@ -233,7 +262,14 @@ fn read_portable_knowledge(
             body: ExportBody::from_bytes(&raw[ENTITY_METADATA_HEADER_LEN..], header.entity_type),
         });
     }
-    Ok(claims)
+    Ok(())
+}
+
+/// A source scan's count: its threshold row, or the count it once refused
+/// past when the row does not read, so the count never fails the birth.
+fn source_count(store: &Store, txn: &heed::RoTxn<'_>, scan: EngineScan, scope: &[u8]) -> ScanCount {
+    ScanCount::start(store, txn, scan, scope)
+        .unwrap_or_else(|_| ScanCount::start_at(scan, scope, SOURCE_SCAN_CHECK))
 }
 
 fn excluded(store: &Store, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {

@@ -1,7 +1,8 @@
-//! Fail-closed propose-widen and owner-authenticated, TASK-bound board
-//! approval or decline.
+//! Fail-closed propose-widen, and board approval or decline by a
+//! revalidated root Owner or by the board attempt's own leased agent, on the
+//! board's live folded TASK authority (FIX 9565).
 
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::consent::{
     AuthenticatedOwner, approve_once_authorization_in_txn, spend_approve_once_in_txn,
 };
@@ -14,6 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 
+use self::board_authority::BoardActor;
 use super::attenuation::source_content_fingerprint;
 use super::codec::record_dispatch_input;
 use super::widen_record::{
@@ -26,6 +28,8 @@ use super::{
     AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
     AgentDispatcher, AgentSpawnContext, DispatchAgent,
 };
+
+mod board_authority;
 
 /// An ephemeral proof, constructed only after the authenticated board's live
 /// slice has bounded this exact parent. This is never stored or caller-created.
@@ -240,33 +244,54 @@ impl AgentDispatcher<'_> {
         ))))
     }
 
-    /// The board above acts on an exact, stored proposal. No caller-supplied
-    /// actor, grant flag or replacement descriptor is accepted. The owner
-    /// capability alone is insufficient: the board's TASK must prove ownership.
-    /// Approval changes only the direct parent's slice and enqueues the child in
-    /// the SAME transaction as the exact approve-once consent receipt.
+    /// The board above acts on an exact, stored proposal, here a revalidated
+    /// root Owner of this vault (FIX 9565). No caller-supplied actor, grant
+    /// flag or replacement descriptor is accepted. Approval changes only the
+    /// direct parent's slice and enqueues the child in the SAME transaction
+    /// as the exact approve-once consent receipt.
     pub fn approve_context_widen(
         &self,
         owner: &AuthenticatedOwner,
         proposal: &super::ContextWidenProposal,
         now: u64,
     ) -> Result<AgentDispatchOutcome> {
+        self.approve_widen_as(&BoardActor::Owner(owner), proposal, now)
+    }
+
+    /// [`Self::approve_context_widen`] by the board attempt's own agent
+    /// (FIX 9565): `board_lease` is that attempt's record as its host leased
+    /// it, rechecked live in the landing writer, and the board's TASK
+    /// authority must be live. The act lands on the same checks, narrowed by
+    /// the board's own live slice, and is recorded as a board act: it mints
+    /// no owner consent.
+    pub fn approve_context_widen_as_board(
+        &self,
+        board_lease: &AttemptRecord,
+        proposal: &super::ContextWidenProposal,
+        now: u64,
+    ) -> Result<AgentDispatchOutcome> {
+        self.approve_widen_as(&BoardActor::Agent(board_lease), proposal, now)
+    }
+
+    /// The one landing path both approvals take.
+    fn approve_widen_as(
+        &self,
+        actor: &BoardActor<'_>,
+        proposal: &super::ContextWidenProposal,
+        now: u64,
+    ) -> Result<AgentDispatchOutcome> {
         // FIX 6291: as the proposal's, judged at a fresh grant clock.
         self.vault.store.authorization_now()?;
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self.vault, &wtxn)?;
         // Proposal ids are content hashes, not bearer authority. Find the exact
         // saved intent by its stable index, rejecting forged or edited objects.
         let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
         if record.request.proposal()? != *proposal {
             return Err(invalid("widen proposal differs from the stored request"));
         }
-        let board = record
-            .request
-            .board
-            .ok_or_else(|| invalid("widen has no provable board above"))?;
-        self.require_board_owner(&wtxn, board, actor)?;
-        if self.recorded_parent(record.request.intent.parent)? != Some(board) {
+        let board = record.request.board;
+        let act = self.authorize_board_act_in_txn(&wtxn, board, actor)?;
+        if self.recorded_parent(record.request.intent.parent)? != board {
             return Err(invalid("widen board is not the immediate board above"));
         }
         // A settled proposal answers as it settled: its landing, or its
@@ -275,7 +300,9 @@ impl AgentDispatcher<'_> {
             return self.widen_outcome(&wtxn, &record);
         }
         let (input, spawn) = record.dispatch(&proposal.proposal_id, now)?;
-        self.child_depth_remaining(record.request.intent.parent)?;
+        // In this writer's snapshot: a read snapshot opened beside the
+        // writer would not see it.
+        self.project_depth_limit_in_txn(&wtxn, Some(record.request.intent.parent), None)?;
         self.require_sibling_result_lineage(
             input.parent_attempt,
             input.run_id.as_deref(),
@@ -296,16 +323,25 @@ impl AgentDispatcher<'_> {
         {
             return Err(invalid("widen parent slice changed since the proposal"));
         }
-        let board_input = self
-            .parent_dispatch_input(board)?
-            .ok_or_else(|| invalid("widen board has no dispatch input"))?;
-        let board_spec = self.effective_context_spec(board, &board_input)?;
-        validate_spec_narrows(&board_spec, &record.request.widened_spec)?;
+        // The grant above bounds the widening: the board's own live slice. A
+        // root Owner answering for a parent with no board above holds the
+        // vault's whole grant.
+        let above = match board {
+            Some(board) => {
+                let board_input = self
+                    .parent_dispatch_input(board)?
+                    .ok_or_else(|| invalid("widen board has no dispatch input"))?;
+                let board_spec = self.effective_context_spec(board, &board_input)?;
+                validate_spec_narrows(&board_spec, &record.request.widened_spec)?;
+                Some(self.resolve_attempt_context(board)?)
+            }
+            None => None,
+        };
         let widened = resolve_context_spec(
             self.vault,
             ContextResolutionRequest {
                 spec: record.request.widened_spec.clone(),
-                parent: Some(self.resolve_attempt_context(board)?),
+                parent: above,
                 context_from: Vec::new(),
                 world_scope: Some(
                     self.dispatchable_definition(&parent_input.target)?
@@ -324,17 +360,27 @@ impl AgentDispatcher<'_> {
             let target = self.dispatchable_definition_in_txn(&wtxn, &input.target)?;
             prepared_parent.resolve_child(self, &input, &spawn, target.scope.to_world_scope())?;
         }
-        // Only the existing authenticated-owner door mints approval. Spending
-        // and landing are atomic, so a failed enqueue spends no owner act.
-        self.vault
-            .approve_once_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
-        let authorization = approve_once_authorization_in_txn(
-            &self.vault.store,
-            &wtxn,
-            &proposal.consent.effect_digest,
-        )?
-        .ok_or_else(|| invalid("board consent did not authorize this exact widening"))?;
-        spend_approve_once_in_txn(&self.vault.store, &mut wtxn, &authorization)?;
+        match actor {
+            // Only the existing authenticated-owner door mints approval.
+            // Spending and landing are atomic, so a failed enqueue spends no
+            // owner act.
+            BoardActor::Owner(owner) => {
+                self.vault
+                    .approve_once_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
+                let authorization = approve_once_authorization_in_txn(
+                    &self.vault.store,
+                    &wtxn,
+                    &proposal.consent.effect_digest,
+                )?
+                .ok_or_else(|| invalid("board consent did not authorize this exact widening"))?;
+                spend_approve_once_in_txn(&self.vault.store, &mut wtxn, &authorization)?;
+            }
+            // An agent's act is a board act, recorded beside the pending row
+            // in the same writer; it mints no owner consent.
+            BoardActor::Agent(_) => {
+                self.record_board_act_in_txn(&mut wtxn, &act, proposal, "approved", now)?;
+            }
+        }
         let outcome = match &input.target {
             AgentDispatchTarget::Custom(_) => {
                 self.dispatch_in_txn(&mut wtxn, None, input, spawn)?
@@ -371,7 +417,8 @@ impl AgentDispatcher<'_> {
             &SliceOverride {
                 proposal_id: proposal.proposal_id.clone(),
                 board,
-                owner: actor.to_hex(),
+                actor: act.actor.to_hex(),
+                proof: act.proof,
                 spec: record.request.widened_spec.clone(),
             },
         )?;
@@ -390,8 +437,8 @@ impl AgentDispatcher<'_> {
     }
 
     /// The board above refuses an exact, stored proposal (OF-568), on the
-    /// same proof as approval: the authenticated owner of the board's TASK,
-    /// a live human, and the immediate board above. Declining writes the
+    /// same proof as approval, here a revalidated root Owner and a live
+    /// human (FIX 9565), and the immediate board above. Declining writes the
     /// refusal and, through the consent denial door, the `denied` decision
     /// row that closes the proposal's `pending` one on the same effect
     /// digest: no slice, no enqueue, no consent minted or spent. An approved
@@ -403,18 +450,34 @@ impl AgentDispatcher<'_> {
         owner: &AuthenticatedOwner,
         proposal: &super::ContextWidenProposal,
     ) -> Result<()> {
+        self.decline_widen_as(&BoardActor::Owner(owner), proposal)
+    }
+
+    /// [`Self::decline_context_widen`] by the board attempt's own agent,
+    /// under its live host lease (FIX 9565). Its `denied` row is a recorded
+    /// board act; no owner consent is denied in its name.
+    pub fn decline_context_widen_as_board(
+        &self,
+        board_lease: &AttemptRecord,
+        proposal: &super::ContextWidenProposal,
+    ) -> Result<()> {
+        self.decline_widen_as(&BoardActor::Agent(board_lease), proposal)
+    }
+
+    /// The one refusal path both declines take.
+    fn decline_widen_as(
+        &self,
+        actor: &BoardActor<'_>,
+        proposal: &super::ContextWidenProposal,
+    ) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self.vault, &wtxn)?;
         let (key_hash, mut record) = self.stored_widen_proposal(&wtxn, &proposal.proposal_id)?;
         if record.request.proposal()? != *proposal {
             return Err(invalid("widen proposal differs from the stored request"));
         }
-        let board = record
-            .request
-            .board
-            .ok_or_else(|| invalid("widen has no provable board above"))?;
-        self.require_board_owner(&wtxn, board, actor)?;
-        if self.recorded_parent(record.request.intent.parent)? != Some(board) {
+        let board = record.request.board;
+        let act = self.authorize_board_act_in_txn(&wtxn, board, actor)?;
+        if self.recorded_parent(record.request.intent.parent)? != board {
             return Err(invalid("widen board is not the immediate board above"));
         }
         if record.landed.is_some() {
@@ -425,13 +488,20 @@ impl AgentDispatcher<'_> {
         }
         let at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut wtxn)?;
         record.declined = Some(WidenDecline {
-            by: actor.to_hex(),
+            by: act.actor.to_hex(),
             at,
         });
-        // The owner's refusal lands in the same decision ledger as the
-        // pending row; a failed append declines nothing.
-        self.vault
-            .deny_consent_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
+        // The refusal lands in the same decision ledger as the pending row;
+        // a failed append declines nothing.
+        match actor {
+            BoardActor::Owner(owner) => {
+                self.vault
+                    .deny_consent_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
+            }
+            BoardActor::Agent(_) => {
+                self.record_board_act_in_txn(&mut wtxn, &act, proposal, "denied", at)?;
+            }
+        }
         WIDEN.put(self.vault, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         Ok(())
@@ -549,10 +619,15 @@ impl AgentDispatcher<'_> {
         let Some(slice) = SLICE.get(&self.vault.store, &txn, &attempt)? else {
             return Ok(input.context_spec.clone().unwrap_or_default());
         };
-        self.require_board_owner(&txn, slice.board, EntityId::from_hex(&slice.owner)?)?;
+        self.replay_board_act_in_txn(
+            &txn,
+            slice.board,
+            EntityId::from_hex(&slice.actor)?,
+            slice.proof,
+        )?;
         let (_, record) = self.stored_widen_proposal(&txn, &slice.proposal_id)?;
         drop(txn);
-        if self.recorded_parent(attempt)? != Some(slice.board) {
+        if self.recorded_parent(attempt)? != slice.board {
             return Err(invalid("approved slice has a different board lineage"));
         }
         if record.landed.is_none() || record.request.intent.parent != attempt {
@@ -575,41 +650,6 @@ impl AgentDispatcher<'_> {
             .get(attempt)?
             .ok_or_else(|| invalid("widen lineage attempt is missing"))?;
         self.workflow_authority_parent(decode_dreamer_attempt_payload(&row.payload)?.parent_attempt)
-    }
-
-    fn require_board_owner(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        board: AttemptId,
-        owner: EntityId,
-    ) -> Result<()> {
-        let row = AttemptQueue::new(self.vault)
-            .get_in_txn(txn, board)?
-            .ok_or_else(|| invalid("widen board attempt is missing"))?;
-        record_dispatch_input(&row)
-            .ok_or_else(|| invalid("widen board is not an agent dispatch"))?;
-        let task = row
-            .task_ref
-            .as_deref()
-            .and_then(|id| EntityId::from_hex(id).ok())
-            .ok_or_else(|| invalid("widen board has no authority-bearing TASK"))?;
-        let standing = self
-            .vault
-            .task_authority_state_in(txn, task)?
-            .ok_or_else(|| invalid("widen board TASK has no owner proof"))?;
-        if standing.cancelled || standing.owner_ref != owner {
-            return Err(invalid("authenticated actor does not own the board above"));
-        }
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.vault.store, txn, &owner)?
-            .ok_or_else(|| invalid("board owner is no longer present"))?;
-        if crate::batch::EntityMetadataHeader::parse(&raw)
-            .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_PERSON)
-            || self.vault.entity_lifecycle_state_in_txn(txn, &owner)?
-                != crate::identity_topology::EntityLifecycleState::Active
-        {
-            return Err(invalid("board owner is no longer an active human"));
-        }
-        Ok(())
     }
 }
 

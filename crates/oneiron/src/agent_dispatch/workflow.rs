@@ -339,7 +339,8 @@ impl AgentDispatcher<'_> {
         frozen.definition.ceiling = live.ceiling;
         let (_, ceiling) =
             self.project_depth_limit_in_txn(txn, record.intent.parent, frozen.project_ref)?;
-        frozen.depth_remaining = Some(frozen.depth_remaining.unwrap_or(ceiling).min(ceiling));
+        // Only an explicit slice is stored (FIX 9560).
+        frozen.depth_remaining = super::dispatch::stored_depth(frozen.depth_remaining, ceiling);
         if let Some(parent) = record.intent.parent {
             let (target, definition) = self.attenuate_child_target(
                 txn,

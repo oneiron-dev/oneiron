@@ -95,9 +95,8 @@ pub(crate) const SELF_COMPACTION_BACKEND: &str = "self";
 /// The pinned sub-map keys for a profile's `output_decay`, in encode order.
 pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
 
-/// Most literal verbatim pins one profile carries, and the most bytes one
-/// pin may hold.
-pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PINS: usize = 64;
+/// The most bytes one literal verbatim pin may hold. A profile carries any
+/// number of pins: its put's scan row asks past 64.
 pub(super) const MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES: usize = 1024;
 
 /// The pinned sub-map keys for a [`ContextBudgetSplit`], in encode order.
@@ -121,7 +120,9 @@ pub const AGENT_MODEL_TIER_MAX_BYTES: usize = 256;
 /// Maximum byte length of a skill/connector/MCP reference id or key.
 pub const AGENT_REF_KEY_MAX_BYTES: usize = 256;
 
-/// Maximum number of entries in each composition list.
+/// Entries in one composition list past which a definition's put asks
+/// whether everything is okay (the count it once refused past); every entry
+/// is kept, however many (rule 5).
 pub const AGENT_MAX_LIST_ENTRIES: usize = 64;
 
 pub(super) const KEY_AGENT_ID: &str = AGENT_DEF_BODY_KEYS[0];

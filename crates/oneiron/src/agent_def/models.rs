@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use super::decode::{text_value, validate_text_field};
 use super::types::{
-    AGENT_DESC_MAX_BYTES, AGENT_MAX_LIST_ENTRIES, AGENT_MODEL_TIER_MAX_BYTES, AgentDefinition,
-    KEY_MODEL_REF, KEY_MODEL_WHEN,
+    AGENT_DESC_MAX_BYTES, AGENT_MODEL_TIER_MAX_BYTES, AgentDefinition, KEY_MODEL_REF,
+    KEY_MODEL_WHEN,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -94,15 +94,13 @@ pub(super) fn encode_agent_models(models: &[AgentModel]) -> Value {
     )
 }
 
-/// Strict `models` decode: an array of at most 64 maps, each holding both
-/// pinned keys once and nothing else.
+/// Strict `models` decode: an array of maps, each holding both pinned keys
+/// once and nothing else. Every entry is kept, however many (rule 5): the
+/// put's scan row asks past its threshold.
 pub(super) fn decode_agent_models(value: &Value) -> Result<Vec<AgentModel>> {
     let Value::Array(values) = value else {
         return Err(invalid("models must be a MessagePack array"));
     };
-    if values.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(invalid("models must contain at most 64 entries"));
-    }
     values.iter().map(decode_agent_model).collect()
 }
 
@@ -139,14 +137,11 @@ fn decode_model_id(value: &Value, context: &'static str) -> Result<ModelId> {
         .map_err(|_| invalid(context))
 }
 
-/// The list rules every encode and decode holds: at most 64 entries, each a
-/// model id at most 256 bytes listed once, with a non-blank `when` at most
+/// The list rules every encode and decode holds: each entry a model id at
+/// most 256 bytes listed once, with a non-blank `when` at most
 /// 4096 bytes. The compaction model need not be listed: it compacts the
 /// agent's window and runs none of its wakes.
 pub(super) fn validate_agent_models(def: &AgentDefinition) -> Result<()> {
-    if def.models.len() > AGENT_MAX_LIST_ENTRIES {
-        return Err(invalid("models must contain at most 64 entries"));
-    }
     for (index, model) in def.models.iter().enumerate() {
         validate_text_field(
             model.model_ref.as_str(),
