@@ -3623,7 +3623,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/connector_call_asks.rs` | src | s | 1 fn · 1 crate-vis | — | The owner ask a held connector call queues (ONE-2510) |
 | `src/outbound_consent/connector_call_code.rs` | src | m | 3 fn · 9 crate-vis | — | A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds |
 | `src/outbound_consent/connector_call_consent.rs` | src | s | 1 fn · 4 crate-vis | — | FIX 990: the owner's `always ask` setting on an admitted connector call |
-| `src/outbound_consent/connector_call_erase.rs` | src | s | 1 crate-vis | — | An actor's erase reaches every connector call row that keeps what the actor asked (FIX 9159): the held or… |
+| `src/outbound_consent/connector_call_erase.rs` | src | s | 5 crate-vis | — | What a connector call row keeps, and how it goes |
 | `src/outbound_consent/connector_call_input.rs` | src | s | 1 struct · 6 fn · 4 crate-vis | ConnectorCallInput | A connector call whose connector asked for input, kept on the call's own row (ONE-2510, FIX 3837; canon… |
 | `src/outbound_consent/connector_call_output.rs` | src | s | 1 crate-vis | — | A connector call's reply after its send (FIX 7646, FIX 7647): the host that sent it cleared it of the… |
 | `src/outbound_consent/connector_call_pending.rs` | src | s | 1 fn · 3 crate-vis | — | Expiry of held and pending-delivery connector calls (ONE-2510) |
@@ -4207,7 +4207,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/known_values.rs` | src | m | 1 const · 17 crate-vis | — | The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later… |
 | `src/secret_custody/known_values/forms.rs` | src | s | 7 crate-vis | — | A known value spelled another way in incoming bytes (FIX 2725): standard or URL-safe base64, padded or not… |
 | `src/secret_custody/masked_files.rs` | src | m | 1 enum · 3 fn · 18 crate-vis | SecretSight | Files stored with keys in them (OF-560; ARCH-0069 #mask-on-write, owner ruling G04 binary = C2) |
-| `src/secret_custody/mod.rs` | src | s | 11 re-export · 23 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
+| `src/secret_custody/mod.rs` | src | s | 11 re-export · 24 crate-vis | — | ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret… |
 | `src/secret_custody/owner_door.rs` | src | m | 4 struct · 2 fn · 2 crate-vis | ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered | The owner registers a secret (ARCH-0069 S1–S3): the production door that puts a value into custody |
 | `src/secret_custody/owner_door/tests.rs` | test | L | — | — | ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody… |
 | `src/secret_custody/reveal.rs` | src | L | 6 struct · 5 enum · 3 fn · 7 const · 2 re-export · 21 crate-vis | HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk +3 | A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection) |
@@ -4220,7 +4220,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/reveal/person.rs` | src | s | 5 crate-vis | — | PERSON handles use the reveal consent machine, not custody or a T1 lease |
 | `src/secret_custody/run_bound.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 const · 2 crate-vis | RunSecretHolder, RunSecretSeat | Run-bound custody (FIX 8028, OF-560; ARCH-0069 secret custody): a secret a run's browser or desktop finds… |
 | `src/secret_custody/sighted_file.rs` | src | s | 2 crate-vis | — | An ASSET body kept in its file, read as a serving door's reader reads it (FIX 5507) |
-| `src/secret_custody/storage_seal.rs` | src | m | 19 crate-vis | — | A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential… |
+| `src/secret_custody/storage_seal.rs` | src | m | 20 crate-vis | — | A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential… |
+| `src/secret_custody/storage_seal/connector_resume.rs` | src | s | 3 crate-vis | — | A connector call's durable resume state at rest (FIX 9157): sealed under the call's own erasable custody… |
 | `src/secret_custody/storage_seal/image.rs` | src | m | 12 crate-vis | — | A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the… |
 | `src/secret_custody/tests.rs` | test | L | — | — | SECRET-01 (ONE-1919) unit tests: custody classes, record round-trip and redacted `Debug`, the name index… |
 | `src/secret_custody/transition.rs` | src | m | 1 fn · 20 crate-vis | — | OF-422 Phase 1 (ARCH-0069 `#custody-seal-planned`): a portable credential syncs again, but only as a custody… |
@@ -4624,7 +4625,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/checkpoint_payload/rows/restore.rs` | src | s | 7 crate-vis | — | Putting an opened compartment's rows back, through the one restore-only raw-row sink |
 | `src/store/checkpoint_payload/rows/typed.rs` | src | s | 11 crate-vis | — | Reading a declared table's rows with its own codec, and splitting the actors a row names out of an owner's… |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
-| `src/store/credential_custody.rs` | src | s | 11 crate-vis | — | The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and… |
+| `src/store/credential_custody.rs` | src | m | 15 crate-vis | — | The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and… |
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/actor_erase.rs` | src | s | 1 enum · 1 const · 1 crate-vis | GateAttributionErase | An erased actor out of the Gate decision ledger (FIX 4230, 4231) |

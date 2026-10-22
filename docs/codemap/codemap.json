@@ -46600,9 +46600,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_erase.rs",
-     "purpose": "An actor's erase reaches every connector call row that keeps what the actor asked (FIX 9159): the held or…",
+     "purpose": "What a connector call row keeps, and how it goes",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 5
      }
     },
     {
@@ -53780,7 +53780,7 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 11
      }
     },
@@ -53948,7 +53948,17 @@
      "path": "src/secret_custody/storage_seal.rs",
      "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/storage_seal/connector_resume.rs",
+     "purpose": "A connector call's durable resume state at rest (FIX 9157): sealed under the call's own erasable custody…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -59077,13 +59087,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/credential_custody.rs",
      "purpose": "The credential custody client (KS-6, FIX-LIST 5687 part 1): one erasable key per credential generation and…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 15
      }
     },
     {
@@ -74069,7 +74079,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -74456,7 +74466,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4821,
+   "source_files": 4822,
    "test_files": 902
   },
   "oneiron-android": {
