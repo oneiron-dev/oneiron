@@ -13,6 +13,7 @@ use oneiron_organ_protocol::{Hash32, MAX_FDS_PER_FRAME, MappedRegion, Output, Pa
 
 use super::Resolved;
 use crate::budget::{CallRoom, Grown, Lease};
+use crate::clock::Clock;
 use crate::error::HostError;
 use crate::measure::install_row;
 use crate::outcome::{OrganOutcome, OrganOutput, OutputBytes};
@@ -30,6 +31,8 @@ pub(super) struct Replied {
     pub(super) frame: Lease,
     pub(super) queued: Duration,
     pub(super) sent_at: Instant,
+    /// The call's deadline as its waits for room had moved it when the
+    /// reply came (FIX 8020).
     pub(super) deadline: Instant,
     pub(super) asks: Vec<AskReceipt>,
     /// The host's budget: what the soft-target exception passes.
@@ -132,19 +135,13 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
 }
 
 /// Hashes in pieces, so a large output cannot run the call past its
-/// deadline. The deadline moves on by every wait for room since `waited`:
-/// waiting for room is not the call's time.
-fn hash_until(
-    bytes: &[u8],
-    deadline: Instant,
-    room: &CallRoom,
-    waited: Duration,
-) -> Result<Hash32, HostError> {
+/// deadline: the one its reply came back with, which already counts every
+/// earlier wait for room, moved on by each wait since, once (FIX 8020).
+fn hash_until(bytes: &[u8], clock: Clock<'_>) -> Result<Hash32, HostError> {
     const PIECE: usize = 32 * 1024 * 1024;
-    let deadline = deadline + room.grown().waited.saturating_sub(waited);
     let mut hasher = blake3::Hasher::new();
     for piece in bytes.chunks(PIECE) {
-        if Instant::now() >= deadline {
+        if clock.passed() {
             return Err(HostError::DeadlineExceeded);
         }
         hasher.update(piece);
@@ -169,7 +166,8 @@ fn take_outputs(
     let Called {
         vault, spec, room, ..
     } = *called;
-    let waited = room.grown().waited;
+    // From the reply's own moved deadline: only the waits from here on.
+    let clock = Clock::new(deadline, room.waits());
     let mut slots: Vec<Option<OwnedFd>> = fds.into_iter().map(Some).collect();
     let mut total = 0u64;
     let taken = outputs
@@ -178,8 +176,8 @@ fn take_outputs(
             let (bytes, len) = output_bytes(called, output.data, &mut slots)?;
             total = total.saturating_add(len);
             let content_hash = match &bytes {
-                OutputBytes::Inline(inline) => hash_until(inline, deadline, room, waited)?,
-                OutputBytes::Mapped(region) => hash_until(region, deadline, room, waited)?,
+                OutputBytes::Inline(inline) => hash_until(inline, clock)?,
+                OutputBytes::Mapped(region) => hash_until(region, clock)?,
             };
             vault.measure_limit(EngineLimit::OrganOutputNameBytes, output.name.len() as u64);
             vault.measure_limit(
@@ -192,6 +190,7 @@ fn take_outputs(
                 content_hash,
                 bytes,
                 _kept: Some(room.keep(len)),
+                _leased: None,
             })
         })
         .collect::<Result<Vec<_>, HostError>>()?;

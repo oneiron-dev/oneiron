@@ -66,6 +66,7 @@ fn installed_as(
             .is_some_and(|hash| hash.to_hex() == build.blake3)
         && spec.version_pin == organ.version
         && spec.verbs == organ.verbs
+        && spec.kinds.as_ref() == Some(&organ.kinds)
         && spec.media_types == organ.media_types
         && organ.threads.is_none_or(|threads| spec.threads == threads)
         && organ

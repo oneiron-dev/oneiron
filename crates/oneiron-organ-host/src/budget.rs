@@ -20,11 +20,20 @@
 //! from the machine's memory floor first, then held in the call's room as a
 //! class apart from what its answers and outputs hold, until the call ends.
 //! That growth waits within the call's deadline, and a revocation ends it.
+//! The process's kernel limits grow with what its buffers were granted, and
+//! shrink back when the call ends (FIX 6194).
+//!
+//! Calls of one class take their turns in the order they came (FIX 8025):
+//! a newer call never passes an older one of its class, however small. A
+//! frame's bytes and the value it decodes into take room, and the machine's
+//! floor when the host has one, before either is allocated (FIX 6195).
 
+use std::collections::VecDeque;
 use std::fmt;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+use crate::clock::WaitClock;
 use crate::error::HostError;
 use crate::resource_memory::{FloorRefusal, SharedFloor};
 use crate::spec::CallClass;
@@ -54,10 +63,12 @@ struct Used {
     threads: u32,
     memory: u64,
     inflight: u32,
-    waiting: [u32; 3],
-    /// Of those waiting, the calls bigger than the whole budget. While one
-    /// waits, its class admits nothing new, so the budget drains for it.
-    whole: [u32; 3],
+    /// The calls waiting in each class, oldest first: only the oldest may
+    /// be admitted, so one bigger than the whole budget holds its class
+    /// until the budget drains for it.
+    turns: [VecDeque<u64>; 3],
+    /// The turn the next waiting call takes.
+    next_turn: u64,
     /// Live calls and frames waiting for room to grow. While any waits, no
     /// new call is admitted, so the budget drains for them.
     growing: u32,
@@ -162,38 +173,110 @@ fn never() -> bool {
     false
 }
 
-/// The budget, as a frame reader holds it: room for each frame's body
-/// before it is read.
+/// The budget, as a frame's reader and sender hold it: room for its bytes
+/// before they are allocated, the machine's floor first when the host has
+/// one.
 #[derive(Debug, Clone)]
 pub(crate) struct Room {
     shared: Arc<Shared>,
+    floor: Option<SharedFloor>,
 }
 
-/// Memory one frame holds while its bytes live, given back on drop.
+/// Why a frame got no room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unroomed {
+    /// The frame is no longer wanted.
+    Stopped,
+    /// The machine's floor: `needed` bytes cannot fit even with nothing
+    /// else leased; it has `available` at most.
+    Floor { needed: u64, available: u64 },
+}
+
+/// Memory one frame holds while its bytes and its value live, given back on
+/// drop.
 #[derive(Debug)]
 pub(crate) struct Lease {
     shared: Arc<Shared>,
     memory: u64,
+    /// The frame's encoded body.
+    frame: u64,
     grown: Grown,
+    /// The machine's leases behind `memory`, when the host has a floor.
+    floors: Mutex<Leases>,
 }
 
+/// The floor's port asks for a deadline; a frame's wait has none, only
+/// what stops it (a process that ends, a call that is withdrawn).
+const UNTIMED: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+
 impl Room {
-    /// Room for `bytes` of a frame, as a live call grows: `None` once
-    /// `stopped` says the frame is no longer wanted.
-    pub(crate) fn lease(&self, bytes: u64, stopped: &dyn Fn() -> bool) -> Option<Lease> {
-        let grown = self.shared.grow(bytes, stopped)?;
-        Some(Lease {
+    /// Room for a frame's `bytes`, as a live call grows: the machine's
+    /// floor first, then the budget, until `stopped` says the frame is no
+    /// longer wanted.
+    pub(crate) fn lease(&self, bytes: u64, stopped: &dyn Fn() -> bool) -> Result<Lease, Unroomed> {
+        let mut lease = Lease {
             shared: Arc::clone(&self.shared),
-            memory: bytes,
-            grown,
-        })
+            memory: 0,
+            frame: bytes,
+            grown: Grown::default(),
+            floors: Mutex::new(Leases::default()),
+        };
+        self.grow(&mut lease, bytes, stopped)?;
+        Ok(lease)
+    }
+
+    /// `bytes` more in `lease`, for what its frame becomes: the value its
+    /// body decodes into, before that is built (FIX 6195, 7890).
+    pub(crate) fn grow(
+        &self,
+        lease: &mut Lease,
+        bytes: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<(), Unroomed> {
+        if let Some(floor) = &self.floor
+            && bytes > 0
+        {
+            let deadline = Instant::now() + UNTIMED;
+            let held =
+                floor
+                    .0
+                    .lease(bytes, deadline, stopped)
+                    .map_err(|refused| match refused {
+                        FloorRefusal::Floor { needed, available } => {
+                            Unroomed::Floor { needed, available }
+                        }
+                        FloorRefusal::Deadline => Unroomed::Stopped,
+                    })?;
+            lock_leases(&lease.floors).0.push(held);
+        }
+        let grown = self.shared.grow(bytes, stopped).ok_or(Unroomed::Stopped)?;
+        lease.memory += bytes;
+        lease.grown = Grown {
+            overcommit: lease.grown.overcommit.saturating_add(grown.overcommit),
+            peak: lease.grown.peak.max(grown.peak),
+            waited: lease.grown.waited + grown.waited,
+        };
+        Ok(())
     }
 }
 
+fn lock_leases(leases: &Mutex<Leases>) -> MutexGuard<'_, Leases> {
+    leases.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Lease {
-    /// The frame's bytes this lease holds room for.
+    /// The frame's encoded body, as it came: what the frame rows measure.
     pub(crate) fn bytes(&self) -> u64 {
-        self.memory
+        self.frame
+    }
+
+    /// Gives back `bytes` of the budget's room for bytes that are gone: a
+    /// frame's body, once only its value is left. The machine's leases stay
+    /// until the frame drops.
+    pub(crate) fn shrink(&mut self, bytes: u64) {
+        let bytes = bytes.min(self.memory);
+        self.memory -= bytes;
+        self.shared.give_back(bytes);
     }
 
     /// What taking the room took: past the budget, and the wait for it.
@@ -232,6 +315,20 @@ pub(crate) struct CallRoom {
     /// The machine floor the organ's own buffers lease from; none on a host
     /// built without one, which reserves them nothing.
     floor: Option<SharedFloor>,
+    /// Its waits for room: time the call's deadline does not count.
+    waits: WaitClock,
+    /// The kernel's limits on the process the call runs in, which grow
+    /// with what the organ's own buffers are granted (FIX 6194).
+    limits: OnceLock<Arc<dyn NativeLimits>>,
+}
+
+/// The kernel's limits on an organ process, kept in step with what its own
+/// buffers were granted (`memory.grow`, FIX 6194).
+pub(crate) trait NativeLimits: Send + Sync + fmt::Debug {
+    /// `bytes` more of the organ's own buffers were granted.
+    fn grant(&self, bytes: u64);
+    /// `bytes` granted earlier went back with their call.
+    fn give_back(&self, bytes: u64);
 }
 
 #[derive(Debug)]
@@ -247,7 +344,6 @@ struct RoomState {
     leases: Leases,
     overcommit: u64,
     peak: u64,
-    waited: Duration,
 }
 
 /// The machine's leases one room holds for the organ's own buffers.
@@ -283,10 +379,22 @@ impl CallRoom {
                 leases: Leases::default(),
                 overcommit: 0,
                 peak: 0,
-                waited: Duration::ZERO,
             }),
             floor,
+            waits: WaitClock::default(),
+            limits: OnceLock::new(),
         }
+    }
+
+    /// Ties the room to the process its call runs in, whose kernel limits
+    /// grow with what the organ's own buffers are granted.
+    pub(crate) fn bind(&self, limits: Arc<dyn NativeLimits>) {
+        let _ = self.limits.set(limits);
+    }
+
+    /// The room's waits for room, as a clock.
+    pub(crate) fn waits(&self) -> &WaitClock {
+        &self.waits
     }
 
     fn lock(&self) -> MutexGuard<'_, RoomState> {
@@ -306,13 +414,12 @@ impl CallRoom {
         if need > state.permit.memory {
             let delta = need - state.permit.memory;
             let shared = Arc::clone(&state.permit.shared);
-            let Some(grown) = shared.grow(delta, stopped) else {
+            let Some(grown) = self.waits.timing(|| shared.grow(delta, stopped)) else {
                 return false;
             };
             state.permit.memory += delta;
             state.overcommit = state.overcommit.saturating_add(grown.overcommit);
             state.peak = state.peak.max(grown.peak);
-            state.waited += grown.waited;
         }
         state.held = state.held.saturating_add(bytes);
         true
@@ -355,16 +462,19 @@ impl CallRoom {
             let delta = need - state.permit.memory;
             let shared = Arc::clone(&state.permit.shared);
             // Refused here, the machine's lease drops with it: nothing held.
-            let Some(grown) = shared.grow(delta, &ended) else {
+            let Some(grown) = self.waits.timing(|| shared.grow(delta, &ended)) else {
                 return Err(NativeRefusal::Deadline);
             };
             state.permit.memory += delta;
             state.overcommit = state.overcommit.saturating_add(grown.overcommit);
             state.peak = state.peak.max(grown.peak);
-            state.waited += grown.waited;
         }
         state.native = state.native.saturating_add(bytes);
         state.leases.0.push(lease);
+        drop(state);
+        if let Some(limits) = self.limits.get() {
+            limits.grant(bytes);
+        }
         Ok(())
     }
 
@@ -400,7 +510,24 @@ impl CallRoom {
         Grown {
             overcommit: state.overcommit,
             peak: state.peak,
-            waited: state.waited,
+            waited: self.waits.waited(),
+        }
+    }
+}
+
+impl Drop for CallRoom {
+    /// The organ's own buffers go back with the call: so does what the
+    /// kernel's limits grew by for them.
+    fn drop(&mut self) {
+        let native = self
+            .state
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner)
+            .native;
+        if native > 0
+            && let Some(limits) = self.limits.get()
+        {
+            limits.give_back(native);
         }
     }
 }
@@ -430,10 +557,12 @@ impl Budget {
         }
     }
 
-    /// The budget as a frame reader holds it.
-    pub(crate) fn room(&self) -> Room {
+    /// The budget as a frame's reader and sender hold it, beside the
+    /// machine's `floor` when the host has one.
+    pub(crate) fn room(&self, floor: Option<SharedFloor>) -> Room {
         Room {
             shared: Arc::clone(&self.shared),
+            floor,
         }
     }
 
@@ -443,11 +572,12 @@ impl Budget {
         self.shared.config.memory_bytes
     }
 
-    /// Books `threads` and `memory` for one call, waiting in class order
-    /// until they fit or `deadline` passes. Memory past the whole budget
-    /// fits once nothing else holds any; threads past the class's share
-    /// are booked as all of it, so the call runs alone in its class. While
-    /// a live call waits to grow, nothing new is admitted.
+    /// Books `threads` and `memory` for one call, waiting in class order,
+    /// and in its class behind every call that came before it, until they
+    /// fit or `deadline` passes. Memory past the whole budget fits once
+    /// nothing else holds any; threads past the class's share are booked as
+    /// all of it, so the call runs alone in its class. While a live call
+    /// waits to grow, nothing new is admitted.
     pub(crate) fn admit(
         &self,
         class: CallClass,
@@ -466,13 +596,15 @@ impl Budget {
         };
         let threads = threads.min(thread_cap);
         let mut used = shared.lock();
-        used.waiting[rank] += 1;
-        used.whole[rank] += u32::from(whole);
+        let turn = used.next_turn;
+        used.next_turn += 1;
+        used.turns[rank].push_back(turn);
         loop {
-            let ahead = used.waiting[..rank].iter().any(|count| *count > 0);
-            // A smaller call of the same class waits behind a whole-budget
-            // one, which would otherwise never see the budget drain.
-            let held = (!whole && used.whole[rank] > 0) || used.growing > 0;
+            let ahead = used.turns[..rank].iter().any(|turns| !turns.is_empty());
+            // Its class's oldest waiter goes first: a whole-budget one holds
+            // the newer ones, so the budget drains for it.
+            let first = used.turns[rank].front() == Some(&turn);
+            let held = !first || used.growing > 0;
             let room = if whole {
                 used.memory == 0
             } else {
@@ -481,11 +613,13 @@ impl Budget {
             let fits =
                 used.threads + threads <= thread_cap && room && used.inflight < config.max_inflight;
             if !ahead && !held && fits {
-                used.waiting[rank] -= 1;
-                used.whole[rank] -= u32::from(whole);
+                used.turns[rank].pop_front();
                 used.threads += threads;
                 used.memory += memory;
                 used.inflight += 1;
+                drop(used);
+                // The next in its class may fit beside it.
+                shared.freed.notify_all();
                 return Ok(Permit {
                     shared: Arc::clone(shared),
                     threads,
@@ -494,8 +628,7 @@ impl Budget {
             }
             let now = Instant::now();
             if now >= deadline {
-                used.waiting[rank] -= 1;
-                used.whole[rank] -= u32::from(whole);
+                used.turns[rank].retain(|waiting| *waiting != turn);
                 drop(used);
                 shared.freed.notify_all();
                 return Err(HostError::BudgetTimeout);

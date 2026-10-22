@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 120] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -86,6 +86,7 @@ impl EngineLimit {
         Self::SealFetchAsks,
         Self::SealAsks,
         Self::SealAnswerBytes,
+        Self::SealMemoryAsks,
         Self::SealCrlBytes,
         Self::SealTsaBytes,
         Self::SealReportJsonBytes,
@@ -210,6 +211,7 @@ impl EngineLimit {
             Self::SealFetchAsks => "limits.seal_fetch_asks",
             Self::SealAsks => "limits.seal_asks",
             Self::SealAnswerBytes => "limits.seal_answer_bytes",
+            Self::SealMemoryAsks => "limits.seal_memory_asks",
             Self::SealCrlBytes => "limits.seal_crl_bytes",
             Self::SealTsaBytes => "limits.seal_tsa_bytes",
             Self::SealReportJsonBytes => "limits.seal_report_json_bytes",
@@ -375,6 +377,9 @@ impl EngineLimit {
             Self::SealFetchAsks => 32,
             Self::SealAsks => 36,
             Self::SealAnswerBytes => 64 << 20,
+            // A seal reserves its decodes 4 MiB at a time: a 1 GiB PDF's
+            // worth of reservations.
+            Self::SealMemoryAsks => 256,
             Self::SealCrlBytes => 8 << 20,
             Self::SealTsaBytes => 1 << 20,
             Self::SealReportJsonBytes => 8 << 20,

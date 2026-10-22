@@ -155,6 +155,10 @@ impl<'a> CallContext<'a> {
     }
 }
 
+mod answer;
+
+pub use answer::{AnswerMemory, AskBytes};
+
 /// What the engine answered.
 #[derive(Debug)]
 pub struct AskReply {
@@ -163,22 +167,9 @@ pub struct AskReply {
     pub data: Option<AskBytes>,
 }
 
-/// An answer's bytes, in the organ's own memory. A region the engine
-/// sealed is copied out and unmapped as the answer arrives, so the engine's
-/// pages are never held past the ask, and what the organ keeps counts
-/// against its own memory grant.
-#[derive(Debug)]
-pub struct AskBytes {
-    pub content_hash: Hash32,
-    bytes: Vec<u8>,
-}
-
-impl Deref for AskBytes {
-    type Target = [u8];
-    fn deref(&self) -> &[u8] {
-        &self.bytes
-    }
-}
+/// An answer as it came: its value, and its bytes with the descriptors they
+/// ride in, not yet in the organ's own memory.
+type Answered = (rmpv::Value, Option<(AskData, Vec<OwnedFd>)>);
 
 /// One served call's way to ask, and the ask that waits for its answer.
 #[derive(Debug, Default)]
@@ -255,6 +246,20 @@ struct AskLine {
 
 impl AskLine {
     fn ask(&self, verb: &str, value: rmpv::Value) -> Result<AskReply, AskRefusal> {
+        let (value, data) = self.exchange(verb, value)?;
+        // Answered, and the call's one ask is free again: a region's bytes
+        // are reserved by an ask of their own before they are copied out
+        // (FIX 8454).
+        let data = match data {
+            Some((data, fds)) => Some(self.answer_bytes(data, fds)?),
+            None => None,
+        };
+        Ok(AskReply { value, data })
+    }
+
+    /// Sends one ask and waits for its answer, holding the call's one ask
+    /// in flight until it comes.
+    fn exchange(&self, verb: &str, value: rmpv::Value) -> Result<Answered, AskRefusal> {
         if !self.asks {
             return Err(AskRefusal::new(
                 AskCode::Unsupported,
@@ -287,36 +292,13 @@ impl AskLine {
             return Err(AskRefusal::new(AskCode::Failed, "the ask was not sent"));
         }
         match woken.recv() {
-            Ok(Wake::Answer(AskOutcome::Answered { value, data }, fds)) => Ok(AskReply {
-                value,
-                data: data.map(|data| answer_bytes(data, fds)).transpose()?,
-            }),
+            Ok(Wake::Answer(AskOutcome::Answered { value, data }, fds)) => {
+                Ok((value, data.map(|data| (data, fds))))
+            }
             Ok(Wake::Answer(AskOutcome::Refused(refusal), _)) => Err(refusal),
             Ok(Wake::Cancelled) | Err(_) => Err(cancelled()),
         }
     }
-}
-
-fn answer_bytes(data: AskData, fds: Vec<OwnedFd>) -> Result<AskBytes, AskRefusal> {
-    let broken = |what: &str| AskRefusal::new(AskCode::Failed, format!("answer data: {what}"));
-    let bytes = match data.data {
-        Payload::Inline(bytes) if bytes.len() as u64 == data.len => bytes.into_vec(),
-        Payload::Inline(_) => return Err(broken("inline length")),
-        Payload::Slot(slot) => {
-            let fd = fds
-                .into_iter()
-                .nth(usize::from(slot))
-                .ok_or_else(|| broken("slot"))?;
-            // Mapped, copied, and unmapped here; the descriptor closes too.
-            MappedRegion::map(fd, data.len)
-                .map_err(|err| broken(&err.to_string()))?
-                .to_vec()
-        }
-    };
-    Ok(AskBytes {
-        content_hash: data.content_hash,
-        bytes,
-    })
 }
 
 /// One input's bytes, valid for the call.

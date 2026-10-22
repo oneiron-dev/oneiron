@@ -30,6 +30,7 @@
 #[cfg(unix)]
 mod asks;
 mod budget;
+mod clock;
 mod error;
 #[cfg(unix)]
 mod fetch;
@@ -79,6 +80,8 @@ pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
+#[cfg(unix)]
+pub use sandbox::{DescendantFence, NamespaceFact, OrganIsolation};
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{

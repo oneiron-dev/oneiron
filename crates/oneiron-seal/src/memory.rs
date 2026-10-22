@@ -372,6 +372,35 @@ impl AdmittedBytes {
         Ok(copy)
     }
 
+    /// `bytes` as they are, adopted with no second copy (FIX 8454): `held`
+    /// when something already holds their memory (the organ runtime's
+    /// reservation, made before it copied them), else a lease of their own
+    /// from `memory`'s service, taken now. The lease covers the buffer's
+    /// whole capacity and drops with it.
+    ///
+    /// # Errors
+    /// The service's refusal, when the bytes need a lease of their own.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn adopt(
+        memory: &SealMemoryProvider,
+        bytes: Vec<u8>,
+        held: Option<Box<dyn Send>>,
+    ) -> Result<Self, SealMemoryRefusal> {
+        if bytes.capacity() == 0 {
+            return Ok(Self::empty());
+        }
+        let lease = match held {
+            Some(held) => Lease {
+                _held: Mutex::new(held),
+            },
+            None => memory.lease(bytes.capacity())?,
+        };
+        Ok(Self {
+            bytes,
+            _lease: Some(lease),
+        })
+    }
+
     /// The capacity the buffer must grow to before `extra` more bytes go in,
     /// or `None` when they fit: twice what it holds, or what they need when
     /// that is more.

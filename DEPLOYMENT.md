@@ -289,6 +289,7 @@ seal_sign_asks = 3                # signature asks one seal call makes (still on
 seal_fetch_asks = 32              # fetch asks (timestamps, CRLs) one seal call makes; past it each allowlisted fetch runs and the row asks
 seal_asks = 36                    # asks of every verb one seal call makes; past it they are answered and the row asks
 seal_answer_bytes = 67108864      # answer bytes one seal call is lent (identity, signatures, fetched bodies); past it the call's booking grows and the row asks
+seal_memory_asks = 256            # memory.grow asks one seal call makes, its own buffers reserved, counted apart from seal_asks and seal_answer_bytes; past it each is answered and the row asks
 seal_crl_bytes = 8388608          # bytes of one CRL a seal fetches; past it the CRL is read whole and the row asks
 seal_tsa_bytes = 1048576          # bytes of one timestamp reply a seal fetches; past it the reply is read whole and the row asks
 seal_report_json_bytes = 8388608  # bytes of one seal verdict's report JSON; past it the report is carried whole and the row asks

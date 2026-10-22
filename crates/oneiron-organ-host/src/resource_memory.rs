@@ -77,7 +77,7 @@ impl AskHandler for MemoryGrow {
             ));
         };
         let MemoryAsk { bytes } = decode(ask.value)?;
-        let answer = match room.grow_native(bytes, ask.deadline, ask.revoked.0) {
+        let answer = match room.grow_native(bytes, ask.clock.deadline(), ask.revoked.0) {
             Ok(()) => MemoryAnswer::Granted,
             Err(NativeRefusal::NoFloor) => {
                 return Err(AskRefusal::new(

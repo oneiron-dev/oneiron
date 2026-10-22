@@ -4,7 +4,7 @@
 //! seal's own row for its purpose (`seal_crl_bytes`, `seal_tsa_bytes`) the
 //! vault asks whether everything is okay.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::limit_ask::EngineLimit;
@@ -21,7 +21,9 @@ pub(super) struct TimedFetch<'v> {
 
 impl AskHandler for TimedFetch<'_> {
     fn answer(&self, ask: &AskRequest<'_>) -> Result<Answered, AskRefusal> {
-        let deadline = ask.deadline.min(Instant::now() + self.timeout);
+        // The fetch timeout runs on the call's clock: a wait for room to
+        // hold the body moves both alike (FIX 6196).
+        let clock = ask.clock.within(self.timeout);
         let purpose = ask.value.as_map().and_then(|fields| {
             fields
                 .iter()
@@ -38,7 +40,11 @@ impl AskHandler for TimedFetch<'_> {
                 ));
             }
         };
-        let answered = GuardedFetch.answer(&AskRequest { deadline, ..*ask })?;
+        let answered = GuardedFetch.answer(&AskRequest {
+            deadline: clock.deadline(),
+            clock,
+            ..*ask
+        })?;
         let body = answered.data.as_ref().map_or(0, Vec::len);
         self.vault.measure_limit(row, body as u64);
         Ok(answered)

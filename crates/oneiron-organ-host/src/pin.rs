@@ -65,7 +65,7 @@ pub fn install_pinned_binary(
 
 /// An organ from a pack's build for this host: the build written under
 /// `dir` by its blake3, and the install grant its `ORGAN.json` names (its
-/// verbs, media types, threads and memory), pinned to that binary and to
+/// verbs, the kinds it reads, media types, threads and memory), pinned to that binary and to
 /// the version the pack names, at `tier`, which the caller classifies from
 /// the build's verified provenance (FIX 7644). The seal sets its own grant
 /// ([`crate::seal::seal_spec_from_pack`]).
@@ -84,6 +84,9 @@ pub fn pack_spec(
     spec.version_pin = organ.version.clone();
     spec.verbs = organ.verbs.clone();
     spec.media_types = organ.media_types.clone();
+    // The owner granted these kinds at install: a body of any other is not
+    // the organ's to read (FIX 7985).
+    spec.kinds = Some(organ.kinds.clone());
     if let Some(threads) = organ.threads {
         spec.threads = threads;
     }

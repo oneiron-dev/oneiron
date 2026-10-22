@@ -188,8 +188,8 @@ impl SealSettings {
 /// engine wrote, which [`SealCall`] holds it to), fetches only inside
 /// `fetch`, memory for its decodes, and room for the sealed PDF. No count or size of its own
 /// refuses an ask: the seal's `[limits]` rows (`seal_identity_asks`,
-/// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`)
-/// measure them, so the grant's generic thresholds are the wire's own. Its
+/// `seal_sign_asks`, `seal_fetch_asks`, `seal_asks`, `seal_answer_bytes`,
+/// and `seal_memory_asks` for its own buffers) measure them, so the grant's generic thresholds are the wire's own. Its
 /// memory is a floor: each call is sized by what it lends, and grows. Its
 /// frames are bounded by the wire's own `u32` length alone, and its outputs
 /// by the PDF format bound.

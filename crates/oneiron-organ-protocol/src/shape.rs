@@ -3,18 +3,41 @@
 //! The frame limit bounds encoded bytes, but a nil is one byte and a decoded
 //! value is dozens: a 64 MiB frame of nils would unfold into gigabytes. The
 //! check walks the markers once, allocates nothing, and refuses a frame
-//! that holds too many values, nests too deep, or does not add up.
+//! that holds too many values, nests too deep, or does not add up. What it
+//! counts says what the value takes once decoded ([`Shape::decoded`]), so a
+//! receiver can make room for it first (FIX 6195).
 
 /// The most values one frame may hold (maps count keys and values).
 pub const MAX_FRAME_VALUES: u64 = 1 << 21;
 /// The deepest one frame may nest.
 pub const MAX_FRAME_DEPTH: usize = 64;
 
+/// What one frame's value holds, read off its markers.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Shape {
+    values: u64,
+    /// The bytes of its strings, binaries and extensions.
+    payload: u64,
+}
+
+impl Shape {
+    /// At most what decoding the frame allocates: each value one
+    /// [`rmpv::Value`] at most, a typed one no more, and its strings',
+    /// binaries' and extensions' bytes beside.
+    pub(crate) fn decoded(self) -> u64 {
+        let value = std::mem::size_of::<rmpv::Value>() as u64;
+        self.values
+            .saturating_mul(value)
+            .saturating_add(self.payload)
+    }
+}
+
 /// # Errors
 /// What is wrong with the frame, in a few words.
-pub(crate) fn check(bytes: &[u8]) -> Result<(), &'static str> {
+pub(crate) fn check(bytes: &[u8]) -> Result<Shape, &'static str> {
     let mut at = 0usize;
     let mut values = 0u64;
+    let mut payload = 0u64;
     // What each enclosing container still owes, innermost last.
     let mut open: Vec<u64> = Vec::new();
     let mut owed = 1u64;
@@ -22,7 +45,7 @@ pub(crate) fn check(bytes: &[u8]) -> Result<(), &'static str> {
         while owed == 0 {
             match open.pop() {
                 Some(parent) => owed = parent,
-                None if at == bytes.len() => return Ok(()),
+                None if at == bytes.len() => return Ok(Shape { values, payload }),
                 None => return Err("bytes after the frame's value"),
             }
         }
@@ -34,6 +57,9 @@ pub(crate) fn check(bytes: &[u8]) -> Result<(), &'static str> {
         let marker = *bytes.get(at).ok_or("the frame is cut short")?;
         at += 1;
         let (skip, children) = step(marker, bytes, at)?;
+        if carries_bytes(marker) {
+            payload = payload.saturating_add(skip as u64);
+        }
         at = at
             .checked_add(skip)
             .filter(|end| *end <= bytes.len())
@@ -50,6 +76,13 @@ pub(crate) fn check(bytes: &[u8]) -> Result<(), &'static str> {
             owed = children;
         }
     }
+}
+
+/// Whether a marker's skipped bytes are a string, a binary or an
+/// extension, which a decoded value holds apart: the few bytes of its
+/// length field count with them.
+fn carries_bytes(marker: u8) -> bool {
+    matches!(marker, 0xa0..=0xbf | 0xc4..=0xc9 | 0xd4..=0xd8 | 0xd9..=0xdb)
 }
 
 /// A big-endian length of `width` bytes at `at`.

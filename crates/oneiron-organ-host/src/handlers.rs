@@ -11,6 +11,7 @@ use std::time::Instant;
 use oneiron_organ_protocol::AskRefusal;
 
 use crate::budget::{CallRoom, Stop};
+use crate::clock::Clock;
 use crate::receipt::{AskReceipt, FetchTarget, SignedReceipt};
 use crate::spec::FetchGrant;
 
@@ -31,9 +32,13 @@ pub struct AskRequest<'a> {
     /// The verb of the call the ask came from.
     pub call_verb: &'a str,
     pub grant: &'a str,
-    /// The call's deadline. A handler returns before it; an answer after it
-    /// is dropped and the call cancelled.
+    /// The call's deadline as the handler starts. A handler returns before
+    /// it; an answer after it is dropped and the call cancelled. A wait for
+    /// room while the handler runs moves it on (FIX 6196): the host's own
+    /// handlers read it from the call's clock.
     pub deadline: Instant,
+    /// The call's deadline, as its waits for room move it.
+    pub(crate) clock: Clock<'a>,
     /// The answer bytes the call may be lent before its `[limits]` row
     /// asks; never a refusal (Rule 5).
     pub max_bytes: u64,

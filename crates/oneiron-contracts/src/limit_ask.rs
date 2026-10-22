@@ -315,6 +315,10 @@ pub enum EngineLimit {
     /// and fetched bodies. Past it the row asks and the call's booking grows to
     /// hold them.
     SealAnswerBytes,
+    /// Memory asks (`memory.grow`) one seal call makes: the organ reserving its
+    /// own buffers, measured apart from its functional asks and their answer
+    /// bytes (FIX 8453). Past it the row asks and each is answered.
+    SealMemoryAsks,
     /// Bytes of one CRL a seal fetches. Past it the row asks and the CRL is read
     /// whole.
     SealCrlBytes,
