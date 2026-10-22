@@ -17,9 +17,10 @@
 //!
 //! Neither pattern context is a loaded skill, so neither earns pack credit: a
 //! pattern skill's payoff comes from its team receipt alone. The use lists
-//! start empty and only grow from witnessed use; credit follows the
-//! lineage-credit settings where the run's project and type apply, by
-//! default the full used chain with no per-hop check.
+//! start empty and only grow from witnessed use: a bind starts its used chain
+//! from the derivations the run witnessed before it (FIX 3103). Credit
+//! follows the lineage-credit settings where the run's project and type
+//! apply, by default the full used chain with no per-hop check.
 //!
 //! At close the host witnesses the run's output
 //! ([`witness_agent_run_close`]): the output derives from what the run
@@ -99,7 +100,7 @@ pub fn bind_agent_run_attribution(
     };
     let type_ref = TypeRef::from(&input.type_ref);
     let credit = credit_options(vault, input.project_ref, &type_ref)?;
-    let fields = PackAttributionFields {
+    let mut fields = PackAttributionFields {
         type_ref,
         executor,
         judge: None,
@@ -112,6 +113,16 @@ pub fn bind_agent_run_attribution(
         used_edges: Vec::new(),
         credit,
     };
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        super::derivation_witness::drain_in_txn(
+            &vault.store,
+            &rtxn,
+            attempt,
+            record.attempt_count,
+            &mut fields,
+        )?;
+    }
     AttemptQueue::new(vault).set_pack_attribution(
         attempt,
         lease_owner,
@@ -122,12 +133,13 @@ pub fn bind_agent_run_attribution(
 }
 
 /// Witnesses the close of the leased agent run `attempt`, before the
-/// terminal door freezes its receipt: `output` becomes the receipt's output
-/// and derives from each entity the run itself derived (one DerivedFrom edge
-/// each, written here), and the used chain grows by those edges and by the
-/// stored lineage above the run's derivations, as deep as the run's credit
-/// reaches. Returns whether it witnessed: a run with no bound attribution
-/// witnesses nothing.
+/// terminal door freezes its receipt: the used chain first takes every
+/// derivation this try witnessed, whenever and on whichever thread it landed
+/// (FIX 3103); `output` becomes the receipt's output and derives from each
+/// entity the run itself derived (one DerivedFrom edge each, written here),
+/// and the used chain grows by those edges and by the stored lineage above
+/// the run's derivations, as deep as the run's credit reaches. Returns
+/// whether it witnessed: a run with no bound attribution witnesses nothing.
 ///
 /// Only lineage is witnessed here. A skill the run loaded or called has not
 /// contributed by that alone, so the contribution list stays as the run's
@@ -159,6 +171,13 @@ pub fn witness_agent_run_close(
     if fields.output == Some(output) {
         return Ok(true);
     }
+    super::derivation_witness::drain_in_txn(
+        &vault.store,
+        &txn,
+        attempt.id,
+        attempt.attempt_count,
+        &mut fields,
+    )?;
     let mut seen: BTreeSet<(EntityId, EntityId)> = fields
         .used_edges
         .iter()
