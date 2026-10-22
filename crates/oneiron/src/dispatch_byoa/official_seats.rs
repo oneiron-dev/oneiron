@@ -366,6 +366,7 @@ impl OfficialSeatSpec {
             unmodified_binary: self.unmodified_binary,
             approvals: self.approvals,
             dry_fallback: self.dry_fallback,
+            machine_digest: self.machine_ref.as_deref().map(seat_machine_digest),
         }
     }
 }
@@ -380,6 +381,33 @@ pub struct OfficialSeatStamp {
     pub approvals: SeatPlacementApproval,
     #[serde(default)]
     pub dry_fallback: DrySeatFallback,
+    /// The machine the seat's login is on (FIX 4552), as the digest of its
+    /// `machine_ref` label, so the stamp stays a fixed-size value; `None` when
+    /// the seat names no machine. A host claims the attempt only when it is
+    /// `None` or names that host ([`Self::runs_on`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub machine_digest: Option<[u8; 32]>,
+}
+
+impl OfficialSeatStamp {
+    /// Whether a host on `machine` (its machine label, `None` when it has
+    /// none) runs this seat's attempt (FIX 4552): a seat that names no machine
+    /// runs on any host; one that names a machine only on that machine, so an
+    /// attempt aimed at another machine's runner stays for that runner.
+    #[must_use]
+    pub fn runs_on(&self, machine: Option<&str>) -> bool {
+        match self.machine_digest {
+            None => true,
+            Some(digest) => machine.is_some_and(|machine| seat_machine_digest(machine) == digest),
+        }
+    }
+}
+
+/// The digest a seat's `machine_ref` label is stamped as: of the label
+/// trimmed and lowercased, so a machine id written in either case names the
+/// same machine.
+fn seat_machine_digest(label: &str) -> [u8; 32] {
+    *blake3::hash(label.trim().to_lowercase().as_bytes()).as_bytes()
 }
 
 fn check_ref(value: &str, max_len: usize) -> bool {

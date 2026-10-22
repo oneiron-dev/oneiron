@@ -22178,7 +22178,7 @@
      "surface": {
       "const": 5,
       "enum": 5,
-      "fn": 22,
+      "fn": 23,
       "struct": 14,
       "trait": 1
      }
@@ -28362,7 +28362,7 @@
      "purpose": "The proposal landing (ARCH-0078): machine work waits beside the live artifact, never on it, until a person…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 8,
       "re-export": 1,
@@ -36988,9 +36988,9 @@
      "purpose": "Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5,
       "trait": 1
      }
@@ -37465,13 +37465,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/ask_history.rs",
      "purpose": "One commit-ordered log of a question's asks (FIX 2337, FIX 1585): each graph answer receipt a question…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -37549,7 +37549,7 @@
      "path": "src/llm/decision/questions/mod.rs",
      "purpose": "Versioned questions, scoped answer receipts, and bound outcome labels",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 14
      }
     },
@@ -37639,6 +37639,7 @@
      "surface": {
       "crate-vis": 7,
       "fn": 9,
+      "re-export": 1,
       "struct": 2
      }
     },
@@ -37650,6 +37651,16 @@
      "purpose": "FIX 1588: a standing question's work is written under the class its asker authenticated as when it wrote the…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/decision/questions/refresh/manual.rs",
+     "purpose": "FIX 9176: a standing question refreshed by hand writes its answers as the asker its version keeps, as the…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -38004,7 +38015,7 @@
      "surface": {
       "crate-vis": 12,
       "mod": 11,
-      "re-export": 18
+      "re-export": 19
      }
     },
     {
@@ -38235,7 +38246,7 @@
       "const": 1,
       "crate-vis": 9,
       "enum": 1,
-      "fn": 25,
+      "fn": 26,
       "re-export": 1,
       "struct": 3
      }
@@ -43064,7 +43075,7 @@
       "crate-vis": 41,
       "enum": 3,
       "fn": 4,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -43331,6 +43342,53 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FileFacts",
+      "FileMeta",
+      "FileReadiness",
+      "NameOnlyFile",
+      "NameOnlyReason"
+     ],
+     "path": "src/note/files/metadata.rs",
+     "purpose": "What a Files source knows of each file besides its text (FIX 6942): the formats it takes text from, why a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/files/mod.rs",
+     "purpose": "The Files world (FIX 6942; ARCH-0027 #files-world): an opt-in, device-local world over folders the owner…",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FileHandle",
+      "FilesPlacement",
+      "FilesWorld"
+     ],
+     "path": "src/note/files/source.rs",
+     "purpose": "The Files world and its sources: one world per install, born the first time the owner attaches a folder to…",
+     "surface": {
+      "const": 3,
+      "crate-vis": 1,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -43341,13 +43399,23 @@
       "FolderSource",
       "FolderSourceFile"
      ],
-     "path": "src/note/folder_source.rs",
+     "path": "src/note/folder_source/mod.rs",
      "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/folder_source/reconcile.rs",
+     "purpose": "One rescan of an attached folder against its ledger: new files land, changed files supersede what they…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -49422,6 +49490,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "PromptLayout",
       "PromptRecompileStamp",
       "ResolvedPrompt",
       "SessionPromptAssembly",
@@ -49431,8 +49500,9 @@
      "path": "src/prompt.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
-      "fn": 6,
+      "const": 6,
+      "enum": 1,
+      "fn": 8,
       "struct": 5
      }
     },
@@ -60894,13 +60964,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/frame.rs",
+     "purpose": "A window carrier's own spelling (KS7-3b): what KS7-5 keeps of a split window under the image's outer seal",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/checkpoint_payload/mod.rs",
      "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 38
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/operations.rs",
+     "purpose": "A window's Loro rows split for a checkpoint (KS7-3b, FIX 5688), over the vendored root-map checkpoint…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -60910,7 +61000,7 @@
      "path": "src/sync/checkpoint_payload/owners.rs",
      "purpose": "Where each window root map's values go (KS7-3a): the typed owner, dependency and actor dispatch KS7-3b's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 5
      }
     },
     {
@@ -60921,6 +61011,16 @@
      "purpose": "Which holders each part of a parted window value has (KS7-3a)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/restore.rs",
+     "purpose": "A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -61521,7 +61621,7 @@
      "path": "src/sync/custody/checkpoint.rs",
      "purpose": "A custody carrier in a checkpoint (KS7-3a): a custody transition and a protected input are secret custody's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -61539,9 +61639,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/document_pins/checkpoint.rs",
-     "purpose": "A document pin in a checkpoint (KS7-3a), read with the pin codec and filed under its own key: a whole pin is…",
+     "purpose": "A document pin in a checkpoint (KS7-3a, KS7-3b), read with the pin codec and filed under its own key: a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -62134,7 +62234,7 @@
      "path": "src/sync/message_docs/checkpoint.rs",
      "purpose": "A MESSAGE document in a checkpoint (KS7-3a), read with the head codec and filed under its message: the head…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -62164,9 +62264,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/note/checkpoint.rs",
-     "purpose": "The native NOTE carriers' values in a checkpoint (KS7-3a), read with the NOTE sync codecs: a proposal…",
+     "purpose": "The native NOTE carriers' values in a checkpoint (KS7-3a, KS7-3b), read with the NOTE sync codecs: a…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -62332,7 +62432,7 @@
      "path": "src/sync/queue/checkpoint.rs",
      "purpose": "The sync queue's rows in a checkpoint (KS7-3a), read with the queue's own key and value codecs",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -62855,9 +62955,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_turns/checkpoint.rs",
-     "purpose": "A room turn row in a checkpoint (KS7-3a), read with the turn codec: the row rides with its TURN, held only…",
+     "purpose": "A room turn row in a checkpoint (KS7-3a, KS7-3b), read with the turn codec: the row rides with its TURN…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -62867,7 +62967,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -62878,6 +62978,16 @@
      "purpose": "An erased actor's births leave the window carriers (FIX 6279)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/row_birth/checkpoint.rs",
+     "purpose": "A row birth in a checkpoint (KS7-3b, FIX 9127), read with the birth codec and filed under its born row: the…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -63466,7 +63576,7 @@
      "path": "src/sync/withdrawn_cutoffs.rs",
      "purpose": "OF-013: withdrawn-generation cutoffs on the window plane",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -67905,6 +68015,36 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FilesFileState",
+      "FilesFileView",
+      "FilesLimitCrossed",
+      "FilesRescanAnswer",
+      "FilesRescanCounts",
+      "FilesRescanView",
+      "FilesSourceAttachAnswer",
+      "FilesSourceAttachRequest",
+      "FilesSourceDetachAnswer",
+      "FilesSourceDetachRequest",
+      "FilesSourceFiles",
+      "FilesSourceFilesRequest",
+      "FilesSourceList",
+      "FilesSourceListRequest",
+      "FilesSourceRescanRequest",
+      "FilesSourceView",
+      "FilesWorldView"
+     ],
+     "path": "src/verbs/files.rs",
+     "purpose": "The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`…",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 16
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -67936,7 +68076,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1180
+      "fn": 1185
      }
     },
     {
@@ -68333,7 +68473,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 78,
+      "re-export": 79,
       "struct": 39
      }
     },
@@ -69057,7 +69197,7 @@
      "purpose": "The voice-bank rows (DOOR-143, e2e VOICE-02, FIX 4393, 4396): `vault.voices.packs.put` banks a reference…",
      "surface": {
       "enum": 1,
-      "fn": 7,
+      "fn": 8,
       "re-export": 1,
       "struct": 12
      }
@@ -70026,7 +70166,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 17,
+      "fn": 18,
       "struct": 4,
       "trait": 2
      }
@@ -73799,7 +73939,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 127,
+     "files": 128,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -73841,7 +73981,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 55,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -74303,7 +74443,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 243,
+     "files": 247,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74436,7 +74576,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 83,
+     "files": 84,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74508,7 +74648,7 @@
    },
    "over_bar": 146,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 4825,
+   "source_files": 4835,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79188,7 +79328,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 56,
+      "const": 58,
       "crate-vis": 1
      }
     },
@@ -85053,7 +85193,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 6,
       "struct": 2,
       "trait": 3,
       "type": 3
@@ -85451,6 +85591,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "InferenceCallObservation",
+      "InferenceObservationId"
+     ],
+     "path": "src/llm/inference_observation.rs",
+     "purpose": "What each physical inference request measured, published by the adapter that sends it while the request is…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "LabelReadModel",
       "LabelReadRequest",
       "LabelReadResponse",
@@ -85581,7 +85737,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 25
+      "re-export": 26
      }
     },
     {
@@ -85707,7 +85863,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85716,7 +85872,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 42,
+   "source_files": 43,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -85807,7 +85963,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1149
+      "fn": 1154
      }
     },
     {
@@ -87095,7 +87251,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1150
+      "fn": 1155
      }
     },
     {
@@ -89041,13 +89197,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -91181,6 +91337,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/files_doors.rs",
+     "purpose": "The host doors of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fold_doors.rs",
      "purpose": "Public run-bound folds, through the caller's existing live-run action door",
      "surface": {
@@ -91334,7 +91500,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 189
+      "crate-vis": 190
      }
     },
     {
@@ -94705,7 +94871,7 @@
      "surface": {
       "enum": 12,
       "fn": 3,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 22
      }
     },
@@ -94719,6 +94885,23 @@
      "purpose": "Host-only deployment commands; neither opens a local vault",
      "surface": {
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FilesAttachArgs",
+      "FilesCommand",
+      "FilesListArgs",
+      "FilesPathArgs",
+      "FilesRescanArgs"
+     ],
+     "path": "src/cli/files_args.rs",
+     "purpose": "`oneiron files`: the Files world on a stopped vault (FIX 6942), the folders this install keeps searchable on…",
+     "surface": {
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -94926,7 +95109,7 @@
       "const": 1,
       "crate-vis": 9,
       "fn": 12,
-      "re-export": 21,
+      "re-export": 22,
       "struct": 1
      }
     },
@@ -94990,6 +95173,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/files.rs",
+     "purpose": "`oneiron files attach|rescan|detach|list|files`: the Files world on a stopped vault (FIX 6942)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -95003,16 +95196,6 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
-     "path": "src/commands/history_import/confined.rs",
-     "purpose": "Reading under one folder without leaving it",
-     "surface": {
-      "crate-vis": 10
-     }
-    },
-    {
-     "bucket": "L",
-     "kind": "src",
-     "notable": [],
      "path": "src/commands/history_import/notes.rs",
      "purpose": "`oneiron import notes <folder> --out <batch>`: a folder of linked markdown notes, as one batch the owner…",
      "surface": {
@@ -95020,23 +95203,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/commands/history_import/notes/folder.rs",
      "purpose": "`oneiron import folder attach|rescan|detach|list`: a folder of markdown notes and PDFs that stays attached…",
      "surface": {
-      "crate-vis": 2
-     }
-    },
-    {
-     "bucket": "m",
-     "kind": "src",
-     "notable": [],
-     "path": "src/commands/history_import/notes/markdown.rs",
-     "purpose": "What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code",
-     "surface": {
-      "crate-vis": 5
+      "crate-vis": 1
      }
     },
     {
@@ -96965,6 +97138,76 @@
      "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/confined.rs",
+     "purpose": "Reading under one folder without leaving it",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/files.rs",
+     "purpose": "A Files source's read (FIX 6942)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/markdown.rs",
+     "purpose": "What `import notes` reads in one note: its YAML frontmatter, and the `[[links]]` it makes outside code",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/mod.rs",
+     "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/reader.rs",
+     "purpose": "The host's reader of a folder of notes, shared by `oneiron import notes`, an attached folder's rescans and a…",
+     "surface": {
+      "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/source.rs",
+     "purpose": "One rescan of an attached folder, as `oneiron import folder`, `oneiron files`, the facade's…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/files_intake/worker.rs",
+     "purpose": "`oneiron serve`'s rescans of every attached folder, Files sources included (OF-554, FIX 6942): the one…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -102402,7 +102645,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 510,
+     "files": 511,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -102458,7 +102701,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -102472,7 +102715,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 47,
+     "files": 46,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -102610,6 +102853,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every…"
+    },
+    "files_intake": {
+     "files": 7,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
      "files": 24,
@@ -102857,9 +103107,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 48,
+   "over_bar": 47,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1130,
+   "source_files": 1138,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -104491,6 +104741,24 @@
       "FieldSpec",
       "FieldTextReason",
       "FieldValue",
+      "FileHandle",
+      "FileReadiness",
+      "FilesFileState",
+      "FilesFileView",
+      "FilesLimitCrossed",
+      "FilesRescanAnswer",
+      "FilesRescanCounts",
+      "FilesRescanView",
+      "FilesSourceAttachAnswer",
+      "FilesSourceAttachRequest",
+      "FilesSourceDetachAnswer",
+      "FilesSourceDetachRequest",
+      "FilesSourceFiles",
+      "FilesSourceFilesRequest",
+      "FilesSourceList",
+      "FilesSourceRescanRequest",
+      "FilesSourceView",
+      "FilesWorldView",
       "FindInput",
       "FindOutput",
       "FinishReason",
@@ -105226,6 +105494,7 @@
       "ModelTrialView",
       "ModelWireFormat",
       "MutationIntent",
+      "NameOnlyReason",
       "NarrowConnect",
       "NativeOutputRequest",
       "NearCopyFlag",
@@ -107108,8 +107377,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 994,
-      "struct": 3054
+      "enum": 997,
+      "struct": 3070
      }
     },
     {

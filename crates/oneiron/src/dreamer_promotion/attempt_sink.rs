@@ -53,6 +53,48 @@ impl ConsolidationSink for AttemptPromotionSink {
     }
 
     fn accept_scoped(&mut self, write: ScopedConsolidationWrite) -> Result<()> {
+        self.promote(write, self.checker.as_ref())
+    }
+
+    /// [`Self::accept_scoped`], its checker's turn awaited first (FIX 9110):
+    /// one place in line under the sealed write's own deadline, for its
+    /// fence's actor, the principal each candidate's admission names, taken
+    /// without holding the executor's thread. The promotion's writes then
+    /// carry that turn and never queue for it twice.
+    fn accept_scoped_in_line(
+        &mut self,
+        write: ScopedConsolidationWrite,
+    ) -> std::pin::Pin<Box<dyn Future<Output = Result<()>> + '_>> {
+        Box::pin(async move {
+            let admitted = match &self.checker {
+                Some(checker) => {
+                    let checker = match write.checker_deadline {
+                        Some(deadline) => checker.with_deadline(deadline),
+                        None => checker.clone(),
+                    };
+                    let (agent_actor, _) = write.fence.run_identity();
+                    let caller = agent_actor.entity_ref();
+                    Some(
+                        checker
+                            .admit_for_writes_in_line(&self.vault.store, caller)?
+                            .await,
+                    )
+                }
+                None => None,
+            };
+            self.promote(write, admitted.as_ref())
+        })
+    }
+}
+
+impl AttemptPromotionSink {
+    /// The sealed `write` through the one promotion door, each candidate's
+    /// claim write through `checker`.
+    fn promote(
+        &self,
+        write: ScopedConsolidationWrite,
+        checker: Option<&BoundedAutoChecker>,
+    ) -> Result<()> {
         let (agent_actor, attempt_id) = write.fence.run_identity();
         let run_id = AttemptQueue::new(&self.vault)
             .get(attempt_id)?
@@ -64,8 +106,7 @@ impl ConsolidationSink for AttemptPromotionSink {
             agent_actor,
             now_ms: self.vault.now_recorded_at().saturating_mul(1_000),
         };
-        let outcome =
-            promote_scoped_consolidation(&self.vault, &run, write, self.checker.as_ref())?;
+        let outcome = promote_scoped_consolidation(&self.vault, &run, write, checker)?;
         let outputs: Vec<_> = outcome
             .landed
             .iter()

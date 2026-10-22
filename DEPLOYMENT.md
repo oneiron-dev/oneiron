@@ -385,6 +385,10 @@ the response says it was clamped.
 On a self-hosted local vault, the server claims the queued official CLI
 attempts (claude, codex, opencode) and runs them itself (FIX 4552).
 `[runtime] seat_host = false` leaves them to another runner, as before.
+A seat whose `machine_ref` names a machine is run only by the host whose
+install machine id it names (the 32-hex `host` the owner origin reports);
+everywhere else its attempts stay for that machine's runner. A seat that
+names no machine is run by any seat host.
 `[runtime.host_destinations]` binds an environment variable to the effector
 the owner's secret binding names, for the processes such a run starts. It is
 empty by default, so no run is offered a T1 destination.
@@ -396,6 +400,17 @@ seat_host = true    # the default; false leaves queued CLI attempts to another r
 [runtime.host_destinations]
 GH_TOKEN = "cli:gh"
 ```
+
+## Prompt layout
+
+`ONEIRON_PROMPT_LAYOUT` chooses where a turn's context (activated memory, the
+`ai.reply` board, a chat answer's craft) sits in the request (FIX 6676).
+`early_system`, the default, keeps today's order: the context joins the early
+system text, before the history. `stable_history_then_turn_context` puts the
+stable system and the append-only history first and the turn's context in one
+request-only message right before the latest user turn, so a provider's
+prompt cache can reuse the prefix. Any other value keeps the default. The
+answer-quality screen decides whether the default flips.
 
 ## CJK Dictionaries
 

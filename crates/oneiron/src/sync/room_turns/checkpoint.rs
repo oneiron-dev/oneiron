@@ -1,20 +1,33 @@
-//! A room turn row in a checkpoint (KS7-3a), read with the turn codec: the
-//! row rides with its TURN, held only while its room, its messages and each
-//! turn it quotes are. A row naming its actor, or agents it addressed,
-//! stays unclassified: no split here takes them out.
+//! A room turn row in a checkpoint (KS7-3a, KS7-3b), read with the turn
+//! codec: the row rides with its TURN, held only while its room, its
+//! messages and each turn it quotes are. Its actor and the agents it
+//! addressed are split out (FIX 9127): the copy keeps the turn naming no one
+//! and addressing no one, and each actor is a field of its own. An actor
+//! that does not open leaves the erased spelling, and an agent that does not
+//! open is no longer addressed. A row naming an actor by anything but its
+//! id stays unclassified.
 #![allow(
     dead_code,
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
-use super::decode;
+use super::{decode, encode};
 use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
-use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::checkpoint_payload::{Placement, SyncUnclassified};
+use crate::store::checkpoint_payload::rows::{NOT_SPELLED_BACK, OwnerRef, bad_part};
+use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified, ValueSplit};
+use crate::workspace_roster::RoomTurn;
 
-/// A turn row naming its actor or the agents it addressed.
-const TURN_ACTORS: &str = "a room turn names its actor and the agents it addressed";
+/// A turn row naming its actor or an agent it addressed by anything but an
+/// id.
+const TURN_ACTORS: &str = "a room turn names an actor by something other than its id";
+
+/// The field the turn's actor fills.
+const ACTOR: &str = "actor";
+
+/// The field an addressed agent fills, then its place among them.
+const ADDRESSED: &str = "addressed/";
 
 /// An id in its one canonical spelling.
 fn named(hex: &str) -> Option<EntityId> {
@@ -34,9 +47,6 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         return undecodable();
     }
     let owner = OwnerRef::entity(&id);
-    if turn.actor != ERASED_CALL_IDENTITY || !turn.addressed_agents.is_empty() {
-        return Placement::unclassified(Some(owner), SyncUnclassified::ActorSplit(TURN_ACTORS));
-    }
     let mut dependencies = vec![OwnerRef::entity(&room)];
     for message in &turn.message_ids {
         let Some(message) = named(message) else {
@@ -49,5 +59,52 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
             .values()
             .map(|quote| OwnerRef::entity(&quote.target_turn)),
     );
-    Placement::owned(owner, dependencies)
+    match split(turn, value) {
+        Ok(split) => Placement::split(vec![Holder::new(owner, dependencies)], split),
+        Err(reason) => Placement::unclassified(Some(owner), SyncUnclassified::ActorSplit(reason)),
+    }
+}
+
+/// `turn`, stored as `value`, naming no one and addressing no one, and each
+/// actor it named.
+fn split(mut turn: RoomTurn, value: &[u8]) -> std::result::Result<ValueSplit, &'static str> {
+    if encode(&turn).ok().as_deref() != Some(value) {
+        return Err(NOT_SPELLED_BACK);
+    }
+    let mut actors = Vec::new();
+    if turn.actor != ERASED_CALL_IDENTITY {
+        actors.push((ACTOR.to_owned(), named(&turn.actor).ok_or(TURN_ACTORS)?));
+        turn.actor = ERASED_CALL_IDENTITY.to_owned();
+    }
+    for (place, agent) in std::mem::take(&mut turn.addressed_agents)
+        .iter()
+        .enumerate()
+    {
+        let agent = named(agent).ok_or(TURN_ACTORS)?;
+        actors.push((format!("{ADDRESSED}{place}"), agent));
+    }
+    let no_one = encode(&turn).map_err(|_| TURN_ACTORS)?;
+    Ok(ValueSplit { no_one, actors })
+}
+
+/// The turn `no_one` with each of `opened` back: its actor, and each agent
+/// it addressed.
+pub(in crate::sync) fn fill(no_one: &[u8], opened: &[(&str, EntityId)]) -> Result<Option<Vec<u8>>> {
+    let mut turn = decode(no_one).map_err(|_| bad_part())?;
+    if turn.actor != ERASED_CALL_IDENTITY || !turn.addressed_agents.is_empty() {
+        return Err(bad_part());
+    }
+    for (field, actor) in opened {
+        if *field == ACTOR && turn.actor == ERASED_CALL_IDENTITY {
+            turn.actor = actor.to_hex();
+            continue;
+        }
+        let placed = field
+            .strip_prefix(ADDRESSED)
+            .is_some_and(|place| place.parse::<usize>().is_ok());
+        if !placed || !turn.addressed_agents.insert(actor.to_hex()) {
+            return Err(bad_part());
+        }
+    }
+    encode(&turn).map(Some)
 }
