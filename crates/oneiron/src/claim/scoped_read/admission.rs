@@ -506,8 +506,9 @@ impl ScopedRead<'_> {
     }
 
     /// The world the stored row `id` sits in, read in `txn` over this read's
-    /// own store (`record_scope::record_world_in`). `None` where the row
-    /// cannot prove one.
+    /// own store (`record_scope::record_world_in`): a NOTE in several worlds
+    /// at one the worlds this read asked for hold, base reality first
+    /// (FIX-LIST 9433). `None` where the row cannot prove one.
     fn record_world_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -515,10 +516,14 @@ impl ScopedRead<'_> {
         kind: u8,
         data: &[u8],
     ) -> Result<Option<Option<EntityId>>> {
-        use crate::federation::record_scope::record_world_in;
+        use crate::federation::record_scope::note_world::record_world_held_at;
+        let ceiling = self
+            .actor_key
+            .asked_world_ceiling()
+            .unwrap_or_else(crate::federation::Scope::top);
         match self.session_view {
-            Some(view) => record_world_in(view, txn, *id, kind, data),
-            None => record_world_in(&self.vault.store, txn, *id, kind, data),
+            Some(view) => record_world_held_at(view, txn, *id, kind, data, &ceiling),
+            None => record_world_held_at(&self.vault.store, txn, *id, kind, data, &ceiling),
         }
     }
 

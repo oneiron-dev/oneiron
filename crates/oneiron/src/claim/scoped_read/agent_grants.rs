@@ -211,7 +211,19 @@ impl<'v> ScopedRead<'v> {
                 )?,
             }
         };
-        Ok(record.is_some_and(|record| grant.admits("read", &record, &Scope::top())))
+        // A NOTE in several worlds is judged at one the Grant holds, base
+        // reality first (FIX-LIST 9433).
+        Ok(record.is_some_and(|record| {
+            let record = crate::federation::record_scope::note_world::held_at(
+                &self.store_read(),
+                rtxn,
+                *id,
+                header.entity_type,
+                &record,
+                &[grant],
+            );
+            grant.admits("read", &record, &Scope::top())
+        }))
     }
 }
 

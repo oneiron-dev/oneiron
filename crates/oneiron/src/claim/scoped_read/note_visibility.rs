@@ -90,6 +90,17 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
+        // A NOTE in several worlds is judged at one the proof below holds,
+        // base reality first (FIX-LIST 9433).
+        let proof = grant.or(self.actor_key.authority_scope());
+        let scope = crate::federation::record_scope::note_world::held_at(
+            &self.store_read(),
+            txn,
+            *id,
+            crate::registry::ENTITY_TYPE_NOTE,
+            &scope,
+            proof.as_slice(),
+        );
         Ok(match grant {
             None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
             Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(

@@ -187,11 +187,19 @@ impl Vault {
         match super::record_scope::scope_for_blob(&self.store, txn, id, &raw)? {
             Some(scope) => Ok(scope),
             None if header.entity_type == crate::registry::ENTITY_TYPE_NOTE => {
-                // A NOTE born without a FacetOf edge has the ordinary base/default
-                // position. Never use this fallback for another record kind.
-                Ok(super::record_scope::default_stamp(
+                // A NOTE born without a FacetOf edge has the ordinary default
+                // position, in the world its live InWorld edges place it
+                // (FIX-LIST 9433). Never use this fallback for another kind.
+                let birth = super::record_scope::default_stamp(
                     header.entity_type,
                     crate::claim::substrate_facet_id(id)?,
+                );
+                Ok(super::record_scope::note_world::note_position(
+                    &self.store,
+                    txn,
+                    id,
+                    header.entity_type,
+                    birth,
                 ))
             }
             None => Err(denied()),
