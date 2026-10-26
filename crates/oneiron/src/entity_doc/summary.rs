@@ -275,6 +275,7 @@ pub(crate) fn open_summary_proposal(
             std::slice::from_ref(request),
             authorization,
             vault.now_recorded_at(),
+            &sources,
         )?;
         let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
         for record in &mut bundle.forks {

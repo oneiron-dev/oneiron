@@ -133,7 +133,7 @@ impl Vault {
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
-                apply(&mut doc, *entity, edit, &text, at, &lifted)?;
+                apply(&mut doc, *entity, edit, &text, at, &[], &lifted)?;
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
             Ok(doc.frontier())
@@ -452,14 +452,16 @@ pub(super) fn admitted_text_in_txn(
 }
 
 /// `replacement` is the text `edit` writes as admitted
-/// ([`admitted_prose_in_txn`]); `lifted` are the keys the live text's lift
-/// marked, for a quote a masked reader was issued (FIX 2936).
+/// ([`admitted_prose_in_txn`]); `sources` are the rows its writer read for
+/// it, which its commit's receipt names (FIX 7790); `lifted` are the keys the
+/// live text's lift marked, for a quote a masked reader was issued (FIX 2936).
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
     replacement: &str,
     at: u64,
+    sources: &[EntityId],
     lifted: &LiftedKeys,
 ) -> Result<()> {
     let actor = edit
@@ -474,7 +476,7 @@ pub(super) fn apply(
             return Err(invalid("quoted span changed concurrently"));
         }
     }
-    doc.edit_as(actor, at, |body| {
+    doc.edit_with(actor, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;
