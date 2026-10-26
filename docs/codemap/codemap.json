@@ -67775,6 +67775,8 @@
      "kind": "src",
      "notable": [
       "LocalUpdate",
+      "MessagePresenceScope",
+      "ScopedPresenceFrame",
       "SyncConfig",
       "WindowKey"
      ],
@@ -67783,7 +67785,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 12,
-      "struct": 3
+      "struct": 5
      }
     },
     {
@@ -90366,9 +90368,19 @@
      "path": "src/mesh/serve.rs",
      "purpose": "The serving side: the node that has the model runs another owner node's call under its own admission, and…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mesh/serve/shutdown.rs",
+     "purpose": "A connection's drain at its host's mesh stop (FIX 4756)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -90412,7 +90424,7 @@
      "purpose": "What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text…"
     },
     "mesh": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90428,7 +90440,7 @@
    },
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 2
   },
   "oneiron-llm-systemone": {
@@ -92020,6 +92032,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshCancel"
+     ],
+     "path": "src/host/shutdown.rs",
+     "purpose": "The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -92052,7 +92078,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -92099,7 +92125,7 @@
      "path": "src/mesh/serve.rs",
      "purpose": "The serving side of a mesh organ call: this node's host runs another owner node's call as its own, and sends…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -92155,6 +92181,16 @@
      "purpose": "One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), the kernel limits…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process/shutdown.rs",
+     "purpose": "A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92366,7 +92402,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganJob",
@@ -92459,7 +92495,7 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -92501,7 +92537,7 @@
      "purpose": "Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are…"
     },
     "process": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92566,14 +92602,14 @@
     "wait": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…"
     }
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 36,
+   "source_files": 38,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -104173,7 +104209,17 @@
      "path": "src/handler/ephemeral.rs",
      "purpose": "Ephemeral presence lane: validation, hub budget, and canonical fan-out frames",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/ephemeral/message_scope.rs",
+     "purpose": "Where a message's live partials go (FIX 9537)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -104242,6 +104288,26 @@
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
       "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh/pressure.rs",
+     "purpose": "The mesh sync route's floor in its own pressure check (FIX 7737, [`PoolPressure::mesh`])",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh/shutdown.rs",
+     "purpose": "The mesh listener's stop for the work its routes admitted (FIX 4755, 4756), under one deadline: the host's…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -108779,7 +108845,17 @@
      "path": "src/server/message_stream.rs",
      "purpose": "Host-owned stream timer and local presence relay",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/message_stream/scoped.rs",
+     "purpose": "The trusted scope of each message partial in the presence hub (FIX 9537), kept apart from what clients write…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -109710,7 +109786,7 @@
      "path": "src/wire_telemetry/connection_pressure.rs",
      "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -110296,7 +110372,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 26,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110478,7 +110554,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110550,7 +110626,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1303,
+   "source_files": 1307,
    "test_files": 182
   },
   "oneiron-spawn": {
