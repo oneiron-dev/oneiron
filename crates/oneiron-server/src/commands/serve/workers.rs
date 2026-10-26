@@ -88,6 +88,9 @@ pub(crate) async fn start_desktop_workers(
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     let sync_server = Arc::new(sync_server);
+    // A managed vault's attested owner's queued work is judged by this
+    // server's check, installed before any worker takes it up (FIX 11090).
+    crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).

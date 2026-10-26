@@ -190,8 +190,9 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
         Err(reason)
     };
     let revoked = || {
-        cancel(StreamCancelReason::Custom(REVOKED.into()));
-        Err("the turn's credential was revoked".to_owned())
+        let (code, reason) = credential.lapse();
+        cancel(StreamCancelReason::Custom(code.into()));
+        Err(reason.to_owned())
     };
     // The newcomer barrier: the reply was assembled for the audience before
     // the entry. Its MESSAGE keeps what it saved and is cancelled; the next
@@ -248,7 +249,7 @@ pub(in crate::api::ai::chat) async fn produce(producer: Producer) -> Result<(), 
                 if credential.live() {
                     cancel(StreamCancelReason::AgentAborted);
                 } else {
-                    cancel(StreamCancelReason::Custom(REVOKED.into()));
+                    cancel(StreamCancelReason::Custom(credential.lapse().0.into()));
                 }
                 return Err(format!("terminal message was not saved: {error:?}"));
             }

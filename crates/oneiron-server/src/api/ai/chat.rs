@@ -220,10 +220,27 @@ impl TurnCredential {
             Self::Action { action, vault } => action.requester_live_in(vault, txn),
         }
     }
+
+    /// What a lapse of this credential records on the MESSAGE, and the
+    /// turn's reason: a queued action's attested owner who is no longer the
+    /// vault's live owner is [`OWNER_NOT_LIVE`] (FIX 11090), never a revoked
+    /// slip; any other lapse is [`REVOKED`].
+    fn lapse(&self) -> (&'static str, &'static str) {
+        match self {
+            Self::Action { action, vault } if action.owner_not_live(vault) => (
+                OWNER_NOT_LIVE,
+                "the attested owner is not this vault's live owner",
+            ),
+            _ => (REVOKED, "the turn's credential was revoked"),
+        }
+    }
 }
 
 /// Recorded on the assistant MESSAGE a revoked credential's turn leaves.
 const REVOKED: &str = "credential_revoked";
+/// Recorded on the assistant MESSAGE a queued action leaves once its
+/// attested owner is no longer the vault's live owner (FIX 11090).
+const OWNER_NOT_LIVE: &str = "owner_not_live";
 /// Recorded on the assistant MESSAGE the newcomer barrier stopped: an
 /// attendee entered its conversation while it was being written.
 const NEWCOMER: &str = "attendee_entered";

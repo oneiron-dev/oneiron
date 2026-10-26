@@ -25,6 +25,11 @@
 //! until it stands again, each resumed as the same try before a selection
 //! (`dreamer_runner::program`'s resumer). Nothing restarts it from scratch,
 //! and nothing reports it complete.
+//!
+//! A managed vault's attested owner's program runs only while the vault
+//! records him as its live owner (FIX 11090): one he no longer is ends that
+//! try Failed, before its entry or once a run of it stops short, never held
+//! for his standing to return.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -175,6 +180,15 @@ fn hold(
     })
 }
 
+/// The try of an attested owner who is no longer the vault's live owner,
+/// ended Failed with what it spent (FIX 11090).
+fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Failed {
+        reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
+        completed_units,
+    }
+}
+
 /// The program's task, as its host binds its run's config and seat from it:
 /// its pinned callable entry, exactly as pinned. The entry runs as pinned
 /// with no model writing its call.
@@ -203,6 +217,7 @@ async fn run_program(
     let binding = match vault.bind_turn_program_execution(attempt.id)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
+        TurnProgramBound::OwnerNotLive => return Ok(owner_not_live(0)),
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -395,7 +410,9 @@ fn pinned_entry(
 
 /// What one entry's end means for the program's try. An entry that stops
 /// short is held by the program runtime, its spend settled on the pass's
-/// meter all the same.
+/// meter all the same; an attested owner's that stops short once he is no
+/// longer the vault's live owner ends Failed instead (FIX 11090), whatever
+/// stopped it, his authority's later re-check included.
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -404,13 +421,22 @@ fn settle(
     ran: Result<Ran>,
     used: u64,
 ) -> Result<DreamerAttemptExecution> {
-    let stopped = |reason: String| DreamerAttemptExecution::ParkWithSpend {
-        reason,
-        cause: DreamerParkCause::Checkpoint,
-        completed_units: used,
-        step_hashes: Vec::new(),
+    let owner_lost = || vault.turn_program_owner_not_live(attempt.id);
+    let stopped = |reason: String| {
+        if owner_lost() {
+            return owner_not_live(used);
+        }
+        DreamerAttemptExecution::ParkWithSpend {
+            reason,
+            cause: DreamerParkCause::Checkpoint,
+            completed_units: used,
+            step_hashes: Vec::new(),
+        }
     };
     let held = |kind: ProgramHold| -> Result<DreamerAttemptExecution> {
+        if owner_lost() {
+            return Ok(owner_not_live(used));
+        }
         vault.hold_turn_program(attempt.id, kind, ctx.now_ms / 1_000)?;
         Ok(DreamerAttemptExecution::ParkWithSpend {
             reason: kind.reason().to_owned(),
