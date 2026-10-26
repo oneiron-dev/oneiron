@@ -41,6 +41,7 @@ pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
     ensure_quote_document_in_txn, quote_birth_admits_in,
 };
+pub(crate) use pins::pin_body_quote_at_birth_in_txn;
 pub(crate) use recovery::{
     capture as capture_canonical, restore as restore_canonical,
     restore_proposals as restore_canonical_proposals,

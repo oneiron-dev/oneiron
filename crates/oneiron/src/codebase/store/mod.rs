@@ -467,9 +467,10 @@ impl Vault {
     }
 }
 
-/// One snapshot row in the caller's transaction (the serve path composes it with other reads).
+/// One snapshot row in the caller's transaction (the serve path composes it with other reads),
+/// read from the CODEBASE_SNAPSHOT side row of `store`: the vault's own, or a room's view.
 pub(super) fn codebase_snapshot_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,
 ) -> Result<Option<CodebaseSnapshot>> {

@@ -314,6 +314,8 @@ pub(crate) struct PipelineOutput {
     /// Temporal phrases read from the query and what the run did with each.
     pub(crate) temporal_hints: Vec<crate::temporal::TemporalHintReport>,
     pub(crate) temporal_report: Option<super::TemporalSearchReport>,
+    /// See `RetrievalTxnOutput::critical` (FIX 9760).
+    pub(crate) critical: crate::context_pack::PackCriticalAccounting,
 }
 
 #[derive(Debug, Clone)]

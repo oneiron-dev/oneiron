@@ -6,7 +6,7 @@ use super::read::{Holder, ProjectReader, ProjectVerdict};
 use super::resolution::{ProjectResolution, ProjectSeal};
 use super::revision::{
     HeldRevisions, ProjectRevision, ProjectRevisionHash, ProjectRevisionProof, REVISIONS,
-    RevisionOrigin, anchor_of, authenticate, signed_depth,
+    RevisionOrigin, anchor_of, authenticate,
 };
 use super::*;
 use crate::federation::ScopeId;
@@ -14,9 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-/// Deepest nesting of envelopes (a resolution's `prior`, a seal's
-/// `supersedes`) and revisions the fold follows from one entry.
-const MAX_FOLD_DEPTH: usize = 4 * MAX_PROJECT_ANCHORS;
+mod settle;
 
 #[cfg(test)]
 thread_local! {
@@ -90,11 +88,14 @@ pub(super) struct FoldCx<'r, 'a, 't> {
     /// Per tree root: its exclusions, and each node's fork.
     pub(super) exclusions: RefCell<BTreeMap<ProjectRevisionHash, Rc<Exclusion>>>,
     pub(super) forks: RefCell<BTreeMap<(ProjectRevisionHash, ProjectRevisionHash), Rc<Fork>>>,
-    depth: Cell<usize>,
+    /// The revisions being judged now, each under the one before it.
+    active: RefCell<BTreeSet<ProjectRevisionHash>>,
+    /// The deepest lineage this fold counted ([`settle`]).
+    deepest: Cell<usize>,
     /// Calls of `verdict`: a component charges them to its work budget.
     visits: Cell<u64>,
-    /// How often the depth guard refused. A verdict that consumed a refusal
-    /// depends on where the walk entered the chain, so it is not memoized.
+    /// How often the cycle guard refused. A verdict that consumed a refusal
+    /// depends on where the walk entered the cycle, so it is not memoized.
     refusals: Cell<u64>,
 }
 
@@ -117,7 +118,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
             seals: RefCell::new(None),
             exclusions: RefCell::new(BTreeMap::new()),
             forks: RefCell::new(BTreeMap::new()),
-            depth: Cell::new(0),
+            active: RefCell::new(BTreeSet::new()),
+            deepest: Cell::new(0),
             visits: Cell::new(0),
             refusals: Cell::new(0),
         }
@@ -197,22 +199,35 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         }
     }
 
-    /// Whether `hash` is valid on its own lineage at this snapshot.
+    /// Whether `hash` is valid on its own lineage at this snapshot, however
+    /// long that lineage is (rule 5, FIX 9436): its chain of parents is
+    /// judged first, oldest up ([`settle`]), so each state meets its
+    /// parent's verdict already kept and no lineage deepens the stack. A
+    /// revision met again under itself, a cycle only a malformed set holds,
+    /// is quarantined and not kept, as the old depth guard's refusal was not.
     pub(super) fn verdict(&self, hash: ProjectRevisionHash) -> Result<ProjectVerdict> {
-        #[cfg(test)]
-        FOLD_VISITS.with(|count| count.set(count.get() + 1));
-        self.visits.set(self.visits.get() + 1);
+        self.settle_lineage(hash);
+        self.verdict_once(hash, true)
+    }
+
+    /// [`Self::verdict`] without settling the lineage first; `counted` is
+    /// whether the call is charged as a visit.
+    fn verdict_once(&self, hash: ProjectRevisionHash, counted: bool) -> Result<ProjectVerdict> {
+        if counted {
+            #[cfg(test)]
+            FOLD_VISITS.with(|count| count.set(count.get() + 1));
+            self.visits.set(self.visits.get() + 1);
+        }
         if let Some(known) = self.verdicts.borrow().get(&hash) {
             return Ok(*known);
         }
-        if self.depth.get() > MAX_FOLD_DEPTH {
+        if !self.active.borrow_mut().insert(hash) {
             self.refusals.set(self.refusals.get() + 1);
-            return Ok(ProjectVerdict::Quarantined(reason::TOO_DEEP));
+            return Ok(ProjectVerdict::Quarantined(reason::MALFORMED));
         }
         let refusals = self.refusals.get();
-        self.depth.set(self.depth.get() + 1);
         let verdict = self.judge(hash);
-        self.depth.set(self.depth.get() - 1);
+        self.active.borrow_mut().remove(&hash);
         let verdict = verdict?;
         if self.refusals.get() == refusals {
             self.verdicts.borrow_mut().insert(hash, verdict);
@@ -304,11 +319,6 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
                 let prior = self.verdict(parent)?;
                 if prior != ProjectVerdict::Visible {
                     return Ok(prior);
-                }
-                // A valid parent's lineage is held, so only length fails
-                // here: no row could carry this revision's witness.
-                if signed_depth(self.held, hash).is_none() {
-                    return Ok(ProjectVerdict::Quarantined(reason::TOO_DEEP));
                 }
                 match anchor_of(self.held, parent) {
                     Some(anchor) => Some(anchor),
@@ -470,8 +480,8 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
 
     /// Whether the resolution `hash` is an authorized envelope at its anchor
     /// (ruling (b)), judged with its held prior closure, each envelope after
-    /// its own priors: a chain of any length never meets the depth guard,
-    /// every door judges it alike, and only that closure is judged, so a
+    /// its own priors: a chain of any length is walked on the heap, every
+    /// door judges it alike, and only that closure is judged, so a
     /// frozen re-check never judges envelopes held after the freeze (Sol
     /// #1434 r11 F2, Astra r12 F1, Sol r12 F1).
     fn envelope(&self, hash: ProjectRevisionHash) -> Result<ProjectVerdict> {
@@ -507,7 +517,7 @@ impl<'r, 'a, 't> FoldCx<'r, 'a, 't> {
         }
         let verdict =
             (judged.get(&hash).copied()).unwrap_or(ProjectVerdict::Pending(reason::NOT_HELD));
-        // One that met the depth guard depends on where the walk entered.
+        // One that met the cycle guard depends on where the walk entered.
         if self.refusals.get() == refusals {
             self.envelopes.borrow_mut().extend(judged);
         }

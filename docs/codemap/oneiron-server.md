@@ -198,12 +198,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_pack/audience.rs` | src | s | 4 crate-vis | — | The audience an assembly reads for: the room a request names, and the caller's read narrowed to that room's… |
 | `src/api/context_pack/companion_assembly.rs` | src | s | 1 crate-vis | — | Companion scope-resolution authorization for context-pack assembly |
 | `src/api/context_pack/controls.rs` | src | m | 25 crate-vis | — | Request DTOs, control structs, and shared limit constants for context-pack assembly |
+| `src/api/context_pack/instruction_files.rs` | src | s | 1 crate-vis | — | The instruction-file handles a context-pack response carries |
 | `src/api/context_pack/interlocutor.rs` | src | m | 8 crate-vis | — | Interlocutor-set resolution and third-party party inputs for context-pack requests |
 | `src/api/context_pack/media_query.rs` | src | m | 7 crate-vis | — | The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's… |
 | `src/api/context_pack/mod.rs` | src | s | 8 crate-vis | — | Core context-pack assembly: POST /v1/core/context-pack validates the request, runs scoped retrieval through… |
 | `src/api/context_pack/reader.rs` | src | s | 2 crate-vis | — | The reader's optional-memory profile (ZERO-RETRIEVAL = A, ARCH-0004 #reader-budget): the named agent… |
-| `src/api/context_pack/resolve.rs` | src | m | 15 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
+| `src/api/context_pack/resolve.rs` | src | m | 11 crate-vis | — | Route handler plus depth/policy/time/budget resolution for context-pack assembly |
 | `src/api/context_pack/response.rs` | src | m | 30 crate-vis | — | Response DTOs and engine-to-wire mapping functions for context-pack assembly |
+| `src/api/context_pack/response_limits.rs` | src | s | 3 crate-vis | — | The response limits a context-pack response is cut to after its scoped filter, and the stats a cut pack shows |
 | `src/api/conversation_dag/append.rs` | src | s | 4 crate-vis | — | The DAG append doors' wire conversions (FIX 9771): a request becomes the engine's append of a TURN or of a… |
 | `src/api/conversation_dag/mod.rs` | src | m | 18 crate-vis | — | HTTP adapters for transactional conversation DAG and summary doors |
 | `src/api/conversation_dag/summary.rs` | src | s | 5 crate-vis | — | Scope-summary result polling, retained metadata and explicit re-derivation |
@@ -438,6 +440,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_lfs/wire.rs` | src | s | 10 crate-vis | — | Git-LFS wire DTOs and batch types |
 | `src/api/host_action.rs` | src | s | 4 crate-vis | — | Who a host credential acts as at a server door (FIX 2222 = A, slice B; owner ruling "A + support", 2026-10-18) |
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
+| `src/api/linear_push.rs` | src | s | 3 crate-vis | — | `POST /v1/core/linear/push`: a caller's own push of one TASK to Linear now (FIX 8788, FIX 9382) |
 | `src/api/llm.rs` | src | m | 6 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/decision_read.rs` | src | s | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
@@ -980,9 +983,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ladder_poll.rs` | src | s | 1 crate-vis | — | Polling an engine future whose decisions run on the host's ladder |
 | `src/lens_frames.rs` | src | m | 14 crate-vis | — | OF-181: the lens frames this server holds for the cards it rendered |
 | `src/lib.rs` | src | s | 3 fn · 24 mod · 1 re-export | — | Oneiron CRDT sync server library |
-| `src/linear_host.rs` | src | m | 4 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
+| `src/linear_host.rs` | src | m | 5 crate-vis | — | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
 | `src/linear_host/body_line.rs` | src | s | 2 crate-vis | — | The direct Linear mirror's decode memory on the server's retained-memory line (FIX 8610): the narrow host… |
-| `src/linear_host/direct.rs` | src | s | 1 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
+| `src/linear_host/direct.rs` | src | s | 4 crate-vis | — | The server's direct Linear GraphQL mirror, using the production adapter |
+| `src/linear_host/push.rs` | src | s | 3 crate-vis | — | A caller's own push of one TASK to Linear (FIX 8788, FIX 9382) |
 | `src/linear_host/tests.rs` | test | s | — | — | — |
 | `src/linear_host/webhook.rs` | src | s | 6 crate-vis | — | `POST /v1/hooks/linear`: the signed Linear webhook door (OF-427 C1–C4, C11) |
 | `src/livequery.rs` | src | m | 34 crate-vis | — | App-tier framing and coarse live-query state, separate from WindowSync |

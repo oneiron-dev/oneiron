@@ -599,6 +599,14 @@ pub trait OutboundExecutionSink {
     fn admit_in(&self, _txn: &heed::RoTxn<'_>) -> crate::error::Result<()> {
         Ok(())
     }
+
+    /// Whether the sink's own durable record proves that its call for
+    /// `intent_ref` under `idempotency_key`, left outcome-free Pending by a
+    /// crash, reached no provider (FIX 9379). By default a sink proves
+    /// nothing.
+    fn known_non_delivery(&self, _intent_ref: &str, _idempotency_key: Option<&str>) -> bool {
+        false
+    }
 }
 
 /// Coarse pipeline outcome.

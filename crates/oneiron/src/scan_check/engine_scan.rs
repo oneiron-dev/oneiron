@@ -311,11 +311,18 @@ pub enum EngineScan {
     AgentBirthSourceBytes,
     /// One TASK post's caller intent key, in bytes (once refused past 256).
     TaskPostIntentKeyBytes,
+    /// The deepest cover one audience read walks under its row (once denied
+    /// past 64).
+    AudienceCoverDepth,
+    /// One project authority chain's anchors (once quarantined past 64).
+    ProjectAnchorDepth,
+    /// One project fold's deepest lineage walk (once quarantined past 256).
+    ProjectFoldDepth,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 115] = [
+    pub const ALL: [Self; 118] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -431,6 +438,9 @@ impl EngineScan {
         Self::AgentDefinitionVerbatimPinBytes,
         Self::AgentBirthSourceBytes,
         Self::TaskPostIntentKeyBytes,
+        Self::AudienceCoverDepth,
+        Self::ProjectAnchorDepth,
+        Self::ProjectFoldDepth,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -560,6 +570,9 @@ impl EngineScan {
             Self::AgentDefinitionVerbatimPinBytes => "agent_definition_verbatim_pin_bytes",
             Self::AgentBirthSourceBytes => "agent_birth_source_bytes",
             Self::TaskPostIntentKeyBytes => "task_post_intent_key_bytes",
+            Self::AudienceCoverDepth => "audience_cover_depth",
+            Self::ProjectAnchorDepth => "project_anchor_depth",
+            Self::ProjectFoldDepth => "project_fold_depth",
         }
     }
 
@@ -634,6 +647,8 @@ impl EngineScan {
             Self::AgentDefinitionVerbatimPinBytes => 1024,
             Self::AgentBirthSourceBytes => 32 * 1024 * 1024,
             Self::TaskPostIntentKeyBytes => 256,
+            Self::AudienceCoverDepth | Self::ProjectAnchorDepth => 64,
+            Self::ProjectFoldDepth => 256,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -755,6 +770,9 @@ impl EngineScan {
             Self::AgentDefinitionVerbatimPinBytes => 140,
             Self::AgentBirthSourceBytes => 141,
             Self::TaskPostIntentKeyBytes => 142,
+            Self::AudienceCoverDepth => 150,
+            Self::ProjectAnchorDepth => 151,
+            Self::ProjectFoldDepth => 152,
         }]
     }
 }
