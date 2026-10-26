@@ -8,11 +8,12 @@
 //!
 //! An escrow recipient the carrier delivers after the engine started is
 //! sealed to and spooled at the next look, as a start seals those present
-//! then, with no restart. A look is a cadence, not a deadline: one question
-//! to the companion is in flight at a time, and one that does not come back
-//! leaves the last answer standing.
+//! then, with no restart; a capsule a spool did not hand over, at a start
+//! or a look, goes at a later look. A look is a cadence, not a deadline:
+//! one question to the companion is in flight at a time, and one that does
+//! not come back leaves the last answer standing.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,7 +22,7 @@ use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
 use tokio::task::JoinHandle;
 
 use super::admission::WriteKind;
-use super::boot_keys::{seal_escrow_recipient, spool_vault_key_escrow};
+use super::boot_keys::{escrow_unspooled, seal_escrow_recipient, spool_escrow_capsules};
 use super::{ManagedArgs, ManagedShutdown, ManagedState};
 
 /// How often the engine looks at its outbox companion and at the escrow
@@ -57,6 +58,8 @@ struct Recipients {
     sealed: HashMap<&'static str, blake3::Hash>,
     /// Each role's recipient that last did not seal, said once.
     said: HashMap<&'static str, blake3::Hash>,
+    /// Whether a spool that did not go through was said, until one does.
+    unspooled_said: bool,
 }
 
 /// Looks at the companion and, where the engine has an escrow outbox, at
@@ -126,16 +129,22 @@ fn note_companion(state: &ManagedState, revision: Option<u32>) {
 }
 
 /// Seals the vault's data key to each recipient the carrier holds that the
-/// watch has not sealed to, and spools the capsules once one was sealed, as
-/// a start does (FIX 6684). It writes under a background admission, so a
-/// vault frozen for reap seals nothing until it thaws. A recipient that does
-/// not seal is said once and tried again at each look.
+/// watch has not sealed to, and spools each capsule the outbox does not hold
+/// yet, as a start does (FIX 6684): one sealed now, or one an earlier spool
+/// did not hand over, which goes again as the same report and is never
+/// sealed again. It writes under a background admission, held through each
+/// report and its mark, so a vault frozen for reap seals and spools nothing
+/// until it thaws. A recipient that does not seal, and a spool that does
+/// not go through, is said once and tried again at each look.
 fn seal_carrier_recipients(
     state: &ManagedState,
     vault: &oneiron::Vault,
     managed: &ManagedArgs,
     recipients: &mut Recipients,
 ) {
+    let Some(outbox) = managed.escrow_outbox.as_deref() else {
+        return;
+    };
     let dir = Path::new(VM_GUEST_OUTBOX_DIR).join("recipients");
     let mut fresh = Vec::new();
     for (role, file) in CARRIER_RECIPIENTS {
@@ -147,12 +156,38 @@ fn seal_carrier_recipients(
             fresh.push((role, fingerprint, bytes));
         }
     }
-    if fresh.is_empty() {
+    if fresh.is_empty() && !escrow_unspooled(vault) {
         return;
     }
     let Some(admitted) = state.admit_background(WriteKind::BackgroundOther) else {
         return;
     };
+    if !fresh.is_empty() {
+        seal_fresh(vault, fresh, recipients);
+    }
+    match spool_escrow_capsules(vault, managed, outbox, &mut BTreeSet::new()) {
+        Ok(()) => recipients.unspooled_said = false,
+        Err(error) => {
+            if !std::mem::replace(&mut recipients.unspooled_said, true) {
+                tracing::warn!(
+                    reason = "vm_escrow_capsule_unspooled",
+                    error = %format!("{error:#}"),
+                    "an escrow capsule is not spooled yet; the next look spools it, and the \
+                     vault serves on"
+                );
+            }
+        }
+    }
+    drop(admitted);
+}
+
+/// Seals the vault's data key to each `fresh` recipient, by role, with its
+/// fingerprint and bytes, and notes which sealed.
+fn seal_fresh(
+    vault: &oneiron::Vault,
+    fresh: Vec<(&'static str, blake3::Hash, Vec<u8>)>,
+    recipients: &mut Recipients,
+) {
     let present = match vault.vault_key_wraps() {
         Ok(present) => present,
         Err(error) => {
@@ -164,11 +199,9 @@ fn seal_carrier_recipients(
             return;
         }
     };
-    let mut sealed = false;
     for (role, fingerprint, bytes) in fresh {
         match seal_escrow_recipient(vault, &present, role, &bytes) {
-            Ok(added) => {
-                sealed |= added;
+            Ok(_) => {
                 recipients.sealed.insert(role, fingerprint);
                 recipients.said.remove(role);
             }
@@ -185,8 +218,4 @@ fn seal_carrier_recipients(
             }
         }
     }
-    if sealed {
-        spool_vault_key_escrow(vault, managed);
-    }
-    drop(admitted);
 }
