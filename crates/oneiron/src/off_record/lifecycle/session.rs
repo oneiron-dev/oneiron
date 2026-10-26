@@ -738,13 +738,12 @@ impl OffRecordSession<'_> {
             &mut heed::RwTxn<'_>,
             crate::session_overlay::JournalEntry,
         ) -> Result<()> = &|wtxn, entry| {
-            crate::batch::apply_ops_session(
+            crate::embed::apply_ops_session_projected(
+                self.vault,
                 &self.read_view()?,
                 route,
-                &self.vault.config,
-                &self.vault.analyzer,
                 wtxn,
-                vec![entry],
+                entry,
             )
         };
         let (segment, written) = self.vault.with_write_txn_grouped(|wtxn| {

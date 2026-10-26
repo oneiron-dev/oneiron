@@ -31,7 +31,7 @@ use super::space::{
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
 use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
-use super::space_probe::{ProbeCohortLedger, SpaceProbe, space_probes_in_txn};
+use super::space_probe::{ProbeCohortLedger, SpaceProbe, projected_space_probes_in_txn};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -831,7 +831,7 @@ impl Vault {
                         Error::InvalidConfig(format!("embedding space {id} is not declared"))
                     })?,
             };
-            let stored = space_probes_in_txn(&self.store, &rtxn)?;
+            let stored = projected_space_probes_in_txn(self, &rtxn)?;
             let mut probes: Vec<([u8; 16], SpaceProbe, Option<PendingMedia>)> = Vec::new();
             for (id, probe) in &stored {
                 if !moving.kinds.contains(&probe.kind) {
@@ -1270,7 +1270,7 @@ impl Vault {
             Some(check) if !by_owner => Some(read_cards(
                 check,
                 moving.margin,
-                &space_probes_in_txn(&self.store, &wtxn)?,
+                &projected_space_probes_in_txn(self, &wtxn)?,
             )),
             check => check,
         };

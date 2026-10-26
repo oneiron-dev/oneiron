@@ -40,6 +40,7 @@ use crate::store::{decode_vector_row, encode_vector_row_v1};
 use crate::temporal::TimeRange;
 
 mod bindings;
+pub(super) mod repo_projection;
 
 /// Longest declared space id.
 pub const EMBEDDING_SPACE_ID_MAX_LEN: usize = 256;

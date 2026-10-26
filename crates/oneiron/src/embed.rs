@@ -34,7 +34,13 @@ pub(crate) use eligibility::{
 pub use evidence::EmbeddingMatchEvidence;
 pub(crate) use locality::clear_embedding_locality_in_txn;
 pub use media::{MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput, MediaOutcome};
-pub(crate) use repo_projection::{repo_envelope_copies_in_txn, requeue_repo_embedding_in_txn};
+pub use repo_projection::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
+pub(crate) use repo_projection::{
+    apply_ops_session_projected, finalize_repo_derived_index_copies_in_txn,
+    refresh_repo_derived_projection_in_txn, repo_derived_batch, repo_derived_fields,
+    repo_derived_index_text_in, repo_envelope_copies_in_txn, repo_media_bytes,
+    requeue_repo_embedding_in_txn, retire_repo_derived_index_copies_in_txn,
+};
 pub use session_media::SessionMediaRefusals;
 pub use space::EMBEDDING_SETUP_LEARNED_AT;
 pub use space::{

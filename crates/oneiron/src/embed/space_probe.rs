@@ -29,7 +29,11 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
 mod ledger;
+mod repo_projection;
 pub(super) use ledger::ProbeCohortLedger;
+pub(super) use repo_projection::{
+    projected_space_probes_in_txn, refresh_repo_probe_queries_in_txn,
+};
 
 /// Probes the authoring pass keeps per kind.
 pub const SPACE_PROBES_PER_KIND: usize = 20;
@@ -186,6 +190,7 @@ impl Vault {
             ));
         }
         EMBEDDING_PROBE.put(&self.store, &mut wtxn, &id, &probe)?;
+        repo_projection::queue_probe_query_copy_in_txn(self, &mut wtxn, &id, &probe)?;
         wtxn.commit()?;
         Ok(id)
     }
@@ -203,6 +208,7 @@ impl Vault {
         owner.revalidate_in_txn(self, &wtxn)?;
         let existed = EMBEDDING_PROBE.contains(&self.store, &wtxn, id)?;
         EMBEDDING_PROBE.delete(&self.store, &mut wtxn, id)?;
+        repo_projection::drop_probe_query_copy_in_txn(self, &mut wtxn, id)?;
         wtxn.commit()?;
         Ok(existed)
     }
@@ -257,6 +263,10 @@ impl Vault {
             }
         };
         let mut report = SpaceProbeReport::default();
+        // Pending evaluation copies have their own scan (FIX 10408).
+        if let Err(error) = self.rebuild_probe_query_copies(kind, author, max_items, egress) {
+            tracing::warn!(error = %error, "probe evaluation copies stay pending");
+        }
         let documents = {
             let rtxn = self.store.env.read_txn()?;
             let gate = egress
@@ -389,6 +399,12 @@ impl Vault {
             };
             probe.validate()?;
             EMBEDDING_PROBE.put(&self.store, &mut wtxn, &probe.id(), &probe)?;
+            repo_projection::record_authored_probe_copy_in_txn(
+                self,
+                &mut wtxn,
+                &probe.id(),
+                &probe,
+            )?;
             report.written += 1;
         }
         wtxn.commit()?;
