@@ -315,8 +315,8 @@ pub(crate) async fn run_context_pack_builder(
         tracing::error!(kind = ?error.kind(), "core context-pack clamp count failed");
         core_engine_error("core context-pack scoped read failed", error)
     })?;
-    let mut narrowing = scoped_read
-        .filter_context_pack_under(&mut pack.value, disclosure.as_ref())
+    let mut narrowing = pack
+        .filter_scoped_under(scoped_read, disclosure.as_ref())
         .map_err(|error| {
             pack.discard_telemetry();
             tracing::error!(kind = ?error.kind(), "core context-pack scoped read failed");
@@ -332,11 +332,13 @@ pub(crate) async fn run_context_pack_builder(
             core_engine_error("core context-pack reactions failed", error)
         })?;
     apply_context_pack_response_limits(&mut pack.value, response_limits);
-    project_instruction_files(scoped_read, &mut pack.value).map_err(|error| {
-        pack.discard_telemetry();
-        tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
-        core_engine_error("core context-pack scoped read failed", error)
-    })?;
+    project_instruction_files(scoped_read, &mut pack.value, disclosure.as_ref()).map_err(
+        |error| {
+            pack.discard_telemetry();
+            tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
+            core_engine_error("core context-pack scoped read failed", error)
+        },
+    )?;
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     // Board provenance/snippets consume the same authorized snapshot, before
     // the requested JSON profile removes source fields for the separate pack.

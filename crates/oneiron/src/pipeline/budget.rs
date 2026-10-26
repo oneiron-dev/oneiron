@@ -19,6 +19,11 @@ use super::types::{
 use crate::disclosure::DisclosureContext;
 use crate::vault::NoMatchFloors;
 
+mod selection;
+pub(super) use selection::{
+    keep_critical_through, pack_critical_accounting, truncate_critical_first,
+};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPackBudgetKind {
     Claim,
@@ -196,7 +201,7 @@ fn select_rows(
 }
 
 /// Returns whether the world share kept a claim out; a kind's zero cap
-/// is not the share's.
+/// is not the share's. The `critical` claims take each cap first.
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -204,6 +209,7 @@ pub(super) fn apply_context_pack_retrieval_budget(
     metadata_cache: &mut EntityMetadataCache,
     budget: ContextPackRetrievalBudget,
     world_share: Option<WorldShare<'_>>,
+    critical: &HashSet<EntityId>,
 ) -> Result<bool> {
     if scores.is_empty() {
         return Ok(false);
@@ -234,17 +240,25 @@ pub(super) fn apply_context_pack_retrieval_budget(
 
     let caps =
         redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
-    let (rows, share_held_back) = select_rows(&candidates, Some(caps), usize::MAX, fraction);
+    let (rows, share_held_back) = selection::select_rows_critical_first(
+        &candidates,
+        critical,
+        Some(caps),
+        usize::MAX,
+        fraction,
+    );
     *scores = rows;
     Ok(share_held_back)
 }
 
 /// Cuts an `All`-world pack's scored rows to `limit` under its world share
-/// ([`select_rows`]), after any reorder that followed the budget.
+/// ([`select_rows`]), after any reorder that followed the budget, the
+/// `critical` claims first.
 pub(super) fn truncate_under_world_share(
     scores: &mut Vec<ScoredEntity>,
     limit: usize,
     share: WorldShare<'_>,
+    critical: &HashSet<EntityId>,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -257,7 +271,7 @@ pub(super) fn truncate_under_world_share(
         };
         rows.push((scored, kind, share.role(kind, &scored.id)));
     }
-    *scores = select_rows(&rows, None, limit, share.fraction).0;
+    *scores = selection::select_rows_critical_first(&rows, critical, None, limit, share.fraction).0;
     Ok(())
 }
 

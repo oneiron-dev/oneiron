@@ -1,33 +1,22 @@
 //! The instruction-file handles a context-pack response carries.
 
-use std::collections::BTreeSet;
-
-/// Keeps each instruction handle `pack` carries only over the units it still
-/// returns, and only while `read` reads its CODE_ARTIFACT, all in one
-/// snapshot (FIX 646): the handles are gathered before the scoped filter,
-/// over units the caller may not be shown.
+/// Resolves the instruction handles `pack` carries afresh over the units it
+/// still returns, after its last row filter and cut: under `read` and
+/// `disclosure`, in one snapshot, each unit and its owning CODE_ARTIFACT
+/// admitted before any of their metadata is read (FIX 646, FIX 9761). The
+/// handles assembly gathered were read before the scoped filter, over units
+/// the caller may not be shown.
 pub(super) fn project_instruction_files(
     read: &oneiron::claim::ScopedRead<'_>,
     pack: &mut oneiron::ContextPack,
+    disclosure: Option<&oneiron::disclosure::DisclosureContext>,
 ) -> oneiron::Result<()> {
-    let returned: BTreeSet<_> = pack
+    let returned: Vec<_> = pack
         .results
         .iter()
         .chain(&pack.neighbors)
         .map(|entity| entity.id)
         .collect();
-    for handle in &mut pack.instruction_files {
-        handle.units.retain(|unit| returned.contains(unit));
-    }
-    pack.instruction_files
-        .retain(|handle| !handle.units.is_empty());
-    let artifacts: Vec<_> = pack
-        .instruction_files
-        .iter()
-        .map(|handle| vec![handle.code_artifact_id])
-        .collect();
-    let mut readable = read.refs_readable_each(&artifacts)?.into_iter();
-    pack.instruction_files
-        .retain(|_| readable.next().unwrap_or(false));
+    pack.instruction_files = read.context_pack_instruction_files_under(&returned, disclosure)?;
     Ok(())
 }

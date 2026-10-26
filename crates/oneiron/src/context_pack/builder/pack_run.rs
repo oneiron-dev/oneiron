@@ -17,7 +17,7 @@ use super::super::empty_pack::{
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
-use super::super::types::{ContextPack, PackStats};
+use super::super::types::{ContextPack, PackCriticalAccounting, PackStats};
 
 #[derive(Debug, Clone)]
 pub struct SerializedContextPack {
@@ -113,6 +113,8 @@ pub(in crate::context_pack) struct ContextPackRun<'a> {
     /// Scored candidates the disclosure clamp's candidate sweep dropped.
     pub(in crate::context_pack) clamped: Vec<EntityId>,
     pub(in crate::context_pack) replay_config: Option<serde_json::Value>,
+    /// The critical rows the run found and its budgets cut (FIX 9760).
+    pub(in crate::context_pack) critical: PackCriticalAccounting,
 }
 
 pub struct UnfinalizedContextPack<'a> {
@@ -122,6 +124,7 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) total_in_scope: usize,
     pub(super) clamped: Vec<EntityId>,
     pub(super) replay_config: Option<serde_json::Value>,
+    pub(super) critical: PackCriticalAccounting,
 }
 
 impl UnfinalizedContextPack<'_> {
@@ -154,6 +157,46 @@ impl UnfinalizedContextPack<'_> {
             }
         }
         Ok(count)
+    }
+
+    /// Filters the pack to what `read` may be served under `disclosure`
+    /// (`ScopedRead::filter_context_pack_under`), and counts its critical
+    /// claims, the ones its budgets cut included, over the ids `read` is
+    /// admitted to (FIX 9760).
+    pub fn filter_scoped_under(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<crate::claim::ScopedReadReceipt> {
+        read.filter_context_pack_critical_under(&mut self.value, &self.critical, disclosure)
+    }
+
+    /// Resolves the pack's instruction files afresh over the units it now
+    /// returns, under `read` and `disclosure` (FIX 9761): call it after the
+    /// pack's last row filter and cut. A failure discards the provisional run
+    /// row before it returns.
+    pub fn project_instruction_files_under(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<()> {
+        let units: Vec<EntityId> = self
+            .value
+            .results
+            .iter()
+            .chain(&self.value.neighbors)
+            .map(|row| row.id)
+            .collect();
+        match read.context_pack_instruction_files_under(&units, disclosure) {
+            Ok(files) => {
+                self.value.instruction_files = files;
+                Ok(())
+            }
+            Err(error) => {
+                self.discard_telemetry();
+                Err(error)
+            }
+        }
     }
 
     pub fn finish_projected_json(

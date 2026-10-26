@@ -802,7 +802,7 @@ fn pipeline_candidate_matches_relationship_filter(
     })
 }
 
-fn pipeline_candidate_matches_world_filter(
+pub(super) fn pipeline_candidate_matches_world_filter(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,

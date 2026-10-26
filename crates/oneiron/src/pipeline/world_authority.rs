@@ -480,3 +480,49 @@ fn world_access_rows(
     }
     Ok(rows)
 }
+
+/// A run's world selection as its edge expansion applies it (FIX 9759): the
+/// scope the caller selected, with an `ActiveSet` authority resolved once in
+/// the expansion's snapshot.
+pub(crate) struct ResolvedWorldScope {
+    scope: WorldScope,
+    active_set: Option<WorldAuthoritySet>,
+}
+
+impl ResolvedWorldScope {
+    /// Whether the selection admits `id`, by the rule a primary candidate
+    /// takes. Stale federated worlds are the walk's own check.
+    pub(crate) fn admits(
+        &self,
+        store: &crate::store::StoreRead<'_>,
+        rtxn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        super::filters::pipeline_candidate_matches_world_filter(
+            store,
+            rtxn,
+            id,
+            &self.scope,
+            (self.active_set.as_ref(), None),
+        )
+    }
+}
+
+impl super::PipelineBuilder<'_> {
+    /// This run's world selection, for the neighbors its pack walks to:
+    /// resolved as the run resolves it, at the run's clock, in `txn`.
+    pub(crate) fn neighbor_world_scope(&self, txn: &RoTxn<'_>) -> Result<ResolvedWorldScope> {
+        let authority = resolve_active_world_authority(
+            &self.vault.store,
+            txn,
+            &self.world_scope,
+            self.active_world_selection.as_ref(),
+            self.execution_actor,
+            self.temporal_now.unwrap_or_else(crate::unix_seconds_now),
+        )?;
+        Ok(ResolvedWorldScope {
+            scope: self.world_scope.clone(),
+            active_set: authority.map(|authority| authority.active_set),
+        })
+    }
+}

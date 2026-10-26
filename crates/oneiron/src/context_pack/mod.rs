@@ -25,7 +25,9 @@ mod world_partition;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
+pub use builder::{
+    ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack, select_critical_pack_rows,
+};
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
 pub(crate) use l2_base::L2BaseCache;
 pub use l2_base::L2BaseSummary;
@@ -34,6 +36,7 @@ pub use psych_mirror::{
     PsychProfilePackSection, PsychProfilePackStaleReason, psych_mirror_source_candidate_from_claim,
     psych_mirror_source_candidate_from_context_entity, psych_profile_pack_section,
 };
+pub(crate) use types::PackCriticalAccounting;
 pub use types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, DEFAULT_MAX_FIELD_CHARS,
     DEFAULT_MAX_NEIGHBORS, FieldProfile, MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat,
@@ -41,5 +44,7 @@ pub use types::{
     PackStats, PackTokenStats, TokenAllocation,
 };
 pub use world_partition::WORLD_STALE_FIELD;
+
+pub(crate) use validation::disclosure_admits_target;
 
 pub(crate) use hydration::{context_entity_matches_read_snapshot, same_claim_body};

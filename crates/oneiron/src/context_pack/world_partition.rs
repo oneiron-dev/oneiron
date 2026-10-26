@@ -2,7 +2,7 @@
 //! (ARCH-0004 / ARCH-0022 / ONE-1411).
 
 use crate::ports::EntityStoreRead;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use heed::RoTxn;
 
@@ -36,28 +36,93 @@ pub(super) fn resolve_edge_short_ids(
     }
 }
 
-/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack: reorders
-/// `results` so rows are grouped by world — the base section (claims with no
-/// `world` key plus every other base-reality record) first, then one section
-/// per non-base world, which also holds a TASK born there (sections ordered
-/// by their highest-scoring row; score order preserved within a section). A
-/// cap drops the lowest-scoring fiction claims so non-base claims stay at
-/// most `floor(non_base_fraction × claims the pack emits)`, keeping all base
-/// claims (`pipeline::non_base_claim_cap`).
+/// ARCH-0004 / ARCH-0022 world partitioning for an `All`-scope pack, run once
+/// over the rows it emits (FIX 9759): reorders `results` so rows are grouped
+/// by world — the base section (claims with no `world` key plus every other
+/// base-reality record) first, then one section per non-base world, which
+/// also holds a TASK born there (sections ordered by their highest-scoring
+/// row; score order preserved within a section). Non-base claims stay at most
+/// `floor(non_base_fraction × unique claims results and neighbors emit)`
+/// (`pipeline::non_base_claim_cap`), keeping every base claim. The non-base
+/// claims kept are the critical ones first, then the rest, each in rank
+/// order: results by score, then neighbors in walk order (FIX 9760). Returns
+/// the critical claims the share left out.
 ///
 /// When no non-base row survives, `results` are left flat in score order.
-pub(super) fn partition_results_by_world(
+pub(super) fn partition_pack_claims(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     results: &mut Vec<ContextEntity>,
+    neighbors: &mut Vec<ContextEntity>,
     non_base_fraction: f32,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
-) -> Result<()> {
+) -> Result<Vec<EntityId>> {
+    let mut result_worlds = Vec::with_capacity(results.len());
+    for entity in results.iter() {
+        result_worlds.push(entity_world(store, rtxn, entity, claim_bodies)?);
+    }
+    let mut neighbor_worlds = Vec::with_capacity(neighbors.len());
+    for entity in neighbors.iter() {
+        neighbor_worlds.push(entity_world(store, rtxn, entity, claim_bodies)?);
+    }
+
+    // Only CLAIMs share, each counted once; other records do not count.
+    let mut base_claims = HashSet::new();
+    let mut non_base_claims: Vec<(EntityId, bool)> = Vec::new();
+    let mut seen_non_base = HashSet::new();
+    for (entity, world) in results
+        .iter()
+        .zip(&result_worlds)
+        .chain(neighbors.iter().zip(&neighbor_worlds))
+    {
+        if entity.entity_type != ENTITY_TYPE_CLAIM {
+            continue;
+        }
+        if world.is_none() {
+            base_claims.insert(entity.id);
+        } else if seen_non_base.insert(entity.id) {
+            non_base_claims.push((entity.id, entity.critical));
+        }
+    }
+    let non_base_cap = crate::pipeline::non_base_claim_cap(
+        base_claims.len(),
+        non_base_claims.len(),
+        non_base_fraction,
+    );
+    let mut kept_claims = HashSet::with_capacity(non_base_cap);
+    for critical_pass in [true, false] {
+        for (id, critical) in &non_base_claims {
+            if *critical == critical_pass && kept_claims.len() < non_base_cap {
+                kept_claims.insert(*id);
+            }
+        }
+    }
+    let dropped_critical: Vec<EntityId> = non_base_claims
+        .iter()
+        .filter(|(id, critical)| *critical && !kept_claims.contains(id))
+        .map(|(id, _)| *id)
+        .collect();
+    let emitted = |entity: &ContextEntity, world: &Option<EntityId>| {
+        entity.entity_type != ENTITY_TYPE_CLAIM
+            || world.is_none()
+            || kept_claims.contains(&entity.id)
+    };
+
+    let mut kept_neighbors = Vec::with_capacity(neighbors.len());
+    for (entity, world) in neighbors.drain(..).zip(&neighbor_worlds) {
+        if emitted(&entity, world) {
+            kept_neighbors.push(entity);
+        }
+    }
+    *neighbors = kept_neighbors;
+
     let mut base: Vec<ContextEntity> = Vec::with_capacity(results.len());
     let mut non_base: Vec<(EntityId, ContextEntity)> = Vec::new();
-
-    for entity in results.drain(..) {
-        match entity_world(store, rtxn, &entity, claim_bodies)? {
+    for (entity, world) in results.drain(..).zip(result_worlds) {
+        if !emitted(&entity, &world) {
+            continue;
+        }
+        match world {
             None => base.push(entity),
             Some(world) => non_base.push((world, entity)),
         }
@@ -66,31 +131,8 @@ pub(super) fn partition_results_by_world(
     // No fictional / dream row survived — leave the pack flat (score order).
     if non_base.is_empty() {
         *results = base;
-        return Ok(());
+        return Ok(dropped_critical);
     }
-
-    // Only CLAIMs share; other records do not count. Non-base claims stay at
-    // most `floor(non_base_fraction × emitted claims)`.
-    let is_claim = |entity: &ContextEntity| entity.entity_type == ENTITY_TYPE_CLAIM;
-    let base_claim_count = base.iter().filter(|entity| is_claim(entity)).count();
-    let non_base_claims = non_base
-        .iter()
-        .filter(|(_, entity)| is_claim(entity))
-        .count();
-    let non_base_cap =
-        crate::pipeline::non_base_claim_cap(base_claim_count, non_base_claims, non_base_fraction);
-
-    // `non_base` is in score order (results arrive score-sorted). Keep the top
-    // `non_base_cap` claims by score and drop the rest so fiction cannot crowd
-    // base reality out.
-    let mut kept_claims = 0_usize;
-    non_base.retain(|(_, entity)| {
-        if !is_claim(entity) {
-            return true;
-        }
-        kept_claims += 1;
-        kept_claims <= non_base_cap
-    });
 
     // Group survivors by world; sections ordered by first (highest-score)
     // appearance, score order preserved within each section.
@@ -110,7 +152,7 @@ pub(super) fn partition_results_by_world(
         }
     }
     *results = out;
-    Ok(())
+    Ok(dropped_critical)
 }
 
 /// Hydrated-field key carrying the ONE-1411 stale-federation marker.

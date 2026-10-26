@@ -1,7 +1,7 @@
 //! Public value types of the context pack: the pack itself, its entities, its
 //! stats, and its budget/allocation knobs.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
@@ -103,6 +103,20 @@ pub struct PackStats {
     pub critical_over_budget: bool,
     /// Critical claims eligible before budget truncation (not suppressed claims).
     pub critical_count: usize,
+}
+
+/// The critical claims a pack run found among its admitted candidates, and
+/// those its budgets left out (FIX 9760). Engine-internal: the ids never
+/// leave the engine. Only [`PackStats::critical_count`] and
+/// [`PackStats::critical_over_budget`] do, counted over the ids the reading
+/// caller is admitted to.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PackCriticalAccounting {
+    /// Critical claims among the admitted candidates before any cut.
+    pub(crate) eligible_ids: BTreeSet<EntityId>,
+    /// Those of `eligible_ids` that a per-kind, diversity, result, neighbor
+    /// or world-share cut left out of the pack.
+    pub(crate) budget_omitted_ids: BTreeSet<EntityId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
