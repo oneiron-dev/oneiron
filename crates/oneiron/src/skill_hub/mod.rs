@@ -113,9 +113,9 @@ pub(crate) use self::index::{
     backfill_content_hash_index_if_needed, maintain_skill_content_hash_index_for_delete,
     maintain_skill_content_hash_index_for_put,
 };
-pub(crate) use self::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
-#[cfg(test)]
-use self::package::MAX_HUB_PACKAGE_FILES;
+pub(crate) use self::package::{
+    MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES,
+};
 pub(crate) use self::verdict::{
     scan_verdict_row_risk, skill_scan_verdict_heads_for_content_hash_in_store,
     skill_scan_verdicts_for_content_hash_in_store,

@@ -2,7 +2,9 @@
 use super::{PackAdapter, PackKind, PackManifest, invalid};
 use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
-use crate::skill_hub::HubFile;
+use crate::skill_hub::{
+    HubFile, MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSource {
@@ -14,10 +16,18 @@ pub struct PackSource {
     pub(super) organs: Vec<super::PackOrgan>,
 }
 impl PackSource {
-    /// Every file of the tree, whatever their number or length (FIX 8202,
-    /// Rule 5): only shape, path, text and credential checks refuse one.
     pub fn from_files(mut files: Vec<HubFile>) -> Result<Self> {
+        if files.len() > MAX_HUB_PACKAGE_FILES {
+            return Err(invalid("too many source files"));
+        }
+        let mut total = 0usize;
         for file in &files {
+            total = total
+                .checked_add(file.content.len())
+                .ok_or_else(|| invalid("source length overflow"))?;
+            if file.content.len() > MAX_HUB_FILE_BYTES || total > MAX_HUB_PACKAGE_TOTAL_BYTES {
+                return Err(invalid("source exceeds byte bound"));
+            }
             if file
                 .path
                 .split('/')
@@ -74,6 +84,9 @@ impl PackSource {
                         .content,
                 )
                 .map_err(|_| invalid("agent skills.json must be native structured references"))?;
+                if refs.len() > 128 {
+                    return Err(invalid("too many agent skill references"));
+                }
                 let mut seen = std::collections::BTreeSet::new();
                 for reference in refs {
                     reference.validate()?;
@@ -89,6 +102,9 @@ impl PackSource {
                 let section: PackSection = serde_json::from_slice(&file.content)
                     .map_err(|_| invalid("invalid pack section manifest"))?;
                 section.validate()?;
+                if sections.len() >= 128 {
+                    return Err(invalid("too many pack sections"));
+                }
                 if !section
                     .section_id
                     .starts_with(&format!("{}.", manifest.name))
