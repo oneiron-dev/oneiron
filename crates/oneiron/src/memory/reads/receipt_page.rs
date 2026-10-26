@@ -42,7 +42,12 @@ impl FamilyCursor {
     }
 
     fn to_text(&self) -> String {
-        format!("{}:{}:{}", self.occurred_at, self.kind.as_str(), self.receipt_id)
+        format!(
+            "{}:{}:{}",
+            self.occurred_at,
+            self.kind.as_str(),
+            self.receipt_id
+        )
     }
 
     fn parse(text: &str) -> Option<Self> {
@@ -229,7 +234,9 @@ impl Memory<'_> {
         let more = records.len() > page;
         records.truncate(page);
         let next_after = if more {
-            records.last().map(|record| FamilyCursor::of(record).to_text())
+            records
+                .last()
+                .map(|record| FamilyCursor::of(record).to_text())
         } else {
             // A cut walk moves the next page on only past this cursor.
             let walked = cut.map(FamilyCursor::walked).filter(|walked| {
@@ -241,7 +248,10 @@ impl Memory<'_> {
         };
         // A world's name on the owner's own share receipt is his (FIX 5493).
         crate::share_travel::screen_owner_notice_fields(self, &mut records);
-        Ok((records.into_iter().map(family_receipt).collect(), next_after))
+        Ok((
+            records.into_iter().map(family_receipt).collect(),
+            next_after,
+        ))
     }
 
     /// Up to `wanted` gate decisions before `before` (from the newest when

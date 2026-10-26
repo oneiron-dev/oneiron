@@ -255,7 +255,9 @@ impl Vault {
         }
         // Opened only when every owed reference is at rest or erased, and
         // one at least is at rest.
-        if rests.iter().all(|(_, rest)| !matches!(rest, RefRest::Unheld))
+        if rests
+            .iter()
+            .all(|(_, rest)| !matches!(rest, RefRest::Unheld))
             && rests
                 .iter()
                 .any(|(_, rest)| matches!(rest, RefRest::Rested | RefRest::Held))
