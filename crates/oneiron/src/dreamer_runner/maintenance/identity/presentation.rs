@@ -6,8 +6,8 @@ use rmpv::Value;
 use serde_json::json;
 
 use super::{
-    IDENTITY_ANSWER_VERB, IdentityAsk, IdentityAskView, IdentityCardCopy, IdentityOption,
-    SOMEONE_NEW, key_hex,
+    IDENTITY_ANSWER_VERB, IS_PREFIX, IdentityAsk, IdentityAskView, IdentityCardCopy,
+    IdentityOption, SOMEONE_NEW, key_hex,
 };
 use crate::lens::{
     ButtonControl, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,

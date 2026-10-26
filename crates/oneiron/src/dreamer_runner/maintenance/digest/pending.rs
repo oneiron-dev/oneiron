@@ -4,7 +4,8 @@
 
 use super::{
     CLEANUP_VIEW, DigestCleanup, DigestNoteTombstones, DigestOffer, DigestProposal, DigestState,
-    NOTE_TOMBSTONE_VIEW, PROACTIVITY_POLICY_REQUEST_PREDICATE, ProactivityCadence, invalid,
+    NOTE_TOMBSTONE_VIEW, PROACTIVITY_POLICY_REQUEST_PREDICATE, ProactivityCadence,
+    TRAINING_OFFER_GROUP, invalid,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, EntityId, Result, Vault};
