@@ -5,10 +5,11 @@
 //! name, written whole: a temporary sibling, synced, renamed, the directory
 //! synced. It holds no member bytes: the agreed version's digest, the last
 //! transfer taken from the other end, the transfer sent and not yet acked,
-//! the highest revision this end ever sent, and a digest cache keyed by the
-//! local file's stamp. A record outlives its member as a tombstone, so a
-//! late replay never brings a retired file back; none is aged out or
-//! evicted. The next transfer id is `next-transfer`.
+//! the highest revision this end ever sent, a digest cache keyed by the
+//! local file's stamp, and the state of a file whose put the other end
+//! refused as `digest_mismatch` (FIX 11075). A record outlives its member
+//! as a tombstone, so a late replay never brings a retired file back; none
+//! is aged out or evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
 //!
 //! The host also keeps `backup-label.json` (FIX 7046): the backup label the
@@ -78,9 +79,35 @@ pub(super) struct MemberRecord {
     #[serde(default)]
     pub(super) pending: Option<VmOutboxDescriptor>,
     /// The change the other end refused (`put:<digest>` or
-    /// `remove:<digest>`), not sent again until the member changes.
+    /// `remove:<digest>`), not sent again until the member changes; a put
+    /// refused as `digest_mismatch` is kept in `source` instead.
     #[serde(default)]
     pub(super) refused: Option<String>,
+    /// This end's own file, once the other end refused a put of it as
+    /// `digest_mismatch`: due to be read again, or damaged here; `None`
+    /// otherwise, and once the member changes.
+    #[serde(default)]
+    pub(super) source: Option<SourceStatus>,
+}
+
+/// What this end knows of its own file after the other end refused a put
+/// of it as `digest_mismatch`: its bytes did not hash, on arrival, to the
+/// digest the transfer named (FIX 11075).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(super) enum SourceStatus {
+    /// The refused put named `blake3`: the set's next paced look reads the
+    /// file again whole and hashes it, and sends it again while it still
+    /// hashes to that digest.
+    Recheck { blake3: String },
+    /// The file at `stamp`, read again, hashes to `read`, no longer to
+    /// `recorded`, its own recorded digest: the source is damaged, and none
+    /// of it is sent until the member changes.
+    SourceDigestMismatch {
+        stamp: FileStamp,
+        recorded: String,
+        read: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]

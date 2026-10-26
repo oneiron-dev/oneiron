@@ -8,6 +8,7 @@ pub(super) use super::link::Link;
 use super::link::SourceReadError;
 use super::local::{self, Staged};
 use super::scan::{OutOp, OutSet};
+use super::source_check;
 use super::store::{Cached, Received, Version};
 use super::{Carrier, Mode};
 use oneiron_vault_contract::vm_outbox::{
@@ -244,16 +245,16 @@ impl Carrier {
             }
         }
         link.flush()?;
-        let mut deferred = false;
+        let mut again = false;
         for (descriptor, _) in &transfers {
             let ack = match link.read()? {
                 Some(VmOutboxFrame::Ack(ack)) if ack.answers(descriptor) => ack,
                 _ => anyhow::bail!("the other end did not ack an outbox transfer in order"),
             };
-            deferred |= matches!(ack.outcome, VmOutboxOutcome::Deferred { .. });
+            again |= source_check::paces(&ack.outcome);
             self.take_ack(descriptor, ack);
         }
-        if deferred {
+        if again {
             self.pace(set.kind, &set.set);
         } else {
             self.paced.remove(&(set.kind, set.set));
@@ -317,11 +318,12 @@ impl Carrier {
     /// Records the other end's answer to `transfer`: a durable one is the
     /// agreed version and retires the retransmission state, a deferral keeps
     /// it and writes nothing, a refusal drops it and is not sent again until
-    /// the member changes. A durable or refused answer that does not record
-    /// stands, and its exact record is kept to write again: the kind waits
-    /// on its carrier records both ways until that record is written, before
-    /// its next scan, and the session goes on to the set's other acks (FIX
-    /// 7624).
+    /// the member changes, but a put whose bytes did not hash to its digest
+    /// on arrival is read again and resent at its set's pacing (FIX 11075).
+    /// A durable or refused answer that does not record stands, and its exact
+    /// record is kept to write again: the kind waits on its carrier records
+    /// both ways until that record is written, before its next scan, and the
+    /// session goes on to the set's other acks (FIX 7624).
     fn take_ack(&mut self, transfer: &VmOutboxDescriptor, ack: VmOutboxAck) {
         let (kind, member) = (transfer.kind, transfer.member.as_str());
         let gate = Arc::clone(&self.gate);
@@ -353,11 +355,13 @@ impl Carrier {
             VmOutboxOutcome::Refused { code, detail } => {
                 self.say(kind, member, &format!("refused ({code:?}): {detail}"));
                 record.pending = None;
-                record.refused = Some(format!(
-                    "{}:{}",
-                    operation_name(transfer.operation),
-                    transfer.blake3
-                ));
+                if !source_check::recheck(&mut record, transfer, code) {
+                    record.refused = Some(format!(
+                        "{}:{}",
+                        operation_name(transfer.operation),
+                        transfer.blake3
+                    ));
+                }
             }
         }
         if let Err(error) = self.store.put(kind, member, record.clone()) {
