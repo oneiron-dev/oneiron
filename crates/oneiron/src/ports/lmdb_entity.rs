@@ -46,7 +46,6 @@ impl Vault {
             row.body = self.asset_file_body(txn, &manifest)?;
             return Ok(Some(row));
         }
-        #[cfg(feature = "sync")]
         if crate::entity_doc::has_record_head(&self.store, txn, id)? {
             if row.entity_type == ENTITY_TYPE_NOTE {
                 crate::note::ensure_citations_ready(&self.store, txn, *id)?;

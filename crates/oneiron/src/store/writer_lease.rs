@@ -365,10 +365,36 @@ impl VaultWriterLease {
     /// holder refuses as before after one look again, since the act's mark
     /// follows its lock by a moment; past the bound the refusal is today's.
     pub(crate) fn acquire_after_owner_act(vault_dir: &Path) -> Result<Self> {
+        Self::wait_out_owner_act(vault_dir, || Self::acquire(vault_dir))
+    }
+
+    /// [`Self::acquire_held`] for a held owned open, waiting out a lease
+    /// held for one owner act as [`Self::acquire_after_owner_act`] does (FIX
+    /// 5897). `directory` stays the caller's root: each try locks through a
+    /// clone of it, never a path opened again, and a failed clone is an
+    /// error, not a held lease.
+    #[cfg(unix)]
+    pub(crate) fn acquire_held_after_owner_act(
+        directory: std::fs::File,
+        vault_dir: &Path,
+    ) -> Result<Self> {
+        Self::wait_out_owner_act(vault_dir, || {
+            Self::acquire_held(directory.try_clone()?, vault_dir)
+        })
+    }
+
+    /// Runs `acquire` until it takes the lease, waiting out a lease held for
+    /// one owner act up to `OWNER_ACT_LEASE_WAIT`, as the two doors above
+    /// share it. The owner act's mark only chooses to wait: `acquire` alone
+    /// takes the lock.
+    fn wait_out_owner_act(
+        vault_dir: &Path,
+        mut acquire: impl FnMut() -> Result<Self>,
+    ) -> Result<Self> {
         let deadline = Instant::now() + OWNER_ACT_LEASE_WAIT;
         let mut looked_again = false;
         loop {
-            match Self::acquire(vault_dir) {
+            match acquire() {
                 Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD))
                     if Instant::now() < deadline =>
                 {

@@ -161,13 +161,13 @@ pub(super) fn classify_vault_root_pair(
 /// (`crates/heed/PROVENANCE.md`) hands those exact bytes to `mdb_env_open`
 /// without canonicalizing them — so renaming or replacing the pathname cannot
 /// redirect the environment onto a directory this door never bound. The
-/// descriptor outlives the open and the post-open refresh and is then moved
+/// descriptor outlives the open and the post-open check and is then moved
 /// into the [`OwnedEnv`], so its number cannot be recycled while the
 /// environment lives.
 #[cfg(target_os = "linux")]
 pub(super) struct BoundVaultRoot {
     pub(super) dir: File,
-    /// Identity of the bound directory itself, so the post-open refresh can
+    /// Identity of the bound directory itself, so the post-open check can
     /// prove the path the CALLER named still resolves to it.
     pub(super) directory: FileIdentity,
     /// Identity of both LMDB entries as captured before the environment open.
@@ -176,21 +176,17 @@ pub(super) struct BoundVaultRoot {
 
 #[cfg(target_os = "linux")]
 impl BoundVaultRoot {
-    /// Binds an already-canonical `root`. Refuses unless both LMDB entries are
-    /// already present as regular, non-symlink, single-link, non-aliased
-    /// files: a root with neither entry is the create-capable door's new-vault
-    /// state, which this door has no branch for.
+    /// Binds an already-canonical `root` over `dir`, the root directory
+    /// already open. Refuses unless both LMDB entries are already present as
+    /// regular, non-symlink, single-link, non-aliased files: a root with
+    /// neither entry is the create-capable door's new-vault state, which this
+    /// door has no branch for.
     ///
     /// Refuses again unless those two files are already a complete LMDB
     /// environment — see [`validate_bound_lmdb_pair`], which reads their
     /// headers through the very descriptors the classification used. That
     /// second refusal is what keeps a pre-created empty or headerless pair from
     /// reaching a read-write `mdb_env_open` that would initialize it.
-    pub(super) fn bind(root: &Path) -> Result<Self> {
-        Self::bind_dir(root, open_root_directory(root)?)
-    }
-
-    /// [`Self::bind`] over `dir`, the root directory already open.
     pub(super) fn bind_dir(root: &Path, dir: File) -> Result<Self> {
         let directory = file_identity(&dir.metadata()?);
         let data = bound_vault_root_entry(root, &dir, VaultRootEntry::Data)?;
@@ -227,8 +223,12 @@ impl BoundVaultRoot {
         Ok(pair.identity)
     }
 
-    /// [`Self::verify_unchanged`] from metadata alone
-    /// ([`Self::pair_by_metadata`]).
+    /// Defense in depth after the environment open, from metadata alone
+    /// ([`Self::pair_by_metadata`]): the bound descriptor must still hold
+    /// exactly the two files whose identity was captured before it, and the
+    /// path the caller named must still resolve to the bound directory. A
+    /// root renamed away, deleted, or replaced inside the open window fails
+    /// one of those and refuses.
     pub(super) fn verify_unchanged_by_metadata(&self, root: &Path) -> Result<()> {
         if Self::pair_by_metadata(root, &self.dir)?.as_ref() != Some(&self.identity)
             || named_directory_identity(root)?.as_ref() != Some(&self.directory)
@@ -248,25 +248,6 @@ impl BoundVaultRoot {
     /// for as long as that environment lives.
     pub(super) fn into_dir(self) -> File {
         self.dir
-    }
-
-    /// Defense in depth after the environment open: the bound descriptor must
-    /// still hold exactly the two files whose identity was captured before it,
-    /// and the path the caller named must still resolve to the bound
-    /// directory. A root renamed away, deleted, or replaced inside the open
-    /// window fails one of those and refuses.
-    pub(super) fn verify_unchanged(&self, root: &Path) -> Result<VaultRootIdentity> {
-        let data = bound_vault_root_entry(root, &self.dir, VaultRootEntry::Data)?;
-        let lock = bound_vault_root_entry(root, &self.dir, VaultRootEntry::Lock)?;
-        let refreshed =
-            classify_vault_root_pair(root, bound_entry_info(&data), bound_entry_info(&lock))?
-                .identity;
-        if refreshed.as_ref() != Some(&self.identity)
-            || named_directory_identity(root)?.as_ref() != Some(&self.directory)
-        {
-            return Err(existing_root_refusal(root, true));
-        }
-        Ok(self.identity.clone())
     }
 }
 
@@ -559,9 +540,18 @@ pub(super) fn open_existing_environment(
     // Deliberately no `create_dir_all`: an absent root fails here, with zero
     // filesystem effect.
     let canonical_path = path.canonicalize()?;
-    let root = BoundVaultRoot::bind(&canonical_path)?;
-    let mut registered_path =
-        RegisteredPath::reserve(canonical_path.clone(), Some(root.identity.clone()))?;
+    let dir = open_root_directory(&canonical_path)?;
+    // Reserved from the pair's metadata before either file is opened: a
+    // vault this process holds refuses here, its environment's `fcntl` locks
+    // on `lock.mdb` untouched (FIX 8027).
+    let Some(identity) = BoundVaultRoot::pair_by_metadata(&canonical_path, &dir)? else {
+        return Err(existing_root_refusal(&canonical_path, false));
+    };
+    let registered_path = RegisteredPath::reserve(canonical_path.clone(), Some(identity.clone()))?;
+    let root = BoundVaultRoot::bind_dir(&canonical_path, dir)?;
+    if root.identity != identity {
+        return Err(existing_root_refusal(&canonical_path, false));
+    }
 
     // SAFETY: heed/LMDB require a single Env per environment, the path must not
     // be on NFS or another unsupported network filesystem, and map_size must
@@ -583,8 +573,8 @@ pub(super) fn open_existing_environment(
     //   key heed derives for itself on the create-capable door; it is used for
     //   nothing but heed's registry. `RegisteredPath` under the process-local
     //   root-open guard remains this engine's single-environment-per-root
-    //   authority, and `verify_unchanged` below is defense in depth, not the
-    //   mechanism that makes the open safe.
+    //   authority, and `verify_unchanged_by_metadata` below is defense in
+    //   depth, not the mechanism that makes the open safe.
     //
     // The two hooks are test-only interleave points: they rename or stage
     // directories and never re-enter heed.
@@ -617,8 +607,9 @@ pub(super) fn open_existing_environment(
         env,
         _bound_root_dir: None,
     };
-    let refreshed = root.verify_unchanged(&canonical_path)?;
-    registered_path.refresh_identity(Some(refreshed))?;
+    // From metadata alone: another descriptor of `lock.mdb` closed now would
+    // release the locks this environment just took.
+    root.verify_unchanged_by_metadata(&canonical_path)?;
     // Only now, with every post-open check passed, does the environment take
     // ownership of the descriptor it was opened through.
     env.retain_bound_root(root.into_dir());

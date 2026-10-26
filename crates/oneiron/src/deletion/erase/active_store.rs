@@ -105,7 +105,6 @@ impl Vault {
         }
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
-        #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so
@@ -217,7 +216,6 @@ impl Vault {
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
-        #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;

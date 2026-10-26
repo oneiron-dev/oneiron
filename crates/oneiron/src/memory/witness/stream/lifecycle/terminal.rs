@@ -166,23 +166,21 @@ fn terminal_write(
                 admitted_in_txn(&vault.store, txn, &[&seed.assertions, assertions])?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
-            admission::authorize(vault, txn, seed, &text)?;
+            admission::authorize(vault, txn, seed, &text, !state.pending.is_empty())?;
             let was_final =
                 storage::receipt(vault, txn, seed.message_id)?.is_none_or(|prior| prior.complete());
-            #[cfg(feature = "sync")]
-            crate::entity_doc::append_message_stream_in_txn(
-                vault,
-                txn,
-                &seed.message_id,
-                &state.pending,
-                crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                seed.occurred_at,
-            )?;
-            #[cfg(not(feature = "sync"))]
+            // A nonempty continuation edits the MESSAGE, and its first births
+            // the document; an empty one edits nothing and births none (FIX
+            // 4840).
             if !state.pending.is_empty() {
-                return Err(MessageStreamError::InvalidRequest(
-                    "continuation requires entity documents (sync feature)",
-                ));
+                crate::entity_doc::append_message_stream_in_txn(
+                    vault,
+                    txn,
+                    &seed.message_id,
+                    &state.pending,
+                    crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
+                    seed.occurred_at,
+                )?;
             }
             receipt.bytes = text.len() as u64;
             storage::finish(vault, txn, seed, &receipt)?;
@@ -253,14 +251,8 @@ fn terminal_write(
                         retry
                     },
                     |txn| -> MemoryResult<()> {
-                        #[cfg(feature = "sync")]
-                        crate::entity_doc::birth_message_stream_in_txn(
-                            vault,
-                            txn,
-                            &seed.message_id,
-                            crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                            seed.occurred_at,
-                        )?;
+                        // The new MESSAGE keeps its words inline: its document
+                        // is born at its first later edit (FIX 4840).
                         if let Some(source) = seed.regenerates {
                             // The kind's creation is this stream's alone (FIX
                             // 5972), its pair proven above in this transaction:

@@ -198,7 +198,6 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     }
     // A record's prose lives in its document, whose history no door
     // rewrites: its keys are marked through the document's own door.
-    #[cfg(feature = "sync")]
     if header.entity_type != ENTITY_TYPE_NOTE
         && crate::entity_doc::has_record_head(&vault.store, txn, &id)?
     {

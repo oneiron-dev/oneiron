@@ -284,7 +284,6 @@ fn citation_text(
     doc: &loro::LoroDoc,
     field: &str,
 ) -> Result<Option<loro::LoroText>> {
-    #[cfg(feature = "sync")]
     if let Some(body_field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
         let matches = match body_field {
             crate::entity_doc::TextField::Utf8Body => field == "body",
@@ -292,7 +291,6 @@ fn citation_text(
         };
         return Ok(matches.then(|| doc.get_text("body")));
     }
-    let _ = (store, txn, id);
     Ok(doc
         .get_map("text_fields")
         .get(field)

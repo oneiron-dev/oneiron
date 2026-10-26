@@ -343,7 +343,6 @@ pub(crate) fn capture_canonical_window_within(
         }
     }
     document::capture(vault, &txn, &mut snapshot, budget)?;
-    #[cfg(feature = "sync")]
     for entity in &snapshot.entity_blobs {
         if crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)

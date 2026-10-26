@@ -287,7 +287,13 @@ impl Vault {
                 if state.relift {
                     admission::admit_axes_in_txn(self, txn, &mut row, &mut lifted)?;
                 }
-                admission::authorize(self, txn, &row, &format!("{}{}", state.base, pending))?;
+                admission::authorize(
+                    self,
+                    txn,
+                    &row,
+                    &format!("{}{}", state.base, pending),
+                    !pending.is_empty(),
+                )?;
                 storage::checkpoint(self, txn, &row)?;
                 Ok((pending, row.metadata))
             })?;
