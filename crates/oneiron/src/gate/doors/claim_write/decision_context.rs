@@ -51,7 +51,9 @@ pub(super) fn claim_decision_context(
     run: Option<&str>,
 ) -> GateDecisionContext {
     GateDecisionContext {
-        read: GateDecisionReadContext::claim(id, body).into_iter().collect(),
+        read: GateDecisionReadContext::claim(id, body)
+            .into_iter()
+            .collect(),
         links: run
             .map(|run| {
                 GateLoopLink::action(

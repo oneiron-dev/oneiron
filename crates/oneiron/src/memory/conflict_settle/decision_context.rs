@@ -25,8 +25,7 @@ pub(super) fn answering_claim(
         .unwrap_or_default()
         .into_iter()
         .filter(|record| {
-            !record.context.links.is_empty()
-                && kind.is_none_or(|kind| record.content_kind == kind)
+            !record.context.links.is_empty() && kind.is_none_or(|kind| record.content_kind == kind)
         })
         .max_by_key(|record| record.created_at)
         .map(|answered| GateDecisionContext {

@@ -493,7 +493,10 @@ impl Memory<'_> {
                 // the loop links of the pending decision it answers.
                 let pending = reviewed.pending.as_ref().and_then(|pending| {
                     let store = &self.vault.store;
-                    store.gate_decision_in_txn(&*wtxn, pending.decision_id).ok().flatten()
+                    store
+                        .gate_decision_in_txn(&*wtxn, pending.decision_id)
+                        .ok()
+                        .flatten()
                 });
                 record.context = crate::store::GateDecisionContext {
                     read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
