@@ -69,17 +69,30 @@ impl Memory<'_> {
         session.for_participant(self.actor()).map(Some)
     }
 
-    /// [`Self::raw_session`] for a read: a room that is gone, or that this
-    /// caller is no longer in, reads base, as a read did before.
-    fn raw_read_session(&self) -> MemoryResult<Option<OffRecordSession<'_>>> {
-        match self.raw_session() {
-            Ok(session) => Ok(session),
-            Err(Error::OffRecord(
-                OffRecordError::OffRecordSessionNotFound { .. }
-                | OffRecordError::OffRecordSessionClosing { .. }
-                | OffRecordError::OffRecordNotInRoom { .. },
-            )) => Ok(None),
-            Err(error) => Err(error.into()),
+    /// Runs `read` over the composed view of the room this surface's
+    /// session names, while the room is live and the caller is in it.
+    /// `None` when the read belongs on base, as a read did before: no
+    /// session, a ref no room can carry, or a room that is gone, closing or
+    /// closed, or that this caller has left, at bind or during the read.
+    fn raw_composed_read<R>(
+        &self,
+        read: impl FnOnce(&Vault, &SessionStoreView<'_>, &RoTxn<'_>) -> crate::Result<R>,
+    ) -> MemoryResult<Option<R>> {
+        let Some((session_ref, _)) = self.off_record_binding() else {
+            return Ok(None);
+        };
+        let session = match self.vault().off_record_session_vault().bind(session_ref) {
+            Ok(session) => session,
+            // Bind's one config refusal: a ref no room can carry.
+            Err(Error::InvalidConfig(_)) => return Ok(None),
+            Err(error) => return read_on_base(error),
+        };
+        match session
+            .for_participant(self.actor())
+            .and_then(|session| session.read_composed_in_vault(read))
+        {
+            Ok(value) => Ok(Some(value)),
+            Err(error) => read_on_base(error),
         }
     }
 
@@ -280,10 +293,10 @@ impl Memory<'_> {
     ///
     /// As [`Vault::get`].
     pub fn raw_get_entity(&self, id: &EntityId) -> MemoryResult<Option<Vec<u8>>> {
-        let Some(session) = self.raw_read_session()? else {
-            return Ok(self.vault().get(id)?);
-        };
-        Ok(session.read_composed_in_vault(|vault, view, txn| body_in(vault, view, txn, id))?)
+        match self.raw_composed_read(|vault, view, txn| body_in(vault, view, txn, id))? {
+            Some(body) => Ok(body),
+            None => Ok(self.vault().get(id)?),
+        }
     }
 
     /// Whether `id` is stored, the room's rows counted while this surface's
@@ -303,12 +316,13 @@ impl Memory<'_> {
     ///
     /// Storage errors.
     pub fn raw_entity_type(&self, id: &EntityId) -> MemoryResult<Option<u8>> {
-        let Some(session) = self.raw_read_session()? else {
-            return Ok(self.vault().get_entity_type(id)?);
-        };
-        Ok(session.read_composed(|view, txn| {
+        let composed = self.raw_composed_read(|_, view, txn| {
             Ok(view.port_entity_record(txn, id)?.map(|row| row.entity_type))
-        })?)
+        })?;
+        match composed {
+            Some(entity_type) => Ok(entity_type),
+            None => Ok(self.vault().get_entity_type(id)?),
+        }
     }
 
     /// `src`'s outbound edges, the room's among them while this surface's
@@ -336,13 +350,7 @@ impl Memory<'_> {
         center: &EntityId,
         direction: EdgeDirection,
     ) -> MemoryResult<Vec<EdgeInfo>> {
-        let Some(session) = self.raw_read_session()? else {
-            return Ok(match direction {
-                EdgeDirection::In => self.vault().edges_in(center)?,
-                _ => self.vault().edges_out(center)?,
-            });
-        };
-        Ok(session.read_composed(|view, txn| {
+        let composed = self.raw_composed_read(|_, view, txn| {
             let mut edges = Vec::new();
             for (scanned, row) in view
                 .port_edges(txn, center, direction, None, None)?
@@ -354,7 +362,14 @@ impl Memory<'_> {
                 edges.push(row?);
             }
             Ok(edges)
-        })?)
+        })?;
+        if let Some(edges) = composed {
+            return Ok(edges);
+        }
+        Ok(match direction {
+            EdgeDirection::In => self.vault().edges_in(center)?,
+            _ => self.vault().edges_out(center)?,
+        })
     }
 
     /// [`Vault::targets`], the room's edges and rows among them while this
@@ -369,10 +384,7 @@ impl Memory<'_> {
         kind: EdgeKind,
         target_type: Option<u8>,
     ) -> MemoryResult<Vec<EntityId>> {
-        let Some(session) = self.raw_read_session()? else {
-            return Ok(self.vault().targets(src, kind, target_type)?);
-        };
-        Ok(session.read_composed(|view, txn| {
+        let composed = self.raw_composed_read(|_, view, txn| {
             super::super::edges::filtered_edge_peers_in(
                 view,
                 txn,
@@ -381,7 +393,11 @@ impl Memory<'_> {
                 kind,
                 target_type,
             )
-        })?)
+        })?;
+        match composed {
+            Some(peers) => Ok(peers),
+            None => Ok(self.vault().targets(src, kind, target_type)?),
+        }
     }
 
     /// [`Vault::sources`], the room's edges and rows among them while this
@@ -396,10 +412,7 @@ impl Memory<'_> {
         kind: EdgeKind,
         source_type: Option<u8>,
     ) -> MemoryResult<Vec<EntityId>> {
-        let Some(session) = self.raw_read_session()? else {
-            return Ok(self.vault().sources(tgt, kind, source_type)?);
-        };
-        Ok(session.read_composed(|view, txn| {
+        let composed = self.raw_composed_read(|_, view, txn| {
             super::super::edges::filtered_edge_peers_in(
                 view,
                 txn,
@@ -408,7 +421,25 @@ impl Memory<'_> {
                 kind,
                 source_type,
             )
-        })?)
+        })?;
+        match composed {
+            Some(peers) => Ok(peers),
+            None => Ok(self.vault().sources(tgt, kind, source_type)?),
+        }
+    }
+}
+
+/// `None`, for a base read, when `error` says the room is gone, closing or
+/// closed, or that its caller has left it; any other error stands.
+fn read_on_base<R>(error: Error) -> MemoryResult<Option<R>> {
+    match error {
+        Error::OffRecord(
+            OffRecordError::OffRecordSessionNotFound { .. }
+            | OffRecordError::OffRecordSessionClosing { .. }
+            | OffRecordError::OffRecordNotInRoom { .. }
+            | OffRecordError::OffRecordOverlayLeaseClosed { .. },
+        ) => Ok(None),
+        error => Err(error.into()),
     }
 }
 
