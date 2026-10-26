@@ -210,7 +210,7 @@ impl Memory<'_> {
                     .vault()
                     .task_authority_facts_in(&*wtxn, task_ref)?
                     .cancelled
-                && super::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
+                && crate::task_verb::wire_decode::task_verb_body_in(self.vault(), &*wtxn, task_ref)?
                     .is_some_and(|body| body.terminal().is_none())
             {
                 cancel_task_in_txn(self.vault(), wtxn, task_ref, self.actor(), now)?;
