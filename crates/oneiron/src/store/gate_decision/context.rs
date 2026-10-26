@@ -179,6 +179,20 @@ impl GateDecisionContext {
         self.read.is_empty() && self.links.is_empty() && self.analysis.is_none()
     }
 
+    /// The context of a loop decision its writer linked as `link`, about the
+    /// read contexts `read`.
+    #[must_use]
+    pub fn linked(
+        link: GateLoopLink,
+        read: impl IntoIterator<Item = GateDecisionReadContext>,
+    ) -> Self {
+        Self {
+            read: read.into_iter().collect(),
+            links: vec![link],
+            analysis: None,
+        }
+    }
+
     /// The read context and links `original` carries, for a decision that
     /// answers it: each link now names `original` as its origin where it was
     /// the admission itself. No analysis is carried, since this decision
@@ -297,6 +311,39 @@ impl GateDecisionReadContext {
 }
 
 impl GateLoopLink {
+    /// The link of a loop's own admission: the decision is its origin.
+    #[must_use]
+    pub fn admission(
+        source: GateLoopSource,
+        run: Option<String>,
+        attempt: Option<[u8; 16]>,
+    ) -> Self {
+        Self {
+            family: GateLoopFamily::Admission,
+            source,
+            run,
+            attempt,
+            origin: GateLoopOrigin::SelfDecision,
+        }
+    }
+
+    /// The link of an action a loop took, under the admission `origin`.
+    #[must_use]
+    pub fn action(
+        source: GateLoopSource,
+        run: Option<String>,
+        attempt: Option<[u8; 16]>,
+        origin: GateLoopOrigin,
+    ) -> Self {
+        Self {
+            family: GateLoopFamily::Action,
+            source,
+            run,
+            attempt,
+            origin,
+        }
+    }
+
     /// This link as a decision answering `original` carries it.
     fn answered_by(&self, original: GateDecisionId) -> Self {
         Self {

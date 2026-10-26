@@ -292,9 +292,9 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
                 request_id: *attempt.as_bytes(),
             };
             vault.put_archive_tombstone_in_txn(txn, &id, &marker)?;
-            vault
-                .store
-                .append_gate_decision_in_txn(txn, &archive_receipt(actor, id, &snapshot, now_ms))?;
+            let link = vault.attempt_action_link_in_txn(&*txn, attempt);
+            let receipt = archive_receipt(actor, id, &snapshot, now_ms, link);
+            vault.store.append_gate_decision_in_txn(txn, &receipt)?;
             archived += 1;
         }
         Ok(archived)
@@ -303,12 +303,13 @@ pub(crate) fn archive_quiet_claims(vault: &Vault, attempt: AttemptId, now_ms: u6
 /// The receipt one archive leaves (owner ruling 10-18: the Dreamer applies
 /// and the owner reverts): the Dreamer's, naming the claim and the revision
 /// its snapshot scored, so the owner finds it and restores the claim through
-/// the cleanup restore door.
+/// the cleanup restore door. `link` is the scoring attempt's (FIX 7500).
 fn archive_receipt(
     actor: WriteActor,
     claim: EntityId,
     snapshot: &ConsolidationStrengthSnapshot,
     now_ms: u64,
+    link: crate::store::GateLoopLink,
 ) -> crate::store::GateDecisionRecord {
     crate::store::GateDecisionRecord {
         version: crate::store::GATE_DECISION_LEDGER_VERSION,
@@ -326,7 +327,7 @@ fn archive_receipt(
         grant_ref: None,
         diff_handle: snapshot.revision.to_vec(),
         read_frontier_hash: [0; 32],
-        context: Default::default(),
+        context: crate::store::GateDecisionContext::linked(link, None),
         redacted_at: None,
     }
 }

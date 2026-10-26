@@ -29,6 +29,7 @@ use crate::{ClaimLifecycleStatus, EntityId, Error, Result, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
 mod action_mode_row;
+mod decision_context;
 mod identity_erase;
 pub(super) use action_mode_row::{action_mode_applied_in_txn, record_action_mode_in_txn};
 pub(super) use identity_erase::erase_identity_inverses_in_txn;
@@ -468,6 +469,7 @@ fn record_finding_in_txn(
         finding_revision.to_vec(),
         now,
     );
+    receipt.context = decision_context::applied(vault, &*txn, target, attempt);
     receipt.grant_ref = grant.map(|grant| grant.to_hex());
     vault
         .store
@@ -559,6 +561,7 @@ pub(super) fn record_project_tree_fork_in_txn(
         key,
         now,
     );
+    receipt.context = decision_context::applied(vault, &*txn, target, Some(attempt));
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -630,6 +633,7 @@ pub(super) fn close_with_parent_in_txn(
         handle,
         now,
     );
+    receipt.context = decision_context::answering(vault, &*txn, row.receipt);
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
@@ -780,6 +784,7 @@ impl Vault {
                 row.receipt.as_bytes().to_vec(),
                 now,
             );
+            receipt.context = decision_context::answering(self, &*txn, row.receipt);
             self.store
                 .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
             out.receipt_ref = format!("gate:{}", receipt.decision_id.to_hex());
