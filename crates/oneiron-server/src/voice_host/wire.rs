@@ -64,8 +64,6 @@ impl VoiceWireBindings {
         self,
     ) -> oneiron::Result<(MediaTts, MediaBridge, MediaWorker, WireMedia, WireControl)> {
         let (playout, playout_out) = mpsc::channel(PLAYOUT_QUEUE);
-        // The wire carries the sibling's audio: no separate audio side.
-        let (_, audio_in) = mpsc::channel(1);
         let (control, control_out) = mpsc::unbounded_channel();
         let (tts, bridge, worker) = VoiceMediaBindings {
             door: self.door,
@@ -73,7 +71,9 @@ impl VoiceWireBindings {
             render: self.render,
             sample_rate: self.sample_rate,
             channels: self.channels,
-            audio_in,
+            // The wire carries the sibling's audio: no separate audio side,
+            // which is absent rather than closed (FIX 9543).
+            audio_in: None,
             brain_out: self.brain_out,
             chunking: self.chunking,
             playout,

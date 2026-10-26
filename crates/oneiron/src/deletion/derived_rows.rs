@@ -41,6 +41,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9752: a fitted section install's receipt, with the skill or the
     // install claim it names.
     crate::context_board::erase_section_fit_receipts_in_txn,
+    // FIX 9949: an uploaded or generated ASSET's reference to its bytes.
+    crate::memory::release_asset_blob_in_txn,
+    // FIX 10219: a subject's recognition prints, samples and active pointer.
+    crate::voice_identity::erase_recognition_for_subject_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

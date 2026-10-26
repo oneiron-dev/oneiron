@@ -1054,7 +1054,7 @@ class Oneiron:
         def resolve_proposal(self, spec: Facade.ClusterResolveRequest) -> Facade.ClusterTopologyReceipt:
             """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
-        def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
+        def __call__(self, format: PackFormat | None = None) -> Facade.ExportAnswer: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
     class _VaultScopeVerbs:
@@ -3428,6 +3428,8 @@ class Oneiron:
     class _SelfGrantsVerbs:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
+        def answer(self, spec: Facade.GrantAnswerRequest) -> Facade.GrantAnswered:
+            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
     class _SelfBudgetVerbs:
         def __call__(self, spec: Facade.SelfBudgetRequest) -> Facade.AgentBudgetView:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""

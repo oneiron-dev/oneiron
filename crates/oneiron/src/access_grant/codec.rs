@@ -12,10 +12,10 @@ use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, Access
 use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
-pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 3;
+pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 4;
 
 /// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 9] = [
+pub const ACCESS_GRANT_BODY_KEYS: [&str; 10] = [
     "schema_version",
     "principal_ref",
     "scope",
@@ -25,6 +25,7 @@ pub const ACCESS_GRANT_BODY_KEYS: [&str; 9] = [
     "revoked_at",
     "expires_at",
     "authority_scope",
+    "companion_bounds",
 ];
 
 pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
@@ -47,6 +48,10 @@ pub(super) const KEY_STATUS: &str = ACCESS_GRANT_BODY_KEYS[4];
 pub(super) const KEY_CREATED_AT: &str = ACCESS_GRANT_BODY_KEYS[5];
 
 pub(super) const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
+
+const KEY_COMPANION_BOUNDS: &str = ACCESS_GRANT_BODY_KEYS[9];
+
+const BOUNDS_KEYS: [&str; 2] = ["issuer_slip", "ceiling"];
 
 pub(super) const SCOPE_KEY_KIND: &str = "kind";
 
@@ -104,6 +109,10 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
             Value::from("expires_at"),
             grant.expires_at.map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_COMPANION_BOUNDS),
+            encode_companion_bounds(grant.companion_bounds.as_ref())?,
+        ),
     ]);
 
     let mut out = Vec::new();
@@ -160,6 +169,7 @@ pub(crate) struct GrantTerms {
     pub(crate) created_at: u64,
     pub(crate) revoked_at: Option<u64>,
     pub(crate) expires_at: Option<u64>,
+    pub(crate) companion_bounds: Option<super::CompanionGrantBounds>,
 }
 
 impl GrantTerms {
@@ -173,6 +183,7 @@ impl GrantTerms {
             created_at: self.created_at,
             revoked_at: self.revoked_at,
             expires_at: self.expires_at,
+            companion_bounds: self.companion_bounds,
         }
     }
 }
@@ -191,25 +202,9 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(2);
-    if legacy {
-        // v2 legacy union: BASE 7-key bodies (no `expires_at`) and HEAD 8-key
-        // bodies (with `expires_at`) both decode; `authority_scope` was never
-        // present at v2 so any v2 body carrying it is malformed.
-        if entries
-            .iter()
-            .any(|(key, _)| key.as_str() == Some("authority_scope"))
-        {
-            return Err(invalid_grant());
-        }
-        validate_keys(entries, &ACCESS_GRANT_BODY_KEYS[..7])
-            .or_else(|_| validate_keys(entries, &ACCESS_GRANT_BODY_KEYS[..8]))?;
-    } else {
-        validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
-    }
-
-    let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if !legacy && version != Some(ACCESS_GRANT_SCHEMA_VERSION) {
+    // One body format: the current schema's every key, nothing older.
+    validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
+    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(ACCESS_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
@@ -233,34 +228,65 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
         Some(revoked_value.as_u64().ok_or_else(invalid_grant)?)
     };
 
-    // `expires_at` is required at v3 but absent from BASE 7-key v2 bodies.
-    let expires_at = match entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some("expires_at")).then_some(value))
-    {
-        None if legacy => None,
-        None => return Err(invalid_grant()),
-        Some(Value::Nil) => None,
-        Some(value) => Some(value.as_u64().ok_or_else(invalid_grant)?),
+    let expires_at = match required_value(entries, "expires_at")? {
+        Value::Nil => None,
+        value => Some(value.as_u64().ok_or_else(invalid_grant)?),
     };
+    let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: if legacy {
-            crate::federation::scope_codec::read_preset()
-        } else {
-            crate::federation::scope_codec::decode_scope_value(required_value(
-                entries,
-                "authority_scope",
-            )?)
-            .map_err(|_| invalid_grant())?
-        },
+        authority_scope: crate::federation::scope_codec::decode_scope_value(required_value(
+            entries,
+            "authority_scope",
+        )?)
+        .map_err(|_| invalid_grant())?,
         scope,
         capability,
         status,
         created_at,
         revoked_at,
         expires_at,
+        companion_bounds,
     };
     Ok((principal, terms))
+}
+
+/// A companion grant's issuer bounds (FIX 8140): the issuing slip's id and
+/// its record ceiling, or nil.
+fn encode_companion_bounds(bounds: Option<&super::CompanionGrantBounds>) -> Result<Value> {
+    let Some(bounds) = bounds else {
+        return Ok(Value::Nil);
+    };
+    Ok(Value::Map(vec![
+        (
+            Value::from(BOUNDS_KEYS[0]),
+            Value::from(bounds.issuer_slip.as_str()),
+        ),
+        (
+            Value::from(BOUNDS_KEYS[1]),
+            crate::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
+        ),
+    ]))
+}
+
+fn decode_companion_bounds(value: &Value) -> Result<Option<super::CompanionGrantBounds>> {
+    let Value::Map(entries) = value else {
+        return match value {
+            Value::Nil => Ok(None),
+            _ => Err(invalid_grant()),
+        };
+    };
+    validate_keys(entries, &BOUNDS_KEYS)?;
+    Ok(Some(super::CompanionGrantBounds {
+        issuer_slip: required_value(entries, BOUNDS_KEYS[0])?
+            .as_str()
+            .ok_or_else(invalid_grant)?
+            .to_owned(),
+        ceiling: crate::federation::scope_codec::decode_scope_value(required_value(
+            entries,
+            BOUNDS_KEYS[1],
+        )?)
+        .map_err(|_| invalid_grant())?,
+    }))
 }
 
 pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -29,7 +29,8 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::error_map::core_engine_error;
-use super::{json_payload, query_params};
+use super::query_params;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::owner::schedule::OwnerHost;
@@ -547,11 +548,11 @@ struct RehearseRequest {
 async fn rehearse_backup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RehearseRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RehearseRequest>,
 ) -> OwnerReply<backup::Rehearsal> {
     root_admin(&auth, &server)?;
     let host = host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let rehearsal =
         blocking(move || host.rehearse(server.vault(), request.file.as_deref())).await?;
     Ok(Json(rehearsal))
@@ -588,10 +589,10 @@ struct SetSecretScan {
 async fn set_secret_scan(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetSecretScan>, JsonRejection>,
+    payload: OwnerJsonBody<SetSecretScan>,
 ) -> OwnerReply<oneiron::policy_model::SecretScanReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         Ok(vault.set_secret_scan_mode(&owner, request.mode, vault.now_recorded_at())?)
@@ -644,10 +645,10 @@ async fn healer_residue(
 async fn preview_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<imports::ImportBatch>, JsonRejection>,
+    payload: OwnerJsonBody<imports::ImportBatch>,
 ) -> OwnerReply<imports::ImportPreview> {
     let owner = owner(&auth, &server)?;
-    let batch = json_payload(payload)?;
+    let batch = payload.read(&server).await?;
     let preview = blocking(move || imports::preview(server.vault(), &owner, batch)).await?;
     Ok(Json(preview))
 }
@@ -663,10 +664,10 @@ struct DecideImport {
 async fn approve_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideImport>, JsonRejection>,
+    payload: OwnerJsonBody<DecideImport>,
 ) -> OwnerReply<imports::ImportApproved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let approved =
         blocking(move || imports::approve(server.vault(), &owner, &request.batch, &request.digest))
             .await?;
@@ -676,10 +677,10 @@ async fn approve_import(
 async fn decline_import(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideImport>, JsonRejection>,
+    payload: OwnerJsonBody<DecideImport>,
 ) -> OwnerReply<imports::ImportDeclined> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let declined =
         blocking(move || imports::decline(server.vault(), &owner, &request.batch, &request.digest))
             .await?;
@@ -733,7 +734,7 @@ struct DecideRun {
 async fn approve_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
 ) -> OwnerReply<runs::RunResolved> {
     decide_run(auth, server, payload, GateConsentBundleAction::Approve).await
 }
@@ -741,7 +742,7 @@ async fn approve_run(
 async fn decline_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
 ) -> OwnerReply<runs::RunResolved> {
     decide_run(auth, server, payload, GateConsentBundleAction::Decline).await
 }
@@ -749,11 +750,11 @@ async fn decline_run(
 async fn decide_run(
     auth: CoreAuth,
     server: Arc<SyncServer>,
-    payload: Result<Json<DecideRun>, JsonRejection>,
+    payload: OwnerJsonBody<DecideRun>,
     action: GateConsentBundleAction,
 ) -> OwnerReply<runs::RunResolved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let destination = auth.destination();
     let resolved = blocking(move || {
         let run =
@@ -784,10 +785,10 @@ async fn cleanup_review(
 async fn configure_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<cleanup::CleanupSettings>, JsonRejection>,
+    payload: OwnerJsonBody<cleanup::CleanupSettings>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let settings = json_payload(payload)?;
+    let settings = payload.read(&server).await?;
     let review = blocking(move || cleanup::configure(server.vault(), &owner, &settings)).await?;
     Ok(Json(review))
 }
@@ -802,10 +803,10 @@ struct DecideCleanup {
 async fn accept_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideCleanup>, JsonRejection>,
+    payload: OwnerJsonBody<DecideCleanup>,
 ) -> OwnerReply<cleanup::Accepted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let accepted =
         blocking(move || cleanup::accept(server.vault(), &owner, &request.proposal)).await?;
     Ok(Json(accepted))
@@ -814,10 +815,10 @@ async fn accept_cleanup(
 async fn reject_cleanup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DecideCleanup>, JsonRejection>,
+    payload: OwnerJsonBody<DecideCleanup>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review = blocking(move || {
         cleanup::reject(server.vault(), &owner, &request.proposal)?;
         cleanup::review(server.vault())
@@ -838,10 +839,10 @@ async fn note_tombstone_review(
 async fn accept_note_tombstone(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+    payload: OwnerJsonBody<note_tombstones::Decide>,
 ) -> OwnerReply<note_tombstones::Tombstoned> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let tombstoned =
         blocking(move || note_tombstones::accept(server.vault(), &owner, &request)).await?;
     Ok(Json(tombstoned))
@@ -850,10 +851,10 @@ async fn accept_note_tombstone(
 async fn decline_note_tombstone(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<note_tombstones::Decide>, JsonRejection>,
+    payload: OwnerJsonBody<note_tombstones::Decide>,
 ) -> OwnerReply<note_tombstones::TombstoneReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review =
         blocking(move || note_tombstones::decline(server.vault(), &owner, &request)).await?;
     Ok(Json(review))
@@ -872,10 +873,10 @@ struct RestoreArchived {
 async fn restore_archived(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RestoreArchived>, JsonRejection>,
+    payload: OwnerJsonBody<RestoreArchived>,
 ) -> OwnerReply<cleanup::CleanupReview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let review = blocking(move || {
         cleanup::restore(
             server.vault(),
@@ -899,10 +900,10 @@ struct RevertCleanupRun {
 async fn revert_cleanup_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertCleanupRun>, JsonRejection>,
+    payload: OwnerJsonBody<RevertCleanupRun>,
 ) -> OwnerReply<cleanup::RunReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reverted =
         blocking(move || cleanup::revert_run(server.vault(), &owner, &request.attempt)).await?;
     Ok(Json(reverted))
@@ -931,10 +932,10 @@ async fn preview_persona(
 async fn export_persona(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<persona::ExportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<persona::ExportRequest>,
 ) -> OwnerReply<persona::Exported> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let destination = auth.destination();
     let exported =
         blocking(move || persona::export(server.vault(), &owner, &request, destination)).await?;
@@ -944,10 +945,10 @@ async fn export_persona(
 async fn enter_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Enter>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Enter>,
 ) -> OwnerReply<off_record::Session> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let session = blocking(move || off_record::enter(server.vault(), &owner, &request)).await?;
     Ok(Json(session))
 }
@@ -967,10 +968,10 @@ async fn off_record_session(
 async fn flip_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Flip>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Flip>,
 ) -> OwnerReply<off_record::Session> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let session = blocking(move || off_record::flip(server.vault(), &owner, &request)).await?;
     Ok(Json(session))
 }
@@ -978,10 +979,10 @@ async fn flip_off_record(
 async fn witness_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Witness>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Witness>,
 ) -> OwnerReply<oneiron::memory::WitnessReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || off_record::witness(server.vault(), &owner, &request)).await?;
     Ok(Json(receipt))
 }
@@ -989,10 +990,10 @@ async fn witness_off_record(
 async fn promote_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::Promote>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::Promote>,
 ) -> OwnerReply<off_record::Promoted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let promoted = blocking(move || off_record::promote(server.vault(), &owner, &request)).await?;
     Ok(Json(promoted))
 }
@@ -1000,10 +1001,10 @@ async fn promote_off_record(
 async fn save_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::SessionName>,
 ) -> OwnerReply<off_record::Saved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let saved = blocking(move || off_record::save(server.vault(), &owner, &request)).await?;
     Ok(Json(saved))
 }
@@ -1011,10 +1012,10 @@ async fn save_off_record(
 async fn close_off_record(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<off_record::SessionName>, JsonRejection>,
+    payload: OwnerJsonBody<off_record::SessionName>,
 ) -> OwnerReply<off_record::Closed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let closed =
         blocking(move || off_record::close(server.vault(), &owner, &request.session_ref)).await?;
     Ok(Json(closed))
@@ -1047,11 +1048,11 @@ async fn read_graph_fs(
 async fn preview_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<feedback::FeedbackRequest>, JsonRejection>,
+    payload: OwnerJsonBody<feedback::FeedbackRequest>,
 ) -> OwnerReply<feedback::Preview> {
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let redactor = crate::feedback_redaction::feedback_redactor(&server);
@@ -1064,11 +1065,11 @@ async fn preview_feedback(
 async fn send_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<feedback::SendRequest>, JsonRejection>,
+    payload: OwnerJsonBody<feedback::SendRequest>,
 ) -> OwnerReply<feedback::Sent> {
     let owner = owner(&auth, &server)?;
     let host = feedback_host(&server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     // FIX 5212: the send carries the bytes the preview kept and runs no
     // filter.
     let sent = blocking(move || feedback::send(server.vault(), &host, &owner, &request)).await?;
@@ -1123,10 +1124,10 @@ struct SetModelCatalog {
 async fn set_model_catalog(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetModelCatalog>, JsonRejection>,
+    payload: OwnerJsonBody<SetModelCatalog>,
 ) -> OwnerReply<oneiron::skill_hub::ModelCatalogSync> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let policy = oneiron::skill_hub::HubSyncPolicy::parse(&request.sync_policy)
         .ok_or_else(|| ApiError::bad_request("unknown sync policy", Some("sync_policy")))?;
     let state = blocking(move || {

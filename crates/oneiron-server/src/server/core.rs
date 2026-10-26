@@ -127,6 +127,8 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// The wakes of removed holders' archive delivery sessions (FIX 3396).
+    pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
@@ -136,6 +138,8 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) model_streams: crate::api::ModelStreams,
+    /// Whole-vault exports kept for their callers to read (FIX 3676).
+    pub(crate) export_transfers: crate::api::ExportTransfers,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.

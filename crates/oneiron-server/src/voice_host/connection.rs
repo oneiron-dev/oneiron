@@ -5,7 +5,6 @@
 //! Over the wire's media ops (`wire`) the same stream also carries the
 //! sibling's audio side.
 
-use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -31,6 +30,7 @@ use oneiron::voice_cascade::media::VoiceMediaOutput;
 use super::media_bridge::{
     HEARD_REVISION, HeardWork, LIVE_ASR_FAILURE, LiveAsrFailure, MediaBridge, MediaEvent,
 };
+use super::playout_queue::{PlayoutOutbox, Queued};
 use super::wire::{self, ControlOut, WireMedia, WireOut};
 use super::{HostError, VoiceHost, VoiceMediaIn, VoiceOutputs, VoicePlayout};
 
@@ -242,17 +242,48 @@ impl VoiceHost {
         let mut pending: Option<Pending<'_>> = None;
         // Whether `pending` enriches a final: words heard live after it wait.
         let mut pending_final = false;
-        // Frames still to write; a sentence's audio goes out in several.
-        let mut outbox = VecDeque::new();
-        let mut errors = 0;
+        // Frames still to write; a sentence's audio goes out in several
+        // chunks, each with its generation's gate (FIX 9542).
+        let mut outbox = PlayoutOutbox::new();
         // Subscribed before the session's first read: an attendee entering
         // the bound container stops what was assembled before it.
         let mut entry_wakes = self.entry_wakes();
         let shutdown = self.shutdown.triggered();
         tokio::pin!(shutdown);
         loop {
-            let response = if let Some(queued) = outbox.pop_front() {
-                queued
+            // The gate a spoken chunk is written under, asked again right
+            // before its write.
+            let mut gated = None;
+            let response = if !outbox.is_empty() {
+                // Before each queued frame: the session's end, a stop, a
+                // newcomer's wake, and a control that came meanwhile.
+                tokio::select! {
+                    biased;
+                    () = &mut shutdown => break,
+                    () = &mut stop => break,
+                    woke = super::next_entry_wake(&mut entry_wakes) => {
+                        self.entry_woke(woke, &mut entry_wakes, bridge.as_deref_mut(), outputs);
+                        continue;
+                    }
+                    () = std::future::ready(()) => {
+                        if let Some(out) = wire.as_mut().and_then(WireMedia::queued_control) {
+                            outbox.push_frames_first(control_frames(out));
+                        }
+                        match outbox.next_current_chunk() {
+                            Some(Queued::Pcm(mut chunk)) => {
+                                let response = Response::Pcm {
+                                    generation: chunk.generation,
+                                    sample_rate: chunk.sample_rate,
+                                    data: std::mem::take(&mut chunk.data),
+                                };
+                                gated = Some(chunk);
+                                response
+                            }
+                            Some(Queued::Frame(frame)) => frame,
+                            None => continue,
+                        }
+                    }
+                }
             } else {
                 tokio::select! {
                     biased;
@@ -267,17 +298,10 @@ impl VoiceHost {
                     // steady microphone frames must not starve it.
                     out = WireMedia::next(wire) => match out {
                         WireOut::Playout(Some(VoicePlayout::Pcm(spoken))) => {
-                            // Checked again at dequeue: a stopped generation's audio never goes out.
-                            let Some(spoken) = spoken.current() else { continue };
-                            let generation = spoken.generation.value();
-                            let mut chunks = wire::pcm_chunks(&spoken).into_iter().map(|data| Response::Pcm {
-                                generation,
-                                sample_rate: spoken.sample_rate,
-                                data,
-                            });
-                            let Some(first) = chunks.next() else { continue };
-                            outbox.extend(chunks);
-                            first
+                            // Queued in chunks, each checked again before it is written:
+                            // a stopped generation's audio never goes out.
+                            outbox.push_spoken(&spoken);
+                            continue;
                         }
                         WireOut::Playout(Some(VoicePlayout::End(generation))) => {
                             if let Some(wire) = wire.as_mut() {
@@ -288,7 +312,7 @@ impl VoiceHost {
                         WireOut::Control(Some(out)) => {
                             let mut frames = control_frames(out).into_iter();
                             let Some(first) = frames.next() else { continue };
-                            outbox.extend(frames);
+                            outbox.push_frames(frames);
                             first
                         }
                         WireOut::Playout(None) | WireOut::Control(None) => continue,
@@ -446,21 +470,25 @@ impl VoiceHost {
                     }
                 }
             };
-            if matches!(response, Response::Error { .. }) {
-                errors += 1;
-            }
+            // An error answers its request alone; no count of them ends the
+            // call (FIX 9541).
             let mut bytes = serde_json::to_vec(&response).map_err(io::Error::other)?;
             bytes.push(b'\n');
+            // Right before the write: a chunk whose generation stopped while
+            // it waited stays off the wire (FIX 9542).
+            let written = async {
+                match &gated {
+                    Some(chunk) => write_current(write, &bytes, || chunk.is_current()).await,
+                    None => write.write_all(&bytes).await,
+                }
+            };
             tokio::select! {
                 biased;
                 () = &mut shutdown => break,
                 () = &mut stop => break,
-                result = timeout(Duration::from_secs(1), write.write_all(&bytes)) => {
+                result = timeout(Duration::from_secs(1), written) => {
                     result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice write timeout"))??;
                 }
-            }
-            if errors >= 8 {
-                break;
             }
         }
         Ok(())
@@ -488,6 +516,28 @@ fn media_input(request: Request) -> Option<VoiceMediaIn> {
         Request::RosterChanged => VoiceMediaIn::RosterChanged,
         _ => return None,
     })
+}
+
+/// Writes `frame`, one spoken chunk's, only while `current` holds: asked
+/// right before each try at the frame's first bytes, so again after every
+/// wait for the socket. A frame whose first bytes went is finished whole,
+/// never cut.
+async fn write_current(
+    write: &mut OwnedWriteHalf,
+    frame: &[u8],
+    current: impl Fn() -> bool,
+) -> io::Result<()> {
+    loop {
+        if !current() {
+            return Ok(());
+        }
+        match write.try_write(frame) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => return write.write_all(&frame[written..]).await,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => write.writable().await?,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// How long the wire's last frames may take: the sibling may be gone.
