@@ -19,11 +19,17 @@ pub(super) fn merge_openai_proxy_paths(spec: &mut Value) {
                 "param": {"type": "null"}, "code": {"type": "string"}
             }}
     }});
+    // FIX 3389: every reply states its call receipt, as the facade's do.
+    let headers = json!({"x-oneiron-receipt-ref": {
+        "description": "The call's receipt ref (`call:<32hex>`), or `none; no-record` for a caller verified in an anonymous off-record session; absent when the receipt could not be written.",
+        "schema": {"type": "string"}
+    }});
     let mut responses = serde_json::Map::new();
     responses.insert(
         "200".to_owned(),
         json!({
             "description": "The buffered model reply, usage and memory-injection/proposal outcome.",
+            "headers": headers,
             "content": {"application/json": {"schema": answer}}
         }),
     );
@@ -50,6 +56,7 @@ pub(super) fn merge_openai_proxy_paths(spec: &mut Value) {
         responses.insert(
             status.to_owned(),
             json!({"description": description,
+                "headers": headers,
                 "content": {"application/json": {"schema": refusal}}
             }),
         );

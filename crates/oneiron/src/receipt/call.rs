@@ -81,6 +81,8 @@ pub enum CallTransport {
     Mcp,
     /// A WS app-tier RPC.
     Ws,
+    /// A raw OpenAI-compatible `/v1/chat/completions` call (FIX 3389).
+    OpenAiProxy,
 }
 
 /// How a call ended.
