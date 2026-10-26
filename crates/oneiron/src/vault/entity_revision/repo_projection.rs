@@ -43,7 +43,7 @@ pub(super) fn project_revision_input_in_txn(
     marks: &RepoIndexMarks,
     input: IndexedRevisionInput,
 ) -> Result<IndexedRevisionInput> {
-    if !marks.touches(&input.entity, &input.body, &input.fields) {
+    if !marks.touches_in_txn(vault, txn, &input.entity, &input.body, &input.fields)? {
         return Ok(input);
     }
     let IndexedRevisionInput {
@@ -161,9 +161,10 @@ pub(super) fn take_phonetic_in_txn(
 
 /// A mask change on the blob record `entity` stands for: its staged codes
 /// are dropped, its published text and codes are published again as their
-/// copy through the batch door, and a vector it holds is queued for
-/// refill. `false` for a record with no revision state, whose index the
-/// caller refreshes by its own door.
+/// copy through the batch door, and a vector it holds is dropped now and
+/// queued for refill (FIX 10405: no vector of an older copy stays
+/// searchable meanwhile). `false` for a record with no revision state,
+/// whose index the caller refreshes by its own door.
 ///
 /// # Errors
 /// A store failure, or the batch door's.
@@ -222,6 +223,7 @@ pub(crate) fn refresh_repo_revision_projection_in_txn(
         .port_vector_with_raw(txn, entity, |_| Ok(()))?
         .is_some()
     {
+        super::drop_vector_state(vault, txn, entity)?;
         REFILL.put(&vault.store, txn, entity, &())?;
     }
     Ok(true)
