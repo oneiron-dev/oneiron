@@ -16,6 +16,7 @@ mod receipt;
 mod receipt_completion;
 mod receipt_final;
 mod receipt_grammar;
+mod receipt_origin;
 mod rendezvous;
 mod sweep_queue;
 mod timeline;
@@ -112,6 +113,8 @@ pub(crate) use receipt_final::{
     finish_redaction_erase_in_txn, redaction_erase_final_id, redaction_erase_final_in_txn,
 };
 pub(crate) use receipt_grammar::validate_redaction_receipt_body;
+// This device attests only the erase receipts it made (FIX 2596).
+pub(crate) use receipt_origin::receipt_attested_by_this_device_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{

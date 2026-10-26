@@ -403,6 +403,9 @@ side_tables! {
     /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
     /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
     SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
+    /// A left shared vault's owed orphan body collection (FIX 2413): when its env's purge finished
+    /// and when the collection is due (unix seconds); local only, never synced. Key: ().
+    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).
