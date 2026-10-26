@@ -50,6 +50,35 @@ pub(super) fn notice(
     Ok(Some(notice))
 }
 
+impl Vault {
+    /// The live soft-confirm notice a scheduled send's content ref names
+    /// (FIX 1469): delivery schedules the bare notice id. `None` when the id
+    /// names no soft-confirm notice; a notice no longer live answers as the
+    /// delivery's own check does.
+    ///
+    /// # Errors
+    /// The read fails, or the stored notice no longer matches its ask.
+    pub fn ask_soft_confirm_notice_by_content_ref(
+        &self,
+        id: EntityId,
+    ) -> Result<Option<super::TaskAskSoftConfirmNotice>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(stored): Option<super::TaskAskSoftConfirmNotice> =
+            super::ask_record::read(self, &txn, id, SOFT_CONFIRM)?
+        else {
+            return Ok(None);
+        };
+        let expected = crate::EntityId::derive(
+            crate::entity_id::derived_domains::TASK_ASK_SOFT_CONFIRM,
+            &[stored.group_ref.as_bytes(), stored.person_ref.as_bytes()],
+        )?;
+        if expected != id {
+            return Ok(None);
+        }
+        notice(self, &txn, stored.group_ref, stored.person_ref)
+    }
+}
+
 pub(super) fn put_notice(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

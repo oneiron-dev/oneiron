@@ -35,6 +35,8 @@ use crate::memory::{
 use crate::origin::export::EngineCommitExport;
 use crate::origin::publication::OriginPublicationStatus;
 use crate::origin::residence::{OriginAuthorityLease, OriginHostAuthority};
+use crate::origin::secret_projection::RepoRevealRecipient;
+use crate::origin::secret_projection::checkout_recipient::record_run_checkout_recipient;
 use crate::origin::smart_http::{
     ORIGIN_REPO_DIR_SUFFIX, origin_repo_dir, origin_serving_root, push_queue_key,
 };
@@ -125,6 +127,8 @@ pub struct RepoExportOutput {
 struct RunCheckout {
     served: String,
     lease: CheckoutLeaseAct,
+    /// The PROJECT the run's admission bound its anchor in.
+    project: EntityId,
 }
 
 impl Memory<'_> {
@@ -152,6 +156,14 @@ impl Memory<'_> {
         // to the masked copy once, and the port materializes that copy.
         wire.select_projected_checkout(&own.lease, true)
             .map_err(checkout_refusal)?;
+        // FIX 10271/9328: the run's proven agent, PROJECT and run, kept
+        // beside the copy's binding for its later Git exchanges.
+        if binding.actor.actor_class() == crate::EdgeActorClass::Agent {
+            let recipient = RepoRevealRecipient::proven_agent(binding.actor.entity_ref())
+                .in_project(Some(own.project))
+                .for_run(Some(binding.executor_run.to_hex()));
+            record_run_checkout_recipient(self.vault, &own.lease, input.repo, &recipient);
+        }
         wire.materialize(&own.lease).map_err(checkout_refusal)?;
         let checkout = own.lease.checkout_id.to_string();
         let remote_url = input.endpoint.as_deref().map(|endpoint| {
@@ -279,7 +291,11 @@ impl Memory<'_> {
         if lease.task_ref != binding.task {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
         }
-        Ok(RunCheckout { served, lease })
+        Ok(RunCheckout {
+            served,
+            lease,
+            project: admitted.membership.bounds.project,
+        })
     }
 
     /// The run's materialized checkout as the export's source: its tree

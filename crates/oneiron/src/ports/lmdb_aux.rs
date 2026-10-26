@@ -466,7 +466,6 @@ impl Vault {
         }
         // A body migrated into an entity document resolves as
         // `port_entity_get` resolves it; only an unmigrated body is lent in place.
-        #[cfg(feature = "sync")]
         if crate::entity_doc::has_record_head(&self.store, txn, &id)? {
             let resolved = crate::entity_doc::resolve_record_body(&self.store, txn, &id, &body)?;
             return Ok(Some(Cow::Owned(resolved)));
