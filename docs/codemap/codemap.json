@@ -22835,7 +22835,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/dispatch_byoa/dispatcher/terminal.rs",
@@ -25424,32 +25424,15 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
-     "notable": [
-      "AgentHealthCard",
-      "AgentHealthCardView",
-      "AgentHealthConfidence",
-      "AgentHealthCounter",
-      "AgentHealthMove",
-      "AgentHealthOutcome",
-      "AgentHealthPromptInject",
-      "AgentHealthRunTree",
-      "AgentHealthTone",
-      "ConcernCardRequest",
-      "ConcernCardSummary",
-      "ConcernOutcome",
-      "ConcernOutcomeRequest"
-     ],
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health.rs",
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
-      "const": 15,
-      "crate-vis": 8,
-      "enum": 6,
-      "fn": 12,
-      "re-export": 11,
-      "struct": 7
+      "const": 1,
+      "crate-vis": 7,
+      "re-export": 13
      }
     },
     {
@@ -25547,6 +25530,47 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/detectors.rs",
+     "purpose": "The closed-form detectors over one review's working set, one per signal",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/dials.rs",
+     "purpose": "Dial resolution: each `HEALTH_*` dial read for a project and task type",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentHealthCardView",
+      "AgentHealthPromptInject",
+      "AgentHealthRunTree",
+      "ConcernCardRequest",
+      "ConcernCardSummary",
+      "ConcernOutcome",
+      "ConcernOutcomeRequest"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/doors.rs",
+     "purpose": "Card reads and doors: period reads, the card view and settlement",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 7,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -25624,6 +25648,16 @@
      "surface": {
       "crate-vis": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/pipeline.rs",
+     "purpose": "One review: detect, emit each finding as a DIAGNOSTIC, route and merge",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -25738,6 +25772,27 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentHealthCard",
+      "AgentHealthConfidence",
+      "AgentHealthCounter",
+      "AgentHealthMove",
+      "AgentHealthOutcome",
+      "AgentHealthTone"
+     ],
+     "path": "src/dreamer_runner/maintenance/agent_health/vocabulary.rs",
+     "purpose": "Agent-health vocabulary: the `HEALTH_*` dial catalog and the card table",
+     "surface": {
+      "const": 14,
+      "crate-vis": 6,
+      "enum": 5,
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -26105,7 +26160,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DigestCleanup",
@@ -26141,6 +26196,26 @@
       "const": 2,
       "crate-vis": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/digest/assembly.rs",
+     "purpose": "Assembles one digest in one write: select, mark seen, store, notify",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/digest/pending.rs",
+     "purpose": "What a digest may carry that no digest carried yet, by its seen state",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -26322,7 +26397,7 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "IdentityActNow",
@@ -26344,9 +26419,9 @@
      "purpose": "Background identity checks (OF-123; owner ruling: ask rule B)",
      "surface": {
       "const": 4,
-      "crate-vis": 10,
+      "crate-vis": 9,
       "enum": 4,
-      "fn": 9,
+      "fn": 2,
       "re-export": 2,
       "struct": 10
      }
@@ -26404,6 +26479,36 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/host.rs",
+     "purpose": "Identity doors on `Vault`: list, render, decide, resurface, answer asks",
+     "surface": {
+      "fn": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/presentation.rs",
+     "purpose": "How an ask is shown: candidate labels, options, its view and its card",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/recheck.rs",
+     "purpose": "The nightly recheck: finds uncertain person mentions and opens their asks",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/identity/settle_undo.rs",
      "purpose": "The Dreamer's automatic identity settles, receipted and revertible (FIX 3327, OF-023)",
      "surface": {
@@ -26418,6 +26523,16 @@
      "purpose": "The erase scrub of one automatic settle's inverse, and the checks its revert makes before it holds a…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/identity/settlement.rs",
+     "purpose": "Settles an ask: applies a choice, keeps the names separate, or escalates",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -76628,9 +76743,9 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 147,
+     "files": 158,
      "impl_vault": true,
-     "largest_src_bucket": "XL",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Private Dreamer runner store plus atomic admission"
     },
@@ -77657,9 +77772,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 128,
+   "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5099,
+   "source_files": 5110,
    "test_files": 902
   },
   "oneiron-android": {
