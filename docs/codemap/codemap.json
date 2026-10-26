@@ -47050,7 +47050,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)",
      "surface": {
       "crate-vis": 7,
-      "mod": 15,
+      "mod": 16,
       "re-export": 4
      }
     },
@@ -47231,7 +47231,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/origin/publish/mirror_plan_dispatch.rs",
@@ -47288,7 +47288,7 @@
      "path": "src/origin/publish/mirror_plan_types.rs",
      "purpose": "The shapes of one automatic mirror push plan (FIX 6866 part 2; CALLS \"FIX 6866 automatic review record\")…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -47332,6 +47332,16 @@
      "purpose": "The full-ancestry review of one exact publish (FIX 6866; CALLS \"FIX 6866 review scope\"): what the push would…",
      "surface": {
       "const": 1,
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/publish/secret_hold.rs",
+     "purpose": "The publication gate at both kinds of send (FIX 7608 slice 9, A1): an exact request's one push and each…",
+     "surface": {
       "crate-vis": 6
      }
     },
@@ -47443,7 +47453,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 24
      }
     },
     {
@@ -47666,6 +47676,25 @@
      "surface": {
       "crate-vis": 9,
       "enum": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoDestinationAudience",
+      "RepoDestinationRole",
+      "RepoDestinationVisibility",
+      "RepoSecretLiveness"
+     ],
+     "path": "src/origin/secret_publication.rs",
+     "purpose": "The publication gate (FIX 7608 slice 9, owner ruling SECRETS-IN-REPOS = A; A1, A2, C2, C3): a send to a…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 3,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -77839,7 +77868,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 145,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78485,7 +78514,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5172,
+   "source_files": 5174,
    "test_files": 902
   },
   "oneiron-android": {
@@ -112151,6 +112180,9 @@
       "RepoAnchorBindOutput",
       "RepoCheckoutBindInput",
       "RepoCheckoutBindOutput",
+      "RepoDestinationAudience",
+      "RepoDestinationRole",
+      "RepoDestinationVisibility",
       "RepoExportInput",
       "RepoExportOutput",
       "RepoFileProjectionKind",
@@ -113410,8 +113442,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1013,
-      "struct": 3121
+      "enum": 1015,
+      "struct": 3122
      }
     },
     {

@@ -12,6 +12,10 @@
 //! `refused`. Nothing is ever recomputed or widened: a new plan waits for
 //! this one to settle.
 //!
+//! A ref the publication gate held (`secret_hold`) is read the same way
+//! before its same-plan send asks the gate again; one the plan read no tip
+//! for goes unleased, as it was planned.
+//!
 //! When the read itself fails, the plan stays frozen and the read is tried
 //! again at the next opportunity; once it has failed
 //! [`AUTOMATIC_RECONCILE_UNREAD_BEFORE_RESEND`] times in a row, each further
@@ -99,7 +103,10 @@ impl Vault {
             let at_old = match &plan_ref.observed {
                 MirrorObservedTip::Absent => now.is_none(),
                 MirrorObservedTip::At { oid } => now == Some(oid.as_str()),
-                MirrorObservedTip::Unknown { .. } => false,
+                // A held ref was never sent: it goes unleased, as planned.
+                MirrorObservedTip::Unknown { .. } => {
+                    outcomes.get(*index as usize) == Some(&MirrorRefOutcome::Held)
+                }
             };
             if at_new {
                 settled.push((*index, MirrorRefOutcome::ObservedApplied));
