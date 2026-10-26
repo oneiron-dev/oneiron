@@ -26485,7 +26485,7 @@
      "path": "src/dreamer_runner/maintenance/identity/admission.rs",
      "purpose": "Identity asks as one reader may read them (FIX 8711)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -27190,7 +27190,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 17,
       "struct": 1
      }
@@ -28828,7 +28828,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -28856,7 +28856,7 @@
      "path": "src/edit_distance/publisher/signature_store.rs",
      "purpose": "Stored signature rows: codec and vault_meta keys",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -29769,7 +29769,7 @@
       "crate-vis": 11,
       "enum": 3,
       "fn": 8,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 4,
       "trait": 2
      }
@@ -29883,13 +29883,60 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/embed/repo_projection.rs",
      "purpose": "What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/repo_projection/derived.rs",
+     "purpose": "What the index holds for a text a model derived from a marked repo blob (FIX 7608 S3F, FIX 10405; CALL…",
+     "surface": {
+      "crate-vis": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/repo_projection/derived/storage.rs",
+     "purpose": "The rows [`super`] keeps (FIX 7608 S3F): one per derived text or probe query a marked repo blob reaches…",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoDerivedIndexReport",
+      "RepoDerivedIndexTextAuthor"
+     ],
+     "path": "src/embed/repo_projection/derived/worker.rs",
+     "purpose": "The pass that derives a pending text's safe copy (FIX 7608 S3F, CALL DERIVED-TEXT-COPY): each source is read…",
+     "surface": {
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/repo_projection/session.rs",
+     "purpose": "A mask change's room-staged media vectors (FIX 7608 S3F, FIX 10407)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -29918,7 +29965,7 @@
      "purpose": "Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`)",
      "surface": {
       "const": 4,
-      "crate-vis": 44,
+      "crate-vis": 45,
       "enum": 1,
       "fn": 17,
       "struct": 3
@@ -29932,6 +29979,16 @@
      "purpose": "The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`)",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space/repo_projection.rs",
+     "purpose": "The vault-meta rows a declared space keeps for a record's media vector (FIX 7608 S3F, FIX 10407): their…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -29982,7 +30039,7 @@
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
       "const": 3,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 6,
       "struct": 2,
       "trait": 1
@@ -29994,6 +30051,16 @@
      "notable": [],
      "path": "src/embed/space_probe/ledger.rs",
      "purpose": "A space move check's probe cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`): the date-cut cohort each…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_probe/repo_projection.rs",
+     "purpose": "The query a space move runs for a probe written from repo bytes (FIX 7608 S3F, FIX 10408; CALL…",
      "surface": {
       "crate-vis": 6
      }
@@ -32471,7 +32538,7 @@
      "purpose": "The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -32588,7 +32655,7 @@
      "purpose": "OF-537: free, actor-bound reports about a durable subject, never a task kind",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 3,
       "re-export": 4,
@@ -32614,6 +32681,7 @@
      "purpose": "Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref`",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "re-export": 2,
@@ -32630,6 +32698,7 @@
      "path": "src/feedback/report/delivery/metadata.rs",
      "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
      "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -32669,7 +32738,7 @@
      "path": "src/feedback/report/delivery/wire.rs",
      "purpose": "The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -45640,7 +45709,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 25
      }
     },
     {
@@ -45824,6 +45893,16 @@
      "notable": [],
      "path": "src/off_record/promote/attribution.rs",
      "purpose": "FIX 3103 (OF-540): a promotion witnesses the edges it replays for the runs that journaled them, never for…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/promote/repo_projection.rs",
+     "purpose": "What a promotion replays of a room's cached media vectors (FIX 7608 S3F, FIX 10407)",
      "surface": {
       "crate-vis": 1
      }
@@ -47381,7 +47460,17 @@
      "path": "src/origin/secret_projection/index.rs",
      "purpose": "The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 32
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/index/derived.rs",
+     "purpose": "The sources a text a model derived from repo bytes stands on (FIX 7608 S3F, FIX 10405): a caption or…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -53692,7 +53781,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "re-export": 1,
       "struct": 3,
       "type": 1
@@ -53705,7 +53794,7 @@
      "path": "src/recovery/checkpoint/watermark/marker.rs",
      "purpose": "The strict read of a label's backup marker (FIX 6777): what every public reader of the marker…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -57894,6 +57983,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/session_overlay/overlay/repo_projection.rs",
+     "purpose": "Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/session_overlay/overlay/retire.rs",
      "purpose": "Promoted-closure retirement reusing Store key builders",
      "surface": {
@@ -61655,7 +61754,7 @@
      "path": "src/store/body_envelope/opaque_response.rs",
      "purpose": "Row-held responses that do not decode (FIX 6227)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -63066,7 +63165,7 @@
      "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
      "surface": {
       "crate-vis": 10,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -77033,7 +77132,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 23,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -77355,7 +77454,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77369,7 +77468,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 144,
+     "files": 145,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77684,7 +77783,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78015,7 +78114,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5132,
+   "source_files": 5141,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83846,7 +83945,7 @@
      "purpose": "Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed…",
      "surface": {
       "const": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -100426,7 +100525,7 @@
      "path": "src/config/diagnostics.rs",
      "purpose": "Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -104584,7 +104683,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 12,
       "struct": 1
      }
@@ -104768,7 +104867,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "re-export": 14,
       "struct": 2
@@ -105716,7 +105815,7 @@
      "path": "src/owner/backup/finalize.rs",
      "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -106987,6 +107086,16 @@
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/space_move/repo_index_derivation.rs",
+     "purpose": "The host's seats for a derived text's safe copy (FIX 7608 S3F, CALL DERIVED-TEXT-COPY): a caption or…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -108341,7 +108450,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 67,
+     "files": 68,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -108413,7 +108522,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1267,
+   "source_files": 1268,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -93,9 +93,19 @@ impl IdempotencyStore {
             return Ok(IdempotencyLookup::Miss);
         };
         // The erased marker of a retired entry that never decoded is that
-        // entry erased: answered so, before any decode or expiry, never a
-        // miss and never a second run (FIX 9390).
+        // entry erased: answered so, before any decode, never a miss and
+        // never a second run (FIX 9390), until it expires from the time it
+        // retired, as a decoded entry does from its creation (FIX 10710). A
+        // marker that kept no time never expires.
         let Ok(raw) = oneiron::store::http_response_read(store_key.as_bytes(), &raw) else {
+            if oneiron::store::http_opaque_retired_at(&raw).is_some_and(|retired_at| {
+                self.now_secs().saturating_sub(retired_at) >= IDEMPOTENCY_TTL.as_secs()
+            }) {
+                self.vault
+                    .sync_state_delete(store_key)
+                    .map_err(IdempotencyStoreError::storage)?;
+                return Ok(IdempotencyLookup::Miss);
+            }
             return Ok(IdempotencyLookup::Erased);
         };
 
