@@ -144,6 +144,11 @@ side_tables! {
     /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
     /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
     FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
+    /// The content-free receipt of a held `FacetOf` stamp that retired (FIX 8890): why (1 past its
+    /// wait, 2 its grant or staged receipt ended), when it was held and when it retired (u64
+    /// big-endian each), then the grant it was held under (a flag byte, then its 16 raw bytes when
+    /// set). Key: as `FEDERATION_PARKED_FACET_STAMP`.
+    FEDERATION_PARKED_FACET_RECEIPT: SyncState b"fedparkreceipt:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
