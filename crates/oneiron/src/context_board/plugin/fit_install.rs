@@ -25,12 +25,16 @@ use crate::entity_id::EntityId;
 use crate::skill::SkillRecord;
 use crate::skill_hub::osv::{OsvDevClient, OsvQuery};
 use crate::skill_hub::{
-    CallerPermissions, HubRef, MarketplaceFit, RefFetch, SkillFitSetting, pinned_tracking,
+    CallerPermissions, HubRef, MarketplaceFit, RefFetch, RuleSkillFit, SkillFitSetting,
+    pinned_tracking,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
-use crate::write_envelope::{WriteActor, WriteProvenance};
+use crate::write_envelope::{WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteProvenance};
 use rmpv::Value;
+
+mod receipt_erase;
+pub(crate) use receipt_erase::erase_section_fit_receipts_in_txn;
 
 /// The engine-owned receipt a fitted install leaves on its skill. `skill.*`
 /// is a reserved namespace: no generic claim door can write one, so only
@@ -63,6 +67,9 @@ pub enum PluginSectionFitOutcome {
         permissions: Vec<String>,
     },
 }
+
+/// Why an offer whose content the owner blocked asks.
+const HASH_BLOCKED: &str = "the owner blocked this package's content hash; the owner decides";
 
 /// The fit's verdict before anything lands.
 enum Fit {
@@ -131,12 +138,123 @@ pub fn install_plugin_section_after_fit(
             section,
         ),
     };
-    let proposal = land_proposed_install(vault, actor, provenance, &target, &payload, None, now)?;
+    // The owner's proposal carries what the caller is told: the bounded
+    // analysis and every permission the fit evaluated.
+    let evidence = PluginSectionFitEvidence {
+        analysis: bounded_analysis(analysis),
+        permissions,
+    };
+    let proposal = land_proposed_install(
+        vault,
+        actor,
+        provenance,
+        &target,
+        &payload,
+        Some(evidence.to_value()),
+        now,
+    )?;
     Ok(PluginSectionFitOutcome::PermissionAsk {
         proposal,
-        analysis,
-        permissions,
+        analysis: evidence.analysis,
+        permissions: evidence.permissions,
     })
+}
+
+/// The fit's analysis bound in an owner's proposal, as the skill fit
+/// bounds its own.
+const FIT_ANALYSIS_BYTES: usize = 512;
+
+/// Keys of the fit evidence an asking install carries.
+const FIT_EVIDENCE_ANALYSIS: &str = "fit_analysis";
+const FIT_EVIDENCE_PERMISSIONS: &str = "fit_permissions";
+
+/// What the fit concluded for an install that asks the owner: why it asks
+/// and every permission it evaluated.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginSectionFitEvidence {
+    pub analysis: String,
+    pub permissions: Vec<String>,
+}
+
+impl PluginSectionFitEvidence {
+    fn to_value(&self) -> Value {
+        Value::Map(vec![
+            (
+                Value::from(FIT_EVIDENCE_ANALYSIS),
+                Value::from(self.analysis.as_str()),
+            ),
+            (
+                Value::from(FIT_EVIDENCE_PERMISSIONS),
+                Value::Array(
+                    self.permissions
+                        .iter()
+                        .map(|permission| Value::from(permission.as_str()))
+                        .collect(),
+                ),
+            ),
+        ])
+    }
+
+    /// The fit evidence a stored install claim carries; none when no fit
+    /// asked for it or the evidence does not decode.
+    fn from_claim(body: &ClaimBody) -> Option<Self> {
+        let Some(Value::Map(envelope)) = &body.evidence else {
+            return None;
+        };
+        let Some(Value::Map(entries)) = map_entry(envelope, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY)
+        else {
+            return None;
+        };
+        let analysis = map_entry(entries, FIT_EVIDENCE_ANALYSIS)?
+            .as_str()?
+            .to_owned();
+        let Some(Value::Array(items)) = map_entry(entries, FIT_EVIDENCE_PERMISSIONS) else {
+            return None;
+        };
+        let permissions = items
+            .iter()
+            .map(|item| item.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()?;
+        Some(Self {
+            analysis,
+            permissions,
+        })
+    }
+}
+
+/// The fit evidence each of `claims` carries, in order: none for a claim
+/// that is gone or that no fit asked for. The owner's pending rows show it.
+pub fn plugin_section_fit_evidence(
+    vault: &Vault,
+    claims: &[EntityId],
+) -> PluginResult<Vec<Option<PluginSectionFitEvidence>>> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let mut evidence = Vec::with_capacity(claims.len());
+    for claim in claims {
+        let body = vault.get_claim_in_txn(&txn, claim)?;
+        evidence.push(body.as_ref().and_then(PluginSectionFitEvidence::from_claim));
+    }
+    Ok(evidence)
+}
+
+/// `analysis` cut to [`FIT_ANALYSIS_BYTES`] on a character boundary.
+fn bounded_analysis(mut analysis: String) -> String {
+    if analysis.len() > FIT_ANALYSIS_BYTES {
+        let mut end = FIT_ANALYSIS_BYTES;
+        while !analysis.is_char_boundary(end) {
+            end -= 1;
+        }
+        analysis.truncate(end);
+    }
+    analysis
+}
+
+/// The value stored under `key` in a MessagePack map.
+fn map_entry<'v>(entries: &'v [(Value, Value)], key: &str) -> Option<&'v Value> {
+    entries
+        .iter()
+        .find(|(k, _)| k.as_str() == Some(key))
+        .map(|(_, value)| value)
 }
 
 /// Whether the install claim `claim_id` authorizes its section: the owner's
@@ -224,8 +342,9 @@ struct Offer<'a> {
 
 impl Offer<'_> {
     /// The fit: the owner's setting, then what the section requests, then
-    /// the skill itself (an existing skill must be Active; a hub package
-    /// runs the chosen skill fit).
+    /// the skill itself (an existing skill's stored package runs the rule
+    /// fit and the skill must be Active; a hub package runs the chosen skill
+    /// fit). The owner's hash block asks on either route.
     fn fit(&self, section: &[String], caller: &dyn CallerPermissions) -> PluginResult<Fit> {
         if self.vault.marketplace_skill_fit()? == SkillFitSetting::OwnerAsked {
             return Ok(Fit::ask(
@@ -247,7 +366,7 @@ impl Offer<'_> {
         let approved = ApprovedPluginIdentity::from_reviewed(self.payload, &envelope)?;
         match self.target {
             PluginInstallTarget::ExistingSkill { skill_ref } => {
-                self.existing(&envelope, &approved, *skill_ref, section)
+                self.existing(&envelope, &approved, *skill_ref, section, caller)
             }
             PluginInstallTarget::HubPackage {
                 hub_ref,
@@ -299,16 +418,59 @@ impl Offer<'_> {
     }
 
     /// An existing skill installs its section when it is exactly the
-    /// reviewed package and Active; a Candidate one asks, as today.
+    /// reviewed package, Active, and its stored package fits as a hub
+    /// package does: the rule fit over its static scan, its code and what it
+    /// requests against what the caller holds. The owner-asked setting has
+    /// already asked above, so the rule fit is the chosen one here. The
+    /// package is read before the writer opens; missing bytes or anything
+    /// short of ready asks, as a Candidate skill does.
     fn existing(
         &self,
         envelope: &SectionManifestEnvelope,
         approved: &ApprovedPluginIdentity,
         skill_ref: EntityId,
         section: &[String],
+        caller: &dyn CallerPermissions,
     ) -> PluginResult<Fit> {
+        let stored = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            let record = self.vault.read_skill_record_in_txn(&txn, &skill_ref)?;
+            self.vault
+                .runtime_skill_package_in_txn(&txn, &skill_ref, &record)?
+        };
+        let Some(package) = stored else {
+            return Ok(Fit::ask(
+                "the skill's stored package is missing; the owner decides",
+                section,
+            ));
+        };
+        approved.check_package(&package)?;
+        let static_scan = crate::skill_scan::run_static_skill_scan(&package, self.now)?;
+        let (outcome, analysis, requested) =
+            RuleSkillFit::new(caller).fit_stored(&package, &static_scan);
+        let mut permissions = section.to_vec();
+        permissions.extend(requested);
+        permissions.sort();
+        permissions.dedup();
+        if outcome != MarketplaceFit::Ready {
+            return Ok(Fit::Ask {
+                analysis,
+                permissions,
+            });
+        }
         self.vault
             .try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
+                if self
+                    .vault
+                    .skill_hash_blocked_in_txn(txn, approved.content_hash)?
+                {
+                    return Ok(Fit::ask(HASH_BLOCKED, &permissions));
+                }
                 let record = self.vault.read_skill_record_in_txn(txn, &skill_ref)?;
                 approved.check_record(&record)?;
                 if !record.lifecycle_status.loads_as_canon() {
@@ -317,10 +479,10 @@ impl Offer<'_> {
                             "the skill is {:?}, not Active; the owner decides",
                             record.lifecycle_status
                         ),
-                        section,
+                        &permissions,
                     ));
                 }
-                self.land_in_txn(txn, envelope, &record, section.to_vec())
+                self.land_in_txn(txn, envelope, &record, permissions)
                     .map(Fit::Installed)
             })
     }
@@ -369,6 +531,11 @@ impl Offer<'_> {
         }
         approved.check_package(fitted.package())?;
         vault.try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
+            // Checked before the import writes anything: an Active holder of
+            // blocked content asks too, and the shared import is untouched.
+            if vault.skill_hash_blocked_in_txn(txn, approved.content_hash)? {
+                return Ok(Fit::ask(HASH_BLOCKED, &permissions));
+            }
             let entity = vault.commit_fitted_skill_in_txn(txn, &fitted, Some(target_skill_ref))?;
             // The section's ref is where every rebuild re-finds the skill:
             // content held elsewhere aborts this writer, and the offer asks.

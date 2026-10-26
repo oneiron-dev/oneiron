@@ -5644,6 +5644,8 @@ class PluginSectionPendingRow(TypedDict):
     label: str
     origin: str
     awaiting_owner_consent: bool
+    analysis: NotRequired[str | None]
+    permissions: NotRequired[list[str]]
 class PluginSectionAdmittedRow(TypedDict):
     claim_ref: str
     section_id: str

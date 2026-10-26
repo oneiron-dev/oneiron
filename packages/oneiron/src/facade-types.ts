@@ -2221,7 +2221,7 @@ export type PluginSectionInstallOutcome = { outcome: "installed"; claim_ref: str
 /** `oneiron::memory::plugin_sections::PluginSectionListRequest` */
 export type PluginSectionListRequest = { limit?: number | null; cursor?: string | null }
 /** `oneiron::memory::plugin_sections::PluginSectionPendingRow` */
-export type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean }
+export type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean; analysis?: string | null; permissions?: string[] }
 /** `oneiron::memory::plugin_sections::PluginSectionAdmittedRow` */
 export type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope }
 /** `oneiron::memory::plugin_sections::PluginSectionPackRow` */

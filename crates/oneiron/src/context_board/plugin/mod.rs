@@ -52,9 +52,10 @@ pub use self::doors::{
     EngineSectionBindings, VaultPluginInstallExecutor, VaultPluginInstallSource,
 };
 pub use self::errors::{PluginResult, PluginSectionError};
+pub(crate) use self::fit_install::erase_section_fit_receipts_in_txn;
 pub use self::fit_install::{
-    PREDICATE_SKILL_SECTION_FIT, PluginSectionFitOutcome, PluginSectionInstalled,
-    install_plugin_section_after_fit,
+    PREDICATE_SKILL_SECTION_FIT, PluginSectionFitEvidence, PluginSectionFitOutcome,
+    PluginSectionInstalled, install_plugin_section_after_fit, plugin_section_fit_evidence,
 };
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{

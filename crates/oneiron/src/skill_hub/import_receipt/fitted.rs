@@ -93,6 +93,16 @@ impl Vault {
         }))
     }
 
+    /// Whether the owner's rule blocks the content `hash`, read in the
+    /// caller's transaction.
+    pub(crate) fn skill_hash_blocked_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: crate::skill::SkillContentHash,
+    ) -> Result<bool> {
+        marketplace_hash_blocked_in_txn(&self.store, txn, hash)
+    }
+
     /// The fit stage: fetches from the configured source, parses and scans
     /// the folder, runs `fit`, and with `advisories` queries the bytes' OSV
     /// receipts. It writes nothing.

@@ -1128,7 +1128,7 @@ declare namespace Sdk {
   type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
   type PluginSectionInstallOutcome = { outcome: "installed"; claim_ref: string; section_id: string; skill_ref: string; manifest_digest: string; permissions: string[]; undo_verb: string; manifest: SectionManifestEnvelope } | { outcome: "permission_ask"; claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; analysis: string; permissions: string[]; manifest: SectionManifestEnvelope };
   type PluginSectionListRequest = { limit?: number | null; cursor?: string | null };
-  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
+  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean; analysis?: string | null; permissions?: string[] };
   type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
   type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
   type PluginSectionsView = { pending: PluginSectionPendingRow[]; pending_total: number; pending_remaining: number; next_cursor?: string | null; end: boolean; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };

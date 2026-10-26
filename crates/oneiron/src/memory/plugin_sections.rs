@@ -141,6 +141,14 @@ pub struct PluginSectionPendingRow {
     /// `conversation` or `dreamer_suggestion`.
     pub origin: String,
     pub awaiting_owner_consent: bool,
+    /// Why a fitted offer asks: what it requests that its caller does not
+    /// hold. None for an offer no fit evaluated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<String>,
+    /// Every permission the fit evaluated; empty for an offer no fit
+    /// evaluated.
+    #[serde(default)]
+    pub permissions: Vec<String>,
 }
 
 /// One admitted plugin section and the exact manifest it was granted under.

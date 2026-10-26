@@ -17095,6 +17095,14 @@ pub struct PluginSectionPendingRow {
     pub origin: String,
     #[serde(rename = "awaiting_owner_consent")]
     pub awaiting_owner_consent: bool,
+    #[serde(rename = "analysis", default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<String>,
+    #[serde(
+        rename = "permissions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub permissions: Option<Vec<String>>,
 }
 
 /// `oneiron::memory::plugin_sections::PluginSectionAdmittedRow`.

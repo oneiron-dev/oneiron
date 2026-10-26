@@ -94,6 +94,18 @@ impl<'a> RuleSkillFit<'a> {
     pub fn new(caller: &'a dyn CallerPermissions) -> Self {
         Self { caller }
     }
+
+    /// The same fit over a package this vault already stores, which has no
+    /// hub source to bind: the rung, its analysis and every permission label
+    /// the package requests.
+    pub(crate) fn fit_stored(
+        &self,
+        package: &HubPackage,
+        static_scan: &SkillScanReceipt,
+    ) -> (MarketplaceFit, String, Vec<String>) {
+        let (outcome, analysis) = rule_fit(package, static_scan, self.caller);
+        (outcome, analysis, permission_labels(&package.capabilities))
+    }
 }
 
 impl MarketplaceFitEvaluator for RuleSkillFit<'_> {
