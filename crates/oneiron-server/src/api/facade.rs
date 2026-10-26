@@ -395,6 +395,10 @@ struct FacadeErrorBody {
     /// (FIX 3194); the reply carries it as `Retry-After` too.
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds, when its
+    /// source said (FIX 8190).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    resets_at: Vec<u64>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -425,4 +429,5 @@ pub(crate) struct MemoryErrorBodySchema {
     suggestions: Vec<String>,
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
+    resets_at: Option<Vec<u64>>,
 }

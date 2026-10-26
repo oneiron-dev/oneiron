@@ -152,6 +152,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         })
     })
 }
@@ -169,6 +170,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     })
 }
 

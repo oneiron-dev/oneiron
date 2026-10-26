@@ -17425,6 +17425,7 @@ class FacadeMemoryError(TypedDict):
     policy_denial: NotRequired[MemoryPolicyDenial | None]
     hook: NotRequired[VerbHookStop | None]
     retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus

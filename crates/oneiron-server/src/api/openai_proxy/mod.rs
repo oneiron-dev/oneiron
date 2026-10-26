@@ -12,6 +12,7 @@
 //! the exchange he proposes is his own. Calls are buffered: `stream: true` is
 //! refused, and `/v1/responses` is not served.
 mod receipt;
+mod timing;
 mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};

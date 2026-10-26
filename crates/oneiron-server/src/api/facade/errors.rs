@@ -23,6 +23,7 @@ impl FacadeApiError {
                     wrong_root: None,
                     hook: None,
                     retry_after: None,
+                    resets_at: Vec::new(),
                 },
                 narrowing: None,
             },
@@ -162,6 +163,7 @@ impl From<MemoryError> for FacadeApiError {
                     wrong_root: error.wrong_root,
                     hook: error.hook,
                     retry_after: error.retry_after,
+                    resets_at: error.resets_at,
                 },
                 narrowing: error.read_receipt,
             },
@@ -209,6 +211,7 @@ impl FacadeApiError {
         refusal.wrong_root = error.wrong_root;
         refusal.hook = error.hook;
         refusal.retry_after = error.retry_after;
+        refusal.resets_at = error.resets_at;
         refusal
     }
 }
