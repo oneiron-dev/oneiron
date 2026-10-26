@@ -266,7 +266,12 @@ impl Memory<'_> {
         &self,
         request: &AdmissionReceiptsRequest,
     ) -> MemoryResult<Vec<AdmissionReceipt>> {
-        crate::memory::caps::check_limit(request.intent_keys.len())?;
+        if request.intent_keys.is_empty() {
+            return Err(MemoryError::bad_request_with(
+                "intent_keys must name at least one invocation id",
+                &["Name each invocation id to reconcile."],
+            ));
+        }
         let invocations = request
             .intent_keys
             .iter()
