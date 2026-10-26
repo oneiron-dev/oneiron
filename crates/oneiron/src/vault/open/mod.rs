@@ -113,7 +113,9 @@ impl Vault {
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a
     /// directory renamed in under `path` after the caller's checks is refused,
-    /// never opened. Refuses unless `path` still names `directory`.
+    /// never opened. Refuses unless `path` still names `directory`. A lease
+    /// another host holds for one owner act is waited out as
+    /// [`Self::open_owned`] waits it out (FIX 5897).
     #[cfg(unix)]
     pub fn open_owned_held(
         directory: std::fs::File,
@@ -122,7 +124,7 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
         Self::open_leased(&canonical, config, lease)
     }
 
