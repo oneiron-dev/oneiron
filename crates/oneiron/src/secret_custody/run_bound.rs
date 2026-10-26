@@ -382,6 +382,7 @@ impl RunRecord<'_> {
             grant_ref: None,
             diff_handle: digest.finalize().as_bytes().to_vec(),
             read_frontier_hash: [0; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         store.append_gate_decision_in_txn(wtxn, &record)

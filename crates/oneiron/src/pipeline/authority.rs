@@ -48,6 +48,25 @@ pub(crate) fn type_allowed(
         }
 }
 
+/// [`claim_ceiling_allowed`] for a claim known only by the band, confidence
+/// and salience a Gate decision kept of it (FIX 7499): the same scalar floor,
+/// so a decision is read only where its claim's ceiling would be.
+pub(crate) fn claim_scalars_ceiling_allowed(
+    filter: &ResolvedRetrievalFilter,
+    band: Option<u8>,
+    confidence: f32,
+    salience: Option<f32>,
+) -> bool {
+    !filter.deny_all
+        && band
+            .and_then(band_sensitivity)
+            .is_some_and(|band| filter.read_scope().sensitivity.permits(band))
+        && confidence.is_finite()
+        && (filter.min_confidence..=1.0).contains(&confidence)
+        && salience.unwrap_or(0.0).is_finite()
+        && (filter.min_salience..=1.0).contains(&salience.unwrap_or(0.0))
+}
+
 /// A claim's sensitivity band as the [`Sensitivity`] a read Scope ceilings,
 /// mapped as `ResolvedRetrievalFilter::read_scope` maps the filter's own
 /// band. A band past Restricted names no sensitivity and is never admitted.

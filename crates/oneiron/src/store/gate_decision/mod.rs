@@ -7,6 +7,7 @@ use super::*;
 mod actor_erase;
 mod checkpoint_custody;
 mod claim_refs;
+mod context;
 mod keys;
 mod ledger;
 mod lookup;
@@ -22,6 +23,11 @@ mod vet;
 
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
+pub use self::context::{
+    GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext,
+    GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin, GateLoopSource,
+    GateReadPosition, GateRiskAxis, GateRiskState,
+};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 pub(crate) use self::checkpoint_custody::{
     LiveCustody, MadeDestination, admit_existing_vault_root, host_hold_rows_in_txn,

@@ -228,9 +228,21 @@ impl<'a> ReceiveSecretMarksBuilder<'a> {
         for hit in hits {
             let plan = match &spool.known {
                 Some(source) => source.pass(|known| {
-                    plan_retained_repo_blob(&blob.content, known, hit.reason, operation_id)
+                    plan_retained_repo_blob(
+                        &blob.path,
+                        &blob.content,
+                        known,
+                        hit.reason,
+                        operation_id,
+                    )
                 })??,
-                None => plan_retained_repo_blob(&blob.content, None, hit.reason, operation_id)?,
+                None => plan_retained_repo_blob(
+                    &blob.path,
+                    &blob.content,
+                    None,
+                    hit.reason,
+                    operation_id,
+                )?,
             };
             let observation = ReceiveSecretObservation {
                 seen: seen.clone(),
