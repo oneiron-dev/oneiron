@@ -86,16 +86,20 @@ credential.
   A disk the host cannot read is logged `vm_vault_disk_unread` and left to
   the guest's own check, which refuses it before the key goes in.
 - The boot timeout (FIX 8934): the VM profile's `boot_timeout_secs` bounds
-  each wait of a start, in seconds: a cold boot's provision, credential,
-  ready and join, a snapshot's rejoin, and a cold restore's boot steps.
-  Unset, each waits 10 s; `0` refuses the profile. Size it from a measured
+  the start's handshake waits, in seconds: a cold boot's provision,
+  credential, ready and join, a snapshot's rejoin, and a cold restore's
+  handshake. Unset, each waits 10 s; `0` refuses the profile. The VMM API
+  calls, the wait for the VMM API socket, and the standalone marker
+  inspection keep their fixed 10 s. Size it from a measured
   first boot of an image with guest runtime bindings, whose bootstrap imports
   both guest images before the engine starts; later boots import nothing.
   The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
 - The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
-  The engine asks the outbox companion again at each look, every 5 s, so a
-  companion that stops answering reads as no revision, as a VM without one
-  does. Restarting a companion that ended is the bootstrap's part.
+  The engine looks at the outbox companion every 5 s, with at most one
+  status question in flight. A question that fails (the companion ended, or
+  its socket errs) clears the revision, as a VM without one reads; a
+  question still unanswered leaves the last answer standing. Restarting a
+  companion that ended is the bootstrap's part.
 
 ## The channel
 
@@ -167,8 +171,8 @@ the observation.
 Timeouts:
 
 - The boot timeout (`boot_timeout_secs`, above) covers only the boot's own
-  steps: the VMM API calls, the hello, the provision, the credential
-  connection's accept, the join, and the inspection's reply.
+  handshake waits listed above. The VMM API calls and the inspection's reply
+  keep their fixed 10 s.
 - A restore has no deadline. A guest that ends closes the channel, and the
   runner sees that.
 
