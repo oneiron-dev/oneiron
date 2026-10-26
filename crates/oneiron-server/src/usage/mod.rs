@@ -3,6 +3,7 @@ mod codec;
 mod keys;
 mod ledger;
 mod limit;
+mod meters;
 mod model;
 mod pricing;
 mod repair;
@@ -10,6 +11,10 @@ mod rollup;
 pub use codec::UsageError;
 pub use ledger::{CycleSettlements, SeatUsage, UnpricedCache, UsageLedger};
 pub use limit::{CachedBudgetLimit, ExchangeRate};
+pub use meters::{
+    METER_PERIOD_SECS, MeterRecordResult, MeterRollup, MeterRow, MeterTotal, OperationalMetric,
+    embed_key, ingest_key, meter_period, retrieval_key, storage_key,
+};
 pub use model::{
     CacheDimension, Money, UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates,
     UsageCounter, UsageEvent, UsageEventType, UsageMode, UsageRecordResult, UsageRollup,

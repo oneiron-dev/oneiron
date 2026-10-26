@@ -26,7 +26,7 @@ pub(super) fn vault_key_part(vault: &str) -> String {
 }
 /// The value a key part encodes, when it is one [`key_part`] made.
 pub(super) fn decoded_key_part(part: &str) -> Option<String> {
-    if part.len() % 2 != 0 {
+    if !part.len().is_multiple_of(2) {
         return None;
     }
     let bytes = (0..part.len())
@@ -41,6 +41,23 @@ pub(super) fn vault_rollup_key(owner: &str, vault: &str) -> String {
 /// [`vault_rollup_key`] for the owner and vault parts of a stored event's key.
 pub(super) fn vault_rollup_key_of_parts(owner: &str, vault: &str) -> String {
     format!("usage:rollup:vault:{owner}:{vault}")
+}
+/// The key a meter row of `metric` is kept under (FIX 7764).
+pub(super) fn meter_key(owner: &str, vault: &str, metric: &str, id: &str) -> String {
+    format!(
+        "usage:meter:{}:{}:{metric}:{}",
+        key_part(owner),
+        key_part(vault),
+        key_part(id)
+    )
+}
+/// The key of one owner/vault/metric/day meter rollup (FIX 7764).
+pub(super) fn meter_rollup_key(owner: &str, vault: &str, metric: &str, period: u64) -> String {
+    format!(
+        "usage:meter-rollup:{}:{}:{metric}:{period:020}",
+        key_part(owner),
+        key_part(vault)
+    )
 }
 pub(super) fn usage_repair_receipt_key(id: &str) -> String {
     format!("usage:repair:receipt:{id}")
