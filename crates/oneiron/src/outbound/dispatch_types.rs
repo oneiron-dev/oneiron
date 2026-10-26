@@ -11,7 +11,7 @@ use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
 use crate::campaign::send_hygiene::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
-use crate::connector_key::{EffectorBudgetRead, EffectorPoolCharge};
+use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -21,7 +21,6 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
 use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
-use crate::llm::BudgetLadderEvent;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
@@ -662,7 +661,7 @@ pub struct OutboundDispatchResult {
     pub effector_budget: Option<EffectorBudgetRead>,
     /// Effector-meter ladder events fired by this dispatch, for the host's
     /// one steering queue (same contract as `BudgetAdmission.ladder_events`).
-    pub budget_ladder_events: Vec<BudgetLadderEvent>,
+    pub budget_ladder_events: Vec<EffectorBudgetLadderEvent>,
     /// A per-grant key's catalog pool side of this dispatch's charge
     /// (ONE-1794): its debit, matched rows and ladder events for the same
     /// steering queue, under the catalog key's ref. The pool's post-debit

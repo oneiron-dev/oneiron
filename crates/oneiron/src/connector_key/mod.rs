@@ -18,6 +18,7 @@ mod credential_binding;
 pub mod events;
 mod lifecycle;
 mod manifest_drift;
+mod measure;
 mod meter;
 pub mod qualification;
 mod record;
@@ -33,7 +34,7 @@ mod txn;
 #[cfg(test)]
 mod tests;
 
-pub use self::accounting::{CONNECTOR_KEY_MAX_DISPATCH_BATCH, ConnectorKeySendAdmission};
+pub use self::accounting::{CONNECTOR_DISPATCH_TRANSACTION_CHUNK, ConnectorKeySendAdmission};
 pub use self::channel_subscription::ChannelMessageSubscription;
 pub use self::charter::{CompiledCharter, ConnectorCharterCompileIssue, compile_connector_charter};
 pub use self::codec::{
@@ -52,18 +53,17 @@ pub use self::lifecycle::{
     PROXY_CONNECTOR, ProbeManifestQualifier,
 };
 pub use self::meter::{
-    CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
-    EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
-    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID,
-    EffectorBudgetCharge, EffectorBudgetDebit, EffectorBudgetRead, EffectorBudgetRowRead,
-    EffectorPoolCharge,
+    ConnectorDispatchTelemetry, ConnectorKeyDispatchTally, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE,
+    EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE,
+    EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID, EffectorBudgetCharge, EffectorBudgetDebit,
+    EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId,
+    EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
 };
 pub use self::record::{
-    CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass,
-    ConnectorCatalogEntry, ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec,
-    ConnectorKeyStatus, EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust,
-    EffectorBudgetReservePolicy, EffectorBudgetWindow, PendingConnectorCharter,
-    PendingConnectorManifest,
+    CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
+    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus,
+    EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetReservePolicy,
+    EffectorBudgetWindow, PendingConnectorCharter, PendingConnectorManifest,
 };
 pub use self::setup::{
     BROWSER_SESSION_CHECK, GMAIL_PROFILE_CHECK, LINE_BOT_INFO_CHECK, LINKEDIN_SESSION_CHECK,

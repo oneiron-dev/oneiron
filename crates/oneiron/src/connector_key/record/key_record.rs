@@ -6,8 +6,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::{
-    CONNECTOR_KEY_MAX_BUDGET_ROWS, EffectorBudget, normalize_connector_key, validate_budget_row,
-    validate_never_list_entry, validate_suggested_budget_row,
+    EffectorBudget, normalize_connector_key, validate_budget_row, validate_never_list_entry,
+    validate_suggested_budget_row,
 };
 use crate::error::RecordError;
 
@@ -132,9 +132,6 @@ impl ConnectorCatalogEntry {
         }
         if self.summary.as_bytes().contains(&0) {
             return Err(invalid_body("catalog summary must not contain NUL"));
-        }
-        if self.verbs.len() > CONNECTOR_CATALOG_MAX_VERBS {
-            return Err(invalid_body("too many catalog verbs"));
         }
         for verb in &self.verbs {
             if verb.trim().is_empty() {
@@ -314,14 +311,8 @@ impl ConnectorKeyRecord {
     /// status and any stored charter block.
     pub fn validate(&self) -> Result<()> {
         validate_connector_token(&self.connector)?;
-        if self.budgets.len() > CONNECTOR_KEY_MAX_BUDGET_ROWS {
-            return Err(invalid_body("too many budget rows"));
-        }
         for budget in &self.budgets {
             validate_budget_row(budget)?;
-        }
-        if self.suggested_budgets.len() > CONNECTOR_KEY_MAX_BUDGET_ROWS {
-            return Err(invalid_body("too many suggested budget rows"));
         }
         for budget in &self.suggested_budgets {
             validate_suggested_budget_row(budget)?;
@@ -504,11 +495,6 @@ pub struct PendingConnectorCharter {
 /// length rule.
 pub(super) const CONNECTOR_KEY_NAME_MAX_LEN: usize = 128;
 
-/// Upper bound on the verbs one catalog entry may advertise. The list is
-/// DESCRIPTIVE only — classification is entry-wide — so this exists purely to
-/// keep the encoded body bounded.
-pub(super) const CONNECTOR_CATALOG_MAX_VERBS: usize = 64;
-
 pub(in crate::connector_key) fn validate_connector_token(connector: &str) -> Result<()> {
     if normalize_connector_key(connector).is_empty() {
         return Err(invalid_body("connector must not be blank"));
@@ -568,9 +554,6 @@ pub(super) fn validate_catalog_name(name: &str) -> Result<()> {
 pub(in crate::connector_key) fn validate_compiled_policy(
     compiled: &CompiledConnectorPolicy,
 ) -> Result<()> {
-    if compiled.channel_caps.len() > CONNECTOR_KEY_MAX_BUDGET_ROWS {
-        return Err(invalid_body("too many charter channel caps"));
-    }
     for cap in &compiled.channel_caps {
         validate_budget_row(cap)?;
     }

@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 121] = [
+    pub const ALL: [Self; 126] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -127,6 +127,11 @@ impl EngineLimit {
         Self::AuthorityRecordItems,
         Self::ConnectorLiveQuestions,
         Self::ConnectorReplyContextBytes,
+        Self::ConnectorBudgetRows,
+        Self::ConnectorSuggestedBudgetRows,
+        Self::ConnectorCharterCaps,
+        Self::ConnectorCatalogVerbs,
+        Self::ConnectorDispatchBatch,
     ];
 
     /// The config key that sets the row.
@@ -253,6 +258,11 @@ impl EngineLimit {
             Self::AuthorityRecordItems => "limits.authority_record_items",
             Self::ConnectorLiveQuestions => "limits.connector_live_questions",
             Self::ConnectorReplyContextBytes => "limits.connector_reply_context_bytes",
+            Self::ConnectorBudgetRows => "limits.connector_budget_rows",
+            Self::ConnectorSuggestedBudgetRows => "limits.connector_suggested_budget_rows",
+            Self::ConnectorCharterCaps => "limits.connector_charter_caps",
+            Self::ConnectorCatalogVerbs => "limits.connector_catalog_verbs",
+            Self::ConnectorDispatchBatch => "limits.connector_dispatch_batch",
         }
     }
 
@@ -437,6 +447,13 @@ impl EngineLimit {
             // (CONTEXT_SPEC_MAX_TEXT_BYTES): a long conversation asks, a
             // short one never does.
             Self::ConnectorReplyContextBytes => 65_536,
+            // The old fixed refusals, now the points where a connector key's
+            // shape asks (CALLS `connector count rows`).
+            Self::ConnectorBudgetRows
+            | Self::ConnectorSuggestedBudgetRows
+            | Self::ConnectorCharterCaps => 16,
+            Self::ConnectorCatalogVerbs => 64,
+            Self::ConnectorDispatchBatch => 4_096,
         }
     }
 }

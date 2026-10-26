@@ -374,6 +374,11 @@ impl LimitsConfig {
             authority_record_items,
             connector_live_questions,
             connector_reply_context_bytes,
+            connector_budget_rows,
+            connector_suggested_budget_rows,
+            connector_charter_caps,
+            connector_catalog_verbs,
+            connector_dispatch_batch,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -591,6 +596,17 @@ impl LimitsConfig {
             (
                 EngineLimit::ConnectorReplyContextBytes,
                 connector_reply_context_bytes,
+            ),
+            (EngineLimit::ConnectorBudgetRows, connector_budget_rows),
+            (
+                EngineLimit::ConnectorSuggestedBudgetRows,
+                connector_suggested_budget_rows,
+            ),
+            (EngineLimit::ConnectorCharterCaps, connector_charter_caps),
+            (EngineLimit::ConnectorCatalogVerbs, connector_catalog_verbs),
+            (
+                EngineLimit::ConnectorDispatchBatch,
+                connector_dispatch_batch,
             ),
         ] {
             if let Some(bound) = bound {
@@ -825,4 +841,9 @@ pub(super) struct LimitsConfigOverride {
     pub(super) authority_record_items: Option<u64>,
     pub(super) connector_live_questions: Option<u64>,
     pub(super) connector_reply_context_bytes: Option<u64>,
+    pub(super) connector_budget_rows: Option<u64>,
+    pub(super) connector_suggested_budget_rows: Option<u64>,
+    pub(super) connector_charter_caps: Option<u64>,
+    pub(super) connector_catalog_verbs: Option<u64>,
+    pub(super) connector_dispatch_batch: Option<u64>,
 }
