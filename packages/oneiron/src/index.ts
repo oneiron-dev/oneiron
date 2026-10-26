@@ -1170,6 +1170,8 @@ export class Oneiron {
         approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
       },
       read_grants: {
+        /** The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing. */
+        grant: (input: Facade.ConnectorWitnessReadGrantRequest): Facade.ConnectorWitnessReadGranted => this.#call(() => this.#client.vaultConnectorsReadGrantsGrant(input) as Facade.ConnectorWitnessReadGranted),
         /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
         revoke: (input: Facade.ConnectorWitnessReadGrantRevokeRequest): Facade.ConnectorWitnessReadGrantRevoked => this.#call(() => this.#client.vaultConnectorsReadGrantsRevoke(input) as Facade.ConnectorWitnessReadGrantRevoked),
       },

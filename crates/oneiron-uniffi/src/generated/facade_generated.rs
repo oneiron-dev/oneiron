@@ -3461,6 +3461,11 @@ export_facade! {
     let output = client.vault_repo_git_push_revoke(&input)?;
     crate::codec::lift_record("vault.repo.git_push.revoke", &output)
 };
+"vault.connectors.read_grants.grant" => fn vault_connectors_read_grants_grant(&self, input: ConnectorWitnessReadGrantRequest) -> ConnectorWitnessReadGranted = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest = crate::codec::lower_record("vault.connectors.read_grants.grant", input)?;
+    let output = client.vault_connectors_read_grants_grant(&input)?;
+    crate::codec::lift_record("vault.connectors.read_grants.grant", &output)
+};
 "vault.connectors.read_grants.revoke" => fn vault_connectors_read_grants_revoke(&self, input: ConnectorWitnessReadGrantRevokeRequest) -> ConnectorWitnessReadGrantRevoked = |client| {
     let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest = crate::codec::lower_record("vault.connectors.read_grants.revoke", input)?;
     let output = client.vault_connectors_read_grants_revoke(&input)?;
