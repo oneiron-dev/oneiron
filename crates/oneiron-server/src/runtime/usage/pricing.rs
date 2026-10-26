@@ -30,13 +30,15 @@ const PROVIDER_API_ORIGINS: [&str; 4] = [
 /// one whose route goes to no provider API origin a catalog price is
 /// quoted for: it logs token counts only, whatever price its model id has
 /// (owner, 2026-10-10; ARCH-0011 `#byok-usage`, FIX 7765). Read from the
-/// route the run admitted, never from the request.
+/// route the run admitted, never from the request. A route that names no
+/// web origin (an injected backend's opaque `host`) names no endpoint, so
+/// its call keeps the catalog price it had.
 pub(super) fn custom_endpoint(facts: &PermitFacts) -> bool {
     facts.payer == Payer::CustomerKey
-        && facts
-            .route
-            .split_once('@')
-            .is_none_or(|(_, origin)| !PROVIDER_API_ORIGINS.contains(&origin))
+        && facts.route.split_once('@').is_some_and(|(_, origin)| {
+            (origin.starts_with("https://") || origin.starts_with("http://"))
+                && !PROVIDER_API_ORIGINS.contains(&origin)
+        })
 }
 
 /// The vault registry whose list prices meter its admitted model calls.
