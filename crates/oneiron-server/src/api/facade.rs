@@ -97,6 +97,7 @@ mod gate_policy_doors;
 mod git_push_doors;
 mod goal_optimize_doors;
 mod graduation_doors;
+mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
