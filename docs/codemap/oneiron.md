@@ -2687,9 +2687,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gate/repair_tests.rs` | test | s | — | — | ONE-1395 repair-only tests, kept separate from the existing Gate write-door tests |
 | `src/gate/replicated_confirm.rs` | src | s | 2 crate-vis | — | Device-local confirmation for a newly materialized critical claim revision |
 | `src/gate/residence_budgets.rs` | src | s | 4 crate-vis | — | Residence-operation budgets as editable policy (FIX 8750, FIX 8783) |
-| `src/gate/resolution/accessors.rs` | src | L | 67 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
+| `src/gate/resolution/accessors.rs` | src | L | 66 crate-vis | — | Read-only resolved-field accessors plus the frontier-hash entry |
+| `src/gate/resolution/accessors/goal_limits.rs` | src | s | 1 crate-vis | — | The resolved goal-limit bundle; split from its parent accessors |
 | `src/gate/resolution/evaluation.rs` | src | m | 7 crate-vis | — | Decision core: ceilings, source-trust, and gate evaluation |
 | `src/gate/resolution/frontier_hash.rs` | src | L | 5 crate-vis | — | Read-frontier hash worker plus byte-level hash encoders |
+| `src/gate/resolution/frontier_hash/goal_limits.rs` | src | s | 1 crate-vis | — | The goal-limit bundle's frontier bytes; split from its parent hash worker |
 | `src/gate/resolution/manifest_fold.rs` | src | s | 7 crate-vis | — | Store-scanning manifest fold plus budget-guard and trust adapters |
 | `src/gate/resolution/manifest_fold/doors.rs` | src | s | 2 fn · 1 crate-vis | — | The Vault doors that read document limits and the budget guard from the resolved manifest |
 | `src/gate/resolution/manifest_fold/fold.rs` | src | m | 1 crate-vis | — | The whole policy-manifest fold; `manifest_fold` re-exports it |
@@ -2762,7 +2764,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/genui/failure_card_validation.rs` | src | s | 2 crate-vis | — | Read-only integrity checks for surfaced failure cards |
 | `src/genui/mod.rs` | src | s | 9 re-export · 1 crate-vis | — | OF-336 generated-UI component contract |
 | `src/genui/offer_card.rs` | src | m | 4 struct · 3 enum · 15 fn · 5 const | OfferAnswerIntent, OfferCardIntent, OfferCardOutcome, OfferCardPayload, OfferCardPhase, OfferReopenIntent, OfferVoteIntent | The offer card's render-neutral payload and its write-free intents (OF-530): the host's answer, a room… |
-| `src/genui/project_proposal.rs` | src | m | 4 struct · 7 fn · 1 const | ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard, ProjectProposalPicks | Typed project proposal and owner-confirmed, write-free mint intent (OF-501) |
+| `src/genui/project_proposal.rs` | src | m | 4 struct · 7 fn · 1 const · 1 crate-vis | ProjectGoalDraft, ProjectMintIntent, ProjectProposalCard, ProjectProposalPicks | Typed project proposal and owner-confirmed, write-free mint intent (OF-501) |
 | `src/genui/protocol.rs` | src | s | 1 struct · 1 enum · 1 fn | Of336ActionDescriptor, Of336ComponentKind | OF-336 component discriminators and the action descriptor every card advertises |
 | `src/genui/receipt_view.rs` | src | s | 2 struct · 2 enum · 8 fn | ReceiptDeepLink, ReceiptDeepLinkKind, ReceiptViewComponent, ViewTimeResolution | Receipt view component, deep-link kinds and commitment link resolver |
 | `src/genui/shape_plan.rs` | src | s | 2 struct · 3 fn | ShapePlanCard, ShapePlanCardItem | The vault shape's plan card (ARCH-0070 `shape:plan-apply`, the plan card door): a plan as the owner meets it… |
@@ -5830,7 +5832,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/web_fetch/rungs.rs` | src | s | — | — | The built-in rungs' [`Renderer`] impls |
 | `src/web_fetch/tests.rs` | test | XL | — | — | — |
 | `src/work_line.rs` | src | m | 4 struct · 2 trait · 21 fn · 2 const | LineCrossing, LineObserver, LinePermit, TaskWorkTurn, WaitTimedOut, WorkLine | A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work… |
-| `src/workspace_roster/codec.rs` | src | L | 45 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
+| `src/workspace_roster/codec.rs` | src | L | 48 crate-vis | — | Roster reads, journal records, and canonical onboarding encodings |
+| `src/workspace_roster/companion_bind.rs` | src | s | 2 crate-vis | — | The first binding of a member's companion to her principal, and the one check a brought companion passes… |
 | `src/workspace_roster/intent.rs` | src | m | 5 struct · 1 enum · 5 fn · 3 crate-vis | CompanionBirthIntent, CompanionChoice, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent, WorkspaceRosterPreset | Onboarding request shapes and their structural validation |
 | `src/workspace_roster/join_consent.rs` | src | m | 5 struct · 6 enum · 5 fn · 2 re-export · 6 crate-vis | AdmissionBasis, AdmissionConsent, ConsentDenial, ConsentSet, ConsentState, JoinDecision, JoinRefusal, JoinRequest +3 | One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a… |
 | `src/workspace_roster/join_consent/admission.rs` | src | s | 6 crate-vis | — | Subject, spend and room admission consent |
@@ -5839,7 +5842,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/join_door/publish.rs` | src | s | 1 fn | — | A join's receipt reaching the live windows of its room or thread once the write that filed or answered it… |
 | `src/workspace_roster/join_history.rs` | src | m | 1 enum · 1 const · 8 crate-vis | RosterBindingErase | A settled join of an erased party, as stored (FIX 4228): history only |
 | `src/workspace_roster/join_receipt.rs` | src | m | 3 struct · 3 enum · 7 fn · 1 const · 18 crate-vis | JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer, RosterActor, RosterErase | The join receipt (OF-531): one typed record per join intent |
-| `src/workspace_roster/mod.rs` | src | s | 22 re-export · 28 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
+| `src/workspace_roster/mod.rs` | src | s | 22 re-export · 29 crate-vis | — | Workspace roster preset + member onboarding (ONEIRON-ARCH-0065) |
 | `src/workspace_roster/project/asks.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | ProjectAsk | A project's asks queue (ARCH-0067 tasks and asks) |
 | `src/workspace_roster/project/branch.rs` | src | m | 5 crate-vis | — | The fork rule (Astra #1434 F1) |
 | `src/workspace_roster/project/capture.rs` | src | m | 15 crate-vis | — | Capture and admission of project revisions (section 2 of the PR 3 contract) |
@@ -5850,17 +5853,18 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/edges.rs` | src | s | 3 crate-vis | — | Shared project-hub edge admission and final graph invariant |
 | `src/workspace_roster/project/fold.rs` | src | m | 4 struct · 2 enum · 1 fn · 56 crate-vis | ProjectDisposition, ProjectEffective, ProjectForkConflict, ProjectFrontier, ProjectRank, ProjectWitness | The fold over a project's held revisions (decisions 5-7) |
 | `src/workspace_roster/project/fork_evidence.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 2 crate-vis | ProjectForkEvidence, ProjectForkOutcome | Evidence of forks in a project's signed history (decision 10), mirroring the handoff equivocation records… |
-| `src/workspace_roster/project/goal.rs` | src | s | 4 struct · 1 fn · 2 re-export · 6 crate-vis | GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord | Human-authenticated project goal intake; proposals never write this record |
+| `src/workspace_roster/project/goal.rs` | src | m | 4 struct · 1 fn · 2 re-export · 6 crate-vis | GoalAxis, GoalExplorationBudget, GoalPreference, GoalRecord | Human-authenticated project goal intake; proposals never write this record |
 | `src/workspace_roster/project/goal/admission.rs` | src | m | 12 crate-vis | — | Vault-private, exact-byte admission for goal claims and project goal pointers |
 | `src/workspace_roster/project/goal/context.rs` | src | s | 1 struct · 1 fn | ProjectGoalInterviewContext | What the goal-intake interview reads first (OF-501): the goal claim in force, its generation, the card draft… |
 | `src/workspace_roster/project/goal/interview.rs` | src | s | 1 struct · 4 fn · 2 crate-vis | GoalInterviewTurns | Room-backed completion of a loaded goal-intake skill interview |
 | `src/workspace_roster/project/goal/interview/tests.rs` | test | m | — | — | — |
-| `src/workspace_roster/project/goal/limits.rs` | src | s | 7 crate-vis | — | DEC-0005 admission limits |
+| `src/workspace_roster/project/goal/limits.rs` | src | m | 14 crate-vis | — | DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against |
 | `src/workspace_roster/project/goal/tests.rs` | test | m | 1 crate-vis | — | — |
 | `src/workspace_roster/project/history_policy.rs` | src | m | 4 struct · 5 fn · 2 const · 15 crate-vis | ProjectCycleQuestion, ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion | The per-project history budget (decision 9, ruling F2 (a)) |
 | `src/workspace_roster/project/house.rs` | src | s | 3 fn | — | The house mind leads the root project (ONEIRON-ARCH-0063: the vault is the root project, its house mind… |
 | `src/workspace_roster/project/joint/mod.rs` | src | m | 4 crate-vis | — | One decision for projects whose parents name each other (Astra #1434b; Engine rulings (a) and (E)… |
-| `src/workspace_roster/project/joint/serve.rs` | src | m | 2 crate-vis | — | The served side of a component's decision: each member's frontier, checked under its parents' served views… |
+| `src/workspace_roster/project/joint/serve.rs` | src | m | 1 crate-vis | — | The served side of a component's decision: each member's frontier, checked under its parents' served views |
+| `src/workspace_roster/project/joint/worlds.rs` | src | s | 4 crate-vis | — | A component member's worlds, each folded, and the decision's work, both counted against the bounds the… |
 | `src/workspace_roster/project/leader_chat.rs` | src | m | 1 struct · 2 fn · 1 const · 17 crate-vis | LeaderChat | Direct leader chats: same-vault routing, shared-ancestor rule clamp and speaker scope |
 | `src/workspace_roster/project/mint.rs` | src | m | 3 struct · 3 fn · 6 crate-vis | ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt | Owner-confirmed project birth: one card, one atomic Grant and project branch |
 | `src/workspace_roster/project/mod.rs` | src | L | 8 struct · 3 enum · 17 fn · 1 const · 15 re-export · 47 crate-vis | ProjectAnchor, ProjectAuthority, ProjectParentWitness, ProjectProofVersion, ProjectRecord, ProjectRole, ProjectRoom, ProjectRoomChange +3 | Project responsibility records and their derived home-room membership |
@@ -5869,7 +5873,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/project/projection.rs` | src | m | 6 crate-vis | — | The write-time projector shared by local batches and sync materialization |
 | `src/workspace_roster/project/proof.rs` | src | m | 1 crate-vis | — | Live admission of a PROJECT write: direct, batch and typed doors |
 | `src/workspace_roster/project/proposal.rs` | src | m | 3 struct · 1 enum · 7 fn · 1 const · 1 re-export · 15 crate-vis | ProjectCardConfirmRequest, ProjectCardRecord, ProjectCardState, ProjectProposalRequest | The project card a conversation proposes (OF-501, ARCH-0067) |
-| `src/workspace_roster/project/proposal/history.rs` | src | m | 2 enum · 2 const · 6 crate-vis | ProjectVerdictErase, SettledProjectCardErase | A project question's kept answer, or a settled project card, that named an erased actor, as stored (FIX… |
+| `src/workspace_roster/project/proposal/history.rs` | src | m | 2 enum · 2 const · 7 crate-vis | ProjectVerdictErase, SettledProjectCardErase | A project question's kept answer, or a settled project card, that named an erased actor, as stored (FIX… |
 | `src/workspace_roster/project/read/component.rs` | src | s | 2 crate-vis | — | A project's facts on its own and the component of "names as parent" it belongs to: what `joint.rs` decides… |
 | `src/workspace_roster/project/read/mod.rs` | src | m | 1 struct · 1 enum · 36 crate-vis | ProjectQuarantine, ProjectVerdict | The one read door for PROJECT rows |
 | `src/workspace_roster/project/refresh.rs` | src | m | 3 crate-vis | — | The batch-end refresh of each touched project (sections 2 and 6 of the PR 3 contract) |
@@ -5939,6 +5943,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/workspace_roster/rooms/upkeep_voice_guard.rs` | src | s | 8 crate-vis | — | What a room host's upkeep voice must still hold in the write it lands in (OF-417) |
 | `src/workspace_roster/rooms/witness.rs` | src | m | 5 crate-vis | — | Claim-before-speaking guard inside the existing witness transaction |
 | `src/workspace_roster/runner.rs` | src | m | 4 fn · 2 crate-vis | — | Resumable onboarding runner, house-name rename, and roster read |
+| `src/workspace_roster/scrub.rs` | src | s | 3 crate-vis | — | An erased actor leaves the workspace roster (FIX 3520): the member rows, the companion-principal bindings… |
 | `src/workspace_roster/sharing.rs` | src | s | 4 struct · 1 enum · 4 fn | CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp, RoomSharingView | Sharing reads (ONEIRON-ARCH-0063: the owner dials personal context per contact; ONEIRON-ARCH-0067 §8… |
 | `src/workspace_roster/steps.rs` | src | L | 20 crate-vis | — | Ordered onboarding writes and idempotent primitives |
 | `src/workspace_roster/tests.rs` | test | m | — | — | ONE-1832 workspace roster + member onboarding tests |
