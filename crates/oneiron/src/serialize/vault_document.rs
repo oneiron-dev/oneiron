@@ -137,7 +137,7 @@ impl<'v> DocumentWriter<'v> {
             ExportSnapshotEntityBody::File(mut file) => {
                 let mut body = Vec::new();
                 file.reader.read_to_end(&mut body)?;
-                ExportBody::from_bytes(&body, entity_type)
+                self.exported_body(&body, entity_type)?
             }
             ExportSnapshotEntityBody::Bytes(body)
                 if self.attaches_files && attaches_as_file(entity_type, &body) =>
@@ -145,7 +145,7 @@ impl<'v> DocumentWriter<'v> {
                 let blake3 = self.files.attach(&body)?;
                 ExportBody::File(ExportBodyFile::checked(blake3, body.len() as u64))
             }
-            ExportSnapshotEntityBody::Bytes(body) => ExportBody::from_bytes(&body, entity_type),
+            ExportSnapshotEntityBody::Bytes(body) => self.exported_body(&body, entity_type)?,
         };
         let id = raw.id.to_hex();
         if entity_type == ENTITY_TYPE_CLAIM
@@ -176,10 +176,11 @@ impl<'v> DocumentWriter<'v> {
         };
         self.ledger.entity(&entity)?;
         if let Some(source) = raw.pack_source {
-            let mut tree = super::export_source_tree(source.files())?;
-            if raw.tainted {
-                strip_tree(&mut tree);
-            }
+            let tree = super::source_tree::export_source_tree_with_files(
+                source.files(),
+                &mut self.files,
+                raw.tainted,
+            )?;
             let pack = ExportPack::Source(ExportPackSource {
                 entity_id: entity.id.clone(),
                 source_tree: tree,
@@ -196,14 +197,15 @@ impl<'v> DocumentWriter<'v> {
             ENTITY_TYPE_SKILL => {
                 let package = raw.skill_package;
                 let source_format = package.as_ref().map(|package| package.format);
-                let mut source_tree = package
-                    .map(|package| super::export_source_tree(&package.files))
+                let source_tree = package
+                    .map(|package| {
+                        super::source_tree::export_source_tree_with_files(
+                            &package.files,
+                            &mut self.files,
+                            raw.tainted,
+                        )
+                    })
                     .transpose()?;
-                if raw.tainted
-                    && let Some(tree) = &mut source_tree
-                {
-                    strip_tree(tree);
-                }
                 self.skills
                     .extend(super::vault_bundles::skill_records(std::iter::once(
                         &entity,
@@ -527,6 +529,16 @@ impl<'v> DocumentWriter<'v> {
         ))
     }
 
+    /// A stored body as its typed export; a hub source's members stored as
+    /// files are spooled as the bytes its credential scan read (FIX 10101).
+    fn exported_body(&mut self, body: &[u8], entity_type: u8) -> Result<ExportBody> {
+        let exported = ExportBody::from_bytes(body, entity_type);
+        if let ExportBody::HubSource(source) = &exported {
+            source.attach_files(body, &mut self.files)?;
+        }
+        Ok(exported)
+    }
+
     /// Whether a claim row selects an agent's knowledge: its subject is an
     /// agent this vault holds.
     fn about_an_agent(&self, row: &ExportEntity) -> bool {
@@ -542,16 +554,23 @@ impl<'v> DocumentWriter<'v> {
                 })
     }
 
-    /// An entity row at `depth`. A file body's descriptor the pass changed
-    /// refuses the export, naming its entity, so no bytes go under a
-    /// reference that no longer names them.
+    /// An entity row at `depth`. A file body's descriptor, or a hub source
+    /// member's, the pass changed refuses the export, naming its entity, so no
+    /// bytes go under a reference that no longer names them.
     fn push_entity(
         &mut self,
         kind: ArchiveRecordKind,
         entity: &ExportEntity,
         depth: usize,
     ) -> Result<()> {
-        let row = nulled(entity, "", depth)?;
+        let typed = serde_json::to_value(entity).map_err(|_| encode_failed())?;
+        let row = null_document_member("", &typed, depth);
+        if !file_members_kept(&typed, &row, "/body/value/source_tree/files") {
+            return Err(Error::InvalidConfig(format!(
+                "whole-vault export: the credential pass changed entity {}'s source file reference",
+                entity.id
+            )));
+        }
         if let ExportBody::File(file) = &entity.body {
             let descriptor = serde_json::to_value(ExportBody::File(file.clone()))
                 .map_err(|_| encode_failed())?;
@@ -569,33 +588,21 @@ impl<'v> DocumentWriter<'v> {
         self.push_at(kind, path, &row)
     }
 
-    /// A row holding a source tree, at depth 2: once nulled, each tree file's
-    /// text moves to `files/<blake3>`, and the row keeps its path, its own
-    /// sha256 and the `file` it is stored under.
+    /// A row holding a source tree, at depth 2. Its text members stay in the
+    /// row; a member stored as a file keeps the descriptor of the bytes
+    /// spooled for it (FIX 10101), and one the pass changed refuses the export.
     fn push_tree(&mut self, kind: ArchiveRecordKind, row: &impl Serialize) -> Result<()> {
-        let mut row = nulled(row, "", 2)?;
-        let tree = match kind {
-            ArchiveRecordKind::Pack
-                if row.get("kind").and_then(Value::as_str) == Some("source") =>
-            {
-                row.pointer_mut("/value/source_tree")
-            }
-            ArchiveRecordKind::Pack => None,
-            _ => row.get_mut("source_tree"),
+        let typed = serde_json::to_value(row).map_err(|_| encode_failed())?;
+        let row = null_document_member("", &typed, 2);
+        let files = match kind {
+            ArchiveRecordKind::Pack => "/value/source_tree/files",
+            _ => "/source_tree/files",
         };
-        if let Some(files) = tree
-            .and_then(|tree| tree.get_mut("files"))
-            .and_then(Value::as_array_mut)
-        {
-            for file in files {
-                let Some(fields) = file.as_object_mut() else {
-                    continue;
-                };
-                if let Some(Value::String(text)) = fields.get_mut("content").map(Value::take) {
-                    let blake3 = self.files.attach(text.as_bytes())?;
-                    fields.insert("file".to_owned(), Value::from(blake3));
-                }
-            }
+        if !file_members_kept(&typed, &row, files) {
+            return Err(Error::InvalidConfig(
+                "whole-vault export: the credential pass changed a source file reference"
+                    .to_owned(),
+            ));
         }
         self.push(kind, &row)
     }
@@ -627,13 +634,20 @@ impl<'v> DocumentWriter<'v> {
     }
 }
 
-/// A tainted row's source tree carries no content and claims no identity.
-fn strip_tree(tree: &mut crate::batch::export::ExportFileTree) {
-    tree.content_hash = None;
-    for file in &mut tree.files {
-        file.content = None;
-        file.sha256 = None;
-    }
+/// Whether the pass left each member stored as a file of the source tree
+/// at `files` in `typed` as it was, in `kept`.
+fn file_members_kept(typed: &Value, kept: &Value, files: &str) -> bool {
+    let Some(members) = typed.pointer(files).and_then(Value::as_array) else {
+        return true;
+    };
+    members.iter().enumerate().all(|(index, member)| {
+        let content = member.get("content");
+        content
+            .and_then(|content| content.get("kind"))
+            .and_then(Value::as_str)
+            != Some("file")
+            || kept.pointer(&format!("{files}/{index}/content")) == content
+    })
 }
 
 /// `row` as the document's pass leaves it at `depth` under `key`.

@@ -5908,7 +5908,7 @@
      "path": "src/batch/export/archive_read.rs",
      "purpose": "Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -5994,6 +5994,7 @@
       "ExportImportRefusal",
       "ExportSkillBundle",
       "ExportSourceBoundary",
+      "ExportSourceContent",
       "ExportSourceFile",
       "ImportOmissionReason",
       "ImportRefusalReason"
@@ -6001,7 +6002,7 @@
      "path": "src/batch/export/bundle_types.rs",
      "purpose": "Portable source files and typed bundle facets",
      "surface": {
-      "enum": 6,
+      "enum": 7,
       "struct": 6
      }
     },
@@ -22834,7 +22835,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "re-export": 12
      }
     },
@@ -22978,6 +22979,16 @@
       "enum": 2,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/tombstone_scope.rs",
+     "purpose": "The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -58677,6 +58688,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/serialize/export_value/tree.rs",
+     "purpose": "FIX 10097: an exported MessagePack value is kept whole at any depth",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -58715,7 +58736,7 @@
      "path": "src/serialize/hub_source_archive.rs",
      "purpose": "Credential-safe view of exact replicated skill source carriers",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 8,
       "struct": 1
      }
     },
@@ -58829,13 +58850,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/serialize/source_tree.rs",
      "purpose": "Credential-nulled, exact source files",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 9
      }
     },
     {
@@ -61169,7 +61190,7 @@
      "path": "src/skill_hub/package.rs",
      "purpose": "Hub package and capability surface shapes",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 8,
       "struct": 4
@@ -61182,8 +61203,18 @@
      "path": "src/skill_hub/package_codec.rs",
      "purpose": "Bounded, typed package persistence",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/package_work.rs",
+     "purpose": "FIX 10100: a package's files are read to the last one, however many it holds",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -67432,6 +67463,26 @@
      "purpose": "The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/tombstones.rs",
+     "purpose": "Which window tombstones a selector export carries beside the rows it keeps (FIX 10161)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/validators.rs",
+     "purpose": "Federation admission validators for AUTHORITY_LOG and pack-instance rows",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -78415,7 +78466,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79164,7 +79215,7 @@
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity"
     },
     "serialize": {
-     "files": 28,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79234,7 +79285,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 87,
+     "files": 88,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79304,7 +79355,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 272,
+     "files": 274,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79509,7 +79560,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5259,
+   "source_files": 5264,
    "test_files": 902
   },
   "oneiron-android": {
