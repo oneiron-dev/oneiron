@@ -375,6 +375,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&sync_server),
             shutdown.clone(),
         );
+        // Its carrier as it stands, and the recipients it delivers later.
+        super::carrier_watch::spawn(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+        );
     }
 
     // Subscribed before the opening push reads the training setting, so a
