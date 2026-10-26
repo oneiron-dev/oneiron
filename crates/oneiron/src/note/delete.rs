@@ -59,7 +59,10 @@ fn delete_repo_copy_in_txn(
     txn: &mut heed::RwTxn<'_>,
     source: &EntityId,
 ) -> Result<()> {
-    let copy = crate::origin::secret_projection::copy_id::copy_id(source)?;
+    // No copy is ever made under an id that does not derive.
+    let Ok(copy) = crate::origin::secret_projection::copy_id::copy_id(source) else {
+        return Ok(());
+    };
     let slot = DocumentSlot::of(copy);
     store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
     store.port_document_updates_delete(txn, slot)?;
@@ -67,5 +70,7 @@ fn delete_repo_copy_in_txn(
     let key_prefix = format!("{}:", copy.to_hex()).into_bytes();
     SYNC_QD_E.delete_from(store, txn, &key_prefix)?;
     SYNC_AD_E.delete_from(store, txn, &key_prefix)?;
+    #[cfg(feature = "sync")]
+    crate::sync::residence::erase_item_caches_in_txn(store, txn, &[*source, copy])?;
     Ok(())
 }
