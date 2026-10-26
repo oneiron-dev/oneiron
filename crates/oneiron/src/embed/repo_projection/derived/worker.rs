@@ -105,14 +105,21 @@ impl Vault {
         let mut report = RepoDerivedIndexReport::default();
         let texts: Vec<EntityId> = {
             let rtxn = self.store.env.read_txn()?;
-            pending_in(&self.store, &rtxn, usize::MAX)?
+            let mut texts: Vec<EntityId> = pending_in(&self.store, &rtxn, usize::MAX)?
                 .into_iter()
                 .filter_map(|owner| match owner {
                     RepoDerivedOwner::Text(id) => Some(id),
                     RepoDerivedOwner::Probe(_) => None,
                 })
-                .take(max_items)
-                .collect()
+                .collect();
+            // A pass draws a different few each time, so a copy no seat can
+            // derive yet never holds the others back.
+            let draw = self.store.clock.now_recorded_at().to_be_bytes();
+            texts.sort_by_cached_key(|id| {
+                *blake3::keyed_hash(blake3::hash(&draw).as_bytes(), id.as_bytes()).as_bytes()
+            });
+            texts.truncate(max_items);
+            texts
         };
         for entity in texts {
             let read = {
@@ -147,6 +154,10 @@ impl Vault {
                     source_rows: None,
                 })
                 .collect();
+            if inputs.is_empty() {
+                report.declined += 1;
+                continue;
+            }
             if !self.media_copies_may_leave(author, egress, &inputs)? {
                 report.withheld += 1;
                 continue;

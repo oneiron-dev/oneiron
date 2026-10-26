@@ -256,10 +256,20 @@ impl Vault {
         {
             let rtxn = self.store.env.read_txn()?;
             let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
-            for owner in pending_in(&self.store, &rtxn, usize::MAX)? {
-                let RepoDerivedOwner::Probe(id) = owner else {
-                    continue;
-                };
+            let mut pending: Vec<[u8; 16]> = pending_in(&self.store, &rtxn, usize::MAX)?
+                .into_iter()
+                .filter_map(|owner| match owner {
+                    RepoDerivedOwner::Probe(id) => Some(id),
+                    RepoDerivedOwner::Text(_) => None,
+                })
+                .collect();
+            // A pass draws a different few each time, so a probe no seat can
+            // rewrite yet never holds the others back.
+            let draw = self.store.clock.now_recorded_at().to_be_bytes();
+            pending.sort_by_cached_key(|id| {
+                *blake3::keyed_hash(blake3::hash(&draw).as_bytes(), id).as_bytes()
+            });
+            for id in pending {
                 if work.len() >= max_items {
                     break;
                 }
