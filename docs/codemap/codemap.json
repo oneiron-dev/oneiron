@@ -5854,7 +5854,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/batch/export/archive_project.rs",
@@ -32367,6 +32367,7 @@
      "path": "src/federation/record_scope/export.rs",
      "purpose": "The scoped export door",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
