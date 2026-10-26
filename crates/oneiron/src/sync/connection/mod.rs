@@ -51,7 +51,7 @@ pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
 pub(crate) use home_search::HomeSearchSlot;
 pub use home_search::{DeviceResidence, HomeSearch};
-pub use topology::HomeNodeTopology;
+pub use topology::{HomeNodeTopology, HomeRoute};
 
 /// Configuration for the connection manager.
 #[derive(Debug, Clone)]
