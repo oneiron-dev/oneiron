@@ -42,7 +42,6 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::response::Json;
@@ -65,7 +64,7 @@ use zeroize::Zeroizing;
 
 use super::owner_work_routes::request_entry;
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
@@ -360,10 +359,10 @@ async fn run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     _: OwnerDevice,
-    payload: Result<Json<RunRootRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRootRequest>,
 ) -> OwnerReply<RootWorkAnswer> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
     // The enrolment request reads as pairing reads it, before any work.
     let enrolment = match &body.material {
@@ -706,10 +705,10 @@ async fn pad_access(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     _: OwnerDevice,
-    payload: Result<Json<PadAccess>, JsonRejection>,
+    payload: OwnerJsonBody<PadAccess>,
 ) -> OwnerReply<PadAccessAnswer> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     kit_target(&server, &body.target)?;
     let vault = Arc::clone(&server.vault);
     let (seed, recipient, me) = blocking(

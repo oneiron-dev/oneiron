@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
@@ -18,7 +17,7 @@ use oneiron::task_verb::sdk::{PackFileInput, decode_pack_files};
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
@@ -49,10 +48,10 @@ struct PreviewPack {
 async fn preview(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PreviewPack>, JsonRejection>,
+    payload: OwnerJsonBody<PreviewPack>,
 ) -> OwnerReply<PackImportPreview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let preview = blocking(move || {
         let files = match (request.path, request.files) {
             (Some(path), None) => super::pack_routes::read_folder(&path)?,

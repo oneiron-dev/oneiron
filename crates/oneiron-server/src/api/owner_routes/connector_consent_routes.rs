@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::get;
@@ -20,7 +20,8 @@ use oneiron::outbound_consent::DataClass;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -131,10 +132,10 @@ async fn read(
 async fn consent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConsentRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConsentRequest>,
 ) -> OwnerReply<Consented> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Consented> {
         let installed = installed_endpoint(&server, &request.connector).ok_or_else(|| {
             OwnerError::Invalid("this host installed no transport for the connector".to_owned())

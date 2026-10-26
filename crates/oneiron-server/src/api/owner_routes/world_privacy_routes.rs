@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
@@ -35,7 +35,8 @@ use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::owner::{OwnerResult, entity_id};
@@ -185,11 +186,11 @@ async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyOutcome> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WorldPrivacyOutcome> {
         let (world, settings, seen) = body.parse()?;
         Ok(server.vault().set_world_privacy_by(
@@ -210,7 +211,7 @@ async fn accept(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
     answer(auth, headers, server, payload, true).await
 }
@@ -221,7 +222,7 @@ async fn decline(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
     answer(auth, headers, server, payload, false).await
 }
@@ -230,12 +231,12 @@ async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
     server: Arc<SyncServer>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
     yes: bool,
 ) -> OwnerReply<WorldPrivacyAnswer> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WorldPrivacyAnswer> {
         let request = entity_id("request", &body.request)?;
         Ok(server
@@ -252,11 +253,11 @@ async fn undo(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<UndoChange>, JsonRejection>,
+    payload: OwnerJsonBody<UndoChange>,
 ) -> OwnerReply<WorldPrivacyReceipt> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         Ok(server
             .vault()
@@ -286,10 +287,10 @@ async fn unanimity(
 async fn set_unanimity(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetUnanimity>, JsonRejection>,
+    payload: OwnerJsonBody<SetUnanimity>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
         let world = body
             .world
@@ -327,7 +328,7 @@ async fn unanimity_requests(
 async fn confirm_off(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     answer_off(auth, server, payload, true).await
 }
@@ -337,7 +338,7 @@ async fn confirm_off(
 async fn decline_off(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     answer_off(auth, server, payload, false).await
 }
@@ -345,11 +346,11 @@ async fn decline_off(
 async fn answer_off(
     auth: CoreAuth,
     server: Arc<SyncServer>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
     yes: bool,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
         let request = entity_id("request", &body.request)?;
         Ok(server

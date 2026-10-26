@@ -10,14 +10,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::commitment_wake::CommitmentReminderRoute;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -55,10 +54,10 @@ async fn reminder_route(
 async fn set_reminder_route(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetReminderRoute>, JsonRejection>,
+    payload: OwnerJsonBody<SetReminderRoute>,
 ) -> OwnerReply<ReminderRouteReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let route = blocking(move || {
         server
             .vault()
