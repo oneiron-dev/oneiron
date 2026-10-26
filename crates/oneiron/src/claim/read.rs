@@ -323,9 +323,9 @@ impl Vault {
     /// arrived by replication materializes its entity and its `claim_of` edge
     /// but no local index row, so an index-backed reader and a claim-backed
     /// reader answer differently on a replica. This scan is the one read path
-    /// both can share. The list refuses past a fixed count;
-    /// `for_each_readable_claim_with_predicate_in_txn` walks the same claims
-    /// with none.
+    /// both can share. The list holds every such claim, however many (FIX
+    /// 8656); a reader that need not hold them walks the same claims with
+    /// `for_each_readable_claim_with_predicate_in_txn`.
     pub(crate) fn claims_with_predicate_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
