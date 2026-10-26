@@ -3,7 +3,9 @@
 //! chain under the caller's read key, with a rewrite re-admitted as the
 //! connector's own call would be. A connector's call whose hook asked names
 //! the registration it came in by, so settlement runs it again here, under
-//! its credential as it verified again then.
+//! its credential as it verified again then. The managed vault's console
+//! owner's call names his own stream instead (FIX 5204), and runs again here
+//! while the vault records him as its live owner.
 
 use std::sync::Arc;
 
@@ -85,15 +87,26 @@ pub(crate) fn mcp_row_hooks_pre<'a>(
 /// The reference a verb hook's ask saves for a connector's call of `tool`:
 /// the registration it came in by and the ceiling it was admitted at, when
 /// its memory carries nothing the drain could not rebuild (ARCH-0080 §3
-/// Ask). Bound on every call, so a retry of a call an ask parked meets its
-/// saved reference whether or not a hook takes `tool` now.
+/// Ask). The managed vault's attested owner has no registration: his call
+/// names his own STREAM connection (FIX 5204). Bound on every call, so a
+/// retry of a call an ask parked meets its saved reference whether or not a
+/// hook takes `tool` now.
 fn mcp_verb_ask_credential(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Option<VerbAskCredential> {
-    let door = VerbAskDoor::Mcp {
-        connection: actor.stream_connection.0.clone(),
-        ceiling: mcp_adapter_ceiling(actor),
+    let owner = actor
+        .auth
+        .as_ref()
+        .and_then(crate::api::scoped_auth::attested_owner_holder);
+    let door = match owner {
+        Some(_) => VerbAskDoor::McpOwner {
+            connection: actor.stream_connection.0.clone(),
+        },
+        None => VerbAskDoor::Mcp {
+            connection: actor.stream_connection.0.clone(),
+            ceiling: mcp_adapter_ceiling(actor),
+        },
     };
     memory
         .clone()
@@ -104,7 +117,7 @@ fn mcp_verb_ask_credential(
 /// BLAKE3 of the registration a connector call came in by: its actor, its
 /// world and facet scope and its bound verbs. A call settlement runs again
 /// must find the same (ARCH-0080 §3 Ask).
-fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
+pub(super) fn mcp_adapter_ceiling(actor: &McpResolvedActor) -> [u8; 32] {
     let ceiling = format!(
         "{:?}|{:?}|{:?}|{:?}",
         actor.actor_ref, actor.actor_class, actor.scope, actor.bound_verbs
@@ -237,22 +250,80 @@ impl McpCallContext {
             drain: Some(drain),
             forwarded: None,
         };
-        mcp_rewrite_admit(server, &call.verb, &context)(&call.verb, &call.args)
-            .map_err(|_| VerbAskRefusal::ScopeRefused)?;
-        let mut served = super::McpServed::default();
-        let mut board_hooks = None;
-        let ran = super::tasks_response::execute_agent_verb_input(
-            server,
-            &call.verb,
-            call.args,
-            &context,
-            None,
-            &mut served,
-            &mut board_hooks,
-        )
-        .await;
-        Ok(ran.map(|(output, ..)| output).map_err(mcp_saved_error))
+        rerun_saved_call(server, &context, call).await
     }
+
+    /// Runs the managed vault's console owner's call a verb hook's ask
+    /// stopped again, once the ask settled proceed (FIX 5204), under `auth`,
+    /// the owner as [`crate::auth::CoreAuth::for_attested_owner`] rebuilt him
+    /// now. His call came by his own STREAM `connection`, which must still be
+    /// his; no connector registration, its ceiling or a holder proof stands
+    /// behind it, and his live socket is not needed. The saved args meet the
+    /// admission his own call of the tool meets, then run through the same
+    /// door, the pre chain on the drain's permit.
+    pub(crate) async fn resume_owner_verb_ask(
+        server: &Arc<SyncServer>,
+        auth: crate::auth::CoreAuth,
+        connection: &str,
+        call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
+        drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
+    ) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal>
+    {
+        use oneiron::runtime_hooks::verb::VerbAskRefusal;
+        if !matches!(
+            try_registered_surface(McpSurfaceMode::ToolFirst)
+                .ok()
+                .and_then(|surface| surface.resolve(&call.verb)),
+            Some(McpEndpointTool::Verb(_))
+        ) {
+            return Err(VerbAskRefusal::ContextUnavailable);
+        }
+        let Some(owner) = auth.managed_owner() else {
+            return Err(VerbAskRefusal::CredentialChanged);
+        };
+        let context = super::owner_call::owner_resume_context(
+            server,
+            auth,
+            connection,
+            call.invocation,
+            drain,
+        )
+        .ok_or(VerbAskRefusal::CredentialChanged)?
+        // His standing changed since it was read: as it reads now.
+        .map_err(|_| {
+            crate::code_consent_host::attested_owner_standing(server, owner)
+                .err()
+                .unwrap_or(VerbAskRefusal::CredentialUnavailable)
+        })?;
+        rerun_saved_call(server, &context, call).await
+    }
+}
+
+/// The saved `call` run again in `context`, its door rebuilt: the saved args
+/// meet the admission the caller's own call of the tool meets, then run
+/// through the same dispatch.
+#[cfg(feature = "code-sandbox-wasmtime")]
+async fn rerun_saved_call(
+    server: &Arc<SyncServer>,
+    context: &McpCallContext,
+    call: oneiron::runtime_hooks::verb::VerbAskSavedCall,
+) -> Result<oneiron::memory::MemoryResult<Value>, oneiron::runtime_hooks::verb::VerbAskRefusal> {
+    use oneiron::runtime_hooks::verb::VerbAskRefusal;
+    mcp_rewrite_admit(server, &call.verb, context)(&call.verb, &call.args)
+        .map_err(|_| VerbAskRefusal::ScopeRefused)?;
+    let mut served = super::McpServed::default();
+    let mut board_hooks = None;
+    let ran = super::tasks_response::execute_agent_verb_input(
+        server,
+        &call.verb,
+        call.args,
+        context,
+        None,
+        &mut served,
+        &mut board_hooks,
+    )
+    .await;
+    Ok(ran.map(|(output, ..)| output).map_err(mcp_saved_error))
 }
 
 /// A connector call's refusal as the error settlement saves for its retry:

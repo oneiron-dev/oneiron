@@ -11,6 +11,7 @@ mod kit_fetch;
 mod machine_history;
 mod pad_custody;
 mod promoted_pads;
+mod rpc;
 mod search;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub(crate) use bundle::relay_sealed_bundle;
@@ -20,37 +21,19 @@ pub use index::ResidenceIndexWindow;
 pub use kit_fetch::{fetch_sealed_bundle_index_with_kit, fetch_sealed_bundle_with_kit};
 pub(crate) use machine_history::fetch_owed_machine_history;
 
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 use base64::Engine;
-use futures_util::{SinkExt, StreamExt};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use serde::Deserialize;
+use serde_json::json;
 
 use super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
-use crate::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use crate::sync::selector::encode_sync_selector;
-use crate::sync::transport::{self, TAG_RPC, TransportError};
+use crate::sync::transport::{self, TransportError};
 use crate::sync::types::WindowKey;
-
-/// The app-tier response encoding has a fixed 32-MiB payload ceiling.
-const MAX_RPC_REPLY_BYTES: usize = 32 * 1024 * 1024;
-
-fn residence_budgets(vault: &crate::Vault) -> Result<ResidenceOperationBudgets, TransportError> {
-    vault
-        .residence_operation_budgets()
-        .map_err(|error| TransportError::Storage(error.to_string()))?
-        .ok_or(TransportError::InvalidPayload(
-            "residence policy unavailable",
-        ))
-}
-
-type Socket = crate::sync::carrier::SyncSocket;
+use rpc::{ResidenceRpc, refused, residence_budgets};
 
 /// Search explicitly distinguishes a complete home answer from a partial
 /// offline answer over this device's previously opened, cached items.
@@ -73,26 +56,6 @@ pub struct ResidenceSearch {
     pub hits: Vec<ResidenceHit>,
     pub source: SearchSource,
     pub complete: bool,
-}
-
-#[derive(Serialize)]
-struct RequestEnvelope {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    id: u64,
-    seq: u64,
-    last: bool,
-    payload: Value,
-}
-
-#[derive(Deserialize)]
-struct ReplyEnvelope {
-    #[serde(rename = "type")]
-    kind: String,
-    id: u64,
-    seq: u64,
-    last: bool,
-    payload: rmpv::Value,
 }
 
 #[derive(Deserialize)]
@@ -160,203 +123,6 @@ struct SearchHit {
     window: String,
 }
 
-/// The home answered a residence RPC and refused it (FIX 3353), apart from a
-/// call that failed: a socket that broke or timed out, or a reply that did not
-/// parse.
-struct HomeRefused {
-    /// The code the home gave.
-    code: Option<String>,
-}
-
-struct ResidenceRpc {
-    socket: Socket,
-    next_id: u64,
-    timeout: Duration,
-    /// The machine the home proved on this socket's upgrade (OF-534 G7).
-    home: crate::authority::PeerMachine,
-}
-
-impl ResidenceRpc {
-    /// `None` is only a transport outage. A refused bind or malformed reply
-    /// is an error, not permission to label the search local-only.
-    async fn connect(
-        vault: &crate::Vault,
-        config: &SyncClientConfig,
-        budgets: ResidenceOperationBudgets,
-    ) -> Result<Option<Self>, TransportError> {
-        let timeout = Duration::from_millis(budgets.rpc_timeout_ms);
-        let deadline = tokio::time::Instant::now() + timeout;
-        let session = config.note_session.as_ref().ok_or_else(refused)?;
-        config.residence_selector.as_ref().ok_or_else(refused)?;
-        let mut request = config
-            .residence_url()
-            .into_client_request()
-            .map_err(|_| refused())?;
-        // The upgrade proves the device's transport slip, as the sync
-        // socket does, signed on the wall clock as it is; the bind below
-        // then attenuates it to the actor.
-        let mut binding = None;
-        if let Some(credential) = &config.transport_credential {
-            binding = Some(
-                credential
-                    .sign_upgrade(vault, vault.store.clock.wall_now(), &mut request)
-                    .map_err(|_| refused())?,
-            );
-        } else if !config.auth_token.is_empty() {
-            let header = format!("Bearer {}", config.auth_token)
-                .parse()
-                .map_err(|_| refused())?;
-            request.headers_mut().insert(AUTHORIZATION, header);
-        }
-        // The mesh carrier reaches the configured home; an elected home
-        // elsewhere is dialed at its own URL.
-        let dialer = config
-            .mesh_dialer
-            .as_deref()
-            .filter(|_| config.residence_url() == config.server_url);
-        let (mut socket, response) = match tokio::time::timeout_at(
-            deadline,
-            crate::sync::carrier::connect_sync_socket(request, dialer),
-        )
-        .await
-        {
-            Ok(Ok(connected)) => connected,
-            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(_))) => return Err(refused()),
-            Ok(Err(_)) | Err(_) => return Ok(None),
-        };
-        tokio::time::timeout_at(
-            deadline,
-            socket.send(Message::Binary(
-                transport::encode_residence_protocol_hello().into(),
-            )),
-        )
-        .await
-        .map_err(|_| refused())?
-        .map_err(|_| refused())?;
-        tokio::time::timeout_at(
-            deadline,
-            socket.send(Message::Binary(
-                super::note_session::bind_frame(session)?.into(),
-            )),
-        )
-        .await
-        .map_err(|_| refused())?
-        .map_err(|_| refused())?;
-        // A future server may send an ephemeral snapshot before the bind ack.
-        // Only the exact fixed-ID null reply opens the RPC lane.
-        for _ in 0..16 {
-            let msg = tokio::time::timeout_at(deadline, socket.next())
-                .await
-                .map_err(|_| refused())?
-                .ok_or_else(refused)?
-                .map_err(|_| refused())?;
-            let Message::Binary(frame) = msg else {
-                return Err(refused());
-            };
-            match frame.first() {
-                Some(&TAG_RPC) => {
-                    super::note_session::accept_bind_reply(&frame[1..])?;
-                    return Ok(Some(Self {
-                        socket,
-                        next_id: 1,
-                        timeout,
-                        home: crate::sync::home_proof::home_peer(
-                            vault,
-                            &response,
-                            binding.as_ref(),
-                        ),
-                    }));
-                }
-                Some(&transport::TAG_EPHEMERAL) | Some(&transport::TAG_SYNC_UPDATE) => continue,
-                _ => return Err(refused()),
-            }
-        }
-        Err(refused())
-    }
-
-    async fn request(&mut self, method: &str, params: Value) -> Result<Value, TransportError> {
-        self.call(method, params).await?.map_err(|refusal| {
-            if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
-                TransportError::IndexRevisionChanged
-            } else {
-                TransportError::InvalidPayload("home refused residence RPC")
-            }
-        })
-    }
-
-    /// [`Self::request`], with the home's refusal kept apart from a call that
-    /// failed: `Ok(Err(_))` when the home answered no.
-    async fn call(
-        &mut self,
-        method: &str,
-        params: Value,
-    ) -> Result<Result<Value, HomeRefused>, TransportError> {
-        let id = self.next_id;
-        self.next_id = self.next_id.checked_add(1).ok_or_else(refused)?;
-        let request = RequestEnvelope {
-            kind: "rpc.req",
-            id,
-            seq: 0,
-            last: true,
-            payload: json!({"method": method, "params": params}),
-        };
-        let bytes = rmp_serde::to_vec_named(&request).map_err(|_| refused())?;
-        if bytes.len() > transport::MAX_DECODED_PAYLOAD_BYTES {
-            return Err(refused());
-        }
-        let mut frame = vec![TAG_RPC];
-        frame.extend(bytes);
-        let deadline = tokio::time::Instant::now() + self.timeout;
-        tokio::time::timeout_at(deadline, self.socket.send(Message::Binary(frame.into())))
-            .await
-            .map_err(|_| refused())?
-            .map_err(|_| refused())?;
-        let mut assembled = Vec::new();
-        for seq in 0..512u64 {
-            let msg = tokio::time::timeout_at(deadline, self.socket.next())
-                .await
-                .map_err(|_| refused())?
-                .ok_or_else(refused)?
-                .map_err(|_| refused())?;
-            let Message::Binary(frame) = msg else {
-                return Err(refused());
-            };
-            if frame.first() != Some(&TAG_RPC) {
-                return Err(refused());
-            }
-            let reply: ReplyEnvelope = rmp_serde::from_slice(&frame[1..]).map_err(|_| refused())?;
-            if reply.id != id || reply.seq != seq {
-                return Err(refused());
-            }
-            if reply.kind == "rpc.err" {
-                let code = reply.payload.as_map().and_then(|fields| {
-                    fields
-                        .iter()
-                        .find(|(key, _)| key.as_str() == Some("code"))
-                        .and_then(|(_, value)| value.as_str())
-                });
-                return Ok(Err(HomeRefused {
-                    code: code.map(str::to_owned),
-                }));
-            }
-            if reply.kind != "rpc.res" {
-                return Err(refused());
-            }
-            let chunk = reply.payload.as_slice().ok_or_else(refused)?;
-            if assembled.len().saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
-                return Err(refused());
-            }
-            assembled.extend_from_slice(chunk);
-            if reply.last {
-                return rmp_serde::from_slice(&assembled)
-                    .map(Ok)
-                    .map_err(|_| refused());
-            }
-        }
-        Err(refused())
-    }
-}
-
 /// The home is a peer, so its promotion snapshot passes the same carrier
 /// admission as a raw window update before any byte reaches the window.
 #[cfg(test)]
@@ -375,10 +141,6 @@ fn import_promotion_snapshot_with(
 ) -> bool {
     crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
         && crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)).is_ok()
-}
-
-fn refused() -> TransportError {
-    TransportError::InvalidPayload("opened-item RPC unavailable")
 }
 
 /// Sync-state prefix of a window this machine holds in full whose retain the

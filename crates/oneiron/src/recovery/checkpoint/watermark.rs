@@ -27,13 +27,17 @@
 //! directory sync are done ([`BackupSnapshotReceipt::persist_marker`]); no
 //! LMDB write, so recording it changes nothing. A marker that failed to land
 //! leaves the one before, and a missing or bad one reads as changed
-//! ([`last_backed_up`]).
+//! ([`last_backed_up`]); every reader takes it through one strict read
+//! (`marker`, FIX 6777).
+
+mod marker;
 
 use std::fmt;
 use std::path::Path;
 
+use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
-use oneiron_vault_contract::backup_handoff::{PrivateFile, read_private_file, write_private_file};
+use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::{Deserialize, Serialize};
 
 use crate::side_table::{self, Named, SideTable};
@@ -165,23 +169,11 @@ impl BackupSnapshotReceipt {
 
 /// What the newest backup of `label` in `dir` covered, from its marker:
 /// `None`, read as changed, when the marker is missing, is not a private file
-/// of this user, does not parse, or names a backup no longer there.
+/// of this user, does not parse, does not name a backup of `label` by its
+/// current file name, or names one that is no longer there as it recorded it
+/// (its size and the commitment its head and tail carry, FIX 6777).
 pub fn last_backed_up(dir: &Path, label: &str) -> Option<BackupWatermark> {
-    read_marker(dir, label).map(|marker| marker.covered)
-}
-
-/// The marker of `label`'s newest backup in `dir`, as [`last_backed_up`]
-/// reads it.
-fn read_marker(dir: &Path, label: &str) -> Option<WatermarkMarker> {
-    let Ok(PrivateFile::Bytes(bytes)) = read_private_file(&dir.join(marker_name(label))) else {
-        return None;
-    };
-    let marker: WatermarkMarker = serde_json::from_slice(&bytes).ok()?;
-    let plain = !marker.file.is_empty()
-        && !marker.file.starts_with('.')
-        && !marker.file.contains(['/', '\\', '\0']);
-    (marker.schema_version == MARKER_SCHEMA_VERSION && plain && dir.join(&marker.file).is_file())
-        .then_some(marker)
+    marker::read_bound_marker(dir, label).map(|marker| marker.covered)
 }
 
 /// A label's backup marker read whole (L14 B2, agreed with L04): the backup
@@ -254,7 +246,18 @@ impl BackupMarker {
 /// as well as what it covered. `None` as there, and when the marker's time
 /// does not read.
 pub fn backup_marker(dir: &Path, label: &str) -> Option<BackupMarker> {
-    let marker = read_marker(dir, label)?;
+    backup_marker_with_pins(dir, label, None)
+}
+
+/// [`backup_marker`], and when `pins` are given, `None` too for a backup
+/// whose commitment none of them signed (FIX 10712). It checks the signer of
+/// the backup's tail; [`BackupMarker::held`] stays the strong check.
+pub fn backup_marker_with_pins(
+    dir: &Path,
+    label: &str,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<BackupMarker> {
+    let marker = marker::read_bound_marker_with_pins(dir, label, pins)?;
     let landed = std::fs::symlink_metadata(dir.join(marker_name(label)))
         .and_then(|metadata| std::fs::Metadata::modified(&metadata))
         .ok()?

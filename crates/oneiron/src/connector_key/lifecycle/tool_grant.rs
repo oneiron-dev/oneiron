@@ -37,8 +37,9 @@ use super::super::manifest_drift::{
 };
 use super::super::qualification::ConnectorQualificationReceipt;
 use super::super::record::{
-    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, PendingConnectorManifest,
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ConnectorCallClass, ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus,
+    PendingConnectorManifest, ScopedCapabilityProvenance, canonical_scoped_server_segment,
+    normalize_connector_key,
 };
 use super::super::slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateRow, read_connector_slate_in_txn,
@@ -47,6 +48,8 @@ use super::super::txn::{
     CATALOG_NAME_INDEX, CONNECTOR_INDEX, append_connector_key_op_record, read_connector_key_in_txn,
     revoke_connector_key_in_txn, rewrite_connector_key_in_txn,
 };
+
+mod doors;
 
 /// The component every connector-consent grant names as its origin.
 pub const CONNECTOR_CONSENT_ORIGIN_COMPONENT_ID: &str = "connector_consent";
@@ -137,18 +140,6 @@ struct AdmittedCatalog {
 }
 
 impl Vault {
-    /// The owner consents to `consent.rows` of one catalog connector for one
-    /// actor. All grants and keys commit together, or none do.
-    pub fn consent_connector_tools(
-        &self,
-        owner: &AuthenticatedOwner,
-        consent: &ConnectorToolConsent,
-    ) -> Result<Vec<ConnectorToolGrant>> {
-        let at = crate::unix_seconds_now();
-        self.with_write_txn_grouped(|wtxn| {
-            self.consent_connector_tools_in_txn(wtxn, owner, consent, at)
-        })
-    }
     /// [`Self::consent_connector_tools`] in the caller's writer, at `at`: an
     /// accepted scope revision mints its widened grant beside the owner's
     /// stamp of it (FIX 988).
@@ -260,79 +251,6 @@ impl Vault {
             });
         }
         Ok(granted)
-    }
-
-    /// What the owner is asked about one catalog connector, with `actor`'s
-    /// (default: the owner's) live grant per tool. `None`: no such connector.
-    pub fn connector_consent_view(
-        &self,
-        owner: &AuthenticatedOwner,
-        connector: &str,
-        actor: Option<EntityId>,
-    ) -> Result<Option<ConnectorConsentView>> {
-        let actor = match actor {
-            Some(actor) => actor,
-            None => owner.actor_for_read(self)?,
-        };
-        let principal_ref = actor.to_hex();
-        let txn = self.store.env.read_txn()?;
-        let Some((_, record)) = catalog_key_in_txn(&self.store, &txn, connector)? else {
-            return Ok(None);
-        };
-        let ready = admitted_catalog_in_txn(self, &txn, connector).is_ok();
-        let slate = match record.slate_ref {
-            Some(id) => read_connector_slate_in_txn(self, &txn, id)?,
-            None => None,
-        };
-        let server = record
-            .catalog
-            .as_ref()
-            .and_then(|catalog| canonical_scoped_server_segment(&catalog.name));
-        let floor =
-            crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
-        let mut live = Vec::new();
-        for id in standing_outbound_grant_ids_for_principal(&self.store, &txn, &principal_ref)? {
-            let Some(grant) = standing_outbound_grant_in_txn(&self.store, &txn, &id)? else {
-                continue;
-            };
-            if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&floor) {
-                continue;
-            }
-            if let Some(scope) = grant.scope.scoped_mcp_grant()
-                && server.as_deref() == Some(scope.server)
-            {
-                live.push((scope.tool.to_owned(), id, scope.data_class_ceiling));
-            }
-        }
-        let rows = slate
-            .iter()
-            .flat_map(|slate| slate.manifest().iter().map(move |tool| (slate, tool)))
-            .map(|(slate, tool)| {
-                let grant = live.iter().find(|(name, ..)| *name == tool.name);
-                ConnectorConsentRowView {
-                    tool: tool.name.clone(),
-                    data_class: tool.row_data_class(),
-                    setting: slate.tool_setting(&tool.name),
-                    header_parameters: tool.header_parameters.clone(),
-                    destroys: tool.destroys,
-                    grant_id: grant.map(|(_, id, _)| id.to_hex()),
-                    grant_ceiling: grant.map(|(.., ceiling)| *ceiling),
-                }
-            })
-            .collect();
-        let elicitation = slate
-            .as_ref()
-            .and_then(ConnectorGrantSlate::elicitation_row)
-            .map(SlateRow::effective_disposition);
-        Ok(Some(ConnectorConsentView {
-            connector: record.connector,
-            actor: principal_ref,
-            status: record.status.as_str().to_owned(),
-            protocol_revision: record.protocol_revision,
-            ready,
-            rows,
-            elicitation,
-        }))
     }
 
     /// Brings every per-grant key of a catalog key in line with the
@@ -588,19 +506,19 @@ pub(crate) fn catalog_charter_in_txn(
     Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.charter))
 }
 
-/// Whether a scoped call on `server` debits the `Sends` dimension: only when
-/// the server's catalog entry is `CounterpartyComm`. ARCH-0054 gives the
-/// Send class to counterparty communication alone and leaves scoped-MCP
-/// calls unbudgeted by default, so an uncatalogued server debits no sends.
-pub(crate) fn scoped_server_debits_sends_in_txn(
+/// The call class of the catalog entry that names `server`: what the owner
+/// registered the server's calls as. `None` for an uncatalogued server. The
+/// budget class of one call also reads the tool's own declaration
+/// (`connector_key::tool_effect`, FIX 8688).
+pub(crate) fn scoped_server_call_class_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     server: &str,
-) -> Result<bool> {
+) -> Result<Option<ConnectorCallClass>> {
     Ok(catalog_key_in_txn(store, txn, server)?
         .filter(|(_, catalog)| catalog_server(catalog).as_deref() == Some(server))
         .and_then(|(_, catalog)| catalog.catalog)
-        .is_some_and(|entry| entry.call_class.debits_sends()))
+        .map(|entry| entry.call_class))
 }
 
 /// Holds each Active per-grant key of a catalog key that is no longer

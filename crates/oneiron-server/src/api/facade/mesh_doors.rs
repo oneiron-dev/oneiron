@@ -132,14 +132,25 @@ async fn dial(
     auth: &CoreAuth,
     input: MeshDialRequest,
 ) -> MemoryResult<MeshPathReceipt> {
-    let transport =
+    let (transport, owner) =
         super::legal_hold_doors::as_owner(server, auth, "vault.mesh.dial", |server, owner| {
             server.vault().recheck_owner(owner)?;
-            server.mesh_transport.get().cloned().ok_or_else(unavailable)
+            let transport = server
+                .mesh_transport
+                .get()
+                .cloned()
+                .ok_or_else(unavailable)?;
+            Ok((transport, owner.clone()))
         })
         .await?;
+    // The owner's complete MACHINE lookup names the receipt's machine where
+    // the bounded one stops (FIX 8622).
+    let lookup = oneiron_mesh_transport::iroh_transport::owner_machine_lookup(
+        Arc::clone(server.vault()),
+        owner,
+    );
     transport
-        .dial_address(&input.address, &input.alpn)
+        .dial_address_attributed(&input.address, &input.alpn, Some(lookup))
         .await
         .map_err(|error| {
             oneiron::memory::MemoryError::new(

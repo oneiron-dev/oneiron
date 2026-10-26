@@ -3817,6 +3817,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.connectors.read_grants.grant",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+                >(),
+            ),
+            (
+                "vault.connectors.read_grants.revoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest,
+                >(),
+            ),
+            (
                 "vault.repo.anchor.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RepoAnchorBindInput,
@@ -6995,6 +7007,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.get",
     "vault.research.reserve_exploration",
     "vault.research.budget",
+    "vault.authority.handoff_alarms",
+    "vault.authority.handoff_alarms.acknowledge",
     "vault.cleanup.run",
     "vault.cleanup.review",
     "vault.cleanup.decide",
@@ -7162,6 +7176,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.grants.revoke",
     "vault.repo.git_push.mint",
     "vault.repo.git_push.revoke",
+    "vault.connectors.read_grants.grant",
+    "vault.connectors.read_grants.revoke",
     "vault.repo.anchor.bind",
     "vault.repo.snapshots.get",
     "vault.repo.snapshots.read",
@@ -7654,18 +7670,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
         }
-        "vault.tagging.status" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingStatusView>()
-        }
-        "vault.tagging.tags" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTagsView>()
-        }
-        "vault.tagging.history" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingHistoryView>()
-        }
-        "vault.tagging.mentions" => {
-            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsView>()
-        }
+        "vault.tagging.status" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>,
+        >(),
+        "vault.tagging.tags" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>,
+        >(),
+        "vault.tagging.history" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>,
+        >(),
+        "vault.tagging.mentions" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>,
+        >(),
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
         >(),
@@ -8029,9 +8045,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorPackGrants,
         >(),
-        "vault.packs.sections.propose" => {
-            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionProposal>()
-        }
+        "vault.packs.sections.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::PluginSectionInstallOutcome,
+        >(),
         "vault.packs.sections.list" => {
             crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionsView>()
         }
@@ -8459,6 +8475,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.research.budget" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchBudgetView,
         >(),
+        "vault.authority.handoff_alarms" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::authority::AuthorityHandoffAlarm>,
+        >(),
+        "vault.authority.handoff_alarms.acknowledge" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::AuthorityHandoffAlarm>()
+        }
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
@@ -8967,6 +8989,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.repo.git_push.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::GitPushGrantRevokeOutput,
+        >(),
+        "vault.connectors.read_grants.grant" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorWitnessReadGranted,
+        >(),
+        "vault.connectors.read_grants.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked,
         >(),
         "vault.repo.anchor.bind" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::RepoAnchorBindOutput,
@@ -14747,6 +14775,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.connectors.read_grants.grant" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.read_grants.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.repo.anchor.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -18518,7 +18560,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts" => {
             let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
-            crate::memory::caps::check_limit(
+            crate::memory::caps::check_limit_nonzero(
                 input
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
@@ -20344,6 +20386,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.repo.git_push.revoke" => {
             let _input: crate::task_verb::sdk::GitPushGrantRevokeInput = decode(value.clone())?;
         }
+        "vault.connectors.read_grants.grant" => {
+            let _input: crate::task_verb::sdk::ConnectorWitnessReadGrantRequest =
+                decode(value.clone())?;
+        }
+        "vault.connectors.read_grants.revoke" => {
+            let _input: crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest =
+                decode(value.clone())?;
+        }
         "vault.repo.anchor.bind" => {
             let _input: crate::task_verb::sdk::RepoAnchorBindInput = decode(value.clone())?;
         }
@@ -20947,7 +20997,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.verdict" => {
             let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "vault.graph.ask" => {
@@ -21088,8 +21137,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_consolidation::ThingDecideInput = decode(value.clone())?;
         }
         "vault.commit" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.remember" => {
             let input: crate::memory::ClaimInput = decode(value.clone())?;
@@ -21256,8 +21304,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             )?;
         }
         "vault.hydrate" => {
-            let input: HydrateRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("refs", input.refs.len())?;
+            let _input: HydrateRequest = decode(value.clone())?;
         }
         "vault.get" => {
             let _input: EntityRequest = decode(value.clone())?;
@@ -21576,8 +21623,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
         }
         "vault.claims.seed" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.channel_identities.provision" => {
             let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
@@ -23455,6 +23501,12 @@ pub fn invoke(
         "vault.agents.grants.revoke" => encode(vault_agents_grants_revoke(memory, decode(value)?)?),
         "vault.repo.git_push.mint" => encode(vault_repo_git_push_mint(memory, decode(value)?)?),
         "vault.repo.git_push.revoke" => encode(vault_repo_git_push_revoke(memory, decode(value)?)?),
+        "vault.connectors.read_grants.grant" => {
+            encode(vault_connectors_read_grants_grant(memory, decode(value)?)?)
+        }
+        "vault.connectors.read_grants.revoke" => {
+            encode(vault_connectors_read_grants_revoke(memory, decode(value)?)?)
+        }
         "vault.repo.anchor.bind" => encode(vault_repo_anchor_bind(memory, decode(value)?)?),
         "vault.repo.snapshots.get" => encode(vault_repo_snapshots_get(memory, decode(value)?)?),
         "vault.repo.snapshots.read" => encode(vault_repo_snapshots_read(memory, decode(value)?)?),
@@ -25426,7 +25478,7 @@ pub fn vault_affect_annotations_put(
 pub fn vault_tagging_status(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingStatusView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.status",
@@ -25438,7 +25490,7 @@ pub fn vault_tagging_status(
 pub fn vault_tagging_tags(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingTagsView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.tags",
@@ -25450,7 +25502,7 @@ pub fn vault_tagging_tags(
 pub fn vault_tagging_history(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingTurnRequest,
-) -> MemoryResult<crate::tagging::TaggingHistoryView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>> {
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.tagging.history",
@@ -25462,7 +25514,7 @@ pub fn vault_tagging_history(
 pub fn vault_tagging_mentions(
     memory: &Memory<'_>,
     input: crate::tagging::TaggingMentionsRequest,
-) -> MemoryResult<crate::tagging::TaggingMentionsView> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>> {
     crate::memory::caps::check_limit_nonzero(input.limit)?;
     memory.tagging_mentions(&input)
 }
@@ -25779,17 +25831,18 @@ pub fn vault_export_scoped(
 pub fn vault_receipts(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VaultReceiptsRequest,
-) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
-    crate::memory::caps::check_limit(
+) -> MemoryResult<crate::task_verb::sdk::VaultReceiptsPage> {
+    crate::memory::caps::check_limit_nonzero(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )?;
-    memory.receipts_of_kinds(
+    memory.receipts_page(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
-        &input.kinds,
+        input.kinds.as_deref().unwrap_or_default(),
+        input.after.as_deref(),
     )
 }
 pub fn vault_assets_ingest(
@@ -26697,7 +26750,7 @@ pub fn vault_packs_remove(
 pub fn vault_packs_sections_propose(
     memory: &Memory<'_>,
     input: crate::memory::PluginSectionProposeRequest,
-) -> MemoryResult<crate::memory::PluginSectionProposal> {
+) -> MemoryResult<crate::memory::PluginSectionInstallOutcome> {
     memory.plugin_section_propose(&input)
 }
 pub fn vault_packs_sections_list(
@@ -29273,7 +29326,7 @@ pub fn host_budget_hit(
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
-) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
+) -> MemoryResult<crate::task_verb::sdk::HooksReplayPage> {
     input.limit()?;
     crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
 }
@@ -30262,6 +30315,26 @@ pub fn vault_repo_git_push_revoke(
         memory.vault(),
         &memory.embedded_owner("vault.repo.git_push.revoke")?,
         crate::authority::ActSurface::ThisInstall,
+        input,
+    )
+}
+pub fn vault_connectors_read_grants_grant(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorWitnessReadGranted> {
+    crate::task_verb::sdk::grant_connector_witness_read_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.read_grants.grant")?,
+        input,
+    )
+}
+pub fn vault_connectors_read_grants_revoke(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked> {
+    crate::task_verb::sdk::revoke_connector_witness_read_grant_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.connectors.read_grants.revoke")?,
         input,
     )
 }
@@ -31740,7 +31813,6 @@ pub fn ai_verdict(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::AiVerdictRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVerdict> {
-    crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
@@ -32113,7 +32185,6 @@ pub fn vault_commit(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.commit",
@@ -32473,7 +32544,6 @@ pub fn vault_hydrate(
     memory: &Memory<'_>,
     input: HydrateRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
-    crate::memory::caps::check_batch_len("refs", input.refs.len())?;
     memory.hydrate(&input.refs)
 }
 pub fn vault_get(
@@ -33385,7 +33455,6 @@ pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.seed",
@@ -33660,7 +33729,7 @@ pub fn vault_notes_from_entity(
         &input,
         &["/source_ref"],
     )?;
-    memory.create_note_from_entity(&input.source_ref, &input.kind)
+    memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())
 }
 pub fn vault_notes_read(
     memory: &Memory<'_>,

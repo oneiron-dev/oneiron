@@ -123,7 +123,8 @@ class CitedMessage(TypedDict):
 class RecordRef(TypedDict):
     kind: str
     id: str
-    short_id: NotRequired[str]
+    # Always present; null when the record has no short id (FIX 4802).
+    short_id: str | None
     label: str
 
 class ScopeHonesty(TypedDict):
@@ -690,7 +691,7 @@ class Oneiron:
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs": ...
         def batch(self, spec: Facade.CoreBatchWriteInput) -> Facade.CoreBatchWriteReceipt:
-            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
+            """Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
@@ -1031,14 +1032,14 @@ class Oneiron:
         def configure(self, spec: Facade.WellnessPolicyConfigureRequest) -> Facade.ActionModePolicy | None:
             """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
     class _VaultTaggingVerbs:
-        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
-            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
-        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingTagsView:
-            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
-        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingHistoryView:
-            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
-        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
-            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingStatusView]:
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."""
+        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingTagsView]:
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."""
+        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingHistoryView]:
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."""
+        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.ScopedReadResult[Facade.TaggingMentionsView]:
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."""
     class _VaultClusterVerbs:
         def __call__(self, spec: Facade.ClusterRequest) -> Facade.ScopedReadResult[Facade.ClusterProposal]:
             """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""
@@ -1062,7 +1063,7 @@ class Oneiron:
         def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None, after: str | None = None) -> Facade.VaultReceiptsPage: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
         def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:
@@ -1410,8 +1411,8 @@ class Oneiron:
         def put(self, spec: Facade.ConnectorPackGrantsPutRequest) -> Facade.ConnectorPackGrants:
             """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
     class _VaultPacksSectionsVerbs:
-        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionProposal:
-            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
+        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionInstallOutcome:
+            """The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim."""
         def list(self, spec: Facade.PluginSectionListRequest) -> Facade.PluginSectionsView:
             """Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project."""
         def grant(self, spec: Facade.PluginSectionGrantRequest) -> Facade.PluginSectionGrant:
@@ -1477,6 +1478,8 @@ class Oneiron:
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
         @property
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs": ...
+        @property
+        def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs": ...
     class _VaultConnectorsProxyVerbs:
         def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
             """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
@@ -1507,6 +1510,11 @@ class Oneiron:
     class _VaultConnectorsCallsVerbs:
         def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
+    class _VaultConnectorsReadGrantsVerbs:
+        def grant(self, spec: Facade.ConnectorWitnessReadGrantRequest) -> Facade.ConnectorWitnessReadGranted:
+            """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
+        def revoke(self, spec: Facade.ConnectorWitnessReadGrantRevokeRequest) -> Facade.ConnectorWitnessReadGrantRevoked:
+            """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
     class _VaultAuthorityVerbs:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
@@ -2187,8 +2195,8 @@ class Oneiron:
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
-        def replay(self, spec: Facade.HooksReplayRequest) -> list[Facade.HookReplayRow]:
-            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
+        def replay(self, spec: Facade.HooksReplayRequest) -> Facade.HooksReplayPage:
+            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
         @property
         def regen(self) -> "Oneiron._VaultHooksRegenVerbs": ...
     class _VaultHooksRegenVerbs:
@@ -2774,11 +2782,11 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsThreadAudienceVerbs:
         def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
-            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."""
+            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record."""
         def open_full_history(self, spec: Facade.ThreadAudienceOpenFullHistoryRequest) -> Facade.ThreadAudienceReceipt:
             """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
         def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
-            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record."""
     class _VaultRoomsThreadJoinVerbs:
         def request(self, spec: Facade.ThreadJoinRequest) -> Facade.ThreadJoinRequestView:
             """Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it."""

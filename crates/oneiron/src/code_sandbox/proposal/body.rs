@@ -83,7 +83,7 @@ impl SandboxProposalBody {
     /// Spools everything `source` yields, one bounded buffer at a time.
     pub fn copy_from(source: &mut impl Read) -> Result<Self> {
         let mut writer = Self::spool()?;
-        let mut frame = vec![0; READ_FRAME];
+        let mut frame = super::zeroed(READ_FRAME)?;
         loop {
             let read = match source.read(&mut frame) {
                 Ok(0) => break,

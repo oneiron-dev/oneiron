@@ -7,6 +7,8 @@
 //! target saved. The source verifies that ack before it keeps it. `.cancel`
 //! (FIX 5931) fences a handoff the source takes back, in the target's
 //! adopting writer, or answers the ack when the target adopted it first.
+//! A source with no actor session opens the lane as its machine alone (FIX
+//! 6458), and a status says when the target fenced the handoff (FIX 6574).
 
 use std::time::Duration;
 
@@ -29,6 +31,8 @@ pub(crate) enum TargetStanding {
     Adopted(HomeAck),
     /// Not adopted there: how many parts it holds staged, in order.
     Staged(u32),
+    /// FIX 6574: its source cancelled it there, so it never lands there.
+    Fenced,
 }
 
 /// What the target answers a cancel with, from its adopting writer.
@@ -45,6 +49,8 @@ struct StatusReply {
     staged: Option<u32>,
     #[serde(default)]
     ack: Option<String>,
+    #[serde(default)]
+    fenced: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -82,7 +88,9 @@ pub(crate) struct HandoffLane {
 impl HandoffLane {
     /// Dials `endpoint` for a move to `target`. `None` when the endpoint is
     /// out of reach or refuses this machine's socket, or the socket proves a
-    /// machine other than `target`.
+    /// machine other than `target`. With the host's actor session the lane
+    /// binds it, as before; without one it opens as this machine alone (FIX
+    /// 6458).
     pub(crate) async fn open(
         vault: &Vault,
         config: &SyncClientConfig,
@@ -92,7 +100,12 @@ impl HandoffLane {
         let budgets = residence_budgets(vault)?;
         let mut pinned = config.clone();
         pinned.residence_home_route = Some(ResidenceHomeRoute::new(Some(endpoint.to_owned())));
-        let rpc = match ResidenceRpc::connect(vault, &pinned, budgets).await {
+        let opened = if pinned.note_session.is_some() && pinned.residence_selector.is_some() {
+            ResidenceRpc::connect(vault, &pinned, budgets).await
+        } else {
+            ResidenceRpc::connect_machine(vault, &pinned, budgets).await
+        };
+        let rpc = match opened {
             Ok(Some(rpc)) => rpc,
             Ok(None) | Err(_) => return Ok(None),
         };
@@ -106,7 +119,8 @@ impl HandoffLane {
     }
 
     /// The target's persisted answer for handoff `id`, sealed to the bytes
-    /// `digest` names; `None` when it refused.
+    /// `digest` names; `None` when it refused. Only the target's explicit word
+    /// is a fence, never a call that failed.
     pub(crate) async fn status(
         &mut self,
         id: &[u8; 32],
@@ -121,10 +135,11 @@ impl HandoffLane {
             Ok(reply) => serde_json::from_value::<StatusReply>(reply).map_err(|_| refused())?,
             Err(_) => return Ok(None),
         };
-        match (reply.ack, reply.staged) {
-            (Some(ack), _) => Ok(Some(TargetStanding::Adopted(ack_from(&ack)?))),
-            (None, Some(staged)) => Ok(Some(TargetStanding::Staged(staged))),
-            (None, None) => Err(refused()),
+        match (reply.ack, reply.fenced, reply.staged) {
+            (Some(ack), _, _) => Ok(Some(TargetStanding::Adopted(ack_from(&ack)?))),
+            (None, Some(true), _) => Ok(Some(TargetStanding::Fenced)),
+            (None, _, Some(staged)) => Ok(Some(TargetStanding::Staged(staged))),
+            (None, _, None) => Err(refused()),
         }
     }
 

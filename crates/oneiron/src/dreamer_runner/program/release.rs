@@ -126,7 +126,9 @@ pub fn release_turn_program_hold_as_owner(
     if let Some((id, generation)) = released.stopped {
         crate::engine_executor::stop_attempt_step(Some(vault), id, generation);
     }
-    if released.resumed {
+    // A resume arms its try at once, and a Stop may owe an abandon whose
+    // retry the deadline lane arms (FIX 7352).
+    if released.resumed || released.stopped.is_some() {
         vault.store.notify_proactivity_changes();
     }
     Ok(released.view)
@@ -245,6 +247,9 @@ fn resume_in_txn(
     let binding = match vault.bind_turn_program_in_txn(&*wtxn, attempt)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return Err(not_resumed(held.reason())),
+        TurnProgramBound::OwnerNotLive => {
+            return Err(not_resumed(crate::authority::OWNER_NOT_LIVE));
+        }
     };
     if let Some(why) = vault.validate_program_resume_checkpoint_in_txn(
         &*wtxn,

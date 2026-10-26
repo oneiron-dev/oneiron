@@ -113,7 +113,8 @@ fn terminal_write(
         ),
         reply_assertions: crate::llm::ReplyAssertions::default(),
     };
-    let memory = vault.memory(seed.actor, seed.class()?);
+    // The opener's own proof, restored, reads every link below (FIX 1667).
+    let memory = super::super::reader::terminal_memory(vault, seed)?;
     // OF-063 prose links (Engine ruling 10-17): a continuation's appended
     // text is read for the links its AI writer cannot resolve, receipt-only,
     // before the writer opens, and receipted only once the finalize has
@@ -165,23 +166,21 @@ fn terminal_write(
                 admitted_in_txn(&vault.store, txn, &[&seed.assertions, assertions])?;
             let base = admission::committed_text(vault, txn, seed)?.ok_or(Error::EntityNotFound)?;
             let text = format!("{base}{}", state.pending);
-            admission::authorize(vault, txn, seed, &text)?;
+            admission::authorize(vault, txn, seed, &text, !state.pending.is_empty())?;
             let was_final =
                 storage::receipt(vault, txn, seed.message_id)?.is_none_or(|prior| prior.complete());
-            #[cfg(feature = "sync")]
-            crate::entity_doc::append_message_stream_in_txn(
-                vault,
-                txn,
-                &seed.message_id,
-                &state.pending,
-                crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                seed.occurred_at,
-            )?;
-            #[cfg(not(feature = "sync"))]
+            // A nonempty continuation edits the MESSAGE, and its first births
+            // the document; an empty one edits nothing and births none (FIX
+            // 4840).
             if !state.pending.is_empty() {
-                return Err(MessageStreamError::InvalidRequest(
-                    "continuation requires entity documents (sync feature)",
-                ));
+                crate::entity_doc::append_message_stream_in_txn(
+                    vault,
+                    txn,
+                    &seed.message_id,
+                    &state.pending,
+                    crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
+                    seed.occurred_at,
+                )?;
             }
             receipt.bytes = text.len() as u64;
             storage::finish(vault, txn, seed, &receipt)?;
@@ -252,14 +251,8 @@ fn terminal_write(
                         retry
                     },
                     |txn| -> MemoryResult<()> {
-                        #[cfg(feature = "sync")]
-                        crate::entity_doc::birth_message_stream_in_txn(
-                            vault,
-                            txn,
-                            &seed.message_id,
-                            crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                            seed.occurred_at,
-                        )?;
+                        // The new MESSAGE keeps its words inline: its document
+                        // is born at its first later edit (FIX 4840).
                         if let Some(source) = seed.regenerates {
                             // The kind's creation is this stream's alone (FIX
                             // 5972), its pair proven above in this transaction:
@@ -283,11 +276,8 @@ fn terminal_write(
                         }
                         // The turn's set, seed and terminal, was admitted in
                         // this write: its receipt keeps it (FIX 10260).
-                        receipt.reply_assertions = admitted_in_txn(
-                            &vault.store,
-                            txn,
-                            &[&turn.assertions],
-                        )?;
+                        receipt.reply_assertions =
+                            admitted_in_txn(&vault.store, txn, &[&turn.assertions])?;
                         storage::finish(vault, txn, seed, &receipt)?;
                         Ok(())
                     },

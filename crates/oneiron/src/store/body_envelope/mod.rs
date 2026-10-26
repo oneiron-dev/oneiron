@@ -51,7 +51,10 @@ pub(crate) use self::custody::{
     BodyMint, body_key_in, body_mint_in, custody_unavailable, instance_id, pin_body_custody_in_txn,
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
-pub(crate) use self::opaque_response::{ResponseRead, ResponseScan};
+pub(crate) use self::opaque_response::{
+    ResponseOwners, ResponseRead, ResponseScan, is_opaque_erased, opaque_retired_at,
+    stamp_opaque_erased,
+};
 pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,
 };

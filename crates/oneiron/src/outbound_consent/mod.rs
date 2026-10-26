@@ -12,12 +12,17 @@ mod connector_call;
 mod connector_call_asks;
 mod connector_call_code;
 mod connector_call_consent;
+mod connector_call_delivery;
+mod connector_call_dispatch;
+mod connector_call_driver;
 mod connector_call_erase;
 mod connector_call_input;
 mod connector_call_input_resume;
 mod connector_call_output;
 mod connector_call_pending;
 mod connector_call_resume;
+mod connector_call_start;
+mod connector_call_types;
 mod connector_elicitation_asks;
 mod connector_elicitation_consent;
 mod connector_elicitation_receipt;
@@ -39,7 +44,8 @@ pub use self::authority::{
 pub use self::connector_call::{
     CONNECTOR_REPLY_MAX_BYTES, ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost,
     ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState,
-    ConnectorQuestion, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorQuestion, ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef,
+    UntrustedToolResult,
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub(crate) use self::connector_call_code::{

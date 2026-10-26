@@ -98,26 +98,18 @@ impl SyncClient {
             ));
         }
 
-        if config.note_session.is_some() {
-            let uri: tokio_tungstenite::tungstenite::http::Uri =
-                config.server_url.parse().map_err(|_| {
-                    Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
-                })?;
-            let loopback = uri.host().is_some_and(|host| {
-                host.trim_matches(['[', ']'])
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-            });
-            // A mesh dialer is a private carrier to a paired machine: the
-            // bind never crosses an open network.
-            if config.mesh_dialer.is_none()
-                && uri.scheme_str() != Some("wss")
-                && !(uri.scheme_str() == Some("ws") && loopback)
-            {
-                return Err(Error::sync_protocol(
-                    SyncProtocolValidation::DocumentAdmissionDenied,
-                ));
-            }
+        // A mesh dialer is a private carrier to a paired machine: the bind
+        // never crosses an open network. The residence lane holds the
+        // endpoint it dials to the same rule (FIX 8862).
+        if config.note_session.is_some()
+            && !super::endpoint::admits_credentials(
+                &config.server_url,
+                config.mesh_dialer.is_some(),
+            )
+        {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
         }
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());

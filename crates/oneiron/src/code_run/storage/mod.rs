@@ -48,6 +48,7 @@ pub(crate) use self::replay_bodies::{
     response_erased_error,
 };
 pub use self::replay_capsule::step_replay_capsules;
+pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
     ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
     fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,
@@ -82,12 +83,12 @@ pub(crate) use self::wait_delivery::{
 // DOOR-141 PR3b: a turn program's resume checkpoint and its wait.
 pub(crate) use self::program_resume::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
+    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
     program_resume_calls_in_txn, program_resume_head_in_txn,
 };
 pub(crate) use self::wait_delivery::wait_delivered_in_txn;
 pub(crate) use self::wait_holders::{
     WaitReply, erase_settled_reply_of_erased_run_in_txn, settled_reply_held_in_txn,
-    settled_wait_key, wait_delivery_owners, wait_reply_in_txn, wait_reply_stub,
+    settled_wait_key, wait_delivery_owners, wait_reply_erased, wait_reply_in_txn, wait_reply_scan,
     wait_settled_owners,
 };

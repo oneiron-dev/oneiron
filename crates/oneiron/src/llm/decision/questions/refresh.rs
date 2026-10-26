@@ -1034,17 +1034,12 @@ fn source(
     }
     let mut hasher = blake3::Hasher::new();
     hasher.update(&raw);
-    #[cfg(feature = "sync")]
     let document_head = crate::entity_doc::record_head_bytes(&vault.store, txn, &unit)?;
-    #[cfg(feature = "sync")]
     if let Some(head) = &document_head {
         hasher.update(head);
     }
     if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-        #[cfg(feature = "sync")]
         let migrated = document_head.is_some();
-        #[cfg(not(feature = "sync"))]
-        let migrated = false;
         if !migrated {
             hasher.update(&crate::note::live_frontier_in_txn(vault, txn, unit)?);
         }

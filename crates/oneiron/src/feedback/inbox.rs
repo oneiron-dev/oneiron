@@ -7,11 +7,13 @@
 //! the owner. Notes are numbered in arrival order, from 1; a sweep keeps the
 //! last number it read and asks for the notes after it. Bounding what one
 //! note may carry and how many arrive is the host's (its body row and flood
-//! cap); nothing here reads a note's text.
+//! cap); nothing here reads a note's text, except a body that declares itself
+//! an issue signature, which lands only once it reads back as one (FIX 7684).
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use super::report::{REPORT_SIGNATURE_SCHEMA, received_issue_signature};
 use super::{FeedbackBundle, FeedbackCategory, FeedbackEncoding, decode_feedback_bundle_as};
 use crate::side_table::{self, Named, SideTable};
 use crate::{Error, Result, Vault};
@@ -29,6 +31,20 @@ pub enum FeedbackInboxVia {
     Post,
     /// A POST carrying a v1 feedback bundle a vault sent.
     Bundle,
+    /// A POST carrying a content-free issue signature a vault's Coach sent
+    /// (`oneiron.issue_signature.v1`), read back typed; its text is the exact
+    /// canonical body.
+    Signature,
+}
+
+/// Whether `body` declares itself an issue signature: a JSON object whose
+/// `schema` is `oneiron.issue_signature.v1`. Such a body lands only through
+/// [`Vault::take_feedback_signature`], once it [`reads_as_issue_signature`].
+#[must_use]
+pub fn declares_issue_signature(body: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(body).is_ok_and(|value| {
+        value.get("schema").and_then(serde_json::Value::as_str) == Some(REPORT_SIGNATURE_SCHEMA)
+    })
 }
 
 /// One note in the inbox.
@@ -48,6 +64,13 @@ pub struct FeedbackInboxNote {
     pub bundle: Option<FeedbackBundle>,
 }
 
+/// Whether `body` reads back as an issue signature, byte for byte: what
+/// [`Vault::take_feedback_signature`] lands.
+#[must_use]
+pub fn reads_as_issue_signature(body: &str) -> bool {
+    received_issue_signature(body).is_some()
+}
+
 impl Vault {
     /// Lands one plain note and returns its arrival number.
     pub fn take_feedback_note(
@@ -56,12 +79,31 @@ impl Vault {
         text: String,
         category: Option<FeedbackCategory>,
     ) -> Result<u64> {
-        if via == FeedbackInboxVia::Bundle {
-            return Err(Error::InvalidConfig(
-                "a feedback bundle lands through take_feedback_bundle".into(),
-            ));
+        match via {
+            FeedbackInboxVia::Bundle => {
+                return Err(Error::InvalidConfig(
+                    "a feedback bundle lands through take_feedback_bundle".into(),
+                ));
+            }
+            FeedbackInboxVia::Signature => {
+                return Err(Error::InvalidConfig(
+                    "an issue signature lands through take_feedback_signature".into(),
+                ));
+            }
+            FeedbackInboxVia::Link | FeedbackInboxVia::Post => {}
         }
         self.land_feedback_note(via, text, category, None)
+    }
+
+    /// Lands one content-free issue signature a vault's Coach sent and
+    /// returns its arrival number. A body that does not read back as one,
+    /// byte for byte, is refused and nothing lands, so its sender never
+    /// records it delivered (FIX 7684).
+    pub fn take_feedback_signature(&self, body: &str) -> Result<u64> {
+        if !reads_as_issue_signature(body) {
+            return Err(Error::InvalidConfig("invalid issue signature".into()));
+        }
+        self.land_feedback_note(FeedbackInboxVia::Signature, body.to_owned(), None, None)
     }
 
     /// Lands one v1 feedback bundle a vault sent and returns its arrival

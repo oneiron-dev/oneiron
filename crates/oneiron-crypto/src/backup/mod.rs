@@ -35,8 +35,9 @@ pub use self::commitment::{
     MAX_SIGNED_FRAME, SLHDSA_KEY_ID, commitment_digest, verify_commitment_signature,
 };
 pub use self::inspect::{
-    ARTIFACT_SEAL_EPOCH, ARTIFACT_SEAL_SUITE, BackupEvidence, IMAGE_STREAM, MANIFEST_STREAM,
-    MAX_FRAME_LEN, inspect_backup, verify_with_pins,
+    ARTIFACT_SEAL_EPOCH, ARTIFACT_SEAL_SUITE, BackupEvidence, BackupTailEvidence, IMAGE_STREAM,
+    MANIFEST_PIECE_STREAM, MANIFEST_STREAM, MAX_FRAME_LEN, inspect_backup, inspect_backup_tail,
+    verify_tail_with_pins, verify_with_pins,
 };
 pub use self::prelude::{
     ARTIFACT_VERSION_V1, ARTIFACT_VERSION_V2, ArtifactPrelude, BackupHead, IDENTITY_V1_LEN,

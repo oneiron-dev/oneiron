@@ -69,7 +69,9 @@ impl Memory<'_> {
     /// Returns at admission. This does not open a trap, lease a run, or wait.
     /// A question answer never stands in for an authenticated consent receipt.
     /// In `manual` mode the ask may be held for the owner's launch approval
-    /// (ASK-3): its receipt names the hold and no member TASK exists yet.
+    /// (ASK-3), and under `auto` when a host's learned ruling surfaces a
+    /// multi-recipient ask to a person (FIX 10181): its receipt names the
+    /// hold and no member TASK exists yet.
     pub fn tasks_ask(&self, input: &TaskAskSpec) -> MemoryResult<TaskAskReceipt> {
         self.tasks_ask_composed(input, None)
     }
@@ -89,8 +91,16 @@ impl Memory<'_> {
                 .tasks_ask_with_txn_effect(input, effect);
         }
         let digest = ask_admission_digest(input)?;
+        let auto = self.ask_auto_gate(input);
         self.with_verified_actor_write_txn(|txn| {
-            self.admit_ask_in_txn(txn, input, &digest, AskThen::Now(effect))
+            self.admit_ask_in_txn(
+                txn,
+                input,
+                &digest,
+                AskThen::Now(effect),
+                auto.as_ref(),
+                None,
+            )
         })
     }
 
@@ -106,9 +116,26 @@ impl Memory<'_> {
             return self.task_work_memory().tasks_ask_composed(input, effect);
         }
         let digest = ask_admission_digest(input)?;
+        let auto = self.ask_auto_gate(input);
         self.with_verified_actor_write_txn(|txn| {
-            self.admit_ask_in_txn(txn, input, &digest, AskThen::<NoClosure>::Typed(effect))
+            self.admit_ask_in_txn(
+                txn,
+                input,
+                &digest,
+                AskThen::<NoClosure>::Typed(effect),
+                auto.as_ref(),
+                None,
+            )
         })
+    }
+
+    /// The Auto launch ruling a multi-recipient ask takes before its writer
+    /// opens (FIX 10181), where this surface carries a host's decisions. An
+    /// ask on any other surface, or composed inside a writer, takes none and
+    /// is admitted as before.
+    fn ask_auto_gate(&self, input: &TaskAskSpec) -> Option<super::fanout_launch::AskAutoGate> {
+        self.task_decisions()
+            .and_then(|decisions| super::fanout_launch::AskAutoGate::decide(self, input, decisions))
     }
 
     /// [`Self::tasks_ask_composed`] inside a transaction an engine writer
@@ -122,25 +149,59 @@ impl Memory<'_> {
         effect: Option<AskEffect>,
     ) -> MemoryResult<TaskAskReceipt> {
         let digest = ask_admission_digest(input)?;
-        self.admit_ask_in_txn(txn, input, &digest, AskThen::<NoClosure>::Typed(effect))
+        self.admit_ask_in_txn(
+            txn,
+            input,
+            &digest,
+            AskThen::<NoClosure>::Typed(effect),
+            None,
+            None,
+        )
+    }
+
+    /// The ask of a consult interruption's frozen consent case (FIX 10692),
+    /// in `txn`, the interruption's own writer: kept under `case_ref`, the
+    /// group the consult's Finish reads, which only the engine names. As the
+    /// engine's question to the owners it takes no ask ceiling and no launch
+    /// hold. A replay of the same case answers the group it minted.
+    pub(super) fn tasks_ask_for_case_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: &TaskAskSpec,
+        case_ref: EntityId,
+    ) -> MemoryResult<TaskAskReceipt> {
+        let digest = ask_admission_digest(input)?;
+        self.admit_ask_in_txn(
+            txn,
+            input,
+            &digest,
+            AskThen::<NoClosure>::Typed(None),
+            None,
+            Some(case_ref),
+        )
     }
 
     /// One ask's admission in `txn`: replay (of a group, or of a held
     /// launch), the ask rules, the census, then either the launch hold or
     /// the member TASKs and the group, and the composed effect on a first
-    /// admission.
+    /// admission. A consult case's ask (`case`) is kept under its case ref.
     fn admit_ask_in_txn<F>(
         &self,
         txn: &mut heed::RwTxn<'_>,
         input: &TaskAskSpec,
         digest: &str,
         then: AskThen<F>,
+        auto: Option<&super::fanout_launch::AskAutoGate>,
+        case: Option<EntityId>,
     ) -> MemoryResult<TaskAskReceipt>
     where
         F: FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     {
         let now = self.vault().store.clock.now_recorded_at();
-        let group_ref = ask_record::group_id(self.vault(), txn, self.actor(), &input.intent_key)?;
+        let group_ref = match case {
+            Some(case_ref) => case_ref,
+            None => ask_record::group_id(self.vault(), txn, self.actor(), &input.intent_key)?,
+        };
         if let Some(group) = ask_record::read_group(self.vault(), txn, group_ref)? {
             return replay_receipt(group_ref, group, self.actor(), digest);
         }
@@ -154,7 +215,9 @@ impl Memory<'_> {
         )? {
             return Ok(receipt);
         }
-        self.require_ask_ceiling_in(txn, input)?;
+        if case.is_none() {
+            self.require_ask_ceiling_in(txn, input)?;
+        }
         // Revocation and admission observe the SAME snapshot.
         let census = self.ask_census_in(txn, input, group_ref, now)?;
         // One ask counts once on the asker's ask window, whatever its
@@ -199,16 +262,26 @@ impl Memory<'_> {
             AskThen::Now(_) => self.ask_launch_project_in(txn, input, None)?,
         };
         // A comm widen ask (proved above) asks the approver itself, and a
-        // code consent ask (proved above) is the engine's question to the
-        // owner, so neither waits on a launch approval.
-        if !super::comm_widen::is_comm_widen_ask_intent(&input.intent_key)
+        // code consent ask (proved above) and a consult case's ask are the
+        // engine's questions to the owner, so none waits on a launch
+        // approval.
+        // An Auto ask's learned ruling, taken before the writer, holds it
+        // through the same launch hold when it surfaced the ask to a person
+        // or its policy or recipients moved since (FIX 10181).
+        if case.is_none()
+            && !super::comm_widen::is_comm_widen_ask_intent(&input.intent_key)
             && !super::code_consent_word::is_code_consent_ask_intent(&input.intent_key)
-            && super::fanout_launch::ask_launch_needs_approval(
+            && (super::fanout_launch::ask_launch_needs_approval(
                 self.vault(),
                 txn,
                 &census.holders,
                 approval_project,
-            )?
+            )? || match auto {
+                Some(auto) => {
+                    auto.holds_in(self.vault(), txn, &census.holders, approval_project)?
+                }
+                None => false,
+            })
         {
             // Held: no guest grant, no member TASK and no group exist until
             // an approver releases it; a typed effect waits on the hold, and

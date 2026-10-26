@@ -47,6 +47,8 @@ use crate::secret_custody::reveal::{
 use crate::secret_custody::{CustodyClass, SecretSight};
 use crate::vault::Vault;
 
+mod grants;
+
 /// Domain of a repo file read's identity digests and its fingerprint.
 const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
 

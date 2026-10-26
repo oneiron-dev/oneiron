@@ -212,6 +212,33 @@ pub(super) trait MixedCarrierProjection {
         carrier: Carrier,
         opened: OpenedOwnerRows,
     ) -> Result<Restored>;
+
+    /// Records in `out`, by carrier, the document groups of `rows` (FIX
+    /// 10932): the image's rows of the carriers that hold entity-document
+    /// frames, each update grouped with its document's history read from
+    /// `txn` as `filter` takes it. Answers the indexes of the rows it
+    /// placed; [`Self::project`] places the rest one at a time. None by
+    /// default.
+    fn project_documents(
+        &self,
+        _txn: &RoTxn<'_>,
+        _filter: &ImageFilter,
+        _rows: &[DocumentCarrierRow],
+        _out: &mut BTreeMap<Carrier, Captured>,
+    ) -> Result<BTreeSet<usize>> {
+        Ok(BTreeSet::new())
+    }
+}
+
+/// One image row of a carrier that holds entity-document frames (a pending
+/// edit's, a cached item's), kept until every row is read so that a
+/// document's rows group whole (FIX 10932).
+pub(super) struct DocumentCarrierRow {
+    pub(super) carrier: Carrier,
+    /// The family the receipt names it by when it stays unclassified.
+    pub(super) family: &'static str,
+    pub(super) key: Vec<u8>,
+    pub(super) value: Vec<u8>,
 }
 
 /// The port before KS7-3: it splits no carrier, so none is compartmented.
@@ -552,6 +579,7 @@ pub(super) fn project(
     }
     let families = Families::new();
     let mut split: BTreeMap<Carrier, Captured> = BTreeMap::new();
+    let mut documents = Vec::new();
     for &(name, class) in rows::DATABASES {
         if matches!(class, DbClass::Rows(Class::NotImaged)) {
             continue;
@@ -570,6 +598,9 @@ pub(super) fn project(
                     }
                 },
             };
+            // A mixed family's response rows go to the response client
+            // (FIX 9179).
+            let class = rows::class_for_row(name, key, value, class);
             match (class, claims.of(name, key)) {
                 (Class::Owner(getter), Some((BundleRole::Content(by), claim))) if by == getter => {
                     if claim == Claim::Unclassified {
@@ -579,6 +610,14 @@ pub(super) fn project(
                 // A row its getter left out, or an unclassified family's,
                 // stays in the image, named.
                 (Class::Owner(_) | Class::Unclassified, None) => projected.count(family),
+                (Class::Mixed(carrier @ (Carrier::PendingEdit | Carrier::ResidenceItem)), None) => {
+                    documents.push(DocumentCarrierRow {
+                        carrier,
+                        family,
+                        key: key.to_vec(),
+                        value: value.to_vec(),
+                    });
+                }
                 (Class::Mixed(carrier), None) => {
                     let out = split.entry(carrier).or_default();
                     if !carriers.project(txn, carrier, key, value, out)? {
@@ -595,6 +634,16 @@ pub(super) fn project(
             Ok(())
         };
         for_each_row(dbs, txn, name, &mut place)?;
+    }
+    let grouped = carriers.project_documents(txn, filter, &documents, &mut split)?;
+    for (index, row) in documents.iter().enumerate() {
+        if grouped.contains(&index) {
+            continue;
+        }
+        let out = split.entry(row.carrier).or_default();
+        if !carriers.project(txn, row.carrier, &row.key, &row.value, out)? {
+            projected.count(row.family);
+        }
     }
     for (carrier, captured) in split {
         let role = BundleRole::Carrier(carrier);

@@ -23,6 +23,7 @@
 //! lands its exact bytes, and a retired one leaves the explicit erased
 //! marker (a claim, its shell).
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
@@ -35,7 +36,7 @@ use crate::attempt_queue::AttemptId;
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
     bind_response_in_txn, carrier_row, release_response_in_txn, response_binding_in_txn,
-    response_carrier, response_owed_to_all_in_txn,
+    response_carrier, response_owed_to_all_in_txn, stamp_opaque_erased,
 };
 use crate::vault_cleanup::refresh_archived_attempt_in_rows;
 use crate::{Error, Result};
@@ -149,10 +150,15 @@ pub(super) fn carry(
     (carriage, instance, digest, opaque): (ResponseCarriage, [u8; 16], [u8; 32], bool),
 ) -> Result<(CarriedInline, Vec<u8>, Vec<u8>)> {
     let body = value[carriage.keep..].to_vec();
-    // A queue row lands unleased (FIX 7115): the length it lands at.
-    let landed_len = (database == ResponseDb::Attempts.name())
-        .then(|| rebuild::unlease_attempt(key, value).map(|row| row.len() as u64))
-        .transpose()?;
+    // A queue row lands unleased (FIX 7115): the length it lands at. An
+    // opaque one the strict reader refuses lands as it rested (FIX 9390).
+    let landed_len = if database != ResponseDb::Attempts.name() {
+        None
+    } else if opaque {
+        rebuild::unlease_opaque_attempt(key, value)?.map(|row| row.len() as u64)
+    } else {
+        Some(rebuild::unlease_attempt(key, value)?.len() as u64)
+    };
     let carried = CarriedInline {
         database: database.to_owned(),
         key: key.to_vec(),
@@ -328,6 +334,12 @@ pub(super) fn retire_carried(
         let caller = (family == ResponseFamily::Http)
             .then(|| crate::store::http_erase_drop_caller(value))
             .flatten();
+        // An opaque one's erased marker takes the time it retired, as a live
+        // prune stamps it, so a restored vault's marker expires as a live
+        // one's does (FIX 10710); a row its family drops goes all the same.
+        if let Cow::Owned(stamped) = stamp_opaque_erased(value) {
+            *value = stamped;
+        }
         // An attempt's archive mark bound its carried bytes: it follows the
         // row to its text-free form (FIX 7115).
         if family == ResponseFamily::AttemptPayload {
@@ -356,7 +368,8 @@ pub(super) fn retire_carried(
 /// they land and before any row does, as a snapshot unleases every other
 /// (FIX 7115): the instance seals the row as it stood, so its image row is
 /// normalized only here. Its archive mark follows it when it bound the bytes
-/// carried. A Landing attempt refuses, as at the snapshot.
+/// carried. A Landing attempt refuses, as at the snapshot. An opaque one the
+/// strict reader refuses keeps its exact bytes (FIX 9390).
 ///
 /// # Errors
 ///
@@ -366,7 +379,7 @@ pub(super) fn unlease_carried_attempts(
     image: &mut CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
-    let landed: Vec<(Vec<u8>, [u8; 32])> = image
+    let landed: Vec<(Vec<u8>, [u8; 32], bool)> = image
         .inline_bodies
         .iter()
         .filter(|carried| {
@@ -374,15 +387,22 @@ pub(super) fn unlease_carried_attempts(
                 && !carried.superseded
                 && !retired.contains(&carried.instance)
         })
-        .map(|carried| (carried.key.clone(), carried.digest))
+        .map(|carried| (carried.key.clone(), carried.digest, carried.opaque))
         .collect();
-    for (key, digest) in landed {
+    for (key, digest, opaque) in landed {
         let rows = image
             .databases
             .get_mut(ResponseDb::Attempts.name())
             .ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
-        *value = rebuild::unlease_attempt(&key, value)?;
+        if opaque {
+            match rebuild::unlease_opaque_attempt(&key, value)? {
+                Some(unleased) => *value = unleased,
+                None => continue,
+            }
+        } else {
+            *value = rebuild::unlease_attempt(&key, value)?;
+        }
         let after = *blake3::hash(value).as_bytes();
         if let (Ok(id), Some(rows)) = (
             AttemptId::from_bytes(&key),

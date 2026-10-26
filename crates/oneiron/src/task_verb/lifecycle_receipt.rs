@@ -10,14 +10,20 @@
 //! it journaled, `receipt_ref` and all. A fence refusal, a take another holds
 //! and a status read keep none. A call in an anonymous off-record session
 //! keeps none either (Engine ruling, #1968), as every receipt writer there:
-//! such a session keeps nothing.
+//! such a session keeps nothing. One record is exempt (Engine 10-26,
+//! ARCH-0052, FIX 10694): a consult interruption's frozen consent case is an
+//! authority record, kept in such a session too, with its authority fields
+//! only and no conversation content, as is the ConsentRequired fact beside
+//! it.
 //!
 //! Each receipt is indexed in the transaction that keeps it: by its TASK and
 //! time, which a status read names the newest of (FIX 3270) and whose row of
 //! the write that settled the TASK a replayed Done names (FIX 3272), and by
 //! time alone, which a receipt query reads newest first (FIX 3271).
 //!
-//! The receipt is narrative, not authority: no gate or proof reads it.
+//! The receipt is narrative, not authority: no gate or proof reads it, save
+//! the one row the engine keeps for itself, a consult interruption's frozen
+//! consent case (FIX 9742), which only the engine writes and reads back.
 
 use std::ops::Bound;
 
@@ -250,6 +256,16 @@ pub(super) fn replayed_in(
     id: String,
 ) -> MemoryResult<Option<String>> {
     Ok(RECEIPTS.contains(&vault.store, txn, &id)?.then_some(id))
+}
+
+/// The row kept under `id`, as it was kept, read in `txn`: for a record the
+/// engine keeps for itself and reads back (FIX 9742). `None` when none is.
+pub(super) fn kept_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &str,
+) -> MemoryResult<Option<ReceiptRecord>> {
+    Ok(RECEIPTS.get(&vault.store, txn, &id.to_owned())?)
 }
 
 /// [`replayed_in`] in a read of its own.

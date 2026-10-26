@@ -8,7 +8,10 @@
 //! back to the role's price. An AGENT_DEF names no model or route of its
 //! own: its tier is recorded on the call and never picks another model. The
 //! rate is the model's highest catalog rate per token, so the dollar figure
-//! is an upper bound. Catalog prices carry no currency and are read as USD.
+//! is an upper bound. Only a catalog price quoted in USD makes the quote; one
+//! in another currency, or in none its provider named, quotes nothing and is
+//! never read as dollars (FIX 9534). A free model, every rate zero, quotes 0
+//! in any currency.
 //! A unit other than tokens is priced from that same model's token rate
 //! through the one rate the exact offer serving it supplies for the unit
 //! (FIX 3041); a unit's name is never read as money. A peer consult, a model
@@ -23,6 +26,9 @@ use oneiron::llm::run_admission::LeaseUnit;
 use oneiron::{ModelId, Vault};
 
 use super::ModelRuntime;
+
+/// The one currency the launch statement quotes in.
+const QUOTE_CURRENCY: &str = "USD";
 
 /// The per-vault quote the AI host installs. It holds the seat's model id
 /// and a weak handle on the host's model runtime, never the vault.
@@ -105,8 +111,16 @@ impl LaunchUsdPrices for LaunchUsdQuote {
 }
 
 /// The highest of a catalog cost's per-million rates (input, output, cache
-/// read, cache write), rounded up. `None` when any rate does not parse.
+/// read, cache write), rounded up. `None` when the cost is neither quoted in
+/// USD nor free in any currency, or any rate does not parse.
 fn max_rate(cost: &LlmCatalogCost) -> Option<UsdUnitPrice> {
+    // Rates that are all zero cost nothing in any currency, so they quote
+    // zero whatever currency they name, none included (FIX 9534).
+    let free = crate::usage::catalog_cost_rates(cost, String::new())
+        .is_some_and(|rates| rates.free_in_any_currency());
+    if !free && cost.currency.as_deref() != Some(QUOTE_CURRENCY) {
+        return None;
+    }
     let mut max_rate = 0.0_f64;
     for text in [&cost.input_per_million, &cost.output_per_million]
         .into_iter()

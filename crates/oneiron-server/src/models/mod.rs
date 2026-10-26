@@ -91,8 +91,8 @@ pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
-pub use hosted_speech::HostedCloner;
 pub(crate) use host_budgets::ModelHostBudgets;
+pub use hosted_speech::HostedCloner;
 pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
@@ -137,6 +137,15 @@ impl Seat {
     /// The rung that serves `model`, alone and with its prompt.
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
+    }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order: every model a call on the seat may be served on.
+    pub(crate) fn rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder
+            .rung_models()
+            .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned)))
+            .collect()
     }
 }
 

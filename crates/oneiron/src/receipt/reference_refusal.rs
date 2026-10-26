@@ -37,6 +37,11 @@ use crate::memory::RefusalReason;
 
 const OUTCOME_REFUSED: &str = "refused";
 const OUTCOME_UNLINKED: &str = "unlinked";
+const OUTCOME_CREATION_NOT_PROVEN: &str = "creation_not_proven";
+/// The one trace a creation-status record carries: the record is real and
+/// readable, but its birth does not prove its writer made it (FIX 1211). It
+/// is neither an invented reference nor a gate refusal.
+const TRACE_CREATION_NOT_PROVEN: &str = "CREATION_NOT_PROVEN";
 const FIELD_ACTOR_CLASS: &str = "actor_class";
 const FIELD_ROW: &str = "row";
 const FIELD_FIELD: &str = "field";
@@ -57,6 +62,10 @@ pub(crate) enum ReferenceOutcome {
     /// even when that write then fails (a gate refusal, a cap). A reader of
     /// the audit family must not read it as proof the text landed.
     Unlinked,
+    /// A landed reply said it created a record its writer reads, and the
+    /// record's birth does not prove that writer made it (FIX 1211). The
+    /// reply stands; the record is shown as not proven created.
+    CreationNotProven,
 }
 
 impl ReferenceOutcome {
@@ -64,6 +73,7 @@ impl ReferenceOutcome {
         match self {
             Self::Refused => OUTCOME_REFUSED,
             Self::Unlinked => OUTCOME_UNLINKED,
+            Self::CreationNotProven => OUTCOME_CREATION_NOT_PROVEN,
         }
     }
 }
@@ -96,13 +106,22 @@ const fn actor_class_name(class: crate::EdgeActorClass) -> &'static str {
     }
 }
 
-/// The receipt the record at `id` carries: `refused`, at `at`, for `reason`.
+/// The receipt the record at `id` carries: its outcome, at `at`, for
+/// `reason`. A creation status carries its own trace, never `reason`.
 pub(super) fn reference_refusal_receipt(
     id: &EntityId,
     facts: &ReferenceRefusalFacts,
     reason: RefusalReason,
     at: u64,
 ) -> ReceiptRecord {
+    // A creation status names no actor id: it records what the writer's
+    // reply asserted, and an actor's erase has no scrub to reach it.
+    let (trace, actor) = match facts.outcome {
+        ReferenceOutcome::CreationNotProven => (TRACE_CREATION_NOT_PROVEN, None),
+        ReferenceOutcome::Refused | ReferenceOutcome::Unlinked => {
+            (reason.as_str(), Some(facts.actor.to_hex()))
+        }
+    };
     let fields = BTreeMap::from([
         (
             FIELD_ACTOR_CLASS.to_owned(),
@@ -115,32 +134,49 @@ pub(super) fn reference_refusal_receipt(
         receipt_id: receipt_id(id),
         receipt_kind: ReceiptKind::ReferenceRefusal,
         occurred_at: at,
-        actor: Some(facts.actor.to_hex()),
+        actor,
         on_behalf_of: None,
         outcome: facts.outcome.as_str().to_owned(),
         job_ref: None,
         trigger_ref: None,
-        policy_trace: vec![reason.as_str().to_owned()],
+        policy_trace: vec![trace.to_owned()],
         fields,
     }
 }
 
 /// Whether `receipt` is the reference-refusal record `id` carries: its own
-/// id, a hex actor, the outcome `refused`, one typed reason, and exactly the
-/// refusal facts, each in its bounded shape, so no carrier can smuggle an
-/// attempt's content into the audit family.
+/// id, the outcome `refused` or `unlinked` with a hex actor and one typed
+/// reason, or `creation_not_proven` with no actor and its one trace, and
+/// exactly the refusal facts, each in its bounded shape, so no carrier can
+/// smuggle an attempt's content into the audit family.
 pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
     let field = |name: &str| receipt.fields.get(name).map(String::as_str);
+    let hex_actor = receipt.actor.as_deref().is_some_and(|actor| {
+        EntityId::from_hex(actor).is_ok_and(|parsed| parsed.to_hex() == actor)
+    });
+    let traced = match receipt.outcome.as_str() {
+        OUTCOME_REFUSED | OUTCOME_UNLINKED => {
+            hex_actor
+                && matches!(
+                    receipt.policy_trace.as_slice(),
+                    [reason] if RefusalReason::parse(reason).is_some()
+                )
+        }
+        OUTCOME_CREATION_NOT_PROVEN => {
+            receipt.actor.is_none()
+                && matches!(
+                    receipt.policy_trace.as_slice(),
+                    [trace] if trace == TRACE_CREATION_NOT_PROVEN
+                )
+        }
+        _ => false,
+    };
     receipt.receipt_kind == ReceiptKind::ReferenceRefusal
         && receipt.receipt_id == receipt_id(id)
-        && matches!(receipt.outcome.as_str(), OUTCOME_REFUSED | OUTCOME_UNLINKED)
-        && receipt.actor.as_deref().is_some_and(|actor| {
-            EntityId::from_hex(actor).is_ok_and(|parsed| parsed.to_hex() == actor)
-        })
+        && traced
         && receipt.on_behalf_of.is_none()
         && receipt.job_ref.is_none()
         && receipt.trigger_ref.is_none()
-        && matches!(receipt.policy_trace.as_slice(), [reason] if RefusalReason::parse(reason).is_some())
         && matches!(field(FIELD_ACTOR_CLASS), Some("human" | "agent" | "system"))
         && field(FIELD_ROW).is_some_and(|row| {
             !row.is_empty()
@@ -264,4 +300,30 @@ pub(crate) fn receipt_refusal(
         Ok(id)
     })?;
     Ok(Some(receipt_id(&id)))
+}
+
+/// Records, best effort, that a landed reply's `created` records at
+/// `pointers` are not proven made by `memory`'s writer (FIX 1211), each as
+/// its own content-free reference record, naming the writer's class but no
+/// actor id, on one grouped write of their own after the turn has committed:
+/// a failure there is logged and the reply stands. An anonymous off-record
+/// session keeps none, as for refusals.
+pub(crate) fn receipt_creations_not_proven(
+    memory: &crate::memory::Memory<'_>,
+    row: &'static str,
+    pointers: &[String],
+) {
+    let statuses: Vec<ReferenceRefusalFacts> = pointers
+        .iter()
+        .map(|pointer| ReferenceRefusalFacts {
+            actor: memory.actor(),
+            actor_class: memory.actor_class(),
+            row,
+            field: pointer.clone(),
+            outcome: ReferenceOutcome::CreationNotProven,
+        })
+        .collect();
+    if let Err(error) = receipt_reference_refusals(memory, &statuses) {
+        tracing::warn!(%error, "creation-not-proven receipts were not written; the reply stands");
+    }
 }

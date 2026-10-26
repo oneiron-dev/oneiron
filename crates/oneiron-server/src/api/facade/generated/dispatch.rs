@@ -1218,9 +1218,13 @@ async fn vault_shape_apply(
     oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
     let ran = async {
-        let (output, listed) =
-            super::host_doors::vault_shape_apply(server, auth, facade_door_input(&mut hooks)?)
-                .await;
+        let (output, listed) = super::host_doors::vault_shape_apply(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -2387,8 +2391,8 @@ async fn tasks_redo(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_landing(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
@@ -2401,13 +2405,14 @@ async fn tasks_redo(
     tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke(
+        let output = facade_invoke_born(
             &server,
             &call,
             actor,
             class,
             "tasks.redo",
             value,
+            position,
             &producers,
         )?;
         Ok(FacadeCallOutput::listed(output, &producers))
@@ -22298,6 +22303,76 @@ async fn vault_repo_git_push_revoke(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_connectors_read_grants_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.read_grants.grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.grant", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.read_grants.grant", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_read_grants_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_read_grants_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.read_grants.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.revoke", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.read_grants.revoke", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_read_grants_revoke(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_repo_anchor_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37773,6 +37848,12 @@ pub(crate) async fn call_verb(
         "vault.agents.grants.revoke" => vault_agents_grants_revoke(server, call, input).await,
         "vault.repo.git_push.mint" => vault_repo_git_push_mint(server, call, input).await,
         "vault.repo.git_push.revoke" => vault_repo_git_push_revoke(server, call, input).await,
+        "vault.connectors.read_grants.grant" => {
+            vault_connectors_read_grants_grant(server, call, input).await
+        }
+        "vault.connectors.read_grants.revoke" => {
+            vault_connectors_read_grants_revoke(server, call, input).await
+        }
         "vault.repo.anchor.bind" => vault_repo_anchor_bind(server, call, input).await,
         "vault.repo.snapshots.get" => vault_repo_snapshots_get(server, call, input).await,
         "vault.repo.snapshots.read" => vault_repo_snapshots_read(server, call, input).await,

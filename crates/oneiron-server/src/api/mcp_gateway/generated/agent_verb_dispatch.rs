@@ -830,6 +830,8 @@ fn mcp_agent_verb_input(
         "vault.agents.grants.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.git_push.mint" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.git_push.revoke" => a.spec.clone().ok_or_else(invalid),
+        "vault.connectors.read_grants.grant" => a.spec.clone().ok_or_else(invalid),
+        "vault.connectors.read_grants.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.anchor.bind" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.snapshots.get" => a.spec.clone().ok_or_else(invalid),
         "vault.repo.snapshots.read" => a.spec.clone().ok_or_else(invalid),
@@ -3538,6 +3540,12 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.repo.git_push.revoke" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "vault.connectors.read_grants.grant" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.connectors.read_grants.revoke" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "vault.repo.anchor.bind" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5584,7 +5592,8 @@ async fn execute_agent_verb_row(
                 usize::from(output.next_after.is_some()),
                 true,
             )
-            .rows_at("rows");
+            .rows_at("rows")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "self.inbox.mark" => {
@@ -5754,8 +5763,13 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::vault_shape::ShapeApplyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shape_apply(server, auth, input).await;
+            let (output, listed) = crate::api::facade::host_doors::vault_shape_apply(
+                server,
+                auth,
+                crate::api::facade::owner_binding::act_surface(auth),
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
@@ -7168,11 +7182,19 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             served.extend(
                 output
+                    .receipts
                     .iter()
                     .filter_map(|receipt| receipt.claim_ref.as_deref())
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.receipts.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("receipts")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "vault.assets.ingest" => {
@@ -13537,7 +13559,14 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_cursor.is_some()),
+                true,
+            )
+            .rows_at("rows")
+            .resumed_within("next_cursor", "spec", "cursor");
             mcp_agent_verb_output(output, source)
         }
         "vault.hooks.regen.due" => {
@@ -15377,6 +15406,40 @@ async fn execute_agent_verb_row(
                 input,
             )
             .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.connectors.read_grants.grant" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.grant", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_connectors_read_grants_grant(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.connectors.read_grants.revoke" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.revoke", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_connectors_read_grants_revoke(
+                    server, auth, input,
+                )
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
@@ -18033,8 +18096,11 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(1);
-            mcp_agent_verb_output(output, source)
+            let (value, source) =
+                crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(
+                    output,
+                )?;
+            Ok((value, source, McpCarrierPolicy::Drain, None))
         }
         "vault.questions.refresh" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;

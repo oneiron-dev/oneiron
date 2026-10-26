@@ -17,7 +17,10 @@ use crate::models::ModelHostBudgets;
 use crate::models::http::holding_replies;
 
 /// `0`, its calls holding their replies' bytes on `1`'s media-reply line.
-pub(super) struct BookedReplies(pub(super) Arc<dyn MediaBackend>, pub(super) ModelHostBudgets);
+pub(super) struct BookedReplies(
+    pub(super) Arc<dyn MediaBackend>,
+    pub(super) ModelHostBudgets,
+);
 
 impl MediaBackend for BookedReplies {
     fn run<'a>(

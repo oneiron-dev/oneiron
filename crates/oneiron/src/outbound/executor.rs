@@ -1,18 +1,24 @@
+//! Connector-send attempt execution.
+//! Entry: `Vault::run_connector_task_executor`.
+//! Defines its own items.
+
 use super::OutboundDeliveryWindowDecision;
 use super::connector_task::{
     ConnectorSendAttemptPayload, ConnectorSendTask, ConnectorSendTaskOutcome,
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
     project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
 };
-use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
+use super::dispatch_pipeline::{
+    ALTERNATIVE_OUTCOME_FIELD, GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD,
+};
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
-use super::receipt_fields::append_connector_task_window_receipt;
+use super::receipt_fields::{PROVIDER_WAIT_FIELD, append_connector_task_window_receipt};
 use super::retry_audit::{
-    persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
-    reconcile_connector_task, settle_suppressed_send,
+    complete_degraded_connector_task, persist_failed_send_receipt_and_retry,
+    persist_send_receipt_and_retry, reconcile_connector_task, settle_suppressed_send,
 };
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
@@ -27,7 +33,19 @@ use crate::outbound_intent_ledger::{
 };
 use crate::receipt::SendReceiptOutcome;
 
+mod phases;
+
+use self::phases::{
+    ambient_alternative_went, connector_dispatch_request, settle_failed_connector_task,
+    settle_held_connector_task,
+};
+
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
+/// The queue reason a provider wait ends with at its caller's deadline (FIX
+/// 8818).
+const PROVIDER_WAIT_DEADLINE_REASON: &str = "deadline_reached";
+/// The receipt field naming the deadline that ended a provider wait.
+const PROVIDER_WAIT_DEADLINE_FIELD: &str = "deadline_at";
 /// First re-arm delay for a send the Gate parked on a human decision.
 const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
 /// Ceiling for that curve: a granted approval waits at most five minutes.
@@ -102,6 +120,9 @@ impl Vault {
     ) -> std::result::Result<usize, ConnectorTaskExecutorError> {
         let queue = AttemptQueue::new(self);
         let mut executed = 0_usize;
+        // The vault clock as the drain starts, beside the caller's `now`: each
+        // send's window door measures the time the drain spent from here.
+        let drain_clock = self.now_recorded_at();
         loop {
             // The kind's own claim door runs the job port's claim and
             // broadcasts only a real claim, so an empty queue never wakes the
@@ -208,69 +229,9 @@ impl Vault {
                 complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
-            let actor = OutboundDispatchActor {
-                actor_class: task.actor_class.gate_actor_class().to_owned(),
-                actor_ref: Some(task.actor_ref.to_hex()),
-                actor_entity_ref: Some(task.actor_ref),
-            };
-            let originating_session_ref = task.originating_session_ref.clone();
-            let logical_send_intent_ref = connector_logical_send_intent_ref(&task);
-            let mut request = OutboundDispatchRequest::new(
-                // A reclaimed lease can execute under the same attempt id. Its
-                // audit identity must still differ from the earlier execution.
-                format!(
-                    "outbound:task:{}:attempt:{}:lease:{}",
-                    task_ref.to_hex(),
-                    crate::receipt::hex_lower(attempt.id.as_bytes()),
-                    attempt.attempt_count
-                ),
-                // Sink-facing scheduled ref: sinks key their per-send plan by
-                // `request.intent_ref`, so it must stay the stable task ref the
-                // caller registered the plan under. The charge/replay identity
-                // travels separately below.
-                format!("intent:task:{}", task_ref.to_hex()),
-                task.intent.clone(),
-                actor,
-                OutboundDispatchGate::allow_when_policy_grants(),
-                now,
-                OutboundDeliveryWindowDecision::DeliverNow,
-            );
-            // Ledger identity is the logical-send id (derived from the task
-            // idempotency key) so fresh retry attempts stay the same paid intent.
-            request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
-            // Local wall-clock time is derived from the FROZEN offset at THIS
-            // attempt's `now`, never from schedule time. No offset ⇒ no local
-            // minute ⇒ the door fails closed instead of guessing midnight.
-            if let Some(offset) = task.utc_offset_minutes {
-                request = request
-                    .delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset));
-            }
-            if let Some(level) = task.apns_interruption_level {
-                request = request.delivery_window_apns_interruption_level(level);
-            }
-            if let Some(level) = task.resolved_level {
-                request = request.delivery_window_resolved_level(level);
-            }
-            if task.human_explicit_instant {
-                request = request.delivery_window_human_explicit_instant();
-            }
-            if let Some(session_ref) = originating_session_ref {
-                request = request.originating_session(session_ref);
-            }
-            // The frozen party is not the transport target. The live gate and
-            // receipt projector must read the explicit counterparty binding.
-            if let Some(party) = task.counterparty_ref.as_deref() {
-                request = request.counterparty_ref(party);
-            }
-            // CAL-04: replay the frozen five-field iMIP body the schedule
-            // chokepoint committed with this TASK. The executor is the retry
-            // lane, so it must never re-derive a UID or a SEQUENCE — it hands
-            // the pipeline exactly what was admitted.
-            if let Some(payload) = task.calendar_invite.clone() {
-                request = request.calendar_invite(payload);
-            }
+            let request = connector_dispatch_request(task_ref, &task, &attempt, now, drain_clock);
             let receipt_id = request.receipt_id.clone();
-            let mut result = match self.dispatch_outbound_intent_with_verified_actor(
+            let result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,
                 sink,
                 task.actor_ref,
@@ -339,43 +300,29 @@ impl Vault {
                         executed = executed.saturating_add(1);
                     }
                 }
-                OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
-                    // The door supplies a window-edge retry_at when it knows one;
-                    // a hostless `local_minute_unavailable` hold knows none. Either
-                    // way the CONCRETE next instant is computed HERE, before the
-                    // receipt is persisted, so no hold is ever surfaced with an
-                    // unknown retry edge (ONE-1880: that is what left the executor
-                    // spinning at now+1 with nothing surfaced).
-                    let window_edge = result
-                        .receipt
-                        .fields
-                        .get("retry_at")
-                        .and_then(|value| value.parse().ok());
-                    let arm = ConnectorRetryArm {
-                        window_edge,
-                        provider_retry_after_secs: receipt_provider_retry_after(&result.receipt),
-                        curve: connector_retry_curve(&result),
-                    };
-                    let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
-                    // A parked attempt is still auditable. Its receipt and the
-                    // queue re-arm commit together so neither can outlive the other.
-                    append_connector_task_window_receipt(&mut result.receipt, &task);
-                    // The current receipt ledger has Delivered/Failed durability states;
-                    // retain the actual parked outcome as a field while storing this as an
-                    // audit-only (non-idempotency) row.
-                    result.receipt.fields.insert(
-                        "dispatch_outcome".to_owned(),
-                        result.outcome.as_str().to_owned(),
-                    );
-                    result.receipt.outcome = "failed".to_owned();
-                    persist_failed_send_receipt_and_retry(
+                // The provider accepted the send as a remote task (FIX 7960):
+                // the TASK completes, and the send is never repeated.
+                OutboundDispatchOutcome::Deferred => {
+                    reconcile_connector_task(
                         self,
                         &attempt,
-                        task_ref,
-                        result.receipt,
-                        result.outcome.as_str(),
-                        retry_at,
+                        &task,
+                        &receipt_id,
                         now,
+                        None,
+                        Some(result.receipt),
+                    )?;
+                }
+                // FIX 7962: the ambient send the interrupt degraded to went,
+                // so the TASK's send is carried out; the interrupt is not
+                // re-armed.
+                OutboundDispatchOutcome::Degraded if ambient_alternative_went(&result) => {
+                    complete_degraded_connector_task(self, &attempt, &task, result.receipt, now)?;
+                    executed = executed.saturating_add(1);
+                }
+                OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
+                    settle_held_connector_task(
+                        self, &queue, &attempt, task_ref, &task, result, now,
                     )?;
                 }
                 OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
@@ -421,118 +368,16 @@ impl Vault {
                     }
                 }
                 OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous => {
-                    let ambiguous = result.outcome == OutboundDispatchOutcome::Ambiguous;
-                    // A recovered non-idempotent Pending intent may be ambiguous
-                    // even though this attempt never reached the transport.
-                    let transport_dispatched = ambiguous
-                        && result
-                            .receipt
-                            .fields
-                            .get("delivery_may_have_occurred")
-                            .is_some_and(|value| value == "true");
-                    let retryable = matches!(
-                        result.resolution,
-                        Some(IntentResolution::Pending {
-                            retry: RetryDisposition::Idempotent,
-                            ..
-                        })
-                    );
-                    if retryable {
-                        // A provider that stated its own cool-down (a rate-limit
-                        // `retry_after`) is obeyed exactly; without one the
-                        // generic transport curve still applies. The instant is
-                        // computed HERE, before the receipt is persisted, so the
-                        // audited retry edge and the queue's `backoff_until`
-                        // cannot diverge.
-                        let provider_retry_after_secs =
-                            receipt_provider_retry_after(&result.receipt);
-                        let arm = ConnectorRetryArm {
-                            window_edge: None,
-                            provider_retry_after_secs,
-                            curve: ConnectorRetryCurve::Transport,
-                        };
-                        let retry_at = connector_task_retry_at(&queue, &attempt, now, &arm)?;
-                        // A retried transport failure is still an auditable outcome.
-                        // Stored as the audit-only (non-idempotency) row a hold takes,
-                        // so the provider's stated cool-down, the failure evidence and
-                        // the instant this re-arms at survive the retry instead of
-                        // living only inside the queue row that replaces it.
-                        result.receipt.fields.insert(
-                            "dispatch_outcome".to_owned(),
-                            result.outcome.as_str().to_owned(),
-                        );
-                        persist_send_receipt_and_retry(
-                            self,
-                            &attempt,
-                            task_ref,
-                            result.receipt,
-                            if ambiguous {
-                                "transport_ambiguous_pending"
-                            } else {
-                                "transport_failed_pending"
-                            },
-                            retry_at,
-                            now,
-                            if ambiguous {
-                                SendReceiptOutcome::Ambiguous
-                            } else {
-                                SendReceiptOutcome::Failed
-                            },
-                            transport_dispatched,
-                        )?;
-                    } else if matches!(result.resolution, Some(IntentResolution::Stopped { .. })) {
-                        reconcile_connector_task(
-                            self,
-                            &attempt,
-                            &task,
-                            &receipt_id,
-                            now,
-                            None,
-                            Some(result.receipt),
-                        )?;
-                    } else {
-                        // A non-idempotent definite no-wire attempt is terminal
-                        // for this queue row, but the logical ledger remains
-                        // Pending and may be manually retried under O6. An
-                        // earlier attempt the ledger still holds unresolved
-                        // keeps the terminal outcome ambiguous.
-                        let ambiguous = ambiguous
-                            || matches!(
-                                result.resolution,
-                                Some(IntentResolution::Pending {
-                                    delivery: UnconfirmedDelivery::Unresolved,
-                                    ..
-                                })
-                            );
-                        if ambiguous {
-                            result.receipt.outcome = "ambiguous".to_owned();
-                        }
-                        super::retry_audit::persist_terminal_send_receipt_and_fail(
-                            self,
-                            super::retry_audit::TerminalSendSettlement {
-                                attempt: &attempt,
-                                task_ref,
-                                receipt: result.receipt,
-                                receipt_outcome: if ambiguous {
-                                    SendReceiptOutcome::Ambiguous
-                                } else {
-                                    SendReceiptOutcome::Failed
-                                },
-                                transport_dispatched,
-                                task_outcome: if ambiguous {
-                                    ConnectorSendTaskOutcome::Ambiguous
-                                } else {
-                                    ConnectorSendTaskOutcome::Failed
-                                },
-                                reason: if ambiguous {
-                                    "transport_ambiguous"
-                                } else {
-                                    "transport_failed"
-                                },
-                                now,
-                            },
-                        )?;
-                    }
+                    settle_failed_connector_task(
+                        self,
+                        &queue,
+                        &attempt,
+                        task_ref,
+                        &task,
+                        &receipt_id,
+                        result,
+                        now,
+                    )?;
                 }
             }
         }

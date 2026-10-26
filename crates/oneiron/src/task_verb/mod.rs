@@ -23,10 +23,12 @@ mod attendee_answer;
 mod board_task;
 mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
+pub use comm_widen::CommWidenRevokeReceipt;
 mod brief;
 mod brief_history;
 pub(crate) use brief_history::settled_brief_in;
 mod browser_workflow;
+mod cancel_settlement;
 mod checkout_facts;
 mod code_consent_word;
 pub(crate) use checkout_facts::CheckoutTaskAccess;
@@ -73,10 +75,6 @@ pub(crate) use lifecycle_receipt::{
 mod linear_store;
 mod mirror_edit;
 mod office_origin;
-#[expect(
-    unused_imports,
-    reason = "L12-A's office fork transaction consumes it (FIX 3551)"
-)]
 pub(crate) use office_origin::office_fork_origin_in_txn;
 mod owner_index;
 mod policy_change_followup;
@@ -185,7 +183,7 @@ pub(crate) use browser_workflow::erase_task_workflows_in_txn;
 pub use browser_workflow::{
     TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowPin, TaskWorkflowReport,
     TaskWorkflowUnavailable, mark_task_workflow_started, record_task_workflow_outcome,
-    task_workflow_binding, task_workflow_binding_in_txn,
+    task_run_done_means, task_workflow_binding, task_workflow_binding_in_txn,
 };
 pub use decision_port::TaskDecisions;
 pub(crate) use highway_post::settle_task_proposal_in_txn;
@@ -201,7 +199,8 @@ pub use runner_done::{
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
-    settled_task_result_binding, task_human_assignee, task_is_terminal,
+    settled_task_result_binding, settled_task_result_binding_in_txn, task_human_assignee,
+    task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{

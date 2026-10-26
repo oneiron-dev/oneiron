@@ -62,7 +62,7 @@ pub use crate::caps::{
     check_dimensions, check_limit, check_payload_bytes, check_query, check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
-pub use crate::embedded::store_open_count;
+pub use crate::embedded::{HostOpenCheck, store_open_count};
 use crate::error::forbidden;
 pub use crate::in_process::{
     InProcessReply, InProcessRequest, InProcessStream, InProcessTransport,
@@ -239,7 +239,24 @@ impl OneironClient {
         options: &OpenOptions,
     ) -> Result<Self, MemoryError> {
         Ok(Self {
-            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options)?),
+            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options, None)?),
+            host_root: None,
+        })
+    }
+
+    /// [`Self::attach`] for a host that can close while its handles live,
+    /// such as an embedded engine: each call of the handle, and of every
+    /// handle rebound from it, first asks `host_open`, so none starts once
+    /// the host has closed; a call already running finishes (FIX 4895).
+    pub fn attach_while_open(
+        path: &Path,
+        vault: std::sync::Arc<oneiron::Vault>,
+        options: &OpenOptions,
+        host_open: HostOpenCheck,
+    ) -> Result<Self, MemoryError> {
+        let embedded = EmbeddedClient::attach(path, vault, options, Some(host_open))?;
+        Ok(Self {
+            backend: Backend::Embedded(embedded),
             host_root: None,
         })
     }

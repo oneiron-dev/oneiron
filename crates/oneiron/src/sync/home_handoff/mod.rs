@@ -39,6 +39,7 @@ mod envelope;
 mod lineage;
 mod registry;
 mod restore;
+mod routes;
 mod store;
 mod table;
 mod transfer;
@@ -50,9 +51,9 @@ use crate::error::Error;
 
 pub(crate) use arrival::prepare_arrival;
 pub(crate) use delivery::{
-    DeliveryPlan, ElectionMark, FrozenHandoff, cancel_frozen, capture_route, decode_ack,
-    delivery_plan, drop_staged, election_mark, encode_ack, fence_handoff, frozen_part, record_ack,
-    record_unresolved, stage_part, staged_position, staged_sealed, supersede_export,
+    DeliveryPlan, ElectionMark, FrozenHandoff, cancel_frozen, decode_ack, delivery_plan,
+    drop_staged, election_mark, encode_ack, fence_handoff, fenced_here, frozen_part, record_ack,
+    record_unresolved, replan_fenced, stage_part, staged_position, staged_sealed, supersede_export,
     target_receipt,
 };
 pub(crate) use drain::free_time_arming;
@@ -63,6 +64,7 @@ pub(crate) use registry::{
     froze_home_state_in_txn, home_tables, pending_move_in_txn, takes_home_write_in_txn,
 };
 pub(crate) use restore::{HomeManaged, keep_move_through, restore_managed_keys};
+pub(crate) use routes::{feed_fallback_route, feed_routes};
 pub(crate) use store::{handoff_status_in_txn, incomplete_in_txn, record_incomplete_in_txn};
 pub(crate) use table::{HomeTable, HomeTableRegistration, ImageRows, TableAdopt};
 pub(crate) use transfer::{ack_in_txn, adopt, freeze_export, guard_in_txn, request_move_in_txn};

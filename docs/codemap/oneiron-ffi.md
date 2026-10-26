@@ -21,5 +21,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/mod.rs` | src | s | 6 re-export | — | C ABI for on-device iOS and macOS access to the Oneiron vault |
 | `src/lib/parse.rs` | src | s | 18 crate-vis | — | ID/enum/limit/query/format parsing and validation helpers |
 | `src/lib/query.rs` | src | m | 14 fn | — | Edge, search, vector, context-pack, and graph-traversal entry points |
+| `src/lib/session_reads.rs` | src | s | 5 crate-vis | — | The content reads a bound [`OneironVault`] makes inside the off-record session it names (FIX 8603): the… |
 | `src/lib/tests.rs` | test | m | — | — | Inline ABI tests: layout stability, round-trips, batch/boundary |
-| `src/lib/types.rs` | src | s | 10 struct · 1 enum · 12 crate-vis | OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray, OneironEntityInput, OneironScoredEntity, OneironScoredEntityArray, OneironStatus +3 | repr(C) status/types/handles and ABI limit constants |
+| `src/lib/types.rs` | src | s | 10 struct · 1 enum · 11 crate-vis | OneironBuffer, OneironByteSlice, OneironEdgeInfo, OneironEdgeInfoArray, OneironEntityInput, OneironScoredEntity, OneironScoredEntityArray, OneironStatus +3 | repr(C) status/types/handles and ABI limit constants |

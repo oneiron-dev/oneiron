@@ -45,7 +45,8 @@ side_tables! {
     /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
     FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
     /// T2 report membership and vectors, keyed by the first ISSUE id.
-    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named
+        => crate::feedback::intake::forget_report_cluster_source_in_txn;
     /// One issue's publisher delivery lane (OF-420, FIX 739): the frozen ED-08 signature and its
     /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
     /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).
@@ -260,8 +261,9 @@ side_tables! {
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
     /// The instrument a credential caller's request was admitted on, pinned beside its stopped
-    /// call for the drain to verify again: a slip, its holder's challenge and signature, never a
-    /// secret. Pruned with the call. Key: id16 (invocation).
+    /// call for the drain to verify again: a slip, its holder's challenge and signature, or a
+    /// managed vault's attested owner's person, never a secret and no credential minted for him.
+    /// Pruned with the call. Key: id16 (invocation).
     HOOKS_VERB_ASK_WITNESS: VaultMeta b"hooks:verb_ask_witness:v1:" Named;
     /// A verb hook run's saved copy: the exact input its body saw, its read pins and the outcome it
     /// returned. Key: hash32 (run key).

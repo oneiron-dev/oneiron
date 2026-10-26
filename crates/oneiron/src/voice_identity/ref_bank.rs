@@ -966,10 +966,14 @@ mod owner_acts;
 // Every render decision, kept once beside the current one (FIX 4396).
 #[path = "ref_bank/render_history.rs"]
 mod render_history;
+// The bank's rows in checkpoint images, erased with its subject (FIX 8972).
+#[path = "ref_bank/checkpoint_response.rs"]
+mod checkpoint_response;
 // Stored packs checked for integrity, new intake measured (FIX 10177, FIX 10220).
 #[path = "ref_bank/validation.rs"]
 mod validation;
 pub use actor::{VoiceBankActor, VoiceCreator};
+pub(crate) use checkpoint_response::{voice_bank_owners, voice_bank_row, voice_bank_scan};
 pub use owner_acts::{
     VoiceBankInspection, VoiceClipSummary, VoiceIdentityView, VoicePackSummary,
     VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,

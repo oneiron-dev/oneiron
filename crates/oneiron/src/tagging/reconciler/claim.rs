@@ -12,6 +12,7 @@ use crate::error::Result;
 use crate::memory::extraction::{EncoderInput, ExtractionWork};
 use crate::tagging::input::{TurnInput, turn_input_in_txn};
 use crate::tagging::marker::{MarkerPayload, TAGGING_MARKER_KIND, enqueue_marker_in_txn};
+use crate::tagging::register::bulk_register_in_txn;
 use crate::tagging::tags::tagged_messages_absent_in_txn;
 use crate::tagging::trace::{HandBackReason, SkipReason, TaggingOutcome, TaggingTrace};
 
@@ -316,6 +317,10 @@ impl TaggingReconciler {
             })?;
             return Ok(settled(hold, trace));
         }
+        // The marker's class picks its register before anything is read or
+        // hashed (FIX 9520, 10167): a live marker reads the live window, a
+        // bulk one its whole conversation.
+        let work = payload.effective_work(&self.vault);
         // A MESSAGE the turn's saved tags were read from is away from this
         // replica (OF-534): the turn reads only partly here, so neither a
         // fragment's answer nor an empty turn's skip may replace its set.
@@ -324,7 +329,10 @@ impl TaggingReconciler {
             if tagged_messages_absent_in_txn(&self.vault.store, &txn, &turn)? {
                 None
             } else {
-                Some(turn_input_in_txn(&self.vault, &txn, &turn)?)
+                Some(match work {
+                    ExtractionWork::Live => turn_input_in_txn(&self.vault, &txn, &turn)?,
+                    ExtractionWork::Bulk => bulk_register_in_txn(&self.vault, &txn, &turn)?,
+                })
             }
         };
         #[cfg(test)]
@@ -350,7 +358,6 @@ impl TaggingReconciler {
         };
         trace.input_hash = Some(hash.clone());
         trace.model = Some(self.encoder.model_id().as_str().to_owned());
-        let work = payload.effective_work(&self.vault);
         Ok(TaggingPreparation::Ready(PreparedTagging {
             trace,
             call: Box::new(PreparedCall {

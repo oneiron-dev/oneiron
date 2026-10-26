@@ -73,21 +73,18 @@ pub(crate) fn check_rewritten_reply_to(
     }
 }
 
-/// Runs `sign` with this host's authority key.
+/// Runs `sign` with this host's authority key: the managed issuer, else
+/// this install's own self-host root issuer (FIX-LIST 3018).
 pub(super) fn with_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> OwnerResult<T> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return Ok(sign(issuer)?);
-    }
-    let secret = server.config.auth_secret.as_deref().ok_or_else(|| {
+    let issuer = server.host_issuer().ok_or_else(|| {
         OwnerError::Refused(
             "this host holds no signing key; send an ask signed by the pinned key".to_owned(),
         )
     })?;
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes())?;
-    Ok(sign(&issuer)?)
+    Ok(sign(issuer)?)
 }
 
 /// Signs (unless the owner brought a signed ask) and queues one ask.

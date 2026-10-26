@@ -178,6 +178,21 @@ pub fn retrieval_candidates_from_ranked_lists(
         .collect()
 }
 
+/// Each candidate's channel relevance alone, as its score: the per-list
+/// z-score sum [`retrieval_candidates_from_ranked_lists`] forms, with no
+/// sparse list and no blend signals. A list flat throughout stays neutral,
+/// and a candidate a list did not return takes that list's lowest z. Ids in
+/// ascending byte order; the caller orders them.
+pub fn fuse_ranked_lists(ranked_lists: &[Vec<ScoredEntity>]) -> Vec<ScoredEntity> {
+    retrieval_candidates_from_ranked_lists(ranked_lists, &[])
+        .into_iter()
+        .map(|input| ScoredEntity {
+            id: input.id,
+            score: input.relevance as f32,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 pub(crate) fn linear_log_blend(inputs: &[RetrievalBlendInput]) -> Vec<ScoredEntity> {
     linear_log_blend_with_weights(inputs, RetrievalBlendWeights::bootstrap())

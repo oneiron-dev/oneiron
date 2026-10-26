@@ -4,9 +4,10 @@
 //!
 //! Both seal the actor's authority from what this surface's host bound: the
 //! caller's own verified slip, a self-hosted host action acting as the
-//! owner, or the in-process host's own caller. A transport caller that
-//! presented none (an operator root acting as nobody), a code run's call and
-//! a machine-signed write seal nothing.
+//! owner, a managed vault's attested owner (FIX 11090), or the in-process
+//! host's own caller. A transport caller that presented none (an operator
+//! root acting as nobody), a code run's call and a machine-signed write seal
+//! nothing.
 
 use crate::dreamer_runner::{
     ArmTurnProgram, LandedTurnRef, TurnProgramAuthority, TurnProgramRegistration,
@@ -79,8 +80,18 @@ impl Memory<'_> {
                 action.guard().root_slip_id(),
             ));
         }
+        // A managed vault's attested owner seals his person alone; each
+        // judgment asks whether the vault records him as its live owner then
+        // (FIX 11090).
+        if let Some(holder) = self.attested_owner_holder() {
+            return Some(TurnProgramAuthority::attested_owner(holder));
+        }
         if let Some(proof) = &self.read_proof {
-            return TurnProgramAuthority::slip(self.actor, self.actor_class, proof);
+            // The slip seals the instrument its request kept, verified again
+            // at each judgment (FIX 8717); a request that kept none seals
+            // nothing.
+            let instrument = self.invocation_slip()?;
+            return TurnProgramAuthority::slip(self.actor, self.actor_class, proof, instrument);
         }
         if self.native_invocation() {
             return Some(TurnProgramAuthority::native(self.actor, self.actor_class));

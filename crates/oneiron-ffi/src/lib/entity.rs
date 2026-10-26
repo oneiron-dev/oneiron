@@ -431,7 +431,7 @@ pub unsafe extern "C" fn oneiron_vault_get_entity(
         }
         let result = with_vault(vault, |handle| {
             let id = parse_entity_id(id_ptr, id_len)?;
-            match engine(handle.vault.get(&id))? {
+            match handle.entity_body(&id)? {
                 Some(bytes) => write_out(out_buffer, buffer_from_vec(bytes)),
                 None => Err(OneironStatus::NotFound),
             }
@@ -496,7 +496,7 @@ pub unsafe extern "C" fn oneiron_vault_entity_exists(
         }
         let result = with_vault(vault, |handle| {
             let id = parse_entity_id(id_ptr, id_len)?;
-            let exists = engine(handle.vault.entity_exists(&id))?;
+            let exists = handle.entity_stored(&id)?;
             write_out(out_exists, u8::from(exists))
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)

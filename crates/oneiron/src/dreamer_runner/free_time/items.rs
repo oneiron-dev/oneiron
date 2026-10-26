@@ -407,6 +407,7 @@ fn propose_about(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     };
     let agent = binding.agent;
     let about_agent = subject == agent;

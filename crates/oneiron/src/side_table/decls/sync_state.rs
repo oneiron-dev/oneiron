@@ -58,6 +58,9 @@ side_tables! {
     /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
     /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
+    /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
+    /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
+    AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;
@@ -144,6 +147,11 @@ side_tables! {
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
+    /// The scope a deleted record held, bound to its delete request, so a narrower grant's export
+    /// carries its tombstone only where the grant reads that scope (FIX 10161). Ids and levels
+    /// only, never content. Local to this vault: never replicated or exported. Key: hex32 (entity
+    /// id).
+    FEDERATION_TOMBSTONE_SCOPE: SyncState b"fedtombscope:" Named;
     /// Registers a foreign world as content delivered by one federation pact, scanned when the pact
     /// goes terminal. Key: hex64 (pact id) ":" hex32 (world id).
     FEDERATION_WORLD_REGISTRATION: SyncState b"fedworld:" Raw;
@@ -395,6 +403,9 @@ side_tables! {
     /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
     /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
     SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
+    /// A left shared vault's owed orphan body collection (FIX 2413): when its env's purge finished
+    /// and when the collection is due (unix seconds); local only, never synced. Key: ().
+    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).
@@ -444,6 +455,13 @@ side_tables! {
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
     USAGE_EVENT: SyncState b"usage:event:" Named
         => crate::store::erase_usage_source_in_txn;
+    /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" 20-digit period start.
+    USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named;
+    /// One operational meter row for an owner/vault, kept once under its idempotency key
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" hex (owner, vault,
+    /// metric, idempotency key).
+    USAGE_METER: SyncState b"usage:meter:" Named;
     /// The receipt of one owner repair that removed a stored usage event that no longer decoded
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).
@@ -475,7 +493,9 @@ side_tables! {
     /// zero-padded to 20 digits; window start).
     WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
-    /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
+    /// threshold, kept once each time another verb or actor crossed (FIX 9531). Key: "seq:" u64
+    /// (decimal, zero-padded to 20 digits; the order questions were kept in) | "window:" u64 ":"
+    /// u64 ":" u64 (each zero-padded to 20 digits; window start:end, then the question's seq).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;
     /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
     /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).

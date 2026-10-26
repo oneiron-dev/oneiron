@@ -20,7 +20,7 @@ use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::task_verb::{
     HostBinding, TaskWorkflowAttempt, TaskWorkflowCheck, TaskWorkflowHandoff, TaskWorkflowOutcome,
     TaskWorkflowReport, mark_task_workflow_started, record_task_workflow_outcome,
-    runner_done_question, runner_workflow_done_answer, task_workflow_binding,
+    runner_done_question, runner_workflow_done_answer, task_run_done_means, task_workflow_binding,
 };
 use oneiron::{DreamerRunnerStore, EntityId, Vault, WriteActor};
 use oneiron_browser::{ExpectInput, ExpectOutput};
@@ -80,17 +80,19 @@ pub(super) fn before_seat(
         }
         TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. } => {}
     }
+    // FIX 8104: a program started at an earlier entry whose end was never
+    // recorded is not run again: the run hands off, its effects unknown. An
+    // entered run's start is ended here too (FIX 8947), so its pin never
+    // stays started.
+    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
+        let report = TaskWorkflowReport::Interrupted;
+        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
+    }
     // A run that entered before its end was recorded ran its first entry
     // without the program: running it now would say something new to a run
     // whose task its record holds.
     if !matches!(entered_run(vault, run_id), Ok(None)) {
         return Ok(BeforeSeat::Unbound);
-    }
-    // FIX 8104: a program started at an earlier entry whose end was never
-    // recorded is not run again: the run hands off, its effects unknown.
-    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
-        let report = TaskWorkflowReport::Interrupted;
-        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
     }
     let report = match pinned.active() {
         None => TaskWorkflowReport::Unavailable,
@@ -134,6 +136,52 @@ pub(super) fn before_seat(
         }
     };
     Ok(recorded(vault, &binding, &pinned, attempt, report, now))
+}
+
+/// CUA E8b (the E8 pair trigger): keeps what a TASK-bound run's browser
+/// reached toward its TASK's done-means, once the run ended, through
+/// `door`, the run's own, before it drops: the agent's solved-run evidence
+/// when the done-means' browser checks hold on the page, grouped under the
+/// run's recorded `type_ref`. A run that realizes no TASK, a done-means
+/// with no browser check, or a binding that does not read captures
+/// nothing, logged; nothing here fails the run.
+pub(super) fn capture_task_run(
+    vault: &Vault,
+    door: &super::RunHostDoor,
+    actor: WriteActor,
+    attempt: &AttemptRecord,
+    type_ref: &oneiron::task_type::TaskTypeRef,
+) {
+    if attempt.task_ref.is_none() {
+        return;
+    }
+    let skipped = |error: &dyn std::fmt::Display| {
+        tracing::warn!(%error, attempt = ?attempt.id, "a TASK run's solved span was not captured");
+    };
+    let dispatcher = match HostSelfDispatcher::for_leased_agent_attempt(vault, actor, attempt) {
+        Ok(dispatcher) => dispatcher,
+        Err(error) => return skipped(&error),
+    };
+    let binding = match dispatcher.task_host_binding() {
+        Ok(Some(binding)) => binding,
+        Ok(None) => return,
+        Err(error) => return skipped(&error),
+    };
+    let (task, goal) = match task_run_done_means(vault, &binding) {
+        Ok(Some(found)) => found,
+        Ok(None) => return,
+        Err(error) => return skipped(&error),
+    };
+    if goal.browser_checks.is_empty() {
+        return;
+    }
+    // The capture drafts the run's span: its write names the draft verb.
+    let origin = match dispatcher.browser_origin_from_host(AgentVerb::SelfBrowserLibraryDraft) {
+        Ok(origin) => origin,
+        Err(error) => return skipped(&error),
+    };
+    let type_ref = oneiron::learning::TypeRef::from(type_ref);
+    door.capture_task_run(&origin, task, type_ref, &goal);
 }
 
 /// Records `report` as the try's end and answers what its seat takes. A

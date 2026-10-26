@@ -310,10 +310,26 @@ impl Vault {
             canonical_target_tree: None,
             files: translated.iter().map(|file| file.pin.clone()).collect(),
         };
-        let conflict = translated.iter().any(|file| {
+        let is_conflict = |file: &&super::projected_files::ProjectedCandidateFile| {
             file.after
                 == ProjectedCanonicalAfter::Held(RepoProjectionHoldCause::ProjectionEditConflict)
-        });
+        };
+        // CALL GRANT-CONFLICT-REPLACEMENT (FIX 10271): a conflict file a
+        // live grant covers for the push's recipient takes its exact
+        // submitted bytes below, its cause kept for the live recheck.
+        let granted = super::projected_reveal::granted_projected_conflicts(
+            self,
+            provenance,
+            &projection.graph,
+            translated
+                .iter()
+                .filter(is_conflict)
+                .map(|file| (file.pin.path.as_str(), file.pin.original_blob.as_ref())),
+        )?;
+        let conflict = translated
+            .iter()
+            .filter(is_conflict)
+            .any(|file| !granted.contains(&file.pin.path));
         if conflict {
             // No unique translation: the source and pins stay, with no
             // canonical target and no proposal (ASK E).

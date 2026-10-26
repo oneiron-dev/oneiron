@@ -30,8 +30,8 @@
 //!
 //! File map (declarations and re-exports only live here):
 //!
-//! * `core_types` — [`ClaimBody`], [`ClaimSubject`], the pinned key set, the
-//!   codec, and the structural-validation dispatcher. The hub; kept whole.
+//! * `core_types` — [`ClaimBody`], [`ClaimSubject`], the pinned key set and
+//!   the structural-validation dispatcher; its `codec` child holds the codec.
 //! * `status` — the approval / lifecycle / source status axes.
 //! * `decay` — the pure read-side aging-class `access_factor` contract.
 //! * `predicate_grammar` — namespaces, registry, D17 grammar, reserved gate.
@@ -69,8 +69,9 @@ mod predicate_validators;
 mod projection_index;
 pub(crate) use projection_index::{
     PENDING_PRODUCER, claim_ids_for_predicate_bounded_in_txn, claim_ids_for_predicate_in_txn,
-    claim_ids_for_predicate_page_in_txn, maintain_claim_projection_index,
-    remove_claim_projection_index, remove_claim_projection_index_in_rows,
+    claim_ids_for_predicate_page_in_txn, for_each_claim_id_for_predicate_in_txn,
+    maintain_claim_projection_index, remove_claim_projection_index,
+    remove_claim_projection_index_in_rows,
 };
 mod put;
 mod read;
@@ -93,7 +94,10 @@ pub use history_handoff::*;
 pub use lexical_query_hint::*;
 pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
-pub use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+pub use oneiron_contracts::claim::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
+    VerdictBasis,
+};
 pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;

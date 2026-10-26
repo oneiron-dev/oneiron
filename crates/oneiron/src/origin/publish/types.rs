@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
+use crate::origin::secret_publication::RepoDestinationAudience;
 
 /// What the mirror's branch held when the request was made, read with the
 /// mirror's own credential. The push is leased on it.
@@ -128,6 +129,9 @@ pub struct OriginPublishDestination {
     /// The mirror's generation id; `None` only for a mirror row stored
     /// before generations.
     pub target_generation: Option<EntityId>,
+    /// The mirror's audience as its row stated it; the publication gate
+    /// reads the row again at each send.
+    pub audience: RepoDestinationAudience,
 }
 
 /// Git-LFS bytes the push carries.
@@ -176,6 +180,12 @@ pub enum OriginPublishRefusalReason {
     AuthorityChanged,
     /// The commit is no longer held here.
     ObjectsMissing,
+    /// The mirror is public or unstated, and the commit's history holds a
+    /// key marked live or of unknown liveness (FIX 7608 slice 9, A1).
+    MarkedLiveSecret,
+    /// The mirror is public or unstated, and the commit's history or the
+    /// vault's secret marks could not be read whole: held as live (A1).
+    SecretHistoryUnknown,
 }
 
 /// The typed refusal that ended a request, with safe fields only: never a

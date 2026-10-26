@@ -4,8 +4,10 @@
 //! vault as one BLOB artifact per (channel, provider event id), so the body
 //! syncs, restores and erases with the vault, and its ref reads it back.
 //! A provider retry of the same event appends the same bytes, which is the
-//! blob store's own no-op.
+//! blob store's own no-op. The artifact's name and provenance name the event
+//! by [`surface_event_run_id`], never by the provider id as it arrived.
 
+use super::surface_event_run_id;
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::entity_id::derived_domains::{
     SURFACE_PROVIDER_EVENT_BLOB, SURFACE_PROVIDER_INBOUND_ACTOR,
@@ -35,11 +37,12 @@ impl Vault {
             start: now,
             end: now,
         };
+        let event_run_id = surface_event_run_id(provider_event_id);
         if self.get_blob_artifact(&artifact_id)?.is_none() {
             self.put_blob_artifact(
                 &artifact_id,
                 &BlobArtifactBody::new(
-                    format!("provider-event:{channel}:{provider_event_id}"),
+                    format!("provider-event:{channel}:{event_run_id}"),
                     "application/json",
                 ),
                 at,
@@ -51,7 +54,7 @@ impl Vault {
             &artifact_id,
             body,
             &BlobVersionProvenance::AgentRun {
-                run_ref: format!("surface:{channel}:{provider_event_id}"),
+                run_ref: format!("surface:{channel}:{event_run_id}"),
             },
             WriteActor::new(actor, crate::edge::EdgeActorClass::System),
             at,

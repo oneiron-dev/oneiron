@@ -21,6 +21,9 @@ use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
+mod hooks_replay;
+pub use self::hooks_replay::*;
+
 /// One file of a pack folder, its content an explicit choice: text, stored as
 /// its UTF-8 bytes, or any bytes (an image, a font, a Wasm module) as
 /// standard base64. `vault.packs.put` and `POST /v1/owner/packs` both take it.
@@ -711,158 +714,6 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             evidence_cut_at_bytes: None,
         }
     }
-}
-
-/// `vault.hooks.replay`'s page size when the request names none.
-pub const HOOKS_REPLAY_LIMIT_DEFAULT: usize = 64;
-/// The most entries one `vault.hooks.replay` returns: the engine's own cap.
-pub const HOOKS_REPLAY_LIMIT_MAX: usize = 256;
-
-/// `vault.hooks.replay`'s input: the hook to replay, where a fact hook
-/// starts and how many entries to return. A verb hook replays its newest
-/// saved runs.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HooksReplayRequest {
-    /// The hook binding's 32-hex id.
-    pub binding: String,
-    /// The fact position a fact hook replays after (`claim_changelog:<hex32>`
-    /// or `settlement:<hex16>`); every source from its start when absent. A
-    /// verb hook takes none.
-    #[serde(default)]
-    pub since: Option<String>,
-    /// Entries to return, 1 to [`HOOKS_REPLAY_LIMIT_MAX`];
-    /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-impl HooksReplayRequest {
-    /// The page size this request names, refused outside its bounds.
-    pub fn limit(&self) -> MemoryResult<usize> {
-        let limit = self.limit.unwrap_or(HOOKS_REPLAY_LIMIT_DEFAULT);
-        if limit == 0 || limit > HOOKS_REPLAY_LIMIT_MAX {
-            return Err(MemoryError::bad_request_with(
-                format!("limit must be between 1 and {HOOKS_REPLAY_LIMIT_MAX}"),
-                &["Request a smaller page and continue from the last entry's position."],
-            ));
-        }
-        Ok(limit)
-    }
-}
-
-/// One past fact or saved verb run a hook takes, and what its body returns
-/// for it now. Nothing landed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HookReplayRow {
-    pub case: crate::runtime_hooks::HookReplayCase,
-    pub result: HookReplayOutcome,
-}
-
-/// What a replayed entry gave: the body's outcome, or the history it lacks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum HookReplayOutcome {
-    /// The body ran on this entry. Nothing landed.
-    Ran {
-        outcome_json: Option<String>,
-        /// The outcome kind, or `refused` / `failed`.
-        outcome: String,
-        reason: Option<String>,
-        /// The outcome the live run recorded, when one ran.
-        recorded: Option<String>,
-        /// The outcome JSON the live run recorded, when it kept one.
-        recorded_outcome_json: Option<String>,
-        /// How this outcome stands to the recorded one, as JSON.
-        compare: crate::runtime_hooks::HookReplayCompare,
-        /// The input came from the run's saved row: its memo, or its saved
-        /// verb run.
-        from_memo: bool,
-        /// No run pinned this entry's reads; they read current rows.
-        reads_live: bool,
-    },
-    /// The entry's inputs are gone: replay will not read newer state instead.
-    MissingHistory { reason: String },
-}
-
-impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
-    fn from(entry: crate::runtime_hooks::HookReplayEntry) -> Self {
-        use crate::runtime_hooks::HookReplayResult;
-        Self {
-            case: entry.case,
-            result: match entry.result {
-                HookReplayResult::Ran {
-                    outcome_json,
-                    outcome,
-                    reason,
-                    recorded,
-                    recorded_outcome_json,
-                    compare,
-                    from_memo,
-                    reads_live,
-                } => HookReplayOutcome::Ran {
-                    outcome_json,
-                    outcome,
-                    reason,
-                    recorded,
-                    recorded_outcome_json,
-                    compare,
-                    from_memo,
-                    reads_live,
-                },
-                HookReplayResult::MissingHistory { reason } => {
-                    HookReplayOutcome::MissingHistory { reason }
-                }
-            },
-        }
-    }
-}
-
-/// `vault.hooks.replay` under the owner's proof a host minted from the
-/// request, on `runtime`, the host's own hook sandbox: a dry run of the
-/// binding's body over past facts or saved verb runs, landing nothing.
-/// `verdict`, the host's decision ladder, answers a generative fact hook's
-/// `ai.verdict` on a fact no run pinned; a pinned run hears its own again.
-pub fn replay_hooks_as_owner(
-    vault: &crate::Vault,
-    owner: &crate::consent::AuthenticatedOwner,
-    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
-    verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
-    input: &HooksReplayRequest,
-) -> MemoryResult<Vec<HookReplayRow>> {
-    replay_hooks_as_owner_listing(vault, owner, runtime, verdict, input).map(|(rows, _)| rows)
-}
-
-/// [`replay_hooks_as_owner`], beside the rows its entries stand on
-/// ([`crate::Vault::hooks_replay_listing`]); `None` once an entry asked a
-/// verdict.
-pub fn replay_hooks_as_owner_listing(
-    vault: &crate::Vault,
-    _owner: &crate::consent::AuthenticatedOwner,
-    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
-    verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
-    input: &HooksReplayRequest,
-) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<crate::EntityId>>)> {
-    let limit = input.limit()?;
-    let binding = crate::EntityId::from_hex(input.binding.trim())
-        .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
-    let since = input
-        .since
-        .as_ref()
-        .map(|position| crate::runtime_hooks::FactPositionHex(position.trim().to_owned()));
-    let (entries, listed) = vault
-        .hooks_replay_listing(runtime, verdict, binding, since, limit)
-        .map_err(|error| match error {
-            crate::Error::EntityNotFound => {
-                MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
-            }
-            crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
-            other => other.into(),
-        })?;
-    Ok((
-        entries.into_iter().map(HookReplayRow::from).collect(),
-        listed,
-    ))
 }
 
 /// Where a credential value goes during a pack's setup: the owner secrets

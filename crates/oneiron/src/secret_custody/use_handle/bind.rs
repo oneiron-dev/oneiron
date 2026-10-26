@@ -223,6 +223,7 @@ impl Vault {
             grant_ref: None,
             diff_handle: id.as_bytes().to_vec(),
             read_frontier_hash: [0; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(&mut wtxn, &record)?;

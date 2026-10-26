@@ -60,7 +60,7 @@ mod options;
 // FIX 9517: every reference upload under the bank's current reference.
 mod voice_reference;
 
-use jobs::{JobRow, JobStore, erased_poll, submit_stamps};
+use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
 pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
 /// The run every media call is admitted under, one run per call.
@@ -334,12 +334,12 @@ impl MediaRuntime {
             .store
             .as_ref()
             .map_or(Ok(true), |store| -> Result<bool, String> {
-                let mut row = store
+                let kept = store
                     .get(id)
                     .ok_or_else(|| "its row is not kept".to_owned())?;
-                if row.erased {
+                let Some(mut row) = kept.live() else {
                     return Ok(false);
-                }
+                };
                 row.ended = Some(state.clone());
                 store.put(id, row)
             });
@@ -371,15 +371,15 @@ impl MediaRuntime {
         if let Some(held) = self.lock_jobs().get(id) {
             return Ok(held.clone());
         }
-        let row = self
+        let kept = self
             .store
             .as_ref()
             .and_then(|store| store.get(id))
             .ok_or(FatalLlmError::InvalidRequest)?;
         // An erased job is never taken up, resumed or resubmitted (KS-2B2).
-        if row.erased {
+        let Some(row) = kept.live() else {
             return Ok(Held::Ended(erased_poll(id)));
-        }
+        };
         if let Some(state) = row.ended {
             return Ok(Held::Ended(state));
         }
@@ -409,15 +409,16 @@ impl MediaRuntime {
     /// The end job `id` holds here, or its row keeps; its erased end once
     /// an erase took it, whose end held here goes (KS-2B2).
     fn ended(&self, id: &str) -> LlmResult<MediaJobState> {
-        let row = self.store.as_ref().and_then(|store| store.get(id));
-        if row.as_ref().is_some_and(|row| row.erased) {
+        let kept = self.store.as_ref().and_then(|store| store.get(id));
+        if kept.as_ref().is_some_and(KeptJob::erased) {
             self.lock_jobs().remove(id);
             return Ok(erased_poll(id));
         }
         if let Some(Held::Unkept(state)) = self.lock_jobs().get(id) {
             return Ok(state.clone());
         }
-        row.and_then(|row| row.ended)
+        kept.and_then(KeptJob::live)
+            .and_then(|row| row.ended)
             .ok_or_else(|| FatalLlmError::InvalidRequest.into())
     }
 

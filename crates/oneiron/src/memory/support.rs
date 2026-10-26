@@ -168,6 +168,15 @@ pub struct HostWriteOrigin {
     /// from the run's own history, never from the guest. It names the pause
     /// only, beside the call's invocation.
     hook_ask: Option<EntityId>,
+    /// The live, verified slip whose turn woke the calling program (FIX
+    /// 8717), from the program's own binding, never from the guest: the
+    /// surface the origin reaches reads and writes under it.
+    read_proof: Option<crate::authority::VerifiedSlip>,
+    /// The durable code run the dispatcher is bound to (its replay record's
+    /// id), from the dispatcher's own binding, never from the guest: the
+    /// one run a creation this origin's writer asserts can be proved in
+    /// (FIX 1211).
+    bound_run: Option<EntityId>,
 }
 
 impl HostWriteOrigin {
@@ -178,7 +187,16 @@ impl HostWriteOrigin {
             model_provider: None,
             code_consent: None,
             hook_ask: None,
+            read_proof: None,
+            bound_run: None,
         }
+    }
+
+    /// This origin with the waking slip a turn program's call runs under,
+    /// if its program has one (FIX 8717).
+    pub(crate) fn with_read_proof(mut self, proof: Option<crate::authority::VerifiedSlip>) -> Self {
+        self.read_proof = proof;
+        self
     }
 
     /// This origin naming the hook pause its call resumes, if it resumes one.
@@ -222,6 +240,17 @@ impl HostWriteOrigin {
     #[must_use]
     pub const fn source(&self) -> ClaimSource {
         self.envelope.source()
+    }
+
+    /// This origin bound to the durable run its dispatcher is bound to.
+    pub(crate) const fn with_bound_run(mut self, run: Option<EntityId>) -> Self {
+        self.bound_run = run;
+        self
+    }
+
+    /// The durable code run the dispatcher bound this origin to, if any.
+    pub(crate) const fn bound_run(&self) -> Option<EntityId> {
+        self.bound_run
     }
 }
 

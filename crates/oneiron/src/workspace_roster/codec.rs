@@ -114,6 +114,14 @@ pub(super) fn write_journal(
         completed_at: record.completed_at,
     };
     ONBOARDING.encode_value(&row)?;
+    // A brought companion is first bound at Started, where her proof is
+    // rechecked; the authorization clock commits before the writer opens.
+    let authorized_at = match record.step {
+        MemberOnboardingStep::Started if intent.companion.is_bring() => {
+            Some(vault.store.authorization_now()?)
+        }
+        _ => None,
+    };
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
         if let Some(prior) = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)? {
@@ -127,7 +135,7 @@ pub(super) fn write_journal(
             }
         }
         if record.step == MemberOnboardingStep::Started {
-            reserve_member_in_txn(vault, wtxn, intent, &record.intent_digest)?;
+            reserve_member_in_txn(vault, wtxn, intent, &record.intent_digest, authorized_at)?;
         }
         ONBOARDING.put(&vault.store, wtxn, &intent.onboarding_id, &row)?;
         Ok(())
@@ -137,9 +145,9 @@ pub(super) fn write_journal(
 /// `workspace_ref` then a NUL separator then the raw member-person id — the
 /// same shape [`super::records::RosterMemberKey`] uses, differing only in how
 /// the tail id is spelled (raw bytes here, hex there).
-struct MemberIntentKey {
-    workspace_ref: String,
-    person_ref: EntityId,
+pub(super) struct MemberIntentKey {
+    pub(super) workspace_ref: String,
+    pub(super) person_ref: EntityId,
 }
 
 impl SideKey for MemberIntentKey {
@@ -164,12 +172,12 @@ impl SideKey for MemberIntentKey {
 
 /// Guards one member's workspace-onboarding slot against a second onboarding
 /// with different inputs. Key: [`MemberIntentKey`].
-const MEMBER_INTENT: SideTable<MemberIntentKey, [u8; 32], Raw> =
+pub(super) const MEMBER_INTENT: SideTable<MemberIntentKey, [u8; 32], Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_MEMBER_INTENT);
 
 /// Guards a companion PERSON against being claimed by a second principal's
 /// onboarding. Key: id16 (companion person id).
-const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
+pub(super) const COMPANION_PRINCIPAL: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::WORKSPACE_ROSTER_COMPANION_PRINCIPAL);
 
 /// The principal a companion PERSON was onboarded for, from the guard row
@@ -194,39 +202,6 @@ pub(super) fn companions_of_in_txn(
         .into_iter()
         .filter_map(|(companion, of)| (of == principal).then_some(companion))
         .collect())
-}
-
-/// An unfinished onboarding owns its member slot too. A second id must not
-/// create another companion while the first journal is waiting for custody.
-fn reserve_member_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    intent: &MemberOnboardingIntent,
-    digest: &[u8; 32],
-) -> Result<()> {
-    let key = MemberIntentKey {
-        workspace_ref: intent.workspace.workspace_ref.clone(),
-        person_ref: intent.person_ref,
-    };
-    if let Some(prior) = MEMBER_INTENT.get(&vault.store, txn, &key)?
-        && prior != *digest
-    {
-        return Err(invalid(
-            "member already has a different workspace onboarding",
-        ));
-    }
-    // Brought or born, one companion PERSON belongs to one principal.
-    let companion = intent.companion.person_ref();
-    if let Some(prior) = COMPANION_PRINCIPAL.get(&vault.store, txn, &companion)?
-        && prior != intent.person_ref
-    {
-        return Err(invalid(
-            "companion person already belongs to a different principal",
-        ));
-    }
-    COMPANION_PRINCIPAL.put(&vault.store, txn, &companion, &intent.person_ref)?;
-    MEMBER_INTENT.put(&vault.store, txn, &key, digest)?;
-    Ok(())
 }
 
 /// The principal whose onboarding claimed `companion` here, if one did.

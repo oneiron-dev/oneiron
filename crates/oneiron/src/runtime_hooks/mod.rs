@@ -31,7 +31,8 @@ pub mod verb;
 
 pub use block::{HookBlock, HookBlockLifetime};
 pub use body::{
-    HookBodyRun, HookBodyRuntime, HookBudgetOverrun, HookRunContext, HookVerdict, HookVerdictCall,
+    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookBudgetOverrun, HookRunContext, HookVerdict,
+    HookVerdictCall,
 };
 pub use grant::HookGrant;
 pub use host::{BudgetHit, HOST_BUDGET_HIT};
@@ -45,7 +46,10 @@ pub use regen::{
     HookContractStamp, HookGoldenDiff, HookGoldenFingerprint, HookRegenFailure,
     HookRegenFailurePhase, HookRegenOutcome, HookRegenRecord, HookRegenRequest, HookRegenerator,
 };
-pub use replay::{HookReplayCase, HookReplayCompare, HookReplayEntry, HookReplayResult};
+pub use replay::{
+    HookReplayCase, HookReplayCompare, HookReplayCursor, HookReplayEntry, HookReplayEntryPage,
+    HookReplayResult,
+};
 pub use runner::{
     FactHookRunner, HOOK_PASS_ENTRIES, HOOK_RUNNER_TICK, HookPassAdmission, HookPassReport,
 };

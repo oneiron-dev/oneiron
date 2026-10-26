@@ -232,9 +232,6 @@ pub(crate) struct ProjectSpawnView {
     pub(crate) parents: Vec<String>,
     pub(crate) depth: u64,
 }
-/// Deepest anchor chain the fold follows before it quarantines the row.
-pub(crate) const MAX_PROJECT_ANCHORS: usize = 64;
-
 /// The fields a leader may narrow and only a board holder may widen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -348,6 +348,7 @@ impl OverlaySnapshot {
     ) -> Result<PromotePlan> {
         let mut ops = Vec::new();
         let mut cut_from = Vec::new();
+        let mut source_runs = Vec::new();
         let mut replayed = Vec::new();
         let mut source_learned_at = BTreeSet::new();
         for entry in self
@@ -361,6 +362,7 @@ impl OverlaySnapshot {
             source_learned_at.insert(entry.learned_at);
             ops.push(promotion_replay_op(entry)?);
             cut_from.push(entry.seq);
+            source_runs.push(entry.source_run.clone());
         }
 
         // In-room aliases, read from the overlay's OWN short-id tables. Base
@@ -384,6 +386,7 @@ impl OverlaySnapshot {
             temporary_short_ids,
             source_learned_at: source_learned_at.into_iter().collect(),
             cut_from,
+            source_runs,
             turn,
             conversation,
             appends,

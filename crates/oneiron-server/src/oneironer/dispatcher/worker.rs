@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderExecution, EncoderInput, EncoderMessage, EncoderOutput,
+    EncoderAttempt, EncoderExecution, EncoderInput, EncoderMessage, EncoderOutput, EncoderRegister,
     ExecutionCompute, ExecutionPick, ExecutionRuntime,
 };
 
@@ -291,6 +291,8 @@ fn warm_input() -> EncoderInput {
             text: WARM_TEXT.to_owned(),
         }],
         context: Vec::new(),
+        following: Vec::new(),
+        register: EncoderRegister::Live,
         language: None,
         speaker: None,
     }
@@ -355,23 +357,41 @@ pub(super) fn serve_unit(
     fault
 }
 
-/// One unit as one [`Worker::run_batch`] call: one result per call, in
-/// order. A worker that panics, or answers another number of calls, fails
-/// every call of the unit, and the fault is named.
+/// One unit as one [`Worker::run_batch`] call over every window of its
+/// calls, in order: one result per call, each call's windows merged into
+/// its one answer (FIX 9518), and a call any of whose windows failed failing
+/// with that window's error. A worker that panics, or answers another number
+/// of windows, fails every call of the unit, and the fault is named.
 fn run_unit(
     worker: &mut dyn Worker,
     unit: &[(Job, ExecutionPick)],
 ) -> (Vec<oneiron::Result<EncoderOutput>>, Option<&'static str>) {
-    let inputs: Vec<&EncoderInput> = unit.iter().map(|(job, _)| &job.input).collect();
+    let inputs: Vec<&EncoderInput> = unit
+        .iter()
+        .flat_map(|(job, _)| job.windows.inputs())
+        .collect();
     let (code, fault) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
-        Ok(results) if results.len() == inputs.len() => return (results, None),
+        Ok(results) if results.len() == inputs.len() => {
+            let mut results = results.into_iter();
+            let answers = unit
+                .iter()
+                .map(|(job, _)| {
+                    let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
+                    parts
+                        .into_iter()
+                        .collect::<oneiron::Result<Vec<EncoderOutput>>>()
+                        .and_then(|outputs| job.windows.merge(outputs))
+                })
+                .collect();
+            return (answers, None);
+        }
         Ok(_) => (
             "the worker answered another number of calls",
             "wrong_result_count",
         ),
         Err(_) => ("the worker panicked", "worker_panicked"),
     };
-    let failed = inputs
+    let failed = unit
         .iter()
         .map(|_| Err(failure(WORKER_TOOL, code)))
         .collect();

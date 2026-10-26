@@ -63,6 +63,7 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
         crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
+        crate::side_table::FEDERATION_TOMBSTONE_SCOPE.prefix,
     ]
     .iter()
     .any(|prefix| key.as_bytes().starts_with(prefix))
@@ -287,6 +288,19 @@ impl Vault {
         self.with_write_txn_grouped(|wtxn| {
             crate::store::admit_embedding_transform_in_txn(&self.store, wtxn, transform)
         })
+    }
+
+    /// The transform the vault pins for its vectors, `None` while none is.
+    /// A host whose model files are named by a moving hub ref reads it to load
+    /// the commit the stored vectors came from (FIX 9489).
+    pub fn embedding_transform(&self) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.store
+            .port_index_meta_with_raw(&rtxn, IndexMetaKey::EmbeddingTransform, |raw| {
+                std::str::from_utf8(raw)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::CorruptedIndex("embedding transform"))
+            })
     }
 
     /// `transform: None` keeps the stored transform under the same model and
@@ -779,8 +793,11 @@ impl Vault {
 
 #[cfg(feature = "sync")]
 mod sync_state_delete;
+mod sync_state_page;
 #[cfg(feature = "sync")]
 mod sync_state_reclaim;
+#[cfg(feature = "sync")]
+mod telemetry_if_absent;
 
 #[cfg(all(test, feature = "sync"))]
 mod sync_scan_tests;
