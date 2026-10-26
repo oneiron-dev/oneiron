@@ -411,6 +411,17 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// reader or writer of catalog rows or usage events runs at or after the
 /// floor, and no other missing-field default or reader of a row without it
 /// is kept. This version stays 3.
+///
+/// Wire health check revisions (FIX 9531): each kept call-volume question is
+/// a health check of its own on the owner's `/v1/owner/wire-health` read,
+/// its `subject` the crossed set's digest and the question's sequence
+/// (`wire:<digest>:<seq>`), with its own question and unit. An answered
+/// check's `state.by` gains the value `cover`: the answer to an earlier
+/// revision of the same crossed set that still covered it, whose `question`
+/// and `unit` it cites, and it was not asked itself. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of the checks runs against an engine at or after the floor, and no reader
+/// of a check without it is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
