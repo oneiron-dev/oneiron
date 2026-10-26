@@ -757,11 +757,95 @@ pub(crate) fn archive_side_rows_in_txn(
             .map(|(family, key, value)| (*family, key.as_slice(), value.as_slice())),
     );
     let mut travels = Vec::with_capacity(stored.len());
-    let mut groups: BTreeMap<(Group, EntityId), bool> = BTreeMap::new();
     for (family, key, value) in &stored {
-        let travel = context.travel(*family, key, value)?;
+        travels.push((*family, context.travel(*family, key, value)?));
+    }
+    let groups = whole_groups(&travels, included);
+    let mut held_out = BTreeSet::new();
+    let rows: Vec<SideRowBytes> = stored
+        .into_iter()
+        .zip(&travels)
+        .filter_map(|((family, key, value), (_, travel))| {
+            let owner = carried(family, travel, &groups, included, on_device, &mut held_out)?;
+            Some(SideRowBytes {
+                family,
+                key,
+                value,
+                owner,
+            })
+        })
+        .collect();
+    Ok((rows, incomplete(held_out).collect()))
+}
+
+/// FIX-LIST 11110: which of a stored records archive's side `rows` stay when
+/// the archive is cut down to the records `kept`, as
+/// [`archive_side_rows_in_txn`] carries them for those records: each row's
+/// record and carriers are read from the archive's own rows, as its import
+/// reads them, and a record's rows of one group stay together or not at all.
+/// `withheld`, the archive's list already cut to the kept records, then names
+/// what a fresh export of them names: each family of a kept record whose group
+/// does not stay whole, a row the export held out alone among them too. A
+/// vault-wide row stays nowhere: a records archive leaves this device.
+/// `files` reads a file a row names.
+pub(crate) fn project_side_rows(
+    rows: &[ArchiveSideRow],
+    kept: &BTreeSet<EntityId>,
+    withheld: &mut Vec<ArchiveSideWithheld>,
+    files: &mut dyn FnMut(&ExportBodyFile) -> Result<Vec<u8>>,
+) -> Result<Vec<bool>> {
+    let mut stored = Vec::with_capacity(rows.len());
+    for row in rows {
+        stored.push(row.stored(files)?);
+    }
+    let context = SideContext::of(
+        stored
+            .iter()
+            .map(|row| (row.family, row.key.as_slice(), row.value.as_slice())),
+    );
+    let mut travels = Vec::with_capacity(stored.len());
+    for row in &stored {
+        travels.push((
+            row.family,
+            context.travel(row.family, &row.key, &row.value)?,
+        ));
+    }
+    let groups = whole_groups(&travels, kept);
+    let mut held_out = BTreeSet::new();
+    let stays: Vec<bool> = travels
+        .iter()
+        .map(|(family, travel)| {
+            carried(*family, travel, &groups, kept, false, &mut held_out).is_some()
+        })
+        .collect();
+    let mut alone = Vec::with_capacity(withheld.len());
+    for entry in withheld.drain(..) {
+        let owner = entry.owner.as_deref().map(parse_id).transpose()?;
+        match owner {
+            Some(owner)
+                if entry.reason == ArchiveSideWithheldReason::Incomplete
+                    || groups.get(&(entry.family.spec().group, owner)) == Some(&false) =>
+            {
+                held_out.insert((entry.family, owner));
+            }
+            _ => alone.push(entry),
+        }
+    }
+    *withheld = alone;
+    withheld.extend(incomplete(held_out));
+    Ok(stays)
+}
+
+/// Whether each record's rows of one group all go (FIX 3681): the record and
+/// every carrier its rows name are in `included`, and none is broken.
+fn whole_groups(
+    travels: &[(ArchiveSideFamily, Travel)],
+    included: &BTreeSet<EntityId>,
+) -> BTreeMap<(Group, EntityId), bool> {
+    let mut groups = BTreeMap::new();
+    for (family, travel) in travels {
         let group = family.spec().group;
-        match &travel {
+        match travel {
             Travel::With(owner, carriers) => {
                 let whole =
                     included.contains(owner) && carriers.iter().all(|id| included.contains(id));
@@ -772,45 +856,50 @@ pub(crate) fn archive_side_rows_in_txn(
             }
             Travel::Vault | Travel::Orphan => {}
         }
-        travels.push(travel);
     }
-    let mut held_out = BTreeSet::new();
-    let rows: Vec<SideRowBytes> = stored
-        .into_iter()
-        .zip(travels)
-        .filter_map(|((family, key, value), travel)| {
-            let owner = match travel {
-                Travel::With(owner, _) | Travel::Broken(owner)
-                    if groups.get(&(family.spec().group, owner)) == Some(&true) =>
-                {
-                    Some(owner)
-                }
-                Travel::With(owner, _) | Travel::Broken(owner) => {
-                    if included.contains(&owner) {
-                        held_out.insert((family, owner));
-                    }
-                    return None;
-                }
-                Travel::Vault if on_device => None,
-                Travel::Vault | Travel::Orphan => return None,
-            };
-            Some(SideRowBytes {
-                family,
-                key,
-                value,
-                owner,
-            })
-        })
-        .collect();
-    let withheld: Vec<ArchiveSideWithheld> = held_out
+    groups
+}
+
+/// Where a row of `family` that travels as `travel` goes: `Some(Some(owner))`
+/// with its record when that record's group is whole, `Some(None)` as a
+/// vault-wide row when `vault`, else nowhere, its family then named in
+/// `held_out` for a record in `included`.
+fn carried(
+    family: ArchiveSideFamily,
+    travel: &Travel,
+    groups: &BTreeMap<(Group, EntityId), bool>,
+    included: &BTreeSet<EntityId>,
+    vault: bool,
+    held_out: &mut BTreeSet<(ArchiveSideFamily, EntityId)>,
+) -> Option<Option<EntityId>> {
+    match travel {
+        Travel::With(owner, _) | Travel::Broken(owner)
+            if groups.get(&(family.spec().group, *owner)) == Some(&true) =>
+        {
+            Some(Some(*owner))
+        }
+        Travel::With(owner, _) | Travel::Broken(owner) => {
+            if included.contains(owner) {
+                held_out.insert((family, *owner));
+            }
+            None
+        }
+        Travel::Vault if vault => Some(None),
+        Travel::Vault | Travel::Orphan => None,
+    }
+}
+
+/// The manifest entries of the families `held_out` names, each once.
+fn incomplete(
+    held_out: BTreeSet<(ArchiveSideFamily, EntityId)>,
+) -> impl Iterator<Item = ArchiveSideWithheld> {
+    held_out
         .into_iter()
         .map(|(family, owner)| ArchiveSideWithheld {
             family,
             owner: Some(owner.to_hex()),
             reason: ArchiveSideWithheldReason::Incomplete,
         })
-        .collect();
-    Ok((rows, withheld))
 }
 
 /// Validates an archive's side rows: each reads back through its table's key

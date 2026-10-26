@@ -454,6 +454,9 @@ impl Vault {
     }
 }
 
+mod birth;
+pub(crate) use birth::pin_body_quote_at_birth_in_txn;
+
 impl Vault {
     /// Pins a quoted span of a MESSAGE that owns a document, inside the
     /// caller's write transaction: the conversation reply door's quote.

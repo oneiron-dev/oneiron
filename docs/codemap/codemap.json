@@ -5911,7 +5911,7 @@
      "path": "src/batch/export/archive_side_tables.rs",
      "purpose": "OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 5,
       "struct": 3
      }
@@ -5996,7 +5996,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -21548,6 +21548,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/conversation/visibility/covers.rs",
+     "purpose": "A row's covers, walked on the heap (rule 5, FIX 9113): a summary's or a claim's covers, each cover's own…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/conversation/visibility/private_sources.rs",
      "purpose": "The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it",
      "surface": {
@@ -21657,9 +21667,19 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 28,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/quote/body_pins.rs",
+     "purpose": "Body-anchored quotes that reach this vault after their MESSAGE's document was born here (FIX 8942)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -31233,7 +31253,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "mod": 2,
       "re-export": 10
      }
@@ -31265,10 +31285,20 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 9,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/pins/birth.rs",
+     "purpose": "A MESSAGE quote anchored to the atomic text a document's local birth took (FIX 8942)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -69233,7 +69263,7 @@
      "purpose": "Vault storage for the tracker mirror: replicated fields, local OCC and CAS links",
      "surface": {
       "crate-vis": 10,
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -75145,7 +75175,7 @@
      "purpose": "Project responsibility records and their derived home-room membership",
      "surface": {
       "const": 1,
-      "crate-vis": 47,
+      "crate-vis": 46,
       "enum": 3,
       "fn": 17,
       "re-export": 15,
@@ -75229,6 +75259,16 @@
       "const": 2,
       "crate-vis": 7,
       "enum": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/read/authorize.rs",
+     "purpose": "Who authorized a stored project row's authority fields: its proof and the anchor lineage it builds on",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -75319,7 +75359,7 @@
      "path": "src/workspace_roster/project/revision.rs",
      "purpose": "Immutable, content-addressed project revisions (decision 8)",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 25,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -75503,6 +75543,16 @@
      "purpose": "Whether one held revision is valid on its own lineage, and the board's resolutions at one node (decisions 5…",
      "surface": {
       "crate-vis": 28
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/validity/settle.rs",
+     "purpose": "A fold's lineages judged from the oldest up (rule 5, FIX 9436)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76012,7 +76062,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RoomUpkeepInput",
@@ -76021,7 +76071,7 @@
      "path": "src/workspace_roster/rooms/upkeep.rs",
      "purpose": "What a room's upkeep reads (ONEIRON-ARCH-0067 §8: the engine performs every room's mechanical upkeep, and a…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 2,
       "struct": 2
      }
@@ -78134,14 +78184,14 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78309,7 +78359,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 32,
+     "files": 33,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79254,7 +79304,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 122,
+     "files": 124,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79277,7 +79327,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5240,
+   "source_files": 5245,
    "test_files": 902
   },
   "oneiron-android": {
@@ -89167,11 +89217,26 @@
      "purpose": "Host-owned GraphQL transport; credentials never enter the engine",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 4,
+      "re-export": 1,
       "struct": 2,
       "trait": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphQlValue"
+     ],
+     "path": "src/http/decode.rs",
+     "purpose": "A tracker response decoded on the host's memory line by the memory its value takes, not its wire bytes (FIX…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -89181,7 +89246,7 @@
      "path": "src/journal.rs",
      "purpose": "Host delivery state beneath the engine outbound dispatch, not a second gate",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -89244,10 +89309,10 @@
      "purpose": "Outbound mutation mapping; host door enforces policy and replay custody"
     },
     "http": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Host-owned GraphQL transport; credentials never enter the engine"
     },
     "journal": {
@@ -89281,7 +89346,7 @@
    },
    "over_bar": 0,
    "purpose": "Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror",
-   "source_files": 7,
+   "source_files": 8,
    "test_files": 1
   },
   "oneiron-llm-anthropic": {
@@ -98299,6 +98364,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/linear_push.rs",
+     "purpose": "`POST /v1/core/linear/push`: a caller's own push of one TASK to Linear now (FIX 8788, FIX 9382)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -104067,7 +104142,7 @@
      "path": "src/linear_host.rs",
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -104087,7 +104162,17 @@
      "path": "src/linear_host/direct.rs",
      "purpose": "The server's direct Linear GraphQL mirror, using the production adapter",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/linear_host/push.rs",
+     "purpose": "A caller's own push of one TASK to Linear (FIX 8788, FIX 9382)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -109589,7 +109674,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 574,
+     "files": 575,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -109876,7 +109961,7 @@
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered"
     },
     "linear_host": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -110067,7 +110152,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1298,
+   "source_files": 1300,
    "test_files": 182
   },
   "oneiron-spawn": {

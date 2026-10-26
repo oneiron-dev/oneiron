@@ -12214,7 +12214,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.add",
-      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told.",
+      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record.",
       "input": "crate::workspace_roster::ThreadAudienceAddRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_add(&input)?",
@@ -12242,7 +12242,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.remove",
-      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it.",
+      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record.",
       "input": "crate::workspace_roster::ThreadAudienceRemoveRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_remove(&input)?",
