@@ -8,8 +8,7 @@ use super::record::{
     CONFIDENCE_KEYS, KEY_COMPACT, KEY_CONFIDENCE, KEY_NARRATIVE, KEY_SCHEMA_VERSION,
     KEY_SOURCE_PAGES, KEY_SOURCE_REVISION_PAGES, KEY_STATUS, KEY_SUBJECT_REF, KEY_TEXT,
     MAX_COMPACT_BYTES, MAX_NARRATIVE_BYTES, MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS,
-    PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
-    PsychProfileSnapshotStatus,
+    PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus,
 };
 use crate::claim::unit_interval_f32;
 use crate::entity_id::EntityId;

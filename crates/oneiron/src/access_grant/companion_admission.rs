@@ -41,8 +41,7 @@ impl CompanionGrantBounds {
     /// unfaceted profile spans them all, so only an unbounded axis reaches it.
     #[must_use]
     pub fn admits_profile_key(&self, key: &PsychProfileKey) -> bool {
-        axis_admits(&self.ceiling.worlds, key.world)
-            && axis_admits(&self.ceiling.facets, key.facet)
+        axis_admits(&self.ceiling.worlds, key.world) && axis_admits(&self.ceiling.facets, key.facet)
     }
 }
 

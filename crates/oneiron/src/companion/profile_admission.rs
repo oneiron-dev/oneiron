@@ -90,11 +90,15 @@ impl Vault {
             else {
                 continue;
             };
-            if grant.allows_companion_profile_read(principal_ref, &key.person, key.facet.as_ref(), now)
-                && grant
-                    .companion_bounds
-                    .as_ref()
-                    .is_none_or(|bounds| bounds.admits_profile_key(key))
+            if grant.allows_companion_profile_read(
+                principal_ref,
+                &key.person,
+                key.facet.as_ref(),
+                now,
+            ) && grant
+                .companion_bounds
+                .as_ref()
+                .is_none_or(|bounds| bounds.admits_profile_key(key))
             {
                 return Ok(Some(id));
             }
@@ -126,9 +130,10 @@ impl Vault {
             PsychProfileState::Fresh(profile) | PsychProfileState::Stale { profile, .. } => profile,
         };
         COMPANION_PROFILE_WITHHOLDS_MIXED_SOURCES
-            && profile
-                .sources
-                .iter()
-                .any(|source| source.world_ref.is_some_and(|world| withheld.contains(&world)))
+            && profile.sources.iter().any(|source| {
+                source
+                    .world_ref
+                    .is_some_and(|world| withheld.contains(&world))
+            })
     }
 }

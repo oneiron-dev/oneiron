@@ -18,7 +18,9 @@ use crate::server::SyncServer;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
+use axum::http::StatusCode;
 use axum::response::Json;
+use oneiron::access_grant::{CompanionGrantIssuer, CompanionGrantOutcome};
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -108,16 +110,84 @@ pub(crate) struct CompanionAccessGrantResponse {
     expires_at: Option<u64>,
 }
 
+/// A companion grant asked past its issuer's bounds, kept whole as a pending
+/// access request for the owner (FIX 8140). It authorizes nothing.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+pub(crate) struct CompanionAccessRequestPendingResponse {
+    /// Request id; an approval creates the grant at this id.
+    #[schema(example = "33333333333333333333333333333333")]
+    request_id: String,
+    /// Principal the requested grant names.
+    #[schema(example = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    principal_ref: String,
+    /// Exact companion profile scope requested.
+    scope: CompanionAccessGrantScopePayload,
+    /// Requested capability.
+    #[schema(example = "companion_profile.read")]
+    capability: String,
+    /// Always `pending`.
+    #[schema(example = "pending")]
+    status: String,
+}
+
+/// A companion grant write's answer: the active grant, or the pending request.
+#[derive(Clone, Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum CompanionAccessGrantCreated {
+    Grant(CompanionAccessGrantResponse),
+    Request(CompanionAccessRequestPendingResponse),
+}
+
+/// HTTP status of a companion grant write that stands active (CALLS
+/// "OF-8140 companion grant statuses", open).
+const COMPANION_GRANT_ACTIVE_HTTP_STATUS: StatusCode = StatusCode::OK;
+
+/// HTTP status of a companion grant write kept as a pending request (CALLS
+/// "OF-8140 companion grant statuses", open).
+const COMPANION_GRANT_PENDING_HTTP_STATUS: StatusCode = StatusCode::ACCEPTED;
+
+/// The hosted operator's root acts as nobody (FIX 8139, FIX 2222): it gets
+/// the typed support-grant refusal before any body, actor or lookup. Every
+/// other answer of the host resolver, and every other credential, keeps its
+/// own path.
+fn refuse_hosted_root(server: &SyncServer, auth: &CoreAuth) -> Result<(), ApiError> {
+    match crate::api::host_action::host_action_of(server.vault(), auth) {
+        Some(Err(error @ oneiron::Error::HostActionRequiresSupportGrant)) => {
+            Err(crate::api::host_action::host_action_refusal(error))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Who issues a companion grant (FIX 8140): a self-hosted root or the dev
+/// mode acting as the owner, and a managed vault's attested owner, carry no
+/// record bounds; a verified slip's bounds are the grant's ceiling, judged
+/// by the engine in the writing transaction; a credential with no slip
+/// carries no bounds to carry.
+fn companion_grant_issuer<'a>(server: &SyncServer, auth: &'a CoreAuth) -> CompanionGrantIssuer<'a> {
+    if auth.managed_owner().is_some()
+        || matches!(
+            crate::api::host_action::host_action_of(server.vault(), auth),
+            Some(Ok(_))
+        )
+    {
+        return CompanionGrantIssuer::Unbounded;
+    }
+    auth.verified_slip()
+        .map_or(CompanionGrantIssuer::Unbounded, CompanionGrantIssuer::Slip)
+}
+
 /// Create a scoped companion AccessGrant.
 #[utoipa::path(
     post,
     path = "/v1/companion/access-grants",
     request_body(content = CompanionCreateAccessGrantRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "AccessGrant created.", body = CompanionAccessGrantResponse, content_type = "application/json"),
+        (status = 200, description = "AccessGrant created, carrying its issuer's bounds.", body = CompanionAccessGrantResponse, content_type = "application/json"),
+        (status = 202, description = "The grant asked past its issuer's bounds; it is kept whole as a pending access request.", body = CompanionAccessRequestPendingResponse, content_type = "application/json"),
         (status = 400, description = "Malformed grant request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks companion:access-grant:write or core:auth.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:access-grant:write or core:auth, or is a hosted operator's root.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "AccessGrant id already exists.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant write failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -126,7 +196,8 @@ pub(crate) async fn create_companion_access_grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CompanionCreateAccessGrantRequest>, JsonRejection>,
-) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
+) -> Result<(StatusCode, Json<CompanionAccessGrantCreated>), EnvelopedApiError> {
+    refuse_hosted_root(&server, &auth)?;
     let req = json_payload(payload)?;
     let grant_id = parse_optional_entity_id(req.id.as_deref(), "id")?;
     let principal_ref = parse_entity_id_param(&req.principal_ref, "principal_ref")?;
@@ -141,15 +212,38 @@ pub(crate) async fn create_companion_access_grant(
     );
     grant.expires_at = req.expires_at;
 
-    server
+    let outcome = server
         .vault
-        .create_access_grant(&grant_id, &grant)
+        .create_companion_access_grant_admitted(
+            &grant_id,
+            &grant,
+            companion_grant_issuer(&server, &auth),
+        )
         .map_err(|error| {
         tracing::error!(kind = ?error.kind(), id = %grant_id.to_hex(), "companion access grant create failed");
             companion_create_error(error)
         })?;
 
-    Ok(Json(companion_access_grant_response(&grant_id, &grant)))
+    Ok(match outcome {
+        CompanionGrantOutcome::Active(grant) => (
+            COMPANION_GRANT_ACTIVE_HTTP_STATUS,
+            Json(CompanionAccessGrantCreated::Grant(
+                companion_access_grant_response(&grant_id, &grant),
+            )),
+        ),
+        CompanionGrantOutcome::Pending(request) => (
+            COMPANION_GRANT_PENDING_HTTP_STATUS,
+            Json(CompanionAccessGrantCreated::Request(
+                CompanionAccessRequestPendingResponse {
+                    request_id: request.id.to_hex(),
+                    principal_ref: request.grant.principal_ref.to_hex(),
+                    scope: companion_scope_response(&person_ref, facet_ref.as_ref()),
+                    capability: request.grant.capability.as_str().to_owned(),
+                    status: "pending".to_owned(),
+                },
+            )),
+        ),
+    })
 }
 
 /// Revoke a scoped companion AccessGrant.
@@ -162,7 +256,7 @@ pub(crate) async fn create_companion_access_grant(
         (status = 200, description = "AccessGrant revoked.", body = CompanionAccessGrantResponse, content_type = "application/json"),
         (status = 400, description = "Malformed grant id or request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Token lacks companion:access-grant:write or core:auth, or carries record caveats.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Token lacks companion:access-grant:write or core:auth, carries record caveats, or is a hosted operator's root.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "AccessGrant was not found, or is not a companion grant this caller may revoke.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "AccessGrant revoke failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -173,6 +267,7 @@ pub(crate) async fn revoke_companion_access_grant(
     Path(grant_id): Path<String>,
     payload: Result<Json<CompanionRevokeAccessGrantRequest>, JsonRejection>,
 ) -> Result<Json<CompanionAccessGrantResponse>, EnvelopedApiError> {
+    refuse_hosted_root(&server, &auth)?;
     let grant_id = parse_entity_id_param(&grant_id, "grant_id")?;
     let req = json_payload(payload)?;
     let revoked_at = req.revoked_at.unwrap_or_else(unix_seconds_now);

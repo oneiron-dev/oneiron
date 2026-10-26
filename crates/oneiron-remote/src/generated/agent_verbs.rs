@@ -177,6 +177,9 @@ impl OneironClient {
                 "vault.companions.access_requests.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CompanionAccessRequestAnswered,
                 >(client, verb, &input),
+                "self.grants.answer" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GrantAnswered,
+                >(client, verb, &input),
                 "vault.personas.preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::PersonaSnapshotPreview,
                 >(client, verb, &input),
@@ -4188,6 +4191,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.companions.access_requests.answer", value)
+    }
+    pub fn self_grants_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::GrantAnswerRequest,
+    ) -> Result<oneiron::task_verb::sdk::GrantAnswered, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.answer", value)
     }
     pub fn vault_personas_preview(
         &self,

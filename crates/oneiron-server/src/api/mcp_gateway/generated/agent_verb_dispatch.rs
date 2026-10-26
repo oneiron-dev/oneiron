@@ -111,6 +111,7 @@ fn mcp_agent_verb_input(
         "self.message" => a.spec.clone().ok_or_else(invalid),
         "self.grants.ask" => a.spec.clone().ok_or_else(invalid),
         "vault.companions.access_requests.answer" => a.spec.clone().ok_or_else(invalid),
+        "self.grants.answer" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.preview" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.export" => a.spec.clone().ok_or_else(invalid),
         "vault.personas.edit" => a.spec.clone().ok_or_else(invalid),
@@ -1575,6 +1576,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.companions.access_requests.answer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.grants.answer" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.personas.preview" => {
@@ -5808,6 +5812,20 @@ async fn execute_agent_verb_row(
                     server, auth, input,
                 )
                 .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.grants.answer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.grants.answer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::GrantAnswerRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::self_grants_answer(server, auth, input).await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;

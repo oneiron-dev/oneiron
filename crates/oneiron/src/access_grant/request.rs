@@ -278,10 +278,14 @@ impl Vault {
             AccessRequestResponder::Person(proof) => {
                 match proof.revalidate_as_vault_owner_in_txn(self, &txn) {
                     Ok(owner) => {
-                        let request =
-                            self.answer_access_request_in(&mut txn, owner, id, approve, now, |_| {
-                                Ok(())
-                            })?;
+                        let request = self.answer_access_request_in(
+                            &mut txn,
+                            owner,
+                            id,
+                            approve,
+                            now,
+                            |_| Ok(()),
+                        )?;
                         txn.commit()?;
                         return Ok(request);
                     }
@@ -303,17 +307,18 @@ impl Vault {
                 actor
             }
         };
-        let request = self.answer_access_request_in(&mut txn, actor, id, approve, now, |request| {
-            if request.addressed_to != Some(actor) {
-                return Err(Error::EntityNotFound);
-            }
-            if approve && !own_companion_profile(&request.grant, &actor) {
-                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                    ADDRESSED_APPROVAL_PAST_OWN_DATA,
-                )));
-            }
-            Ok(())
-        })?;
+        let request =
+            self.answer_access_request_in(&mut txn, actor, id, approve, now, |request| {
+                if request.addressed_to != Some(actor) {
+                    return Err(Error::EntityNotFound);
+                }
+                if approve && !own_companion_profile(&request.grant, &actor) {
+                    return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                        ADDRESSED_APPROVAL_PAST_OWN_DATA,
+                    )));
+                }
+                Ok(())
+            })?;
         txn.commit()?;
         Ok(request)
     }
@@ -359,8 +364,7 @@ impl Vault {
 /// The refusal of an addressed member's approval past their own data (CALLS
 /// "OF-1379 addressed member approval", open): the request stays pending
 /// for the owner, never approved with a partial grant.
-const ADDRESSED_APPROVAL_PAST_OWN_DATA: &str =
-    "an addressed member approves access only to their own companion profile; the owner answers the rest";
+const ADDRESSED_APPROVAL_PAST_OWN_DATA: &str = "an addressed member approves access only to their own companion profile; the owner answers the rest";
 
 /// Whether `grant` reads only `actor`'s own companion profile.
 fn own_companion_profile(grant: &AccessGrant, actor: &EntityId) -> bool {

@@ -24,8 +24,12 @@ pub const PSYCH_PROFILE_BODY_KEYS: [&str; 9] = [
 ];
 
 /// Minimal projection: enough to answer "is there a profile and is it fresh?"
-pub(crate) const PSYCH_PROFILE_FIELDS_MINIMAL: &[&str] =
-    &["schemaVersion", "subjectRef", "sourceRevisionPages", "status"];
+pub(crate) const PSYCH_PROFILE_FIELDS_MINIMAL: &[&str] = &[
+    "schemaVersion",
+    "subjectRef",
+    "sourceRevisionPages",
+    "status",
+];
 
 /// Standard projection: add the cheap compact render and confidence metadata.
 pub(crate) const PSYCH_PROFILE_FIELDS_STANDARD: &[&str] = &[
