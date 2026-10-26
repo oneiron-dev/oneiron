@@ -535,6 +535,7 @@ impl WireTelemetry {
                 None => WireCrossed::default(),
             };
             active.window = Some(restored);
+            self.restore_newest(active, start, end)?;
         }
         let window = active.window.as_mut().expect("installed above");
         count(window);
@@ -545,15 +546,50 @@ impl WireTelemetry {
             let seq = self.keep_question(window, &crossed, active.next_seq)?;
             active.next_seq = Some(seq.saturating_add(1));
             active.asked = crossed;
+            self.index_question(window, seq)?;
         }
+        Ok(())
+    }
+    /// Counts into the window just installed, `start`..`end`, the newest
+    /// call-volume question kept, when it is that window's: then it is the
+    /// window's latest, which its index may not name, as a question is kept
+    /// before its window's row names it (FIX 9531). A restart so resumes a
+    /// question whose index row never committed. The sequence is read once
+    /// per server, and the first question kept takes it.
+    fn restore_newest(&self, active: &mut Active, start: u64, end: u64) -> Result<()> {
+        let next = match active.next_seq {
+            Some(next) => next,
+            None => self.next_question_seq()?,
+        };
+        active.next_seq = Some(next);
+        let Some(seq) = next.checked_sub(1) else {
+            return Ok(());
+        };
+        let Some(question) = self
+            .vault
+            .sync_state_get(&format!("{QUESTION_SEQ}{seq:020}"))?
+            .map(|b| decode::<WireQuestion>(&b))
+            .transpose()?
+        else {
+            return Ok(());
+        };
+        if question.seq != seq {
+            return Err(Error::CorruptedIndex("wire question identity"));
+        }
+        if question.evidence.started_at != start || question.evidence.ended_at != end {
+            return Ok(());
+        }
+        if let Some(window) = active.window.as_mut() {
+            resume(window, &question.evidence);
+        }
+        active.asked = question.crossed;
         Ok(())
     }
     /// Keeps `window` as the next call-volume question, naming `crossed`,
     /// under the sequence `next`, or the vault's next when this server has
-    /// kept none yet or another question holds `next`; then names it under
-    /// its window. Each row goes through the telemetry door that only adds
-    /// (FIX 10300): a kept question is never rewritten, and no sequence is
-    /// reused. The sequence it took.
+    /// kept none yet or another question holds `next`. The row goes through
+    /// the telemetry door that only adds (FIX 10300): a kept question is
+    /// never rewritten, and no sequence is reused. The sequence it took.
     fn keep_question(
         &self,
         window: &WireWindowReceipt,
@@ -578,6 +614,12 @@ impl WireTelemetry {
             }
             seq = self.next_question_seq()?.max(seq.saturating_add(1));
         }
+        Ok(seq)
+    }
+    /// Names question `seq`, kept for `window`, under its window, through the
+    /// same door. The index speeds the window's restore, which reads the
+    /// newest question kept beside it (`restore_newest`).
+    fn index_question(&self, window: &WireWindowReceipt, seq: u64) -> Result<()> {
         let key = format!(
             "{QUESTION_WINDOW}{:020}:{:020}:{seq:020}",
             window.started_at, window.ended_at
@@ -585,7 +627,7 @@ impl WireTelemetry {
         let bytes = encode(&seq)?;
         self.vault
             .sync_state_put_telemetry_batch_if_absent(&[(key.as_str(), bytes.as_slice())])?;
-        Ok(seq)
+        Ok(())
     }
     /// The sequence after the last call-volume question kept.
     fn next_question_seq(&self) -> Result<u64> {
@@ -681,7 +723,8 @@ impl WireTelemetry {
         }
         Ok(receipt)
     }
-    /// The latest call-volume question kept for the window `start`..`end`.
+    /// The latest call-volume question kept for the window `start`..`end`
+    /// that the window's index names.
     pub fn question(&self, start: u64, end: u64) -> Result<Option<WireQuestion>> {
         let named = format!("{QUESTION_WINDOW}{start:020}:{end:020}:");
         let Some(latest) = self.vault.sync_state_keys_with_prefix(&named)?.pop() else {
