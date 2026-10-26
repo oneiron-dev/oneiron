@@ -120,9 +120,25 @@ impl Vault {
             })?;
             self.authority_fold()?
         };
-        let live = fold.actor_bindings.get(&key).is_some_and(|binding| {
+        let binding_active = fold.actor_bindings.get(&key).is_some_and(|binding| {
             binding.status == ActorBindingStatus::Active && binding.actor_ref == machine
-        }) && fold.roster.get(&key).is_some_and(|device| !device.revoked);
+        });
+        let device_live = fold.roster.get(&key).is_some_and(|device| !device.revoked);
+        let live = binding_active && device_live;
+        // bel diagnosis (hack/bel-dreamer-fix): ids and booleans only, no keys.
+        tracing::info!(
+            machine = ?machine,
+            bindings_naming_machine = fold
+                .actor_bindings
+                .values()
+                .filter(|binding| binding.actor_ref == machine)
+                .count(),
+            derived_key_binding_active = binding_active,
+            derived_key_device_present = fold.roster.contains_key(&key),
+            derived_key_device_live = device_live,
+            signer_retained = live,
+            "engine machine identity provisioned"
+        );
         if live {
             self.retain_machine_write_signer(machine, public_key, move |transcript| {
                 Ok(signing.sign(transcript).to_bytes())

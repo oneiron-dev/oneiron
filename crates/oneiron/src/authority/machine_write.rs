@@ -33,6 +33,13 @@ pub(super) fn denied() -> Error {
     })
 }
 
+/// bel diagnosis (hack/bel-dreamer-fix): name the refusing stage of a MACHINE
+/// claim write in the log; the refusal itself is unchanged. Ids only, no keys.
+fn refused(stage: &'static str, id: &EntityId, replicated: bool, err: Error) -> Error {
+    tracing::warn!(stage, claim = ?id, replicated, "machine claim write refused");
+    err
+}
+
 fn invalid_origin(replicated: bool) -> Error {
     if replicated {
         Error::Claim(ClaimError::InvalidMachineClaimProof)
@@ -162,7 +169,14 @@ impl Vault {
         }
         match self.retained_machine_signer(envelope.actor().entity_ref())? {
             Some(signer) => self.attach_machine_signature(txn, id, candidate, envelope, signer),
-            None => Ok(()),
+            None => {
+                tracing::warn!(
+                    claim = ?id,
+                    actor = ?envelope.actor().entity_ref(),
+                    "machine claim left unsigned: no signer retained for this actor"
+                );
+                Ok(())
+            }
         }
     }
 
@@ -675,10 +689,15 @@ pub(crate) fn verify_machine_claim_in_txn(
     }
     let (actor, class, proof) = proof(body)
         .map_err(|err| match err {
-            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => invalid_origin(replicated),
+            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => refused(
+                "proof_malformed",
+                id,
+                replicated,
+                invalid_origin(replicated),
+            ),
             other => other,
         })?
-        .ok_or_else(|| invalid_origin(replicated))?;
+        .ok_or_else(|| refused("proof_absent", id, replicated, invalid_origin(replicated)))?;
     let actor_type = EntityStoreRead::port_entity_with_raw(store, txn, &actor, |raw| {
         Ok(EntityMetadataHeader::parse(raw).map(|header| header.entity_type))
     })?
@@ -687,15 +706,27 @@ pub(crate) fn verify_machine_claim_in_txn(
         || !replicated && actor_type != Some(ENTITY_TYPE_MACHINE)
         || actor_type.is_some_and(|kind| kind != ENTITY_TYPE_MACHINE)
     {
-        return Err(invalid_origin(replicated));
+        return Err(refused(
+            "actor_not_system_machine",
+            id,
+            replicated,
+            invalid_origin(replicated),
+        ));
     }
     let fold = super::authority_fold_readonly_for_store_in_txn(store, posture, txn)?;
     if fold.vault_root_is_conflicted() {
-        return Err(denied());
+        return Err(refused("root_conflicted", id, replicated, denied()));
     }
-    let proof = proof.ok_or_else(|| invalid_origin(replicated))?;
-    let key =
-        super::strong_ed25519_key(&proof.public_key).map_err(|_| invalid_origin(replicated))?;
+    let proof =
+        proof.ok_or_else(|| refused("proof_absent", id, replicated, invalid_origin(replicated)))?;
+    let key = super::strong_ed25519_key(&proof.public_key).map_err(|_| {
+        refused(
+            "proof_key_invalid",
+            id,
+            replicated,
+            invalid_origin(replicated),
+        )
+    })?;
     if let Some(vault_id) = fold.vault_id {
         match crate::claim::history_projection::resolved_machine_history(store, txn, &fold, *id) {
             Ok(projection) => {
@@ -705,7 +736,12 @@ pub(crate) fn verify_machine_claim_in_txn(
                             key.as_str() == Some(SIGNATURE_KEY)))
                     })
                 {
-                    return Err(invalid_origin(replicated));
+                    return Err(refused(
+                        "history_mismatch",
+                        id,
+                        replicated,
+                        invalid_origin(replicated),
+                    ));
                 }
             }
             // A restriction staged while a carrier awaits its owner's answer.
@@ -722,41 +758,58 @@ pub(crate) fn verify_machine_claim_in_txn(
                             && envelope.machine_signature() == Some(proof)
                     })
                 {
-                    return Err(denied());
+                    return Err(refused(
+                        "first_birth_envelope_mismatch",
+                        id,
+                        replicated,
+                        denied(),
+                    ));
                 }
                 // A first birth may reach replay before its scoped controls.
                 // Origin-verifiable rows are provisional; malformed proofs
                 // quarantine without requiring enrollment arrival order.
                 let transcript = machine_claim_transcript(&vault_id, id, body)?;
                 key.verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
-                    .map_err(|_| invalid_origin(replicated))?;
+                    .map_err(|_| {
+                        refused(
+                            "signature_invalid",
+                            id,
+                            replicated,
+                            invalid_origin(replicated),
+                        )
+                    })?;
             }
             Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => {
-                return Err(invalid_origin(replicated));
+                return Err(refused(
+                    "history_proof_invalid",
+                    id,
+                    replicated,
+                    invalid_origin(replicated),
+                ));
             }
             Err(other) => return Err(other),
         }
     } else if !replicated {
-        return Err(denied());
+        return Err(refused("no_vault_id", id, replicated, denied()));
     }
     // A relay may see the signed row before genesis/birth. Store its canonical
     // bytes provisionally; read/export withhold until verified history arrives.
     if !replicated {
         let authority_key = AuthorityKey::Ed25519(proof.public_key);
-        if !fold
+        let binding_admitted = fold
             .actor_bindings
             .get(&authority_key)
             .is_some_and(|binding| {
                 binding.status == ActorBindingStatus::Active
                     && binding.actor_ref == actor
                     && binding.actor_class == "system"
-            })
-            || !fold.roster.get(&authority_key).is_some_and(|device| {
-                !device.revoked
-                    && device.tier == AuthorityTier::Software
-                    && device.roles & ROLE_AGENT != 0
-            })
-        {
+            });
+        let device_admitted = fold.roster.get(&authority_key).is_some_and(|device| {
+            !device.revoked
+                && device.tier == AuthorityTier::Software
+                && device.roles & ROLE_AGENT != 0
+        });
+        if !binding_admitted || !device_admitted {
             // A history the successor root carried stays writable as it
             // stays readable: its transitions project an existing birth.
             if !super::host_re_root::origin_carried_past_re_root(
@@ -767,7 +820,19 @@ pub(crate) fn verify_machine_claim_in_txn(
                 &authority_key,
                 actor,
             ) {
-                return Err(denied());
+                tracing::warn!(
+                    claim = ?id,
+                    actor = ?actor,
+                    binding_admitted,
+                    device_admitted,
+                    "machine claim write refused: signer key not admitted"
+                );
+                return Err(refused(
+                    "binding_or_roster_not_admitted",
+                    id,
+                    replicated,
+                    denied(),
+                ));
             }
         }
     }
