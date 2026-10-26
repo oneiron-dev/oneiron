@@ -492,6 +492,11 @@ fn receipted_door(path: &str) -> Option<(CallTransport, String)> {
             Some((CallTransport::Mcp, path.trim_start_matches('/').to_owned()))
         }
         "/ws" => Some((CallTransport::Ws, "ws.upgrade".to_owned())),
+        // FIX 3389: the raw OpenAI proxy, under the verb its own door states.
+        "/v1/chat/completions" => Some((
+            CallTransport::OpenAiProxy,
+            super::openai_proxy::PROXY_CALL_VERB.to_owned(),
+        )),
         _ => None,
     }
 }

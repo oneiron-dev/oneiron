@@ -19,7 +19,13 @@
 //! the handoff in its adopting writer (FIX 5931); the old home's tries run in
 //! the host's own passes, and this worker only rechecks quiescence in the
 //! final writer and freezes.
+//!
+//! FIX 6459: each round first feeds the route residence reads take now, so
+//! a host with no topology captures its moves' routes too ([`feed_move_routes`]
+//! feeds a topology's). FIX 6574: a target whose status says it fenced the
+//! handoff makes this node take its state back and replan the move.
 
+use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -34,7 +40,7 @@ use crate::sync::home_handoff::{
 };
 
 /// Whether this build delivers home handoffs (on since FIX 5661 C2b). Off,
-/// the worker never runs a round and no move's route is captured.
+/// the worker never runs a round and no route is fed for a move.
 const HOME_HANDOFF_DELIVERY: bool = true;
 
 /// The target's answer to a cancel, or why it could not be read: no
@@ -75,15 +81,21 @@ async fn keep_ack(
     blocking(move || home_handoff::record_ack(&vault, &id, ack)).await
 }
 
-/// Captures the route of the move this node's election last recorded, at
-/// the move. Off while delivery is off. A capture that fails is logged;
-/// the move's delivery then finds no route and records that.
-pub(super) fn capture_move_route(vault: &Vault, endpoint_of: impl FnOnce(u64) -> Option<String>) {
+/// FIX 6459: feeds the host topology's candidate `endpoints` and the
+/// `fallback` route residence reads take where it names none, before the
+/// election they inform; the election captures each move's route from
+/// them. Off while delivery is off. A feed that fails is logged; the next
+/// round's feed captures the move.
+pub(super) fn feed_move_routes(
+    vault: &Vault,
+    endpoints: Option<BTreeMap<u64, String>>,
+    fallback: String,
+) {
     if !HOME_HANDOFF_DELIVERY {
         return;
     }
-    if let Err(error) = home_handoff::capture_route(vault, endpoint_of) {
-        tracing::warn!(kind = ?error.kind(), "a home move's route was not captured");
+    if let Err(error) = home_handoff::feed_routes(vault, endpoints, fallback) {
+        tracing::warn!(kind = ?error.kind(), "a home move's routes were not fed");
     }
 }
 
@@ -123,8 +135,13 @@ impl SyncConnection {
         }
     }
 
-    /// One round of the carrier's plan.
+    /// One round of the carrier's plan, after feeding the route residence
+    /// reads take now (FIX 6459): a move no route was captured for yet takes
+    /// it.
     async fn home_handoff_round(&self, vault: &Arc<Vault>) -> Result<(), TransportError> {
+        let feeding = Arc::clone(vault);
+        let fallback = self.config.client_config.residence_url();
+        blocking(move || home_handoff::feed_fallback_route(&feeding, fallback)).await?;
         let planned = Arc::clone(vault);
         match blocking(move || home_handoff::delivery_plan(&planned)).await? {
             DeliveryPlan::Idle => Ok(()),
@@ -200,6 +217,7 @@ impl SyncConnection {
         };
         let staged = match lane.status(&frozen.id, &frozen.digest).await? {
             Some(TargetStanding::Adopted(ack)) => return keep_ack(vault, frozen, ack).await,
+            Some(TargetStanding::Fenced) => return self.replan(vault, frozen).await,
             Some(TargetStanding::Staged(staged)) => staged,
             None => return Ok(()),
         };
@@ -225,6 +243,21 @@ impl SyncConnection {
             Some(ack) => keep_ack(vault, frozen, ack).await,
             None => Ok(()),
         }
+    }
+
+    /// FIX 6574: `frozen`'s target fenced it for good. This node takes its
+    /// state back and records a fresh move to the home its election names,
+    /// that same target included; the next round freezes a new export.
+    async fn replan(
+        &self,
+        vault: &Arc<Vault>,
+        frozen: &FrozenHandoff,
+    ) -> Result<(), TransportError> {
+        let replanning = Arc::clone(vault);
+        let id = frozen.id;
+        blocking(move || home_handoff::replan_fenced(&replanning, &id)).await?;
+        self.home_handoff_wake.notify_one();
+        Ok(())
     }
 
     /// FIX 5931: this node is home again before its target acked. Adopted
