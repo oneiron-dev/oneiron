@@ -98,7 +98,10 @@ impl HookReplayCursor {
                 Ok(Self(CursorAt::Facts(frontiers)))
             }
             Some("runs") => {
-                let commit_ms = parts.next().and_then(|ms| ms.parse().ok()).ok_or_else(foreign)?;
+                let commit_ms = parts
+                    .next()
+                    .and_then(|ms| ms.parse().ok())
+                    .ok_or_else(foreign)?;
                 let key = parts.next().and_then(run_key).ok_or_else(foreign)?;
                 if parts.next().is_some() {
                     return Err(foreign());
