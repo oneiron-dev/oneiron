@@ -192,6 +192,10 @@ pub struct OutboundDispatchRequest {
     /// again under the outbound writer. In memory only, never persisted;
     /// `None` everywhere else.
     pub publisher_signature: Option<super::PublisherSignatureAuthorization>,
+    /// The host-selected ambient send an interrupt degrades to (FIX 7962):
+    /// when the delivery window degrades this send to its surface, the
+    /// pipeline sends it as a send of its own. `None` keeps today's park.
+    pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -245,6 +249,7 @@ impl OutboundDispatchRequest {
             facet_ref: None,
             send_autonomy: None,
             publisher_signature: None,
+            ambient_alternative: None,
         }
     }
 
@@ -376,6 +381,16 @@ impl OutboundDispatchRequest {
         self
     }
 
+    /// Binds the ambient send this interrupt degrades to (FIX 7962): the
+    /// delivery window may degrade it to `alternative.surface`, and the
+    /// pipeline then sends the alternative.
+    #[must_use]
+    pub fn ambient_alternative(mut self, alternative: super::OutboundAmbientAlternative) -> Self {
+        self.delivery_window_degrade_to = Some(alternative.surface.clone());
+        self.ambient_alternative = Some(Box::new(alternative));
+        self
+    }
+
     #[must_use]
     pub fn delivery_window_apns_interruption_level(
         mut self,
@@ -465,6 +480,13 @@ pub struct OutboundExecutionOutcome {
     /// deliver, as the sink names it (FIX 7965). Empty, the receipt files
     /// the engine's typed fallback.
     pub recovery_suggestions: Vec<super::OutboundRecoverySuggestion>,
+    /// The provider's handle on a send it accepted as a remote task (FIX
+    /// 7960); set only with [`OutboundExecutionOutcomeKind::Deferred`].
+    pub remote_task: Option<crate::outbound_intent_ledger::RemoteTaskHandle>,
+    /// Why the provider refused this send for now (FIX 8818): a rate limit
+    /// or a spent quota, on a definite non-delivery. Its stated seconds ride
+    /// the `retry_after` field.
+    pub provider_wait: Option<crate::outbound_intent_ledger::ProviderWaitKind>,
 }
 
 /// Typed adapter execution result. Unknown adapter outcomes must be modeled
@@ -473,6 +495,8 @@ pub struct OutboundExecutionOutcome {
 pub enum OutboundExecutionOutcomeKind {
     DeliveredToChannel,
     Failed,
+    /// The provider accepted the send as a remote task (FIX 7960).
+    Deferred,
 }
 
 impl OutboundExecutionOutcome {
@@ -485,6 +509,8 @@ impl OutboundExecutionOutcome {
             retry_state: None,
             receipt_fields: BTreeMap::new(),
             recovery_suggestions: Vec::new(),
+            remote_task: None,
+            provider_wait: None,
         }
     }
 
@@ -497,7 +523,36 @@ impl OutboundExecutionOutcome {
             retry_state: Some(reason.into()),
             receipt_fields: BTreeMap::new(),
             recovery_suggestions: Vec::new(),
+            remote_task: None,
+            provider_wait: None,
         }
+    }
+
+    /// The provider accepted the send as the remote task `handle` (FIX
+    /// 7960): delivery is not yet known, and the send is never repeated.
+    #[must_use]
+    pub fn deferred(handle: crate::outbound_intent_ledger::RemoteTaskHandle) -> Self {
+        Self {
+            kind: OutboundExecutionOutcomeKind::Deferred,
+            delivery_may_have_occurred: true,
+            provider_ref: None,
+            retry_state: None,
+            receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
+            remote_task: Some(handle),
+            provider_wait: None,
+        }
+    }
+
+    /// Marks this definite non-delivery as the provider's rate or quota
+    /// refusal (FIX 8818): the send stays queued for the provider's wait.
+    #[must_use]
+    pub const fn with_provider_wait(
+        mut self,
+        kind: crate::outbound_intent_ledger::ProviderWaitKind,
+    ) -> Self {
+        self.provider_wait = Some(kind);
+        self
     }
 
     #[must_use]
@@ -557,6 +612,8 @@ pub enum OutboundDispatchOutcome {
     LetGo,
     Failed,
     Ambiguous,
+    /// The provider accepted the send as a remote task (FIX 7960).
+    Deferred,
 }
 
 impl OutboundDispatchOutcome {
@@ -570,6 +627,7 @@ impl OutboundDispatchOutcome {
             Self::LetGo => "let_go",
             Self::Failed => "failed",
             Self::Ambiguous => "ambiguous",
+            Self::Deferred => "deferred",
         }
     }
 }

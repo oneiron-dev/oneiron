@@ -318,6 +318,9 @@ pub(super) fn dispatch_result_receipt(
         ceiling_count: _,
         held_approval_digest,
         held_approval_actor,
+        provider_wait,
+        provider_wait_held_until,
+        budget_reservation,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
     let gate_outcome = gate_outcome_kind.as_str().to_owned();
@@ -411,6 +414,12 @@ pub(super) fn dispatch_result_receipt(
     // honest record. `budget` = min remaining over the rows MATCHED by
     // this dispatch (the binding constraint — M4 resolution 2026-07-10).
     append_effector_budget_receipt(&mut receipt, effector_charge.as_ref());
+    append_settlement_receipt_fields(
+        &mut receipt,
+        provider_wait,
+        provider_wait_held_until,
+        budget_reservation,
+    );
     append_contract_receipt(&mut receipt, verb_contract, policy_risk);
     for (key, value) in engine_receipt_fields {
         receipt.fields.insert(key, value);
@@ -472,6 +481,42 @@ pub(super) fn dispatch_result_receipt(
         effector_budget,
         budget_ladder_events,
         budget_pool,
+    }
+}
+
+/// Receipt field naming the kind of provider wait a queued send keeps (FIX
+/// 8818).
+pub(crate) const PROVIDER_WAIT_FIELD: &str = "provider_wait";
+
+/// Receipt field naming where a send's reserved budget stands (FIX 7964).
+const BUDGET_RESERVATION_FIELD: &str = "budget_reservation";
+
+/// What the ledger keeps beside a send's row, on its receipt: the provider
+/// wait it is queued for (FIX 8818), the edge that wait held this dispatch
+/// at as its `retry_at` when nothing went, and its reserved budget's status
+/// (FIX 7964).
+fn append_settlement_receipt_fields(
+    receipt: &mut ReceiptRecord,
+    provider_wait: Option<crate::outbound_intent_ledger::ProviderRetryDirective>,
+    provider_wait_held_until: Option<u64>,
+    budget_reservation: Option<crate::outbound_intent_ledger::ReservationStatus>,
+) {
+    if let Some(wait) = provider_wait {
+        receipt.fields.insert(
+            PROVIDER_WAIT_FIELD.to_owned(),
+            wait.kind.as_str().to_owned(),
+        );
+    }
+    if let Some(edge) = provider_wait_held_until {
+        receipt
+            .fields
+            .insert("retry_at".to_owned(), edge.to_string());
+    }
+    if let Some(status) = budget_reservation {
+        receipt.fields.insert(
+            BUDGET_RESERVATION_FIELD.to_owned(),
+            status.as_str().to_owned(),
+        );
     }
 }
 

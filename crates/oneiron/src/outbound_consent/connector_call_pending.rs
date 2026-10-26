@@ -155,6 +155,15 @@ impl Vault {
                     reasons,
                 }
             }
+            // FIX 7960: the connector took the call as a remote task; its
+            // outcome is still out when its caller expires.
+            IntentResolution::Deferred => SettledConnectorCall::Unsettled {
+                intent: record.id,
+                reasons: vec![
+                    CONNECTOR_CALL_EXPIRED.to_owned(),
+                    super::connector_call_dispatch::REMOTE_TASK_DEFERRED.to_owned(),
+                ],
+            },
             IntentResolution::Pending { .. } => {
                 return Err(IntentLedgerError::InvalidRecord(
                     "an expired connector intent stayed pending",

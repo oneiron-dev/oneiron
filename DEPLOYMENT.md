@@ -328,6 +328,7 @@ deadline_jobs_per_caller = 2048   # recalls and searches one caller has running 
 authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 connector_live_questions = 64     # rounds of foreign MCP questions (elicitation) one server holds live for connector callers; past it the question registers and waits like any other and the row asks; only the memory floor and a round's 120 s deadline end one
 connector_reply_context_bytes = 65536  # UTF-8 bytes one connector reply's model call reads (agent instructions, the conversation's whole witnessed history, the inbound message); past it the call reads the context whole and the row asks
+campaign_judgment_rows = 4096     # membership rows one campaign judgment request joins; past it every row is still joined, 256 at a time, and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

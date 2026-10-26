@@ -374,6 +374,7 @@ impl LimitsConfig {
             authority_record_items,
             connector_live_questions,
             connector_reply_context_bytes,
+            campaign_judgment_rows,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -592,6 +593,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorReplyContextBytes,
                 connector_reply_context_bytes,
             ),
+            (EngineLimit::CampaignJudgmentRows, campaign_judgment_rows),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -825,4 +827,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) authority_record_items: Option<u64>,
     pub(super) connector_live_questions: Option<u64>,
     pub(super) connector_reply_context_bytes: Option<u64>,
+    pub(super) campaign_judgment_rows: Option<u64>,
 }

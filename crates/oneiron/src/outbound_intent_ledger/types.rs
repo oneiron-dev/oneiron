@@ -16,7 +16,7 @@ use crate::error::Error;
 /// own custody key, or erased (FIX 9283, 9372, 2328). These rows are
 /// device-local and pre-release, so v4 is read exclusively: there is no
 /// old-schema reader.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 4;
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 5;
 
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
@@ -50,6 +50,9 @@ pub enum IntentState {
     Pending,
     Done,
     Abandoned,
+    /// The provider accepted the send as a remote task (FIX 7960): its
+    /// handle is kept beside the row, and the engine never sends it again.
+    Deferred,
 }
 
 impl IntentState {
@@ -60,6 +63,7 @@ impl IntentState {
             Self::Pending => "pending",
             Self::Done => "done",
             Self::Abandoned => "abandoned",
+            Self::Deferred => "deferred",
         }
     }
 
@@ -68,6 +72,7 @@ impl IntentState {
             "pending" => Some(Self::Pending),
             "done" => Some(Self::Done),
             "abandoned" => Some(Self::Abandoned),
+            "deferred" => Some(Self::Deferred),
             _ => None,
         }
     }
@@ -75,7 +80,11 @@ impl IntentState {
     pub(super) const fn may_transition_to(self, next: Self) -> bool {
         matches!(
             (self, next),
-            (Self::Pending, Self::Done) | (Self::Pending, Self::Abandoned)
+            (Self::Pending, Self::Done)
+                | (Self::Pending, Self::Abandoned)
+                | (Self::Pending, Self::Deferred)
+                | (Self::Deferred, Self::Done)
+                | (Self::Deferred, Self::Abandoned)
         )
     }
 }
@@ -192,6 +201,12 @@ pub enum IntentEscalationReason {
     /// request is gone and it is never sent again, keeping what it knew of
     /// its delivery (FIX 9283).
     ActorErased,
+    /// The person a send went to was erased before it settled: its request
+    /// is gone and it is never sent again (FIX 10953).
+    RecipientErased,
+    /// The provider reported that the remote task it accepted the send as
+    /// failed or was cancelled (FIX 7960).
+    RemoteTaskFailed,
 }
 
 impl IntentEscalationReason {
@@ -208,6 +223,8 @@ impl IntentEscalationReason {
             Self::OwnerStopped => "owner_stopped",
             Self::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
             Self::ActorErased => "actor_erased",
+            Self::RecipientErased => "recipient_erased",
+            Self::RemoteTaskFailed => "remote_task_failed",
         }
     }
 
@@ -224,6 +241,8 @@ impl IntentEscalationReason {
             "owner_stopped" => Some(Self::OwnerStopped),
             "connector_key_slate_never_allow" => Some(Self::ConnectorSlateNeverAllow),
             "actor_erased" => Some(Self::ActorErased),
+            "recipient_erased" => Some(Self::RecipientErased),
+            "remote_task_failed" => Some(Self::RemoteTaskFailed),
             _ => None,
         }
     }
@@ -237,6 +256,8 @@ pub enum RecordedOutboundOutcome {
     DefiniteNonDelivery,
     Acked,
     Abandoned(IntentEscalationReason),
+    /// The provider accepted the send as a remote task (FIX 7960).
+    Deferred,
 }
 
 /// Caller-owned identity and once-serialized payload for one outbound call.
@@ -466,6 +487,10 @@ pub enum OutboundSendOutcome {
     Ambiguous,
     /// Certain non-delivery. An unsure transport must return [`Self::Ambiguous`].
     Failed(OutboundSendFailure),
+    /// The provider accepted the send as a remote task whose outcome it
+    /// reports later (FIX 7960). The transport hands its handle on through
+    /// `remote_task`; delivery is not yet known.
+    Deferred,
 }
 
 /// Test-only transport seam for exercising ledger encoding primitives.

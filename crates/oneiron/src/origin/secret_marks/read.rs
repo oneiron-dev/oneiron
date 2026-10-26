@@ -295,6 +295,20 @@ impl RepoMarkFacts {
         self.marks.iter().map(|mark| mark.raw_blake3).collect()
     }
 
+    /// The Git OID of every blob, in any store, one of whose marks `keep`
+    /// selects, sorted and once each (FIX 7608 slice 9): the objects a
+    /// public send's history is joined against.
+    pub(crate) fn blob_oids<F: Fn(&RepoSecretMark) -> bool>(
+        &self,
+        keep: F,
+    ) -> std::collections::BTreeSet<GitOid> {
+        self.marks
+            .iter()
+            .filter(|mark| keep(mark))
+            .map(|mark| mark.blob_oid.clone())
+            .collect()
+    }
+
     /// The marks of `address`'s blob in its store.
     pub(crate) fn for_blob(&self, address: &RepoBlobAddress) -> RepoBlobMarks {
         self.select(|mark| mark.store_id == address.store && mark.blob_oid == address.blob)
