@@ -5637,7 +5637,7 @@
      "path": "src/batch/builder/mod.rs",
      "purpose": "The atomic multi-database write-batch builder and its two terminals",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "struct": 1
      }
     },
@@ -6273,7 +6273,7 @@
      "path": "src/batch/gate_mode.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -6311,7 +6311,7 @@
      "path": "src/batch/lexical_query_hints.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -6321,7 +6321,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "mod": 1,
       "re-export": 3
      }
@@ -69572,7 +69572,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 20,
+      "fn": 21,
       "struct": 1
      }
     },
@@ -70892,6 +70892,17 @@
      "surface": {
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/raw_writes/session.rs",
+     "purpose": "A bound raw handle inside the off-record session it names (FIX 8119, 8603), and the verified caller's…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 7
      }
     },
     {
@@ -78857,7 +78868,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 41,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78950,7 +78961,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5212,
+   "source_files": 5213,
    "test_files": 902
   },
   "oneiron-android": {
@@ -88143,6 +88154,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/lib/session_reads.rs",
+     "purpose": "The content reads a bound [`OneironVault`] makes inside the off-record session it names (FIX 8603): the…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -88177,7 +88198,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -88186,7 +88207,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 11,
+   "source_files": 12,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -90797,17 +90818,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "NapiEngineHeader",
       "NapiEngineOptions",
-      "NativeEngine"
+      "NapiEngineReply",
+      "NapiEngineRequest",
+      "NativeEngine",
+      "NativeEngineConnection"
      ],
      "path": "src/facade/client/embedded_engine.rs",
      "purpose": "The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron…",
      "surface": {
-      "fn": 5,
-      "struct": 2
+      "fn": 13,
+      "struct": 6
      }
     },
     {
@@ -90880,12 +90905,9 @@
       "NapiPendingWrite",
       "NapiQueryAffect",
       "NapiQuoteSpan",
-      "NapiReadReceipt",
-      "NapiReadScope",
       "NapiRecallMedia",
       "NapiRecallResidence",
       "NapiRecallResidenceHit",
-      "NapiRecallScope",
       "NapiRecordRef",
       "NapiRecordRefusal",
       "NapiRetrievalMeta",
@@ -90901,7 +90923,22 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 63
+      "crate-vis": 1,
+      "struct": 60
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "NapiReadReceipt",
+      "NapiReadScope",
+      "NapiRecallScope"
+     ],
+     "path": "src/facade/dtos/read_scope.rs",
+     "purpose": "The recall scope a caller asks for and the read receipt every read returns, as napi objects",
+     "surface": {
+      "struct": 3
      }
     },
     {
@@ -90910,6 +90947,16 @@
      "notable": [],
      "path": "src/facade/input_error.rs",
      "purpose": "Typed input refusals for the scoped SDK client, not the legacy bridge",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/facade/js_json.rs",
+     "purpose": "JSON values from JavaScript, read as the typed decode behind them reads them (FIX 2884, 4804)",
      "surface": {
       "crate-vis": 1
      }
@@ -91053,6 +91100,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/lib/vault/reads.rs",
+     "purpose": "The content reads a bound [`NapiVault`] makes inside the off-record session it names (FIX 8119): the room's…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "NapiCodebaseFileEntry",
       "NapiCodebaseSnapshot",
@@ -91079,14 +91136,14 @@
      "purpose": "JS bindings for the typed `companion.expression.*` doors"
     },
     "facade": {
-     "files": 14,
+     "files": 16,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
     "lib": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -91102,7 +91159,7 @@
    },
    "over_bar": 2,
    "purpose": "The raw N-API addon root: module registrations and the crate-level native exports",
-   "source_files": 22,
+   "source_files": 25,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -92159,7 +92216,8 @@
      "purpose": "The embedded backend: path resolution, the process-local vault registry, and the single-writer lease…",
      "surface": {
       "crate-vis": 21,
-      "fn": 1
+      "fn": 1,
+      "type": 1
      }
     },
     {
@@ -92247,7 +92305,7 @@
      "path": "src/lib.rs",
      "purpose": "`oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1)",
      "surface": {
-      "fn": 19,
+      "fn": 20,
       "mod": 1,
       "re-export": 5,
       "struct": 3
@@ -102741,9 +102799,19 @@
      "purpose": "The engine an app runs in its own process (OF-237): one shared Rust entry point under every native binding",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 20,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embedded/engine/run.rs",
+     "purpose": "One serve run of an [`super::EmbeddedEngine`], from its start until it returns, and the state that holds it…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -109324,7 +109392,7 @@
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)"
     },
     "embedded": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -109613,7 +109681,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1290,
+   "source_files": 1291,
    "test_files": 182
   },
   "oneiron-spawn": {
