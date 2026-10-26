@@ -97,20 +97,22 @@ impl Vault {
     /// Opens the worlds restore epoch `epoch` left Locked with the custody
     /// head beside `backup`, the checkpoint that epoch landed, opened with
     /// `key` (the backup's data key, for the head's control compartment) and
-    /// the kit's root or an admitted machine's key `recovery` carries. The
+    /// the kit's root or an admitted machine's key `recovery` carries. With
+    /// no `epoch`, the latest epoch that landed `backup`'s checkpoint. The
     /// owner's proof is checked first and again in every write. An epoch
     /// that owes no Locked world reports as it stands and opens nothing.
     ///
     /// # Errors
     ///
-    /// `owner` no longer holds; no epoch `epoch`; a backup that is not its
-    /// checkpoint, or names no custody head; a head that is another vault's
-    /// lineage or that its admission refuses (seal, chain, anchor, age).
-    /// Faults after admission are named in the report, never returned.
+    /// `owner` no longer holds; no epoch `epoch`, or none that landed
+    /// `backup`; a backup that is not its checkpoint, or names no custody
+    /// head; a head that is another vault's lineage or that its admission
+    /// refuses (seal, chain, anchor, age). Faults after admission are named
+    /// in the report, never returned.
     pub fn reopen_restore_pads_as(
         &self,
         owner: &AuthenticatedOwner,
-        epoch: u64,
+        epoch: Option<u64>,
         backup: &Path,
         key: &CheckpointKey,
         recovery: &CustodyRecovery<'_>,
@@ -119,9 +121,27 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             owner.revalidate_in_txn(self, &txn)?;
         }
-        let recorded = epochs::epoch_at(self, epoch)?.ok_or_else(|| {
-            Error::InvalidConfig(format!("this vault recorded no restore epoch {epoch}"))
-        })?;
+        let (_, checkpoint_id, _, required) = read_image_required(backup, key)?;
+        let (epoch, recorded) = match epoch {
+            Some(epoch) => {
+                let recorded = epochs::epoch_at(self, epoch)?.ok_or_else(|| {
+                    Error::InvalidConfig(format!("this vault recorded no restore epoch {epoch}"))
+                })?;
+                if checkpoint_id != recorded.checkpoint_id {
+                    return Err(Error::InvalidConfig(format!(
+                        "backup {} is not the checkpoint restore epoch {epoch} landed",
+                        backup.display()
+                    )));
+                }
+                (epoch, recorded)
+            }
+            None => epochs::latest_epoch_of(self, &checkpoint_id)?.ok_or_else(|| {
+                Error::InvalidConfig(format!(
+                    "this vault recorded no restore of backup {}",
+                    backup.display()
+                ))
+            })?,
+        };
         let mut report = PadReopenReport {
             epoch,
             checkpoint_id: recorded.checkpoint_id.clone(),
@@ -136,13 +156,6 @@ impl Vault {
         let locked = recorded.pad_recovery.locked_refs();
         if locked.is_empty() {
             return Ok(report);
-        }
-        let (_, checkpoint_id, _, required) = read_image_required(backup, key)?;
-        if checkpoint_id != recorded.checkpoint_id {
-            return Err(Error::InvalidConfig(format!(
-                "backup {} is not the checkpoint restore epoch {epoch} landed",
-                backup.display()
-            )));
         }
         let required = required.ok_or_else(|| {
             Error::InvalidConfig("the backup names no custody head to open its pads from".into())
@@ -159,7 +172,7 @@ impl Vault {
             let opened = if live.is_empty() {
                 Ok(())
             } else {
-                self.reopen_world(owner, *world, keys, &live, gone.len(), &mut report)
+                self.reopen_world(owner, *world, keys, &live, &gone, &mut report)
             };
             retired.extend(gone);
             if let Err((stage, error_kind)) = opened {
@@ -191,14 +204,15 @@ impl Vault {
 
     /// One world's reopen: its `live` pads installed into current custody
     /// and read back, then its owed references `keys` rested and read back.
-    /// `retired` counts the pads the head names retired: evidence only.
+    /// `retired` names the pads the head holds retired: their erase stands,
+    /// so they are never rested.
     fn reopen_world(
         &self,
         owner: &AuthenticatedOwner,
         world: EntityId,
         keys: &[WorldKeyId],
         live: &BTreeMap<[u8; 40], Zeroizing<[u8; 32]>>,
-        retired: usize,
+        retired: &BTreeSet<[u8; 40]>,
         report: &mut PadReopenReport,
     ) -> std::result::Result<(), (PadReopenStage, Option<ErrorKind>)> {
         use PadReopenStage as S;
@@ -206,7 +220,7 @@ impl Vault {
             .with_write_txn_grouped(|txn| {
                 owner.revalidate_in_txn(self, txn)?;
                 self.store
-                    .install_world_pads_in_txn(txn, world, live, retired)
+                    .install_world_pads_in_txn(txn, world, live, retired.len())
             })
             .map_err(faulted(S::Install))?;
         report.installed += installed.held.len();
@@ -220,7 +234,7 @@ impl Vault {
         let rests = self
             .with_write_txn_grouped(|txn| {
                 owner.revalidate_in_txn(self, txn)?;
-                rest_references_in_txn(self, txn, keys)
+                rest_references_in_txn(self, txn, keys, retired)
             })
             .map_err(faulted(S::Rest))?;
         let rested: Vec<&WorldKeyId> = rests
@@ -239,9 +253,12 @@ impl Vault {
                 return Err((S::Verify, None));
             }
         }
-        if rests
-            .iter()
-            .any(|(_, rest)| matches!(rest, RefRest::Rested | RefRest::Held))
+        // Opened only when every owed reference is at rest or erased, and
+        // one at least is at rest.
+        if rests.iter().all(|(_, rest)| !matches!(rest, RefRest::Unheld))
+            && rests
+                .iter()
+                .any(|(_, rest)| matches!(rest, RefRest::Rested | RefRest::Held))
         {
             report.opened_worlds.push(world.to_hex());
         }
@@ -258,16 +275,19 @@ fn faulted(stage: PadReopenStage) -> impl FnOnce(Error) -> (PadReopenStage, Opti
 /// row re-read here: one whose world's keys were destroyed or whose row was
 /// hard-erased is left as it is, one that holds its pad already stays, and
 /// a bare reference whose pad current custody holds rests with it beside
-/// its reference (`rested_pad_row`). Never an old image's row.
+/// its reference (`rested_pad_row`). One the head holds `retired` is left
+/// as it is: its erase stands. Never an old image's row.
 fn rest_references_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     keys: &[WorldKeyId],
+    retired: &BTreeSet<[u8; 40]>,
 ) -> Result<Vec<(WorldKeyId, RefRest)>> {
     let mut outcomes = Vec::with_capacity(keys.len());
     let mut rows = Vec::new();
     for key in keys {
-        if world_keys_destroyed_in_txn(&vault.store, txn, key.world)?
+        if retired.contains(&key.envelope_key_id())
+            || world_keys_destroyed_in_txn(&vault.store, txn, key.world)?
             || pad_row_erased_in_txn(&vault.store, txn, &key.envelope_key_id())?
         {
             outcomes.push((*key, RefRest::Erased));

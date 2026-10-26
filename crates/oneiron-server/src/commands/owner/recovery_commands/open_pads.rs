@@ -15,7 +15,7 @@ use oneiron_keystore::DeviceKeystore;
 use serde::Serialize;
 
 use super::super::recovery_kit::kit_custody_root;
-use super::super::{emit, open_stopped_vault, vault_key};
+use super::super::{base_vault_config, emit, open_stopped_vault_with, vault_key};
 use crate::cli::RestoreArgs;
 use crate::config::ServeConfig;
 use crate::owner::backup::{self, CustodyAnchorCredentials};
@@ -44,7 +44,15 @@ pub(super) fn open_pads(
     unlock: &vault_key::HostUnlock,
     pins: Option<Vec<CheckpointSigner>>,
 ) -> anyhow::Result<()> {
-    let vault = open_stopped_vault(config, "then run `oneiron restore --open-pads` again")?;
+    // A sealed vault (OF-570 maximum tier) opens with this install's
+    // keystore, else with the unlock the owner gave.
+    let mut vault_config = base_vault_config(config);
+    vault_config.page_seal = vault_key::page_seal_at(config, &config.vault_path, Some(unlock))?;
+    let vault = open_stopped_vault_with(
+        config,
+        vault_config,
+        "then run `oneiron restore --open-pads` again",
+    )?;
     let opened = |result: oneiron::Result<CheckpointKey>| {
         result
             .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))
@@ -96,13 +104,7 @@ pub(super) fn open_pads(
         custody = custody.with_machine(*machine, secret);
     }
     let owner = local_owner(&vault)?;
-    let (epoch, _) = vault.latest_restore_epoch()?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "vault {} records no restore whose pads could open",
-            config.vault_path.display()
-        )
-    })?;
-    let report = vault.reopen_restore_pads_as(&owner, epoch, backup, &key, &custody)?;
+    let report = vault.reopen_restore_pads_as(&owner, None, backup, &key, &custody)?;
     let faults = report.faults.len();
     emit(&OpenedPads {
         report,

@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use super::{PadRestoreNote, RESTORE_EPOCH, RestoreEpoch};
 use crate::store::WorldPadCustody;
@@ -81,6 +82,23 @@ pub(super) fn epoch_at(vault: &Vault, sequence: u64) -> Result<Option<RestoreEpo
     RESTORE_EPOCH.get(&vault.store, &txn, &sequence)
 }
 
+/// The latest epoch that landed checkpoint `checkpoint_id`, by its
+/// sequence; a later restore, wake or migrate of another checkpoint does not
+/// hide it.
+pub(super) fn latest_epoch_of(
+    vault: &Vault,
+    checkpoint_id: &str,
+) -> Result<Option<(u64, RestoreEpoch)>> {
+    let txn = vault.store.env.read_txn()?;
+    for row in RESTORE_EPOCH.iter_rev_from(&vault.store, &txn, &[])? {
+        let (sequence, row) = row?;
+        if row.checkpoint_id == checkpoint_id {
+            return Ok(Some((sequence, row)));
+        }
+    }
+    Ok(None)
+}
+
 impl Vault {
     /// The latest restore, wake or migrate epoch this vault recorded, by its
     /// sequence, with what it still owes of its pads; `None` before the
@@ -95,9 +113,11 @@ impl Vault {
 /// Reconciles in `txn` the pads the epoch `epoch` names still owes, or, with
 /// `None`, every epoch that still owes one: each owed reference checked
 /// against what this vault holds now, and its notes updated on the same row.
-/// `retired` names the full ids the custody that just gave pads (a head's or
-/// a capsule's) holds retired: their erase stands. Returns each epoch it read
-/// with its state now. A read fault is a fault, never a resolution.
+/// A bare reference whose pad current custody holds is rested here, in
+/// `txn`, so it resolves only with its row at rest. `retired` names the full
+/// ids the custody that just gave pads (a head's or a capsule's) holds
+/// retired: their erase stands over any pad held here. Returns each epoch it
+/// read with its state now. A read fault is a fault, never a resolution.
 ///
 /// # Errors
 ///
@@ -127,7 +147,12 @@ pub(crate) fn reconcile_restore_pad_notes_in_txn(
     };
     let mut reconciled = BTreeMap::new();
     for (sequence, mut row) in rows {
-        let state = reconcile_state(vault, txn, &row.pad_recovery, retired)?;
+        let (state, rests) = reconcile_state(vault, txn, &row.pad_recovery, retired)?;
+        let puts: Vec<(&[u8], &[u8])> = rests
+            .iter()
+            .map(|(entity, rested)| (entity.as_bytes().as_slice(), rested.as_slice()))
+            .collect();
+        super::pad_custody::put_rows_in_txn(vault, txn, &puts)?;
         if state != row.pad_recovery {
             row.pad_recovery = state.clone();
             RESTORE_EPOCH.put(&vault.store, txn, &sequence, &row)?;
@@ -139,8 +164,14 @@ pub(crate) fn reconcile_restore_pad_notes_in_txn(
 
 /// Where one owed reference stands now.
 enum RefState {
-    /// Its row holds its pad, or current custody holds it.
+    /// Its row holds its pad.
     Resolved,
+    /// A bare reference whose pad current custody holds: resolved once
+    /// `rested` is put under `row` in the same transaction.
+    Rest {
+        row: crate::EntityId,
+        rested: Zeroizing<Vec<u8>>,
+    },
     /// Its erase stands.
     Erased,
     /// Still owed.
@@ -154,7 +185,8 @@ fn ref_state_in_txn(
     retired: &BTreeSet<[u8; 40]>,
 ) -> Result<RefState> {
     let item = key.envelope_key_id();
-    if world_keys_destroyed_in_txn(&vault.store, txn, key.world)?
+    if retired.contains(&item)
+        || world_keys_destroyed_in_txn(&vault.store, txn, key.world)?
         || pad_row_erased_in_txn(&vault.store, txn, &item)?
         || matches!(
             vault.store.world_pad_custody_entry(&item)?,
@@ -164,21 +196,23 @@ fn ref_state_in_txn(
         return Ok(RefState::Erased);
     }
     Ok(match pad_row_rest_in_txn(&vault.store, txn, key)? {
-        PadRowRest::Held | PadRowRest::Rest { .. } => RefState::Resolved,
-        PadRowRest::Unheld if retired.contains(&item) => RefState::Erased,
+        PadRowRest::Held => RefState::Resolved,
+        PadRowRest::Rest { row, rested } => RefState::Rest { row, rested },
         PadRowRest::Unheld => RefState::Owed,
     })
 }
 
-/// `state` checked against what `txn` reads now. A note whose references
-/// were not all checked stays as it is.
+/// `state` checked against what `txn` reads now, with the rows to put at
+/// rest for the references it counts resolved by rest. A note whose
+/// references were not all checked stays as it is.
 fn reconcile_state(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     state: &RestorePadState,
     retired: &BTreeSet<[u8; 40]>,
-) -> Result<RestorePadState> {
+) -> Result<(RestorePadState, Vec<(crate::EntityId, Zeroizing<Vec<u8>>)>)> {
     let mut owed = Vec::new();
+    let mut rests = Vec::new();
     let mut erased = Vec::new();
     let (mut checked_worlds, mut owed_worlds) = (BTreeSet::new(), BTreeSet::new());
     let (mut checked_keys, mut owed_keys) = (BTreeSet::new(), BTreeSet::new());
@@ -188,6 +222,7 @@ fn reconcile_state(
         checked_keys.insert((world.clone(), key.generation));
         match ref_state_in_txn(vault, txn, key, retired)? {
             RefState::Resolved => {}
+            RefState::Rest { row, rested } => rests.push((row, rested)),
             RefState::Erased => erased.push(PadRestoreNote::erased(key)),
             RefState::Owed => {
                 owed_worlds.insert(world.clone());
@@ -217,8 +252,11 @@ fn reconcile_state(
             remaining.push(note);
         }
     }
-    Ok(RestorePadState {
-        required_refs: owed,
-        remaining,
-    })
+    Ok((
+        RestorePadState {
+            required_refs: owed,
+            remaining,
+        },
+        rests,
+    ))
 }
