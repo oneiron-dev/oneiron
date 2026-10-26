@@ -291,6 +291,19 @@ pub(super) fn keep_remote_task_in_txn(
     })
 }
 
+/// Drops row `id`'s remote task handle when an erase takes the send's
+/// request (FIX 9283, 10953): the provider's task id names that send. The
+/// row's provider wait and reserved budget stay.
+pub(super) fn forget_remote_task_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &IntentId,
+) -> IntentLedgerResult<()> {
+    update_settlement_in_txn(vault, wtxn, id, |settlement| {
+        settlement.remote_task = None;
+    })
+}
+
 /// Row `id`'s provider wait and its edge, when that edge is still ahead of
 /// the vault clock's `now` (FIX 8818).
 ///

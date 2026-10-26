@@ -292,7 +292,8 @@ pub(super) fn open_payload_in_txn(
 /// 10953), keeps its id, attempt binding, accounting, state and delivery
 /// knowledge, and loses its request. A sealed row's key retires with it.
 /// A send still Pending or Deferred is abandoned, keeping that it may have
-/// been delivered: no erased request is sent again. A Done send stays Done.
+/// been delivered: no erased request is sent again, and its remote task
+/// handle goes with the request. A Done send stays Done.
 /// A send that certainly never went gives its reserved budget back (FIX
 /// 7964). Runs in the erase's own transaction; housekeeping finishes the
 /// staged key retirements.
@@ -336,6 +337,7 @@ pub(crate) fn erase_outbound_intent_actor_in_txn(
             stop_for_erase(&mut record, IntentEscalationReason::RecipientErased);
         }
         put_erased_record(vault, wtxn, record)?;
+        super::settlement::forget_remote_task_in_txn(vault, wtxn, &id).map_err(erase_error)?;
         if let Some(erased) = get_ledger_record(vault, &*wtxn, &id).map_err(erase_error)? {
             super::settlement::settle_reservation_in_txn(vault, wtxn, &erased)
                 .map_err(erase_error)?;
