@@ -322,6 +322,10 @@ side_tables! {
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
+    /// One holder's delivery of one export-first removal archive: the delivery version it was
+    /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
+    /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;

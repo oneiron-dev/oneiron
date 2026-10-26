@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
@@ -19,7 +18,7 @@ use oneiron::task_verb::sdk::{ConnectorSlateRedraftReply, ConnectorSlateRedraftR
 
 use super::connector_admission_routes::{engine, with_slate_drafter};
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -31,10 +30,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn redraft(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConnectorSlateRedraftRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConnectorSlateRedraftRequest>,
 ) -> OwnerReply<ConnectorSlateRedraftReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || redraft_slate(&server, &owner, request).map_err(engine)).await?;
     Ok(Json(reply))
 }

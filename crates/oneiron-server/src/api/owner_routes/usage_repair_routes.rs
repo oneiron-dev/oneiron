@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -27,7 +26,7 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner, owner_error};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::owner::{OwnerError, hooked_row, memory_refusal};
@@ -80,11 +79,11 @@ async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<UsageRepairRemoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<UsageRepairRemoveRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let scope = metered(&server)?;
     let response = blocking(move || {
         let vault = server.vault();
