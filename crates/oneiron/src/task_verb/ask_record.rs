@@ -23,12 +23,14 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 mod attendee_entry;
+mod consult_answer;
 mod link_proof;
 mod word_admission;
 pub(crate) use attendee_entry::{
     AttendeeEntryFact, admit_attendee_entry_in_txn, admit_unasked_attendee_entry_in_txn,
     attendee_entry_id, read_attendee_entry_in,
 };
+pub(super) use consult_answer::record_answer;
 pub(super) use link_proof::{
     mint_key as mint_link_key, sign_settlement as sign_link_settlement,
     verify_settlement as verify_link_settlement,
@@ -665,59 +667,6 @@ pub(super) fn replay_answer_option_matches(
         return Ok(false);
     };
     Ok(first.word.option == word.option && matching.all(|entry| entry.word.option == word.option))
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one consult answer over its writer and the owner proof"
-)]
-pub(super) fn record_answer(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    task: EntityId,
-    body: &super::consult_result::TaskVerbBody,
-    actor: crate::WriteActor,
-    answer: (&super::TaskTerminalRecord, Option<&super::TaskAskOptionId>),
-    owner: Option<&crate::consent::AuthenticatedOwner>,
-    now: u64,
-) -> Result<Option<EntityId>> {
-    let (terminal, option) = answer;
-    let Some(payload) = &body.consult else {
-        return Ok(None);
-    };
-    let id = payload.correlation_ref;
-    let Some(group) = read_group(vault, txn, id)? else {
-        return Ok(None);
-    };
-    // Correlation alone NEVER confers group membership. A forged sibling may
-    // settle itself, but cannot settle an unrelated handle or mutate siblings.
-    if !group
-        .members
-        .iter()
-        .any(|member| member.task == task.to_hex() && member.actor == actor.entity_ref().to_hex())
-    {
-        return Ok(None);
-    }
-    if let Some(super::ConsultResultSummary::Answer { evidence_refs }) = &terminal.summary {
-        admit_word(
-            vault,
-            txn,
-            id,
-            &group,
-            actor,
-            &TaskAskWord {
-                result_ref: terminal.result_ref.ok_or_else(invalid)?,
-                option: option.cloned(),
-                inform_for: None,
-                companion_for: None,
-                confirmation: None,
-                provenance_refs: evidence_refs.iter().copied().collect(),
-            },
-            owner,
-            now,
-        )?;
-    }
-    Ok(Some(id))
 }
 
 pub(super) fn status_in(
