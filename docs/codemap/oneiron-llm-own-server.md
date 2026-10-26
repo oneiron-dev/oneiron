@@ -17,7 +17,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mesh/client.rs` | src | m | 4 struct · 1 trait · 6 fn | LlmNodes, MeshLlmTransport, MeshPeerProof, MeshPeerTransport, VaultLlmNodes | The asking side: the first of the owner's nodes that takes the call runs it; with none, the call waits and… |
 | `src/mesh/mod.rs` | src | s | 1 const · 4 re-export | — | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
 | `src/mesh/pump.rs` | src | s | 11 crate-vis | — | The asking side's stream pump (FIX 8619): a mesh stream's events go to its caller one handoff at a time |
-| `src/mesh/serve.rs` | src | m | 1 struct · 1 trait · 2 fn | LlmMeshHandler, LlmMeshService | The serving side: the node that has the model runs another owner node's call under its own admission, and… |
+| `src/mesh/serve.rs` | src | m | 1 struct · 1 trait · 3 fn | LlmMeshHandler, LlmMeshService | The serving side: the node that has the model runs another owner node's call under its own admission, and… |
+| `src/mesh/serve/shutdown.rs` | src | s | 7 crate-vis | — | A connection's drain at its host's mesh stop (FIX 4756) |
 | `src/mesh/staging.rs` | src | m | 1 struct · 1 fn · 1 const · 14 crate-vis | StagingBudget | The bytes the model mesh holds for calls (FIX 8618, FIX 8619): bodies a connection stages either way… |
 | `src/tests.rs` | test | m | — | — | — |
 | `tests/remote_transport.rs` | test | s | — | — | Own-server conformance through the shipped HTTP transport, not a trait-only fake |
