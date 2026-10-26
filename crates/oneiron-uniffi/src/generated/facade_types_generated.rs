@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1159 facade rows, 4142 generated types.
+// UniFFI census: 1159 facade rows, 4144 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1111.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -29722,7 +29722,7 @@ pub struct PolicyManifestPropose {
     pub manifest: PolicyManifest,
 }
 
-/// `oneiron::llm::manifest::ConfidenceBand`.
+/// `oneiron_contracts::claim::confidence::ConfidenceBand`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConfidenceBand {
     #[serde(rename = "low")]
@@ -34203,6 +34203,25 @@ pub struct CodeFileEdit {
     pub new_path: Option<String>,
 }
 
+/// `oneiron_contracts::claim::confidence::VerdictBasis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VerdictBasis {
+    #[serde(rename = "calibrated_model")]
+    CalibratedModel,
+    #[serde(rename = "deterministic_fallback")]
+    DeterministicFallback,
+}
+
+/// `oneiron_contracts::claim::confidence::ConfidenceDetails`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConfidenceDetails {
+    #[serde(rename = "band")]
+    pub band: ConfidenceBand,
+    #[serde(rename = "basis")]
+    pub basis: VerdictBasis,
+}
+
 /// `oneiron::memory::claims::ClaimInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct WireClaimInput {
@@ -34250,6 +34269,12 @@ pub struct WireClaimInput {
     pub learned_at: Option<u64>,
     #[serde(rename = "salience", default, skip_serializing_if = "Option::is_none")]
     pub salience: Option<f64>,
+    #[serde(
+        rename = "confidence_details",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub confidence_details: Option<ConfidenceDetails>,
 }
 
 /// `oneiron::memory::foreign_code::ForeignCodeEffect`.
@@ -58615,7 +58640,7 @@ pub struct ConsolidationLineageView {
     pub next_step: Option<String>,
 }
 
-/// `oneiron::dreamer_promotion::admission::EvidenceKind`.
+/// `oneiron::claim::core_types::evidence_refs::EvidenceKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum EvidenceKind {
     #[serde(rename = "turn")]
@@ -58630,7 +58655,7 @@ pub enum EvidenceKind {
     ImportRecord,
 }
 
-/// `oneiron::dreamer_promotion::admission::CursorSpan`.
+/// `oneiron::claim::core_types::evidence_refs::CursorSpan`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct CursorSpan {
@@ -58640,7 +58665,7 @@ pub struct CursorSpan {
     pub end: Vec<u8>,
 }
 
-/// `oneiron::dreamer_promotion::admission::EvidenceRef`.
+/// `oneiron::claim::core_types::evidence_refs::EvidenceRef`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
@@ -58706,6 +58731,12 @@ pub struct GeneratedClaimInput {
     pub valid_from: Option<u64>,
     #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
     pub valid_to: Option<u64>,
+    #[serde(
+        rename = "confidence_details",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub confidence_details: Option<ConfidenceDetails>,
 }
 
 /// `oneiron::memory::consolidation::ConsolidationPromoteRequest`.

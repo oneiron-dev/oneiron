@@ -394,7 +394,7 @@ impl Memory<'_> {
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(id);
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
 
     /// Adds an authenticated claim citation to this NOTE. Stable cursor data is

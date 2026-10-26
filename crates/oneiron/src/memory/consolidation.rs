@@ -43,6 +43,10 @@ pub struct GeneratedClaimInput {
     pub supersedes: Option<String>,
     pub valid_from: Option<u64>,
     pub valid_to: Option<u64>,
+    /// The band and basis a calibrated producer gave `confidence`; absent
+    /// means the house band of the number (FIX 7761).
+    #[serde(default)]
+    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
 }
 
 /// Promote explicitly named candidates in an already admitted consolidation
@@ -435,6 +439,9 @@ impl Memory<'_> {
                 rmpv::Value::from("evidence_refs"),
                 public_evidence_value(&input.evidence_refs)?,
             )]));
+            if let Some(details) = input.confidence_details {
+                candidate = candidate.with_confidence_details(details);
+            }
             let mut evidence_refs = input
                 .claim_evidence_refs
                 .iter()
