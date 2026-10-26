@@ -114,7 +114,8 @@ pub(super) async fn removal_delivery_ack(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<DeliveryAck>, JsonRejection>,
 ) -> Result<Json<Acknowledged>, EnvelopedApiError> {
-    let ack = crate::api::json_payload(payload)?;
+    let Json(ack) = payload
+        .map_err(|_| ApiError::bad_request("the body must be {receipt_id, version}", None))?;
     // Refused before the nonce is spent.
     if oneiron::EntityId::from_hex(&ack.receipt_id).is_err() {
         return Err(ApiError::bad_request("receipt_id must be 32 hex", Some("receipt_id")).into());

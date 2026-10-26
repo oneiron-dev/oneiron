@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use oneiron::EntityId;
-use oneiron::task_verb::sdk::{ActAnswer, SharedActExecuted};
+use oneiron::task_verb::sdk::SharedActExecuted;
 use tokio::sync::Notify;
 
 /// The wakes of every held delivery session on this host.
@@ -74,11 +74,11 @@ impl RemovalDeliveries {
 
     /// One wake for what `vault.shared.execute` ran: the recipient of the
     /// archive an export-first removal, or its re-run, delivered.
-    pub(crate) fn wake_after<E>(&self, ran: &Result<ActAnswer<SharedActExecuted>, E>) {
-        if let Ok(ActAnswer::Done(SharedActExecuted {
+    pub(crate) fn wake_after<E>(&self, ran: &Result<SharedActExecuted, E>) {
+        if let Ok(SharedActExecuted {
             delivery: Some(delivery),
             ..
-        })) = ran
+        }) = ran
             && let Ok(person) = EntityId::from_hex(&delivery.recipient)
         {
             self.wake(person);
