@@ -6,10 +6,13 @@
 //! now, the revision of its stored bytes and what accepting it does, all from
 //! one read snapshot under the owner's proof. A completed attempt's whole
 //! stored row is read in that snapshot too. A record's content is read after
-//! it, through the owner's own `vault.get` and `vault.notes.read` reads, so it
-//! may be newer than the facts beside it; the review's `revision` binds the
-//! snapshot. Nothing is copied into a store and nothing is cut short. An
-//! erased, gone or unreadable slot keeps its place as a typed fact.
+//! it, through the owner's own `vault.get` and `vault.notes.read` reads; the
+//! review answers once its `revision` reads the same after those reads as in
+//! the snapshot, so the content beside each fact is what the revision binds,
+//! and else reads again, up to [`CLEANUP_REVIEW_READ_ATTEMPTS`] times; past that it answers
+//! its latest read with each slot that changed under it marked (FIX 10502).
+//! Nothing is copied into a store and nothing is cut short. An erased, gone
+//! or unreadable slot keeps its place as a typed fact.
 
 use super::attempt_retention::eligible;
 use super::codec_receipts::PROPOSAL;
@@ -40,6 +43,10 @@ const REVIEW_CONTEXT: &str = "oneiron vault_cleanup review revision v1";
 /// The reason a NOTE's document read records.
 const NOTE_READ_REASON: &str = "the owner's cleanup review";
 
+/// How many times a review reads while slots change under it before it
+/// answers its latest read with those slots marked (FIX 10502).
+const CLEANUP_REVIEW_READ_ATTEMPTS: usize = 3;
+
 /// A record whose content is read after the snapshot.
 struct RecordRead {
     entity: EntityId,
@@ -60,11 +67,36 @@ pub fn review_cleanup_proposal_as(
     owner: &AuthenticatedOwner,
     input: &CleanupReviewRequest,
 ) -> MemoryResult<CleanupReviewView> {
-    let Some((mut view, reads)) = snapshot(memory.vault(), owner, &input.proposal)? else {
-        return Err(proposal_not_open(&input.proposal));
-    };
-    // The snapshot's read transaction is closed: each read below opens its
-    // own, as the owner's reads do.
+    let mut read = 1;
+    loop {
+        let Some((mut view, reads)) = snapshot(memory.vault(), owner, &input.proposal)? else {
+            return Err(proposal_not_open(&input.proposal));
+        };
+        read_content(memory, &mut view, reads);
+        // A slot written while its content was read moves the revision:
+        // the review reads again, so no content is newer than its facts.
+        let Some((revision, slots)) = revision_now(memory.vault(), &input.proposal)? else {
+            return Err(proposal_not_open(&input.proposal));
+        };
+        if revision == view.revision {
+            return Ok(view);
+        }
+        if read >= CLEANUP_REVIEW_READ_ATTEMPTS {
+            for (item, now) in view.items.iter_mut().zip(&slots) {
+                if item.revision != *now {
+                    item.changed_during_review = Some(true);
+                }
+            }
+            return Ok(view);
+        }
+        read += 1;
+    }
+}
+
+/// Each record's content, read for the owner after the snapshot: the
+/// snapshot's read transaction is closed, and each read opens its own, as
+/// the owner's reads do. A read that refuses is named on its slot.
+fn read_content(memory: &Memory<'_>, view: &mut CleanupReviewView, reads: Vec<Option<RecordRead>>) {
     for (item, read) in view.items.iter_mut().zip(reads) {
         let Some(read) = read else {
             continue;
@@ -89,7 +121,30 @@ pub fn review_cleanup_proposal_as(
             }
         }
     }
-    Ok(view)
+}
+
+/// The review's revision and each slot's, as a fresh snapshot reads them;
+/// none once the proposal is no longer open.
+fn revision_now(
+    vault: &Vault,
+    proposal: &EntityId,
+) -> Result<Option<(String, Vec<Option<String>>)>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some(raw) = PROPOSAL.get(&vault.store, &rtxn, proposal)? else {
+        return Ok(None);
+    };
+    let row = decode_proposal(*proposal, &raw)?;
+    let mut hasher = review_hasher(&raw);
+    let mut slots = Vec::with_capacity(row.candidates.len());
+    for candidate in &row.candidates {
+        let revision = slot_revision_in_txn(vault, &rtxn, candidate.as_ref())?;
+        fold_revision(&mut hasher, revision.as_ref());
+        slots.push(revision.map(|revision| bytes_to_hex_lower(&revision)));
+    }
+    Ok(Some((
+        bytes_to_hex_lower(hasher.finalize().as_bytes()),
+        slots,
+    )))
 }
 
 /// The answer for a proposal that is no longer open.
@@ -161,6 +216,7 @@ fn snapshot(
             evidence: None,
             content: None,
             accept: CleanupAcceptEffect::Skip,
+            changed_during_review: None,
         };
         let read = if candidate.kind == CleanupKind::CompletedAttempt {
             review_attempt(
@@ -423,6 +479,7 @@ fn erased_item(slot: usize) -> CleanupReviewItem {
         evidence: None,
         content: None,
         accept: CleanupAcceptEffect::Nothing,
+        changed_during_review: None,
     }
 }
 

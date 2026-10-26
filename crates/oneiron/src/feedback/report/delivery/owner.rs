@@ -148,8 +148,9 @@ impl Vault {
     }
 
     /// Binds `publisher_ref` to `endpoint`, the host's feedback destination,
-    /// or unbinds it with `None`. A lane that already froze another
-    /// destination holds as changed; nothing is redirected.
+    /// or unbinds it with `None`. A lane that froze another destination and
+    /// was never offered takes the new binding in the same write (FIX
+    /// 7688); one offered once holds as changed and is never redirected.
     ///
     /// # Errors
     ///
@@ -174,7 +175,10 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             match &endpoint {
-                Some(endpoint) => ENDPOINTS.put(&self.store, txn, &key, endpoint)?,
+                Some(endpoint) => {
+                    ENDPOINTS.put(&self.store, txn, &key, endpoint)?;
+                    refreeze_unsent_in_txn(self, txn, &key, endpoint)?;
+                }
                 None => {
                     ENDPOINTS.delete(&self.store, txn, &key)?;
                 }
@@ -186,4 +190,44 @@ impl Vault {
             endpoint,
         })
     }
+}
+
+/// Re-freezes to `endpoint` each lane of `publisher_ref` that froze another
+/// destination and was never offered: no receipt and no outcome. Its hold
+/// clears, and the next run reads it again. A lane offered once keeps its
+/// destination.
+fn refreeze_unsent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    publisher_ref: &str,
+    endpoint: &ReportPublisherEndpoint,
+) -> Result<()> {
+    let now = vault.now_recorded_at();
+    let mut moved = Vec::new();
+    for row in DELIVERIES.iter_from(&vault.store, &*txn, &[])? {
+        // A row that does not decode is no lane to move; the bind stands.
+        let Ok((row, mut record)) = row else {
+            continue;
+        };
+        if record.key.publisher_ref != publisher_ref
+            || record.receipt.is_some()
+            || record.outcome.is_some()
+        {
+            continue;
+        }
+        let Some(send) = record.send.as_mut() else {
+            continue;
+        };
+        if send.destination == *endpoint {
+            continue;
+        }
+        send.destination = endpoint.clone();
+        record.hold = None;
+        record.updated_at = now;
+        moved.push((row, record));
+    }
+    for (row, record) in moved {
+        DELIVERIES.put(&vault.store, txn, &row, &record)?;
+    }
+    Ok(())
 }

@@ -8691,6 +8691,7 @@ class CleanupReviewItem(TypedDict):
     evidence: NotRequired[CleanupReviewEvidence | None]
     content: NotRequired[CleanupReviewContent | None]
     accept: CleanupAcceptEffect
+    changed_during_review: NotRequired[bool | None]
 class CleanupReviewView(TypedDict):
     proposal: EntityId
     attempt: str

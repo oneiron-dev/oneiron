@@ -49,7 +49,15 @@ impl Vault {
             return Ok(None);
         }
         let mut best: Option<(f32, EntityId, ReportCluster)> = None;
-        for (id, mut cluster) in CLUSTERS.scan(&self.store, txn)? {
+        // A row that does not decode (a retired opaque marker, a corrupt
+        // value) clusters nothing and fails no report; it stays stored
+        // (FIX 10836).
+        let mut undecodable = 0_usize;
+        for row in CLUSTERS.iter_from(&self.store, &*txn, &[])? {
+            let Ok((id, mut cluster)) = row else {
+                undecodable += 1;
+                continue;
+            };
             if cluster.category != issue.request.category
                 || cluster.kind != issue.request.kind
                 || cluster.route != issue.route
@@ -79,6 +87,12 @@ impl Vault {
             {
                 best = Some((similarity, id, cluster));
             }
+        }
+        if undecodable > 0 {
+            tracing::warn!(
+                undecodable,
+                "report intake skipped undecodable cluster rows"
+            );
         }
         let duplicate = best.as_ref().map(|(_, id, _)| *id);
         let id = duplicate.unwrap_or(incoming);

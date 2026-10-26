@@ -85,6 +85,10 @@ pub struct CleanupReviewItem {
     pub content: Option<CleanupReviewContent>,
     /// What accepting this slot does.
     pub accept: CleanupAcceptEffect,
+    /// `Some(true)` when its stored bytes changed while the review read its
+    /// content, on every read the review took: that content may be newer
+    /// than the facts and `revision` beside it (FIX 10502). `None` otherwise.
+    pub changed_during_review: Option<bool>,
 }
 
 /// How one slot stands now.

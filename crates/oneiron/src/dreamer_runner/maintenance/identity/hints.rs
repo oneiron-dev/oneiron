@@ -149,29 +149,32 @@ pub(super) fn pick(
     best.filter(|_| !tied).map(|(entity, _)| entity)
 }
 
-/// Every saved hint for a name, summed over all its contributions: the
-/// Dreamer's own pass, the effect doors' unsettled check and the Linker
-/// read them whole and return no hint text to a caller.
+/// Every saved hint for a name, summed over the contributions `admit`'s
+/// lane reads, or over all of them with none: the Dreamer's own pass reads
+/// them through its lane (FIX 10374); the effect doors' unsettled check and
+/// the Linker read them whole and return no hint text to a caller.
 fn all_hints_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    kind: u8,
-    name: &str,
+    (kind, name): (u8, &str),
+    admit: Option<&Admit<'_, '_>>,
 ) -> Result<BTreeMap<EntityId, IdentityHint>> {
-    Ok(hints_in_txn(&vault.store, txn, (kind, name), None)?
+    Ok(hints_in_txn(&vault.store, txn, (kind, name), admit)?
         .into_iter()
         .map(|(entity, hint, _)| (entity, hint))
         .collect())
 }
 
-/// The one candidate of `ask` whose hint shares the most words with its
-/// context; none on no shared word or a tie.
+/// The one candidate of `ask` whose hint, as `admit`'s lane reads it (all
+/// of it with none), shares the most words with its context; none on no
+/// shared word or a tie.
 pub(super) fn hinted_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     ask: &IdentityAsk,
+    admit: Option<&Admit<'_, '_>>,
 ) -> Result<Option<EntityId>> {
-    let hints = all_hints_in_txn(vault, txn, ask.kind, &ask.name)?;
+    let hints = all_hints_in_txn(vault, txn, (ask.kind, &ask.name), admit)?;
     Ok(pick(&hints, &ask.candidates, &ask.context))
 }
 
@@ -192,7 +195,7 @@ pub(crate) fn hinted_mention_in_txn(
     candidates: &[EntityId],
 ) -> Result<Option<EntityId>> {
     let context = context_terms(text, start, end, name);
-    let hints = all_hints_in_txn(vault, txn, kind, name)?;
+    let hints = all_hints_in_txn(vault, txn, (kind, name), None)?;
     Ok(pick(&hints, candidates, &context))
 }
 
