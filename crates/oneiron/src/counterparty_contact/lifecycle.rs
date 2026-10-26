@@ -188,10 +188,11 @@ impl ClaimHeadWriter<'_> {
 /// Closes the own claim heads of the ChannelIdentity or contact a delete of
 /// `id` removes, in the delete's write transaction and BEFORE it tears the
 /// `claim_of` edges (OF-272): a ChannelIdentity's `channel_identity.*` heads,
-/// a contact's `counterparty_contact.*` heads. An id with no row is asked for
-/// contact heads, since a cache drop removes a contact's row and leaves its
-/// claims. Any other kind is left alone. Returns how many contact heads
-/// closed.
+/// a contact's `counterparty_contact.*` heads. A ChannelIdentity of a LINE
+/// chat also takes that chat's observations and their archived provider
+/// events (FIX 10807). An id with no row is asked for contact heads, since a
+/// cache drop removes a contact's row and leaves its claims. Any other kind
+/// is left alone. Returns how many contact heads closed.
 pub(crate) fn close_family_claims_for_delete_in_txn(
     store: &Store,
     config: &crate::config::VaultConfig,
@@ -212,6 +213,10 @@ pub(crate) fn close_family_claims_for_delete_in_txn(
         .map(|row| row.entity_type)
     {
         Some(ENTITY_TYPE_CHANNEL_IDENTITY) => {
+            // Read while the identity's address heads still stand.
+            crate::channel_identity_provider::erase_line_chat_observations_for_delete_in_txn(
+                &writer, wtxn, id, now,
+            )?;
             crate::channel_identity::close_claim_heads_for_delete_in_txn(
                 &writer,
                 wtxn,

@@ -108,6 +108,11 @@ pub enum UnpricedReason {
     /// price that converts for its model (a paid connector call has none).
     /// The event's `model` names the model.
     UnpricedModel,
+    /// The rates frozen on the call name no currency, its provider named
+    /// none, and are not zero throughout (FIX 9534). The event keeps its
+    /// counts and those rates, their snapshot included; no amount is quoted
+    /// in any currency.
+    UnknownCurrency,
     /// The rates frozen on the call quote no rate for these cache dimensions,
     /// each measured above zero, listed once each in order. Every other count
     /// had a quoted rate.
@@ -129,13 +134,22 @@ pub struct Money {
 }
 impl Money {
     pub(super) fn validate(&self) -> Result<(), UsageError> {
-        validate_price_names(&self.currency, &self.price_table_snapshot)
+        validate_price_names(Some(&self.currency), &self.price_table_snapshot)
     }
 }
 
-/// A three-letter currency and a price-table snapshot id that fits.
-fn validate_price_names(currency: &str, price_table_snapshot: &str) -> Result<(), UsageError> {
-    if currency.len() != 3 || !currency.bytes().all(|b| b.is_ascii_uppercase()) {
+/// Whether `code` is a three-letter currency code.
+pub(super) fn currency_code(code: &str) -> bool {
+    code.len() == 3 && code.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+/// A three-letter currency, where one is named, and a price-table snapshot
+/// id that fits.
+fn validate_price_names(
+    currency: Option<&str>,
+    price_table_snapshot: &str,
+) -> Result<(), UsageError> {
+    if currency.is_some_and(|currency| !currency_code(currency)) {
         return Err(UsageError::InvalidField {
             field: "currency",
             message: "expected a three-letter currency",
@@ -152,7 +166,11 @@ fn validate_price_names(currency: &str, price_table_snapshot: &str) -> Result<()
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageCostRates {
-    pub currency: String,
+    /// The currency the rates are quoted in; `null` when the provider named
+    /// none (FIX 9534): rates in no currency price only a call they make
+    /// free ([`Self::free_in_any_currency`]). Required, `null` included.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub currency: Option<String>,
     pub price_table_snapshot: String,
     pub input_per_million: u64,
     pub output_per_million: u64,
@@ -166,8 +184,24 @@ pub struct UsageCostRates {
 impl UsageCostRates {
     /// Checks the currency and price-table snapshot these rates name, before
     /// any count is priced at them: a bad name is never read as an overflow.
-    pub(super) fn validate(&self) -> Result<(), UsageError> {
-        validate_price_names(&self.currency, &self.price_table_snapshot)
+    pub(crate) fn validate(&self) -> Result<(), UsageError> {
+        validate_price_names(self.currency.as_deref(), &self.price_table_snapshot)
+    }
+
+    /// Whether every rate these quote is zero: a call at them costs nothing
+    /// in any currency, so one they name no currency for still has its
+    /// price, zero, and joins a sum in the sum's currency (FIX 9534).
+    pub fn free_in_any_currency(&self) -> bool {
+        self.input_per_million == 0
+            && self.output_per_million == 0
+            && self.cache_read_per_million.unwrap_or(0) == 0
+            && self.cache_write_per_million.unwrap_or(0) == 0
+    }
+
+    /// Whether a call at these rates has a price in some currency: they name
+    /// one, or they are free in any.
+    pub fn priced(&self) -> bool {
+        self.currency.is_some() || self.free_in_any_currency()
     }
 
     /// Whether these rates price `counts`: every count above zero has a
@@ -203,6 +237,12 @@ impl UsageCostInput {
     pub fn calculate(&self) -> Result<Money, UsageError> {
         let t = &self.token_counts;
         let r = &self.cost_rates;
+        let Some(currency) = r.currency.clone() else {
+            return Err(UsageError::InvalidField {
+                field: "costRates",
+                message: "rates that name no currency make no amount",
+            });
+        };
         if !r.prices(t) {
             return Err(UsageError::InvalidField {
                 field: "costRates",
@@ -228,7 +268,7 @@ impl UsageCostInput {
             .ok_or(UsageError::Overflow)?;
         let money = Money {
             amount,
-            currency: r.currency.clone(),
+            currency,
             price_table_snapshot: r.price_table_snapshot.clone(),
         };
         money.validate()?;
@@ -331,15 +371,25 @@ impl UsageEvent {
     pub fn resolved_source(&self, configured: UsageMode) -> UsageMode {
         self.source.unwrap_or(configured)
     }
+    /// The event's counts at its rates, when the rates name a currency: rates
+    /// that name none make no amount (FIX 9534).
     pub fn cost_input(&self) -> Option<UsageCostInput> {
-        self.cost_rates.as_ref().map(|rates| UsageCostInput {
-            token_counts: self.token_counts.clone(),
-            cost_rates: rates.clone(),
-            service_amount: self.service_amount,
-        })
+        self.cost_rates
+            .as_ref()
+            .filter(|rates| rates.currency.is_some())
+            .map(|rates| UsageCostInput {
+                token_counts: self.token_counts.clone(),
+                cost_rates: rates.clone(),
+                service_amount: self.service_amount,
+            })
     }
     pub(super) fn validate(&self) -> Result<(), UsageError> {
-        if self.cost_rates.is_none() && self.service_amount != 0 {
+        if self
+            .cost_rates
+            .as_ref()
+            .is_none_or(|rates| rates.currency.is_none())
+            && self.service_amount != 0
+        {
             return Err(UsageError::InvalidField {
                 field: "serviceAmount",
                 message: "requires a currency and price-table snapshot in costRates",
@@ -376,6 +426,34 @@ impl UsageEvent {
             });
         }
         let has_tokens = self.token_counts != UsageTokenCounts::default();
+        // Rates in no currency stay on a call two ways (FIX 9534): free in
+        // any currency on a priced call whose counts they quote, or not free
+        // on one unpriced for its unknown currency, with a token count.
+        if let Some(rates) = self.cost_rates.as_ref().filter(|r| r.currency.is_none()) {
+            let named = if rates.free_in_any_currency() {
+                self.unpriced.is_none() && rates.prices(&self.token_counts)
+            } else {
+                self.unpriced == Some(UnpricedReason::UnknownCurrency) && has_tokens
+            };
+            if !named {
+                return Err(UsageError::InvalidField {
+                    field: "unpriced",
+                    message: "costRates that name no currency are free on a priced event that \
+                              they price, or name unknown_currency on one with a token count",
+                });
+            }
+        }
+        if self.unpriced == Some(UnpricedReason::UnknownCurrency)
+            && self
+                .cost_rates
+                .as_ref()
+                .is_none_or(|rates| rates.currency.is_some())
+        {
+            return Err(UsageError::InvalidField {
+                field: "unpriced",
+                message: "unknown_currency names an event whose costRates name no currency",
+            });
+        }
         if let Some(reason @ (UnpricedReason::NoUsage | UnpricedReason::UnpricedModel)) =
             &self.unpriced
             && (self.cost_rates.is_some()

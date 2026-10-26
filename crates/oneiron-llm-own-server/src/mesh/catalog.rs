@@ -41,8 +41,9 @@ pub struct CatalogRefresh {
 }
 
 /// The row for a model `peer` offers: an own-server route at the price the
-/// peer declared, or at zero when it declared none. `None` for a model the
-/// peer may not offer, or one no row can hold.
+/// peer declared, in the currency it named, or at zero when it declared
+/// none. A zero price names no currency: zero establishes none (FIX 9534).
+/// `None` for a model the peer may not offer, or one no row can hold.
 pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<ModelRegistryRow> {
     if !advertises(entry.locality) {
         return None;
@@ -55,6 +56,7 @@ pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<Mo
             output_per_million: "0".to_owned(),
             cache_read_per_million: None,
             cache_write_per_million: None,
+            currency: None,
         });
         entry
             .metadata
