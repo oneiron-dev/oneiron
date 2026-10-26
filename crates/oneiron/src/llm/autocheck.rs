@@ -269,26 +269,19 @@ impl AutoCheckDecisions {
     }
 }
 
-/// The answer as `model`'s calibrated verdict, in the band its confidence
-/// falls in.
+/// The answer as `model`'s calibrated verdict, in the band the verdict table
+/// puts its confidence in: the producer picks the band once, here.
 fn calibrated(model: &ModelId, allow: bool, probability: f64) -> AutoCheckOutcome {
     let confidence_millionths = millionths(probability);
-    [
-        ConfidenceBand::Low,
-        ConfidenceBand::Medium,
-        ConfidenceBand::High,
-        ConfidenceBand::Certain,
-    ]
-    .into_iter()
-    .map(|band| CalibratedVerdict {
-        model: model.clone(),
-        allow,
-        confidence_millionths,
-        band,
-        basis: VerdictBasis::CalibratedModel,
-    })
-    .find(|verdict| verdict.validate().is_ok())
-    .map_or(AutoCheckOutcome::Unavailable, AutoCheckOutcome::Verdict)
+    ConfidenceBand::for_verdict_millionths(confidence_millionths)
+        .map(|band| CalibratedVerdict {
+            model: model.clone(),
+            allow,
+            confidence_millionths,
+            band,
+            basis: VerdictBasis::CalibratedModel,
+        })
+        .map_or(AutoCheckOutcome::Unavailable, AutoCheckOutcome::Verdict)
 }
 
 #[expect(

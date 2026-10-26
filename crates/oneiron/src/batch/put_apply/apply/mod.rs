@@ -716,6 +716,7 @@ pub(in crate::batch) fn apply_put(
             learned_at,
             data,
             envelope: write_envelope,
+            transition,
         },
     )?;
     crate::gate::manifest_authenticity::update_manifest_origin(
@@ -730,7 +731,7 @@ pub(in crate::batch) fn apply_put(
     if body_changed && let Some(body) = decoded_claim_body.as_ref() {
         crate::dreamer_consolidation::mark_person_about_moved_in_txn(store, wtxn, id, body)?;
     }
-    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref())?;
+    stage_claim_projection(store, wtxn, id, decoded_claim_body.as_ref(), replicated)?;
     stage_optional_side_row(store, wtxn, hub_origin_marker)?;
     crate::skill_hub::stage_source_custody_put(
         store,

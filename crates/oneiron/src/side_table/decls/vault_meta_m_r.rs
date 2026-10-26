@@ -367,7 +367,8 @@ side_tables! {
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
     /// Change-log record. Key: id16.
-    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named;
+    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named
+        => crate::ports::erase_change_log_actor_in_txn;
     /// Change-log by actor index. Key: id16 + u64be + id16.
     PORTS_CHANGE_BY_ACTOR: VaultMeta b"ports:change_actor:v1:" Raw;
     /// Change-log by entity index. Key: id16 + u64be + id16.

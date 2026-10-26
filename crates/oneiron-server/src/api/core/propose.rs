@@ -82,6 +82,7 @@ pub(crate) async fn core_propose(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     };
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {

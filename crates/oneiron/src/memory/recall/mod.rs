@@ -34,7 +34,7 @@ pub use self::paid::{
 #[cfg(feature = "sync")]
 pub(crate) use self::selection::RecallKinds;
 
-use self::presentation::{hedge_bucket_for, value_text_of};
+use self::presentation::{hedge_bucket_for, hedge_bucket_for_band, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
 use self::selection::RecallPin;
 
@@ -272,8 +272,14 @@ pub struct MemoryItem {
     /// Calibrated-absolute confidence in [0, 1] — NEVER set-relative:
     /// read from the claim body, independent of the candidate set.
     pub confidence: f32,
-    /// Hedge vocabulary bucket derived from `confidence`.
+    /// Hedge vocabulary bucket: a claim's stored confidence band, by name
+    /// (FIX 7761); a structural record's fixed certainty otherwise.
     pub hedge_bucket: String,
+    /// Where a claim's band came from: a calibrated decider, or the house
+    /// table for a confidence written as a number alone. `None` for an item
+    /// that is not a claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence_basis: Option<crate::claim::VerdictBasis>,
     /// Provenance (default-on).
     pub provenance: MemoryProvenance,
     /// Retained foreign content is explicitly stale after its pact stops refresh.

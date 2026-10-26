@@ -207,10 +207,6 @@ const GRANT_POSTING_SCAN: usize = 10_000;
 #[cfg(test)]
 const GRANT_POSTING_SCAN: usize = 2;
 
-/// Grant rows one read walks at all. A vault holding more refuses the read
-/// rather than guess who is governed.
-const GRANT_ROW_CEILING: usize = 100_000;
-
 /// Which actors world-access law governs. An owner's ALLOWED-SET grant about
 /// an actor puts it under that law, and the actor stays under it after the
 /// grant closes or loses its authority: losing a grant never falls back to
@@ -218,7 +214,8 @@ const GRANT_ROW_CEILING: usize = 100_000;
 ///
 /// Read from the grant predicate's postings, which co-commit with the grant
 /// rows, never from `claim_of` edges: an edge can go while its row stays, and
-/// a missing edge is not permission to read base.
+/// a missing edge is not permission to read base. Every posting is read,
+/// however many (FIX 8659).
 pub(crate) struct WorldGrantIndex {
     /// Every grant row under the predicate.
     rows: Vec<EntityId>,
@@ -228,11 +225,10 @@ pub(crate) struct WorldGrantIndex {
 
 impl WorldGrantIndex {
     pub(crate) fn read(store: &Store, rtxn: &RoTxn<'_>) -> Result<Self> {
-        let rows = crate::claim::claim_ids_for_predicate_bounded_in_txn(
+        let rows = crate::claim::claim_ids_for_predicate_in_txn(
             store,
             rtxn,
             PREDICATE_WORLD_ACCESS_ALLOWED_SET,
-            GRANT_ROW_CEILING,
         )?;
         if rows.len() > GRANT_POSTING_SCAN {
             return Ok(Self {
@@ -437,37 +433,32 @@ fn world_access_rows(
         PREDICATE_WORLD_ACCESS_ALLOWED_SET,
         PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET,
     ] {
-        for claim_id in crate::claim::claim_ids_for_predicate_bounded_in_txn(
-            store,
-            rtxn,
-            predicate,
-            GRANT_ROW_CEILING,
-        )? {
+        crate::claim::for_each_claim_id_for_predicate_in_txn(store, rtxn, predicate, |claim_id| {
             let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {
-                continue;
+                return Ok(());
             };
             if raw.entity_type != ENTITY_TYPE_CLAIM
                 || !crate::vault::live_entity_row_in_txn(store, rtxn, &claim_id)?.is_live()
             {
-                continue;
+                return Ok(());
             }
             let body = crate::claim::decode_claim_body(&raw.body, true)?;
             if body.predicate != predicate {
-                continue;
+                return Ok(());
             }
             if body.subject != ClaimSubject::Entity(*agent_ref)
                 || !claim_surfaceable(&body)
                 || !world_access_row_in_force(&body, at)
             {
-                continue;
+                return Ok(());
             }
             if body.predicate == PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET
                 && session_claim_producer(&body) != Some(*agent_ref)
             {
-                continue;
+                return Ok(());
             }
             if !admit(&claim_id, &body)? {
-                continue;
+                return Ok(());
             }
             let held = !crate::gate::claim_critical_confirm_settled_in_txn(store, rtxn, &claim_id)?;
             rows.push(WorldAccessRow {
@@ -476,7 +467,8 @@ fn world_access_rows(
                 learned_at: raw.learned_at,
                 held,
             });
-        }
+            Ok(())
+        })?;
     }
     Ok(rows)
 }

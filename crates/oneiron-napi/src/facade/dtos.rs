@@ -115,6 +115,13 @@ pub struct NapiClaimInput {
     pub learned_at: Option<f64>,
     /// Optional salience in [0, 1].
     pub salience: Option<f64>,
+    /// The band a calibrated producer gave `confidence`
+    /// (`low|medium|high|certain`), with `confidence_basis`; both omitted
+    /// mean the house band of the number.
+    pub confidence_band: Option<String>,
+    /// Where `confidence_band` came from
+    /// (`calibrated_model|deterministic_fallback`).
+    pub confidence_basis: Option<String>,
 }
 
 /// Receipt for one committed claim.
@@ -521,6 +528,9 @@ pub struct NapiMemoryItem {
     pub confidence: f64,
     /// Hedge vocabulary bucket.
     pub hedge_bucket: String,
+    /// Where a claim's band came from (`calibrated_model` or
+    /// `deterministic_fallback`); omitted for an item that is not a claim.
+    pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: NapiMemoryProvenance,
     pub stale: Option<NapiMemoryStaleStamp>,

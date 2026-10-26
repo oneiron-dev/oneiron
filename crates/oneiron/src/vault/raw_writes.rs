@@ -25,9 +25,10 @@
 //!   the actor is verified in; then the owner's
 //!   [`Memory::safe_delete`] runs with its gate and redaction receipt.
 //!
-//! A raw body is opaque bytes here. NOTE and keyed-value prose admission
-//! (L01's, FIX 1228) runs on their typed writers only, so a raw put of such
-//! a body is not read for links.
+//! A raw body is opaque bytes here, except for prose admission (OF-063,
+//! FIX 1228, 3734): a NOTE's markdown and a keyed value's nested value are
+//! read for links once, through the caller, as their typed writers read
+//! them, and their `unlinked` receipt is written only once the batch lands.
 
 use crate::batch::BatchBuilder;
 use crate::core_write::CoreWriteLane;
@@ -74,6 +75,8 @@ impl Memory<'_> {
     /// refusal (a put that turns an agent definition back on), or the
     /// batch's own refusal; nothing is written then.
     pub fn raw_put_entities(&self, puts: &[RawEntityPut<'_>]) -> MemoryResult<()> {
+        // Read before the writer opens; receipted only for a batch that lands.
+        let unlinked_prose = self.raw_put_prose(puts)?;
         let mut batch = self.vault().batch();
         for put in puts {
             batch = batch.put(
@@ -84,7 +87,9 @@ impl Memory<'_> {
                 put.data,
             );
         }
-        self.commit_raw_batch(batch, puts)
+        self.commit_raw_batch(batch, puts)?;
+        crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
+        Ok(())
     }
 
     /// Puts a directed edge as this surface's caller.

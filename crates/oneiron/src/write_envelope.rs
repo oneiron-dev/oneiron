@@ -291,6 +291,7 @@ pub struct ClaimCandidate {
     subject: ClaimSubject,
     value: Value,
     confidence: f32,
+    confidence_details: Option<crate::claim::ConfidenceDetails>,
     salience: Option<f32>,
     evidence: Option<Value>,
     valid_from: Option<u64>,
@@ -319,6 +320,7 @@ impl ClaimCandidate {
             subject,
             value,
             confidence,
+            confidence_details: None,
             salience: None,
             evidence: None,
             valid_from: None,
@@ -343,6 +345,15 @@ impl ClaimCandidate {
         &self.lexical_hints
     }
 
+    /// Adds the band and basis the candidate's confidence was produced in
+    /// (FIX 7761); without them the stored claim carries the house band of
+    /// its number.
+    #[must_use]
+    pub fn with_confidence_details(mut self, details: crate::claim::ConfidenceDetails) -> Self {
+        self.confidence_details = Some(details);
+        self
+    }
+
     /// Adds candidate-local salience.
     #[must_use]
     pub fn with_salience(mut self, salience: f32) -> Self {
@@ -355,6 +366,22 @@ impl ClaimCandidate {
     pub fn with_evidence(mut self, evidence: Value) -> Self {
         self.evidence = Some(evidence);
         self
+    }
+
+    /// Adds typed document citations beside the candidate's other evidence
+    /// (ARCH-0032, FIX 904). The write pins each one that verifies against
+    /// its document in the write's own snapshot.
+    pub fn with_evidence_refs(mut self, refs: &[crate::claim::EvidenceRef]) -> crate::Result<Self> {
+        let key = crate::claim::EVIDENCE_REFS_KEY;
+        let mut entries = match self.evidence.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => return Err(crate::Error::InvalidClaimBody("evidence must be a map")),
+        };
+        entries.retain(|(name, _)| name.as_str() != Some(key));
+        entries.push((Value::from(key), crate::claim::public_evidence_value(refs)?));
+        self.evidence = Some(Value::Map(entries));
+        Ok(self)
     }
 
     /// Candidate-local evidence data, before the promotion writer replaces it
@@ -522,6 +549,7 @@ impl ClaimCandidate {
             envelope.approval(),
             ClaimLifecycleStatus::Active,
         )?;
+        body.set_confidence(self.confidence, self.confidence_details);
         body.salience = self.salience;
         body.evidence = Some(write_envelope_evidence(envelope, self.evidence));
         body.valid_from = self.valid_from;

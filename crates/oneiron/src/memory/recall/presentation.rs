@@ -1,7 +1,20 @@
 use super::*;
 
+/// The hedge word a claim's stored band reads as (FIX 7761): the band its
+/// producer gave or the house table put it in, never a cutoff applied to
+/// its number here.
+pub(super) fn hedge_bucket_for_band(band: crate::claim::ConfidenceBand) -> &'static str {
+    match band {
+        crate::claim::ConfidenceBand::Certain => "confident",
+        crate::claim::ConfidenceBand::High => "likely",
+        crate::claim::ConfidenceBand::Medium => "tentative",
+        crate::claim::ConfidenceBand::Low => "uncertain",
+    }
+}
+
 /// Hedge vocabulary over calibrated-absolute confidence (scour:A176 —
-/// never rank-relative).
+/// never rank-relative), for a record that is not a claim and so has no
+/// stored band.
 pub(super) fn hedge_bucket_for(confidence: f32) -> &'static str {
     if confidence >= 0.9 {
         "confident"

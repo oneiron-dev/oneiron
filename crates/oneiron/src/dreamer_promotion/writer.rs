@@ -376,12 +376,7 @@ pub(super) fn promote_one_answering(
         Ok(())
     };
     let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
-        crate::entity_doc::retain_promotion_evidence_in_txn(
-            vault,
-            wtxn,
-            &candidate.claim_id,
-            &public_refs,
-        )?;
+        crate::entity_doc::verify_promotion_evidence_in_txn(vault, wtxn, &public_refs)?;
         if let Some(fence) = fence {
             fence.validate_in_txn(vault, wtxn)?;
         }

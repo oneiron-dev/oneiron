@@ -13,8 +13,8 @@ use crate::error::{ClaimError, Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use std::ops::ControlFlow;
 
 impl Vault {
@@ -211,47 +211,37 @@ pub(super) fn edge_provenance_cohort_in_txn(
     lifecycles: &[ClaimLifecycleStatus],
 ) -> Result<Vec<StoredProvenanceClaim>> {
     let mut matched = Vec::new();
-    walk_edge_provenance_cohort_in_txn(
-        store,
-        txn,
-        subject,
-        exclude,
-        lifecycles,
-        MAX_EDGE_QUERY_RESULTS,
-        |claim, _| {
-            matched.push(claim);
-            ControlFlow::Continue(())
-        },
-    )?;
+    walk_edge_provenance_cohort_in_txn(store, txn, subject, exclude, lifecycles, |claim, _| {
+        matched.push(claim);
+        ControlFlow::Continue(())
+    })?;
     Ok(matched)
 }
 
 /// The rows [`edge_provenance_cohort_in_txn`] selects, handed to `visit` one
-/// at a time with their [`cohort_lifecycle`] until it breaks. Past `ceiling`
-/// scanned `claim_of` rows the walk refuses with [`Error::IndexOverflow`]:
-/// a crowded source is never read as an empty cohort.
+/// at a time with their [`cohort_lifecycle`] until it breaks. Every inbound
+/// `claim_of` row of the source is read, however many (FIX 8692): a crowded
+/// source is never read as an empty or partial cohort, and the count only
+/// feeds the advisory [`EngineScan::EdgePeerRows`] check.
 pub(super) fn walk_edge_provenance_cohort_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EdgeRef,
     exclude: Option<&EntityId>,
     lifecycles: &[ClaimLifecycleStatus],
-    ceiling: usize,
     mut visit: impl FnMut(StoredProvenanceClaim, ClaimLifecycleStatus) -> ControlFlow<()>,
 ) -> Result<()> {
-    for (scanned, entry) in store
-        .port_edges(
-            txn,
-            &subject.source,
-            crate::ports::EdgeDirection::In,
-            Some(EdgeKind::ClaimOf),
-            None,
-        )?
-        .enumerate()
-    {
-        if scanned >= ceiling {
-            return Err(Error::IndexOverflow("live provenance claims"));
-        }
+    let direction = crate::ports::EdgeDirection::In;
+    let kind = EdgeKind::ClaimOf;
+    let scope = [
+        &[direction as u8][..],
+        subject.source.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    let mut count = ScanCount::start(store, txn, EngineScan::EdgePeerRows, &scope)?;
+    for entry in store.port_edges(txn, &subject.source, direction, Some(kind), None)? {
+        count.row();
         let edge_row = entry?;
         let claim_id = edge_row.target;
         if exclude == Some(&claim_id) {
@@ -312,5 +302,6 @@ pub(super) fn walk_edge_provenance_cohort_in_txn(
             break;
         }
     }
+    count.defer(store);
     Ok(())
 }

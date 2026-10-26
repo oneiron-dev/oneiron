@@ -28,6 +28,21 @@ struct NoteProse<'a> {
 const NOTE_PROSE_ROW: &str = "memory.author_note";
 const NOTE_PROSE_FIELD: &str = "/markdown";
 
+/// The `unlinked` facts a NOTE's `markdown` earns for `memory`'s writer, the
+/// read [`Memory::author_note`] runs, for a bound raw put of a NOTE body
+/// (FIX 3734).
+pub(super) fn note_prose_unlinked(
+    memory: &Memory<'_>,
+    markdown: &str,
+) -> MemoryResult<Vec<crate::receipt::ReferenceRefusalFacts>> {
+    unlinked_prose_links(
+        memory,
+        NOTE_PROSE_ROW,
+        &NoteProse { markdown },
+        &[NOTE_PROSE_FIELD],
+    )
+}
+
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
@@ -273,7 +288,8 @@ impl Memory<'_> {
 /// links `About` its owner, and the actor content writer checks the agent's
 /// standing at each effect. Its markdown passes prose admission once, here,
 /// whoever calls (OF-063, FIX 3417): read through a txn-bound check, its
-/// receipt written in this same write once the entry has staged.
+/// receipt written in a child of this same write once the entry has staged,
+/// so a receipt that cannot be written never takes the entry (FIX 3709).
 pub(crate) fn append_agent_diary_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -316,7 +332,28 @@ pub(crate) fn append_agent_diary_in_txn(
             ),
     )?;
     content.finish()?;
-    crate::receipt::record_reference_refusals_in_txn(vault, txn, unlinked.as_slice())?;
+    // The Unlinked receipt records the AI's attempt, not the entry: it is
+    // written in a child of the caller's writer, so a failure there drops
+    // only the receipt (FIX 3709). A written one commits into the caller's
+    // writer and rolls back with the entry.
+    if let Some(facts) = unlinked.as_ref() {
+        let receipted = vault
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(crate::error::Error::from)
+            .and_then(|mut child| {
+                crate::receipt::record_reference_refusals_in_txn(
+                    vault,
+                    &mut child,
+                    std::slice::from_ref(facts),
+                )?;
+                child.commit().map_err(crate::error::Error::from)
+            });
+        if let Err(error) = receipted {
+            tracing::warn!(%error, "diary entry kept; its unlinked receipt was not written");
+        }
+    }
     Ok(note_id)
 }
 

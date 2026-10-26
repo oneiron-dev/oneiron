@@ -122,9 +122,11 @@ pub struct WitnessTurn {
 }
 
 /// The typed record assertions one witnessed reply makes (OF-063). Both
-/// lists name records that already exist: `created` claims no authorship
-/// the engine checks, only that the writer can read what it names. `kind`,
-/// `short_id` and `label` are display only; the `id` is what is admitted.
+/// lists name records that already exist and the writer can read. A
+/// `created` record whose birth does not prove the writer made it in the
+/// run its host bound is recorded `creation_not_proven` once the turn lands
+/// (FIX 1211); the reply stands. `kind`, `short_id` and `label` are display
+/// only; the `id` is what is admitted.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WitnessAssertions {

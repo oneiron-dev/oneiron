@@ -118,6 +118,9 @@ impl Memory<'_> {
                 input.confidence,
             )
             .with_validity(input.valid_from, input.valid_to);
+            if let Some(details) = input.confidence_details {
+                candidate = candidate.with_confidence_details(details);
+            }
             if let Some(salience) = input.salience {
                 candidate = candidate.with_salience(salience);
             }

@@ -273,6 +273,7 @@ fn proposal_input(id: EntityId) -> ClaimInput {
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     }
 }
 

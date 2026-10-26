@@ -1,5 +1,6 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
@@ -174,28 +175,55 @@ pub(crate) fn maintain_claim_projection_index(
     PROJECTION_REVERSE.put(store, txn, &id, &reverse_keys)?;
     Ok(())
 }
-fn predicate_ids_in_txn(
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot. The walk reads the whole list, however long
+/// (FIX 8659): past `count`'s threshold it raises the advisory
+/// [`EngineScan::PredicateClaimRows`] check of this predicate and reads on.
+fn walk_predicate_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    hash: [u8; 32],
-    limit: usize,
-) -> Result<Vec<EntityId>> {
-    let mut ids = Vec::new();
+    predicate: &str,
+    mut count: ScanCount,
+    mut visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let hash = predicate_hash(predicate);
     for row in PREDICATE_INDEX.iter_from(store, txn, &hash)? {
-        let (key, _) = row?;
-        ids.push(key.1);
-        if ids.len() > limit {
-            return Err(Error::IndexOverflow("claim projection query"));
-        }
+        count.row();
+        let ((_, id), _) = row?;
+        visit(id)?;
     }
-    Ok(ids)
+    count.defer(store);
+    Ok(())
 }
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot and the vault's [`EngineScan::PredicateClaimRows`]
+/// threshold row. No count ends the walk; `visit` may.
+pub(crate) fn for_each_claim_id_for_predicate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+    )?;
+    walk_predicate_ids_in_txn(store, txn, predicate, count, visit)
+}
+/// Every claim id in `predicate`'s posting list, however many.
 pub(crate) fn claim_ids_for_predicate_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
-    predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
+    let mut ids = Vec::new();
+    for_each_claim_id_for_predicate_in_txn(store, txn, predicate, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
 }
 /// A predicate index row: `(predicate hash, claim id)` and its value.
 type PredicateRow = Result<(([u8; 32], EntityId), String)>;
@@ -231,33 +259,44 @@ pub(crate) fn claim_ids_for_predicate_page_in_txn(
     }
     Ok(ids)
 }
-/// The same posting list under a caller-resolved ceiling (a policy row), for
-/// doors whose limit is authored data rather than this index's default.
+/// Every claim id in the same posting list, with `limit` as the advisory
+/// check's threshold for a door whose number is authored data rather than
+/// the vault's row (FIX 8659). It is never a ceiling: the list is whole.
 pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     predicate: &str,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    predicate_ids_in_txn(store, txn, predicate_hash(predicate), limit)
+    let threshold = u64::try_from(limit).unwrap_or(u64::MAX);
+    let count = ScanCount::start_at(
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+        threshold,
+    );
+    let mut ids = Vec::new();
+    walk_predicate_ids_in_txn(store, txn, predicate, count, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
 }
-/// Classify distinct stored predicates under live policy before reading any
-/// claim bodies. The catalog and its posting lists co-commit with claim writes.
-pub(super) fn pinned_claim_ids_in_txn(
+/// Hands every claim id under a predicate live policy pins to `visit`,
+/// classifying distinct stored predicates before any claim body is read. The
+/// catalog and its posting lists co-commit with claim writes, and every
+/// posting is read (FIX 8659).
+pub(super) fn for_each_pinned_claim_id_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
-) -> Result<Vec<EntityId>> {
-    let mut candidates = Vec::new();
+    mut visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
     for predicate in PREDICATE_NAME.scan_keys(store, txn, &[])? {
         if policy.pins_predicate(&predicate) {
-            candidates.extend(claim_ids_for_predicate_in_txn(store, txn, &predicate)?);
-            if candidates.len() > 10_000 {
-                return Err(Error::IndexOverflow("pinned claim projection"));
-            }
+            for_each_claim_id_for_predicate_in_txn(store, txn, &predicate, &mut visit)?;
         }
     }
-    Ok(candidates)
+    Ok(())
 }
 
 #[cfg(test)]

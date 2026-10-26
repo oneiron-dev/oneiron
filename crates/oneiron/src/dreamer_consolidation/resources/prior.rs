@@ -255,7 +255,8 @@ fn prior_keys(prior: &PriorHead, rules: &PredicateKeyRules) -> Result<CandidateK
         body.subject,
         body.value.clone(),
         body.confidence,
-    );
+    )
+    .with_confidence_details(body.confidence_details());
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }

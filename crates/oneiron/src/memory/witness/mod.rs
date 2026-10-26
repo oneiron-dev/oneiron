@@ -2,6 +2,7 @@
 //! base (`base`) or in an off-record session overlay (`session`), plus the
 //! turn-speaker wire helpers. Surface re-exported by [`super`].
 
+mod assertions;
 mod base;
 mod codec;
 mod program;

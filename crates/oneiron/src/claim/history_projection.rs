@@ -1037,6 +1037,9 @@ pub(crate) fn project_machine_claim(projection: &ClaimTransitionProjection) -> C
     body.approval = projection.approval;
     body.lifecycle = projection.lifecycle;
     body.valid_to = projection.valid_to;
+    // The band and basis project as the birth stored them: a signed
+    // weakening carries its number only, and a reader invents no pair for
+    // it (FIX 7761).
     body.confidence = projection.confidence;
     body.stale = projection.stale;
     if projection.demotion_rung.is_some() || projection.scope_band_floor.is_some() {

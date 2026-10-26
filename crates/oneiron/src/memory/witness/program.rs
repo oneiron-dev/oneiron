@@ -39,10 +39,12 @@ mod execute;
 mod planning;
 mod validation;
 
+use self::validation::*;
+use super::assertions::unproven_creations_in;
+
 // A model stream's continuation terminal judges its reply's records through
 // the same check (FIX 3416).
-pub(in crate::memory::witness) use self::planning::unread_assertion_in;
-use self::validation::*;
+pub(in crate::memory::witness) use super::assertions::unread_assertion_in;
 
 /// Where a witness is asked to land. The session is the one parameter the two
 /// landings differ by.
@@ -184,10 +186,13 @@ pub(super) struct WitnessAdmission<'p> {
 /// The writer's lane a reply's typed assertions are read through in the
 /// write transaction (OF-063), and the slot the first pointer it cannot read
 /// leaves the aborted writer in.
+/// `unproven` carries out of the landed writer the pointers of the created
+/// records whose birth does not prove the writer made them (FIX 1211).
 #[derive(Clone, Copy)]
 struct AssertionRead<'a, 'l> {
     lane: &'a ScopedRead<'l>,
     refused: &'a Cell<Option<String>>,
+    unproven: &'a Cell<Vec<String>>,
 }
 
 impl WitnessAdmission<'_> {

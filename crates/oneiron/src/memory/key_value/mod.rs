@@ -25,6 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub use types::*;
 
 pub(super) const PREDICATE: &str = crate::claim::KEY_VALUE_PREDICATE;
+/// The verb row a keyed value's prose links are receipted under.
+pub(crate) const KEY_VALUE_PROSE_ROW: &str = "vault.kv.put";
 const MAX_ADDRESS_BYTES: usize = 4096;
 const MAX_SEGMENTS: usize = 32;
 const MAX_OFFSET: usize = 1_000_000;
@@ -37,6 +39,19 @@ struct StoredValue {
     value: serde_json::Value,
     created_at: u64,
     request_id: String,
+}
+
+/// The nested value a keyed-value claim `body` stores, the text a bound raw
+/// put's prose admission reads (FIX 3734); `None` for any other claim or a
+/// value of another shape. It reads the shape only: whose value it is
+/// decides nothing here.
+pub(crate) fn key_value_text_of(body: &ClaimBody) -> Option<serde_json::Value> {
+    if body.predicate != PREDICATE {
+        return None;
+    }
+    serde_json::from_value::<StoredValue>(msgpack_value_to_json(&body.value))
+        .ok()
+        .map(|stored| stored.value)
 }
 
 fn check_namespace(namespace: &[String], empty: bool) -> MemoryResult<()> {

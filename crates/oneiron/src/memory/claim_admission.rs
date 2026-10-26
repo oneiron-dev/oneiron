@@ -182,6 +182,7 @@ impl Memory<'_> {
             occurred_at: input.occurred_at,
             learned_at: input.learned_at,
             salience: input.salience,
+            confidence_details: None,
         };
         super::caps::check_claim_input(&claim)?;
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;

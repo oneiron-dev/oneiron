@@ -1,5 +1,6 @@
 //! JavaScript numbers must be validated before N-API can narrow them.
 
+use oneiron::claim::ConfidenceDetails;
 use oneiron::{ClaimInput, MemoryError};
 
 use super::NapiClaimInput;
@@ -84,5 +85,10 @@ pub(super) fn claim_input_to_engine(input: &NapiClaimInput) -> Result<ClaimInput
         occurred_at: claim_timestamp(input.occurred_at, "occurred_at")?,
         learned_at: claim_timestamp(input.learned_at, "learned_at")?,
         salience: input.salience.map(|s| s as f32),
+        confidence_details: ConfidenceDetails::from_names(
+            input.confidence_band.as_deref(),
+            input.confidence_basis.as_deref(),
+        )
+        .map_err(MemoryError::bad_request)?,
     })
 }
