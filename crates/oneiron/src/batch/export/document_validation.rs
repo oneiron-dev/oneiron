@@ -282,7 +282,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         let mut sources = BTreeSet::new();
         let mut packs = self.spool.rows(ArchiveRecordKind::Pack);
         while let Some((loc, _)) = packs.next(&self.spool)? {
-            let source = match self.hydrated::<ExportPack>(ArchiveRecordKind::Pack, loc)? {
+            let source = match self.hydrated::<ExportPack>(loc)? {
                 ExportPack::Source(source) => source,
                 ExportPack::BuiltinAdapter(descriptor) => {
                     if !sources.insert(descriptor.source_id.clone()) {
@@ -303,7 +303,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             if !self.index.insert(Tag::PackSource, id.as_bytes(), &[])? {
                 return Err(invalid("duplicate pack source"));
             }
-            source.source_tree.validate()?;
+            source.source_tree.validate_in(&self.files)?;
             let row = match self.entity(&id)? {
                 Some((at, row)) if at.section == Section::Ledger => row,
                 _ => return Err(invalid("pack source entity missing")),
@@ -313,7 +313,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             }
             if source.source_tree.content_hash.is_some() {
                 let pack = crate::skill_hub::pack_catalog::PackSource::from_files(
-                    source.source_tree.import_files()?,
+                    source.source_tree.import_files_in(&self.files)?,
                 )?;
                 if crate::skill_hub::pack_catalog::export_source_body(&pack)? != row.body
                     || pack.entity_id()? != id

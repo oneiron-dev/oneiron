@@ -532,16 +532,11 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         Ok(Some((at, self.entity_row(&at)?)))
     }
 
-    /// The row at `loc` of a kind holding a source tree, its tree files
-    /// read back as their text.
-    pub(crate) fn hydrated<T: DeserializeOwned>(
-        &self,
-        kind: ArchiveRecordKind,
-        loc: Loc,
-    ) -> Result<T> {
-        let mut row: serde_json::Value = self.spool.parse(loc)?;
-        super::archive_read::attach_tree(kind, &mut row, &self.files, None)?;
-        serde_json::from_value(row).map_err(|_| Error::InvariantViolation("archive spool row"))
+    /// The row at `loc` of a kind holding a source tree. A member stored as
+    /// a file stays its descriptor, read from the archive's files when its
+    /// tree is validated or imported (FIX 10101).
+    pub(crate) fn hydrated<T: DeserializeOwned>(&self, loc: Loc) -> Result<T> {
+        self.spool.parse(loc)
     }
 
     /// The next entity id after `after` in id order, with where it is.

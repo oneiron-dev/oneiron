@@ -1,5 +1,5 @@
 //! Bounded, typed package persistence. This is storage, not an export door.
-use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
+use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::skill::{decode_skill_record, encode_skill_record};
@@ -36,7 +36,7 @@ pub(super) fn is_hub_package_envelope(bytes: &[u8]) -> bool {
     bytes.starts_with(MAGIC)
 }
 
-const MAX_ENCODED: usize = MAX_HUB_PACKAGE_TOTAL_BYTES + 8 * 1024 * 1024;
+pub(super) const MAX_ENCODED: usize = MAX_HUB_PACKAGE_TOTAL_BYTES + 8 * 1024 * 1024;
 const MAX_RECORD: usize = 1024 * 1024;
 
 fn field(out: &mut Vec<u8>, value: &[u8]) -> Result<()> {
@@ -53,6 +53,30 @@ fn count(input: &mut Cursor<&[u8]>, max: usize) -> Result<usize> {
     let n = u32::from_be_bytes(b) as usize;
     if n > max {
         return Err(invalid("package field exceeds bound"));
+    }
+    Ok(n)
+}
+/// The bytes one file takes in an encoded package: its path and its content,
+/// each after its four-byte length.
+pub(super) const fn encoded_file_bytes(path: usize, content: usize) -> usize {
+    path.saturating_add(content).saturating_add(8)
+}
+/// A package's file count, read apart from the bounded field lengths. Each
+/// file takes at least its two four-byte lengths, so a count the bytes left
+/// cannot hold is a truncated package; no count is refused for its size
+/// (FIX 10100).
+fn read_file_count(input: &mut Cursor<&[u8]>) -> Result<usize> {
+    let mut b = [0; 4];
+    input
+        .read_exact(&mut b)
+        .map_err(|_| invalid("truncated package"))?;
+    let n = usize::try_from(u32::from_be_bytes(b)).map_err(|_| invalid("truncated package"))?;
+    let left = input
+        .get_ref()
+        .len()
+        .saturating_sub(input.position() as usize);
+    if n > left / 8 {
+        return Err(invalid("truncated package"));
     }
     Ok(n)
 }
@@ -108,7 +132,9 @@ pub fn encode_hub_package(package: &HubPackage) -> Result<Vec<u8>> {
             field(&mut out, entry.as_bytes())?;
         }
     }
-    out.extend_from_slice(&(package.files.len() as u32).to_be_bytes());
+    let file_count = u32::try_from(package.files.len())
+        .map_err(|_| invalid("package holds more files than its count field names"))?;
+    out.extend_from_slice(&file_count.to_be_bytes());
     let mut files = package.files.iter().collect::<Vec<_>>();
     files.sort_by(|a, b| a.path.cmp(&b.path));
     for file in files {
@@ -150,8 +176,9 @@ pub fn decode_hub_package(raw: &[u8]) -> Result<HubPackage> {
             }
         }
     }
-    let n = count(&mut input, MAX_HUB_PACKAGE_FILES)?;
-    let mut files = Vec::with_capacity(n);
+    let n = read_file_count(&mut input)?;
+    // Grown as each file reads whole, never sized from the count it names.
+    let mut files = Vec::new();
     let mut total = 0usize;
     for _ in 0..n {
         let path = text(&mut input, 4096)?;

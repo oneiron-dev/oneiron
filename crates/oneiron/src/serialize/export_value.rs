@@ -4,6 +4,7 @@
 //! payloads are nulled: an opaque byte string is not proof that it is public data.
 //! A stored file is no tree: the whole-vault archive carries its bytes beside the
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
+//! A value is kept at any depth, and its archive form is flat (FIX 10097, [`tree`]).
 use std::borrow::Cow;
 use std::io::{Cursor, Read};
 
@@ -14,29 +15,25 @@ use serde_json::Value;
 use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
 use crate::batch::export::ArchiveFiles;
 use crate::batch::secret_scan::{
-    decode_members, nested_past_decoder, release_joined_messagepack, release_joined_strings,
-    release_reads_whole, scan_file_content, scan_undecoded_body,
+    decode_members, nested_past_decoder, release_reads_whole, scan_file_content,
+    scan_undecoded_body,
 };
 use crate::error::{Error, Result};
 
 mod file_stream;
 pub(crate) use file_stream::attaches_as_file_read;
+mod tree;
 
-/// How deep an exported tree goes; a deeper node is nulled.
-const TREE_DEPTH: usize = 24;
-/// How deep text is read before its original bytes are kept, as deep as the
-/// document pass reads.
+/// How deep text decoded inside text is read before its original bytes are
+/// kept, as deep as the document pass reads. A value's own structure spends
+/// none of it (FIX 10097).
 const TEXT_DEPTH: usize = 128;
 
 /// A MessagePack value with explicit numeric widths and binary-reference types.
 /// Map entries stay ordered, including duplicate keys; they are not JSON objects.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "type",
-    content = "value",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
+/// It serializes as its nodes in postorder ([`tree`]): no depth of value
+/// nests its archive form.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExportValue {
     Boolean(bool),
     Integer(String),
@@ -50,7 +47,6 @@ pub enum ExportValue {
     BinaryText(String),
     Array(Vec<Self>),
     Map(Vec<(Self, Self)>),
-    #[serde(untagged)]
     Nil,
 }
 
@@ -76,7 +72,8 @@ pub enum ExportBody {
 /// OF-222: the stored file an ASSET body is, by its BLAKE3 (lowercase hex) and
 /// length. Its bytes go out as they are stored: no decode, credential scan,
 /// mask or sealed check reads them, and a sealed or encrypted container goes
-/// as it is (C2).
+/// as it is (C2). A source tree's member that is no UTF-8 text is named the
+/// same way (FIX 10101); the source credential scan reads those bytes first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportBodyFile {
@@ -173,7 +170,7 @@ impl ExportBody {
         if let Ok(value) = rmpv::decode::read_value(&mut cursor)
             && cursor.position() == bytes.len() as u64
         {
-            let mut exported = export_value(&value, "", entity_type, 0, TREE_DEPTH);
+            let mut exported = tree::export_value_tree(&value, entity_type, 0);
             if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
                 export_provenance_references(bytes, &mut exported);
                 if let Ok(body) = crate::claim::decode_claim_body(bytes, true) {
@@ -229,10 +226,12 @@ impl ExportBody {
         }
     }
 
-    /// The stored bytes, a file body's read from the archive's files.
+    /// The stored bytes, a file body's read from the archive's files, and a
+    /// hub source's with its file members read from them (FIX 10101).
     pub(crate) fn to_bytes_in(&self, files: &dyn ArchiveFiles) -> Result<Vec<u8>> {
         match self {
             Self::File(file) => file.read(files),
+            Self::HubSource(value) => value.to_bytes_in(files),
             body => body.to_bytes(),
         }
     }
@@ -268,8 +267,15 @@ impl ExportBody {
     /// body is an ASSET's, names one of them at its length, and holds bytes
     /// the serializer attaches ([`attaches_as_file`]), so no owning adapter's
     /// body or text passes as a file. The file is judged as it streams from
-    /// the archive, checked to its end, never held whole (FIX 3677).
+    /// the archive, checked to its end, never held whole (FIX 3677). A hub
+    /// source's file members are read from them too (FIX 10101).
     pub(crate) fn validate_in(&self, entity_type: u8, files: &dyn ArchiveFiles) -> Result<()> {
+        if let Self::HubSource(value) = self {
+            if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                return Err(invalid("hub source attached to non-asset kind"));
+            }
+            return value.validate_in(files);
+        }
         let Self::File(file) = self else {
             return self.validate(entity_type);
         };
@@ -433,7 +439,9 @@ fn invalid(reason: &str) -> Error {
 /// Text keeps its original bytes only when every reading of it is clean: its
 /// text, and, when it decodes, every member through the decode the write door
 /// runs ([`decode_members`]), a lone JSON string and each repeated key's value
-/// included, with nothing this exporter nulls.
+/// included, with nothing this exporter nulls. `depth` is how deep in text
+/// decoded inside text this text sits; past [`TEXT_DEPTH`] a decoded member
+/// reads as nil.
 fn safe_text(text: &str, depth: usize) -> bool {
     let scalar = Value::String(text.to_owned());
     if null_credentials("", &scalar) != scalar {
@@ -441,16 +449,15 @@ fn safe_text(text: &str, depth: usize) -> bool {
     }
     match decode_members(text.as_bytes()) {
         Some(value) if release_reads_whole(&value) => false,
-        // Text holds no codec's id slot: its tree is read as an ASSET body's.
-        Some(value) => export_value(
-            &value,
-            "",
-            crate::registry::ENTITY_TYPE_ASSET,
-            depth + 1,
-            TEXT_DEPTH,
-        )
-        .to_msgpack()
-        .is_ok_and(|read| read == value),
+        Some(value) => {
+            // Text holds no codec's id slot: its tree is read as an ASSET body's.
+            let read = if depth + 1 < TEXT_DEPTH {
+                tree::export_value_tree(&value, crate::registry::ENTITY_TYPE_ASSET, depth + 1)
+            } else {
+                ExportValue::Nil
+            };
+            read.to_msgpack().is_ok_and(|read| read == value)
+        }
         None => nested_past_decoder(text.as_bytes()).is_none(),
     }
 }
@@ -485,95 +492,10 @@ fn reference_field(key: &str, bytes: &[u8], entity_type: u8, depth: usize) -> bo
     }
 }
 
-fn export_value(value: &Mp, key: &str, entity_type: u8, depth: usize, limit: usize) -> ExportValue {
-    if depth >= limit || credential_key(key) {
-        return ExportValue::Nil;
-    }
-    match value {
-        Mp::Nil => ExportValue::Nil,
-        Mp::Boolean(value) => ExportValue::Boolean(*value),
-        Mp::Integer(value) => ExportValue::Integer(value.to_string()),
-        Mp::F32(value) => ExportValue::F32(value.to_bits()),
-        Mp::F64(value) => ExportValue::F64(value.to_bits()),
-        Mp::String(value) => match value.as_str() {
-            Some(value) if safe_text(value, depth) => ExportValue::String(value.to_owned()),
-            _ => ExportValue::Nil,
-        },
-        Mp::Binary(bytes) if reference_field(key, bytes, entity_type, depth) => {
-            ExportValue::EntityReference(bytes.clone())
-        }
-        Mp::Binary(bytes) => {
-            // A binary map is not text just because its credential's value is
-            // printable. Opaque encodings are intentionally nulled as a whole.
-            match std::str::from_utf8(bytes) {
-                Ok(text) if safe_text(text, depth) && !text.chars().any(char::is_control) => {
-                    ExportValue::BinaryText(text.to_owned())
-                }
-                _ => ExportValue::Nil,
-            }
-        }
-        Mp::Array(values) => {
-            // MessagePack uint8 arrays are another common byte-container. Scan
-            // them before JSON encoding, rather than scanning decimal digits.
-            let bytes: Option<Vec<u8>> = values
-                .iter()
-                .map(|value| value.as_u64().and_then(|v| u8::try_from(v).ok()))
-                .collect();
-            if bytes
-                .as_deref()
-                .is_some_and(|bytes| byte_container_is_opaque_or_tainted(bytes, depth))
-            {
-                return ExportValue::Nil;
-            }
-            // A phrase one word per item, a key one line per item, whether
-            // each item is a string or binary.
-            if release_joined_messagepack(values) {
-                return ExportValue::Nil;
-            }
-            let exported: Vec<ExportValue> = values
-                .iter()
-                .map(|value| export_value(value, "", entity_type, depth + 1, limit))
-                .collect();
-            // Read again once items are nulled: the text left is what a second
-            // pass reads joined, so the array is its own fixed point.
-            let kept: Vec<_> = exported.iter().filter_map(exported_text).collect();
-            if release_joined_strings(&kept) {
-                return ExportValue::Nil;
-            }
-            ExportValue::Array(exported)
-        }
-        Mp::Map(entries) => ExportValue::Map(
-            entries
-                .iter()
-                .map(|(key, value)| {
-                    let exported_key = export_value(key, "", entity_type, depth + 1, limit);
-                    let exported_value = if matches!(exported_key, ExportValue::Nil) {
-                        ExportValue::Nil
-                    } else {
-                        export_value(
-                            value,
-                            key.as_str()
-                                .or_else(|| match key {
-                                    Mp::Binary(bytes) => std::str::from_utf8(bytes).ok(),
-                                    _ => None,
-                                })
-                                .unwrap_or(""),
-                            entity_type,
-                            depth + 1,
-                            limit,
-                        )
-                    };
-                    (exported_key, exported_value)
-                })
-                .collect(),
-        ),
-        Mp::Ext(_, _) => ExportValue::Nil,
-    }
-}
-
 /// An exported item as a second pass reads it joined
-/// ([`release_joined_messagepack`] over its MessagePack): a string, binary
-/// text or id bytes, and an array of byte values.
+/// ([`crate::batch::secret_scan::release_joined_messagepack`] over its
+/// MessagePack): a string, binary text or id bytes, and an array of byte
+/// values.
 fn exported_text(value: &ExportValue) -> Option<Cow<'_, str>> {
     match value {
         ExportValue::String(text) | ExportValue::BinaryText(text) => Some(Cow::Borrowed(text)),
@@ -591,39 +513,8 @@ fn exported_text(value: &ExportValue) -> Option<Cow<'_, str>> {
 }
 
 impl ExportValue {
+    /// The MessagePack value this restores, at any depth.
     pub(crate) fn to_msgpack(&self) -> Result<Mp> {
-        Ok(match self {
-            Self::Nil => Mp::Nil,
-            Self::Boolean(value) => Mp::Boolean(*value),
-            Self::Integer(value) => {
-                if value.starts_with('-') {
-                    Mp::from(
-                        value
-                            .parse::<i64>()
-                            .map_err(|_| invalid("invalid signed integer"))?,
-                    )
-                } else {
-                    Mp::from(
-                        value
-                            .parse::<u64>()
-                            .map_err(|_| invalid("invalid unsigned integer"))?,
-                    )
-                }
-            }
-            Self::F32(bits) => Mp::F32(f32::from_bits(*bits)),
-            Self::F64(bits) => Mp::F64(f64::from_bits(*bits)),
-            Self::String(value) => Mp::from(value.as_str()),
-            Self::EntityReference(value) => Mp::Binary(value.clone()),
-            Self::BinaryText(value) => Mp::Binary(value.as_bytes().to_vec()),
-            Self::Array(values) => {
-                Mp::Array(values.iter().map(Self::to_msgpack).collect::<Result<_>>()?)
-            }
-            Self::Map(entries) => Mp::Map(
-                entries
-                    .iter()
-                    .map(|(key, value)| Ok((key.to_msgpack()?, value.to_msgpack()?)))
-                    .collect::<Result<_>>()?,
-            ),
-        })
+        tree::restore_value_tree(self)
     }
 }

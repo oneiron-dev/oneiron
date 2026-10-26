@@ -481,7 +481,7 @@ fn insert_ready_row<R: Read + Seek>(
             if at.section != Section::Skill {
                 return Err(Error::InvariantViolation("skill bundle missing"));
             }
-            let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+            let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
             if let Some(tree) = &bundle.source_tree {
                 vault.import_archived_skill_in_txn(
                     wtxn,
@@ -491,7 +491,7 @@ fn insert_ready_row<R: Read + Seek>(
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
-                        tree.import_files()?,
+                        tree.import_files_in(&archive.files)?,
                     ),
                     occurred,
                     row.learned_at,
@@ -755,9 +755,9 @@ fn validate_existing_source<R: Read + Seek>(
     if at.section != Section::Skill {
         return Ok(());
     }
-    let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+    let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files()?;
+        let files = tree.import_files_in(&archive.files)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;

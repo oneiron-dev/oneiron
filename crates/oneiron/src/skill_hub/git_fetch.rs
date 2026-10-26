@@ -2,7 +2,7 @@
 //! A repository is a hub (ARCH-0053 §7): `owner/repo` names a GitHub repository,
 //! and discovery lists its skill folders the way `npx skills add` does.
 use super::git_process::GitScratch;
-use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
+use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};
 use crate::{entity_id::EntityId, error::Result};
@@ -337,7 +337,7 @@ fn read_blobs(repo: &GitScratch, listing: &[u8]) -> Result<Vec<HubFile>> {
         .split(|byte| *byte == 0)
         .filter(|row| !row.is_empty())
     {
-        if files.len() >= MAX_HUB_PACKAGE_FILES || std::time::Instant::now() >= deadline {
+        if std::time::Instant::now() >= deadline {
             return Err(invalid("Git subtree resource budget exceeded"));
         }
         let row = std::str::from_utf8(row).map_err(|_| invalid("Git path is not UTF-8"))?;
