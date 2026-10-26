@@ -45,6 +45,53 @@ impl Vault {
         self.walk_claims_with_predicate_in_txn(rtxn, predicate, true, visit)
     }
 
+    /// [`Self::for_each_readable_claim_with_predicate_in_txn`] for a reader
+    /// that judges a readable claim whose body does not decode itself (FIX
+    /// 10793): its id, stored body and decode error go to `undecoded`, and
+    /// the walk goes on. A store or index failure still fails the walk.
+    pub(crate) fn for_each_readable_claim_with_predicate_or_undecoded_in_txn(
+        &self,
+        rtxn: &RoTxn<'_>,
+        predicate: &str,
+        mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
+        mut undecoded: impl FnMut(EntityId, &[u8], Error) -> Result<()>,
+    ) -> Result<()> {
+        for entry in self
+            .store
+            .type_index
+            .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
+        {
+            let (key, _) = entry?;
+            let id = crate::vault::entity_id_from_type_index_key(&key)?;
+            let raw = self
+                .store
+                .entities
+                .get(rtxn, id.as_bytes())?
+                .ok_or(Error::CorruptedIndex("claim type index"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("claim type index"));
+            }
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            if !super::safe_read::body_readable_in_txn(
+                &self.store,
+                rtxn,
+                &id,
+                body,
+                super::safe_read::BodyStale::ClaimStatus,
+            )? {
+                continue;
+            }
+            match decode_claim_body(body, true) {
+                Ok(decoded) if decoded.predicate == predicate => visit(id, decoded)?,
+                Ok(_) => {}
+                Err(error) => undecoded(id, body, error)?,
+            }
+        }
+        Ok(())
+    }
+
     fn walk_claims_with_predicate_in_txn(
         &self,
         rtxn: &RoTxn<'_>,

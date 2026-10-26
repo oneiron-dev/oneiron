@@ -630,7 +630,7 @@ impl EntityDocument {
                 None => bytes,
             };
             encode_document(
-                copy.as_ref().map_or(self.id, |copy| copy.id),
+                copy.as_ref().map_or(self.id, |copy| copy.key),
                 kind,
                 &payload,
             )
