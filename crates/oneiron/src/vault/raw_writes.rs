@@ -25,10 +25,16 @@
 //!   the actor is verified in; then the owner's
 //!   [`Memory::safe_delete`] runs with its gate and redaction receipt.
 //!
+//! A handle bound inside an off-record session writes into its room while
+//! the room is off record, and reads the room over base (FIX 8119, 8603;
+//! `session`); a raw CLAIM put carries its verified caller's envelope
+//! through its gate and apply (FIX 8118).
+//!
 //! A raw body is opaque bytes here, except for prose admission (OF-063,
 //! FIX 1228, 3734): a NOTE's markdown and a keyed value's nested value are
 //! read for links once, through the caller, as their typed writers read
 //! them, and their `unlinked` receipt is written only once the batch lands.
+//! A put its room stages lands in no base batch and earns none.
 
 use crate::batch::BatchBuilder;
 use crate::core_write::CoreWriteLane;
@@ -38,6 +44,10 @@ use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
 use crate::task_verb::sdk::{SafeDeleteRequest, vault_delete};
 use crate::temporal::TimeRange;
+
+mod session;
+
+use self::session::RawOp;
 
 /// One entity blob a bound raw write puts ([`Memory::raw_put_entities`]).
 #[derive(Debug, Clone, Copy)]
@@ -75,17 +85,15 @@ impl Memory<'_> {
     /// refusal (a put that turns an agent definition back on), or the
     /// batch's own refusal; nothing is written then.
     pub fn raw_put_entities(&self, puts: &[RawEntityPut<'_>]) -> MemoryResult<()> {
+        let staged: Vec<_> = puts.iter().copied().map(RawOp::Put).collect();
+        if self.raw_write_in_session(&staged)? {
+            return Ok(());
+        }
         // Read before the writer opens; receipted only for a batch that lands.
         let unlinked_prose = self.raw_put_prose(puts)?;
         let mut batch = self.vault().batch();
         for put in puts {
-            batch = batch.put(
-                &put.id,
-                put.entity_type,
-                put.occurred,
-                put.learned_at,
-                put.data,
-            );
+            batch = self.raw_put_on(batch, put)?;
         }
         self.commit_raw_batch(batch, puts)?;
         crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
@@ -104,6 +112,15 @@ impl Memory<'_> {
         tgt: &EntityId,
         weight: f32,
     ) -> MemoryResult<()> {
+        let staged = RawOp::Edge {
+            src: *src,
+            kind,
+            tgt: *tgt,
+            weight,
+        };
+        if self.raw_write_in_session(&[staged])? {
+            return Ok(());
+        }
         self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight), &[])
     }
 
@@ -113,6 +130,9 @@ impl Memory<'_> {
     ///
     /// As [`Self::raw_put_entities`], and the vector's own refusal.
     pub fn raw_put_vector(&self, id: &EntityId, vector: &[f32]) -> MemoryResult<()> {
+        if self.raw_write_in_session(&[RawOp::Vector { id: *id, vector }])? {
+            return Ok(());
+        }
         self.commit_raw_batch(self.vault().batch().vector(id, vector), &[])
     }
 

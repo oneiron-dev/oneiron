@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::code_run::storage::derived_executor_id;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::runtime_hooks::verb::VerbAskCredentialSource;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
@@ -128,10 +129,12 @@ pub(crate) fn mint_code_consent_wait_in_txn(
             return Ok(None);
         };
         let slip = verified.claims().slip_id;
+        // Only the very slip the witness verifies as: an instrument that
+        // names none beside a slip's witness is no instrument of this call.
         if credential
             .instrument
             .as_ref()
-            .is_some_and(|instrument| instrument.slip != slip)
+            .is_some_and(|instrument| instrument.slip() != Some(slip))
         {
             return Ok(None);
         }
@@ -230,8 +233,17 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     {
         Some(instrument) => {
             field(&instrument.vault);
-            field(&instrument.slip);
-            field(&instrument.fingerprint);
+            match &instrument.source {
+                VerbAskCredentialSource::Slip { slip, fingerprint } => {
+                    field(b"slip");
+                    field(slip);
+                    field(fingerprint);
+                }
+                VerbAskCredentialSource::AttestedOwner { holder } => {
+                    field(b"attested_owner");
+                    field(holder.as_bytes());
+                }
+            }
             field(&instrument.ceiling);
         }
         None => field(&[]),
