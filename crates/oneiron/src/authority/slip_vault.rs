@@ -16,7 +16,7 @@ mod courtesy;
 pub use connect::ConnectOffer;
 mod issuer_custody;
 mod issuer_seed;
-pub use issuer_seed::{HostSlipIssuer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT};
+pub use issuer_seed::{HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT, HostSlipIssuer};
 
 const ROOT_LIFETIME: u64 = 10 * 365 * 24 * 60 * 60;
 /// The attestation a host's own root roster row carries.
