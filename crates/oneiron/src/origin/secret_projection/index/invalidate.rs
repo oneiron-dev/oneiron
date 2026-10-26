@@ -10,8 +10,11 @@
 //! symbol graph is derived again from projected full sources. A record's
 //! published text, phonetic codes and vectors are replaced through the
 //! existing batch door, refill and pending stores; no canonical revision,
-//! live pointer or snapshot moves, and no table, census cap or detector is
-//! added. Equal mark ids prove nothing: a copy is compared by its bytes.
+//! live pointer or snapshot moves, and no census cap or detector is added.
+//! Equal mark ids prove nothing: a copy is compared by its bytes. The texts
+//! a model derived from those records, every room's cached media vectors of
+//! them, and the probe queries written from them follow in the same writer
+//! (FIX 7608 S3F).
 
 use std::collections::BTreeSet;
 
@@ -82,6 +85,9 @@ fn refresh(vault: &Vault, wtxn: &mut RwTxn<'_>, sources: &[[u8; 32]]) -> Result<
         }
         crate::embed::requeue_repo_embedding_in_txn(vault, wtxn, entity)?;
     }
+    // FIX 7608 S3F: the texts derived from them, rooms' cached vectors and
+    // probe queries, with the same affected set.
+    crate::embed::refresh_repo_derived_projection_in_txn(vault, wtxn, &marks, &sources, &entities)?;
     vault.refresh_repo_symbol_graphs_in_txn(wtxn, &marks, &sources)
 }
 

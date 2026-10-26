@@ -446,6 +446,7 @@ impl SyncServer {
                 (space.to_owned(), pass)
             })
             .collect();
+        self.rederive_repo_index_texts(runtime);
         self.author_space_probes(runtime, &moves);
         self.check_space_moves(runtime, &moves, &mut passes);
         (passes, room_embedded)

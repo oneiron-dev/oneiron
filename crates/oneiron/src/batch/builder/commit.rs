@@ -380,6 +380,7 @@ fn apply_admitted(
     // Only their windows are taken from it: this terminal reads the rest of
     // its post-commit work from the ops.
     let pad_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
+    let derived = crate::embed::repo_derived_batch(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -392,6 +393,7 @@ fn apply_admitted(
     )?;
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
     for task in &tasks {

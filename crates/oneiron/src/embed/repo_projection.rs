@@ -20,6 +20,19 @@ use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 
+mod derived;
+mod session;
+pub use derived::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
+pub(super) use derived::{
+    RepoDerivedOwner, RepoDerivedReady, copy_in, delete_in_txn, is_storage_error, pending_in,
+    put_pending_in_txn, put_ready_in_txn,
+};
+pub(crate) use derived::{
+    finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
+    repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
+};
+pub(crate) use session::apply_ops_session_projected;
+
 use super::PendingEmbeddingPayload;
 use super::media::{MediaEmbedReport, PendingMedia, TEXT_MEDIA_TYPE, asset_document_in};
 use super::space::{InputKind, delete_media_vectors_in_txn};
@@ -172,6 +185,53 @@ pub(super) fn media_copy_hash_in(
         Some(stamp) => stamp.copy_blake3,
         None => *blake3::hash(&input.into_bytes()).as_bytes(),
     }))
+}
+
+/// The inline media bytes an ASSET body holds, the bytes a mark joins it by;
+/// `None` for a body holding none.
+pub(crate) fn repo_media_bytes(body: &[u8]) -> Option<Vec<u8>> {
+    super::media::asset_media(body).map(|(_, bytes)| bytes)
+}
+
+/// What a mask change on the blobs `sources` reaches beyond the records
+/// `entities` that hold them (FIX 7608 S3F), in `wtxn`, the writer that
+/// changed the marks, each with the same affected set: the texts a model
+/// derived from them (FIX 10405), every room's cached media vectors of them
+/// (FIX 10407), and the probe queries written from them (FIX 10408). Each
+/// step fails only with `wtxn`'s storage error; any other is logged and
+/// left to the next derivation, as the slice-3 invalidation is.
+///
+/// # Errors
+/// A storage error of `wtxn`.
+pub(crate) fn refresh_repo_derived_projection_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    marks: &RepoIndexMarks,
+    sources: &BTreeSet<[u8; 32]>,
+    entities: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let derived = derived::refresh_repo_derived_index_copies_in_txn(vault, wtxn, marks, entities);
+    let mut affected = kept(derived)?.unwrap_or_default();
+    affected.extend(entities.iter().copied());
+    let rooms =
+        session::refresh_repo_session_index_projection_in_txn(vault, wtxn, sources, &affected);
+    kept(rooms)?;
+    let probes =
+        super::space_probe::refresh_repo_probe_queries_in_txn(vault, wtxn, marks, &affected);
+    kept(probes)?;
+    Ok(())
+}
+
+/// `result`, a storage error passed on and any other logged.
+fn kept<T>(result: Result<T>) -> Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_storage_error(&error) => Err(error),
+        Err(error) => {
+            tracing::warn!(error = %error, "repo index copies are left for their next derivation");
+            Ok(None)
+        }
+    }
 }
 
 /// Every inline ASSET whose media bytes are, by their own whole BLAKE3, a
