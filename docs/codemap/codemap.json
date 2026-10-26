@@ -31369,7 +31369,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 2,
       "re-export": 10
      }
@@ -31569,6 +31569,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/sweep.rs",
+     "purpose": "The sweep's entity documents (FIX 10159): the slot each retained head names, and the owner's own compaction…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54190,7 +54200,7 @@
      "path": "src/recovery/checkpoint/credential_custody.rs",
      "purpose": "A restore's credential values (KS-6 part 2, FIX-LIST 5687, 7403; CALLS `KS-6 required restore set`, `KS-6…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1
      }
     },
@@ -54588,7 +54598,7 @@
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -57421,8 +57431,18 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 17,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/doors/admission.rs",
+     "purpose": "Admission projection (SECRET-02, SOL-1920-04): the borrowing reader of a stored custody body the lease doors…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -57524,8 +57544,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 25,
-      "re-export": 12
+      "crate-vis": 26,
+      "re-export": 13
      }
     },
     {
@@ -57552,6 +57572,41 @@
      "path": "src/secret_custody/owner_door/tests.rs",
      "purpose": "ARCH-0069 S2 at register time: a name the repo manifest declares carries the manifest's entry on its custody…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PendingCredentialResult"
+     ],
+     "path": "src/secret_custody/pending_restore.rs",
+     "purpose": "A credential a restore landed pending because the vault whose custody it kept did not read (FIX-LIST 10671…",
+     "surface": {
+      "crate-vis": 9,
+      "enum": 1,
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PendingCredentialBatch",
+      "PendingCredentialCard",
+      "PendingCredentialConfirmation",
+      "PendingCredentialOutcome",
+      "PendingCredentialReleaseReceipt"
+     ],
+     "path": "src/secret_custody/pending_restore/owner.rs",
+     "purpose": "The owner's one typed confirm over a restore's pending credentials (FIX-LIST 10671 (b), Engine 10-22 21:4x)…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 5,
+      "struct": 4
+     }
     },
     {
      "bucket": "L",
@@ -57702,7 +57757,7 @@
      "path": "src/secret_custody/storage_seal.rs",
      "purpose": "A credential's value at rest (KS-6, FIX-LIST 5687 part 1): stored custody schema 2 (CALLS `KS-6 credential…",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -57722,7 +57777,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -63251,7 +63306,7 @@
      "path": "src/store/credential_custody/fences.rs",
      "purpose": "What a restore, a fork or an activation knows of erased credentials (KS-6 part 2, CALLS `KS-6 erase fence…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 13
      }
     },
     {
@@ -63856,7 +63911,7 @@
      "path": "src/store/key_custody/recovery/unopened.rs",
      "purpose": "What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -64860,6 +64915,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sweep/compact/documents.rs",
+     "purpose": "The entity each persisted `e:` slot holds the document of (FIX 10159)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sweep/corrupt.rs",
      "purpose": "The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038)",
      "surface": {
@@ -65159,6 +65224,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/documents.rs",
+     "purpose": "The native entity-document carriers grouped with their document (FIX 10932): a pending text edit (`qd:e:`)…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -65175,7 +65250,7 @@
      "path": "src/sync/checkpoint_payload/mod.rs",
      "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 42
      }
     },
     {
@@ -65225,7 +65300,7 @@
      "path": "src/sync/checkpoint_payload/rows.rs",
      "purpose": "The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -67775,6 +67850,8 @@
      "kind": "src",
      "notable": [
       "LocalUpdate",
+      "MessagePresenceScope",
+      "ScopedPresenceFrame",
       "SyncConfig",
       "WindowKey"
      ],
@@ -67783,7 +67860,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 12,
-      "struct": 3
+      "struct": 5
      }
     },
     {
@@ -78706,7 +78783,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79287,7 +79364,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 54,
+     "files": 57,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79462,14 +79539,14 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 274,
+     "files": 275,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79674,7 +79751,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5275,
+   "source_files": 5281,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90366,9 +90443,19 @@
      "path": "src/mesh/serve.rs",
      "purpose": "The serving side: the node that has the model runs another owner node's call under its own admission, and…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mesh/serve/shutdown.rs",
+     "purpose": "A connection's drain at its host's mesh stop (FIX 4756)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -90412,7 +90499,7 @@
      "purpose": "What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text…"
     },
     "mesh": {
-     "files": 6,
+     "files": 7,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -90428,7 +90515,7 @@
    },
    "over_bar": 0,
    "purpose": "Own-server LlmBackend",
-   "source_files": 8,
+   "source_files": 9,
    "test_files": 2
   },
   "oneiron-llm-systemone": {
@@ -92020,6 +92107,20 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeshCancel"
+     ],
+     "path": "src/host/shutdown.rs",
+     "purpose": "The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -92052,7 +92153,7 @@
      "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
      "surface": {
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -92099,7 +92200,7 @@
      "path": "src/mesh/serve.rs",
      "purpose": "The serving side of a mesh organ call: this node's host runs another owner node's call as its own, and sends…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -92155,6 +92256,16 @@
      "purpose": "One organ process's life: the child, the cell its descendants are fenced in (FIX 7887), the kernel limits…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/process/shutdown.rs",
+     "purpose": "A call the host's mesh stop cancels (FIX 4756): told with the protocol's shutdown reason, as a deadline…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -92366,7 +92477,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OrganJob",
@@ -92459,7 +92570,7 @@
      "purpose": "The handlers a caller supplies for an organ's asks (protocol 1.1)"
     },
     "host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -92501,7 +92612,7 @@
      "purpose": "Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are…"
     },
     "process": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -92566,14 +92677,14 @@
     "wait": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: \"one node is too weak, means…"
     }
    },
    "over_bar": 1,
    "purpose": "The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`)",
-   "source_files": 36,
+   "source_files": 38,
    "test_files": 4
   },
   "oneiron-organ-protocol": {
@@ -100124,6 +100235,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/secret_control_routes/pending.rs",
+     "purpose": "`/v1/owner/secrets/custody/pending`: the owner's card over a restore's credentials pending on their source's…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/secret_control_routes/sealed_spool.rs",
      "purpose": "The sealed custody change's body, spooled (FIX 5674, Rule 5)",
      "surface": {
@@ -104173,7 +104294,17 @@
      "path": "src/handler/ephemeral.rs",
      "purpose": "Ephemeral presence lane: validation, hub budget, and canonical fan-out frames",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/ephemeral/message_scope.rs",
+     "purpose": "Where a message's live partials go (FIX 9537)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -104242,6 +104373,26 @@
      "purpose": "The paired-machine mesh listener (OF-535)",
      "surface": {
       "crate-vis": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh/pressure.rs",
+     "purpose": "The mesh sync route's floor in its own pressure check (FIX 7737, [`PoolPressure::mesh`])",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh/shutdown.rs",
+     "purpose": "The mesh listener's stop for the work its routes admitted (FIX 4755, 4756), under one deadline: the host's…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -108779,7 +108930,17 @@
      "path": "src/server/message_stream.rs",
      "purpose": "Host-owned stream timer and local presence relay",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/message_stream/scoped.rs",
+     "purpose": "The trusted scope of each message partial in the presence hub (FIX 9537), kept apart from what clients write…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -109710,7 +109871,7 @@
      "path": "src/wire_telemetry/connection_pressure.rs",
      "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 21
      }
     },
     {
@@ -110065,7 +110226,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 575,
+     "files": 576,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -110296,7 +110457,7 @@
      "purpose": "The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's…"
     },
     "handler": {
-     "files": 26,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110478,7 +110639,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 68,
+     "files": 69,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110550,7 +110711,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1303,
+   "source_files": 1308,
    "test_files": 182
   },
   "oneiron-spawn": {

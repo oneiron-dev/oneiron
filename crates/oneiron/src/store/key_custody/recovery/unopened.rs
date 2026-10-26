@@ -4,6 +4,7 @@
 use std::collections::BTreeSet;
 
 use super::super::head::CompartmentScope;
+use super::CustodyLanding;
 
 /// Whether a compartment the restore left `unopened` may hold a key an image
 /// requires: a world's holds its pads alone, which no image requires by
@@ -48,4 +49,13 @@ pub(super) fn owner_key_required(count: usize, unopened: &BTreeSet<CompartmentSc
          {}",
         openers.join("; ")
     )
+}
+
+impl CustodyLanding {
+    /// Whether the head this restore landed holds an owner-only compartment
+    /// its opener did not open (FIX-LIST 9246 item 4): the one place an
+    /// eligible credential's missing key may still ride.
+    pub(crate) fn owner_compartment_unopened(&self) -> bool {
+        self.admitted.owner_unopened
+    }
 }

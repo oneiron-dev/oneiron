@@ -13,7 +13,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because
 use super::super::anchor::verified_position;
 use super::super::body_history::HistoryRows;
 use super::super::erase_evidence::{FenceFact, fold_fact};
-use super::super::head::{CustodyOpener, OpenedHead, open_head};
+use super::super::head::{CompartmentScope, CustodyOpener, OpenedHead, open_head};
 use super::super::identity::{CustodyId, CustodySecret, CustodySubject};
 use super::super::log::{Control, CustodyPosition, FrameHeader, LogEntry, frame_hash, open_frame};
 use super::super::protocol::{AnchorStore, CustodySource, Lineage};
@@ -45,6 +45,8 @@ pub(crate) struct AdmittedCustody {
     /// Each erased credential's fact (FIX 10584 item 3): the head's, and
     /// the log's after it.
     pub(super) evidence: BTreeMap<EntityId, FenceFact>,
+    /// The head holds an owner-only compartment its opener did not open.
+    pub(super) owner_unopened: bool,
 }
 
 impl AdmittedCustody {
@@ -187,6 +189,7 @@ pub(crate) fn admit_recovery(
             .collect(),
         history: opened.history,
         evidence: opened.evidence,
+        owner_unopened: opened.unopened.contains(&CompartmentScope::OwnerOnly),
     };
     if let Some(record) = record {
         let anchored =

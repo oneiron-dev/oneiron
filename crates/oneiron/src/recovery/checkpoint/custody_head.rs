@@ -618,6 +618,10 @@ impl Vault {
         if let Some(landing) = &landing {
             landing.fence(anchor)?;
             report.custody_note = landing.note().map(str::to_owned);
+            super::credential_custody::note_landed_access(
+                &mut report.credential_notes,
+                landing.owner_compartment_unopened(),
+            );
         }
         forked.keep();
         made.keep(&mut vault);

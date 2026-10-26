@@ -15,6 +15,7 @@
 //! length (`sealed_spool`, FIX 5674). Each act's surface is audit only: no
 //! route here refuses on where the owner said yes.
 
+mod pending;
 mod sealed_spool;
 
 use std::sync::Arc;
@@ -52,6 +53,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/secrets/revoke", post(revoke_secret))
         .route("/secrets/rewrap", post(rewrap_secret))
         .route("/secrets/custody", get(custody_view).post(sealed_change))
+        .merge(pending::routes())
 }
 
 /// The body is read by `RegisterSecret::read`, as rotation's is: the owner
