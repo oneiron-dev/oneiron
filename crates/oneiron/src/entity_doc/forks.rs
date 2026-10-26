@@ -2,6 +2,7 @@
 
 use super::doc_actor::{DocActor, names_no_actor};
 use super::document::decode_frontier;
+use super::prose_admission::{LandedProse, PROPOSAL_ROW, admit_landed};
 use super::side_keys::HexPair;
 use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn};
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
@@ -352,10 +353,12 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             open_proposal_in_txn(self, txn, proposal, requests, authorization, at, &[])
         })?;
         registry.clear();
+        drop(registry);
+        admit_landed(self, PROPOSAL_ROW, &landed);
         Ok(out)
     }
 
@@ -430,7 +433,9 @@ impl Vault {
 }
 
 /// Opens `requests` under `proposal`. Each fork commit's receipt names
-/// `sources`, the rows its writer read for it (FIX 7790).
+/// `sources`, the rows its writer read for it (FIX 7790). Returns the bundle
+/// and the prose each fork landed, retained or merged, for its caller to
+/// read once the write has landed (FIX 1227).
 pub(super) fn open_proposal_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -439,7 +444,7 @@ pub(super) fn open_proposal_in_txn(
     authorization: &DocAuthorization<'_>,
     at: u64,
     sources: &[EntityId],
-) -> Result<ProposalBundle> {
+) -> Result<(ProposalBundle, Vec<LandedProse>)> {
     // No count bounds a proposal or its operations (FIX 9844): the whole
     // ordered set lands or retains in this one transaction.
     if requests.is_empty() {
@@ -456,7 +461,8 @@ pub(super) fn open_proposal_in_txn(
     }
     // The proposal's prose is admitted with one plan (OF-067; FIX 2371).
     let mut plan = crate::batch::secret_scan::Lifted::default();
-    for req in requests {
+    let mut landed = Vec::new();
+    for (index, req) in requests.iter().enumerate() {
         validate_actor(vault, txn, req.actor)?;
         // A shared vault's role and record scope, in this writer, for a fork
         // retained for review as for one a grant lands (FIX 9846).
@@ -477,10 +483,14 @@ pub(super) fn open_proposal_in_txn(
                 body.insert(0, &text)
                     .map_err(|_| invalid("fork rewrite insert"))
             })?;
+            let slot = format!("/requests/{index}/rewrite");
+            landed.push(LandedProse::new(req.actor, slot, text));
         } else {
-            for op in &req.edits {
+            for (edit, op) in req.edits.iter().enumerate() {
                 let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
                 super::verbs::apply(&mut fork, req.entity, op, &text, at, sources, &lifted)?;
+                let slot = format!("/requests/{index}/edits/{edit}/text");
+                landed.push(LandedProse::new(req.actor, slot, text));
             }
         }
         let id = EntityId::now();
@@ -499,7 +509,7 @@ pub(super) fn open_proposal_in_txn(
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
         }
     }
-    read_bundle(&vault.store, txn, proposal)
+    Ok((read_bundle(&vault.store, txn, proposal)?, landed))
 }
 
 pub(super) fn read_bundle(

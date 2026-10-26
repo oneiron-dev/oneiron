@@ -1,6 +1,7 @@
 //! Stable-cursor edit verbs and the lossless whole-text timeout path.
 
 use super::document::{BODY, decode_frontier};
+use super::prose_admission::{EDIT_ROW, LandedProse, UPDATE_ROW, admit_landed};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
 use crate::batch::secret_scan::{Lifted, LiftedKeys, Part, admit_parts_in_txn};
 use crate::error::Result;
@@ -115,13 +116,14 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
             let mut plan = Lifted::default();
             let before = doc.doc.oplog_vv();
-            for edit in edits {
+            let mut landed = Vec::with_capacity(edits.len());
+            for (index, edit) in edits.iter().enumerate() {
                 let actor = edit
                     .actor
                     .ok_or(invalid("text operation requires an actor"))?;
@@ -134,11 +136,16 @@ impl Vault {
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
                 apply(&mut doc, *entity, edit, &text, at, &[], &lifted)?;
+                let slot = format!("/edits/{index}/text");
+                landed.push(LandedProse::new(actor, slot, text));
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
-            Ok(doc.frontier())
+            Ok((doc.frontier(), landed))
         })?;
         registry.remove(entity);
+        drop(registry);
+        // Landed prose's links, once the edits have landed (FIX 1227).
+        admit_landed(self, EDIT_ROW, &landed);
         Ok(out)
     }
 
@@ -154,7 +161,7 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
             // A shared vault's role and record scope, whether the update lands
@@ -163,6 +170,7 @@ impl Vault {
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
+            let base_text = fork.text();
             // The new text is admitted before any operation holds it, and a
             // handle of a key the live text's lift marked writes its value
             // again (OF-067; FIX 2371).
@@ -176,6 +184,13 @@ impl Vault {
                 &mut Lifted::default(),
             )?;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
+            // The complete text is the writer's prose, wherever it lands; text
+            // equal to its base says nothing new (FIX 1227).
+            let landed = if *text == base_text {
+                None
+            } else {
+                Some(LandedProse::new(request.actor, "/text".to_owned(), text.clone()))
+            };
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
                 || fork
@@ -218,10 +233,11 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                 )?;
-                return Ok(TextUpdateOutcome::RewriteFork {
+                let outcome = TextUpdateOutcome::RewriteFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
             super::document::stamp(&fork.doc, request.actor, request.at, "update")?;
             if !permitted {
@@ -244,10 +260,11 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                 )?;
-                return Ok(TextUpdateOutcome::ProposedFork {
+                let outcome = TextUpdateOutcome::ProposedFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
             super::forks::merge_into(&live, &fork, &request.base)?;
             storage::persist(self, txn, &request.entity, &mut h, &live, Some(&before))?;
@@ -265,11 +282,14 @@ impl Vault {
                 &request.base,
                 &live.frontier(),
             )?;
-            Ok(TextUpdateOutcome::Merged {
+            let outcome = TextUpdateOutcome::Merged {
                 frontier: live.frontier(),
-            })
+            };
+            Ok((outcome, landed))
         })?;
         registry.remove(&request.entity);
+        drop(registry);
+        admit_landed(self, UPDATE_ROW, landed.as_slice());
         Ok(out)
     }
 }
