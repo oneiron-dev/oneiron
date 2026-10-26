@@ -102,10 +102,15 @@ async fn set_outcome(
     Ok(Json(card))
 }
 
-fn move_error(error: MemoryError) -> OwnerError {
+/// A Note's or Steer's refusal on `card` as the owner route states it: an
+/// unknown card is not found (FIX 8537), as on every other concern route.
+fn move_error(card: &str, error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
+        oneiron::memory::MEMORY_CODE_NOT_FOUND => {
+            OwnerError::NotFound("concern_card", card.to_owned())
+        }
         _ => OwnerError::Refused(error.message),
     }
 }
@@ -130,7 +135,7 @@ async fn take_move(
         if !matches!(request.r#move, ConcernMove::AskCoach) {
             return vault
                 .apply_concern_move(&owner, locality, &request)
-                .map_err(move_error);
+                .map_err(|error| move_error(&request.card, error));
         }
         let Some(card) = vault.agent_health_card(&request.card)? else {
             return Err(OwnerError::NotFound("concern_card", request.card));

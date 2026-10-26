@@ -173,38 +173,28 @@ impl Vault {
         Ok(())
     }
 
-    /// The whole-tray consent depths in `ids` (OF-298), each drawn again
-    /// from the producer's own `snapshot`, `bounds` and `scope`, its whole
-    /// event matched, and every row read again as its claim's current tray
-    /// row over its base Gate decision before the witness exists. One that
-    /// proves nothing is not captured; its diagnostic stands as stored.
+    /// The whole-tray consent depths in `ids` (OF-298) whose stored event is
+    /// `witness`'s: the event the producer's detector drew from its tray
+    /// snapshot, with every row read as its claim's current tray row over its
+    /// base Gate decision in that same snapshot (FIX 7436). One that matches
+    /// none is not captured; its diagnostic stands as stored.
     pub(crate) fn capture_tier1_consent_queue(
         &self,
         ids: &[EntityId],
-        scope: &str,
-        snapshot: &crate::self_heal::consent_depth::ConsentQueueSnapshot,
-        bounds: crate::self_heal::tripwires::TripwireBounds,
+        witness: Option<(crate::self_heal::DiagnosticEvent, VerifiedSourceSet)>,
     ) -> Result<()> {
         if !self.config.failure_signals.exports() {
             return Ok(());
         }
+        let Some((drawn, sources)) = witness else {
+            return Ok(());
+        };
         for id in ids {
             let Some(body) = self.get(id)? else {
                 continue;
             };
-            let event = crate::self_heal::decode_diagnostic_event_body(&body)?;
-            let txn = self.store.env.read_txn()?;
-            let sources = VerifiedSourceSet::consent_queue(
-                &self.store,
-                &txn,
-                &event,
-                scope,
-                snapshot,
-                bounds,
-            );
-            drop(txn);
-            if let Ok(sources) = sources {
-                self.capture_tier1_diagnostic(*id, sources)?;
+            if crate::self_heal::decode_diagnostic_event_body(&body)? == drawn {
+                self.capture_tier1_diagnostic(*id, sources.clone())?;
             }
         }
         Ok(())

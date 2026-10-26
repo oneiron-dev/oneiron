@@ -9,10 +9,10 @@ use rmpv::Value;
 use super::{
     AgentHealthCard, AgentHealthConfidence, AgentHealthMove, AgentHealthOutcome, AgentHealthTone,
     Attempts, CARDS, DialBook, Dispatched, Dispatches, Finding, HEALTH_DIGEST_DOMAIN,
-    HealthCauseSource, SilenceCalls, Traps, brief, call_evidence, call_loop, card_key,
-    check_repeat, cost_spike_findings, duplicate, duplicate_findings, entity, environment,
-    long_wait_findings, misalignment_findings, run_loop, said_blocked, silent_findings,
-    unsupported_done_findings, widen_denial_findings,
+    HealthCauseSource, SilenceCalls, SilenceRefresh, Traps, brief, call_evidence, call_loop,
+    card_key, check_repeat, cost_spike_findings, duplicate, duplicate_findings, entity,
+    environment, long_wait_findings, misalignment_findings, run_loop, said_blocked,
+    silent_findings, unsupported_done_findings, widen_denial_findings,
 };
 use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::learning::{DuplicateLabeller, DuplicateWork, label_duplicate_work};
@@ -55,9 +55,12 @@ pub(in crate::dreamer_runner::maintenance) fn run(vault: &Vault, now: u64) -> Re
     // is a single pass.
     let mut findings = Vec::new();
     let mut digest_pairs = Vec::new();
+    let mut refreshes = Vec::new();
     for window in book.windows() {
         let since = now.saturating_sub(window);
-        let (found, pairs) = detect(vault, &dispatched, &attempts, &traps, &book, since, now)?;
+        let (found, pairs, refreshed) =
+            detect(vault, &dispatched, &attempts, &traps, &book, since, now)?;
+        refreshes.extend(refreshed);
         findings.extend(found.into_iter().filter(|finding| {
             book.for_attempt(&dispatched, finding.attempt).window_secs == window
         }));
@@ -73,6 +76,7 @@ pub(in crate::dreamer_runner::maintenance) fn run(vault: &Vault, now: u64) -> Re
         vault,
         findings,
         &digest_pairs,
+        &refreshes,
         &dispatched,
         &attempts,
         &book,
@@ -82,7 +86,8 @@ pub(in crate::dreamer_runner::maintenance) fn run(vault: &Vault, now: u64) -> Re
 }
 
 /// Lands one review's findings: what each agent said itself, each finding's
-/// DIAGNOSTIC, the digest pairs' labels, then each card. With `escalate`, a
+/// DIAGNOSTIC, the digest pairs' labels, then each card, and each open
+/// `silent` card's refresh no finding of this review touched. With `escalate`, a
 /// card its leader leaves open past the TTL also goes up to the owner: a
 /// pass over every card, the nightly review's alone. Returns the cards it
 /// touched.
@@ -91,22 +96,33 @@ pub(super) fn land(
     vault: &Vault,
     mut findings: Vec<Finding>,
     digest_pairs: &[duplicate::DigestPair],
+    refreshes: &[SilenceRefresh],
     dispatched: &Dispatches,
     attempts: &Attempts,
     book: &DialBook,
     now: u64,
     escalate: bool,
 ) -> Result<u64> {
-    // What each agent said itself, for its card.
-    for finding in &mut findings {
+    // What each agent said itself, for its card. A read that fails leaves
+    // the card's mark as it stood, and the finding still lands.
+    let mut blocked_unread = vec![false; findings.len()];
+    for (finding, unread) in findings.iter_mut().zip(&mut blocked_unread) {
         let began = finding
             .attempt
             .and_then(|attempt| attempts.get(attempt.as_bytes()))
             .map_or(finding.window.0, |record| {
                 record.claimed_at.unwrap_or(record.created_at)
             });
-        finding.blocked =
-            said_blocked(vault, finding.subject, finding.task, began, finding.attempt)?;
+        match said_blocked(vault, finding.subject, finding.task, began, finding.attempt) {
+            Ok(blocked) => finding.blocked = blocked,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "agent-health stuck mark not read for a finding; its card keeps its mark"
+                );
+                *unread = true;
+            }
+        }
     }
 
     // The attribution judge's labels on each finding's exact attempt
@@ -144,8 +160,12 @@ pub(super) fn land(
 
     vault.with_write_txn_grouped(|txn| {
         let mut touched = BTreeSet::new();
-        for (((finding, diagnostic), route), causes) in
-            findings.iter().zip(&emitted).zip(&routes).zip(&causes)
+        for ((((finding, diagnostic), route), causes), unread) in findings
+            .iter()
+            .zip(&emitted)
+            .zip(&routes)
+            .zip(&causes)
+            .zip(&blocked_unread)
         {
             let dials = book.for_attempt(dispatched, finding.attempt);
             if f64::from(AgentHealthTone::of(finding.signal).impact()) < dials.card_floor {
@@ -153,6 +173,7 @@ pub(super) fn land(
             }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
+            let kept = card.as_ref().is_some_and(|card| card.agent_blocked);
             let mut card = merge(
                 card,
                 finding,
@@ -162,12 +183,32 @@ pub(super) fn land(
                 dials.reviewer_revision(),
                 now,
             );
+            if *unread {
+                card.agent_blocked = kept;
+            }
             environment::fold_finding(vault, txn, &mut card, causes, coach);
             for items in [card.evidence.len(), card.diagnostics.len()] {
                 let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
             }
             CARDS.put(&vault.store, txn, &key, &card)?;
             touched.insert(key);
+        }
+        // An open `silent` card whose attempt has spoken since shows what was
+        // read now (FIX 8376); a finding this review merged holds its own.
+        for refresh in refreshes {
+            if touched.contains(&refresh.key) {
+                continue;
+            }
+            let Some(mut card) = CARDS.get(&vault.store, txn, &refresh.key)? else {
+                continue;
+            };
+            if card.outcome != AgentHealthOutcome::Open || card.silence == Some(refresh.silence) {
+                continue;
+            }
+            card.silence = Some(refresh.silence);
+            card.updated_at = now;
+            CARDS.put(&vault.store, txn, &refresh.key, &card)?;
+            touched.insert(refresh.key);
         }
         // A card its leader leaves open past the TTL goes up to the owner.
         let scan = if escalate {
@@ -206,8 +247,8 @@ pub(super) fn land(
     })
 }
 
-/// Every detector over the review window from `since`, and the digest
-/// pairs its duplicate findings came from.
+/// Every detector over the review window from `since`, the digest pairs
+/// its duplicate findings came from, and the open `silent` cards to refresh.
 fn detect(
     vault: &Vault,
     dispatched: &Dispatches,
@@ -216,12 +257,16 @@ fn detect(
     book: &DialBook,
     since: u64,
     now: u64,
-) -> Result<(Vec<Finding>, Vec<duplicate::DigestPair>)> {
+) -> Result<(
+    Vec<Finding>,
+    Vec<duplicate::DigestPair>,
+    Vec<SilenceRefresh>,
+)> {
     // Each agent's calls, and their streams by the attempt each names
     // (OF-568 L4): `loop` and `failed_check_repeat` judge each stream as its
     // own; `silent` reads each leased attempt's own calls and its actor's
     // calls that name no attempt (OF-568 L5, `silence`).
-    let calls = call_evidence::agent_calls(vault, since)?;
+    let (calls, unread_calls) = call_evidence::agent_calls(vault, since)?;
     let streams = call_evidence::call_streams(&calls);
     let mut findings = call_loop::loop_findings(&streams, dispatched, attempts, book);
     findings.extend(run_loop::run_loop_findings(
@@ -230,15 +275,16 @@ fn detect(
     findings.extend(check_repeat::check_repeat_findings(
         vault, &streams, dispatched, attempts, book, since,
     )?);
-    findings.extend(silent_findings(
+    let (silent, refreshes) = silent_findings(
         vault,
-        &SilenceCalls::Actors(&calls),
+        &SilenceCalls::Actors(&calls, unread_calls),
         dispatched,
         attempts,
         traps,
         book,
         now,
-    ));
+    );
+    findings.extend(silent);
     findings.extend(long_wait_findings(
         dispatched, attempts, traps, book, since, now,
     ));
@@ -255,7 +301,7 @@ fn detect(
     findings.extend(cost_spike_findings(
         vault, dispatched, attempts, book, since, now,
     )?);
-    Ok((findings, digest_pairs))
+    Ok((findings, digest_pairs, refreshes))
 }
 
 /// Writes each digest pair's `dup_of` label under its team (agent-mind §4.3:

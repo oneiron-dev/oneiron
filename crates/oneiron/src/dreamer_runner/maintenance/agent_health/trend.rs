@@ -10,7 +10,8 @@
 //! about the work and never a score of the agent. A signal comparison whose
 //! detection cannot be compared is unknown: a detection dial row set inside
 //! its span, a detector that changed, or a side no review covered. So is a
-//! comparison whose source failed, and one with nothing known on a side.
+//! comparison whose source failed, one with nothing known on a side, and one
+//! whose direction the rows its source withheld could turn.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -115,6 +116,9 @@ pub enum TrendUnknown {
     DialChanged,
     /// The signal's detector changed inside the span.
     DetectorChanged,
+    /// Rows its source could not read, each counted on either side, could
+    /// turn its direction.
+    Withheld,
 }
 
 /// Which way a comparison moved.
@@ -183,6 +187,8 @@ pub struct HealthTrendReview {
     pub unreadable_attempts: u64,
     /// DIAGNOSTIC rows deleted or undecodable.
     pub withheld_diagnostics: u64,
+    /// Call receipts that did not read.
+    pub withheld_calls: u64,
     /// Agent-health findings that name no attempt.
     pub unjoined_diagnostics: u64,
 }
@@ -215,7 +221,7 @@ pub fn review_health_trends(input: &HealthTrendInput) -> HealthTrendReview {
                 prior: side_buckets(&buckets, window.prior),
                 latest: side_buckets(&buckets, window.latest),
             };
-            comparisons.extend(group.compare(&failed, input.dial_changes.as_ref()));
+            comparisons.extend(group.compare(rollups, &failed, input.dial_changes.as_ref()));
         }
     }
     HealthTrendReview {
@@ -224,6 +230,7 @@ pub fn review_health_trends(input: &HealthTrendInput) -> HealthTrendReview {
         failed,
         unreadable_attempts: rollups.unreadable_attempts,
         withheld_diagnostics: rollups.withheld_diagnostics,
+        withheld_calls: rollups.withheld_calls,
         unjoined_diagnostics: rollups.unjoined_diagnostics,
     }
 }
@@ -254,6 +261,7 @@ impl Group<'_> {
     /// spend in each unit either side holds.
     fn compare(
         &self,
+        rollups: &HealthTrendRollups,
         failed: &BTreeSet<TrendSource>,
         dials: Option<&DetectionDialChanges>,
     ) -> Vec<HealthTrendComparison> {
@@ -280,8 +288,12 @@ impl Group<'_> {
             .map(|metric| {
                 let prior = measure(&metric, &self.prior, self.window.prior);
                 let latest = measure(&metric, &self.latest, self.window.latest);
+                let withheld = withheld_for(&metric, rollups);
                 let (delta, direction) = match self.unknown(&metric, failed, dials) {
                     Some(reason) => (None, TrendDirection::Unknown(reason)),
+                    None if withheld_could_turn(&metric, &prior.ratio, &latest.ratio, withheld) => {
+                        (None, TrendDirection::Unknown(TrendUnknown::Withheld))
+                    }
                     None => judge(&metric, &prior.ratio, &latest.ratio),
                 };
                 HealthTrendComparison {
@@ -401,6 +413,42 @@ fn measure(metric: &TrendMetric, buckets: &[&HealthTrendRollup], days: (u64, u64
         side.ratio.denominator = days.1.saturating_sub(days.0);
     }
     side
+}
+
+/// The rows `metric`'s source withheld: undecodable call receipts for calls,
+/// deleted or undecodable DIAGNOSTICs for a signal.
+fn withheld_for(metric: &TrendMetric, rollups: &HealthTrendRollups) -> u64 {
+    match metric {
+        TrendMetric::Calls => rollups.withheld_calls,
+        TrendMetric::Signal(_) => rollups.withheld_diagnostics,
+        TrendMetric::Attempts
+        | TrendMetric::Retries
+        | TrendMetric::Spend(_)
+        | TrendMetric::Wait => 0,
+    }
+}
+
+/// Whether `withheld` rows could turn the direction. Each counts at most
+/// once more in one side's numerator (a finding on an attempt no review
+/// covered, once in its denominator too), so a side's value lies between its
+/// own and its numerator with all of them added; the direction moves the
+/// same way as each side, so the two ends decide.
+fn withheld_could_turn(
+    metric: &TrendMetric,
+    prior: &TrendRatio,
+    latest: &TrendRatio,
+    withheld: u64,
+) -> bool {
+    if withheld == 0 {
+        return false;
+    }
+    let more = |ratio: &TrendRatio| TrendRatio {
+        numerator: ratio.numerator.saturating_add(withheld),
+        ..*ratio
+    };
+    let (_, direction) = judge(metric, prior, latest);
+    judge(metric, &more(prior), latest).1 != direction
+        || judge(metric, prior, &more(latest)).1 != direction
 }
 
 /// The signed change from `prior` to `latest`, and its direction. A side
