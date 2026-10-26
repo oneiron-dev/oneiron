@@ -270,12 +270,9 @@ impl ExportFileTree {
                     {
                         return Err(invalid("source files exceed package bounds"));
                     }
-                    let bytes = body.read(files)?;
-                    // Text is carried inline: one shape for one file.
-                    if std::str::from_utf8(&bytes).is_ok() {
-                        return Err(invalid("text source file is carried as a file"));
-                    }
-                    Cow::Owned(bytes)
+                    // UTF-8 bytes carried as a file read as any file member:
+                    // the proofs below are over the bytes, not their carrier.
+                    Cow::Owned(body.read(files)?)
                 }
                 (ExportSourceContent::Redacted, None) => {
                     complete = false;

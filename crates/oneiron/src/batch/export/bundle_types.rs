@@ -16,7 +16,8 @@ pub struct ExportSourceFile {
 /// inline; any other bytes as the archive file `files/<blake3>`, by its
 /// BLAKE3 and length, read by the credential scan before it is attached and
 /// again as it is imported; nothing when the scan redacts the file. Binary
-/// bytes are never a reason to redact.
+/// bytes are never a reason to redact. Import also reads UTF-8 bytes carried
+/// as a file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
