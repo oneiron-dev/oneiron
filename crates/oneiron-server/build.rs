@@ -5,7 +5,7 @@
 //! names; else `unknown`, which no commit spells. A missing identity never
 //! fails the build.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// The release pipeline's commit for this build.
@@ -45,20 +45,27 @@ fn source_head() -> Option<String> {
             .and_then(|out| String::from_utf8(out.stdout).ok())
             .map(|out| out.trim().to_owned())
     };
-    let branch = git(&["symbolic-ref", "-q", "HEAD"]);
-    let watched = ["HEAD", "packed-refs"]
-        .into_iter()
-        .map(str::to_owned)
-        .chain(branch);
-    for name in watched {
+    let git_path =
+        |name: &str| git(&["rev-parse", "--git-path", name]).map(|path| source.join(path));
+    for name in ["HEAD", "packed-refs"] {
         // A path that does not exist is never watched: Cargo would run this
         // script again on every build.
-        if let Some(path) = git(&["rev-parse", "--git-path", &name])
-            .map(|path| source.join(path))
-            .filter(|path| path.exists())
-        {
+        if let Some(path) = git_path(name).filter(|path| path.exists()) {
             println!("cargo:rerun-if-changed={}", path.display());
         }
+    }
+    // A branch whose ref is only packed has no loose file yet, so the
+    // nearest folder that exists is watched: the loose ref its next commit
+    // writes runs this script again.
+    if let Some(path) = git(&["symbolic-ref", "-q", "HEAD"])
+        .and_then(|branch| git_path(branch.as_str()))
+        .and_then(|path| {
+            path.ancestors()
+                .find(|path| path.exists())
+                .map(Path::to_path_buf)
+        })
+    {
+        println!("cargo:rerun-if-changed={}", path.display());
     }
     git(&["rev-parse", "HEAD"]).filter(|revision| is_commit(revision))
 }
