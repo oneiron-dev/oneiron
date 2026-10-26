@@ -21952,7 +21952,7 @@
      "path": "src/core_write/shape.rs",
      "purpose": "The shape every core entity write shares: its id, its interval, its announcement-normalized body and its…",
      "surface": {
-      "const": 6,
+      "const": 5,
       "crate-vis": 5,
       "enum": 2,
       "fn": 11,
@@ -43381,8 +43381,18 @@
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
       "crate-vis": 5,
-      "fn": 11,
+      "fn": 9,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/reads/receipt_page.rs",
+     "purpose": "`vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -53557,7 +53567,7 @@
      "path": "src/receipt/off_device.rs",
      "purpose": "A caller off this device and the receipt family (FIX 1119, FIX 1120): the rows each receipt names, by its…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -53626,7 +53636,7 @@
      "path": "src/receipt/questions.rs",
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
      "surface": {
-      "const": 2,
+      "const": 1,
       "enum": 3,
       "fn": 4,
       "struct": 18
@@ -56121,6 +56131,7 @@
       "crate-vis": 5,
       "enum": 3,
       "fn": 2,
+      "re-export": 1,
       "struct": 1
      }
     },
@@ -56132,6 +56143,21 @@
      "purpose": "One replayed body run (ARCH-0080 §6 Replay): on a run's memo, on a verb run's saved copy, or live on an…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "HookReplayCursor",
+      "HookReplayEntryPage"
+     ],
+     "path": "src/runtime_hooks/replay/page.rs",
+     "purpose": "`hooks.replay` a page at a time (FIX 8629): at most [`MAX_REPLAY_ENTRIES`] entries a page, and a cursor to…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -57240,7 +57266,7 @@
       "crate-vis": 11,
       "enum": 1,
       "fn": 2,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -57254,6 +57280,20 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FoundKeyCursor",
+      "FoundKeyNoticePage"
+     ],
+     "path": "src/secret_custody/found_keys/page.rs",
+     "purpose": "The found-key notices a page at a time (FIX 8204): the order [`Vault::found_keys`] reads, newest key first…",
+     "surface": {
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -72724,9 +72764,6 @@
       "ChannelSubscriptionRow",
       "ChannelSubscriptions",
       "ChannelSubscriptionsRequest",
-      "HookReplayOutcome",
-      "HookReplayRow",
-      "HooksReplayRequest",
       "PackBytesFile",
       "PackFileDecodeError",
       "PackFileInput",
@@ -72745,11 +72782,30 @@
      "path": "src/verbs/host.rs",
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
-      "const": 4,
+      "const": 2,
       "crate-vis": 1,
-      "enum": 7,
-      "fn": 27,
-      "struct": 29
+      "enum": 6,
+      "fn": 24,
+      "re-export": 1,
+      "struct": 27
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookReplayOutcome",
+      "HookReplayRow",
+      "HooksReplayPage",
+      "HooksReplayRequest"
+     ],
+     "path": "src/verbs/host/hooks_replay.rs",
+     "purpose": "`vault.hooks.replay`'s input, page and owner call: a dry run of a hook's body over past facts or saved verb…",
+     "surface": {
+      "const": 2,
+      "enum": 1,
+      "fn": 3,
+      "struct": 3
      }
     },
     {
@@ -72996,7 +73052,6 @@
       "TaskWaitRequest",
       "TaskWaveReceipt",
       "TaskWaveRequest",
-      "VaultReceiptsRequest",
       "WorkCompanionSetRequest",
       "WorkspaceRefRequest"
      ],
@@ -73006,8 +73061,8 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 80,
-      "struct": 39
+      "re-export": 81,
+      "struct": 38
      }
     },
     {
@@ -73152,6 +73207,20 @@
       "enum": 7,
       "fn": 8,
       "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VaultReceiptsPage",
+      "VaultReceiptsRequest"
+     ],
+     "path": "src/verbs/receipts_page.rs",
+     "purpose": "`vault.receipts`'s input and its page (FIX 10186): any positive limit, served at most…",
+     "surface": {
+      "const": 1,
+      "struct": 2
      }
     },
     {
@@ -78670,7 +78739,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 281,
+     "files": 282,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78943,7 +79012,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 38,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78971,7 +79040,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 53,
+     "files": 54,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79286,7 +79355,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 85,
+     "files": 87,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79358,7 +79427,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5248,
+   "source_files": 5253,
    "test_files": 902
   },
   "oneiron-android": {
@@ -79391,6 +79460,7 @@
      "path": "src/reads.rs",
      "purpose": "The Kotlin `EmbeddedVault`'s context pack, text search and graph reads, lowered to the same core reads the C…",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     }
@@ -88587,7 +88657,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 11,
       "enum": 1,
       "struct": 10
      }
@@ -112080,6 +112150,7 @@
       "HookReplayOutcome",
       "HookReplayRow",
       "HookSelector",
+      "HooksReplayPage",
       "HooksReplayRequest",
       "HostBudgetAccounting",
       "HostBudgetHitRequest",
@@ -114530,7 +114601,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1020,
-      "struct": 3124
+      "struct": 3125
      }
     },
     {
@@ -114557,7 +114628,7 @@
      "surface": {
       "const": 1,
       "fn": 10,
-      "re-export": 6,
+      "re-export": 7,
       "struct": 1
      }
     },
@@ -114580,6 +114651,18 @@
      "surface": {
       "enum": 3,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FacadeReceiptPage"
+     ],
+     "path": "src/receipt_page.rs",
+     "purpose": "`vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, and the…",
+     "surface": {
+      "struct": 1
      }
     }
    ],
@@ -114639,11 +114722,18 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from…"
+    },
+    "receipt_page": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "`vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, and the…"
     }
    },
    "over_bar": 4,
    "purpose": "The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound",
-   "source_files": 11,
+   "source_files": 12,
    "test_files": 0
   },
   "oneiron-vault-contract": {
