@@ -127,6 +127,8 @@ pub struct SyncServer {
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// The wakes of removed holders' archive delivery sessions (FIX 3396).
+    pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.

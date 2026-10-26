@@ -242,6 +242,7 @@ impl SyncServer {
             lens_frames,
             retained,
             presence,
+            removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
             usage_ledger: UsageLedger::new(vault.clone()),
             host_account: oneiron::llm::run_admission::HostAccount::new(),
             transfers: crate::api::Transfers::new(

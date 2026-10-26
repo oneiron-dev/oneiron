@@ -230,10 +230,11 @@ impl SyncTransportCredential {
 }
 impl SyncTransportCredential {
     /// The headers of a removed member's leave-notice request
-    /// (`POST /v1/shared/left-notices`, OF-158): the slip, revoked or not, in
+    /// (`POST /v1/shared/left-notices`, OF-158), and of its removal-archive
+    /// delivery requests (FIX 3396): the slip, revoked or not, in
     /// `x-oneiron-left-slip`, and a fresh holder proof over the standard
-    /// request challenge in `x-oneiron-binding`.
-    pub(in crate::sync) fn left_notice_headers(
+    /// request challenge in `x-oneiron-binding`, its nonce new each call.
+    pub fn left_notice_headers(
         &self,
         timestamp: u64,
     ) -> Result<[(&'static str, String); 2], &'static str> {

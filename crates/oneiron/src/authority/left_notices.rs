@@ -18,6 +18,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
 
+// The host's delivery of those archives to their removed holder, beside
+// these pull doors (FIX 3215, 3396).
+mod delivery;
+
 /// What rides beside a removed person's notices as the handoff to the root
 /// that signed them.
 enum HandoffEvidence {

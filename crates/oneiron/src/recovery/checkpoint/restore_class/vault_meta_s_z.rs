@@ -109,6 +109,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_POLICY_CHANGE, LIVE),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
+    // A holder's delivery and ack of a removal archive are facts about bytes
+    // that left the vault: a restore stands them as the live vault holds them.
+    (&t::SHARED_ACT_REMOVAL_DELIVERY, LIVE),
     // An archive delivered to a removed Owner has left the vault: a restore
     // neither revives a purged one nor drops one still within its term.
     (&t::SHARED_ACT_REMOVAL_EXPORT, LIVE),
