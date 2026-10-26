@@ -8,6 +8,11 @@
 //! pass compacts each owed window on its own and settles it once it has; a
 //! window still open, raced or held, or whose cut was not proved to root at
 //! its tip (FIX 6520), keeps its row for the next pass.
+//!
+//! A row may also name the erase receipts that wait on its compaction (FIX
+//! 10234): an audience edit erased in place leaves its earlier revisions in
+//! the window's history, and its receipt completes once the row settles.
+//! The row's value is the raise, then each such receipt's id.
 
 use std::collections::BTreeSet;
 
@@ -19,8 +24,12 @@ use crate::error::Result;
 use crate::sync::types::WindowKey;
 
 /// Sweep-queue prefix of an owed window compaction, `hc:{window}`. Its value
-/// is a fresh id per raise, so a pass settles only the raise it read.
+/// is a fresh id per raise, so a pass settles only the raise it read, then
+/// the receipts waiting on it.
 const OWED_COMPACTION_PREFIX: &[u8] = b"hc:";
+
+/// The bytes of one id in an owed row's value.
+const ID_LEN: usize = 16;
 
 /// One owed compaction, as a pass read it before compacting anything.
 pub(super) struct OwedCompaction {
@@ -43,9 +52,60 @@ pub(crate) fn owe_window_compaction_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     window: &WindowKey,
 ) -> Result<()> {
+    raise_in_txn(vault, wtxn, window, None).map(drop)
+}
+
+/// [`owe_window_compaction_in_txn`] for the erase receipt `receipt` that
+/// waits on the compaction (FIX 10234): the row names it, beside any receipt
+/// an earlier raise named, and its settlement completes each. Returns the
+/// row's key.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn owe_window_compaction_for_receipt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window: &WindowKey,
+    receipt: &EntityId,
+) -> Result<Vec<u8>> {
+    raise_in_txn(vault, wtxn, window, Some(receipt))
+}
+
+/// Raises `window`'s owed compaction afresh, keeping each receipt the row
+/// already names and adding `receipt`. Returns the row's key.
+fn raise_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window: &WindowKey,
+    receipt: Option<&EntityId>,
+) -> Result<Vec<u8>> {
     let key = [OWED_COMPACTION_PREFIX, window.as_str().as_bytes()].concat();
     let raise = vault.store.clock.entity_id()?;
-    vault.store.sync_queue.put(wtxn, &key, raise.as_bytes())
+    let mut waiting = vault
+        .store
+        .sync_queue
+        .get(&*wtxn, &key)?
+        .map(|value| waiting_receipts(&value))
+        .unwrap_or_default();
+    waiting.extend(receipt.copied());
+    let mut value = raise.as_bytes().to_vec();
+    for receipt in &waiting {
+        value.extend_from_slice(receipt.as_bytes());
+    }
+    vault.store.sync_queue.put(wtxn, &key, &value)?;
+    Ok(key)
+}
+
+/// The receipts an owed row's `value` names after its raise; a tail that is
+/// no whole id names none past it.
+fn waiting_receipts(value: &[u8]) -> BTreeSet<EntityId> {
+    value
+        .get(ID_LEN..)
+        .unwrap_or_default()
+        .chunks_exact(ID_LEN)
+        .filter_map(|bytes| EntityId::from_bytes(bytes.try_into().ok()?).ok())
+        .collect()
 }
 
 /// The owed compactions, read before the pass compacts anything. A row whose
@@ -101,14 +161,61 @@ pub(super) fn settle_owed_compactions(
             WindowSweepState::Deferred | WindowSweepState::Failed(_) => false,
         };
         if compacted {
-            vault.with_write_txn_grouped(|wtxn| {
+            let receipts = waiting_receipts(&owed.raise);
+            if !receipts.is_empty() {
+                // Each receipt row is signed in its transaction: the device
+                // key first (P6c). One that cannot load keeps the row.
+                let _ = vault.prepare_install_signing();
+            }
+            let settled = vault.with_write_txn_grouped(|wtxn| {
                 let current = vault.store.sync_queue.get(&*wtxn, &owed.key)?;
                 if current.is_some_and(|raise| *raise == *owed.raise) {
                     vault.store.sync_queue.delete(wtxn, &owed.key)?;
+                    complete_receipts_in_txn(vault, wtxn, &receipts)?;
                 }
                 Ok(())
-            })?;
+            });
+            match settled {
+                Ok(()) => {}
+                // A receipt that did not complete keeps the row, and its
+                // compaction, for the next pass.
+                Err(error) if !receipts.is_empty() => tracing::warn!(
+                    kind = ?error.kind(),
+                    "sweep: an owed compaction's receipts did not complete; the row stays"
+                ),
+                Err(error) => return Err(error),
+            }
         }
+    }
+    Ok(())
+}
+
+/// Completes each erase receipt in `receipts` whose compaction just settled:
+/// its sweep completion row, then its final row once nothing else it binds
+/// is owed. A receipt already completed, or no initial receipt, is passed.
+fn complete_receipts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipts: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    for id in receipts {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)?
+        else {
+            continue;
+        };
+        let Some(body) = raw
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .filter(|_| raw.first() == Some(&crate::registry::ENTITY_TYPE_REDACTION_AUDIT))
+        else {
+            continue;
+        };
+        let receipt = crate::deletion::decode_redaction_audit_receipt(body)?;
+        if !receipt.is_initial() {
+            continue;
+        }
+        crate::deletion::append_redaction_sweep_completion_in_txn(vault, wtxn, id, &receipt, now)?;
+        crate::deletion::finish_redaction_erase_in_txn(vault, wtxn, id, &receipt, now)?;
     }
     Ok(())
 }

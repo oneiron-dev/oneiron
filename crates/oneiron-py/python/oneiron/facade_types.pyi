@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4153 declarations.
+Census: 1159 facade rows, 4154 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -17558,6 +17558,7 @@ class DagRecordAppendInput(TypedDict):
     conversation: str
     parent: NotRequired[str | None]
     reply_to: NotRequired[str | None]
+    containing_turn: NotRequired[str | None]
     addr: NotRequired[CoreDagAddressMode | None]
     to: NotRequired[list[str] | None]
     advance: bool
@@ -17569,10 +17570,23 @@ class DagRecordAppendInput(TypedDict):
     session: NotRequired[str | None]
     quote: NotRequired[CoreDagQuoteInput | None]
     thread_audience: NotRequired[list[str] | None]
+class DagReplyTargetTurn(TypedDict):
+    kind: Literal["turn"]
+    record: EntityId
+    revision: str
+class DagReplyTargetMessage(TypedDict):
+    kind: Literal["message"]
+    record: EntityId
+    revision: str
+    containing_turn: EntityId
+DagReplyTarget = DagReplyTargetTurn | DagReplyTargetMessage
 class DagRecordAppendReceipt(TypedDict):
     id: str
     head: NotRequired[str | None]
     parent: NotRequired[str | None]
+    entity_type: int
+    containing_turn: NotRequired[str | None]
+    reply_target: NotRequired[DagReplyTarget | None]
 class CoreBatchEntityInput(TypedDict):
     id: NotRequired[str | None]
     entity_type: int
