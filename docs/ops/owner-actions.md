@@ -314,7 +314,12 @@ It exits nonzero when a sweep failed or could not finish some of its records. It
 (with `--heal-invalid-vectors` to leave out stored vectors that do not validate),
 `--recompute-short-ids`, `--backfill-gate-claim-index`, `--migrate-conversation-dags`, and
 `--reindex-text`, which rebuilds the text index from the text each record was indexed with; it is
-the repair for a vault refused after an analyzer or dictionary change. A running server answers
+the repair for a vault refused after an analyzer or dictionary change.
+`--reclassify-corrupt-claim <ID>` (32 hex; repeat it for more) classifies a corrupt CLAIM by its
+audited repair, its bytes unchanged and one signed repair event kept, so its hard erase can finish.
+The report lists each named record under `repairs.corrupt_claim_repairs` with its `outcome`:
+`reclassified` (with its `repair_receipt`), `already_classified` (with the receipt it already has),
+or `not_corrupt` for a record that is no corrupt CLAIM, which is left as it is. A running server answers
 `POST /v1/owner/maintain` with the same report, without the repairs.
 
 ## A managed host's vault UID table
