@@ -236,7 +236,6 @@ pub(crate) fn scrub_withdrawn_epoch_in_txn(
         WithdrawnReplacement::EpochKeyframe,
         at,
     )?;
-    #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, txn, id)?;
     crate::vault::entity_revision::remove_entity_revisions(store, txn, id)?;
     crate::batch::delete_short_id_rows_for_id(store, txn, id)?;

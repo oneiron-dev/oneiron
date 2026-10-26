@@ -60,7 +60,8 @@ async fn run(
 }
 
 /// `GET /v1/owner/feedback/triage/status?attempt=<32 hex>`: one sweep's
-/// status; not found when the queue holds no such attempt.
+/// status, with every repository `[feedback.triage]` binds, so one never
+/// swept shows (FIX 7632); not found when the queue holds no such attempt.
 async fn status(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -69,10 +70,17 @@ async fn status(
     let owner = owner(&auth, &server)?;
     let request = query_params(query)?;
     let status = blocking(move || -> OwnerResult<FeedbackTriageStatus> {
-        server
+        let mut status = server
             .vault()
             .feedback_triage_status(&owner, &request)?
-            .ok_or_else(|| OwnerError::NotFound("feedback triage run", request.attempt.to_hex()))
+            .ok_or_else(|| OwnerError::NotFound("feedback triage run", request.attempt.to_hex()))?;
+        status.bound_sources = server
+            .feedback_triage
+            .github_sources
+            .iter()
+            .filter_map(|endpoint| crate::config::github_issue_source(endpoint.as_str()))
+            .collect();
+        Ok(status)
     })
     .await?;
     Ok(Json(status))

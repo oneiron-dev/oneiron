@@ -7,7 +7,11 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::claims::{
     CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
-    decode_campaign_member_value, encode_campaign_member_value,
+    decode_campaign_member_value, decode_member_recorded_exit, encode_campaign_member_value,
+    encode_member_recorded_exit,
+};
+use crate::campaign::enrollment::{
+    IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, decode_claim_body,
@@ -137,6 +141,16 @@ pub enum MembershipCommitOutcome {
         /// Watermark that rejected the plan.
         current_epoch: u64,
     },
+    /// The event, its epoch and its new channels landed on the person's one
+    /// membership, whose own paused, suppressed or exited state holds
+    /// (FIX 9664): nothing outward is owed.
+    RecordedOnly,
+    /// As [`Self::RecordedOnly`], for a saved pause whose wake falls due at
+    /// `until` (FIX 9662).
+    DeferredUntil {
+        /// When the saved wake falls due.
+        until: u64,
+    },
 }
 
 /// The next epoch a transition on this `(query, entity)` pair may claim in
@@ -175,6 +189,18 @@ pub fn next_membership_epoch(
 /// the same transaction as the write, so a stale `Entered` after exit/re-entry
 /// is [`MembershipCommitOutcome::RejectedStaleEpoch`], never `AlreadyApplied`.
 ///
+/// The watermark and the epoch are per query; the membership is per person
+/// and campaign (FIX 9664, 10221). The writer reads every admitted live head
+/// of the person in the campaign, whatever its source (another query, a
+/// manual enrollment, a re-entry), reconciles the plan into one value and
+/// supersedes them all in the same transaction, keeping the replaced head's
+/// isolation stamps, each held channel with its basis and sticky sender, and
+/// the person's own pause, suppression or exit (FIX 9662, 9663). The event and
+/// the watermark land whenever the epoch is new, also when the membership's
+/// state holds ([`MembershipCommitOutcome::RecordedOnly`],
+/// [`MembershipCommitOutcome::DeferredUntil`]): evidence left unrecorded
+/// would be detected again after a pause and read as a new trigger.
+///
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`] when the event and the claim value disagree;
@@ -187,14 +213,11 @@ pub fn commit_membership_plan(
     validate_plan_coherence(plan)?;
     let content = plan_content_digest(plan)?;
     let event = &plan.event;
-    let claim_body = ClaimBody::new(
-        PREDICATE_CAMPAIGN_MEMBER,
-        ClaimSubject::Entity(event.entity_ref),
-        encode_campaign_member_value(&plan.value),
-        1.0,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )?;
+    let source = IntakeSource::Query {
+        query_ref: event.query_ref,
+        transition: event.transition,
+        detected_at: event.detected_at,
+    };
     vault.with_write_txn_grouped(|wtxn| {
         let watermark = current_watermark(
             vault,
@@ -206,15 +229,28 @@ pub fn commit_membership_plan(
         if let Some(outcome) = watermark_verdict(watermark, event.epoch, &content) {
             return Ok(outcome);
         }
-        // The prior heads are read BEFORE the replacement lands, so the
-        // replacement is never its own competition.
-        let superseded = live_member_heads_in_txn(
-            vault,
-            wtxn,
-            event.query_ref,
-            event.campaign_ref,
-            event.entity_ref,
+        // Every admitted head, from every source, is read BEFORE the
+        // replacement lands, so the replacement is never its own competition
+        // and one effective head remains.
+        let effective = effective_member_in_txn(vault, wtxn, event.entity_ref, event.campaign_ref)?;
+        let reconciled = reconcile(effective.as_ref(), &plan.value, &source, now);
+        let mut claim_body = ClaimBody::new(
+            PREDICATE_CAMPAIGN_MEMBER,
+            ClaimSubject::Entity(event.entity_ref),
+            encode_campaign_member_value(&reconciled.value),
+            1.0,
+            ClaimApprovalStatus::Approved,
+            ClaimLifecycleStatus::Active,
         )?;
+        if let Some(effective) = &effective {
+            keep_isolation_stamps(&mut claim_body, &effective.body);
+        }
+        // A foreign exit recorded on another source's membership rides as
+        // the head's evidence, so its spent epoch still replicates.
+        claim_body.evidence = reconciled
+            .recorded_exit
+            .as_ref()
+            .map(encode_member_recorded_exit);
         WATERMARK.put(
             &vault.store,
             wtxn,
@@ -235,14 +271,14 @@ pub fn commit_membership_plan(
             event,
         )?;
         let claim_id = vault.store.clock.entity_id()?;
+        // A kept state keeps the instant it began, so a pause still knows
+        // which events came after it.
+        let start = reconciled.kept_since.unwrap_or(event.valid_at);
         vault.put_claim_in_txn(
             wtxn,
             &claim_id,
             &claim_body,
-            TimeRange {
-                start: event.valid_at,
-                end: event.valid_at,
-            },
+            TimeRange { start, end: start },
             now,
         )?;
         // A transition REPLACES the cohort head; it does not add a second one.
@@ -251,10 +287,14 @@ pub fn commit_membership_plan(
         // incompatible states, and `claims_for_subject` would expose all three
         // as current truth. Same-txn supersession is the CA-01 `crm.stage`
         // pattern: a rejection rolls the replacement back with it.
-        for old_id in superseded {
-            vault.supersede_claim_in_txn(wtxn, &claim_id, &old_id, now)?;
+        for old_id in effective.iter().flat_map(|member| &member.heads) {
+            vault.supersede_claim_in_txn(wtxn, &claim_id, old_id, now)?;
         }
-        Ok(MembershipCommitOutcome::Applied)
+        Ok(match reconciled.outcome {
+            Reconciled::Applied => MembershipCommitOutcome::Applied,
+            Reconciled::RecordedOnly => MembershipCommitOutcome::RecordedOnly,
+            Reconciled::DeferredUntil(until) => MembershipCommitOutcome::DeferredUntil { until },
+        })
     })
 }
 
@@ -278,33 +318,6 @@ pub(super) fn watermark_verdict(
         return Some(MembershipCommitOutcome::AlreadyApplied);
     }
     Some(MembershipCommitOutcome::RejectedStaleEpoch { current_epoch })
-}
-
-/// Live `campaign.member` claim ids on `entity_ref` derived from this
-/// `(query, campaign)` pair — the heads a new transition must close.
-fn live_member_heads_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    query_ref: EntityId,
-    campaign_ref: EntityId,
-    entity_ref: EntityId,
-) -> Result<Vec<EntityId>> {
-    let mut heads = Vec::new();
-    for claim_id in vault.claims_for_subject_in_txn(txn, &entity_ref)? {
-        let Some((body, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
-            continue;
-        };
-        if body.lifecycle != ClaimLifecycleStatus::Active || value.campaign != campaign_ref {
-            continue;
-        }
-        if value
-            .derivation
-            .is_some_and(|derivation| derivation.source_query == query_ref)
-        {
-            heads.push(claim_id);
-        }
-    }
-    Ok(heads)
 }
 
 /// Decodes the `campaign.member` claim at `claim_id`, or `None` when the row is
@@ -422,6 +435,26 @@ pub fn membership_events(
         .collect())
 }
 
+/// [`membership_events`] in the caller's snapshot, so a reader that admits
+/// heads in one transaction folds their history from the same one.
+///
+/// # Errors
+///
+/// As [`membership_events`].
+pub(crate) fn membership_events_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    entity_ref: EntityId,
+) -> Result<Vec<MembershipEvent>> {
+    let prefix = event_pair_prefix(&query_ref, &entity_ref);
+    Ok(MEMBERSHIP_EVENTS
+        .scan_from(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|(_, event)| event)
+        .collect())
+}
+
 /// The epoch floor this `(query, entity)` pair may not write at or below in
 /// `campaign_ref`.
 ///
@@ -455,8 +488,8 @@ fn current_watermark(
 }
 
 /// Highest epoch any replicated `campaign.member` claim on `entity_ref` carries
-/// for `query_ref` in `campaign_ref`. Every lifecycle counts: a superseded
-/// head still proves its epoch was spent.
+/// for `query_ref` in `campaign_ref`, in its derivation or its recorded exit.
+/// Every lifecycle counts: a superseded head still proves its epoch was spent.
 fn replicated_epoch_floor(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -466,14 +499,17 @@ fn replicated_epoch_floor(
 ) -> Result<Option<u64>> {
     let mut floor = None;
     for claim_id in vault.claims_for_subject_in_txn(txn, &entity_ref)? {
-        let Some((_, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
+        let Some((body, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
             continue;
         };
-        if let Some(derivation) = value.derivation
-            && derivation.source_query == query_ref
-            && value.campaign == campaign_ref
-        {
-            floor = floor.max(Some(derivation.epoch));
+        if value.campaign != campaign_ref {
+            continue;
+        }
+        let recorded_exit = decode_member_recorded_exit(body.evidence.as_ref())?;
+        for derivation in value.derivation.iter().chain(recorded_exit.iter()) {
+            if derivation.source_query == query_ref {
+                floor = floor.max(Some(derivation.epoch));
+            }
         }
     }
     Ok(floor)

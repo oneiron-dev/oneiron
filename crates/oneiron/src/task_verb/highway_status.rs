@@ -85,12 +85,17 @@ impl Memory<'_> {
 
     /// A proposal's status: the TASK it landed as, once it landed;
     /// otherwise pending in the tray, or rejected. Readable by its proposer
-    /// and the vault owner.
+    /// and the vault owner, through the read this caller's credential and
+    /// destination admit (FIX 10184): one they withhold, before its state is
+    /// read or again before it is answered, is not found.
     fn proposal_status(
         &self,
         handle: TaskHandle,
         proposal_ref: EntityId,
     ) -> MemoryResult<StatusRead> {
+        if self.proposal_withheld(proposal_ref)? {
+            return Err(not_found());
+        }
         let (landed, pending, rejected) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let Some(claim) = self.vault().get_claim_in_txn(&txn, &proposal_ref)? else {
@@ -120,6 +125,9 @@ impl Memory<'_> {
                 || claim.lifecycle == ClaimLifecycleStatus::Retracted;
             (landed, pending, rejected)
         };
+        if self.proposal_withheld(proposal_ref)? {
+            return Err(not_found());
+        }
         if let Some(task_ref) = landed {
             return Ok(match self.task_status(handle, task_ref, None)? {
                 StatusRead::View(view, mut related) => {
@@ -155,6 +163,15 @@ impl Memory<'_> {
             },
             Vec::new(),
         ))
+    }
+
+    /// Whether this caller's read credential or destination withholds
+    /// `proposal_ref`: the point read a bound credential makes, then the
+    /// scoped entity read every caller makes. Each opens its own snapshot,
+    /// so neither runs inside another read.
+    fn proposal_withheld(&self, proposal_ref: EntityId) -> MemoryResult<bool> {
+        Ok(self.credential_withholds(proposal_ref)?
+            || self.get_entity(&proposal_ref.to_hex())?.value.is_none())
     }
 
     /// A TASK's status, and its live try's. Readable by its owner and by the

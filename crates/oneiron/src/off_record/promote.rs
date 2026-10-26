@@ -21,6 +21,8 @@ use crate::session_overlay::{PromotePlan, SessionOverlay};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GateDecisionRecord, Store};
 
+mod attribution;
+mod repo_projection;
 mod result_holds;
 
 use self::result_holds::message_results;
@@ -397,9 +399,10 @@ impl FloorWrites<'_> {
         // terminus every gated batch uses; the only thing promotion adds is the
         // origin that lets THIS session's overlay ids through the K4 guard.
         let grant = PromoteReplayGrant::mint(plan);
-        let replay_ops = plan.ops.clone();
+        let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, plan.ops.iter())?;
         BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
+        self::attribution::witness_replayed_in_txn(self.store, wtxn, plan, None);
         // The outbox rule (write-path hub; ARCH-0036): the promoted turn is
         // base text now, so it owes the vault's tagger a pass and its embedder
         // a vector (ARCH-0004), committed with the promotion. The receipt
@@ -637,8 +640,10 @@ impl FloorWrites<'_> {
             })
             .collect();
         let grant = PromoteReplayGrant::mint_for(fresh.clone());
-        BatchBuilder::promotion_replay(vault, fresh_ops().cloned().collect(), &grant)
+        let replay_ops = repo_projection::projected_replay_ops(vault, wtxn, fresh_ops())?;
+        BatchBuilder::promotion_replay(vault, replay_ops, &grant)
             .apply_recording_gate_decisions(wtxn)?;
+        self::attribution::witness_replayed_in_txn(self.store, wtxn, plan, Some(&fresh));
         crate::tagging::mark_turn_in_txn(
             vault,
             wtxn,

@@ -5,6 +5,7 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
+mod ambient_alternative;
 mod capability;
 mod connector_reply;
 mod connector_task;
@@ -15,7 +16,9 @@ mod executor;
 mod intent;
 mod manifests;
 mod receipt_fields;
+mod recovery_suggestions;
 mod reply_content;
+mod reply_job;
 mod retry_audit;
 mod served_sink;
 mod window_door;
@@ -25,6 +28,7 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
+pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
@@ -64,13 +68,21 @@ pub use self::intent::{
     MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
     OutboundIntentSource, OutboundIntentTrigger,
 };
+pub use self::recovery_suggestions::OutboundRecoverySuggestion;
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
+pub use self::reply_job::{
+    CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
+    ConnectorReplyJobResult, ConnectorReplyStage,
+};
 pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
+pub(crate) use self::reply_job::{
+    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

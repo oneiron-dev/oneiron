@@ -51,6 +51,7 @@ mod federation_replay;
 mod inbound;
 mod lfs;
 mod note_session;
+mod repo_projection;
 mod residence;
 mod sync_frames;
 mod types;

@@ -64,6 +64,10 @@ pub struct ClaimInput {
     pub learned_at: Option<u64>,
     /// Optional salience in `[0, 1]`.
     pub salience: Option<f32>,
+    /// The band and basis a calibrated producer gave `confidence`; absent
+    /// means the house band of the number (FIX 7761).
+    #[serde(default)]
+    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
 }
 
 /// Receipt for one committed claim. A refused element of a batch never

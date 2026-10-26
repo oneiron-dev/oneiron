@@ -488,6 +488,7 @@ pub(crate) fn invalidate_source_in_txn(
     document: &EntityId,
     door: DependentWalkDoor,
 ) -> Result<()> {
+    crate::feedback::intake::forget_report_cluster_member_in_txn(store, txn, document, door)?;
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     super::dependent_walk::begin_in_txn(store, txn, document, door)
 }

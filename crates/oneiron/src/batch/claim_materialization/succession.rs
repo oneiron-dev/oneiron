@@ -431,6 +431,7 @@ impl ClaimMaterialization {
                 envelope,
                 prior: None,
                 approval: false,
+                closer: None,
             };
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);

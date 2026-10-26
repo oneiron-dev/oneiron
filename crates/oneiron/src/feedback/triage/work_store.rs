@@ -344,14 +344,14 @@ impl Vault {
             erased::refuse_erased_in_txn(self, txn, &handoff)?;
             // The park fence lands on a terminal row too; a plan lands only
             // on the job's live lease.
-            if !AttemptQueue::new(self).holds_lease_in_txn(
-                txn,
-                record.id,
-                lease_owner,
-                record.attempt_count,
-            )? {
+            let queue = AttemptQueue::new(self);
+            if !queue.holds_lease_in_txn(txn, record.id, lease_owner, record.attempt_count)? {
                 return Err(lost_lease());
             }
+            // The park renews the lease it parks under: a lease reclaim that
+            // read the parked set before this write finds the lease live
+            // under its own writer and leaves it (FIX 10304).
+            queue.renew_lease_in_txn(txn, record.id, lease_owner, record.attempt_count, now)?;
             let mut work = work::apply(handoff.work.take(), step, text.as_deref(), now)?;
             let owner = Owner {
                 source_ref: &handoff.source_ref,

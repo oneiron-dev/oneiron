@@ -69,6 +69,11 @@ pub(crate) enum MirrorRefOutcome {
     /// A full-auto ref the mirror already holds, or holds a descendant of:
     /// nothing to send, and never a rewind.
     Covered,
+    /// Never sent: the mirror is public or unstated and the publication
+    /// gate held the ref's history (FIX 7608 slice 9, A1; CALLS HOLD-AUTO).
+    /// The plan stays open: each later run reads it at the mirror and asks
+    /// the gate again before its same-plan send.
+    Held,
 }
 
 impl MirrorRefOutcome {
@@ -90,9 +95,19 @@ impl MirrorRefOutcome {
         matches!(self, Self::Applied | Self::ObservedApplied | Self::Covered)
     }
 
-    /// Whether only a reconcile read can say what became of it.
+    /// Whether only a reconcile read can say what became of it (a held
+    /// ref: what the mirror holds there before it asks the gate again).
     pub(crate) const fn unproven(self) -> bool {
-        matches!(self, Self::Dispatched | Self::Rejected | Self::Unknown)
+        matches!(
+            self,
+            Self::Dispatched | Self::Rejected | Self::Unknown | Self::Held
+        )
+    }
+
+    /// Whether the plan's later batches may go out past it: it needs
+    /// nothing more, or only the publication gate holds it.
+    pub(crate) const fn lets_plan_go_on(self) -> bool {
+        self.settled() || matches!(self, Self::Held)
     }
 }
 

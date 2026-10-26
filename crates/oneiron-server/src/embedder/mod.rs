@@ -14,6 +14,7 @@ mod admitted;
 mod brokered;
 mod endpoint;
 pub(crate) use endpoint::reported_mark;
+pub(crate) use endpoint::{PodRelease, VaultRelease};
 mod remote;
 pub(crate) use local::model_manager;
 pub(crate) use local::prepare as prepare_local;
@@ -232,6 +233,10 @@ pub(crate) struct EmbedderSlot {
     rung_hold: Arc<Mutex<remote::RungHold>>,
     /// Why the last load or admission failed, cleared by the next success.
     refusal: Mutex<Option<String>>,
+    /// The owner's warning that the local model's hub ref now names another
+    /// commit than the vault's pinned one, which this slot keeps serving
+    /// (FIX 9489). Set by a check run off the load path.
+    ref_warning: Arc<Mutex<Option<String>>>,
     /// The vault's credential-broker context, which a `key_secret` endpoint
     /// and remote rung send through.
     broker: Option<crate::models::BrokerContext>,
@@ -265,6 +270,7 @@ impl EmbedderSlot {
             admitted: AtomicBool::new(false),
             rung_hold: Arc::default(),
             refusal: Mutex::new(None),
+            ref_warning: Arc::new(Mutex::new(None)),
             broker: broker.cloned(),
         };
         if config.provider == EmbedderProvider::Endpoint {
@@ -325,11 +331,39 @@ impl EmbedderSlot {
     /// open. An endpoint that says what it serves (`embedder serve`) is
     /// checked the same way, once its listing has been read, and must name the
     /// vault's model as the one it loaded; its floors are known only then.
+    ///
+    /// The server's callers use [`Self::ensure_ready_for`]; this form, with
+    /// any admission and no pin, is the rows' own.
+    #[cfg(test)]
     pub(crate) fn ensure_ready(
         &self,
         admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
-        let ready = self.make_ready(admit);
+        let ready = self.make_ready(|| Ok(None), admit);
+        self.settle(ready)
+    }
+
+    /// The provider made ready as the test rows' `ensure_ready` makes it,
+    /// admitted by `vault`, the vault this slot serves. A local model named
+    /// by a hub ref loads the commit the vault's pinned transform names, so a
+    /// ref that moved keeps serving the vault's weights until `reembed` takes
+    /// the new ones (FIX 9489).
+    pub(crate) fn ensure_ready_for(
+        &self,
+        vault: &oneiron::Vault,
+    ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
+        let ready = self.make_ready(
+            || vault.embedding_transform(),
+            |admission| admission.into_vault(vault),
+        );
+        self.settle(ready)
+    }
+
+    /// Keeps why `ready` failed for [`Self::dense_state`], or clears it.
+    fn settle(
+        &self,
+        ready: oneiron::Result<Arc<dyn QueryEmbedder>>,
+    ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         *self
             .refusal
             .lock()
@@ -358,8 +392,18 @@ impl EmbedderSlot {
         }
     }
 
+    /// The owner's warning that the local model's hub ref moved past the
+    /// commit served, once a check has found it.
+    pub(crate) fn ref_warning(&self) -> Option<String> {
+        self.ref_warning
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     fn make_ready(
         &self,
+        pinned: impl FnOnce() -> oneiron::Result<Option<String>>,
         admit: impl FnOnce(Admission<'_>) -> oneiron::Result<()>,
     ) -> oneiron::Result<Arc<dyn QueryEmbedder>> {
         if let Some(ready) = self.ready.get() {
@@ -390,7 +434,11 @@ impl EmbedderSlot {
             }
             return Ok(Arc::clone(ready));
         }
-        let local = local::LocalEmbedder::load(&self.config, &self.models)?;
+        let pinned = pinned()?;
+        let resolved = self
+            .models
+            .resolve_local_revision(&self.config.local, pinned.as_deref())?;
+        let local = local::LocalEmbedder::load_resolved(&self.config, &self.models, &resolved)?;
         self.admit_holding_rung(
             Admission {
                 transform: Some(local.transform()),
@@ -399,6 +447,18 @@ impl EmbedderSlot {
             admit,
         )?;
         self.admitted.store(true, Ordering::Release);
+        // Whether the ref still names the pinned commit is asked only now,
+        // off the load path: an offline host keeps serving, and a move is a
+        // warning, never a refusal.
+        if let Some(check) = self.models.ref_check(&resolved) {
+            let warning = Arc::clone(&self.ref_warning);
+            std::thread::spawn(move || {
+                let found = check.run();
+                *warning
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = found;
+            });
+        }
         let embedder = local as Arc<dyn QueryEmbedder>;
         if self.ready.set(Arc::clone(&embedder)).is_ok()
             && let Some(loaded) = embedder.loaded()
@@ -602,18 +662,23 @@ pub(crate) fn build_slot_with_broker(
 
 /// Sends the endpoint provider's document batches through leases on the
 /// serve host's GPU pool; queries stay on the configured endpoint. Any other
-/// provider computes on this host and takes none.
+/// provider computes on this host and takes none. A row goes to a pod only
+/// when `release`, the vault's world release, lets it leave this device and,
+/// where the section configures an egress list, the list allows it
+/// (FIX 9486); every other row embeds on the endpoint.
 pub(crate) fn route_batches_through(
     slot: &EmbedderSlot,
     pool: crate::runtime::GpuPool,
     scope: Option<oneiron::federation::derivation::DerivationScope>,
+    release: Arc<dyn PodRelease>,
 ) -> anyhow::Result<()> {
     let Some(http) = slot.ready().and_then(|ready| ready.as_endpoint()) else {
         tracing::warn!("[gpu] is set, but only an endpoint embedder routes batches through it");
         return Ok(());
     };
     let timeout = std::time::Duration::from_millis(slot.config().endpoint.timeout_ms);
-    http.route_batches_through(pool, scope, timeout)?;
+    let egress = remote::configured_egress(slot.config())?;
+    http.route_batches_through(pool, scope, timeout, egress, release)?;
     Ok(())
 }
 

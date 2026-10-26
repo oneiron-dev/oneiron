@@ -166,7 +166,7 @@ impl Memory<'_> {
             } else {
                 RunSettlementReason::OwnerRejected
             };
-            let record = super::super::super::authorship::decision(
+            let mut record = super::super::super::authorship::decision(
                 actor,
                 "proposal_outcome",
                 if approve { "approved" } else { "rejected" },
@@ -178,6 +178,17 @@ impl Memory<'_> {
                 None,
                 review.review_id.as_bytes().to_vec(),
                 now,
+            );
+            // FIX 7500: the answer to the reviewed run. Its members are not
+            // bound to this receipt, so no member's read context is kept.
+            record.context = crate::store::GateDecisionContext::linked(
+                crate::store::GateLoopLink::action(
+                    crate::store::GateLoopSource::Runner,
+                    Some(run.clone()),
+                    None,
+                    crate::store::GateLoopOrigin::Unresolved,
+                ),
+                None,
             );
             self.vault()
                 .store

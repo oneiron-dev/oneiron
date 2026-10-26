@@ -4,7 +4,7 @@
 //! ([`ConnectorCallHost::clears_at_door`](super::ConnectorCallHost::clears_at_door)).
 //! Only a host that cannot say so has the reply of a call that names a
 //! record cleared here, by reading the value once more, as before; withheld
-//! when it cannot be read.
+//! when it cannot be read, under its own absence reason (FIX 2823).
 
 use serde_json::Value;
 
@@ -12,7 +12,8 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 
 use super::connector_call::{
-    PendingConnectorCall, Step, UntrustedToolResult, connector_call_effector,
+    ConnectorResultAbsence, PendingConnectorCall, Step, UntrustedToolResult,
+    connector_call_effector,
 };
 
 impl Vault {
@@ -34,10 +35,19 @@ impl Vault {
                 Step::Delivered {
                     intent,
                     result: Some(result),
+                    ..
                 },
-            ) => Step::Delivered {
-                intent,
-                result: self.cleared_connector_reply(&custody, &pending.name, result),
+            ) => match self.cleared_connector_reply(&custody, &pending.name, result) {
+                Ok(result) => Step::Delivered {
+                    intent,
+                    result: Some(result),
+                    result_absence: None,
+                },
+                Err(absence) => Step::Delivered {
+                    intent,
+                    result: None,
+                    result_absence: Some(absence),
+                },
             },
             (_, step) => step,
         }
@@ -45,22 +55,28 @@ impl Vault {
 
     /// `result`, a reply to a send that presented the value of the custody
     /// record `custody`, with each copy of the value replaced by the
-    /// record's handle text; `None` (withheld) when the value could not be
-    /// read again to find it.
+    /// record's handle text; withheld as `CredentialClearFailed` when the
+    /// route or the value could not be read again to find it. The cause
+    /// itself is never carried: it may name the value's record or its bytes.
     fn cleared_connector_reply(
         &self,
         custody: &EntityId,
         name: &str,
         mut result: UntrustedToolResult,
-    ) -> Option<UntrustedToolResult> {
-        let route = self.route_connector_call(name).ok().flatten()?;
+    ) -> Result<UntrustedToolResult, ConnectorResultAbsence> {
+        let withheld = ConnectorResultAbsence::CredentialClearFailed;
+        let route = self
+            .route_connector_call(name)
+            .ok()
+            .flatten()
+            .ok_or(withheld)?;
         let effector = connector_call_effector(&route);
         let mut fields: Vec<&mut Value> = std::iter::once(&mut result.content)
             .chain(result.structured_content.as_mut())
             .chain(result.rpc_error.as_mut())
             .collect();
         self.clear_secret_record_from(custody, &effector, &mut fields)
-            .ok()?;
-        Some(result)
+            .map_err(|_| withheld)?;
+        Ok(result)
     }
 }

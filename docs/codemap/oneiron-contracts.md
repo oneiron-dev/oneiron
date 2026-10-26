@@ -12,9 +12,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/affect.rs` | src | s | 1 re-export | — | Core VAD value types |
-| `src/affect/vad.rs` | src | s | 2 struct · 2 enum · 6 fn · 1 const | Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
+| `src/affect/vad.rs` | src | s | 3 struct · 2 enum · 6 fn · 1 const | DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent | Core VAD value types: ranges, validation, and annotation records shared by every affect child |
 | `src/authority.rs` | src | s | 1 type · 1 const | — | Authority-log hash vocabulary the write path shares |
-| `src/claim.rs` | src | s | 1 fn · 2 re-export | — | Claim status axes and the scoped-read receipt |
+| `src/claim.rs` | src | s | 1 fn · 3 re-export | — | Claim status axes and the scoped-read receipt |
+| `src/claim/confidence.rs` | src | s | 1 struct · 2 enum · 8 fn | ConfidenceBand, ConfidenceDetails, VerdictBasis | What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and… |
 | `src/claim/receipt.rs` | src | s | 2 struct · 4 fn | ReadScope, ScopedReadReceipt | Mandatory read receipts: the requested / actor-ceiling / applied scope triple and the axes a read narrowed |
 | `src/claim/status.rs` | src | s | 3 enum · 7 fn | ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource | The three small claim status axes and their pinned on-disk strings: approval (consent), lifecycle… |
 | `src/code_run.rs` | src | s | 1 mod | — | Shared vocabulary of the code-run vault-read contract |

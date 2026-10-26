@@ -3,6 +3,7 @@
 
 use super::super::*;
 use super::preflight::preflight_gate_decisions_in_txn;
+use super::reference_read;
 use super::{BatchBuilder, CommitCheck};
 
 use crate::store::Rows;
@@ -11,7 +12,8 @@ use std::collections::{BTreeSet, HashMap};
 
 use heed::RwTxn;
 
-use crate::error::Result;
+use crate::claim::ScopedRead;
+use crate::error::{Error, Result};
 use crate::llm::BoundedAutoChecker;
 
 impl BatchBuilder<'_> {
@@ -34,7 +36,17 @@ impl BatchBuilder<'_> {
     /// opening the LMDB write transaction, avoiding unnecessary I/O on bad
     /// input.
     pub fn commit(self) -> Result<()> {
-        self.commit_inner(None, |_| Ok(()), |_| Ok(()))
+        self.commit_inner(None, None, |_| Ok(()), |_| Ok(()))
+    }
+
+    /// [`Self::commit`] for a writer its host bound to `reader` (OF-063, FIX
+    /// 1223, 6068). Each row a put would take must be one `reader` reads,
+    /// judged against its original in the writer before any op stages; one
+    /// it does not read refuses as missing. Each CLAIM's typed record refs
+    /// must resolve under `reader` once the batch's own rows are staged; one
+    /// that does not is the claim gate's hard deny, receipted once.
+    pub(crate) fn commit_read_by(self, reader: &ScopedRead<'_>) -> Result<()> {
+        self.commit_inner(None, Some(reader), |_| Ok(()), |_| Ok(()))
     }
 
     /// [`Self::commit`] for a writer below owner grade. A put that turns an
@@ -60,6 +72,24 @@ impl BatchBuilder<'_> {
         self,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
+        self.commit_below_owner_inner(None, guard)
+    }
+
+    /// [`Self::commit_below_owner_with_guard`] for a writer its host bound
+    /// to `reader`, held to it as [`Self::commit_read_by`] holds a writer.
+    pub(crate) fn commit_below_owner_read_by(
+        self,
+        reader: &ScopedRead<'_>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.commit_below_owner_inner(Some(reader), guard)
+    }
+
+    fn commit_below_owner_inner(
+        self,
+        reader: Option<&ScopedRead<'_>>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let vault = self.vault;
         let agent_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
             .ops
@@ -76,7 +106,7 @@ impl BatchBuilder<'_> {
                 _ => None,
             })
             .collect();
-        self.commit_with_target_guard(move |txn| {
+        let guard = move |txn: &heed::RoTxn<'_>| -> Result<()> {
             guard(txn)?;
             for (id, body) in &agent_puts {
                 if crate::agent_def::agent_definition_put_widens_in_txn(
@@ -93,7 +123,8 @@ impl BatchBuilder<'_> {
                 }
             }
             Ok(())
-        })
+        };
+        self.commit_inner(None, reader, guard, |_| Ok(()))
     }
 
     /// Runs an app-door target guard in the same writer snapshot as admission.
@@ -103,7 +134,7 @@ impl BatchBuilder<'_> {
         self,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(None, guard, |_| Ok(()))
+        self.commit_inner(None, None, guard, |_| Ok(()))
     }
 
     /// Promotion's checker-aware terminal owns the transaction so a preflight
@@ -122,7 +153,7 @@ impl BatchBuilder<'_> {
         before_apply: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), before_apply, after_apply)
+        self.commit_inner(Some(checker), None, before_apply, after_apply)
     }
 
     /// [`Self::commit_with_checker_guard_and_then`] with nothing read first.
@@ -132,12 +163,13 @@ impl BatchBuilder<'_> {
         checker: &BoundedAutoChecker,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
-        self.commit_inner(Some(checker), |_| Ok(()), after_apply)
+        self.commit_inner(Some(checker), None, |_| Ok(()), after_apply)
     }
 
     fn commit_inner(
         mut self,
         checker: Option<&BoundedAutoChecker>,
+        reader: Option<&ScopedRead<'_>>,
         target_guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
         after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
     ) -> Result<()> {
@@ -184,6 +216,19 @@ impl BatchBuilder<'_> {
             {
                 return Rows::Discard(Err(err.into()));
             }
+            // A bound writer takes only rows its read reads, judged against
+            // their originals before anything stages (FIX 6068); its CLAIMs'
+            // record refs are judged over the staged batch below (FIX 1223).
+            let admitted = reader
+                .map(|reader| reference_read::admit_before_staging(vault, reader, &*wtxn, &ops))
+                .transpose();
+            let gated = match admitted {
+                Ok(None) => Vec::new(),
+                Ok(Some(Some(gated))) => gated,
+                // As missing: the row's kind, body and scope stay unsaid.
+                Ok(Some(None)) => return Rows::Discard(Err(Error::EntityNotFound.into())),
+                Err(err) => return Rows::Discard(Err(err.into())),
+            };
             let mut staged_gate_decisions = Vec::new();
             let mut preflight_gate_decision_ids = HashMap::new();
             if let Err(err) = preflight_gate_decisions_in_txn(
@@ -206,24 +251,45 @@ impl BatchBuilder<'_> {
                     Err(err) => Rows::Discard(Err(err.into())),
                 };
             }
-            let applied = apply_admitted(
-                vault,
-                wtxn,
-                AdmittedBatch {
-                    ops,
-                    text_index_trusted,
-                    gate_mode: ApplyOpsGateMode::new(false, true)
-                        .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
-                        .with_birth_mask(birth_mask)
-                        .with_text_births(text_births)
-                        .with_births(births)
-                        .with_asset_files(asset_files)
-                        .with_replicated_puts(replicated_puts)
-                        .with_prepared(prepared),
-                    origin,
-                },
-                after_apply,
-            );
+            let batch = AdmittedBatch {
+                ops,
+                text_index_trusted,
+                gate_mode: ApplyOpsGateMode::new(false, true)
+                    .with_preflight_gate_decision_ids(preflight_gate_decision_ids)
+                    .with_birth_mask(birth_mask)
+                    .with_text_births(text_births)
+                    .with_births(births)
+                    .with_asset_files(asset_files)
+                    .with_replicated_puts(replicated_puts)
+                    .with_prepared(prepared),
+                origin,
+            };
+            let applied = match reader.filter(|_| !gated.is_empty()) {
+                None => apply_admitted(vault, wtxn, batch, after_apply).map(Judged::Applied),
+                Some(reader) => apply_judged(vault, wtxn, batch, after_apply, reader, &gated),
+            };
+            let applied = match applied {
+                Ok(Judged::Applied(applied)) => Ok(applied),
+                // The gate's one denial stays; nothing the batch staged does,
+                // nor any preflight receipt.
+                Ok(Judged::Denied(denial)) => {
+                    let settled = reference_read::settle_denial_in(
+                        &vault.store,
+                        wtxn,
+                        &staged_gate_decisions,
+                        *denial,
+                    );
+                    return match settled {
+                        Ok((err, Some(decision))) => Rows::Refuse(Refused {
+                            err,
+                            staged_gate_decisions: vec![decision],
+                        }),
+                        Ok((err, None)) => Rows::Discard(Err(err.into())),
+                        Err(err) => Rows::Discard(Err(err.into())),
+                    };
+                }
+                Err(err) => Err(err),
+            };
             match applied {
                 Ok((changes_claims, tasks, approved_vad_ids, pad_windows)) => {
                     Rows::Commit(Committed {
@@ -300,12 +366,7 @@ fn apply_admitted(
     wtxn: &mut RwTxn<'_>,
     batch: AdmittedBatch<'_>,
     after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
-) -> Result<(
-    bool,
-    Vec<crate::entity_id::EntityId>,
-    Vec<crate::entity_id::EntityId>,
-    BTreeSet<String>,
-)> {
+) -> Result<Applied> {
     let rekeys = crate::channel_identity::AssignmentRekeys::begin(&vault.store);
     let pending_vad_ids =
         super::vad_postcommit::pending_dreamer_vad_approvals(vault, wtxn, &batch.ops)?;
@@ -319,6 +380,7 @@ fn apply_admitted(
     // Only their windows are taken from it: this terminal reads the rest of
     // its post-commit work from the ops.
     let pad_scope = super::super::vad_postcommit::VadPostcommitScope::new(vault, wtxn);
+    let derived = crate::embed::repo_derived_batch(&batch.ops);
     apply_ops_with_origin(
         &vault.store,
         &vault.config,
@@ -331,6 +393,7 @@ fn apply_admitted(
     )?;
     let pad_windows = pad_scope.finish().pad_windows;
     after_apply(wtxn)?;
+    crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
     crate::secret_custody::raise_found_key_notices_in_txn(vault, wtxn)?;
     // OF-533: a delegated TASK's terminal result reaches its parked runs here.
     for task in &tasks {
@@ -341,6 +404,46 @@ fn apply_admitted(
     let approved_vad_ids = vault.resolved_dreamer_vad_approvals_in_txn(wtxn, pending_vad_ids)?;
     crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     Ok((changes_claims, tasks, approved_vad_ids, pad_windows))
+}
+
+/// The changes a batch's apply leaves: whether claims changed, the TASKs
+/// written, the Dreamer approvals to consolidate, and the pad tombstone
+/// windows.
+type Applied = (
+    bool,
+    Vec<crate::entity_id::EntityId>,
+    Vec<crate::entity_id::EntityId>,
+    BTreeSet<String>,
+);
+
+/// A bound writer's apply, judged.
+enum Judged {
+    Applied(Applied),
+    /// The claim gate's denial of a record ref the writer's read does not
+    /// resolve; nothing the apply staged stays.
+    Denied(Box<reference_read::StagedDenial>),
+}
+
+/// [`apply_admitted`] for a bound writer whose batch gates CLAIMs: the batch
+/// applies in a savepoint of `wtxn`, the claim gate judges each CLAIM's
+/// record refs under `reader` over the staged rows, and the savepoint joins
+/// `wtxn` only when every ref resolves (OF-063, FIX 1223).
+fn apply_judged(
+    vault: &crate::Vault,
+    wtxn: &mut RwTxn<'_>,
+    batch: AdmittedBatch<'_>,
+    after_apply: impl FnOnce(&mut RwTxn<'_>) -> Result<()>,
+    reader: &ScopedRead<'_>,
+    gated: &[reference_read::GatedClaim],
+) -> Result<Judged> {
+    let mut staged = vault.store.env.nested_write_txn(wtxn)?;
+    let applied = apply_admitted(vault, &mut staged, batch, after_apply)?;
+    let denial = reference_read::staged_reference_denial(vault, &mut staged, reader, gated)?;
+    if let Some(denial) = denial {
+        return Ok(Judged::Denied(Box::new(denial)));
+    }
+    staged.commit()?;
+    Ok(Judged::Applied(applied))
 }
 
 /// What a committed batch still owes after its group commits.

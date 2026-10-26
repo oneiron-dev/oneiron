@@ -185,6 +185,7 @@ pub(super) fn not_run(
                 export: CodeFixVerdict::Withheld { reason },
                 replay: None,
                 engine: None,
+                grant: None,
             };
             (run, None)
         })

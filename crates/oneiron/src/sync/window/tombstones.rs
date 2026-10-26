@@ -178,6 +178,17 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     // origin for it (FIX 4550).
     crate::sync::row_birth::remove_birth_carrier(doc, id)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, [*id])?;
+    // FIX 7608 (KEY STORE = A, FIX 10799): a masked copy row a peer sent
+    // under the item's derived copy id goes with it. Only a carrier present
+    // under that exact key is touched.
+    let copy = crate::origin::secret_projection::copy_id::copy_id(id).ok();
+    if let Some(copy) = copy
+        && entities.get(&copy.to_hex()).is_some()
+    {
+        map_delete(&entities, &copy.to_hex())?;
+        crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
+        crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
+    }
 
     // Edge keys are swept on the EFFECTIVE hardness, not just the incoming
     // value's: a REJECTED soft arriving over an effective hard tombstone
@@ -189,7 +200,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
         let mut doomed = Vec::new();
         map_for_each_bytes(&edges, |key, _| {
             if let Some((src, _, tgt)) = bridge::parse_edge_key(key)
-                && (src == *id || tgt == *id)
+                && (src == *id || tgt == *id || copy.is_some_and(|c| src == c || tgt == c))
             {
                 doomed.push(key.to_owned());
             }

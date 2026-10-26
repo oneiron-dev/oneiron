@@ -17,11 +17,11 @@
 //!
 //! [`resolve_receive_scan_hits`] is the ONE place a hit becomes an outcome,
 //! through ONE statement choosing a [`ReceiveScanDisposition`] (FIX 7608,
-//! SECRETS-IN-REPOS = A). Today that is still the door's refusal with lift
-//! advice. The admit-and-mark arm is built (its hits ride the verdict to the
-//! admitted intent, which writes their marks), and the later flip changes
-//! only that statement, once masked readers exist. Nothing here can turn
-//! the scan off.
+//! SECRETS-IN-REPOS = A). Since the FIX 7608 flip it admits the push and
+//! marks each hit: the hits ride the verdict to the admitted intent, which
+//! writes their marks, and the masked readers serve the masked copy from
+//! then on. The refusal with lift advice stays the other arm of that one
+//! statement. Nothing here can turn the scan off.
 
 use std::io::Cursor;
 
@@ -123,7 +123,7 @@ pub(super) fn resolve_receive_scan_hits(
             return Err(scan_failed(&hit.path));
         }
     }
-    let disposition = ReceiveScanDisposition::Refuse;
+    let disposition = ReceiveScanDisposition::AdmitMarked;
     match disposition {
         ReceiveScanDisposition::Refuse => {
             let mut proposals = Vec::with_capacity(hits.len());
