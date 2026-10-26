@@ -153,6 +153,7 @@ impl Vault {
             RepoProposalReview::Explicit(catalog),
             ProposalBase::CurrentCheckout,
             None,
+            &BTreeSet::new(),
             |_| Ok(Ok(())),
         )?;
         Ok(proposed.unwrap_or_else(|never| match never {}))
@@ -160,13 +161,18 @@ impl Vault {
 
     /// The checked bundle proposer: the one-file proposer's validation,
     /// base, custody and single writer, over every file of a native
-    /// bundle. A refusal in `check` writes nothing.
+    /// bundle. A path in `proven` is one a secret remediation read whole
+    /// from the canonical commit its pinned base is (FIX 7608 slice 6): it
+    /// may change a file the base withholds, whose old bytes are never
+    /// stored, while its new bytes are kept under custody as any are. A
+    /// refusal in `check` writes nothing.
     pub(in crate::repo_mutation) fn propose_repo_bundle_checked<R>(
         &self,
         request: RepoMutationRequest,
         review: RepoProposalReview,
         base: ProposalBase,
         run: Option<RepoRunStamp>,
+        proven: &BTreeSet<String>,
         check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
     ) -> Result<std::result::Result<RepoProposal, R>> {
         validate_operation(&request.operation)?;
@@ -211,14 +217,23 @@ impl Vault {
         // write is; a removal writes no bytes, and the message is scanned.
         let custody = SnapshotCustody::of(self, &repo_root)?;
         for file in &files {
-            if let Some(content) = &file.content {
-                admit_custody(&custody, &pre_action, &file.path, content, &message)?;
+            match &file.content {
+                Some(content) if proven.contains(&file.path) => {
+                    if let Some(withheld) = custody.withholds(&file.path, content) {
+                        return Err(withheld.refusal());
+                    }
+                }
+                Some(content) => {
+                    admit_custody(&custody, &pre_action, &file.path, content, &message)?;
+                }
+                None => {}
             }
         }
         if let Some(reason) = crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
             return Err(SnapshotWithhold::Quarantined(reason).refusal());
         }
-        let files = crate::repo_mutation::bundle::reviewed_bundle_files(&pre_action, files)?;
+        let files =
+            crate::repo_mutation::bundle::reviewed_bundle_files(&pre_action, files, proven)?;
         let row = RepoProposal {
             id: EntityId::now(),
             repo: repo.canonical(),

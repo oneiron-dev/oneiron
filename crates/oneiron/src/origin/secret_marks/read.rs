@@ -110,6 +110,13 @@ impl RepoBlobMarks {
         self.marks.push(mark);
     }
 
+    /// Each readable mark of this blob, in walk order: what a current-code
+    /// remediation replaces, by place and custody record (FIX 7608 slice
+    /// 6). No value.
+    pub(crate) fn marks(&self) -> &[RepoSecretMark] {
+        &self.marks
+    }
+
     /// Each span mark's custody record, once each, in mark order: the keys
     /// a real-byte file reveal of this blob asks for (FIX 7608 2b-ii). A
     /// record id, never a value.

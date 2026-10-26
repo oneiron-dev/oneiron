@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use super::binary_scan::ReceiveScanHit;
+use super::binary_scan::{ReceiveBlobKind, ReceiveScanHit};
 use super::door_credential::DoorCredential;
 use super::door_policy::{DoorEffector, DoorPolicy};
 use super::door_types::{
@@ -180,7 +180,8 @@ impl CredentialDoorService {
     }
 }
 
-/// Scans one blob's whole content, returning the detector's hit.
+/// Scans one blob's whole content, returning the detector's hit, or a
+/// dotenv blob's when the detector names none.
 ///
 /// Order is load-bearing: seam validation first, then the scan over every
 /// byte. All bytes are scanned, binary included; a scan that fails refuses;
@@ -196,7 +197,36 @@ fn scan_one_blob(blob: &PushedBlob) -> DoorResult<Option<ReceiveScanHit>> {
             });
         }
     }
-    super::binary_scan::scan_receive_blob(blob)
+    match super::binary_scan::scan_receive_blob(blob)? {
+        Some(hit) => Ok(Some(hit)),
+        None => Ok(dotenv_hit(blob)),
+    }
+}
+
+/// A dotenv blob no detector named still holds values a program loads, and
+/// each one goes to custody (FIX 7608 slice 6, CALL DOTENV-IMPORT): it is
+/// a hit under the dotenv reason, which the one disposition admits and
+/// marks. A blob whose every value is blank, or no dotenv file's, is none.
+fn dotenv_hit(blob: &PushedBlob) -> Option<ReceiveScanHit> {
+    crate::repo_mutation::repo_env_file(&blob.path)?;
+    let lifts = crate::repo_mutation::repo_env_entries(&blob.content)
+        .iter()
+        .any(|entry| {
+            blob.content
+                .get(entry.value.clone())
+                .is_some_and(crate::repo_mutation::dotenv_value_lifts)
+        });
+    let text = !blob.content.contains(&0) && std::str::from_utf8(&blob.content).is_ok();
+    lifts.then(|| ReceiveScanHit {
+        path: blob.path.clone(),
+        oid: blob.oid.clone(),
+        reason: crate::repo_mutation::REPO_ENV_VALUE_REASON,
+        content_kind: if text {
+            ReceiveBlobKind::Text
+        } else {
+            ReceiveBlobKind::Binary
+        },
+    })
 }
 
 /// Seam input the door cannot use is a scanner failure, which is a rejection.
