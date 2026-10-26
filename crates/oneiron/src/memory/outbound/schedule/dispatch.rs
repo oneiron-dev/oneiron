@@ -128,12 +128,8 @@ impl Memory<'_> {
 
         // Pre-validate the channel/verb capability before either the gate or
         // durable enqueue, preserving a clean retry for malformed requests.
-        outbound_verb_contract(&draft.channel, &draft.verb).map_err(|capability| {
-            MemoryError::bad_request_with(
-                format!("unsupported outbound capability: {capability}"),
-                &["Use a registered channel/verb pair from the connector manifest."],
-            )
-        })?;
+        outbound_verb_contract(&draft.channel, &draft.verb)
+            .map_err(|capability| facade_error_from_unsupported_capability(&capability))?;
 
         let mut intent_draft = OutboundIntentDraft::new(
             self.actor.to_hex(),
