@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1209 code-mode rows (1169 host rows, 40 run rows), 4202 declarations.
-// Replies: 1086 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1210 code-mode rows (1170 host rows, 40 run rows), 4204 declarations.
+// Replies: 1087 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2529,6 +2529,8 @@ declare namespace Sdk {
   type GitPushGrantMintOutput = { grant: GitPushGrantView; act_ref: string };
   type GitPushGrantRevokeInput = { grant_ref: EntityId; seen?: string | null };
   type GitPushGrantRevokeOutput = { grant_ref: EntityId; changed: boolean; member?: EntityId | null; act_ref?: string | null };
+  type ConnectorWitnessReadGrantRequest = { agent: EntityId; conversation: EntityId };
+  type ConnectorWitnessReadGranted = { grant_ref: EntityId; changed: boolean; agent: EntityId; conversation: EntityId; reason: string; granted_at: number };
   type ConnectorWitnessReadGrantRevokeRequest = { grant_ref: EntityId };
   type ConnectorWitnessReadGrantRevoked = { grant_ref: EntityId; changed: boolean; agent: EntityId; conversation: EntityId; reason: string; revoked_at: number };
   type RepoAnchorBindInput = { repo: string; project: EntityId };
@@ -5443,6 +5445,8 @@ declare const vault: Sdk.VaultHost & {
       revoke_write(input: Sdk.ProxyConnectorRevokeWriteRequest): Promise<Sdk.ProxyConnectorRegistration | StoredResult>;
     };
     read_grants: {
+      /** The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing. */
+      grant(input: Sdk.ConnectorWitnessReadGrantRequest): Promise<Sdk.ConnectorWitnessReadGranted | StoredResult>;
       /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
       revoke(input: Sdk.ConnectorWitnessReadGrantRevokeRequest): Promise<Sdk.ConnectorWitnessReadGrantRevoked | StoredResult>;
     };

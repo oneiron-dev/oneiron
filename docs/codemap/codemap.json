@@ -147,13 +147,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -195,6 +195,16 @@
       "enum": 1,
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/actor_claims/candidate/decision_context.rs",
+     "purpose": "The context an owner's craft review keeps (FIX 7499, 7500): the candidate as it was shown, and the…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -12717,7 +12727,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -12879,6 +12889,16 @@
      "purpose": "An authorised read of loop admissions and rejections for the weave (OF-499 A2): the gate decisions a Dreamer…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/loop_decision_read/context.rs",
+     "purpose": "A loop decision's own context as the authorised loop read admits it: the loop link its writer stamped (FIX…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -25137,6 +25157,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/authority/decision_context.rs",
+     "purpose": "The loop link an attempt's action carries on its Gate decision (FIX 7500), from the attempt's own authority…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BaseAgent",
       "DreamerAgentBoundary"
@@ -25858,6 +25888,16 @@
      "purpose": "The owner's apply of an action-mode finding's ceiling patch on the applied list (FIX 1786): the finding's…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/applied/decision_context.rs",
+     "purpose": "The context an applied write's receipt and its revert carry (FIX 7499, 7500): the attempt that wrote it, as…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -26954,7 +26994,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -33042,6 +33082,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/bundle/decision_context.rs",
+     "purpose": "The context a consent bundle's receipt keeps (FIX 7499, 7500): the Dreamer run it answers, and each member's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/bundle/pending_heal.rs",
      "purpose": "The Coach's proposals still waiting in the pending-consent tray, for the healer's residue read (OF-418 L4)",
      "surface": {
@@ -33338,6 +33388,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/doors/claim_write/decision_context.rs",
+     "purpose": "A claim decision's context, computed once from the full candidate before its record is built (FIX 7499…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/doors/claim_write/reference_read.rs",
      "purpose": "OF-063 (FIX 1218): the typed record refs a CLAIM body names, judged under its writer's own scoped read in…",
      "surface": {
@@ -33536,7 +33596,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -36306,7 +36366,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorWitness"
@@ -36314,18 +36374,19 @@
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ingest/connector_witness_grant.rs",
      "purpose": "The witness-read grant (FIX 10895, owner ruling WITNESS-READ)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -41644,6 +41705,16 @@
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/conflict_settle/decision_context.rs",
+     "purpose": "The loop a conflict settlement, its approval or its revert answers (FIX 7500): the one decision it answers…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -49717,7 +49788,7 @@
      "path": "src/pipeline/authority.rs",
      "purpose": "Enforcement of gate-resolved retrieval authority",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -62269,6 +62340,32 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GateAnalysisCoverage",
+      "GateClaimReadSelectors",
+      "GateDecisionAnalysis",
+      "GateDecisionContext",
+      "GateDecisionReadContext",
+      "GateLoopFamily",
+      "GateLoopLink",
+      "GateLoopOrigin",
+      "GateLoopSource",
+      "GateReadPosition",
+      "GateRiskAxis",
+      "GateRiskState"
+     ],
+     "path": "src/store/gate_decision/context.rs",
+     "purpose": "What a Gate decision was made about, the loop it came from and the ruled analysis of the input it judged…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 5,
+      "fn": 7,
+      "struct": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -62337,7 +62434,7 @@
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
       "crate-vis": 15,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -71306,14 +71403,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
-      "ConnectorWitnessReadGrantRevoked"
+      "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted"
      ],
      "path": "src/verbs/connector_witness_read_grant.rs",
      "purpose": "`vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a…",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -71623,7 +71722,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1190
+      "fn": 1191
      }
     },
     {
@@ -76759,7 +76858,7 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76962,7 +77061,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77270,7 +77369,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 162,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77403,7 +77502,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 154,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77613,7 +77712,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 277,
+     "files": 278,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78068,7 +78167,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 149,
+     "files": 150,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78301,7 +78400,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5157,
+   "source_files": 5165,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90152,7 +90251,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1158
+      "fn": 1159
      }
     },
     {
@@ -91524,7 +91623,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1159
+      "fn": 1160
      }
     },
     {
@@ -95642,9 +95741,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/connector_witness_read_doors.rs",
-     "purpose": "The host door of an agent's witness-read grant over a connector conversation (FIX 10895)…",
+     "purpose": "The host doors of an agent's witness-read grant over a connector conversation…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -109958,8 +110057,10 @@
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
       "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted",
       "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
@@ -113196,7 +113297,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3119
+      "struct": 3121
      }
     },
     {

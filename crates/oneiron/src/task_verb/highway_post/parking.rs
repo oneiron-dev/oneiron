@@ -326,6 +326,7 @@ impl Memory<'_> {
                     grant_ref: None,
                     diff_handle: pending.diff_handle,
                     read_frontier_hash: pending.read_frontier_hash,
+                    context: Default::default(),
                     redacted_at: None,
                 },
             )?;

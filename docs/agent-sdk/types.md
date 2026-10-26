@@ -2019,6 +2019,8 @@ class Oneiron:
         def approve_once(self, spec: Facade.ConnectorCallApproveOnceRequest) -> Facade.ConsentActReceipt:
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
     class _VaultConnectorsReadGrantsVerbs:
+        def grant(self, spec: Facade.ConnectorWitnessReadGrantRequest) -> Facade.ConnectorWitnessReadGranted:
+            """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
         def revoke(self, spec: Facade.ConnectorWitnessReadGrantRevokeRequest) -> Facade.ConnectorWitnessReadGrantRevoked:
             """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
     class _VaultAuthorityVerbs:

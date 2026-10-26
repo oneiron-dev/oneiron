@@ -422,6 +422,7 @@ fn append_ruling_in_txn(
         grant_ref: None,
         diff_handle: found.custody.as_bytes().to_vec(),
         read_frontier_hash: [0; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &record)?;
