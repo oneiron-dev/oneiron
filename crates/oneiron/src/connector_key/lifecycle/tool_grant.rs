@@ -37,8 +37,9 @@ use super::super::manifest_drift::{
 };
 use super::super::qualification::ConnectorQualificationReceipt;
 use super::super::record::{
-    ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus, PendingConnectorManifest,
-    ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
+    ConnectorCallClass, ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeyStatus,
+    PendingConnectorManifest, ScopedCapabilityProvenance, canonical_scoped_server_segment,
+    normalize_connector_key,
 };
 use super::super::slate::{
     ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateRow, read_connector_slate_in_txn,
@@ -505,19 +506,19 @@ pub(crate) fn catalog_charter_in_txn(
     Ok(derived_key_catalog_in_txn(store, txn, key)?.and_then(|(_, catalog, _)| catalog.charter))
 }
 
-/// Whether a scoped call on `server` debits the `Sends` dimension: only when
-/// the server's catalog entry is `CounterpartyComm`. ARCH-0054 gives the
-/// Send class to counterparty communication alone and leaves scoped-MCP
-/// calls unbudgeted by default, so an uncatalogued server debits no sends.
-pub(crate) fn scoped_server_debits_sends_in_txn(
+/// The call class of the catalog entry that names `server`: what the owner
+/// registered the server's calls as. `None` for an uncatalogued server. The
+/// budget class of one call also reads the tool's own declaration
+/// (`connector_key::tool_effect`, FIX 8688).
+pub(crate) fn scoped_server_call_class_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     server: &str,
-) -> Result<bool> {
+) -> Result<Option<ConnectorCallClass>> {
     Ok(catalog_key_in_txn(store, txn, server)?
         .filter(|(_, catalog)| catalog_server(catalog).as_deref() == Some(server))
         .and_then(|(_, catalog)| catalog.catalog)
-        .is_some_and(|entry| entry.call_class.debits_sends()))
+        .map(|entry| entry.call_class))
 }
 
 /// Holds each Active per-grant key of a catalog key that is no longer

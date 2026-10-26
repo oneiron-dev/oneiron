@@ -158,7 +158,7 @@ pub(super) fn charge_once(
         EffectorBudgetChargeOutcome::NoRows(charge)
         | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
         EffectorBudgetChargeOutcome::Exhausted {
-            row_index,
+            location,
             on_exhaust,
             mut charge,
         } => {
@@ -168,7 +168,7 @@ pub(super) fn charge_once(
                     wtxn,
                     &target.key_id,
                     &target.key,
-                    connector_key::budget_exhausted_reason(row_index),
+                    connector_key::budget_exhausted_reason(&location),
                     now_ms,
                 )?;
                 charge.read.status = ConnectorKeyStatus::Suspended;

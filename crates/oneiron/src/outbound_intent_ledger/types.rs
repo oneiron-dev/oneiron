@@ -5,7 +5,7 @@ use std::fmt;
 use super::dispatch::{derive_intent_id, validate_request};
 use super::store::hash_frozen_payload;
 use crate::attempt_queue::AttemptId;
-use crate::connector_key::ScopedCapabilityProvenance;
+use crate::connector_key::{EffectorBudgetRowId, ScopedCapabilityProvenance};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
 
@@ -175,7 +175,7 @@ impl BudgetClass {
 pub struct BudgetChargeMarker {
     pub key_ref: Option<EntityId>,
     pub budget_class: BudgetClass,
-    pub matched_rows: Vec<u16>,
+    pub matched_rows: Vec<EffectorBudgetRowId>,
     pub sends_debit: u64,
     pub accounted_at_ms: u64,
 }

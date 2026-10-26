@@ -13,7 +13,7 @@ use super::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectorBudgetDebit {
     pub key_ref: EntityId,
-    pub row_index: u16,
+    pub row: EffectorBudgetRowId,
     pub amount: u64,
     pub at: u64,
 }
@@ -30,7 +30,7 @@ pub(crate) fn release_effector_debits_in_txn(
     debits: &[EffectorBudgetDebit],
 ) -> Result<()> {
     for debit in debits {
-        let key = (debit.key_ref, debit.row_index.to_be_bytes());
+        let key = (debit.key_ref, debit.row.usage_key());
         let Some(mut usage) = USAGE.get(store, wtxn, &key)? else {
             continue;
         };

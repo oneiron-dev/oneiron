@@ -92,20 +92,24 @@ impl Vault {
         };
         // A resume that settled the row first keeps its own outcome, and one
         // that met a connector's questions keeps them (FIX 3837).
-        let settled = self.with_write_txn(|txn| {
+        // The expired row withdraws its owner questions in the same write
+        // (FIX 2551).
+        let (settled, withdrawn) = self.with_write_txn(|txn| {
             let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
-                return Ok(Some(settled));
+                return Ok((Some(settled), Vec::new()));
             };
             if row.input.is_some() {
-                return Ok(None);
+                return Ok((None, Vec::new()));
             }
             if let Some(known) = row.settled {
-                return Ok(Some(known));
+                return Ok((Some(known), Vec::new()));
             }
             row.settled = Some(settled.clone());
+            let withdrawn = self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row);
             PENDING_CALLS.put(&self.store, txn, call_ref, &row)?;
-            Ok(Some(settled))
+            Ok((Some(settled), withdrawn))
         })?;
+        self.signal_withdrawn_call_asks(&withdrawn);
         Ok(settled.map(|settled| settled.outcome()))
     }
 

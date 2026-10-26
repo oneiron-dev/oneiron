@@ -152,7 +152,9 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
                     .budget_accounting
                     .matched_rows
                     .iter()
-                    .map(|row| Value::from(u64::from(*row)))
+                    .map(|row| {
+                        Value::Array(vec![Value::from(row.source.tag()), Value::from(row.index)])
+                    })
                     .collect(),
             ),
         ),

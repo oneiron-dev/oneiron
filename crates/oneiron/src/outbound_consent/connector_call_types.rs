@@ -100,14 +100,27 @@ pub struct ConnectorCallCaller {
     pub name: String,
 }
 
+/// Why a delivered call's outcome carries no reply (FIX 2823).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorResultAbsence {
+    /// The reply is not retained: a replay of an already delivered call, or
+    /// a settled call read back. Nothing is sent again to fetch it.
+    NotRetained,
+    /// The send presented a custody record's value, and the value could not
+    /// be read again to clear it from the reply, so the reply is withheld.
+    CredentialClearFailed,
+}
+
 /// What one connector call came to.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConnectorCallOutcome {
     /// The connector acknowledged the call. `result` is its reply when this
     /// send carried one; a replay of an already delivered call has none.
+    /// `result_absence` says why when `result` is `None`.
     Delivered {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
+        result_absence: Option<ConnectorResultAbsence>,
     },
     /// Held for consent or governance. Nothing was sent. Once the hold may
     /// have cleared, [`crate::Vault::resume_connector_call`] re-enters it.

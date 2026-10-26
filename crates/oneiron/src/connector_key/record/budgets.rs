@@ -286,6 +286,3 @@ pub(in crate::connector_key) fn validate_spend_unit(unit: &str) -> Result<()> {
         "spend unit must be an ISO-4217 code or provider-unit token",
     ))
 }
-
-/// Maximum number of budget rows on one key (and compiled caps on one charter).
-pub const CONNECTOR_KEY_MAX_BUDGET_ROWS: usize = 16;

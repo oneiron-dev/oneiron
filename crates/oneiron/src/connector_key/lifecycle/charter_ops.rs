@@ -56,12 +56,13 @@ impl Vault {
             proposed_at,
         )?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&proposed);
         Ok(pending)
     }
     /// The human gate (GOV-10): applies the staged compile iff the caller
     /// re-presents its compiled hash out-of-band, and stamps the aggregate
     /// binding text + compiled policy. Clears every compiled-cap usage row
-    /// (`0x8000 | *`) in the same txn — compiled-cap usage is keyed
+    /// (charter source tag) in the same txn — compiled-cap usage is keyed
     /// positionally, so a re-stamped charter must never inherit the old
     /// charter's usage at the same indices or leave orphaned rows.
     ///

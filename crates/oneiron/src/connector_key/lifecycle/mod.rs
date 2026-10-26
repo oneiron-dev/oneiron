@@ -23,7 +23,7 @@ pub use self::tool_grant::{
     ConnectorConsentRowView, ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent,
     ConnectorToolConsentRow, ConnectorToolGrant,
 };
-pub(crate) use self::tool_grant::{catalog_charter_in_txn, scoped_server_debits_sends_in_txn};
+pub(crate) use self::tool_grant::{catalog_charter_in_txn, scoped_server_call_class_in_txn};
 pub(in crate::connector_key) use self::tool_grant::{
     catalog_key_in_txn, derived_key_catalog_in_txn, derived_key_catalog_slate_in_txn,
     hold_derived_keys_in_txn,

@@ -178,7 +178,7 @@ fn charge_admitted_external_effect(
         EffectorBudgetChargeOutcome::NoRows(charge)
         | EffectorBudgetChargeOutcome::Charged(charge) => (charge, false),
         EffectorBudgetChargeOutcome::Exhausted {
-            row_index,
+            location,
             on_exhaust,
             mut charge,
         } => {
@@ -188,7 +188,7 @@ fn charge_admitted_external_effect(
                     wtxn,
                     &target.key_id,
                     &target.key,
-                    connector_key::budget_exhausted_reason(row_index),
+                    connector_key::budget_exhausted_reason(&location),
                     budget_now,
                 )?;
                 charge.read.status = ConnectorKeyStatus::Suspended;

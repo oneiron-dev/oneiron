@@ -8,11 +8,10 @@ use crate::error::{Error, Result};
 
 use super::codec::encode_compiled_policy;
 use super::record::{
-    CAPABILITY_NEVER_ENTRY_TAG, CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod,
-    CompiledConnectorPolicy, ConnectorCharterBlock, EffectorBudget, EffectorBudgetDimension,
-    EffectorBudgetOnExhaust, EffectorBudgetWindow, SCOPED_CHANNEL_NEVER_ENTRY_TAG,
-    ScopedCapabilityProvenance, is_canonical_scoped_channel, normalize_connector_key,
-    validate_budget_row, validate_never_list_entry, validate_spend_unit,
+    CAPABILITY_NEVER_ENTRY_TAG, CalendarPeriod, CompiledConnectorPolicy, ConnectorCharterBlock,
+    EffectorBudget, EffectorBudgetDimension, EffectorBudgetOnExhaust, EffectorBudgetWindow,
+    SCOPED_CHANNEL_NEVER_ENTRY_TAG, ScopedCapabilityProvenance, is_canonical_scoped_channel,
+    normalize_connector_key, validate_budget_row, validate_never_list_entry, validate_spend_unit,
 };
 use crate::error::RecordError;
 
@@ -268,9 +267,6 @@ pub fn compile_connector_charter(
                 }
             }
             CharterDirective::Cap(budget) => {
-                if channel_caps.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
-                    return Err(issue("too many charter channel caps"));
-                }
                 validate_budget_row(&budget).map_err(|error| match error {
                     Error::Record(RecordError::InvalidConnectorKeyBody(reason)) => issue(reason),
                     _ => issue("invalid charter cap"),

@@ -255,6 +255,7 @@ impl Vault {
         )?;
         self.sync_derived_keys_in_txn(&mut wtxn, &active, at)?;
         wtxn.commit().map_err(Error::from)?;
+        self.measure_connector_key_shape(&active);
         Ok((active, report))
     }
 

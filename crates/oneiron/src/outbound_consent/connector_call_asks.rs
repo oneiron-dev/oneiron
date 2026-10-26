@@ -56,6 +56,13 @@ const ASK_MAX_REASONS: usize = 16;
 /// question stays open.
 const SUPERSEDED_OWNER_ASK_WITHDRAWN: bool = true;
 
+/// FIX 2551: a held call's owner questions are withdrawn in the write that
+/// ends its wait on them, when it settles or meets its connector's questions,
+/// and so is a question that queued just as the call stopped waiting.
+/// Cleanup, never a cancellation: the call's outcome stands either way.
+/// `false` is the earlier path, where those questions stay open.
+const TERMINAL_CONNECTOR_OWNER_ASK_WITHDRAWN: bool = true;
+
 /// The wording of a held call's owner ask: the one place it lives. It names
 /// the connector, the tool, the call ref and the hold's reason codes, says
 /// that answering grants nothing, and where the call is allowed instead,
@@ -178,10 +185,16 @@ impl Vault {
             self.queue_decision_ask(&connector_call_ask(call_ref, principal, &pending, reasons));
         let seq = queued.as_ref().ok().copied();
         let withdrawn = self.with_write_txn(|txn| {
-            let Some(mut row) = PENDING_CALLS.get(&self.store, txn, call_ref)? else {
-                return Ok(None);
+            let row = PENDING_CALLS.get(&self.store, txn, call_ref)?;
+            let Some(mut row) = row.filter(|row| row.settled.is_none() && row.input.is_none())
+            else {
+                // The call stopped waiting while its question queued: the
+                // fresh question has no hold to ask about (FIX 2551).
+                return Ok(
+                    seq.and_then(|seq| self.withdraw_stranded_ask_in_txn(txn, call_ref, seq))
+                );
             };
-            if row.settled.is_some() || row.owner_ask_seq.is_some() || row.input.is_some() {
+            if row.owner_ask_seq.is_some() {
                 return Ok(None);
             }
             row.held_reasons = reasons.to_vec();
@@ -236,6 +249,68 @@ impl Vault {
         }
     }
 
+    /// In `txn`, the write that ends the held call `call_ref`'s wait (it
+    /// settles, or meets its connector's questions), withdraws the owner
+    /// questions `row` and the stored row still name, and clears them from
+    /// `row`. Returns those it withdrew, for
+    /// [`Self::signal_withdrawn_call_asks`] once the write committed. A
+    /// withdrawal that fails is logged and the write goes on as it would
+    /// without it, as a superseded question's does (FIX 2551).
+    pub(super) fn withdraw_call_owner_asks_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        call_ref: &EntityId,
+        row: &mut PendingConnectorCall,
+    ) -> Vec<u64> {
+        if !TERMINAL_CONNECTOR_OWNER_ASK_WITHDRAWN {
+            return Vec::new();
+        }
+        let mut seqs = take_owner_ask_seqs(row);
+        if let Ok(Some(mut stored)) = PENDING_CALLS.get(&self.store, &*txn, call_ref) {
+            seqs.extend(take_owner_ask_seqs(&mut stored));
+        }
+        seqs.sort_unstable();
+        seqs.dedup();
+        seqs.into_iter()
+            .filter_map(|seq| self.withdraw_stranded_ask_in_txn(txn, call_ref, seq))
+            .collect()
+    }
+
+    /// Withdraws the owner question `seq` of the call `call_ref`, which no
+    /// longer waits on it; `Some(seq)` when the withdrawal closed it. A
+    /// question already answered or withdrawn stays as it is.
+    fn withdraw_stranded_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        call_ref: &EntityId,
+        seq: u64,
+    ) -> Option<u64> {
+        if !TERMINAL_CONNECTOR_OWNER_ASK_WITHDRAWN {
+            return None;
+        }
+        match self.withdraw_decision_ask_in_txn(txn, seq) {
+            Ok(withdrawn) => withdrawn.then_some(seq),
+            Err(error) => {
+                tracing::warn!(
+                    reason = "connector_call_owner_ask_not_withdrawn",
+                    call = %call_ref.to_hex(),
+                    ask = seq,
+                    error = %error,
+                    "the owner question of a call that stopped waiting on it was not \
+                     withdrawn; the call's outcome is recorded as before"
+                );
+                None
+            }
+        }
+    }
+
+    /// Wakes the waiters of the owner questions a committed write withdrew.
+    pub(super) fn signal_withdrawn_call_asks(&self, withdrawn: &[u64]) {
+        for seq in withdrawn {
+            self.signal_decision_answer(*seq);
+        }
+    }
+
     /// Queues the owner ask of every held call whose ask was tried and did
     /// not queue, and returns how many it queued. A call none was tried for
     /// asks when its next resume meets the hold.
@@ -261,4 +336,18 @@ impl Vault {
         }
         Ok(queued)
     }
+}
+
+/// Takes the owner questions a call row names: its own and the one a newer
+/// approvable ask superseded.
+fn take_owner_ask_seqs(row: &mut PendingConnectorCall) -> Vec<u64> {
+    let superseded = row
+        .approval
+        .as_mut()
+        .and_then(|approval| approval.superseded_ask_seq.take());
+    row.owner_ask_seq
+        .take()
+        .into_iter()
+        .chain(superseded)
+        .collect()
 }
