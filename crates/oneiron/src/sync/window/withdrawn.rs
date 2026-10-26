@@ -20,21 +20,23 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_SUMMARY;
 
 /// What one pass over a doc's `entities` carriers did.
 #[derive(Debug, Default)]
 pub(crate) struct WithdrawnCarriers {
     /// Carriers rewritten to their keyframe envelope.
     pub(crate) replaced: u64,
-    /// Artifacts with a carrier of a withdrawn generation that keeps no
-    /// keyframe to stand in for it. The carrier stays, and the artifact's
-    /// obligation waits.
+    /// Artifacts with a carrier of a withdrawn generation that has no
+    /// stand-in: its header does not parse, or names no epoch summary. The
+    /// carrier stays, and the artifact's obligation waits.
     pub(crate) held: BTreeSet<EntityId>,
 }
 
 /// Whether `blob`, a carrier of `id`, holds a withdrawn generation's words:
 /// an envelope at or below `id`'s cutoff whose body is not the content-free
-/// keyframe. A carrier whose header does not parse cannot show its
+/// keyframe, nor the header-only stand-in of an epoch summary that kept none
+/// (FIX 2506). A carrier whose header does not parse cannot show its
 /// generation and counts as withdrawn.
 pub(crate) fn withdrawn_body(
     cutoffs: &BTreeMap<EntityId, u64>,
@@ -46,8 +48,11 @@ pub(crate) fn withdrawn_body(
     };
     match EntityMetadataHeader::parse(blob) {
         Some(header) => {
+            let body = &blob[ENTITY_METADATA_HEADER_LEN..];
+            let header_only = body.is_empty() && header.entity_type == ENTITY_TYPE_SUMMARY;
             header.learned_at <= *cutoff
-                && !crate::compaction::is_withdrawn_keyframe(&blob[ENTITY_METADATA_HEADER_LEN..])
+                && !header_only
+                && !crate::compaction::is_withdrawn_keyframe(body)
         }
         None => true,
     }
@@ -56,7 +61,8 @@ pub(crate) fn withdrawn_body(
 /// Rewrites every `entities` carrier in `doc` that holds a withdrawn
 /// generation's words to its keyframe envelope, uncommitted. The stand-in is
 /// the local row when it is that same generation's keyframe, else the
-/// keyframe the carrier's own body keeps under the carrier's own header.
+/// keyframe the carrier's own body keeps under the carrier's own header, or
+/// that header alone when its body keeps none (FIX 2506).
 pub(crate) fn replace_withdrawn_carriers(
     vault: &Vault,
     doc: &LoroDoc,
@@ -109,7 +115,7 @@ pub(crate) fn replace_withdrawn_carriers(
             None => {
                 tracing::warn!(
                     entity = %id.to_hex(),
-                    "withdrawn generation carrier keeps no keyframe; kept, its sweep waits"
+                    "withdrawn generation carrier has no stand-in; kept, its sweep waits"
                 );
                 found.held.insert(id);
             }

@@ -21,6 +21,7 @@
 
 mod schedule;
 mod sweeps;
+mod sync_work;
 #[cfg(test)]
 mod tests;
 mod wake;
@@ -461,6 +462,8 @@ pub struct HardEraseWork {
     /// Obligations left for a later run without an attempt (not yet due, a
     /// live window, an unreadable row).
     pub jobs_deferred: u64,
+    /// Of those, the ones whose receipt waits for this install's signer to load (FIX 2597).
+    pub jobs_deferred_signer_unavailable: u64,
     /// Windows no caller held, written down and closed so their carriers
     /// could be compacted.
     pub windows_unloaded: u64,
@@ -469,6 +472,8 @@ pub struct HardEraseWork {
     pub windows_compacted: u64,
     pub windows_deferred_live: u64,
     pub windows_deferred_raced: u64,
+    /// Windows whose cut was not proved to root at their tip (FIX 6520).
+    pub windows_deferred_unproved: u64,
     /// Windows and documents a legal hold keeps as they are (OF-470).
     pub windows_deferred_held: u64,
     pub receipts_finalized: u64,
@@ -549,7 +554,8 @@ impl Vault {
     /// it owes no retirement: the earliest deadline a door noted for a secret
     /// lease, a voice print, a critical confirm or a shared act's window, not
     /// before that sweep is next due (a failing sweep waits out its backoff),
-    /// and the erasure sweep's due time while an obligation waits. Cache and retention hygiene
+    /// and the erasure sweep's due time while an obligation waits, and a left
+    /// env's owed body collection (FIX 2413). Cache and retention hygiene
     /// never wake a vault. Reads one row per sweep and the schedule, never a
     /// whole table, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
@@ -567,6 +573,9 @@ impl Vault {
         let mut owed = noted;
         if schedule::erase_obligation_waiting(self)? {
             owed.push((HousekeepingSweep::HardEraseSweep, 0));
+        }
+        if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
+            owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
@@ -723,13 +732,14 @@ impl Vault {
         let (outcome, finished) = match result {
             Ok(Ok(run)) => {
                 // An owner's erasure run that left a window uncompacted (a
-                // caller held it, a write raced it, or a legal hold kept it)
-                // has not answered the owner: it is retried as the owner's,
-                // after the backoff.
+                // caller held it, a write raced it, its cut was not proved,
+                // or a legal hold kept it) has not answered the owner: it is
+                // retried as the owner's, after the backoff.
                 let owner_left = running.owners()
                     && matches!(run.work, SweepWork::HardErase(work)
                         if work.windows_deferred_live > 0
                             || work.windows_deferred_raced > 0
+                            || work.windows_deferred_unproved > 0
                             || work.windows_deferred_held > 0);
                 let items_failed = run.work.items_failed() > 0 || owner_left;
                 if run.complete && !items_failed {

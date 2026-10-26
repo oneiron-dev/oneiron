@@ -234,10 +234,10 @@ pub(super) fn compact_all_windows(
                     state = WindowSweepState::Deferred;
                 }
             }
-            // Counted with the raced: nothing was written and the next pass
-            // cuts again.
+            // Counted on its own (FIX 6629): nothing was written and the
+            // next pass cuts again.
             Ok(CompactOutcome::UnprovedDefer) => {
-                run.windows_deferred_raced += 1;
+                run.windows_deferred_unproved += 1;
                 if matches!(state, WindowSweepState::AllCompacted) {
                     state = WindowSweepState::Deferred;
                 }

@@ -111,7 +111,10 @@
 //! whose scope contains the receipt's scope — a dropped obligation (e.g. a
 //! manually deleted row) is surfaced as `sweep_obligations_missing` plus a
 //! `tracing::error`, never silent. `SyncQueue::clear_all` re-bootstrap
-//! already preserves `h:` rows byte-identically (ONE-1091 residual).
+//! already preserves `h:` rows byte-identically (ONE-1091 residual). An
+//! owed `hc:` compaction that names the receipt covers it too (FIX 11082),
+//! and a receipt another device attested is that device's to complete and
+//! to audit (FIX 2596).
 
 mod compact;
 // A corrupt CLAIM's erase asks for every carrier (FIX 7800).

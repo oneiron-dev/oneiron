@@ -13,12 +13,13 @@ use crate::deletion::{
     decode_hard_erase_sweep_seq, decode_redaction_audit_receipt, encode_hard_erase_sweep_job_value,
     encode_withdrawn_generation_job_value, finish_redaction_erase_in_txn,
     is_corrupt_claim_repair_event, raise_withdrawn_generation_fence_in_txn,
-    redaction_sweep_completion_in_txn, validate_redaction_receipt_body,
+    receipt_attested_by_this_device_in_txn, redaction_sweep_completion_in_txn,
+    validate_redaction_receipt_body,
 };
 use crate::entity_id::EntityId;
 #[cfg(all(feature = "sync", test))]
 use crate::error::SyncEngineContext;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SecretError};
 use crate::ports::{EntityStoreRead, WindowDeletionRows};
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 #[cfg(all(feature = "sync", test))]
@@ -38,25 +39,28 @@ use crate::sync::window_rows::WINDOW_UPDATE;
 /// scope. When several pending receipts share a scope (delete → re-put →
 /// delete again), one completed sweep satisfies all of them — the
 /// obligation ("the ids' historical carriers are scrubbed") is global per
-/// run, and the sibling job then finalizes nothing extra.
+/// run, and the sibling job then finalizes nothing extra. Only a receipt
+/// this device attested gets its completion row here; a replicated one is
+/// its own device's to complete, and the job's scrub still finishes (FIX
+/// 2596).
 ///
-/// Returns `Ok(Some(n))` when finalized (n completion rows appended), or `Ok(None)`
-/// when DEFERRED by the final carrier fence: `compact_all_windows` only
-/// reaches here as `AllCompacted` when ZERO windows were live, so a swept
-/// window then carries ZERO `u:w:` rows. Any `u:w:` row observed inside the
-/// finalize txn is therefore an unambiguous post-compaction arrival — a
-/// SECOND TOCTOU between compaction-commit and finalize. The fence scans
-/// `u:w:` as the FIRST step of the SAME write txn that appends completions and
-/// deletes the h: row (LMDB single-writer makes recheck+delete atomic; a
-/// separate pre-finalize pass would reintroduce the race) and, on any hit,
-/// returns `Ok(None)` with NO mutation. The caller defers the job (no retry
-/// backoff consumed); the raced carrier self-heals on the next run.
+/// Returns [`FinalizeOutcome::FenceDeferred`] when DEFERRED by the final
+/// carrier fence: `compact_all_windows` only reaches here as `AllCompacted`
+/// when ZERO windows were live, so a swept window then carries ZERO `u:w:`
+/// rows. Any `u:w:` row observed inside the finalize txn is therefore an
+/// unambiguous post-compaction arrival — a SECOND TOCTOU between
+/// compaction-commit and finalize. The fence scans `u:w:` as the FIRST step
+/// of the SAME write txn that appends completions and deletes the h: row
+/// (LMDB single-writer makes recheck+delete atomic; a separate pre-finalize
+/// pass would reintroduce the race) and, on any hit, defers with NO mutation.
+/// The caller defers the job (no retry backoff consumed); the raced carrier
+/// self-heals on the next run.
 pub(super) fn finalize_job(
     vault: &Vault,
     job_key: &[u8],
     job: &HardEraseSweepJob,
     now: u64,
-) -> Result<Option<u64>> {
+) -> Result<FinalizeOutcome> {
     // Test-only carrier-race injection: land a valid `u:w:` row in the gap
     // between compaction-commit and the finalize txn so the in-txn fence
     // below observes it. Its own committed txn (the finalize txn has not
@@ -66,8 +70,9 @@ pub(super) fn finalize_job(
 
     // A completion row is signed in the txn: load the device key first (P6c).
     // A job with no pending receipt signs nothing, so an install that cannot
-    // load it still finalizes that; the in-txn signer refuses if it must sign.
-    let _ = vault.prepare_install_signing();
+    // load it still finalizes that; the in-txn signer refuses if it must
+    // sign, and the job waits for the next pass (FIX 2597).
+    let signing = vault.prepare_install_signing();
     let job_ids: BTreeSet<&str> = job.scope.entity_ids.iter().map(String::as_str).collect();
     let finalized = vault.with_write_txn_grouped(|wtxn| {
         // FINAL CARRIER FENCE (in-txn, FIRST step, NO mutation before it):
@@ -146,7 +151,11 @@ pub(super) fn finalize_job(
                 .iter()
                 .map(String::as_str)
                 .collect();
-            if receipt_ids != job_ids {
+            // A receipt another device attested is its device's to complete
+            // (FIX 2596).
+            if receipt_ids != job_ids
+                || !receipt_attested_by_this_device_in_txn(vault, &*wtxn, &id, &receipt)?
+            {
                 continue;
             }
             // Completed already: its linked completion row exists. A
@@ -177,8 +186,22 @@ pub(super) fn finalize_job(
         // Obligation row deletion LAST, same txn (crash-safe ordering).
         vault.store.sync_queue.delete(wtxn, job_key)?;
         Ok(Some(finalized))
-    })?;
-    if finalized == Some(0) {
+    });
+    let finalized = match finalized {
+        Ok(Some(finalized)) => finalized,
+        Ok(None) => return Ok(FinalizeOutcome::FenceDeferred),
+        // The in-txn signer refused a pending receipt's completion row: the
+        // txn rolled back, so the obligation and its receipts are as they
+        // were. The preparer's fault is the cause when it had one.
+        Err(Error::Secret(SecretError::KeystoreUnavailable(refused))) => {
+            let cause = signing
+                .err()
+                .unwrap_or(Error::Secret(SecretError::KeystoreUnavailable(refused)));
+            return Ok(FinalizeOutcome::SignerUnavailable(cause));
+        }
+        Err(error) => return Err(error),
+    };
+    if finalized == 0 {
         // Job without a pending receipt: §8c-style carrier-only obligation
         // (or a sibling job's sweep already finalized the shared receipt).
         tracing::debug!(
@@ -186,7 +209,19 @@ pub(super) fn finalize_job(
             "sweep: job completed with no pending receipt to finalize"
         );
     }
-    Ok(finalized)
+    Ok(FinalizeOutcome::Finalized(finalized))
+}
+
+/// What one [`finalize_job`] came to.
+pub(super) enum FinalizeOutcome {
+    /// Finalized, with this many completion rows appended.
+    Finalized(u64),
+    /// The final carrier fence deferred it, with no mutation.
+    FenceDeferred,
+    /// A pending receipt of this device's needed its completion row signed,
+    /// and this install's signer was not loaded (FIX 2597): nothing was
+    /// written, and the next pass tries again. Carries the cause.
+    SignerUnavailable(Error),
 }
 
 /// Finalizes one withdrawn-generation job (OF-013): raise the artifact's
@@ -331,9 +366,14 @@ fn retry_later(state: &mut HardEraseRetryState, now: u64, error_code: &str) {
 /// completed must be covered by a pending `h:` row — a dropped obligation is
 /// DETECTABLE, loud, and counted. Runs after job processing so receipts
 /// completed this run (their linked completion row) are no longer pending.
-/// A sweep complete while custody is pending is complete here.
+/// A sweep complete while custody is pending is complete here. A receipt an
+/// owed window compaction names waits on that row (FIX 11082), and a receipt
+/// another device attested is that device's obligation (FIX 2596): neither
+/// is dropped here.
 pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
     let rtxn = vault.store.env.read_txn()?;
+    #[cfg(feature = "sync")]
+    let owed_receipts = super::owed::receipts_owed_compaction_in_txn(vault, &rtxn)?;
 
     let mut job_scopes: Vec<BTreeSet<String>> = Vec::new();
     for row in vault
@@ -401,7 +441,13 @@ pub(super) fn audit_dropped_obligations(vault: &Vault) -> Result<(u64, u64)> {
         }
         let needed: BTreeSet<String> = receipt.scope.entity_ids.iter().cloned().collect();
         let covered = job_scopes.iter().any(|scope| needed.is_subset(scope));
-        if !covered {
+        #[cfg(feature = "sync")]
+        let covered = covered || owed_receipts.contains(&id);
+        // Another device's receipt is that device's to audit (FIX 2596); a
+        // cached identity that does not read counts it here, loud.
+        if !covered
+            && receipt_attested_by_this_device_in_txn(vault, &rtxn, &id, &receipt).unwrap_or(true)
+        {
             missing += 1;
             tracing::error!(
                 "sweep audit: receipt has sweep_queued_at but NO pending h: row and NO \

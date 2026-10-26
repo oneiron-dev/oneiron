@@ -28,6 +28,7 @@ use super::receipt::{
 };
 use super::receipt_completion::{linked_row_in, redaction_sweep_completion_in_txn};
 use super::receipt_grammar::validate_redaction_receipt_body;
+use super::receipt_origin::receipt_attested_by_this_device_in_txn;
 
 /// Domain separator of the final row id derived from its receipt's id.
 const REDACTION_ERASE_FINAL_DOMAIN: &[u8] = b"oneiron:redaction-erase-final:v1\0";
@@ -87,6 +88,9 @@ enum EraseFinal {
     /// Its sweep, a custody retirement it binds or a held scrub has not
     /// finished.
     Pending,
+    /// Another device attested its receipt: its final row is that device's
+    /// to append (FIX 2596).
+    Foreign,
 }
 
 /// Reads where the erase of the initial receipt `receipt` stands. A custody
@@ -135,6 +139,8 @@ fn erase_final_in_txn(
     });
     Ok(if held {
         EraseFinal::Pending
+    } else if !receipt_attested_by_this_device_in_txn(vault, txn, receipt_id, receipt)? {
+        EraseFinal::Foreign
     } else {
         EraseFinal::Due(swept)
     })
@@ -145,9 +151,10 @@ fn erase_final_in_txn(
 /// binds and every scrub a legal hold kept from its ids have finished, and
 /// logs a legal hold's "erase completed" for its request in the same
 /// transaction (C4), the one place that event is written. `false` when it is
-/// not owed yet or is there already, or when a different row sits at a
-/// linked id (logged there, never overwritten). The device key must already
-/// be on the handle (P6c).
+/// not owed yet or is there already, when another device attested the
+/// receipt (FIX 2596), or when a different row sits at a linked id (logged
+/// there, never overwritten). The device key must already be on the handle
+/// (P6c).
 pub(crate) fn finish_redaction_erase_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -162,7 +169,7 @@ pub(crate) fn finish_redaction_erase_in_txn(
     }
     let swept = match erase_final_in_txn(vault, wtxn, receipt_id, receipt) {
         Ok(EraseFinal::Due(swept)) => swept,
-        Ok(EraseFinal::Appended | EraseFinal::Pending)
+        Ok(EraseFinal::Appended | EraseFinal::Pending | EraseFinal::Foreign)
         | Err(Error::CorruptedIndex("redaction audit receipt body")) => return Ok(false),
         Err(error) => return Err(error),
     };

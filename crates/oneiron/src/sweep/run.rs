@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::compact::compact_all_windows;
 use super::finalize::{
-    audit_dropped_obligations, finalize_job, finalize_withdrawn_job, rewrite_job_for_retry,
-    rewrite_withdrawn_job_for_retry,
+    FinalizeOutcome, audit_dropped_obligations, finalize_job, finalize_withdrawn_job,
+    rewrite_job_for_retry, rewrite_withdrawn_job_for_retry,
 };
 use crate::Vault;
 use crate::deletion::{
@@ -30,16 +30,24 @@ pub(super) const RETRY_BACKOFF_BASE_SECS: u64 = 60;
 pub(crate) struct HardEraseSweepRun {
     pub jobs_processed: u64,
     pub jobs_deferred: u64,
+    /// Of `jobs_deferred`, the jobs whose pending receipt needed a signed
+    /// completion row while this install's signer was not loaded (FIX
+    /// 2597). Each keeps its obligation and receipts, with no backoff.
+    pub jobs_deferred_signer_unavailable: u64,
     pub jobs_failed: u64,
     pub windows_compacted: u64,
     pub windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction
     /// write txn (anti-clobber re-read guard) — the run defers, no carrier
-    /// is overwritten, the obligation stays. A cut whose encoded root was
-    /// not the window's tip (FIX 6520) defers the same way and counts here.
+    /// is overwritten, the obligation stays.
     /// SIBLING of `windows_deferred_live`; never folded into it.
     pub windows_deferred_raced: u64,
+    /// Windows deferred because the cut's encoded root was not proved to be
+    /// the window's tip (FIX 6520): nothing is written, the obligation stays
+    /// and the next pass cuts again. SIBLING of the raced deferrals (FIX
+    /// 6629).
+    pub windows_deferred_unproved: u64,
     /// Windows and documents left as they are because a legal hold names a
     /// row their compaction would destroy (OF-470); the obligation stays
     /// until the hold lifts.
@@ -347,7 +355,7 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         WindowSweepState::AllCompacted => {
             for (key, job) in &due {
                 match finalize_job(vault, key, job, now) {
-                    Ok(Some(finalized)) => {
+                    Ok(FinalizeOutcome::Finalized(finalized)) => {
                         run.receipts_finalized += finalized;
                         run.jobs_processed += 1;
                     }
@@ -360,8 +368,24 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
                     // DO NOT consume retry backoff. Routing through
                     // rewrite_job_for_retry would misclassify it as failed
                     // and burn an attempt. The carrier self-heals next run.
-                    Ok(None) => {
+                    Ok(FinalizeOutcome::FenceDeferred) => {
                         run.jobs_deferred += 1;
+                    }
+                    // This install's signer was not loaded, and a receipt of
+                    // this device's needed its completion row signed (FIX
+                    // 2597): nothing was written, so the obligation and its
+                    // receipts stay as they are. Like the fence, no backoff
+                    // is consumed: the next pass retries, and sibling jobs
+                    // go on now.
+                    Ok(FinalizeOutcome::SignerUnavailable(cause)) => {
+                        tracing::warn!(
+                            seq = ?decode_hard_erase_sweep_seq(key),
+                            kind = ?cause.kind(),
+                            "sweep: the completion signer is not loaded — obligation kept, \
+                             job deferred to the next pass"
+                        );
+                        run.jobs_deferred += 1;
+                        run.jobs_deferred_signer_unavailable += 1;
                     }
                     // Finding 2 (fail closed, per-job): an undecodable
                     // REDACTION_AUDIT receipt body aborted THIS job's

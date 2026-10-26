@@ -152,8 +152,10 @@ pub(crate) fn is_withdrawn_keyframe(body: &[u8]) -> bool {
 
 /// The content-free stand-in for epoch summary carrier `envelope` (its
 /// header, then its stored body): the same header, then the keyframe the body
-/// keeps, as [`ScrubbedRecord::WithdrawnEpoch`] leaves the row. `None` when
-/// the carrier is no SUMMARY or its body keeps no keyframe.
+/// keeps, as [`ScrubbedRecord::WithdrawnEpoch`] leaves the row. A body that
+/// keeps no keyframe leaves the header alone, as [`erased_form`] leaves such
+/// a row (FIX 2506). `None` when the carrier's header does not parse or it is
+/// no SUMMARY: no header is made up.
 #[cfg(feature = "sync")]
 pub(crate) fn withdrawn_keyframe_envelope(envelope: &[u8]) -> Result<Option<Vec<u8>>> {
     let header_len = crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -163,11 +165,10 @@ pub(crate) fn withdrawn_keyframe_envelope(envelope: &[u8]) -> Result<Option<Vec<
     if header.entity_type != ENTITY_TYPE_SUMMARY {
         return Ok(None);
     }
-    let Some(keyframe) = WithdrawnKeyframe::of_stored(&envelope[header_len..]) else {
-        return Ok(None);
-    };
     let mut out = envelope[..header_len].to_vec();
-    out.extend(keyframe.encode()?);
+    if let Some(keyframe) = WithdrawnKeyframe::of_stored(&envelope[header_len..]) {
+        out.extend(keyframe.encode()?);
+    }
     Ok(Some(out))
 }
 

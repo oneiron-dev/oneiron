@@ -14,7 +14,9 @@
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
 //! (`qd:e:`) and the pending NOTE commands (`qn:e:`) of the env that holds
-//! it. The env's replica rows are dropped by the host with the env.
+//! it. The env's replica rows are dropped by the host with the env. The body
+//! files its purge leaves unnamed go with an orphan collection housekeeping
+//! runs once they are past the collector's grace (FIX 2413).
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +24,12 @@ use crate::Vault;
 use crate::error::{Error, Result};
 use crate::federation::{SharedActOutcome, SharedVaultChange, SignedSharedActOutcome};
 use crate::side_table::{self, Named, Raw, SideTable};
+
+mod collect;
+
+pub(crate) use collect::{
+    collect_left_env_bodies, collect_left_env_bodies_at_open, left_env_body_collect_due_at,
+};
 
 /// This device's leave records, keyed by the notice's receipt id.
 const LEAVE_RECEIPTS: SideTable<String, SharedLeaveReceipt, Named> =
@@ -267,6 +275,10 @@ fn confirm_leave(
         receipt.purged_rows = receipt.purged_rows.saturating_add(rows);
         receipt.kept_entities = count(pass.kept_total);
         LEAVE_RECEIPTS.put(&vault.store, wtxn, &notice.receipt_id, receipt)?;
+        if pass.complete {
+            // The final pass owes the env its orphan body collection.
+            collect::owe_left_env_body_collect_in_txn(vault, wtxn)?;
+        }
         Ok(pass.complete)
     };
     let (mut receipt, mut complete) = vault.with_write_txn_grouped(|wtxn| {
