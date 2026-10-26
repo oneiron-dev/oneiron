@@ -294,7 +294,7 @@ impl Memory<'_> {
                                 occurred_at: None,
                                 learned_at: None,
                                 salience: body.salience,
-                                // The fields, not the method: `body` is moved out of.
+                                // Field by field: `body` is partly moved out by now.
                                 confidence_details: Some(crate::claim::ConfidenceDetails {
                                     band: body.confidence_band,
                                     basis: body.confidence_basis,
