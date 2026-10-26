@@ -573,6 +573,8 @@ async fn put_probe(
                         query: request.query,
                         query_media: request.query_media,
                         family: request.family,
+                        written_from: None,
+                        source_refs: request.source_refs.into_iter().collect(),
                         targets,
                         author: request.author,
                         written_at: vault.now_recorded_at(),
