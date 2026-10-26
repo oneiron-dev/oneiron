@@ -93439,6 +93439,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "build.rs",
+     "purpose": "The engine build's own identity (FIX 6581), compiled in as `ONEIRON_ENGINE_BUILD`: the 40-hex commit the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SharedActionExecutor"
      ],
@@ -100699,7 +100707,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 12,
       "re-export": 23,
       "struct": 1
@@ -101166,7 +101174,7 @@
      "path": "src/commands/serve.rs",
      "purpose": "The unmanaged serve path: open the vault, build the server and its workers, serve until a stop signal, then…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 1
      }
     },
@@ -106615,7 +106623,7 @@
      "path": "src/owner/backup/custody/anchor_credentials.rs",
      "purpose": "The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -106913,7 +106921,7 @@
      "path": "src/owner/schedule.rs",
      "purpose": "Scheduled backups for a running `serve`",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -107209,7 +107217,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfficialCliSeatExecutor",
@@ -107228,6 +107236,16 @@
       "fn": 6,
       "re-export": 1,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime/seat_login/runner_work.rs",
+     "purpose": "The Dreamer executor's runner work (FIX 9238): each admitted attempt's step is bound to its runner seat…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -109292,9 +109310,9 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Runtime configuration, host services, and shared time helpers"
     },
@@ -109376,9 +109394,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 34,
+   "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1285,
+   "source_files": 1287,
    "test_files": 182
   },
   "oneiron-spawn": {
