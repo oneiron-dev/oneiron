@@ -1,11 +1,15 @@
 //! Room in the dispatcher's pending caps, as owned claims (FIX 6755).
 //!
 //! A caller holds a [`DispatchClaim`] for one call in its class from the
-//! moment the class has room until the call is queued. A blocking caller
-//! waits for room on the scheduler's condvar; the tagging coordinator awaits
-//! it on its class's own signal, its waiter registered before room is tested,
-//! holding no lock, no store transaction and no admission while it waits. A
-//! claim dropped unused gives its room back and wakes both kinds of waiter; a
+//! moment the class has room until the call is queued. A claim that has to
+//! wait enters its class's fair queue under its caller ([`super::fair`],
+//! FIX 9519) and takes room only at its turn: callers in turn, oldest first
+//! within each. A blocking caller waits on the scheduler's condvar; the
+//! tagging coordinator awaits its class's own signal, its waiter registered
+//! before its turn and room are tested, holding no lock, no store
+//! transaction and no admission while it waits, and a wait it drops leaves
+//! the queue at once. A claim dropped unused gives its room back and wakes
+//! both kinds of waiter; a
 //! submitted one gives it back exactly once, when its call is answered or
 //! stranded. The answer is a oneshot the coordinator awaits and a blocking
 //! caller polls on its own thread. Nothing here refuses or times out.
@@ -13,9 +17,10 @@
 use std::sync::{Arc, PoisonError};
 use std::time::Instant;
 
-use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionWork};
+use oneiron::memory::extraction::{EncoderAttempt, EncoderInput, ExtractionCaller, ExtractionWork};
 use tokio::sync::{Notify, oneshot};
 
+use super::super::local::InferenceWindows;
 use super::policy::{BULK_PENDING_CAP, LIVE_PENDING_CAP};
 use super::{DISPATCH_TOOL, Job, NO_WORKER, Shared, answer, failure};
 
@@ -45,48 +50,51 @@ impl DispatchClaim {
         }
     }
 
-    /// Queues the call under this claim; it never waits. Its window is
-    /// counted first, once, with no lock held (FIX 6755): a call whose
+    /// Queues the call under this claim; it never waits. Its windows are
+    /// counted first, once, with no lock held (FIX 6755, 9518): a call whose
     /// window cannot be built fails as its infer would. A call no worker
     /// that can run it is ready or coming for, or one a closed dispatcher
     /// would never run, is answered at once. The room is the call's from
     /// here: given back when it is answered or stranded, never by this claim.
     pub(crate) fn submit(self, input: EncoderInput) -> Completion {
-        let counted = self.shared.count(&input);
-        self.submit_counted(input, counted)
+        let planned = self.shared.plan(input);
+        self.submit_planned(planned)
     }
 
-    /// [`Self::submit`] with the window already `counted` by the caller, on
-    /// its own blocking unit: the tagging coordinator counts it there, so the
-    /// tokenizer encode never runs on its async task (FIX 7331).
-    pub(crate) fn submit_counted(
+    /// [`Self::submit`] with the windows already `planned` by the caller, on
+    /// its own blocking unit: the tagging coordinator plans them there, so
+    /// the tokenizer encode never runs on its async task (FIX 7331).
+    pub(crate) fn submit_planned(
         mut self,
-        input: EncoderInput,
-        counted: oneiron::Result<usize>,
+        planned: oneiron::Result<InferenceWindows>,
     ) -> Completion {
         self.holds_room = false;
         let (reply, completion) = oneshot::channel();
+        let windows = match planned {
+            Ok(windows) => windows,
+            Err(error) => {
+                *self.shared.lock().pending(self.work) -= 1;
+                self.shared.room_freed([self.work]);
+                let _ = reply.send(EncoderAttempt {
+                    execution: None,
+                    result: Err(error),
+                });
+                return Completion { answer: completion };
+            }
+        };
         let job = Job {
-            input,
+            window: windows.tokens(),
+            windows,
             work: self.work,
-            window: counted.as_ref().copied().unwrap_or(0),
             queued_at: Instant::now(),
             reply,
         };
-        let unqueued = match counted {
-            Ok(_) => {
-                let queued = self.shared.lock().queue(job);
-                queued
-                    .err()
-                    .map(|job| (job, failure(DISPATCH_TOOL, NO_WORKER)))
-            }
-            Err(error) => Some((job, error)),
-        };
+        let unqueued = self.shared.lock().queue(job).err();
         self.shared.work.notify_all();
-        if let Some((job, error)) = unqueued {
+        if let Some(job) = unqueued {
             *self.shared.lock().pending(job.work) -= 1;
             self.shared.room_freed([job.work]);
-            answer(job, error);
+            answer(job, failure(DISPATCH_TOOL, NO_WORKER));
         }
         Completion { answer: completion }
     }
@@ -129,49 +137,104 @@ fn closed() -> EncoderAttempt {
     }
 }
 
-/// Room for one call in `work`'s class, on the caller's thread. Past the
-/// class's pending cap it waits on the scheduler's condvar, the lock
-/// released, until room is given back. It never refuses.
-pub(super) fn claim_blocking(shared: &Arc<Shared>, work: ExtractionWork) -> DispatchClaim {
+/// Room for one call in `work`'s class for `caller`, on the caller's
+/// thread. It waits its turn in the class's fair queue and, past the class's
+/// pending cap, on the scheduler's condvar, the lock released, until room is
+/// given back. It never refuses.
+pub(super) fn claim_blocking(
+    shared: &Arc<Shared>,
+    work: ExtractionWork,
+    caller: &ExtractionCaller,
+) -> DispatchClaim {
     let cap = pending_cap(work);
     let mut scheduler = shared.lock();
-    while *scheduler.pending(work) >= cap {
+    let ticket = scheduler.fair.enqueue(work, caller);
+    while *scheduler.pending(work) >= cap || !scheduler.fair.is_next(work, ticket) {
         scheduler = shared
             .room
             .wait(scheduler)
             .unwrap_or_else(PoisonError::into_inner);
     }
+    scheduler.fair.granted(work, ticket);
     *scheduler.pending(work) += 1;
     drop(scheduler);
+    // The next claim's turn has come: it may find room too.
+    shared.turn_passed(work);
     DispatchClaim::holding(shared, work)
 }
 
-/// [`claim_blocking`] for an async caller. Past the cap it awaits its class's
-/// signal, registered before room is tested so room given back after the test
-/// still wakes it. The scheduler lock is taken only to test and count room,
-/// never across the await. Dropped before it resolves, it holds no room.
-pub(super) async fn claim(shared: Arc<Shared>, work: ExtractionWork) -> DispatchClaim {
+/// [`claim_blocking`] for an async caller. It awaits its class's signal,
+/// registered before its turn and room are tested, so a turn or room given
+/// after the test still wakes it. The scheduler lock is taken only to test
+/// and count, never across the await. Dropped before it resolves, it holds
+/// no room and leaves the queue.
+pub(super) async fn claim(
+    shared: Arc<Shared>,
+    work: ExtractionWork,
+    caller: ExtractionCaller,
+) -> DispatchClaim {
+    let mut waiting = Waiting::enter(shared, work, &caller);
     loop {
+        let shared = Arc::clone(&waiting.shared);
         let signal = shared.room_signal(work).notified();
         let mut signal = std::pin::pin!(signal);
         signal.as_mut().enable();
-        if let Some(claim) = try_claim(&shared, work) {
+        if let Some(claim) = waiting.try_claim() {
             return claim;
         }
         signal.await;
     }
 }
 
-/// Room for one call in `work`'s class, if the class is under its cap now.
-fn try_claim(shared: &Arc<Shared>, work: ExtractionWork) -> Option<DispatchClaim> {
-    {
-        let mut scheduler = shared.lock();
-        if *scheduler.pending(work) >= pending_cap(work) {
-            return None;
+/// An async claim's place in its class's fair queue, until it takes room or
+/// is dropped: a dropped wait leaves the queue and wakes the claims behind.
+struct Waiting {
+    shared: Arc<Shared>,
+    work: ExtractionWork,
+    ticket: u64,
+    granted: bool,
+}
+
+impl Waiting {
+    fn enter(shared: Arc<Shared>, work: ExtractionWork, caller: &ExtractionCaller) -> Self {
+        let ticket = shared.lock().fair.enqueue(work, caller);
+        Self {
+            shared,
+            work,
+            ticket,
+            granted: false,
         }
-        *scheduler.pending(work) += 1;
     }
-    Some(DispatchClaim::holding(shared, work))
+
+    /// Room for its call, if its turn has come and the class is under its
+    /// cap now.
+    fn try_claim(&mut self) -> Option<DispatchClaim> {
+        {
+            let mut scheduler = self.shared.lock();
+            if *scheduler.pending(self.work) >= pending_cap(self.work)
+                || !scheduler.fair.is_next(self.work, self.ticket)
+            {
+                return None;
+            }
+            scheduler.fair.granted(self.work, self.ticket);
+            *scheduler.pending(self.work) += 1;
+        }
+        self.granted = true;
+        self.shared.turn_passed(self.work);
+        Some(DispatchClaim::holding(&self.shared, self.work))
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        if self.granted {
+            return;
+        }
+        let withdrawn = self.shared.lock().fair.withdrawn(self.work, self.ticket);
+        if withdrawn {
+            self.shared.turn_passed(self.work);
+        }
+    }
 }
 
 impl Shared {
@@ -181,6 +244,12 @@ impl Shared {
             ExtractionWork::Live => &self.live_room,
             ExtractionWork::Bulk => &self.bulk_room,
         }
+    }
+
+    /// A claim in `work`'s class took its turn or left the queue: the claim
+    /// whose turn comes next may go.
+    fn turn_passed(&self, work: ExtractionWork) {
+        self.room_freed([work]);
     }
 
     /// Room was given back in each class of `freed`: wakes every blocking

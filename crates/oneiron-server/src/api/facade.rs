@@ -61,6 +61,7 @@ mod connector_call_doors;
 mod connector_pack_doors;
 mod connector_revision_doors;
 mod connector_slate_doors;
+mod connector_witness_read_doors;
 mod consent_doors;
 mod consolidation_doors;
 mod content_policy_doors;

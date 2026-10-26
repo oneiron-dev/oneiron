@@ -183,24 +183,8 @@ impl Vault {
     /// `Vault::get_secret_value_in_txn`. The value-less projection is
     /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let txn = self.store.env.read_txn()?;
-        if let Some(body) = crate::ports::safe_read_text(self, &txn, id)? {
-            return Ok(Some(body));
-        }
-        // The blob facade preserves a soft-erased shell as Some(empty). This
-        // is not live text: safe hydration still excludes it, and stale or
-        // archived rows stay absent. Never expose a tombstoned body awaiting scrub.
-        let Some(row) = self.store.port_entity_record(&txn, id)? else {
-            return Ok(None);
-        };
-        let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(self, &txn, id)?;
-        Ok(
-            (row.body.is_empty()
-                && visibility.deleted
-                && !visibility.archived
-                && !visibility.stale)
-                .then(Vec::new),
-        )
+        // One snapshot, read as `get_in_txn` reads a caller's (FIX 5870).
+        self.get_in_txn(&self.store.env.read_txn()?, id)
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {

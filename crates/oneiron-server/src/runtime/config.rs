@@ -52,6 +52,14 @@ pub struct RuntimeConfig {
     #[serde(skip)]
     #[schema(ignore)]
     pub seat_host: bool,
+    /// `[runtime] seat_host_aliases`: the operator's own labels for this
+    /// machine (FIX 9420). A seat whose `machine_ref` names one of them runs
+    /// on this host's seat host as one naming its machine id does: they only
+    /// add to that id, which always matches. Empty by default, so only the
+    /// machine id names this host, as before.
+    #[serde(skip)]
+    #[schema(ignore)]
+    pub seat_host_aliases: Vec<String>,
 }
 
 /// Whether a host runs the queued official CLI attempts itself when its
@@ -66,6 +74,7 @@ impl PartialEq for RuntimeConfig {
             && self.role_defaults == other.role_defaults
             && self.host_destinations == other.host_destinations
             && self.seat_host == other.seat_host
+            && self.seat_host_aliases == other.seat_host_aliases
     }
 }
 
@@ -80,6 +89,7 @@ impl fmt::Debug for RuntimeConfig {
             .field("role_defaults", &self.role_defaults)
             .field("host_destinations", &self.host_destinations)
             .field("seat_host", &self.seat_host)
+            .field("seat_host_aliases", &self.seat_host_aliases)
             .finish()
     }
 }
@@ -104,6 +114,7 @@ impl RuntimeConfig {
             role_default_explicit_fields: RuntimeRoleDefaultExplicitFields::default(),
             host_destinations: BTreeMap::new(),
             seat_host: SEAT_HOST_DEFAULT,
+            seat_host_aliases: Vec::new(),
         }
     }
 
@@ -113,6 +124,9 @@ impl RuntimeConfig {
         }
         if let Some(seat_host) = value.seat_host {
             self.seat_host = seat_host;
+        }
+        if let Some(aliases) = value.seat_host_aliases {
+            self.seat_host_aliases = aliases;
         }
         // The BYO key's source is one choice: a layer that names one replaces
         // both, before a BYO mode looks for one.

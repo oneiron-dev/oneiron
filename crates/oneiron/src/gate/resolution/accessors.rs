@@ -32,6 +32,8 @@ use crate::gate::policy_values::{
 };
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
+mod goal_limits;
+
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
     /// Fully resolved, trusted install policy. Missing or malformed policy
@@ -221,11 +223,6 @@ impl PolicyManifestResolution {
             return 1.0;
         }
         self.carry_forward_confidence.floor(kind, actor)
-    }
-
-    #[must_use]
-    pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
-        self.goal_limits.unwrap_or_default()
     }
 
     #[must_use]

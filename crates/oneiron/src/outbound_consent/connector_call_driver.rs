@@ -6,14 +6,12 @@ use serde_json::Value;
 
 use crate::Vault;
 use crate::connector_key::{
-    CONNECTOR_ISSUER_HOLD_REASON, ConnectorCallRoute, ConnectorKeyRecord, ConnectorKeyStatus,
-    ConnectorScopeEvidence, ScopeExceedCall, ScopedCapabilityProvenance, SlateDataClass,
-    SlateDisposition, canonical_scoped_server_segment,
+    CONNECTOR_ISSUER_HOLD_REASON, ConnectorCallRoute, ConnectorKeyRecord, ConnectorScopeEvidence,
+    ScopeExceedCall, SlateDataClass, SlateDisposition, canonical_scoped_server_segment,
 };
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::Memory;
-use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, OutboundToolDescriptor, abandon_record,
 };
@@ -21,7 +19,8 @@ use crate::outbound_intent_ledger::{
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallOutcome,
-    ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall, UntrustedToolResult, now_ms,
+    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall,
+    UntrustedToolResult, now_ms,
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
@@ -30,23 +29,19 @@ use super::scope::{
 };
 use super::tool_call::{ConnectorToolCallPreparation, ToolCallDescriptor};
 
+mod governance;
+use self::governance::GoverningTool;
+
 /// The reason a call that names a custody record gets on a host that cannot
 /// present one: it is refused unsent.
 const CONNECTOR_CALL_CREDENTIAL_UNSUPPORTED: &str = "connector_call_credential_unsupported";
-
-/// The tool beneath one grant, for a schema read: the governing key the
-/// grant mints and the tool's approved schema there.
-struct GoverningTool {
-    key_id: EntityId,
-    key: ConnectorKeyRecord,
-    schema: Value,
-}
 
 /// What one pass came to, before the pending row is settled.
 pub(super) enum Step {
     Delivered {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
+        result_absence: Option<ConnectorResultAbsence>,
     },
     Held {
         decision_ref: Option<String>,
@@ -152,9 +147,9 @@ impl Vault {
         let Some(server) = canonical_scoped_server_segment(&route.name) else {
             return Ok(unavailable(refused("connector_name_not_scoped")));
         };
-        let governed = match self.governing_tool(principal_ref, &server, tool, read)? {
+        let governed = match self.governing_tool(principal_ref, &server, tool, None, read)? {
             Ok(governed) => governed,
-            Err(stop) => return Ok(unavailable(stop)),
+            Err(stop) => return Ok(unavailable(stop.step)),
         };
         // A tool its setting removes (FIX 990), its holder's own narrow
         // included (FIX 987), is not callable: there is no schema to call by.
@@ -215,11 +210,26 @@ impl Vault {
         }
         let rows = pending.source_rows.clone();
         let step = self.connector_reply_cleared(host.clears_at_door(), &pending, step);
+        // A row that stops waiting on its owner (it settles, or meets its
+        // connector's questions) withdraws the owner questions it named in
+        // the same write, and their waiters wake once it committed (FIX 2551).
+        let put_row = |call_ref: &EntityId, row: &PendingConnectorCall| {
+            let mut row = row.clone();
+            let withdrawn = self.with_write_txn(|txn| {
+                let withdrawn = if row.settled.is_some() || row.input.is_some() {
+                    self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
+                } else {
+                    Vec::new()
+                };
+                put_pending_call_in_txn(&self.store, txn, call_ref, &row)?;
+                Ok(withdrawn)
+            })?;
+            self.signal_withdrawn_call_asks(&withdrawn);
+            Ok::<_, IntentLedgerError>(())
+        };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            self.with_write_txn(|txn| {
-                put_pending_call_in_txn(&self.store, txn, &call_ref, pending)
-            })?;
+            put_row(&call_ref, pending)?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
         let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
@@ -228,16 +238,22 @@ impl Vault {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                self.with_write_txn(|txn| {
-                    put_pending_call_in_txn(&self.store, txn, &call_ref, &row)
-                })?;
+                put_row(&call_ref, &row)?;
             }
             Ok::<_, IntentLedgerError>(())
         };
         let outcome = match step {
-            Step::Delivered { intent, result } => {
+            Step::Delivered {
+                intent,
+                result,
+                result_absence,
+            } => {
                 settle(call_ref, SettledConnectorCall::Delivered { intent })?;
-                ConnectorCallOutcome::Delivered { intent, result }
+                ConnectorCallOutcome::Delivered {
+                    intent,
+                    result,
+                    result_absence,
+                }
             }
             // The call reached the connector, which asked for input: the
             // call's row, kept for a first call too, holds the round for its
@@ -396,7 +412,7 @@ impl Vault {
             .as_deref()
             .and_then(|hex| EntityId::from_hex(hex).ok());
         let mut read = Vec::new();
-        let found = self.connector_call_grant(
+        let governed = self.governing_tool(
             &pending.principal_ref,
             &server,
             &pending.tool,
@@ -404,26 +420,22 @@ impl Vault {
             &mut read,
         )?;
         pending.list_rows(read);
-        let Some((grant_id, grant)) = found else {
-            return Ok(held("standing_grant_required"));
+        let GoverningTool {
+            grant_id,
+            grant,
+            key_id,
+            key,
+            schema,
+        } = match governed {
+            Ok(governed) => governed,
+            Err(stop) => {
+                if let Some(grant_id) = stop.grant_id {
+                    pending.grant_id = Some(grant_id.to_hex());
+                }
+                return Ok(stop.step);
+            }
         };
         pending.grant_id = Some(grant_id.to_hex());
-        // The gate binds the same actor from the same principal reference.
-        let actor = EntityId::from_hex(&pending.principal_ref).unwrap_or(grant_id);
-        let Some(capability) = ScopedCapabilityProvenance::mint(&server, &grant_id) else {
-            return Ok(refused("connector_name_not_scoped"));
-        };
-        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
-        else {
-            return Ok(held("connector_key_unregistered"));
-        };
-        pending.list_rows([key_id]);
-        match key.status {
-            ConnectorKeyStatus::Active => {}
-            ConnectorKeyStatus::Revoked => return Ok(refused("connector_key_revoked")),
-            ConnectorKeyStatus::Suspended => return Ok(held("connector_key_suspended")),
-            ConnectorKeyStatus::Pending => return Ok(held("connector_key_pending")),
-        }
         // FIX 988: a row that depends on a credential binding whose issuer
         // changed holds until the owner accepts its re-ask.
         let issuer_held = {
@@ -439,21 +451,6 @@ impl Vault {
         if issuer_held {
             return Ok(held(CONNECTOR_ISSUER_HOLD_REASON));
         }
-        let Some(manifest) = key.retained_manifest.as_ref() else {
-            return Ok(held("connector_manifest_unapproved"));
-        };
-        let Some(schema) = manifest
-            .tools()
-            .iter()
-            .find(|tool| tool.name == pending.tool)
-            .map(|tool| tool.input_schema.clone())
-        else {
-            return Ok(if key.pending_manifest.is_some() {
-                held("connector_manifest_drift")
-            } else {
-                refused("connector_tool_unknown")
-            });
-        };
         if key.tool_requires_confirmation(&pending.tool) {
             return Ok(held("connector_manifest_drift"));
         }
@@ -518,7 +515,8 @@ impl Vault {
             host.abandon_awaiting_input(&left.handle);
         }
         let sent = prepared.call().clone();
-        let dispatch = prepared.execute(
+        // An off-record caller's admitted request stays sealed in the ledger (FIX 9372).
+        let dispatch = prepared.keeping_no_record(pending.off_record).execute(
             self,
             &authority,
             grant_id,
@@ -545,109 +543,6 @@ impl Vault {
             );
         }
         Ok(step_from_host(&dispatch, host))
-    }
-
-    /// The principal's grant for `server` and `tool`, the governing key it
-    /// mints and the tool's approved schema there, for a schema read. It
-    /// follows `connector_call_step`'s resolution step for step (the same
-    /// grant lookup, capability, governing key, status and manifest checks);
-    /// a stop is the hold or refusal a call meets there. Each grant and
-    /// key it reads is listed in `read` (FIX 5816).
-    fn governing_tool(
-        &self,
-        principal_ref: &str,
-        server: &str,
-        tool: &str,
-        read: &mut Vec<EntityId>,
-    ) -> Result<std::result::Result<GoverningTool, Step>, IntentLedgerError> {
-        let Some((grant_id, _)) =
-            self.connector_call_grant(principal_ref, server, tool, None, read)?
-        else {
-            return Ok(Err(held("standing_grant_required")));
-        };
-        // The gate binds the same actor from the same principal reference.
-        let actor = EntityId::from_hex(principal_ref).unwrap_or(grant_id);
-        let Some(capability) = ScopedCapabilityProvenance::mint(server, &grant_id) else {
-            return Ok(Err(refused("connector_name_not_scoped")));
-        };
-        let Some((key_id, key)) = self.connector_key_for(capability.connector(), Some(&actor))?
-        else {
-            return Ok(Err(held("connector_key_unregistered")));
-        };
-        read.push(key_id);
-        match key.status {
-            ConnectorKeyStatus::Active => {}
-            ConnectorKeyStatus::Revoked => return Ok(Err(refused("connector_key_revoked"))),
-            ConnectorKeyStatus::Suspended => return Ok(Err(held("connector_key_suspended"))),
-            ConnectorKeyStatus::Pending => return Ok(Err(held("connector_key_pending"))),
-        }
-        let Some(manifest) = key.retained_manifest.as_ref() else {
-            return Ok(Err(held("connector_manifest_unapproved")));
-        };
-        let Some(schema) = manifest
-            .tools()
-            .iter()
-            .find(|found| found.name == tool)
-            .map(|found| found.input_schema.clone())
-        else {
-            return Ok(Err(if key.pending_manifest.is_some() {
-                held("connector_manifest_drift")
-            } else {
-                refused("connector_tool_unknown")
-            }));
-        };
-        Ok(Ok(GoverningTool {
-            key_id,
-            key,
-            schema,
-        }))
-    }
-
-    /// The principal's live scoped grant for exactly this server and tool:
-    /// the one the call last ran under when it still matches, else the first
-    /// in index order. Each grant it reads is listed in `read`.
-    fn connector_call_grant(
-        &self,
-        principal_ref: &str,
-        server: &str,
-        tool: &str,
-        preferred: Option<EntityId>,
-        read: &mut Vec<EntityId>,
-    ) -> crate::Result<Option<(EntityId, StandingOutboundGrant)>> {
-        let (ids, floor) = {
-            let txn = self.store.env.read_txn()?;
-            let floor =
-                crate::gate::resolve_policy_manifest(&self.store, &txn)?.read_frontier_hash()?;
-            let ids = crate::outbound_grant::standing_outbound_grant_ids_for_principal(
-                &self.store,
-                &txn,
-                principal_ref,
-            )?;
-            (ids, floor)
-        };
-        let mut first = None;
-        for id in ids {
-            let Some(grant) = self.get_standing_outbound_grant(&id)? else {
-                continue;
-            };
-            read.push(id);
-            if grant.principal_ref != principal_ref || !grant.is_active_under_policy(&floor) {
-                continue;
-            }
-            let Some(scope) = grant.scope.scoped_mcp_grant() else {
-                continue;
-            };
-            if scope.server != server || scope.tool != tool {
-                continue;
-            }
-            if preferred == Some(id) {
-                return Ok(Some((id, grant)));
-            }
-            if first.is_none() {
-                first = Some((id, grant));
-            }
-        }
-        Ok(first)
     }
 
     /// The tool's payload class, destructive flag and declared replay hints

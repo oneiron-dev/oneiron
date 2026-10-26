@@ -3,6 +3,7 @@ mod artifact_previews;
 mod board_publisher;
 mod browser_seats;
 mod connector_events;
+mod connector_replies;
 mod connector_sends;
 mod consult_settle;
 mod core;

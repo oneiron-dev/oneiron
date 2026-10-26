@@ -206,8 +206,8 @@ pub(super) struct ProbeShed;
 pub(super) struct Custody {
     held: Mutex<Option<Held>>,
     /// Its place in the pool's pressure check, which counts it by how it
-    /// holds the pool.
-    observed: Option<ObservedSocket>,
+    /// holds the pool, until it gives back what it holds.
+    observed: Mutex<Option<ObservedSocket>>,
     /// Signalled when it parks.
     parked: Notify,
     /// A probe whose first request is not judged yet: one the owner does not
@@ -253,17 +253,20 @@ impl Custody {
     ) -> Arc<Self> {
         Arc::new(Self {
             held: Mutex::new(Some(held)),
-            observed: pressure.map(|pressure| pressure.socket(hold)),
+            observed: Mutex::new(pressure.map(|pressure| pressure.socket(hold))),
             parked: Notify::new(),
             probe: AtomicBool::new(probe),
         })
     }
 
     /// Gives back what it holds of the pool: a probe's reserve, once its
-    /// first request was not the owner's.
+    /// first request was not the owner's. Its place in the pressure check
+    /// goes with it, so the socket shed after counts as nothing (FIX 9263).
     fn release(&self) {
         let held = lock(&self.held).take();
         drop(held);
+        let observed = lock(&self.observed).take();
+        drop(observed);
     }
 
     /// Whether it holds the owner's reserve, so its next request is judged.
@@ -274,7 +277,7 @@ impl Custody {
     /// A record in the pool's pressure check of a request body arriving on
     /// this connection, counted from now; none for a body already ended.
     pub(super) fn count_body(&self, ended: bool) -> Option<(ObservedBody, BodyCredential)> {
-        self.observed
+        lock(&self.observed)
             .as_ref()
             .filter(|_| !ended)
             .map(ObservedSocket::body)
@@ -327,7 +330,7 @@ impl Custody {
     }
 
     fn observe(&self, hold: SocketHold) {
-        if let Some(observed) = &self.observed {
+        if let Some(observed) = lock(&self.observed).as_ref() {
             observed.holds(hold);
         }
     }

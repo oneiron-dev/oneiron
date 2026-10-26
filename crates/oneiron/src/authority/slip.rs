@@ -6,6 +6,9 @@ use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+mod stored_read;
+pub(crate) use stored_read::StoredReadProof;
+
 const MAX_CAVEATS: usize = 64;
 const MINT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/mint\0";
 const CAVEAT_CONTEXT: &[u8] = b"oneiron/capability-slip/v0/caveat\0";

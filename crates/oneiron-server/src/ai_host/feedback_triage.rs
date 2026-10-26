@@ -118,8 +118,11 @@ pub(super) fn run_revision(
     let vault = server.vault();
     let mut input = match vault.feedback_triage_job(admitted)? {
         // A replayed job finds its result, and a job whose evidence the
-        // owner erased finds nothing to triage: neither calls nor files.
-        FeedbackTriageJob::Acknowledged(_) | FeedbackTriageJob::Erased => return Ok(()),
+        // owner erased, or that runs while no skill is bound, finds nothing
+        // to triage: none calls or files.
+        FeedbackTriageJob::Acknowledged(_)
+        | FeedbackTriageJob::Erased
+        | FeedbackTriageJob::Unbound => return Ok(()),
         FeedbackTriageJob::Pending(input) => input,
     };
     let attempt = &admitted.status.attempt;

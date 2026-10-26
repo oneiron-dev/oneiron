@@ -158,10 +158,16 @@ impl SyncServer {
         let runner: Arc<dyn oneiron::code_run::ReaderJobRunner> = reader_runner.clone();
         vault.set_reader_job_runner(runner);
         crate::models::outbound_wait::install(&vault);
-        // Provider media replies are booked on their own line (FIX 8615).
-        crate::models::install_media_reply_line(
-            config.limits.media_reply_bytes,
+        // Provider media replies are booked on their own line (FIX 8615),
+        // this vault's, as its mesh bytes are (FIX 9321, FIX 9323).
+        let model_budgets = crate::models::ModelHostBudgets::new(
+            &config.limits,
             Arc::clone(wire_telemetry.limit_questions()),
+        );
+        // The cloud registration client reads its pins once, here; no
+        // request is made until the owner asks.
+        let cloud_registration = crate::cloud_registration::CloudRegistration::new(
+            config.cloud_registration_pins.as_deref(),
         );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
@@ -270,6 +276,8 @@ impl SyncServer {
             reader_runner,
             live_runs,
             secret_destinations: Default::default(),
+            model_budgets,
+            cloud_registration,
             connector_elicitations: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),

@@ -310,7 +310,24 @@ impl Vault {
         after_source: Option<&EntityId>,
         limit: usize,
     ) -> Result<IdScanPage> {
+        let rtxn = self.store.env.read_txn()?;
+        self.sources_page_in_txn(&rtxn, tgt, kind, source_type, after_source, limit)
+    }
+
+    /// [`Self::sources_page`] in `rtxn`, a snapshot its caller holds (FIX
+    /// 5870): the same page, so a read that judges and serves its rows does
+    /// so in the snapshot that listed them.
+    pub fn sources_page_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        tgt: &EntityId,
+        kind: EdgeKind,
+        source_type: Option<u8>,
+        after_source: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<IdScanPage> {
         self.filtered_edge_peers_page(
+            rtxn,
             crate::ports::EdgeDirection::In,
             tgt,
             kind,
@@ -336,8 +353,13 @@ impl Vault {
         filtered_edge_peers_in(&self.store, rtxn, direction, prefix_id, kind, peer_type)
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the caller's snapshot and the page's edge run, peer type and resume point"
+    )]
     fn filtered_edge_peers_page(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         direction: EdgeDirection,
         prefix_id: &EntityId,
         kind: EdgeKind,
@@ -354,19 +376,18 @@ impl Vault {
 
         let limit = limit.min(MAX_EDGE_QUERY_RESULTS);
         let scan_rows = limit.max(EDGE_PAGE_SCAN_ROWS);
-        let rtxn = self.store.env.read_txn()?;
         let mut page = IdScanPage {
             ids: Vec::with_capacity(limit.min(1024)),
             resume_after: None,
         };
         for (read, entry) in self
             .store
-            .port_edges(&rtxn, prefix_id, direction, Some(kind), after_peer.copied())?
+            .port_edges(rtxn, prefix_id, direction, Some(kind), after_peer.copied())?
             .enumerate()
         {
             let peer = entry?.target;
             let kept = match peer_type {
-                Some(req_type) => self.entity_has_type(&rtxn, &peer, req_type)?,
+                Some(req_type) => self.entity_has_type(rtxn, &peer, req_type)?,
                 None => true,
             };
             if kept {

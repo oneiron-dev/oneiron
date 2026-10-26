@@ -220,6 +220,9 @@ impl Store {
         if original.decision_id != pending.decision_id || original.redacted_at.is_some() {
             return Err(Error::CorruptedIndex("pending gate consent"));
         }
+        // FIX 7499, 7500: the resolution answers the original decision and
+        // carries its read context and loop links.
+        let context = crate::store::GateDecisionContext::answering(&original);
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id: crate::store::GateDecisionId::from_bytes(self.clock.ulid()?),
@@ -236,6 +239,7 @@ impl Store {
             grant_ref,
             diff_handle: pending.diff_handle,
             read_frontier_hash: pending.read_frontier_hash,
+            context,
             // A resolution is a NEW decision, born unredacted: never propagate
             // `original.redacted_at`.
             redacted_at: None,

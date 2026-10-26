@@ -370,6 +370,18 @@ impl OffRecordSessionRegistry {
             .collect()
     }
 
+    /// Every published session's overlay, a live room's or a retained
+    /// sealed stretch's, read from the published snapshot with no registry,
+    /// entry or state lock and no vault transaction (FIX 10407: a mask
+    /// change drops the room-staged copies its blobs derive). RAM only.
+    pub(crate) fn live_overlay_handles(&self) -> Vec<Arc<SessionOverlay>> {
+        self.published
+            .load()
+            .values()
+            .map(|entry| entry.overlay.clone())
+            .collect()
+    }
+
     pub(crate) fn has_overlay_entities(&self) -> Result<bool> {
         let sessions = self.published.load();
         for entry in sessions.values() {

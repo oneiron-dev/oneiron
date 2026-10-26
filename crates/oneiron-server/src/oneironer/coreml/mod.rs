@@ -334,6 +334,7 @@ impl CoreMlWorker {
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
+            mood_parts: Vec::new(),
             stack_sha16: Some(self.stack.clone()),
         }
     }

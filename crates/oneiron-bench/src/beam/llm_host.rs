@@ -184,6 +184,8 @@ impl ModelSession {
                 output_per_million: price.output_per_million.to_string(),
                 cache_read_per_million: Some(price.cache_read_per_million.to_string()),
                 cache_write_per_million: Some(price.cache_write_per_million.to_string()),
+                // The run's price table is in US dollars (`cost_usd`).
+                currency: Some("USD".to_owned()),
             });
             registry.put_model_registry_row(&ModelRegistryRow {
                 version: 1,

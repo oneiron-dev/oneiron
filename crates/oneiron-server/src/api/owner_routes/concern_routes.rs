@@ -128,9 +128,18 @@ async fn take_move(
     let outcome = blocking(move || -> OwnerResult<ConcernMoveOutcome> {
         let vault = server.vault();
         if !matches!(request.r#move, ConcernMove::AskCoach) {
-            return vault
-                .apply_concern_move(&owner, locality, &request)
-                .map_err(move_error);
+            return match vault.apply_concern_move(&owner, locality, &request) {
+                // Only a card that is gone is not found, as on every other
+                // concern route (FIX 8537); a target the move could not
+                // reach keeps its own words.
+                Err(error)
+                    if error.code == oneiron::memory::MEMORY_CODE_NOT_FOUND
+                        && vault.agent_health_card(&request.card)?.is_none() =>
+                {
+                    Err(OwnerError::NotFound("concern_card", request.card.clone()))
+                }
+                moved => moved.map_err(move_error),
+            };
         }
         let Some(card) = vault.agent_health_card(&request.card)? else {
             return Err(OwnerError::NotFound("concern_card", request.card));

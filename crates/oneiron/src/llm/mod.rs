@@ -107,7 +107,9 @@ pub use oneiron_model::llm::{
     WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
-pub use oneiron_model::llm::{InferenceCallObservation, InferenceObservationId};
+pub use oneiron_model::llm::{
+    InferenceCallObservation, InferenceObservationId, InferencePublisher,
+};
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 // DESIGN-V2 R2: the typed segment manifest and the worker session contracts.

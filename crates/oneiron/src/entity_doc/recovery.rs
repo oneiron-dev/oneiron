@@ -25,6 +25,10 @@ use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
 
+mod canonical_order;
+
+use canonical_order::{canonical_order, hasse, names};
+
 fn invalid(reason: &'static str) -> crate::Error {
     ArtifactError::InvalidRecoveryArtifact(reason).into()
 }
@@ -238,7 +242,8 @@ fn history(
         metadata.push(version.metadata_bytes()?);
     }
     let parents = hasse(&versions.vvs);
-    let order = canonical_order(&parents, &texts, &metadata)?;
+    let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
+    let order = canonical_order(&parents, &texts, &metadata, &names)?;
     if order[head] != texts.len() - 1 {
         return Err(Error::InvariantViolation(
             "live head is not the last version",
@@ -359,83 +364,6 @@ fn history(
         forks,
         purges,
     }))
-}
-
-/// Each version's direct predecessors among the captured versions: the
-/// maximal ones its version vector includes. A strictly later version holds
-/// strictly more operations, so walking down by size meets every cover first.
-fn hasse(vvs: &[VersionVector]) -> Vec<Vec<usize>> {
-    let size = |vv: &VersionVector| vv.values().map(|&end| i64::from(end)).sum::<i64>();
-    let mut by_size: Vec<usize> = (0..vvs.len()).collect();
-    by_size.sort_by_key(|&node| size(&vvs[node]));
-    let mut below = vec![vec![false; vvs.len()]; vvs.len()];
-    let mut parents = vec![Vec::new(); vvs.len()];
-    for (rank, &node) in by_size.iter().enumerate() {
-        let mut covered = vec![false; vvs.len()];
-        for &earlier in by_size[..rank].iter().rev() {
-            if covered[earlier] || !vvs[node].includes_vv(&vvs[earlier]) {
-                continue;
-            }
-            parents[node].push(earlier);
-            covered[earlier] = true;
-            for (other, &held) in below[earlier].iter().enumerate() {
-                covered[other] |= held;
-            }
-        }
-        let mut reach = vec![false; vvs.len()];
-        for &parent in &parents[node] {
-            reach[parent] = true;
-            for (other, &held) in below[parent].iter().enumerate() {
-                reach[other] |= held;
-            }
-        }
-        below[node] = reach;
-    }
-    parents
-}
-
-/// The canonical index of every version: a topological order that takes,
-/// among the ready versions, the least by (parent indices, text). The same
-/// causal shape and texts give the same order on every capture, including
-/// the recapture of a replayed document.
-fn canonical_order(
-    parents: &[Vec<usize>],
-    texts: &[String],
-    metadata: &[BTreeMap<String, Vec<u8>>],
-) -> Result<Vec<usize>> {
-    let mut order = vec![usize::MAX; parents.len()];
-    for index in 0..parents.len() {
-        let mut best: Option<(Vec<usize>, usize)> = None;
-        let mut tied = false;
-        for node in 0..parents.len() {
-            if order[node] != usize::MAX || parents[node].iter().any(|&p| order[p] == usize::MAX) {
-                continue;
-            }
-            let mut key: Vec<usize> = parents[node].iter().map(|&p| order[p]).collect();
-            key.sort_unstable();
-            let ordering = best.as_ref().map(|(known, other)| {
-                (&key, &texts[node], &metadata[node]).cmp(&(
-                    known,
-                    &texts[*other],
-                    &metadata[*other],
-                ))
-            });
-            match ordering {
-                None | Some(std::cmp::Ordering::Less) => {
-                    best = Some((key, node));
-                    tied = false;
-                }
-                Some(std::cmp::Ordering::Equal) => tied = true,
-                Some(std::cmp::Ordering::Greater) => {}
-            }
-        }
-        if tied {
-            return Err(invalid("entity document versions are indistinguishable"));
-        }
-        let (_, node) = best.ok_or(Error::InvariantViolation("cyclic document versions"))?;
-        order[node] = index;
-    }
-    Ok(order)
 }
 
 pub(crate) fn restore(

@@ -2,7 +2,8 @@
 //! entry point under every native binding.
 //!
 //! [`EmbeddedEngine::start`] opens the vault the way `oneiron serve` does,
-//! through [`open_served_vault`] and the app's keychain, then serves it over
+//! as [`open_served_vault`] does with the app's keychain, its custody anchor
+//! credential included (FIX 6516), then serves it over
 //! a fresh [`EmbeddedHost`] and returns once the app's `ready` has run. A
 //! binding shares the open vault ([`EmbeddedEngine::vault`]) with SDK
 //! handles through `OneironClient::attach`, again for each new handle, and
@@ -47,7 +48,7 @@ use axum::body::{Body, BodyDataStream, Bytes};
 use futures_util::StreamExt as _;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
-use oneiron_vault_contract::host::HostLimits;
+use oneiron_vault_contract::host::{Host as _, HostLimits};
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf};
 use tokio::runtime::Handle;
@@ -55,8 +56,9 @@ use tokio::sync::{Mutex, Notify, mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
 use super::failure::{EngineErrorKind, cause, failure};
-use crate::commands::{OpenedServedVault, open_served_vault};
+use crate::commands::{OpenedServedVault, open_served_vault_anchored};
 use crate::config::{ServeArgs, ServeConfig};
+use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
 
 /// Connections an app may queue before the engine takes them.
@@ -163,6 +165,31 @@ impl<A: AppHost> AppHost for Readied<A> {
             let _ = ready.send(());
         }
         Ok(())
+    }
+}
+
+/// The custody anchor door's owner credential the app keeps in its
+/// keychain (FIX 6516), read only when `config`'s `[backup]` names a door:
+/// the pipe's one object, under [`CustodyAnchorCredentials::KEYCHAIN_NAME`].
+/// A keychain that keeps none leaves the door uncalled, as before; one that
+/// does not decode is logged, never a byte of it, and the door is not called
+/// either.
+fn keychain_anchor<A: AppHost>(
+    host: &mut EmbeddedHost<Readied<A>, DuplexStream>,
+    config: &ServeConfig,
+) -> Option<Arc<CustodyAnchorCredentials>> {
+    config.backup.custody_anchor_url.as_ref()?;
+    let held = host.secret(CustodyAnchorCredentials::KEYCHAIN_NAME).ok()?;
+    match CustodyAnchorCredentials::from_keychain(&held) {
+        Ok(credentials) => Some(Arc::new(credentials)),
+        Err(reason) => {
+            tracing::warn!(
+                %reason,
+                "the custody anchor credentials in the app's keychain were refused; the anchor \
+                 door is not called"
+            );
+            None
+        }
     }
 }
 
@@ -286,6 +313,9 @@ pub struct EmbeddedEngine<A> {
     /// The rehearsal config the opener resolved, which a restart's owner
     /// host takes, so nothing is resolved or opened twice.
     rehearsal: oneiron::VaultConfig,
+    /// The custody anchor credential read at start, which a restart's owner
+    /// host takes too.
+    anchor: Option<Arc<CustodyAnchorCredentials>>,
     state: Mutex<State<A>>,
 }
 
@@ -311,8 +341,10 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             return Err(failure(EngineErrorKind::RelayRefused, super::RELAY_REFUSAL));
         }
         let (mut host, readied) = embedded_host(app.clone(), limits);
-        let OpenedServedVault { vault, owner_host } = open_served_vault(&mut host, &config)
-            .context(cause(
+        // Read once, at start, as the pipe is.
+        let anchor = keychain_anchor(&mut host, &config);
+        let OpenedServedVault { vault, owner_host } =
+            open_served_vault_anchored(&mut host, &config, anchor.clone()).context(cause(
                 EngineErrorKind::VaultOpen,
                 "the embedded engine's vault did not open",
             ))?;
@@ -332,6 +364,7 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             serve_workers,
             vault,
             rehearsal,
+            anchor,
             state: Mutex::new(State {
                 app,
                 serving: Some(serving),
@@ -443,7 +476,8 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             tracing::warn!(%error, "the embedded engine had stopped serving on its own");
         }
         let (host, readied) = embedded_host(state.app.clone(), self.limits);
-        let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone());
+        let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone())
+            .anchored_at(&self.config.backup, self.anchor.clone());
         let serving = serve_on(
             host,
             readied,
