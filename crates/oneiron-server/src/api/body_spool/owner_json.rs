@@ -18,7 +18,7 @@ use axum::http::header;
 use futures_util::{StreamExt, stream};
 use serde::de::{DeserializeOwned, IgnoredAny};
 
-use super::{SpoolPolicy, Unspooled, declared_length, invalid_json, spool_then};
+use super::{BodySpool, SpoolPolicy, Unspooled, declared_length, invalid_json, spool_then};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -91,6 +91,11 @@ async fn hold(body: Body) -> Result<Held, ApiError> {
     Ok(Held::Whole(held))
 }
 
+/// A spooled body as JSON `T`, on the spool's worker.
+fn decode_spool<T: DeserializeOwned>(mut spool: BodySpool) -> Option<T> {
+    spool.json()
+}
+
 impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
     /// The body as `T`. Call it after the route's door: a body past the
     /// in-memory read is spooled whole before it is decoded.
@@ -123,7 +128,7 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
             self.declared,
             body,
             SpoolPolicy::default(),
-            |mut spool| spool.json::<T>(),
+            decode_spool::<T>,
         )
         .await
         .map_err(Unspooled::refusal)?
