@@ -36,7 +36,6 @@ use self::codec::{
     decode_graph, decode_place, digest_of, digest_value, entity, field, fields, git_oid,
     occurrence_value, oid, optional_binding, packed, place_value, record_fields, text,
 };
-pub(crate) use self::lookup::RepoProjectionLinks;
 use super::recipient::RepoProjectionRevealBinding;
 
 use crate::Vault;
