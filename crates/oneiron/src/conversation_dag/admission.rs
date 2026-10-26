@@ -754,6 +754,14 @@ pub(crate) fn pin_typed_record(
     if kind == ENTITY_TYPE_TURN && record_kind(body)?.is_some() {
         pin_record(store, txn, id)?;
     }
+    // FIX 8942: a body-anchored quote that arrives after its MESSAGE's
+    // document was born here gets the pin that birth gives. Base rows only.
+    if kind == ENTITY_TYPE_TURN && !store.is_union() {
+        let quotes = super::quote::turn_body_quotes(*id, body);
+        if !quotes.is_empty() {
+            super::quote::pin_arrived_body_quotes_in_txn(store, txn, quotes);
+        }
+    }
     // An erased audience edit's pin follows the bytes its erase wrote, the
     // one change `guard_record_put` lets a pinned TURN take (FIX 5639).
     if kind == ENTITY_TYPE_TURN

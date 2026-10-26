@@ -133,6 +133,7 @@ pub(crate) fn birth_summary_in_txn(
         field,
         generation: 0,
         pending: 0,
+        birth_frontier: None,
     };
     storage::persist(vault, txn, &entity, &mut head, &doc, None)
 }

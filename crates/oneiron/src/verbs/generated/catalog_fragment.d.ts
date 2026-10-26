@@ -6686,11 +6686,11 @@ declare const vault: Sdk.VaultHost & {
     /** Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove. */
     speak(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
     thread_audience: {
-      /** Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told. */
+      /** Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record. */
       add(input: Sdk.ThreadAudienceAddRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
       /** Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it. */
       open_full_history(input: Sdk.ThreadAudienceOpenFullHistoryRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
-      /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. */
+      /** Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record. */
       remove(input: Sdk.ThreadAudienceRemoveRequest): Promise<Sdk.ThreadAudienceReceipt | StoredResult>;
     };
     /** Deletes a private thread's root and its own messages on the room's delete rail; legal holds keep what they name. The vault's Owner, or an Admin while rooms.private_threads.admin_delete is on, may call it, seated or not. */

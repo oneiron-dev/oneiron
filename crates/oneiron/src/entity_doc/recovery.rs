@@ -413,6 +413,7 @@ pub(crate) fn restore(
         field: field_of(row),
         generation: 0,
         pending: 0,
+        birth_frontier: None,
     };
     let slot = DocumentSlot::from_hex(&head.document)?;
     match &row.history {
