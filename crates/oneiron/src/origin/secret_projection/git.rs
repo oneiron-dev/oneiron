@@ -33,13 +33,20 @@ use heed::RoTxn;
 
 use super::super::lfs::lfs_repo_id;
 use super::super::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
-use super::claims::{RepoProjectionClaim, RepoProjectionRecord};
+use super::claims::{RepoProjectionAudience, RepoProjectionClaim, RepoProjectionRecord};
 use super::graph_objects::{RepoProjectionCopy, copy_repo_projection_objects};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{
     GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireRepo,
+};
+
+mod recipient;
+
+pub(crate) use self::recipient::{
+    RepoGitReleasePlan, RepoGitReleasedFile, materialize_recipient_git_graph,
+    plan_repo_git_release, recipient_repo_anchor,
 };
 
 /// One canonical export OID proved to return to the source it came from.
@@ -229,12 +236,31 @@ fn projection_inputs(
             .collect(),
         private_root: roots.private_root.clone(),
         marks: facts.ids()?,
+        audience: RepoProjectionAudience::Masked,
     })?;
     Ok(Some(ProjectionInputs {
         graph,
         store_id,
         facts,
     }))
+}
+
+/// FIX 10274: no copy of a canonical store the owner erased is made or
+/// served; its masked reader is answered with the erase, never with the
+/// canonical bytes.
+///
+/// # Errors
+/// The erased store's refusal, or a store failure.
+fn require_store_not_erased(vault: &Vault, store_id: EntityId) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    if vault.local_hard_delete_marker_exists_in_txn(&txn, &store_id)? {
+        return Err(crate::error::Error::Code(
+            crate::error::CodeError::GitHttpServeFailed {
+                reason: "this repository's store was erased; it has no masked copy".to_owned(),
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn graph_dir(vault: &Vault, store_id: EntityId, graph: EntityId) -> Result<PathBuf> {
@@ -261,6 +287,7 @@ pub(crate) fn materialize_masked_git_graph(
     let Some(inputs) = projection_inputs(vault, canonical, roots)? else {
         return Ok(None);
     };
+    require_store_not_erased(vault, inputs.store_id)?;
     if let Some(standing) = standing_projection(vault, wire, &inputs.graph, inputs.store_id, roots)?
     {
         return Ok(Some(standing));
@@ -279,6 +306,7 @@ pub(crate) fn materialize_masked_git_graph(
         &roots.tips(),
         &inputs.facts,
         inputs.store_id,
+        None,
         now,
     )?;
     if !copy.changed_any() {
@@ -309,9 +337,10 @@ pub(crate) fn load_repo_git_projection(
 }
 
 /// Whether `projection` still stands in `txn`: its graph claim is there,
-/// approved and unchanged, and the readable marks are exactly the ones it
-/// was made under. A copy is admitted again here before any byte of it is
-/// released.
+/// approved and unchanged, its canonical store was not erased (FIX 10274:
+/// the owner's erase, carried out, whatever its marks still say), and the
+/// readable marks are exactly the ones it was made under. A copy is
+/// admitted again here before any byte of it is released.
 ///
 /// # Errors
 /// A store failure, or a record that does not decode.
@@ -324,10 +353,13 @@ pub(crate) fn admit_repo_git_projection_in_txn(
     else {
         return Ok(false);
     };
-    let RepoProjectionRecord::Graph { marks, .. } = &stored.record else {
+    let RepoProjectionRecord::Graph {
+        marks, store_id, ..
+    } = &stored.record
+    else {
         return Ok(false);
     };
-    if stored != projection.graph {
+    if stored != projection.graph || vault.local_hard_delete_marker_exists_in_txn(txn, store_id)? {
         return Ok(false);
     }
     let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
@@ -534,6 +566,7 @@ fn record_projection(
                     kind: object.kind,
                     signature_not_preserved: object.signature_not_preserved,
                     marks: object.marks.clone(),
+                    occurrence: object.occurrence.clone(),
                 },
             )
             .put_in_txn(vault, wtxn, at)?;
@@ -564,6 +597,7 @@ fn record_projection(
                 id,
                 RepoProjectionRecord::Link {
                     parent: link.parent.clone(),
+                    parent_occurrence: link.parent_occurrence.clone(),
                     place: link.place.clone(),
                     child_original: link.child_original.clone(),
                     child_copy: link.child_copy.clone(),
