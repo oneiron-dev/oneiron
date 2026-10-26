@@ -1,0 +1,11 @@
+{
+  "reply_snooze_policy": {
+    "min_secs": 5184000,
+    "default_secs": 5184000,
+    "max_secs": 7776000,
+    "wake_on_new_trigger": true,
+    "restart_touch_index": 0
+  },
+  "audit_window_days": 14,
+  "desk_period": "P1M"
+}

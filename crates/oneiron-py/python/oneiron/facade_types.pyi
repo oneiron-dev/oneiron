@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4149 declarations.
+Census: 1159 facade rows, 4153 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -3724,6 +3724,39 @@ class ConditionalExemptionEvidence(TypedDict):
     evidence: ComplianceExemptionEvidence
 ComplianceRuleKind = Literal["consent_class", "sender_id", "physical_address", "optout_mechanism", "optout_deadline", "content_marking", "records", "source_hygiene"]
 B2bExemption = Literal["yes", "no", "conditional"]
+class ConsentFactExplicitOptIn(TypedDict):
+    fact: Literal["explicit_opt_in"]
+class ConsentFactLegalFormIn(TypedDict):
+    fact: Literal["legal_form_in"]
+    tokens: list[str]
+class ConsentFactLegalFormNotIn(TypedDict):
+    fact: Literal["legal_form_not_in"]
+    tokens: list[str]
+class ConsentFactLegalFormRecorded(TypedDict):
+    fact: Literal["legal_form_recorded"]
+class ConsentFactObtainedInSale(TypedDict):
+    fact: Literal["obtained_in_sale"]
+class ConsentFactObtainedInSaleOrNegotiation(TypedDict):
+    fact: Literal["obtained_in_sale_or_negotiation"]
+class ConsentFactSimilarOffering(TypedDict):
+    fact: Literal["similar_offering"]
+class ConsentFactNoObjection(TypedDict):
+    fact: Literal["no_objection"]
+class ConsentFactOptOutOfferedAtCollection(TypedDict):
+    fact: Literal["opt_out_offered_at_collection"]
+class ConsentFactOptOutInMessage(TypedDict):
+    fact: Literal["opt_out_in_message"]
+class ConsentFactCharitablePurpose(TypedDict):
+    fact: Literal["charitable_purpose"]
+class ConsentFactExpressedSupport(TypedDict):
+    fact: Literal["expressed_support"]
+class ConsentFactPublicationContext(TypedDict):
+    fact: Literal["publication_context"]
+ConsentFact = ConsentFactExplicitOptIn | ConsentFactLegalFormIn | ConsentFactLegalFormNotIn | ConsentFactLegalFormRecorded | ConsentFactObtainedInSale | ConsentFactObtainedInSaleOrNegotiation | ConsentFactSimilarOffering | ConsentFactNoObjection | ConsentFactOptOutOfferedAtCollection | ConsentFactOptOutInMessage | ConsentFactCharitablePurpose | ConsentFactExpressedSupport | ConsentFactPublicationContext
+class ConsentBranch(TypedDict):
+    all_of: list[ConsentFact]
+class ConsentRequirement(TypedDict):
+    any_of: list[ConsentBranch]
 class ComplianceSource(TypedDict):
     citation: str
     url: str
@@ -3733,6 +3766,7 @@ class ComplianceRuleRow(TypedDict):
     rule_kind: ComplianceRuleKind
     requirement: str
     b2b_exemption: B2bExemption
+    consent: NotRequired[ConsentRequirement | None]
     source: ComplianceSource
     verified_at: int
     version: int
@@ -4043,6 +4077,15 @@ class SavedQueryMembersRequest(TypedDict):
     cursor: NotRequired[str | None]
     limit: NotRequired[int]
     at_epoch: NotRequired[int | None]
+class MembershipRowSourceSavedQuery(TypedDict):
+    kind: Literal["saved_query"]
+    query_ref: EntityId
+    membership_claim_ref: EntityId
+    epoch: int
+class MembershipRowSourceManualClaim(TypedDict):
+    kind: Literal["manual_claim"]
+    membership_claim_ref: EntityId
+MembershipRowSource = MembershipRowSourceSavedQuery | MembershipRowSourceManualClaim
 class SavedQueryMembershipRowView(TypedDict):
     entity_ref: EntityId
     state: str
@@ -4051,6 +4094,7 @@ class SavedQueryMembershipRowView(TypedDict):
     exited_valid: NotRequired[int | None]
     exited_detected: NotRequired[int | None]
     cause: NotRequired[str | None]
+    source: MembershipRowSource
 class SavedQueryMembershipPageView(TypedDict):
     rows: list[SavedQueryMembershipRowView]
     next_cursor: NotRequired[str | None]

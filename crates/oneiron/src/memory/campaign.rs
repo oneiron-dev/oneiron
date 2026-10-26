@@ -102,8 +102,9 @@ impl Memory<'_> {
                 next_cursor: None,
             });
         }
+        let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         Ok(crate::campaign::surface::read_campaign_members(
-            self.vault, request,
+            &read, request,
         )?)
     }
 
@@ -184,9 +185,9 @@ impl Memory<'_> {
                 next_cursor: None,
             });
         }
-        let read = self.read_key()?;
-        Ok(crate::campaign::surface::read_saved_query_members_scoped(
-            self.vault, request, &read,
+        let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        Ok(crate::campaign::surface::read_saved_query_members(
+            &read, request,
         )?)
     }
 

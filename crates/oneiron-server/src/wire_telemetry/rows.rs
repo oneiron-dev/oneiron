@@ -214,6 +214,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::AuthorityRecordItems),
         Self::Engine(EngineLimit::ConnectorLiveQuestions),
         Self::Engine(EngineLimit::ConnectorReplyContextBytes),
+        Self::Engine(EngineLimit::CampaignJudgmentRows),
         Self::Engine(EngineLimit::ConnectorBudgetRows),
         Self::Engine(EngineLimit::ConnectorSuggestedBudgetRows),
         Self::Engine(EngineLimit::ConnectorCharterCaps),

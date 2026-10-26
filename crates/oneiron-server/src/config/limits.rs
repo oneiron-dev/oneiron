@@ -374,6 +374,7 @@ impl LimitsConfig {
             authority_record_items,
             connector_live_questions,
             connector_reply_context_bytes,
+            campaign_judgment_rows,
             connector_budget_rows,
             connector_suggested_budget_rows,
             connector_charter_caps,
@@ -597,6 +598,7 @@ impl LimitsConfig {
                 EngineLimit::ConnectorReplyContextBytes,
                 connector_reply_context_bytes,
             ),
+            (EngineLimit::CampaignJudgmentRows, campaign_judgment_rows),
             (EngineLimit::ConnectorBudgetRows, connector_budget_rows),
             (
                 EngineLimit::ConnectorSuggestedBudgetRows,
@@ -841,6 +843,7 @@ pub(super) struct LimitsConfigOverride {
     pub(super) authority_record_items: Option<u64>,
     pub(super) connector_live_questions: Option<u64>,
     pub(super) connector_reply_context_bytes: Option<u64>,
+    pub(super) campaign_judgment_rows: Option<u64>,
     pub(super) connector_budget_rows: Option<u64>,
     pub(super) connector_suggested_budget_rows: Option<u64>,
     pub(super) connector_charter_caps: Option<u64>,
