@@ -8,9 +8,10 @@
 //! The grant sits at an id derived from the agent and the conversation, so
 //! it is issued once. A later witness finds it, live or revoked, and never
 //! issues it again: a grant the owner revoked stays revoked until the owner
-//! grants again through the normal grant door. The consent registry lists
-//! every witness-read grant beside the owner's other grants, with its own
-//! one-tap revoke, and its receipts name the reason it was issued.
+//! grants it again (`vault.connectors.read_grants.grant`, FIX 10962), which
+//! issues it anew at the same id. The consent registry lists every
+//! witness-read grant beside the owner's other grants, with its own one-tap
+//! revoke, and its receipts name the reason it was issued.
 
 use crate::Vault;
 use crate::access_grant::{
@@ -24,7 +25,10 @@ use crate::consent::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::ports::EntityStoreRead;
-use crate::registry::ENTITY_TYPE_ACCESS_GRANT;
+use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION};
+use crate::vault::LiveEntityRow;
+
+use super::connector_conversation::is_connector_conversation_body;
 
 /// The owner's standing policy for connector conversations (CALLS `FIX
 /// 10895 WITNESS-READ`): `true` issues an agent that witnesses a connector
@@ -63,18 +67,7 @@ impl Vault {
         if self.get_access_grant(&id)?.is_some() {
             return Ok(());
         }
-        let grant = AccessGrant {
-            authority_scope: crate::federation::scope_codec::read_preset(),
-            principal_ref: agent,
-            scope: AccessGrantScope::ConversationMessages {
-                conversation_ref: conversation,
-            },
-            capability: AccessGrantCapability::MessagesRead,
-            status: AccessGrantStatus::Active,
-            created_at: now,
-            revoked_at: None,
-            expires_at: None,
-        };
+        let grant = witness_read_grant(agent, conversation, now);
         match self.create_access_grant(&id, &grant) {
             // A concurrent witness issued it first.
             Err(Error::Record(RecordError::AccessGrantAlreadyExists)) => Ok(()),
@@ -82,11 +75,13 @@ impl Vault {
         }
     }
 
-    /// Revokes the witness-read grant at `grant_ref` on `owner`'s word,
-    /// through the AccessGrant revoke door. It stays revoked: its revoked
-    /// row is what keeps a later witness from issuing it again, and only
-    /// the owner's own grant lets the agent read the conversation once
-    /// more. A grant already revoked is answered as it stands, unchanged.
+    /// Revokes the witness-read grant at `grant_ref` on `owner`'s word. It
+    /// stays revoked: its revoked row is what keeps a later witness from
+    /// issuing it again, and only the owner's own grant
+    /// ([`Vault::grant_connector_witness_read_grant`]) lets the agent read
+    /// the conversation once more. A grant already revoked is answered as
+    /// it stands, unchanged. The owner's proof and the grant are read in
+    /// the revoke's own write transaction (FIX 10964).
     ///
     /// # Errors
     /// `owner` no longer proves the vault's owner; `EntityNotFound` when
@@ -96,27 +91,98 @@ impl Vault {
         owner: &AuthenticatedOwner,
         grant_ref: &EntityId,
         revoked_at: u64,
-    ) -> Result<WitnessReadGrantRevoke> {
-        self.recheck_owner(owner)?;
-        let (grant, conversation) = self
-            .get_access_grant(grant_ref)?
-            .and_then(|grant| {
-                witness_read_conversation(grant_ref, &grant)
-                    .map(|conversation| (grant, conversation))
-            })
-            .ok_or(Error::EntityNotFound)?;
-        if grant.status == AccessGrantStatus::Revoked {
-            return Ok(WitnessReadGrantRevoke {
-                grant,
-                conversation,
-                changed: false,
-            });
-        }
-        Ok(WitnessReadGrantRevoke {
-            grant: self.revoke_access_grant(grant_ref, revoked_at)?,
+    ) -> Result<WitnessReadGrantChange> {
+        let (grant, changed) =
+            self.put_admitted_access_grant(grant_ref, revoked_at, |txn, standing| {
+                owner.revalidate_in_txn(self, txn)?;
+                let grant = standing
+                    .filter(|grant| witness_read_conversation(grant_ref, grant).is_some())
+                    .ok_or(Error::EntityNotFound)?;
+                if grant.status == AccessGrantStatus::Revoked {
+                    return Ok((grant, false));
+                }
+                Ok((grant.revoked(revoked_at)?, true))
+            })?;
+        let conversation =
+            witness_read_conversation(grant_ref, &grant).ok_or(Error::EntityNotFound)?;
+        Ok(WitnessReadGrantChange {
+            grant_ref: *grant_ref,
+            grant,
             conversation,
-            changed: true,
+            changed,
         })
+    }
+
+    /// Grants `agent` its witness-read grant over `conversation` on
+    /// `owner`'s word, at the grant's own id (FIX 10962): the owner's grant
+    /// once more after a revoke. A revoked grant there is issued anew,
+    /// active from `granted_at`, as a missing one is; an active one is
+    /// answered as it stands, unchanged. The owner's proof, the agent, the
+    /// conversation and the grant are read in the write's own transaction.
+    ///
+    /// # Errors
+    /// `owner` no longer proves the vault's owner; `EntityNotFound` when
+    /// `agent` names no live agent, `conversation` names no live connector
+    /// conversation, or the row at the grant's id is no witness-read grant;
+    /// or the vault write fails.
+    pub(crate) fn grant_connector_witness_read_grant(
+        &self,
+        owner: &AuthenticatedOwner,
+        agent: EntityId,
+        conversation: EntityId,
+        granted_at: u64,
+    ) -> Result<WitnessReadGrantChange> {
+        let id = connector_witness_read_grant_id(agent, conversation)?;
+        let (grant, changed) =
+            self.put_admitted_access_grant(&id, granted_at, |txn, standing| {
+                owner.revalidate_in_txn(self, txn)?;
+                if !self.witness_read_parties_live_in(txn, agent, conversation)? {
+                    return Err(Error::EntityNotFound);
+                }
+                match standing {
+                    Some(grant) if witness_read_conversation(&id, &grant).is_none() => {
+                        Err(Error::EntityNotFound)
+                    }
+                    Some(grant)
+                        if grant.effective_status_at(granted_at) == AccessGrantStatus::Active =>
+                    {
+                        Ok((grant, false))
+                    }
+                    _ => Ok((witness_read_grant(agent, conversation, granted_at), true)),
+                }
+            })?;
+        Ok(WitnessReadGrantChange {
+            grant_ref: id,
+            grant,
+            conversation,
+            changed,
+        })
+    }
+
+    /// Whether `agent` names a live agent and `conversation` a live
+    /// connector conversation, as `txn` reads them.
+    fn witness_read_parties_live_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+        conversation: EntityId,
+    ) -> Result<bool> {
+        if !matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &agent)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_AGENT_DEF,
+                ..
+            }
+        ) {
+            return Ok(false);
+        }
+        Ok(matches!(
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &conversation)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_CONVERSATION,
+                body,
+            } if is_connector_conversation_body(&body)
+        ))
     }
 
     /// The witness-read grants as `vault.consent.registry` reviews them:
@@ -213,15 +279,33 @@ fn registry_row(
     }
 }
 
-/// What the owner's revoke of a witness-read grant did.
-pub(crate) struct WitnessReadGrantRevoke {
-    /// The grant as it now stands: revoked.
+/// What the owner's grant or revoke of a witness-read grant did.
+pub(crate) struct WitnessReadGrantChange {
+    /// The grant's ACCESS_GRANT row.
+    pub(crate) grant_ref: EntityId,
+    /// The grant as it now stands.
     pub(crate) grant: AccessGrant,
-    /// The connector conversation whose MESSAGEs it let its agent read.
+    /// The connector conversation whose MESSAGEs it lets its agent read.
     pub(crate) conversation: EntityId,
-    /// False when the grant was already revoked and the call changed
-    /// nothing.
+    /// False when the grant already stood so and the call changed nothing.
     pub(crate) changed: bool,
+}
+
+/// `agent`'s witness-read grant over `conversation`, active from `now`,
+/// with no expiry.
+fn witness_read_grant(agent: EntityId, conversation: EntityId, now: u64) -> AccessGrant {
+    AccessGrant {
+        authority_scope: crate::federation::scope_codec::read_preset(),
+        principal_ref: agent,
+        scope: AccessGrantScope::ConversationMessages {
+            conversation_ref: conversation,
+        },
+        capability: AccessGrantCapability::MessagesRead,
+        status: AccessGrantStatus::Active,
+        created_at: now,
+        revoked_at: None,
+        expires_at: None,
+    }
 }
 
 /// The id of `agent`'s witness-read grant over `conversation`.

@@ -162,6 +162,43 @@ impl Vault {
         Ok(revoked)
     }
 
+    /// Writes the grant `admit` makes of the record that the write
+    /// transaction itself reads at `id`: an AccessGrant, or none. `admit`
+    /// answers the grant as it is to stand and whether to write it, so the
+    /// admission and the write share one write transaction, as a revoke's
+    /// do. The write passes every check [`Vault::put_access_grant`] runs and
+    /// lands at `learned_at`. A deleted grant is no grant to write over.
+    pub(crate) fn put_admitted_access_grant(
+        &self,
+        id: &EntityId,
+        learned_at: u64,
+        admit: impl FnOnce(&heed::RoTxn<'_>, Option<AccessGrant>) -> Result<(AccessGrant, bool)>,
+    ) -> Result<(AccessGrant, bool)> {
+        use crate::vault::LiveEntityRow;
+        let mut wtxn = self.store.env.write_txn()?;
+        let standing = match crate::vault::live_entity_row_in_txn(&self.store, &wtxn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                body,
+            } => Some(decode_access_grant_body(&body)?),
+            LiveEntityRow::Live { entity_type, .. } => {
+                return Err(Error::InvalidEntityType(entity_type));
+            }
+            LiveEntityRow::Absent => None,
+            LiveEntityRow::DeletedShell => return Err(Error::EntityNotFound),
+        };
+        let (grant, write) = admit(&wtxn, standing)?;
+        if write {
+            let data = encode_access_grant_body(&grant)?;
+            self.check_channel_identity_access_write(&wtxn, id, &grant)?;
+            self.check_companion_profile_target(&wtxn, &grant)?;
+            crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
+            self.apply_access_grant_body(&mut wtxn, id, learned_at, data)?;
+            wtxn.commit()?;
+        }
+        Ok((grant, write))
+    }
+
     /// Reads and decodes an AccessGrant record.
     pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
         let rtxn = self.store.env.read_txn()?;

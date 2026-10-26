@@ -289,3 +289,14 @@ fn conversation_body(origin: &SurfaceConnectorPayload) -> MemoryResult<Vec<u8>> 
         .map_err(|_| MemoryError::bad_request("connector conversation body is not encodable"))?;
     Ok(out)
 }
+
+/// Whether `body`, a CONVERSATION's, is a connector conversation's: one
+/// minted under the connector's import source.
+pub(super) fn is_connector_conversation_body(mut body: &[u8]) -> bool {
+    let Ok(Msgpack::Map(fields)) = rmpv::decode::read_value(&mut body) else {
+        return false;
+    };
+    fields.iter().any(|(key, value)| {
+        key.as_str() == Some(IMPORTED_SOURCE_KEY) && value.as_str() == Some(CONNECTOR_IMPORT_SOURCE)
+    })
+}

@@ -1,14 +1,16 @@
-//! The host door of an agent's witness-read grant over a connector
-//! conversation (FIX 10895): `vault.connectors.read_grants.revoke`.
-//! `host_doors` re-exports it, so the generated HTTP facade handler and the
-//! MCP dispatcher call it by the name every host door has, and a tool call,
-//! a code-mode call and an SDK call meet one admission: the vault owner's
+//! The host doors of an agent's witness-read grant over a connector
+//! conversation: `vault.connectors.read_grants.revoke` (FIX 10895) and
+//! `vault.connectors.read_grants.grant` (FIX 10962). `host_doors`
+//! re-exports them, so the generated HTTP facade handler and the MCP
+//! dispatcher call each by the name every host door has, and a tool call, a
+//! code-mode call and an SDK call meet one admission: the vault owner's
 //! proof (`facade_owner`), never a person's or an agent's. The engine door
-//! rechecks that proof before it revokes. It lists the grant row it names.
+//! rechecks that proof in its own write. Each lists the grant row it names.
 use std::sync::Arc;
 
 use oneiron::task_verb::sdk::{
-    self, ConnectorWitnessReadGrantRevokeRequest, ConnectorWitnessReadGrantRevoked,
+    self, ConnectorWitnessReadGrantRequest, ConnectorWitnessReadGrantRevokeRequest,
+    ConnectorWitnessReadGrantRevoked, ConnectorWitnessReadGranted,
 };
 
 use super::host_doors::support::Listed;
@@ -31,6 +33,25 @@ pub(crate) async fn vault_connectors_read_grants_revoke(
             sdk::revoke_connector_witness_read_grant_as(server.vault(), owner, input)
         },
         |revoked| vec![revoked.grant_ref],
+    )
+    .await
+}
+
+/// `vault.connectors.read_grants.grant`: the owner grants one agent its
+/// witness-read grant once more, listing the grant row it names.
+pub(crate) async fn vault_connectors_read_grants_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ConnectorWitnessReadGrantRequest,
+) -> Listed<ConnectorWitnessReadGranted> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.connectors.read_grants.grant",
+        move |server, owner| {
+            sdk::grant_connector_witness_read_grant_as(server.vault(), owner, input)
+        },
+        |granted| vec![granted.grant_ref],
     )
     .await
 }

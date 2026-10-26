@@ -775,6 +775,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.agents.grants.revoke", post(facade_route))
         .route("/vault.repo.git_push.mint", post(facade_route))
         .route("/vault.repo.git_push.revoke", post(facade_route))
+        .route("/vault.connectors.read_grants.grant", post(facade_route))
         .route("/vault.connectors.read_grants.revoke", post(facade_route))
         .route("/vault.repo.anchor.bind", post(facade_route))
         .route("/vault.repo.snapshots.get", post(facade_route))
