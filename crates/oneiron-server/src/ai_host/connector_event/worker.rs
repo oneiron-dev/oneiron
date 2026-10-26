@@ -4,12 +4,12 @@
 //! words, dispatches through the recorded pipeline, and returns a result
 //! naming the outcome and the units the model calls actually spent.
 //!
-//! The exchange is the agent's memory (FIX 2404): the message and the kept
-//! reply are witnessed into their conversation, and the call reads that
-//! conversation's whole history as the agent's own read lane admits it. A
-//! witness that fails is named in the result, a history read that fails is
-//! logged, and the reply goes on either way; the context is read whole, and
-//! past its `[limits]` row it asks.
+//! The exchange is the agent's memory (FIX 2404): the message, and the kept
+//! reply once it reaches the channel, are witnessed into their conversation,
+//! and the call reads that conversation's whole history as the agent's own
+//! read lane admits it. A witness that fails is named in the result, a
+//! history read that fails is logged, and the reply goes on either way; the
+//! context is read whole, and past its `[limits]` row it asks.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -137,22 +137,6 @@ fn answer(
             )?
         }
     };
-    // The kept words, not this run's: a rerun or a lost save race names
-    // the version that stands.
-    match vault.connector_reply_body_text(&kept.content_ref) {
-        Ok(Some(text)) => witness(result, "reply", || {
-            vault.witness_connector_reply(
-                agent,
-                &origin,
-                REPLY_REF,
-                &text,
-                kept.written_at,
-                super::super::unix_now(),
-            )
-        }),
-        Ok(None) => {}
-        Err(error) => owe_repair(result, "reply", &error),
-    }
     result.body_ref = Some(kept.content_ref.clone());
     let reply = reply_of(agent, kept);
     let mut sink = OwnedServedChannelSink::new(
@@ -179,6 +163,27 @@ fn answer(
     };
     result.outcome = Some(dispatched.outcome.as_str().to_owned());
     result.gate_reason_codes = dispatched.gate_reason_codes;
+    // Only words that reached the channel join the conversation: a held,
+    // degraded, suppressed, let-go, failed or ambiguous reply was not said,
+    // and a later run that delivers it witnesses it then. The kept words,
+    // not this run's: a rerun or a lost save race names the version that
+    // stands.
+    if dispatched.outcome == OutboundDispatchOutcome::DeliveredToChannel {
+        match vault.connector_reply_body_text(&reply.content_ref) {
+            Ok(Some(text)) => witness(result, "reply", || {
+                vault.witness_connector_reply(
+                    agent,
+                    &origin,
+                    REPLY_REF,
+                    &text,
+                    reply.occurred_at,
+                    super::super::unix_now(),
+                )
+            }),
+            Ok(None) => {}
+            Err(error) => owe_repair(result, "reply", &error),
+        }
+    }
     Ok(())
 }
 
