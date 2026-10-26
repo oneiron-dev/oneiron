@@ -38,6 +38,7 @@ use crate::side_table::{self, SideTable};
 use crate::temporal::TimeRange;
 
 mod binding_generation;
+mod consult_executor;
 pub use binding_generation::{BindingGeneration, BindingId};
 
 /// Strict body schema for authority facts. Version 1 is the only shape ever

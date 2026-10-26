@@ -66,6 +66,13 @@ pub struct ChatBreakpoint {
     pub sources: Vec<ConversationTurnSpan>,
     /// The landed summaries the request holds in place of their turns.
     pub summaries: Vec<EntityId>,
+    /// The craft rows the request shows as the host's own snapshot read them
+    /// when it assembled the request (FIX 9439), frozen with the request its
+    /// digest names: a reuse names these, never rows read from the
+    /// request's user text. Empty for a request that shows none, and on a
+    /// breakpoint kept before them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub craft_entries: Vec<crate::attempt_queue::ManifestEntry>,
 }
 
 /// Why a kept breakpoint no longer stands: the fork it captured is not the

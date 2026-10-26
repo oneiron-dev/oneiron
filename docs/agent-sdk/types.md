@@ -1540,14 +1540,14 @@ class Oneiron:
         def configure(self, spec: Facade.WellnessPolicyConfigureRequest) -> Facade.ActionModePolicy | None:
             """Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."""
     class _VaultTaggingVerbs:
-        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
-            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
-        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingTagsView:
-            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
-        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingHistoryView:
-            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
-        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
-            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingStatusView]:
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."""
+        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingTagsView]:
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."""
+        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.ScopedReadResult[Facade.TaggingHistoryView]:
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."""
+        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.ScopedReadResult[Facade.TaggingMentionsView]:
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."""
     class _VaultClusterVerbs:
         def __call__(self, spec: Facade.ClusterRequest) -> Facade.ScopedReadResult[Facade.ClusterProposal]:
             """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""

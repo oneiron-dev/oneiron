@@ -314,6 +314,7 @@ pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolv
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
+pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -331,6 +332,9 @@ pub(crate) use witness::{
     message_stream_finality_in_txn,
 };
 pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub(crate) use witness::{
+    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};
