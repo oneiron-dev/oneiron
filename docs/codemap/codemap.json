@@ -21465,12 +21465,14 @@
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
-      "CoreBatchWriteReceipt"
+      "CoreBatchWriteReceipt",
+      "CoreWriteLane"
      ],
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "enum": 1,
+      "crate-vis": 2,
+      "enum": 2,
       "fn": 3,
       "struct": 4
      }
@@ -42639,7 +42641,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 4
      }
     },
@@ -95225,7 +95227,7 @@
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
