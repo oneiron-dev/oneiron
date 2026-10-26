@@ -87,7 +87,7 @@ pub use client::{
     SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
-    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeSearch, LocalUpdate,
+    ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
     ResidenceModeChange, SyncConnection,
 };
 pub(crate) use ingest::forget_stale_peer_origins;

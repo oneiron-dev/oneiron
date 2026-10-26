@@ -281,14 +281,25 @@ fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAs
 /// owner (FIX 11063): the person, the vault's authority id and the authority
 /// projected for him, which records what his call was admitted under and
 /// is never compared. Settlement runs his call again only while the vault
-/// records him as its live owner then. `None` for any other caller, and for
-/// him while the vault's authority does not read: his call resumes on his
-/// retry.
+/// records him as its live owner then, and work his call queues runs only
+/// while it does when it runs (FIX 11090). `None` for any other caller, and
+/// for him while the vault's authority does not read: his call resumes on
+/// his retry and queues no work, never as the host's own.
 fn attested_owner_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
     let holder = attested_owner_holder(auth)?;
+    let authority = match vault.authority_vault_id() {
+        Ok(authority) => authority?,
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the attested owner's vault authority did not read; his call names no source and queues no work"
+            );
+            return None;
+        }
+    };
     Some(VerbAskInstrument {
         source: VerbAskCredentialSource::AttestedOwner { holder },
-        vault: vault.authority_vault_id().ok().flatten()?,
+        vault: authority,
         ceiling: auth.authority_ceiling(),
     })
 }
