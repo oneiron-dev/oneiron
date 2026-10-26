@@ -10370,13 +10370,15 @@ pub enum Sensitivity {
     Restricted,
 }
 
-/// `oneiron_authority::federation::scope::SensitivityCeiling`.
+/// `oneiron_authority::federation::scope::SensitivityCeilingWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "value")]
 #[serde(deny_unknown_fields)]
-pub enum SensitivityCeiling {
+pub enum SensitivityCeilingWire {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(Sensitivity),
 }
@@ -10400,7 +10402,7 @@ pub struct Scope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub sensitivity: Option<SensitivityCeiling>,
+    pub sensitivity: Option<SensitivityCeilingWire>,
 }
 
 /// `oneiron::memory::scoped_export::CredentialCeiling`.
@@ -10643,6 +10645,8 @@ pub enum ScopeSensitivityBand {
 pub enum ScopeSensitivityInput {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(ScopeSensitivityBand),
 }

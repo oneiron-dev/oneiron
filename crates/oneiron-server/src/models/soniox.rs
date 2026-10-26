@@ -21,6 +21,10 @@
 //! next again, its cuts whose `<fin>` never came in place, ahead of what it
 //! had not sent yet; the next socket answers those cuts. A second drop
 //! before the next socket says anything fails the hearing.
+//!
+//! A rate or quota limit Soniox says is no drop (FIX 9515, `quota`): the
+//! same hearing waits for its offer back, as the owner's existing choices
+//! for a spent window or credit allow, and spends no reconnect.
 use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
 use std::pin::Pin;
@@ -30,6 +34,7 @@ use std::time::Duration;
 
 use futures_util::{Sink, Stream};
 use oneiron::llm::media::{AiOperation, MediaBackend, MediaFuture, MediaRequest, MediaResponse};
+use oneiron::llm::run_admission::OfferBinding;
 use oneiron::voice_cascade::media::{LeasedAsrStream, MediaVoiceRoute, VoiceStreamDoor};
 use oneiron::voice_cascade::soniox::{SonioxAsrClient, SonioxTransport, SonioxUpdate};
 use oneiron::voice_cascade::{AsrEvent, AsrEventKind, AsrStream, AsrToken};
@@ -42,7 +47,12 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
 use super::ModelRuntime;
 use super::catalog::engine_model_id;
+use super::cooldown::OfferCooldowns;
+use super::offer::media_offer;
 use crate::config::models::{LiveAsrOptions, ModelsConfig, ProviderConfig};
+
+// A live hearing's rate and quota limits, waited out (FIX 9515).
+mod quota;
 
 /// A segment that has sent nothing for this long sends a keepalive, so a
 /// silence gap does not end it.
@@ -68,6 +78,9 @@ pub(crate) struct SonioxRung {
     language_hints: Vec<String>,
     /// How long the upgrade may take.
     timeout: Duration,
+    /// Its provider's name, and its offer: where a limit rests it.
+    provider: String,
+    offer: Option<OfferBinding>,
 }
 
 impl SonioxRung {
@@ -92,6 +105,8 @@ impl SonioxRung {
             model: model.to_owned(),
             language_hints: options.language_hints.clone(),
             timeout: Duration::from_secs(provider.timeout_secs.min(30)),
+            provider: String::new(),
+            offer: None,
         })
     }
 
@@ -136,8 +151,14 @@ pub(super) fn live_rungs(config: &ModelsConfig) -> BTreeMap<String, Arc<SonioxRu
         let Ok(id) = engine_model_id(model, provider) else {
             continue;
         };
+        let offer = media_offer(provider, id.clone(), AiOperation::Transcribe);
         match SonioxRung::new(provider, &model.model, options) {
             Ok(rung) => {
+                let rung = SonioxRung {
+                    provider: model.provider.clone(),
+                    offer: offer.ok(),
+                    ..rung
+                };
                 rungs.insert(id.as_str().to_owned(), Arc::new(rung));
             }
             Err(error) => {
@@ -429,6 +450,9 @@ impl Segment {
             };
             let frame: serde_json::Value =
                 serde_json::from_str(text.as_str()).map_err(|_| invalid("a frame is not JSON"))?;
+            if let Some(refusal) = quota::classify_soniox_limit(&frame) {
+                return Poll::Ready(Ok(Heard::Limited(refusal)));
+            }
             return Poll::Ready(Ok(match retriable_error(&frame) {
                 Some(error) => Heard::Dropped(error),
                 None => Heard::Frame(frame),
@@ -443,6 +467,8 @@ enum Heard {
     /// The socket failed or closed before its `finished`, or Soniox sent an
     /// error a fresh socket may clear.
     Dropped(oneiron::Error),
+    /// Soniox said a rate or quota limit (FIX 9515).
+    Limited(oneiron::RetryableLlmError),
 }
 
 /// A Soniox error a fresh socket may clear, as the hearing's failure.
@@ -490,6 +516,12 @@ pub(crate) struct SonioxLive {
     /// A dropped socket was reconnected after, and the next has said
     /// nothing yet: another drop fails the hearing.
     reconnected: bool,
+    /// Where the offer's rests are kept, when a vault keeps them.
+    rests: Option<Arc<OfferCooldowns>>,
+    /// A limit the hearing waits out before its next segment opens.
+    limited: Option<quota::LiveAsrQuotaWait>,
+    /// Limits in a row with nothing heard between them.
+    limit_strikes: u32,
     /// Fires once a segment has sent nothing for [`KEEPALIVE_AFTER`].
     quiet: Pin<Box<tokio::time::Sleep>>,
 }
@@ -523,6 +555,9 @@ impl ModelRuntime {
             ending: false,
             closed: false,
             reconnected: false,
+            rests: self.media.rests(),
+            limited: None,
+            limit_strikes: 0,
             quiet: Box::pin(tokio::time::sleep(KEEPALIVE_AFTER)),
         };
         live.opening = Some(live.open());
@@ -640,6 +675,10 @@ impl SonioxLive {
                         Vec::new(),
                     ))]));
                 }
+                // A limit holds the next segment until its offer is back.
+                if self.poll_limit(cx).is_pending() {
+                    return Poll::Pending;
+                }
                 self.opening = Some(self.open());
                 continue;
             };
@@ -653,9 +692,17 @@ impl SonioxLive {
                     }
                     return Poll::Ready(Ok(updates));
                 }
+                Poll::Ready(Ok(Heard::Limited(refusal))) => {
+                    let updates = self.hold_for_limit(refusal)?;
+                    if updates.is_empty() {
+                        continue;
+                    }
+                    return Poll::Ready(Ok(updates));
+                }
                 Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
             };
             self.reconnected = false;
+            self.limit_strikes = 0;
             let updates = segment.stream.inner_mut().receive(&frame)?;
             segment.journal.heard(&frame, &updates);
             let updates = self.carry(updates)?;
@@ -675,9 +722,18 @@ impl SonioxLive {
         if self.ending || self.reconnected {
             return Err(error);
         }
-        let mut segment = self.segment.take().ok_or_else(|| invalid("no segment"))?;
+        let segment = self.segment.take().ok_or_else(|| invalid("no segment"))?;
         tracing::warn!(%error, "live transcribe socket dropped; reconnecting once");
         self.reconnected = true;
+        self.set_aside(segment)
+    }
+
+    /// Sets `segment` aside for the next: its lease settles the audio it
+    /// admitted and its final words are carried. What it sent after the
+    /// audio Soniox made final, each cut whose `<fin>` never came among it,
+    /// then what it had not sent, wait for the next segment ahead of what
+    /// already waited.
+    fn set_aside(&mut self, mut segment: Segment) -> oneiron::Result<Vec<SonioxUpdate>> {
         segment.stream.cancel()?;
         let mut unsent = segment.journal.replay();
         let client = segment.stream.inner_mut();

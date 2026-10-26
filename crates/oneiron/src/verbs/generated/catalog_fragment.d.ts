@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4228 declarations.
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4229 declarations.
 // Replies: 1092 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: none.
@@ -687,7 +687,8 @@ declare namespace Sdk {
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeId = string;
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
-  type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
+  type SensitivityCeilingWire = { kind: "bottom" } | { kind: "all" } | { kind: "at_most"; value: Sensitivity };
+  type SensitivityCeiling = SensitivityCeilingWire;
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
   type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
@@ -702,7 +703,7 @@ declare namespace Sdk {
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeSensitivityBand = "public" | "private" | "sensitive" | "restricted";
-  type ScopeSensitivityInput = { kind: "bottom" } | { kind: "at_most"; value: ScopeSensitivityBand };
+  type ScopeSensitivityInput = { kind: "bottom" } | { kind: "all" } | { kind: "at_most"; value: ScopeSensitivityBand };
   type ChannelCeiling = { worlds?: ScopeAxisInput<string>; facets?: ScopeAxisInput<string>; bands?: ScopeAxisInput<number>; audience?: ScopeAxisInput<string>; verbs?: ScopeAxisInput<string>; sensitivity?: ScopeSensitivityInput };
   type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };

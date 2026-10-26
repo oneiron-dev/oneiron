@@ -57,8 +57,11 @@ mod construction;
 mod fit;
 mod jobs;
 mod options;
+// FIX 9517: every reference upload under the bank's current reference.
+mod voice_reference;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
@@ -262,6 +265,9 @@ pub struct MediaRuntime {
     cloners: BTreeMap<String, Arc<HostedCloner>>,
     /// The transcribe rungs that hear live (soniox), by engine id.
     live_asr: BTreeMap<String, Arc<SonioxRung>>,
+    /// The guard each reference-rendering backend asks before an upload,
+    /// bound to the runtime's vault (FIX 9517).
+    voice_refs: VoiceReferenceUploadGuard,
 }
 
 impl MediaRuntime {
@@ -485,6 +491,7 @@ fn media_backends(
     config: &ModelsConfig,
     site: Option<&Result<BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
+    voice_refs: &VoiceReferenceUploadGuard,
 ) -> BTreeMap<String, Arc<dyn MediaBackend>> {
     let mut models: BTreeMap<&str, BTreeMap<ModelId, String>> = BTreeMap::new();
     for model in config.media.seats.values().flat_map(|seat| &seat.rungs) {
@@ -535,6 +542,9 @@ fn media_backends(
                         Arc::new(VoxCpm2Speech {
                             http,
                             models: wire_models,
+                            target: name.to_owned(),
+                            locality: provider.locality,
+                            voice_refs: voice_refs.clone(),
                         }) as Arc<dyn MediaBackend>
                     })
                 }
