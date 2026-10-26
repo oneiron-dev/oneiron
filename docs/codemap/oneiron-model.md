@@ -37,7 +37,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/call.rs` | src | s | 5 struct · 6 enum · 6 fn | CallClass, CallEnvelope, CallPurpose, DeterministicFallback, LlmRole, ModelLocality, ModelTierRef, PinnedConfigViolation +3 | Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality |
 | `src/llm/catalog.rs` | src | s | 2 struct · 2 enum · 10 fn · 2 const | LlmCapability, LlmCatalogCost, LlmCatalogEntry, ReasoningEffort | Capability catalog: flags, entries with supports/require, costs, and reasoning effort |
 | `src/llm/defaults.rs` | src | s | 5 struct · 3 enum · 1 trait · 15 fn | ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault, SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane +1 | Inference defaults as data: the shipped purpose-default table, its validation and the routing rules it implies |
-| `src/llm/error.rs` | src | s | 1 struct · 6 enum · 2 fn | BudgetDenied, FatalLlmError, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
+| `src/llm/error.rs` | src | s | 2 struct · 6 enum · 3 fn | BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError, RetryableLlmError, SpentKind, UnsupportedCapability | Error taxonomy: retryable, fatal, and budget-denied errors plus unsupported-capability detail |
 | `src/llm/failure_policy.rs` | src | s | 2 struct · 3 enum · 9 fn | DreamerFailureClass, DreamerFailureDecision, DreamerFailurePrecedence, DreamerFailureRoute, DreamerFailureRule | Vault-resident Dreamer failure decisions; these restrict downstream use, never grant authority |
 | `src/llm/fallback.rs` | src | s | 1 struct · 1 enum · 1 trait · 4 fn | DeterministicRunner, FallbackError, FallbackRegistry | Named deterministic non-LLM fallback runners |
 | `src/llm/image.rs` | src | s | 5 struct · 1 trait · 2 fn · 1 type | ImageBackend, ImageBytes, ImageCatalog, ImageCatalogRow, ImageIntent, ImageResponse | Provider-neutral image generation and reference-edit intent |
@@ -46,11 +46,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/inference_publisher.rs` | src | s | 1 struct · 3 fn | InferencePublisher | One physical request's observation, published by the adapter that sends it while the request is alive (FIX… |
 | `src/llm/label_read.rs` | src | s | 3 struct · 1 enum · 1 trait · 4 fn | LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout, LabelSet | Label-read seam: a host model scores a closed label set instead of generating text |
 | `src/llm/limit.rs` | src | m | 6 fn | — | How an adapter reads a provider's refusal as a spent quota or a rate limit, and the reset the refusal names… |
-| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
+| `src/llm/media/backend.rs` | src | s | 1 struct · 1 enum · 2 trait · 1 fn · 1 type | AiMediaDoor, ImageMedia, MediaBackend, ReferenceCompatibility | Media backends and the host's media door |
 | `src/llm/media/caps.rs` | src | s | 1 struct · 3 enum · 10 fn · 1 const | AiOperation, MediaCaps, Modality, NativeUnit | Media call operations, modalities and row capabilities |
-| `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 4 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
+| `src/llm/media/mod.rs` | src | s | 1 struct · 1 fn · 1 type · 1 mod · 5 re-export | NativeRate | The `ai.*` call family past text (runtime "The ai.* call family"): image, video, speech, transcription and… |
 | `src/llm/media/request.rs` | src | s | 1 struct · 2 enum · 10 fn | MediaPart, MediaRequest, MediaVoice | Media call requests and voices |
-| `src/llm/media/response.rs` | src | s | 2 struct · 1 enum · 4 fn | MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
+| `src/llm/media/response.rs` | src | s | 3 struct · 1 enum · 5 fn | MediaCallProgress, MediaJobState, MediaResponse, MediaUsage | Media call answers, usage and job states |
 | `src/llm/media/wav.rs` | src | s | 1 struct · 4 fn | WavClip | RIFF/WAVE clips: the container a voice call's PCM rides in both ways |
 | `src/llm/mod.rs` | src | s | 4 mod · 30 re-export | — | Engine-facing LLM invocation seam |
 | `src/llm/model_id.rs` | src | s | 1 struct · 1 enum · 6 fn · 3 crate-vis | ModelId, ModelIdError | Validated provider/name@revision model identifier with segment checks and shared constructors |
