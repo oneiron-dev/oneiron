@@ -185,7 +185,7 @@ fn embedded_host<A: AppHost>(
     )
 }
 
-/// One run of the serve body, from ready until it returns.
+/// One run of the serve body, from its start until it returns.
 struct Serving {
     connector: mpsc::Sender<DuplexStream>,
     /// The artifact app's own channel (`/a/`), apart from the API's.
@@ -213,34 +213,34 @@ impl Serving {
     }
 }
 
-/// Stops a serve run whose start was dropped before its app was ready
-/// (FIX 9483): held across startup and disarmed only once the run is
-/// handed to its [`Serving`], so a cancelled start or restarting wake
-/// leaves no serve thread holding the vault open.
-struct StartupStop(Option<Arc<Notify>>);
+/// Asks a serve run to stop when its start is dropped before its app is
+/// ready (FIX 9483, 9484); disarmed once the run is ready or has ended.
+struct StartupStop<'run> {
+    stop: &'run Notify,
+    stopping: Option<&'run mut bool>,
+}
 
-impl StartupStop {
-    /// The run is ready: its [`Serving`] owns its stop from here.
+impl StartupStop<'_> {
+    /// The run is ready, or has ended: nothing is left to ask.
     fn disarm(mut self) {
-        self.0 = None;
+        self.stopping = None;
     }
 }
 
-impl Drop for StartupStop {
+impl Drop for StartupStop<'_> {
     fn drop(&mut self) {
-        if let Some(stop) = self.0.take() {
-            stop.notify_one();
+        if let Some(stopping) = self.stopping.take() {
+            self.stop.notify_one();
+            *stopping = true;
         }
     }
 }
 
-/// Starts the serve body over `vault` on a thread of its own and waits for
-/// the app's `ready`, or for the body's startup error. With `serve_workers`
-/// the run serves on a runtime of its own capped at that many workers, else
+/// Starts the serve body over `vault` on a thread of its own, its app not
+/// yet ready: on a runtime of its own capped at `serve_workers` workers, or
 /// on the caller's ([`super::runtime::spawn_serving`]).
-async fn serve_on<A: AppHost + 'static>(
+fn spawn_run<A: AppHost + 'static>(
     host: EmbeddedHost<Readied<A>, DuplexStream>,
-    mut readied: oneshot::Receiver<()>,
     vault: Arc<oneiron::Vault>,
     config: ServeConfig,
     owner_host: OwnerHost,
@@ -250,19 +250,9 @@ async fn serve_on<A: AppHost + 'static>(
     // The artifact origin's channel, served beside the API's for this run.
     let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
     let (wake, stop) = (host.wake_handle(), host.stop_handle());
-    let mut done = super::runtime::spawn_serving(serve_workers, move || {
+    let done = super::runtime::spawn_serving(serve_workers, move || {
         super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
     })?;
-    let startup = StartupStop(Some(Arc::clone(&stop)));
-    let ready = tokio::select! {
-        biased;
-        ready = &mut readied => ready.is_ok(),
-        served = &mut done => return Err(startup_failure(served)),
-    };
-    if !ready {
-        return Err(startup_failure(done.await));
-    }
-    startup.disarm();
     Ok(Serving {
         connector,
         artifacts,
@@ -298,6 +288,36 @@ struct State<A> {
 }
 
 impl<A> State<A> {
+    /// Keeps `serving`, a run [`spawn_run`] started, here while it waits for
+    /// its app's `ready` on `readied` (FIX 9484): a start or wake dropped
+    /// meanwhile leaves it here, stopping, for the next stop, close or wake
+    /// to join. A run that ends before it is ready is gone, with why.
+    async fn start_run(
+        &mut self,
+        serving: Serving,
+        mut readied: oneshot::Receiver<()>,
+    ) -> anyhow::Result<()> {
+        let serving = self.serving.insert(serving);
+        let startup = StartupStop {
+            stop: &serving.stop,
+            stopping: Some(&mut serving.stopping),
+        };
+        let served = tokio::select! {
+            biased;
+            ready = &mut readied => match ready {
+                Ok(()) => {
+                    startup.disarm();
+                    return Ok(());
+                }
+                Err(_) => (&mut serving.done).await,
+            },
+            served = &mut serving.done => served,
+        };
+        startup.disarm();
+        self.serving = None;
+        Err(startup_failure(served))
+    }
+
     /// Stops the serving run, if any, and waits out its ordered drain in
     /// place (FIX 9484): the run stays here, stopping, until its completion
     /// arrives, so a stop, close or wake dropped mid-drain leaves it for the
@@ -366,25 +386,22 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
                 "the embedded engine's vault did not open",
             ))?;
         let rehearsal = owner_host.vault_config.clone();
-        let serving = serve_on(
+        let serving = spawn_run(
             host,
-            readied,
             Arc::clone(&vault),
             config.clone(),
             owner_host,
             serve_workers,
-        )
-        .await?;
+        )?;
+        let mut state = State { app, serving: None };
+        state.start_run(serving, readied).await?;
         Ok(Self {
             config,
             limits,
             serve_workers,
             vault,
             rehearsal,
-            state: Mutex::new(State {
-                app,
-                serving: Some(serving),
-            }),
+            state: Mutex::new(state),
         })
     }
 
@@ -497,17 +514,17 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         }
         let (host, readied) = embedded_host(state.app.clone(), self.limits);
         let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone());
-        let serving = serve_on(
+        let serving = spawn_run(
             host,
-            readied,
             Arc::clone(&self.vault),
             self.config.clone(),
             owner_host,
             self.serve_workers,
-        )
-        .await?;
-        serving.wake.notify_one();
-        state.serving = Some(serving);
+        )?;
+        state.start_run(serving, readied).await?;
+        if let Some(serving) = &state.serving {
+            serving.wake.notify_one();
+        }
         Ok(())
     }
 
