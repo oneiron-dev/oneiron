@@ -416,6 +416,14 @@ pub(super) fn dispatch_result_receipt(
         receipt.fields.insert(key, value);
     }
     append_request_receipt(&mut receipt, request);
+    // FIX 7965: every failed or uncertain receipt names a typed next step.
+    let recovery_suggestions = super::recovery_suggestions::recovery_suggestions_for(
+        outcome,
+        execution.as_ref(),
+        execution.as_ref().and_then(provider_retry_after_secs),
+        request.occurred_at,
+    );
+    super::recovery_suggestions::append_recovery_suggestions(&mut receipt, &recovery_suggestions);
     if let Some(execution) = execution {
         receipt.fields.insert(
             "delivery_may_have_occurred".to_owned(),

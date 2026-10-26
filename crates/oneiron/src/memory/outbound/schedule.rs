@@ -5,6 +5,7 @@ use super::super::{MemoryError, MemoryResult};
 use super::dedupe::outbound_intent_ref;
 use super::errors::{
     dispatch_outcome_str, facade_error_from_calendar, facade_error_from_outbound_dispatch,
+    facade_error_from_unsupported_capability,
 };
 use super::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext};
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};

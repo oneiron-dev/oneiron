@@ -6,12 +6,14 @@ use super::*;
 
 /// The dispatch request one claimed attempt of `task` replays: its actor,
 /// audit and ledger identities, frozen delivery-window facts, session,
-/// counterparty and committed calendar invite.
+/// counterparty and committed calendar invite. `drain_clock` is the vault
+/// clock reading taken with the drain's `now` (FIX 8817).
 pub(super) fn connector_dispatch_request(
     task_ref: EntityId,
     task: &ConnectorSendTask,
     attempt: &crate::attempt_queue::AttemptRecord,
     now: u64,
+    drain_clock: u64,
 ) -> OutboundDispatchRequest {
     let actor = OutboundDispatchActor {
         actor_class: task.actor_class.gate_actor_class().to_owned(),
@@ -45,9 +47,13 @@ pub(super) fn connector_dispatch_request(
     request.ledger_identity_ref = Some(logical_send_intent_ref.clone());
     // Local wall-clock time is derived from the FROZEN offset at THIS
     // attempt's `now`, never from schedule time. No offset ⇒ no local
-    // minute ⇒ the door fails closed instead of guessing midnight.
+    // minute ⇒ the door fails closed instead of guessing midnight. The door
+    // reads the clock again for this send, so the time an earlier send in
+    // the drain spent moves this minute on (FIX 8817).
     if let Some(offset) = task.utc_offset_minutes {
-        request = request.delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset));
+        request = request
+            .delivery_window_local_minute_of_day(local_minute_of_day_at(now, offset))
+            .delivery_window_clock(offset, drain_clock);
     }
     if let Some(level) = task.apns_interruption_level {
         request = request.delivery_window_apns_interruption_level(level);

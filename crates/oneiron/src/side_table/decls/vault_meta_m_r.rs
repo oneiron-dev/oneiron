@@ -259,8 +259,9 @@ side_tables! {
     /// Key: ().
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
-    /// hash32.
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored;
+    /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
+        => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).

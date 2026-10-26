@@ -184,5 +184,6 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::DedupeSuppressed => "dedupe_suppressed",
         IntentEscalationReason::OwnerStopped => "owner_stopped",
         IntentEscalationReason::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
+        IntentEscalationReason::ActorErased => "actor_erased",
     }
 }

@@ -20,13 +20,23 @@ pub(crate) struct RecordedDispatch {
     pub(crate) replayed: bool,
 }
 impl OutboundDispatchPipeline {
+    /// The public direct door: dispatches `request` and files its ordinary
+    /// outbound-family receipt once, held, denied and uncertain outcomes
+    /// included (FIX 8816). An executor that files its own canonical receipt
+    /// takes one of the crate's receipt-free doors instead.
+    ///
+    /// # Errors
+    /// The dispatch error, or a receipt persistence failure. A retry goes
+    /// through the intent ledger first, so no transport is blindly repeated.
     pub fn dispatch<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, None, None)
+        let result = self.dispatch_inner(vault, request, sink, None, None)?;
+        crate::receipt::record_direct_dispatch_receipt(vault, result.receipt.clone())?;
+        Ok(result)
     }
     pub(in crate::outbound) fn dispatch_from_step<S: OutboundExecutionSink>(
         self,

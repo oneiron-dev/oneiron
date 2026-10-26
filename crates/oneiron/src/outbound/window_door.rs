@@ -39,11 +39,12 @@ pub(super) fn outbound_delivery_window_resolution_at_door(
     } else {
         verb_class
     };
+    let door_clock = DoorClock::sample(vault, request);
     // Fail closed: an interrupt-class send with live window claims and no
     // local wall-clock minute cannot be evaluated, so it holds rather than
     // sinking. A human-explicit instant is exempt — it already named the time.
     if evaluation_verb_class == DeliveryWindowVerbClass::Interrupt
-        && request.delivery_window_local_minute_of_day.is_none()
+        && door_clock.local_minute_of_day.is_none()
         && !request.delivery_window_human_explicit_instant
     {
         let unevaluable = stored_claims
@@ -60,8 +61,45 @@ pub(super) fn outbound_delivery_window_resolution_at_door(
         }
     }
 
-    let context = outbound_delivery_window_context(request, verb_contract, evaluation_verb_class)?;
+    let context = outbound_delivery_window_context(
+        request,
+        verb_contract,
+        evaluation_verb_class,
+        door_clock,
+    )?;
     Ok(DeliveryWindowEvaluator::resolve(&context, &stored_claims))
+}
+
+/// The instant and local minute the door evaluates one send at (FIX 8817). A
+/// drained send reads the vault clock again here, so a slow earlier send in
+/// the same drain moves this one's minute on; any other send keeps the
+/// instant and minute its caller froze.
+#[derive(Clone, Copy)]
+struct DoorClock {
+    evaluated_at: u64,
+    local_minute_of_day: Option<u16>,
+}
+
+impl DoorClock {
+    fn sample(vault: &Vault, request: &OutboundDispatchRequest) -> Self {
+        let Some(clock) = request.delivery_window_clock else {
+            return Self {
+                evaluated_at: request.occurred_at,
+                local_minute_of_day: request.delivery_window_local_minute_of_day,
+            };
+        };
+        let spent = vault
+            .now_recorded_at()
+            .saturating_sub(clock.anchor_recorded_at);
+        let evaluated_at = request.occurred_at.saturating_add(spent);
+        Self {
+            evaluated_at,
+            local_minute_of_day: Some(local_minute_of_day_at(
+                evaluated_at,
+                clock.utc_offset_minutes,
+            )),
+        }
+    }
 }
 
 /// Composes the resolved live-policy action with the caller's own seeded
@@ -123,8 +161,9 @@ fn outbound_delivery_window_context(
     request: &OutboundDispatchRequest,
     verb_contract: &OutboundVerbContract,
     verb_class: DeliveryWindowVerbClass,
+    door_clock: DoorClock,
 ) -> crate::Result<DeliveryWindowEvaluationContext> {
-    let local_minute_of_day = request.delivery_window_local_minute_of_day.unwrap_or(0);
+    let local_minute_of_day = door_clock.local_minute_of_day.unwrap_or(0);
     let channel = request
         .delivery_window_channel
         .clone()
@@ -139,10 +178,13 @@ fn outbound_delivery_window_context(
                 verb_contract.kind
             )
         });
-    let mut context =
-        DeliveryWindowEvaluationContext::new(request.occurred_at, local_minute_of_day, verb_class)?
-            .channel(channel)
-            .interrupt_surface(interrupt_surface);
+    let mut context = DeliveryWindowEvaluationContext::new(
+        door_clock.evaluated_at,
+        local_minute_of_day,
+        verb_class,
+    )?
+    .channel(channel)
+    .interrupt_surface(interrupt_surface);
     if let Some(surface) = request.delivery_window_degrade_to.as_ref() {
         context = context.degrade_to(surface.clone());
     }
@@ -188,13 +230,18 @@ pub(crate) fn local_minute_of_day_at(epoch_secs: u64, utc_offset_minutes: i16) -
 /// - Email family (`email`, Resend, SES, Postmark) × `send` only. Media sends
 ///   are not in the ruled set and must not be over-promoted out of the
 ///   manifest's interrupt class.
-/// - `telegram | line | imessage_mfb | imessage_bridge` × `send` ONLY when the
-///   host resolved that compatibility verb to plain chat. `imessage_mfb` and
-///   `imessage_bridge` are the real shipping connector keys for the iMessage
-///   family. Those manifests declare `send` as
-///   Interrupt today, so this helper is the sole ambient promotion for them
-///   and it never guesses: without a resolved plain-chat level the manifest's
-///   interrupt class stands.
+/// - `telegram | imessage_mfb` × `send` ONLY when the host resolved that
+///   compatibility verb to plain chat.
+/// - `line | imessage_bridge` × `send | send_media` ONLY when the host
+///   resolved the verb to plain chat ([`PLAIN_CHAT_MEDIA_CONNECTORS`], FIX
+///   7961): their manifests send media the way they send text, as one
+///   asynchronous chat message.
+///
+/// `imessage_mfb` and `imessage_bridge` are the real shipping connector keys
+/// for the iMessage family. Those manifests declare `send` (and the bridge's
+/// `send_media`) as Interrupt today, so this helper is the sole ambient
+/// promotion for them and it never guesses: without a resolved plain-chat
+/// level the manifest's interrupt class stands.
 ///
 /// Dedicated push/call/ring verbs and every other connector remain
 /// interrupt-class.
@@ -205,23 +252,27 @@ pub(super) fn outbound_delivery_window_is_chat_like_ambient(
 ) -> bool {
     let connector = normalize_channel_class(&intent.channel);
     let verb = verb_contract.kind.as_str();
+    let plain_chat = resolved_level.is_some_and(DeliveryWindowResolvedLevel::is_plain_chat);
     match connector.as_str() {
         "slack" => matches!(verb, "send" | "send_media"),
         "discord" => matches!(verb, "send" | "send_media"),
         "email" => verb == "send",
         // "do not guess ambient from the string alone": the schedule context
         // must carry the resolved level for these compatibility verbs.
-        //
-        // `imessage_mfb` and `imessage_bridge` are the REAL shipping connector
-        // keys — the bare `imessage` in the blueprint prose is not a registered
+        media_chat if PLAIN_CHAT_MEDIA_CONNECTORS.contains(&media_chat) => {
+            matches!(verb, "send" | "send_media") && plain_chat
+        }
+        // The bare `imessage` in the blueprint prose is not a registered
         // manifest, so no intent can ever reach here with it. It is kept only as
         // a harmless blueprint alias and promotes nothing on its own.
-        "telegram" | "line" | "imessage_mfb" | "imessage_bridge" | "imessage" => {
-            verb == "send" && resolved_level.is_some_and(DeliveryWindowResolvedLevel::is_plain_chat)
-        }
+        "telegram" | "imessage_mfb" | "imessage" => verb == "send" && plain_chat,
         _ => false,
     }
 }
+
+/// The compatibility connectors whose resolved plain-chat media send is
+/// ambient like their text send (FIX 7961).
+const PLAIN_CHAT_MEDIA_CONNECTORS: [&str; 2] = ["line", "imessage_bridge"];
 
 pub(super) fn most_restrictive_delivery_window_decision(
     current: OutboundDeliveryWindowDecision,
@@ -254,12 +305,48 @@ fn same_rank_candidate_is_more_restrictive(
                 ..
             },
         ) => hold_retry_rank(candidate_retry_at) > hold_retry_rank(current_retry_at),
+        // Two APNs caps: the less interrupting destination wins, so a seeded
+        // cap never weakens a live one (FIX 8819). A label neither side can
+        // read keeps the current decision.
+        (
+            OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to: current_to, .. },
+            OutboundDeliveryWindowDecision::DeliverNowWithApnsCap {
+                to: candidate_to, ..
+            },
+        ) => match (
+            apns_destination_rank(current_to),
+            apns_destination_rank(candidate_to),
+        ) {
+            (Some(current), Some(candidate)) => candidate < current,
+            (None, Some(_)) => true,
+            _ => false,
+        },
         _ => false,
     }
 }
 
 fn hold_retry_rank(retry_at: &Option<u64>) -> (bool, u64) {
     (retry_at.is_none(), retry_at.unwrap_or(0))
+}
+
+/// An APNs cap's destination level, read once for both the merge and the
+/// cap's application: passive < active < time sensitive < critical (FIX
+/// 8819). `None` for a label that names no level.
+fn apns_destination_level(label: &str) -> Option<DeliveryWindowApnsInterruptionLevel> {
+    label
+        .strip_prefix("push:")
+        .and_then(DeliveryWindowApnsInterruptionLevel::parse)
+}
+
+/// The interruption rank of an APNs cap's destination; a lower rank
+/// interrupts less.
+fn apns_destination_rank(label: &str) -> Option<u8> {
+    apns_destination_level(label).map(|level| match level {
+        DeliveryWindowApnsInterruptionLevel::Passive => 0,
+        DeliveryWindowApnsInterruptionLevel::Active => 1,
+        DeliveryWindowApnsInterruptionLevel::TimeSensitive => 2,
+        DeliveryWindowApnsInterruptionLevel::Critical => 3,
+    })
 }
 
 fn delivery_window_decision_rank(decision: &OutboundDeliveryWindowDecision) -> u8 {
@@ -276,13 +363,9 @@ pub(super) fn apply_apns_window_cap(
     request: &mut OutboundDispatchRequest,
     decision: &OutboundDeliveryWindowDecision,
 ) {
-    if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = decision {
-        request.delivery_window_apns_interruption_level = match to.as_str() {
-            "push:passive" => Some(DeliveryWindowApnsInterruptionLevel::Passive),
-            "push:active" => Some(DeliveryWindowApnsInterruptionLevel::Active),
-            "push:time_sensitive" => Some(DeliveryWindowApnsInterruptionLevel::TimeSensitive),
-            "push:critical" => Some(DeliveryWindowApnsInterruptionLevel::Critical),
-            _ => request.delivery_window_apns_interruption_level,
-        };
+    if let OutboundDeliveryWindowDecision::DeliverNowWithApnsCap { to, .. } = decision
+        && let Some(level) = apns_destination_level(to)
+    {
+        request.delivery_window_apns_interruption_level = Some(level);
     }
 }

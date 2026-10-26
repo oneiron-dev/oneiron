@@ -112,6 +112,9 @@ impl Vault {
     ) -> std::result::Result<usize, ConnectorTaskExecutorError> {
         let queue = AttemptQueue::new(self);
         let mut executed = 0_usize;
+        // The vault clock as the drain starts, beside the caller's `now`: each
+        // send's window door measures the time the drain spent from here.
+        let drain_clock = self.now_recorded_at();
         loop {
             // The kind's own claim door runs the job port's claim and
             // broadcasts only a real claim, so an empty queue never wakes the
@@ -218,7 +221,7 @@ impl Vault {
                 complete_connector_task_attempt(self, &attempt, now)?;
                 continue;
             }
-            let request = connector_dispatch_request(task_ref, &task, &attempt, now);
+            let request = connector_dispatch_request(task_ref, &task, &attempt, now, drain_clock);
             let receipt_id = request.receipt_id.clone();
             let result = match self.dispatch_outbound_intent_with_verified_actor(
                 request,

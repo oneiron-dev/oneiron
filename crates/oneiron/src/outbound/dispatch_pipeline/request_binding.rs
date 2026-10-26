@@ -12,7 +12,7 @@ use crate::error::{Error, OffRecordError};
 use crate::gate::ExternalEffectPolicyRisk;
 use crate::linkedin_connector::{LINKEDIN_CHANNEL, LINKEDIN_CONNECT_REQUEST_VERB};
 use crate::outbound::capability::{
-    OutboundRetryClass, OutboundVerbContract, normalize_key, outbound_verb_contract,
+    OutboundReplaySafety, OutboundVerbContract, normalize_key, outbound_verb_contract,
 };
 use crate::outbound::dispatch_attempt_id::outbound_dispatch_attempt_id;
 use crate::outbound::dispatch_types::{OutboundDispatchError, OutboundDispatchRequest};
@@ -106,10 +106,12 @@ impl PreparedOutboundDispatch {
             )));
         }
         // A queue-only dedupe key cannot make an ambiguous remote send safe
-        // to replay; native keys and semantic replacement can.
-        let idempotency_supported = matches!(
-            verb_contract.retry_class,
-            OutboundRetryClass::IdempotentNative | OutboundRetryClass::ReplaceIdempotent
+        // to replay; native keys and a replacement on a stable target can. A
+        // superseding send is a new message: it is reconciled, not resent
+        // (FIX 8814).
+        let mut idempotency_supported = !matches!(
+            verb_contract.replay_safety(),
+            OutboundReplaySafety::Reconcile
         );
 
         // Find the logical attempt BEFORE consulting today's sender set. A
@@ -121,10 +123,23 @@ impl PreparedOutboundDispatch {
             .as_deref()
             .unwrap_or(&request.intent_ref);
         let attempt_id = outbound_dispatch_attempt_id(ledger_identity_ref)?;
+        // The custody guard before the snapshot: a sealed row opens here
+        // (FIX 9372).
         let replay = {
-            let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+            let rtxn = vault.store.custody_snapshot()?;
             read_intent_for_attempt_in_txn(vault, &rtxn, attempt_id, 0)?
         };
+        // FIX 8815: a completed send keeps the presentation, effective risk
+        // and retry metadata it was admitted with; a send that may still
+        // reach transport reads today's below.
+        let completed = replay
+            .as_ref()
+            .filter(|record| record.state == IntentState::Done)
+            .map(super::replay_presentation::CompletedReplayPresentation::from_record)
+            .transpose()?;
+        if let Some(record) = replay.as_ref().filter(|_| completed.is_some()) {
+            idempotency_supported = record.idempotency_supported;
+        }
         (request.channel_identity_ref, request.facet_ref) = resolve_dispatch_sender(
             vault,
             &request,
@@ -134,6 +149,23 @@ impl PreparedOutboundDispatch {
         )?;
         let native_mail_recipient =
             bind_native_mail_recipient(vault, &mut request, verb_contract, replay.as_ref())?;
+        if let Some(completed) = completed {
+            return Ok(Self {
+                request,
+                verb_contract,
+                idempotency_supported,
+                attempt_id,
+                replay,
+                space_posting: completed.space_posting,
+                policy_risk: completed.policy_risk,
+                verified_actor,
+                owner_proof: None,
+                step_binding,
+                payload: None,
+                native_mail_recipient,
+                co_actor: None,
+            });
+        }
         let space_posting = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             vault.outbound_space_posting_in_txn(

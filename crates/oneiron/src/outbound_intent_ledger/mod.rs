@@ -6,6 +6,7 @@
 
 mod codec;
 mod dispatch;
+mod payload;
 mod pinned_approval;
 mod resolution;
 mod store;
@@ -28,6 +29,9 @@ pub(crate) use self::dispatch::execute_outbound_call;
 #[cfg(test)]
 use self::dispatch::recover_outbound_intents;
 pub(crate) use self::dispatch::{IntentRecoveryEntry, intent_recovery_entries};
+pub(crate) use self::payload::{
+    LedgerPayloadContext, erase_outbound_intent_actor_in_txn, stored_admission_in_txn,
+};
 pub(crate) use self::pinned_approval::{
     PinnedApproval, PinnedApprovalFamily, keep_pinned_approval_in_txn, keep_press_after_admission,
     pinned_retry_approval,
