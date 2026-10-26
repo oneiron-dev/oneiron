@@ -13901,6 +13901,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
+      "mcp_page": true,
       "section": false
     },
     {
