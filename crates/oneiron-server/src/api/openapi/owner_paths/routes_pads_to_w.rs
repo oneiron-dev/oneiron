@@ -169,7 +169,7 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "get",
         path: "/secrets/found",
-        summary: "Each record the write door lifted keys out of, newest first, with its keys.",
+        summary: "Each record the write door lifted keys out of, newest first, with its keys, a page at a time: `{notices, next_cursor, done}`, continued with `after`.",
         row: None,
     },
     OwnerRoute {

@@ -3,7 +3,7 @@
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
-use super::write_shape::CORE_MAX_BATCH_ENTITIES;
+use super::write_shape::CORE_MAX_HYDRATE_REFS;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -356,9 +356,9 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if req.refs.is_empty() {
         return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
     }
-    if req.refs.len() > CORE_MAX_BATCH_ENTITIES {
+    if req.refs.len() > CORE_MAX_HYDRATE_REFS {
         return Err(ApiError::bad_request(
-            format!("refs must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
+            format!("refs must contain at most {CORE_MAX_HYDRATE_REFS} entries"),
             Some("refs"),
         )
         .into());

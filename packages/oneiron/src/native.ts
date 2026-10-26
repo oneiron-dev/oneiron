@@ -174,7 +174,7 @@ selfCredentialAttenuate(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
-vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
+vaultReceipts(input: unknown): unknown
 vaultAssetsIngest(input: unknown): unknown
 vaultAssetsResolve(input: unknown): unknown
 vaultSearchVector(input: unknown): unknown

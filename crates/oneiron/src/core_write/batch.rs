@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::shape::{
-    AnnouncementAuthority, CORE_MAX_BATCH_ENTITIES, CoreWriteTextField, core_write_times,
-    entity_id, stage_core_put, text_pairs, write_id,
+    AnnouncementAuthority, CoreWriteTextField, core_write_times, entity_id, stage_core_put,
+    text_pairs, write_id,
 };
 use crate::Vault;
 use crate::batch::BatchBuilder;
@@ -37,7 +37,7 @@ pub struct CoreBatchEntityInput {
     pub text: Option<Vec<CoreWriteTextField>>,
 }
 
-/// The puts to commit atomically, at most [`CORE_MAX_BATCH_ENTITIES`].
+/// The puts to commit atomically, as many as the caller names (Rule 5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoreBatchWriteInput {
     pub entities: Vec<CoreBatchEntityInput>,
@@ -112,7 +112,7 @@ impl Vault {
     /// Stages every put of `input` and commits them once, at `commit`. A
     /// TURN is a platform announcement only at the owner's `announcement`.
     /// # Errors
-    /// Too many entities, a bad id, interval or body, or the commit's
+    /// A bad id, interval or body, or the commit's
     /// refusal; nothing is written then.
     pub fn write_core_batch(
         &self,
@@ -188,11 +188,6 @@ impl Vault {
         input: &CoreBatchWriteInput,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<(BatchBuilder<'_>, Vec<CoreBatchEntityReceipt>)> {
-        if input.entities.len() > CORE_MAX_BATCH_ENTITIES {
-            return Err(MemoryError::bad_request(format!(
-                "entities must contain at most {CORE_MAX_BATCH_ENTITIES} entries"
-            )));
-        }
         let mut batch = self.batch();
         let mut entities = Vec::with_capacity(input.entities.len());
         for entity in &input.entities {
