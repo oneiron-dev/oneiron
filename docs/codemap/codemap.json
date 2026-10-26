@@ -30782,9 +30782,9 @@
       "RegistryStatus"
      ],
      "path": "src/entity_doc/registry.rs",
-     "purpose": "Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth",
+     "purpose": "Per-vault sharing of the documents reads are using; durable bytes, not the registry, own truth",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 5,
       "fn": 8,
       "struct": 3
      }
@@ -30851,9 +30851,19 @@
      "path": "src/entity_doc/storage.rs",
      "purpose": "Transactional entity-document storage, editable fields and immutable row pointers",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 23,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/storage/history.rs",
+     "purpose": "The retained states of an entity's document, read as record bodies",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -62671,7 +62681,7 @@
      "path": "src/store/open_gates/vault_root_bind.rs",
      "purpose": "Vault-root preflight pair classifier plus descriptor-bound root and LMDB header validators",
      "surface": {
-      "crate-vis": 48
+      "crate-vis": 46
      }
     },
     {
@@ -63129,7 +63139,7 @@
      "purpose": "Process-owner writer lease, shared by the server and embedded SDK",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 5,
       "struct": 1
      }
@@ -69822,7 +69832,7 @@
      "path": "src/vault/entity_revision/storage.rs",
      "purpose": "Transactional revision ledger",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 28,
       "fn": 2
      }
     },
@@ -69844,6 +69854,16 @@
      "purpose": "A revision document's actors (FIX 6072, part 3 of 3): each raw entity row a revision recorded, its NOTE…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/vault/entity_revision/storage/retained.rs",
+     "purpose": "The revisions a row retains, read for a TURN's text revision search",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -76986,7 +77006,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77861,7 +77881,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77954,7 +77974,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5127,
+   "source_files": 5129,
    "test_files": 902
   },
   "oneiron-android": {
