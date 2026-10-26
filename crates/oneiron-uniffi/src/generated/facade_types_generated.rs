@@ -10945,6 +10945,8 @@ pub enum CallTransport {
     Mcp,
     #[serde(rename = "ws")]
     Ws,
+    #[serde(rename = "open_ai_proxy")]
+    OpenAiProxy,
 }
 
 /// `oneiron::receipt::call::CallOutcome`.

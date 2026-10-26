@@ -393,7 +393,8 @@ impl Vault {
 
 /// [`Vault::agent_grants_in_txn`] for a reader that holds a `Store` and no
 /// `Vault` (FIX 7461): the same live agent grants, in id order. A row that
-/// does not decode is no agent grant here.
+/// does not decode is no agent grant here, and neither is one positively
+/// known withdrawn, whatever row stands at its id now (FIX-LIST 5107).
 pub(crate) fn agent_grants_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -417,6 +418,9 @@ fn agent_grants_reporting_for_store_in_txn(
         else {
             continue;
         };
+        if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
+            continue;
+        }
         let Ok(grant) = decode_federation_grant_body(&body) else {
             undecoded.push(id);
             continue;

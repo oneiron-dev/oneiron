@@ -8,6 +8,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::envelope::SignedHeader;
+use super::routes::RouteCatalog;
 use super::{
     HOME_HANDOFF_PART_BYTES, HandoffId, HandoffStatus, HomeAck, HomeMove, IncompleteReason, refused,
 };
@@ -81,7 +82,7 @@ pub(super) struct HandoffHead {
     pub(super) request: Option<MoveRequest>,
     /// Why the last move that named this node carried nothing, if it did not.
     pub(super) incomplete: Option<IncompleteReason>,
-    /// The route captured for `request`'s target; a new request drops it.
+    /// The route captured for `request`'s target, with the move (FIX 6459).
     pub(super) route: Option<HandoffRoute>,
     /// The handoff this node last staged as a target, until it lands.
     pub(super) staged: Option<StagedHandoff>,
@@ -89,6 +90,10 @@ pub(super) struct HandoffHead {
     /// landed; none of them ever lands here.
     #[serde(default)]
     pub(super) fenced: Vec<HandoffId>,
+    /// FIX 6459: the routes this node's host last fed, which each move the
+    /// election records captures its route from; `None` until a feed.
+    #[serde(default)]
+    pub(super) routes: Option<RouteCatalog>,
 }
 
 impl HandoffHead {
