@@ -4,12 +4,16 @@
 use crate::attempt_queue::{AttemptId, AttemptRecord};
 use crate::batch::{BatchOp, EntityMetadataHeader, apply_ops};
 use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
+    GateDecisionRecord, GateLoopLink, GateLoopSource,
+};
 use crate::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault,
     WriteActor, WriteEnvelope, WriteProvenance,
 };
 use serde::{Deserialize, Serialize};
+mod decision_context;
 mod policy;
 pub use policy::{
     BaseAgent, DreamerAgentBoundary, base_agent_for_facet, dreamer_facet_for_job_type,
@@ -383,6 +387,19 @@ pub(crate) fn stamp_attempt(
         diff_handle: record.id.as_bytes().to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        // FIX 7500: its own admission. A job's input names no typed target,
+        // so no read context is kept.
+        context: GateDecisionContext::linked(
+            GateLoopLink::admission(
+                match agent {
+                    BaseAgent::Dreamer => GateLoopSource::Dreamer,
+                    BaseAgent::Coach => GateLoopSource::Coach,
+                },
+                record.run_id.clone(),
+                Some(*record.id.as_bytes()),
+            ),
+            None,
+        ),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &receipt)?;
@@ -452,6 +469,15 @@ fn stamp_resident_attempt(
         diff_handle: record.id.as_bytes().to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        // FIX 7500, 7499: its own admission, about the resident it runs as.
+        context: GateDecisionContext::linked(
+            GateLoopLink::admission(
+                GateLoopSource::Resident,
+                record.run_id.clone(),
+                Some(*record.id.as_bytes()),
+            ),
+            GateDecisionReadContext::about(Some(resident), vec![resident]),
+        ),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &receipt)?;

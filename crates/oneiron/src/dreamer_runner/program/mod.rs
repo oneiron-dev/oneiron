@@ -48,7 +48,8 @@ pub(crate) use self::arm::{
 };
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
-    program_milestone_envelope, require_program_actor_in_txn, stamp_program_attempt,
+    program_attempt_receipt_in_txn, program_milestone_envelope, require_program_actor_in_txn,
+    stamp_program_attempt,
 };
 pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,

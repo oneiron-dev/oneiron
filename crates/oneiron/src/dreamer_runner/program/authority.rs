@@ -287,6 +287,21 @@ fn lapsed(error: Error) -> Result<bool> {
     }
 }
 
+/// The admission receipt the program `attempt` was stamped under (FIX 7500):
+/// the loop link an action it took carries. A stamp that does not read
+/// names none.
+pub(crate) fn program_attempt_receipt_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Option<[u8; 16]> {
+    ATTEMPT
+        .get(vault, txn, &attempt)
+        .ok()
+        .flatten()
+        .map(|stamp| stamp.receipt_id)
+}
+
 /// Binds a program attempt to the waking actor its admission sealed: the
 /// enqueue law's program branch, beside the resident and dispatch carve-outs.
 /// No base-agent stamp is minted for it. The admission row lands first, in

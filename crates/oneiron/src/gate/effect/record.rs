@@ -64,6 +64,7 @@ pub(crate) fn record_external_effect_policy(
         grant_ref,
         diff_handle: binding.diff_handle,
         read_frontier_hash: binding.read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     if decision.outcome() == GateOutcome::Pending {

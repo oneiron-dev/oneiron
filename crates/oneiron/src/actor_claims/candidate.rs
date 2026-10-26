@@ -21,6 +21,8 @@
 //! candidate, and one decision receipt. An Approved verdict is the
 //! resident's learned craft; a Rejected one settles that candidate only.
 
+mod decision_context;
+
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -441,6 +443,7 @@ fn answer_in_txn(
         grant_ref: None,
         diff_handle: hash.as_bytes().to_vec(),
         read_frontier_hash: [0; 32],
+        context: decision_context::craft_review(vault, wtxn, &candidate, &body, &card.attempt),
         redacted_at: None,
     };
     let receipt_ref = crate::receipt::gate_decision_receipt(&record).receipt_id;

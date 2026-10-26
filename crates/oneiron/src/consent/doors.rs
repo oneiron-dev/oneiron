@@ -584,6 +584,7 @@ impl Vault {
             grant_ref: receipt.grant_ref(),
             diff_handle: receipt.diff_handle(),
             read_frontier_hash: [0_u8; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(wtxn, &record)
@@ -637,6 +638,7 @@ impl Vault {
             grant_ref: receipt.grant_ref(),
             diff_handle: receipt.diff_handle(),
             read_frontier_hash: [0_u8; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(wtxn, &record)

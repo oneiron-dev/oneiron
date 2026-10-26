@@ -182,6 +182,7 @@ fn quarantine_borderline_submission_in_txn(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     let pending = PendingGateConsentRecord {

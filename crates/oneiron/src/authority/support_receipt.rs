@@ -70,6 +70,7 @@ impl Vault {
             grant_ref: Some(slip_hex(&receipt.slip_id)),
             diff_handle: receipt.digest.to_vec(),
             read_frontier_hash: [0; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         self.store.append_gate_decision_in_txn(txn, &record)?;
