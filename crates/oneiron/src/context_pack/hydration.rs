@@ -294,46 +294,15 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            // A NOTE's live prose is in its document, which its row pin does
-            // not hold: words a reranker scored are the pinned row's. A row
-            // the write door refuses hydrates no field, as below.
-            None if options.words_pinned => {
-                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-                if crate::batch::export::write_door_refuses_body(body) {
-                    HashMap::new()
-                } else {
-                    decode_entity_fields(body).unwrap_or_default()
-                }
-            }
-            None => {
-                let body = crate::note::live_body_in_txn(
-                    &vault.store,
-                    rtxn,
-                    &id,
-                    header.entity_type,
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                )?;
-                let markdown = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                    Some(vault.note_text_in_txn(rtxn, id)?)
-                } else {
-                    None
-                };
-                // A body the write door refuses (a note's text is its body
-                // too) hydrates no field, as one no decoder reads hydrates none.
-                let refused = crate::batch::export::write_door_refuses_body(&body)
-                    || markdown.as_ref().is_some_and(|text| {
-                        crate::batch::export::write_door_refuses_body(text.as_bytes())
-                    });
-                if refused {
-                    HashMap::new()
-                } else {
-                    let mut fields = decode_entity_fields(&body).unwrap_or_default();
-                    if let Some(markdown) = markdown {
-                        fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
-                    }
-                    fields
-                }
-            }
+            None => hydrate_selected_note_fields(
+                vault,
+                store,
+                rtxn,
+                &id,
+                header.entity_type,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                options,
+            )?,
         })
     } else {
         None
@@ -386,6 +355,47 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// The fields of a non-claim row, from `body`, the revision the read
+/// selected (FIX 9763). An Indexed or Pinned read, and a row whose words a
+/// reranker scored at its pin, serve that revision's words, a NOTE's
+/// markdown and title included. Only an explicit Live read projects a NOTE
+/// from its live document, read through `store`, the content the pack reads.
+/// A NOTE keeps its pending-erasure gate either way.
+/// A body the write door refuses (a note's text is its body too) hydrates no
+/// field, as one no decoder reads hydrates none.
+fn hydrate_selected_note_fields(
+    vault: &Vault,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    options: HydrateOptions<'_>,
+) -> Result<HashMap<String, serde_json::Value>> {
+    let note = entity_type == crate::registry::ENTITY_TYPE_NOTE && !options.words_pinned;
+    // A NOTE whose citation erasure is pending is beyond use at any frontier.
+    if note && !body.is_empty() {
+        crate::note::ensure_citations_ready(store.base(), rtxn, *id)?;
+    }
+    if !(note && options.read_mode == crate::vault::ReadMode::Live) {
+        if crate::batch::export::write_door_refuses_body(body) {
+            return Ok(HashMap::new());
+        }
+        return Ok(decode_entity_fields(body).unwrap_or_default());
+    }
+    let body =
+        crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;
+    let markdown = vault.note_text_from_in_txn(store, rtxn, *id)?;
+    if crate::batch::export::write_door_refuses_body(&body)
+        || crate::batch::export::write_door_refuses_body(markdown.as_bytes())
+    {
+        return Ok(HashMap::new());
+    }
+    let mut fields = decode_entity_fields(&body).unwrap_or_default();
+    fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
+    Ok(fields)
 }
 
 /// Whether `revision` pins the indexed frontier the vector row belongs to:

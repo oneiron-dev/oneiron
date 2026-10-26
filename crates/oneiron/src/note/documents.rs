@@ -586,6 +586,20 @@ impl Vault {
             .view()?
             .markdown)
     }
+    /// [`Self::note_text_in_txn`] with the NOTE and its document read through
+    /// `store`, a room's view included.
+    pub(crate) fn note_text_from_in_txn(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> Result<String> {
+        Ok(
+            super::document_store::load_in(self, store, txn, note, store.pending_scan_checks())?
+                .view()?
+                .markdown,
+        )
+    }
 }
 impl Vault {
     pub fn note_program_document(&self, note: EntityId) -> Result<Option<NoteDocument>> {
