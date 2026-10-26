@@ -3644,6 +3644,7 @@
      "path": "src/authority/local_open.rs",
      "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6
      }
@@ -3844,7 +3845,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 61
      }
     },
@@ -4112,7 +4113,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 15,
       "struct": 4
      }
@@ -4251,16 +4252,13 @@
     {
      "bucket": "L",
      "kind": "src",
-     "notable": [
-      "HostSlipIssuer"
-     ],
+     "notable": [],
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 24,
-      "fn": 24,
-      "re-export": 2,
-      "struct": 1
+      "fn": 23,
+      "re-export": 3
      }
     },
     {
@@ -4299,6 +4297,32 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_vault/issuer_custody.rs",
+     "purpose": "Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostSlipIssuer"
+     ],
+     "path": "src/authority/slip_vault/issuer_seed.rs",
+     "purpose": "The host issuer's own independent seed (FIX-LIST 3018): per-vault host issuer isolation, so one vault's host…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -4911,6 +4935,16 @@
       "crate-vis": 7,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/withdrawn_grant.rs",
+     "purpose": "A positively withdrawn Grant stays withdrawn (FIX-LIST 5107)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -5779,6 +5813,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_project.rs",
+     "purpose": "Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -6136,7 +6180,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 13
      }
     },
@@ -32406,6 +32450,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/removal_archive.rs",
+     "purpose": "An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "InitialSharedMember",
       "SharedVaultCreation",
@@ -33790,7 +33844,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -77371,7 +77425,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 197,
+     "files": 200,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77385,7 +77439,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 146,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77924,7 +77978,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78843,7 +78897,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5202,
+   "source_files": 5207,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100965,7 +101019,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/host_re_root.rs",
-     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455)",
+     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new issuer seed, in-chain (OF-455), and…",
      "surface": {
       "fn": 1
      }
@@ -101092,7 +101146,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 6
      }
@@ -107527,7 +107581,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 24,
       "fn": 15,
       "re-export": 1,
       "struct": 1
@@ -107752,7 +107806,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 5
      }
     },

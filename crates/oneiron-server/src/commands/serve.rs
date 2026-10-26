@@ -432,14 +432,16 @@ fn refuse_unauthenticated_public_bind(
 /// The root project the vault seeds at its first open takes the owner's first
 /// signature here, through the host's project.write slip (OF-497). A host
 /// with no secret has no issuer, and a relay signs nothing; either leaves the
-/// root unsigned. A root that is already signed is left alone.
+/// root unsigned. A root that is already signed is left alone. The root
+/// signs with this install's own issuer seed for the vault (FIX-LIST 3018),
+/// drawn here only for a vault no root has reached yet.
 pub(crate) fn sign_root_project(
     vault: &oneiron::Vault,
     secret: Option<&str>,
 ) -> anyhow::Result<()> {
-    let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+    if secret.is_none_or(str::is_empty) {
         return Ok(());
-    };
+    }
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
@@ -450,7 +452,7 @@ pub(crate) fn sign_root_project(
     if !unsigned {
         return Ok(());
     }
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let issuer = vault.bootstrap_host_slip_issuer()?;
     vault.ensure_host_root_slip(&issuer)?;
     let owner = crate::owner::local_owner(vault)?;
     vault.sign_owner_project(&owner, &vault.owner_project_signer(&issuer)?, root)?;

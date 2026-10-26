@@ -443,11 +443,15 @@ pub(super) fn scoped_read_for_host_root(
         return Err(ApiError::forbidden_scope("owner"));
     }
     let vault = server.vault().as_ref();
-    if let Some(secret) = server.config.auth_secret.as_deref() {
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
-            .map_err(|_| ApiError::unauthorized())?;
+    if server.config.auth_secret.is_some() {
+        // The self-host root signs with this install's own issuer seed
+        // (FIX-LIST 3018); a host holding none reads nothing as the root.
+        let issuer = server
+            .host_root_issuer
+            .as_deref()
+            .ok_or_else(ApiError::unauthorized)?;
         let proof = vault
-            .verified_host_root_slip(&issuer)
+            .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
         return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }
