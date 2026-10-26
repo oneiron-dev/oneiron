@@ -177,12 +177,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/call_receipt/room_notes.rs` | src | s | 4 crate-vis | — | Which call serves a room NOTE, and so keeps no durable call receipt or hook record (FIX 4280; Engine 10-22) |
 | `src/api/campaign.rs` | src | m | 16 crate-vis | — | CA-07 campaign HTTP routes |
 | `src/api/client_metadata.rs` | src | s | 2 crate-vis | — | Public CIMD documents derived only from the configured OAuth resource origin |
-| `src/api/companion/access_grants.rs` | src | s | 9 crate-vis | — | Companion access-grant routes and DTOs |
+| `src/api/companion/access_grants.rs` | src | m | 11 crate-vis | — | Companion access-grant routes and DTOs |
 | `src/api/companion/auth.rs` | src | s | 5 crate-vis | — | Companion authorization helpers |
 | `src/api/companion/errors.rs` | src | s | 3 crate-vis | — | Companion error constructors |
 | `src/api/companion/lists.rs` | src | s | 8 crate-vis | — | Bounded, authorization-checked companion list projections |
 | `src/api/companion/mod.rs` | src | s | 6 crate-vis | — | Companion control-plane surface: access grants and psych-mirror profiles |
-| `src/api/companion/profiles.rs` | src | m | 24 crate-vis | — | Companion profile routes, DTOs, and state builders |
+| `src/api/companion/profiles.rs` | src | m | 20 crate-vis | — | Companion profile routes, DTOs, and state builders |
+| `src/api/companion/profiles/admission.rs` | src | s | 1 crate-vis | — | The companion profile read through its one-snapshot admission (FIX 8141): the grant, the profile and the… |
+| `src/api/companion/profiles/source_work.rs` | src | s | 1 crate-vis | — | A profile read's source ids, read in fair bounded batches (FIX 10054, Rule 5) |
 | `src/api/consumer_usage.rs` | src | s | 4 crate-vis | — | Per-vault usage facts |
 | `src/api/context_board/board.rs` | src | m | 15 crate-vis | — | The one board frame a hydration renders (ARCH-0067 §1): WORLDS, MEMORIES, TASKS, SKILLS, ROOM and INBOX… |
 | `src/api/context_board/chat_emit.rs` | src | m | 6 crate-vis | — | What a chat answer's context leaves on record (FIX 6921), a live turn's or a queued Continue or Retry's (FIX… |
@@ -319,6 +321,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/git_push_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint` and… |
 | `src/api/facade/goal_optimize_doors.rs` | src | m | 14 crate-vis | — | Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof |
 | `src/api/facade/graduation_doors.rs` | src | s | 10 crate-vis | — | Consent-graduation host doors, under the consent lifecycle's owner proof |
+| `src/api/facade/grants_doors.rs` | src | s | 2 crate-vis | — | `self.grants.answer` (FIX 1379): an access request answered by the vault owner, or by the person or agent it… |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 12 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/graph_ask_doors/question_answers.rs` | src | s | 1 crate-vis | — | `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader ([`question_answers`]), as the… |
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
@@ -326,7 +329,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
 | `src/api/facade/hook_session.rs` | src | s | 1 crate-vis | — | Which facade row call keeps its verb hooks' records and ask pauses for its live session only (FIX 4283… |
 | `src/api/facade/hooks.rs` | src | m | 11 crate-vis | — | A facade row's verb hooks: the pre chain before its door runs and the post chain after it |
-| `src/api/facade/host_doors.rs` | src | s | 151 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | s | 152 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_doors/admission.rs` | src | m | 1 crate-vis | — | The owner preflight every host door's verb meets before its door runs |
 | `src/api/facade/host_doors/artifacts_audit.rs` | src | s | 8 crate-vis | — | The owner's artifact review, ask, admit and deck preview doors, and his audit and mesh reads |
 | `src/api/facade/host_doors/diary.rs` | src | s | 1 crate-vis | — | The caller's own diary query door (`self.memory.diary.query`) |

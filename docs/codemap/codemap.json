@@ -79,6 +79,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionGrantBounds",
+      "CompanionGrantIssuer",
+      "CompanionGrantOutcome"
+     ],
+     "path": "src/access_grant/companion_admission.rs",
+     "purpose": "The companion grant writer that carries its issuer's bounds (FIX 8140)",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -98,11 +115,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/access_grant/delegation.rs",
+     "purpose": "What a credential may delegate of an access grant (FIX 8140, 1379)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/access_grant/mod.rs",
      "purpose": "AccessGrant control-plane record substrate",
      "surface": {
       "crate-vis": 1,
-      "re-export": 4
+      "re-export": 6
      }
     },
     {
@@ -128,14 +156,17 @@
      "kind": "src",
      "notable": [
       "AccessRequest",
-      "AccessRequestStatus"
+      "AccessRequestResponder",
+      "AccessRequestStatus",
+      "AddressedAnswer"
      ],
      "path": "src/access_grant/request.rs",
      "purpose": "Durable request/response lifecycle",
      "surface": {
-      "enum": 1,
-      "fn": 5,
-      "struct": 1
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -18490,7 +18521,7 @@
      "purpose": "Companion task queue and PERSON/FACET persona compilation",
      "surface": {
       "crate-vis": 3,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -18536,6 +18567,20 @@
      "path": "src/companion/persona/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CompanionProfileAdmission"
+     ],
+     "path": "src/companion/profile_admission.rs",
+     "purpose": "The admitted companion profile read (FIX 8141)",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 1
+     }
     },
     {
      "bucket": "m",
@@ -43500,8 +43545,18 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 4,
+      "fn": 3,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/people_verbs/grants.rs",
+     "purpose": "`self.grants.ask` (FIX 1379): an access request addressed to the person asked, for the requested resource's…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -53106,8 +53161,20 @@
      "path": "src/psych_profile/codec.rs",
      "purpose": "Canonical MessagePack encode/decode and field validation helpers",
      "surface": {
-      "crate-vis": 10,
-      "fn": 2
+      "crate-vis": 9,
+      "fn": 2,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/psych_profile/codec/source_pages.rs",
+     "purpose": "The paged source frames of a PSYCH_PROFILE body (FIX 10054, Rule 5): a size bound is a codec frame, never a…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 4
      }
     },
     {
@@ -53162,17 +53229,18 @@
       "PsychProfile",
       "PsychProfileConfidence",
       "PsychProfileSnapshotStatus",
+      "PsychProfileSource",
       "PsychProfileStaleReason",
       "PsychProfileState"
      ],
      "path": "src/psych_profile/record.rs",
      "purpose": "Snapshot record types, projections, and constructors/validators",
      "surface": {
-      "const": 3,
-      "crate-vis": 19,
+      "const": 2,
+      "crate-vis": 18,
       "enum": 3,
-      "fn": 5,
-      "struct": 2
+      "fn": 6,
+      "struct": 3
      }
     },
     {
@@ -53182,7 +53250,7 @@
      "path": "src/psych_profile/store.rs",
      "purpose": "Vault put/get/state maintenance-gated persistence for profiles",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 5
      }
     },
@@ -72408,13 +72476,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/vault_shape/visibility.rs",
      "purpose": "What the visible shape APIs read of the seed and the open applies (FIX 10199)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 7,
+      "fn": 1
      }
     },
     {
@@ -73033,7 +73102,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1191
+      "fn": 1192
      }
     },
     {
@@ -73094,6 +73163,23 @@
      "surface": {
       "fn": 14,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GrantAnswer",
+      "GrantAnswerRequest",
+      "GrantAnswered",
+      "GrantRequestedScope"
+     ],
+     "path": "src/verbs/grants.rs",
+     "purpose": "`self.grants.answer` (FIX 1379): the general answer to an access request, by the vault's owner or by the…",
+     "surface": {
+      "enum": 2,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -73445,7 +73531,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 81,
+      "re-export": 82,
       "struct": 38
      }
     },
@@ -78262,7 +78348,7 @@
    ],
    "modules": {
     "access_grant": {
-     "files": 7,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78598,7 +78684,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…"
     },
     "companion": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79123,7 +79209,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 282,
+     "files": 283,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79305,7 +79391,7 @@
      "purpose": "Provider confidence priors and read-time confidence composition (ES-09)"
     },
     "psych_profile": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79739,7 +79825,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 87,
+     "files": 88,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79811,7 +79897,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5287,
+   "source_files": 5293,
    "test_files": 902
   },
   "oneiron-android": {
@@ -91731,7 +91817,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1159
+      "fn": 1160
      }
     },
     {
@@ -93160,7 +93246,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1160
+      "fn": 1161
      }
     },
     {
@@ -96276,13 +96362,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/companion/access_grants.rs",
      "purpose": "Companion access-grant routes and DTOs",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 11
      }
     },
     {
@@ -96332,7 +96418,27 @@
      "path": "src/api/companion/profiles.rs",
      "purpose": "Companion profile routes, DTOs, and state builders",
      "surface": {
-      "crate-vis": 24
+      "crate-vis": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/profiles/admission.rs",
+     "purpose": "The companion profile read through its one-snapshot admission (FIX 8141): the grant, the profile and the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/companion/profiles/source_work.rs",
+     "purpose": "A profile read's source ids, read in fair bounded batches (FIX 10054, Rule 5)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -97692,6 +97798,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/grants_doors.rs",
+     "purpose": "`self.grants.answer` (FIX 1379): an access request answered by the vault owner, or by the person or agent it…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -97768,7 +97884,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 151
+      "crate-vis": 152
      }
     },
     {
@@ -110348,7 +110464,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 579,
+     "files": 582,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -110833,7 +110949,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1314,
+   "source_files": 1317,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -112650,9 +112766,13 @@
       "GraduationSnooze",
       "GraduationStats",
       "GraduationTrustRow",
+      "GrantAnswer",
+      "GrantAnswerRequest",
+      "GrantAnswered",
       "GrantAskReceipt",
       "GrantAskRequest",
       "GrantAskScope",
+      "GrantRequestedScope",
       "GraphAdmitRequest",
       "GraphAskDeclined",
       "GraphAskOutcome",
@@ -115180,8 +115300,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1020,
-      "struct": 3125
+      "enum": 1022,
+      "struct": 3127
      }
     },
     {
