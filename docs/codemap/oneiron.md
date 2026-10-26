@@ -2084,7 +2084,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/fork_promote/project_upkeep/state.rs` | src | s | 14 crate-vis | — | The project tree upkeep journal: one row per project and body of its evidence, naming the Candidate revision… |
 | `src/dreamer_runner/maintenance/honesty.rs` | src | s | 1 const · 2 crate-vis | — | The Coach's audit-draw recipe on the shared, gated maintenance lane |
 | `src/dreamer_runner/maintenance/identity.rs` | src | m | 10 struct · 4 enum · 2 fn · 4 const · 2 re-export · 9 crate-vis | IdentityActNow, IdentityActNowRequest, IdentityAnswerRequest, IdentityAsk, IdentityAskReason, IdentityAskView, IdentityCardCopy, IdentityDecisions +6 | Background identity checks (OF-123; owner ruling: ask rule B) |
-| `src/dreamer_runner/maintenance/identity/admission.rs` | src | s | 1 fn · 8 crate-vis | — | Identity asks as one reader may read them (FIX 8711) |
+| `src/dreamer_runner/maintenance/identity/admission.rs` | src | s | 1 fn · 9 crate-vis | — | Identity asks as one reader may read them (FIX 8711) |
 | `src/dreamer_runner/maintenance/identity/erase.rs` | src | s | 12 crate-vis | — | What an erase reaches in identity maintenance (FIX 8707), and what a revert checks before it puts anything… |
 | `src/dreamer_runner/maintenance/identity/evidence.rs` | src | m | 3 struct · 1 enum · 2 fn · 6 crate-vis | IdentityAnswerEvidenceRequest, IdentityMentionState, IdentityMentionView, IdentityResolutionView | A mention's saved resolution, separate from the tagger's original suggestion |
 | `src/dreamer_runner/maintenance/identity/hints.rs` | src | s | 14 crate-vis | — | Saved context hints, one contribution per answered mention (FIX 8707) |
@@ -2138,7 +2138,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/program/wake.rs` | src | s | 3 crate-vis | — | The wake a landed turn owes its actor's armed programs (DOOR-141 §4): it is recorded in the turn's own… |
 | `src/dreamer_runner/progress.rs` | src | m | 4 struct · 1 enum · 12 fn · 4 const · 5 crate-vis | DreamerAttemptProgressProducer, DreamerAttemptProgressSnapshot, DreamerAttemptProgressSource, DreamerAttemptProgressUpdate, DreamerProgressed | The live Dreamer progress lane on the ephemeral sync keyspace |
 | `src/dreamer_runner/recipe.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | WeaveRecipePin | Per-vault, owner-admitted workflow skill binding for the Dreamer weave |
-| `src/dreamer_runner/store.rs` | src | L | 1 struct · 17 fn · 28 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
+| `src/dreamer_runner/store.rs` | src | L | 1 struct · 17 fn · 29 crate-vis | DreamerRunnerStore | The Dreamer runner store: queue lifecycle, park/resume, and readers |
 | `src/dreamer_runner/tests.rs` | test | L | — | — | — |
 | `src/dreamer_runner/types.rs` | src | m | 26 struct · 13 enum · 19 fn · 4 crate-vis | AbortDreamerBudgetReservation, AdmitDreamerAttempt, AdmitDreamerConsolidationAttempt, CompleteDreamerAttempt, CompleteDreamerAttemptOutcome, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload +31 | Dreamer runner request/outcome vocabulary and its pure impls |
 | `src/dreamer_runner/types/retry_policy.rs` | src | s | 3 fn · 1 crate-vis | — | How long a Retry park waits before a later wake pass resumes it (FIX 8716): the vault's own… |
@@ -2265,9 +2265,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_distance/proposal_text/tests.rs` | test | m | — | — | — |
 | `src/edit_distance/publisher/dial.rs` | src | s | 3 fn · 1 const · 1 crate-vis | — | Publisher share dial: explicit, install-profile, and compiled-default resolution |
 | `src/edit_distance/publisher/interview.rs` | src | s | 1 struct · 1 enum · 7 fn · 1 const | InterviewSession, InterviewState | Agent-conducted interview digests on ED-00/ED-01's doors |
-| `src/edit_distance/publisher/mod.rs` | src | s | 1 enum · 1 type · 7 re-export · 1 crate-vis | PublisherError | ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue… |
+| `src/edit_distance/publisher/mod.rs` | src | s | 1 enum · 1 type · 7 re-export · 2 crate-vis | PublisherError | ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue… |
 | `src/edit_distance/publisher/signature.rs` | src | s | 1 struct · 9 fn · 1 const · 1 crate-vis | IssueSignature | Content-free issue signature record and its judged-outcome inlet |
-| `src/edit_distance/publisher/signature_store.rs` | src | s | 2 fn · 1 crate-vis | — | Stored signature rows: codec and vault_meta keys |
+| `src/edit_distance/publisher/signature_store.rs` | src | s | 2 fn · 2 crate-vis | — | Stored signature rows: codec and vault_meta keys |
 | `src/edit_distance/publisher/tests.rs` | test | m | — | — | ONE-1764 (ED-08) unit tests: the leak NEG battery that makes rung-1's "structurally impossible" claim… |
 | `src/edit_distance/publisher/transport.rs` | src | s | 1 struct · 1 enum · 5 fn · 3 const | SendOutcome, SignatureSendState | Publisher comm transport: counterparty, send states, and the send door |
 | `src/edit_distance/publisher/vocab.rs` | src | s | 2 enum · 5 fn · 2 const | CountKey, IssueCategory | Closed issue vocabulary: defect categories and count keys |
@@ -2545,7 +2545,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/conversation_training/withdraw.rs` | src | s | 3 crate-vis | — | A hosted submission's withdrawal at the intake (FIX 9855): one helper for a person's erase, a source's… |
 | `src/feedback/dispatch.rs` | src | m | 4 struct · 1 trait · 7 fn · 4 const | FeedbackExportOutcome, FeedbackSendContext, FeedbackSendOutcome, FeedbackTransport, FeedbackTransportRequest | Feedback dispatch and export: send context, transport adapter, dispatch request building, send, and… |
 | `src/feedback/error.rs` | src | s | 1 enum · 8 crate-vis | FeedbackError | Feedback error type plus shared validation and framing helpers |
-| `src/feedback/inbox.rs` | src | s | 1 struct · 1 enum · 4 fn | FeedbackInboxNote, FeedbackInboxVia | The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep |
+| `src/feedback/inbox.rs` | src | s | 1 struct · 1 enum · 7 fn | FeedbackInboxNote, FeedbackInboxVia | The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep |
 | `src/feedback/intake.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | FeedbackDedup, FeedbackReviewItem | Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input |
 | `src/feedback/intake/refs.rs` | src | s | 6 crate-vis | — | Strict hexadecimal entity references for the intake row codec |
 | `src/feedback/intake/report.rs` | src | s | 2 crate-vis | — | T2 for universal reports, sharing the bundle intake's cosine normalization |
@@ -2554,12 +2554,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/mod.rs` | src | s | 1 mod · 10 re-export · 1 crate-vis | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/preview_store.rs` | src | s | 1 struct · 2 fn | RetainedFeedbackPreview | The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact… |
 | `src/feedback/redaction.rs` | src | s | 3 struct · 1 enum · 1 trait · 5 fn | FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity | The engine text filter (OF-420): the seam every free text crosses before it may leave the vault, and the… |
-| `src/feedback/report.rs` | src | s | 4 struct · 3 enum · 3 fn · 1 const · 4 re-export · 3 crate-vis | ReportDisclosure, ReportIssue, ReportKind, ReportReceipt, ReportRequest, ReportReview, ReportStatus | OF-537: free, actor-bound reports about a durable subject, never a task kind |
-| `src/feedback/report/delivery.rs` | src | m | 7 struct · 2 enum · 1 trait · 3 fn · 4 const · 2 re-export | ReportDeliveryHold, ReportDeliveryKey, ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportFrozenSend, ReportFrozenSignature, ReportPublisherEndpoint +2 | Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref` |
-| `src/feedback/report/delivery/metadata.rs` | src | s | 1 struct · 1 fn | ReportPublisherMetadata | The historical ED-08 metadata a report's subject names (OF-420, FIX 739) |
+| `src/feedback/report.rs` | src | s | 4 struct · 3 enum · 3 fn · 1 const · 4 re-export · 4 crate-vis | ReportDisclosure, ReportIssue, ReportKind, ReportReceipt, ReportRequest, ReportReview, ReportStatus | OF-537: free, actor-bound reports about a durable subject, never a task kind |
+| `src/feedback/report/delivery.rs` | src | m | 7 struct · 2 enum · 1 trait · 3 fn · 4 const · 2 re-export · 1 crate-vis | ReportDeliveryHold, ReportDeliveryKey, ReportDeliveryOutcome, ReportDeliveryPass, ReportDeliveryRecord, ReportFrozenSend, ReportFrozenSignature, ReportPublisherEndpoint +2 | Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref` |
+| `src/feedback/report/delivery/metadata.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | ReportPublisherMetadata | The historical ED-08 metadata a report's subject names (OF-420, FIX 739) |
 | `src/feedback/report/delivery/owner.rs` | src | s | 6 struct · 3 fn | ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest, ReportPublisherBinding, ReportPublisherBindingRequest | The owner's publisher delivery doors: run the delivery now, read one issue's delivery, and bind or unbind a… |
 | `src/feedback/report/delivery/participation.rs` | src | s | 3 crate-vis | — | Participation for issue signatures (OF-420, FIX 739) |
-| `src/feedback/report/delivery/wire.rs` | src | s | 4 crate-vis | — | The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built… |
+| `src/feedback/report/delivery/wire.rs` | src | s | 5 crate-vis | — | The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built… |
 | `src/feedback/report/disclosure.rs` | src | s | 1 struct · 1 enum · 1 fn · 3 crate-vis | ReportDisclosureBasis, ReportTextSendBinding | A report's text and its publisher (FIX 8747; DEC-0006) |
 | `src/feedback/report/routing.rs` | src | s | 2 struct · 2 enum · 4 fn · 5 crate-vis | ReportDisclosureChoice, ReportRoute, ReportRoutedPayload, ReportSignature | Maker routing and disclosure |
 | `src/feedback/report/store.rs` | src | s | 3 fn · 4 crate-vis | — | Durable issue identity, entity-local review, and the arrival index |
