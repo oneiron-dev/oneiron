@@ -452,7 +452,8 @@ impl Vault {
     }
 
     /// Whether `input`'s bytes may go to `embedder` now, as the backfill sends a stored document
-    /// (FIX 382): to a model on this device or the owner's server, always; to one at a third
+    /// (FIX 382): to a model on this device, always; to one on the owner's server, always with
+    /// no gate and otherwise as a third party's (FIX 9830); to one at a third
     /// party only with the host's gate `egress`, which must allow it, and only while no
     /// device-local world keeps it (DEC-0005), read under the flag lock right before the bytes
     /// go. A move's check asks it for each media query it encodes (FIX 1637); `false` sends
@@ -467,10 +468,17 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
         input: &MediaEmbeddingInput<'_>,
     ) -> Result<bool> {
-        if embedder.locality() != EmbedderLocality::ThirdParty {
-            return Ok(true);
-        }
-        if egress.is_none_or(|egress| egress.decide_media(input) != EgressDecision::Allow) {
+        // One on the owner's server reads through the host's gate when it
+        // gives one, as its backfill does (FIX 9830), and leaves ungated with
+        // none.
+        let gate = match (embedder.locality(), egress) {
+            (EmbedderLocality::OnDevice, _) | (EmbedderLocality::OwnerServer, None) => {
+                return Ok(true);
+            }
+            (EmbedderLocality::ThirdParty, None) => return Ok(false),
+            (EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty, Some(egress)) => egress,
+        };
+        if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
         self.media_rows_may_leave(None, &[input.entity_id])
