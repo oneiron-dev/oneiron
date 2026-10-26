@@ -14,8 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, GateError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 /// Only the owning archive adapter may select Imported. The public origin
@@ -547,20 +547,18 @@ impl Vault {
             self, &mut wtxn, *actor, *claim_id, &head, now,
         )?;
 
+        // Every direct predecessor is read and judged in this one write
+        // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
+        let direction = EdgeDirection::Out;
+        let kind = EdgeKind::Supersedes;
+        let scope = [&[direction as u8][..], claim_id.as_bytes(), &[kind as u8][..]].concat();
+        let mut count = ScanCount::start(&self.store, &wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut predecessors = Vec::new();
-        for entry in self.port_edges(
-            &wtxn,
-            claim_id,
-            EdgeDirection::Out,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if predecessors.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("expression preference predecessors"));
-            }
-            let id = entry?.target;
-            predecessors.push(id);
+        for entry in self.port_edges(&wtxn, claim_id, direction, Some(kind), None)? {
+            count.row();
+            predecessors.push(entry?.target);
         }
+        count.defer(&self.store);
 
         self.retract_claim_in_txn(&mut wtxn, claim_id, now)?;
         let mut ops = Vec::new();
