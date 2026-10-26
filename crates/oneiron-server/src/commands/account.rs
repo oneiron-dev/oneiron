@@ -59,7 +59,7 @@ fn login(args: AccountLoginArgs) -> anyhow::Result<()> {
         } => {
             let mut stderr = std::io::stderr().lock();
             writeln!(stderr, "Open: {verification_uri}")?;
-            writeln!(stderr, "Enter the code: {user_code}")?;
+            writeln!(stderr, "Enter the code: {}", user_code.as_str())?;
             writeln!(
                 stderr,
                 "Approve there within {} minutes; this command waits.",

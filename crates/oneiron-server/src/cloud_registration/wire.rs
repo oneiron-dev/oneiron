@@ -43,6 +43,7 @@ pub(crate) struct DeviceAuthorization {
 impl Drop for DeviceAuthorization {
     fn drop(&mut self) {
         self.device_code.zeroize();
+        self.user_code.zeroize();
     }
 }
 

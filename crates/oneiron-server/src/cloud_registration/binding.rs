@@ -99,7 +99,7 @@ impl CloudRegistration {
             let device_code = Zeroizing::new(std::mem::take(&mut answer.device_code));
             Ok((endpoints, answer, device_code))
         });
-        let (endpoints, answer, device_code) = match begun {
+        let (endpoints, mut answer, device_code) = match begun {
             Ok(begun) => begun,
             Err(failure) => return Ok(started_failure(failure)),
         };
@@ -123,7 +123,7 @@ impl CloudRegistration {
         Ok(Started::Pending {
             flow: handle,
             verification_uri: answer.verification_uri.clone(),
-            user_code: answer.user_code.clone(),
+            user_code: Zeroizing::new(std::mem::take(&mut answer.user_code)),
             expires_in: answer.expires_in,
             interval: answer.interval,
         })

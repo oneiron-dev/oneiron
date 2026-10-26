@@ -155,15 +155,17 @@ pub(crate) enum Status {
     },
 }
 
-/// What a login's start answered.
-#[derive(Debug, Serialize)]
+/// What a login's start answered. Its user code is the owner's to see, in
+/// this answer alone: wiped when it drops, and never in its `Debug`.
+#[derive(Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub(crate) enum Started {
     /// Open `verification_uri` and enter `user_code` there; poll `flow`.
     Pending {
         flow: String,
         verification_uri: String,
-        user_code: String,
+        #[serde(serialize_with = "shown_code")]
+        user_code: Zeroizing<String>,
         expires_in: u64,
         interval: u64,
     },
@@ -179,6 +181,45 @@ pub(crate) enum Started {
     /// A logout or an erase ran while the start's request did: no login
     /// is held.
     Cancelled,
+}
+
+impl std::fmt::Debug for Started {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Pending {
+                flow,
+                verification_uri,
+                user_code: _,
+                expires_in,
+                interval,
+            } => f
+                .debug_struct("Pending")
+                .field("flow", flow)
+                .field("verification_uri", verification_uri)
+                .field("user_code", &"<redacted>")
+                .field("expires_in", expires_in)
+                .field("interval", interval)
+                .finish(),
+            Self::NotConfigured { reason } => f
+                .debug_struct("NotConfigured")
+                .field("reason", reason)
+                .finish(),
+            Self::Unavailable { description } => f
+                .debug_struct("Unavailable")
+                .field("description", description)
+                .finish(),
+            Self::Failed { reason } => f.debug_struct("Failed").field("reason", reason).finish(),
+            Self::Cancelled => f.write_str("Cancelled"),
+        }
+    }
+}
+
+/// The user code as the owner's answer shows it.
+fn shown_code<S: serde::Serializer>(
+    code: &Zeroizing<String>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(code)
 }
 
 /// What one poll of a login answered.
