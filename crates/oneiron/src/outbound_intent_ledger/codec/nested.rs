@@ -9,7 +9,9 @@ use super::super::types::{
     IntentLedgerResult, RecordedOutboundOutcome,
 };
 use super::{BUDGET_ACCOUNTING_KEYS, CAPABILITY_PROVENANCE_KEYS, RECORDED_OUTCOME_KEYS};
-use crate::connector_key::ScopedCapabilityProvenance;
+use crate::connector_key::{
+    EffectorBudgetRowId, EffectorBudgetRowSource, ScopedCapabilityProvenance,
+};
 use crate::entity_id::EntityId;
 
 pub(super) fn decode_admitted_approval(
@@ -67,10 +69,7 @@ pub(super) fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<Budg
     };
     let mut matched_rows = Vec::with_capacity(row_values.len());
     for value in row_values {
-        let row = expect_u64(value)?;
-        matched_rows.push(u16::try_from(row).map_err(|_| {
-            IntentLedgerError::InvalidRecord("outbound intent matched row is invalid")
-        })?);
+        matched_rows.push(decode_budget_row(value)?);
     }
     Ok(BudgetChargeMarker {
         key_ref,
@@ -78,6 +77,25 @@ pub(super) fn decode_budget_accounting(value: &Value) -> IntentLedgerResult<Budg
         matched_rows,
         sends_debit: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[3])?)?,
         accounted_at_ms: expect_u64(nested_value(entries, BUDGET_ACCOUNTING_KEYS[4])?)?,
+    })
+}
+
+/// Decodes one matched budget row: `[source tag, ordinal]`.
+fn decode_budget_row(value: &Value) -> IntentLedgerResult<EffectorBudgetRowId> {
+    let invalid = || IntentLedgerError::InvalidRecord("outbound intent matched row is invalid");
+    let Value::Array(parts) = value else {
+        return Err(invalid());
+    };
+    let [tag, index] = parts.as_slice() else {
+        return Err(invalid());
+    };
+    let source = u8::try_from(expect_u64(tag)?)
+        .ok()
+        .and_then(EffectorBudgetRowSource::from_tag)
+        .ok_or_else(invalid)?;
+    Ok(EffectorBudgetRowId {
+        source,
+        index: expect_u64(index)?,
     })
 }
 

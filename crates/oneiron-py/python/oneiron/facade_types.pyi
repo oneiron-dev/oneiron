@@ -3826,7 +3826,7 @@ class CampaignEnrollRequest(TypedDict):
     person_ref: str
     channels: list[CampaignMemberChannelSpec]
     evidence_refs: list[str]
-CampaignEnrollmentState = Literal["enrolled"]
+CampaignEnrollmentState = Literal["enrolled", "paused", "exited", "suppressed"]
 class CampaignActionProvenance(TypedDict):
     actor_ref: str
     evidence_refs: list[str]

@@ -67,7 +67,7 @@ pub(super) use super::connector_call_driver::{Step, refused};
 pub use super::connector_call_types::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallInvocation,
     ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState, ConnectorQuestion,
-    ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
 };
 
 /// The most bytes of one connector discovery or qualification reply a host
@@ -192,6 +192,7 @@ impl SettledConnectorCall {
             Self::Delivered { intent } => ConnectorCallOutcome::Delivered {
                 intent,
                 result: None,
+                result_absence: Some(ConnectorResultAbsence::NotRetained),
             },
             Self::Refused {
                 decision_ref,

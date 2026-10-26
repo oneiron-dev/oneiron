@@ -6,7 +6,9 @@ use crate::outbound_intent_ledger::{
     OutboundSendOutcome,
 };
 
-use super::connector_call::{ConnectorAwaitingInput, ConnectorCallHost, UntrustedToolResult};
+use super::connector_call::{
+    ConnectorAwaitingInput, ConnectorCallHost, ConnectorResultAbsence, UntrustedToolResult,
+};
 use super::connector_call_driver::Step;
 use super::execution::ScopedMcpDispatchResult;
 use super::scope::{ScopedMcpConsentDecision, ScopedMcpEscalationReason};
@@ -84,6 +86,9 @@ fn step_from_dispatch(
             Some(input) => Step::AwaitingInput { intent, input },
             None => Step::Delivered {
                 intent,
+                result_absence: reply
+                    .is_none()
+                    .then_some(ConnectorResultAbsence::NotRetained),
                 result: reply,
             },
         },
