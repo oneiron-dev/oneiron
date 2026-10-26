@@ -10,7 +10,8 @@
 //! rate is the model's highest catalog rate per token, so the dollar figure
 //! is an upper bound. Only a catalog price quoted in USD makes the quote; one
 //! in another currency, or in none its provider named, quotes nothing and is
-//! never read as dollars (FIX 9534).
+//! never read as dollars (FIX 9534). A free model, every rate zero, quotes 0
+//! in any currency.
 //! A unit other than tokens is priced from that same model's token rate
 //! through the one rate the exact offer serving it supplies for the unit
 //! (FIX 3041); a unit's name is never read as money. A peer consult, a model
