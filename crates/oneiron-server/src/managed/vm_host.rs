@@ -177,6 +177,16 @@ pub struct VaultVmConfig {
     /// already protected and otherwise stops the vault.
     #[serde(deserialize_with = "Option::deserialize")]
     pub snapshot_custody: Option<VmSnapshotCustody>,
+    /// How long each wait of a start may take, in seconds: a cold boot's
+    /// provision, credential, ready and join, a snapshot's rejoin, and a
+    /// cold restore's boot steps (FIX 8934). It must cover the first boot of
+    /// an image with guest runtime bindings, whose bootstrap imports both
+    /// guest images before the engine starts; later boots import nothing.
+    /// Sized by the operator from a measured first import, as LC's
+    /// `[vault_vm] boot_timeout_secs` is. Unset, each waits 10 s, as before;
+    /// never 0.
+    #[serde(default)]
+    pub boot_timeout_secs: Option<u64>,
 }
 fn default_boot_args() -> String {
     "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda ro init=/sbin/oneiron-vault-init".into()
@@ -235,6 +245,10 @@ impl VaultVm {
         if let Err(fault) = config.provision.validate() {
             anyhow::bail!("the VM profile's provision binding: {fault}");
         }
+        anyhow::ensure!(
+            config.boot_timeout_secs != Some(0),
+            "the VM profile's boot_timeout_secs must be at least 1"
+        );
         crate::web_client::parse_allowed_origins(&config.allowed_origins)?;
         network::validate(&config)?;
         std::fs::create_dir_all(&config.state_dir)?;
@@ -286,6 +300,14 @@ impl VaultVm {
 
     pub fn is_running(&self) -> bool {
         self.child.is_some()
+    }
+
+    /// How long each wait of a start may take: the profile's
+    /// `boot_timeout_secs`, else 10 s (FIX 8934).
+    pub fn boot_timeout(&self) -> Duration {
+        self.config
+            .boot_timeout_secs
+            .map_or(API_TIMEOUT, Duration::from_secs)
     }
 
     /// A watch on the running VMM's exit, which any number of tasks await
@@ -444,9 +466,12 @@ impl VaultVm {
     }
 
     /// A fresh VMM, its kernel, drives, machine and vsock device and the
-    /// profile's NIC set, and started. `with_source` attaches the profile's
-    /// restore source drive read-only after the others, when it names one.
+    /// profile's NIC set, and started, once the vault disk is the binding's
+    /// ([`provision::check_vault_disk`]). `with_source` attaches the
+    /// profile's restore source drive read-only after the others, when it
+    /// names one.
     async fn boot_vmm(&mut self, with_source: bool) -> anyhow::Result<()> {
+        provision::check_vault_disk(&self.config)?;
         self.spawn_vmm().await?;
         let config = &self.config;
         let mut boot_args = config.boot_args.clone();

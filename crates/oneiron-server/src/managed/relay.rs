@@ -34,11 +34,13 @@ mod ctl_hold_guard;
 mod deferred_delete;
 pub(super) mod hold_guard;
 mod installer;
+mod locker_pool;
 mod overwrite;
 
 use self::deferred_delete::HeldDeletes;
 use self::hold_guard::RelayDeleteHoldGuard;
 pub(crate) use self::installer::run_host_relay;
+use self::locker_pool::{LockerConnection, LockerListener, LockerPool};
 
 /// The relay executable must be built from the same fork revision as the
 /// engine's mesh adapter. It remains a sidecar, not another engine transport.
@@ -132,6 +134,9 @@ struct RelayRoom {
     /// The host's hold guard and the deletes it deferred (FIX 1488). `None`
     /// deletes as the room always has: no intent, no deferral.
     held: Option<Arc<HeldDeletes>>,
+    /// Its connections and authorized request bodies, in a pressure check
+    /// (FIX 7739).
+    pool: Arc<LockerPool>,
 }
 
 type HttpResult<T> = Result<T, (StatusCode, &'static str)>;
@@ -301,6 +306,17 @@ async fn meter(
     }))
 }
 
+/// The locker's connection pressure check as it stands (FIX 7739): clear,
+/// or the open uploads holding it while its connections are as many as a
+/// public listener's descriptor floor.
+async fn pressure(
+    State(room): State<Arc<RelayRoom>>,
+    Path(vault): Path<String>,
+) -> HttpResult<Json<crate::wire_telemetry::ConnectionPoolPressure>> {
+    room.object(&vault, "manifest")?;
+    Ok(Json(room.pool.reading()))
+}
+
 fn relay_profile(config: &RelayConfig) -> anyhow::Result<String> {
     // iroh-relay's configuration and packet framing stay upstream. The
     // room's public-key allowlist is only transport admission, never a grant.
@@ -374,6 +390,7 @@ pub(crate) async fn run_relay_with_hold_guard(
             None
         }
     };
+    let pool = LockerPool::new();
     let room = Arc::new(RelayRoom {
         vault: config.vault_id.clone(),
         objects,
@@ -382,6 +399,7 @@ pub(crate) async fn run_relay_with_hold_guard(
         sent: AtomicU64::new(0),
         next_write: AtomicU64::new(0),
         held,
+        pool: Arc::clone(&pool),
     });
     let locker = Router::new()
         .route("/v1/relay/{vault}/locker", get(list))
@@ -390,7 +408,10 @@ pub(crate) async fn run_relay_with_hold_guard(
             get(read).put(write).delete(delete),
         )
         .route("/v1/relay/{vault}/bytes", get(meter))
+        .route("/v1/relay/{vault}/pressure", get(pressure))
         .layer(DefaultBodyLimit::max(config.max_object_bytes))
+        // Inside the authorization: only a body the token let in counts.
+        .route_layer(middleware::from_fn(locker_pool::count_body))
         .route_layer(middleware::from_fn_with_state(Arc::clone(&room), authorize))
         .with_state(room);
     let app = locker
@@ -401,7 +422,7 @@ pub(crate) async fn run_relay_with_hold_guard(
             ),
         ))
         .layer(cors);
-    let listener = tokio::net::TcpListener::bind(config.listen).await?;
+    let listener = LockerListener::new(tokio::net::TcpListener::bind(config.listen).await?, pool);
     let profile = directory.join("iroh-relay.toml");
     std::fs::write(&profile, relay_profile(&config)?)?;
     let mut command = tokio::process::Command::from(oneiron_spawn::command(&config.relay_binary));
@@ -413,9 +434,12 @@ pub(crate) async fn run_relay_with_hold_guard(
         .arg(&profile);
     let mut child = command.spawn()?;
     tracing::info!(vault = %config.vault_id, required_relay_revision = IROH_RELAY_REVISION, "blind relay room started");
-    let serving = axum::serve(listener, app)
-        .with_graceful_shutdown(crate::commands::stop_requested())
-        .into_future();
+    let serving = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<LockerConnection>(),
+    )
+    .with_graceful_shutdown(crate::commands::stop_requested())
+    .into_future();
     let result = tokio::select! {
         result = serving => result.map_err(anyhow::Error::from),
         status = child.wait() => Err(anyhow::anyhow!("iroh relay exited: {:?}", status?)),

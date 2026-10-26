@@ -1,5 +1,7 @@
 //! The ctl dispatcher: every parsed ctl request a managed vault answers.
 
+use std::sync::atomic::Ordering;
+
 use oneiron_vault_contract::artifact_origin::ARTIFACT_INTERNAL_HOST_REVISION;
 use oneiron_vault_contract::relay_delete::RELAY_DELETE_REVISION;
 use oneiron_vault_contract::settings_paths::SETTINGS_PATHS_REVISION;
@@ -18,13 +20,23 @@ impl ManagedState {
     /// none until set.
     #[must_use]
     pub(in crate::managed) fn with_vm_outbox_revision(mut self, revision: Option<u32>) -> Self {
-        self.vm_outbox_revision = revision;
+        *self.vm_outbox_revision.get_mut() = revision.unwrap_or(0);
         self
     }
 
-    /// The vault VM outbox carrier's revision, when it has one.
+    /// The vault VM outbox carrier's revision, when it has one now.
     pub(in crate::managed) fn vm_outbox_revision(&self) -> Option<u32> {
-        self.vm_outbox_revision
+        Some(self.vm_outbox_revision.load(Ordering::Relaxed)).filter(|revision| *revision != 0)
+    }
+
+    /// The carrier's revision as its companion answered a later look, or
+    /// `None` once it did not answer (FIX 6683); returns the one before.
+    #[cfg(target_os = "linux")]
+    pub(in crate::managed) fn set_vm_outbox_revision(&self, revision: Option<u32>) -> Option<u32> {
+        let was = self
+            .vm_outbox_revision
+            .swap(revision.unwrap_or(0), Ordering::Relaxed);
+        Some(was).filter(|revision| *revision != 0)
     }
 
     /// Dispatches one parsed ctl request.
@@ -53,7 +65,7 @@ impl ManagedState {
                 settings_paths_revision: Some(SETTINGS_PATHS_REVISION),
                 artifact_internal_host_revision: Some(ARTIFACT_INTERNAL_HOST_REVISION),
                 slim_recovery_revision: Some(SLIM_RECOVERY_REVISION),
-                vm_outbox_revision: self.vm_outbox_revision,
+                vm_outbox_revision: self.vm_outbox_revision(),
                 relay_delete_revision: Some(RELAY_DELETE_REVISION),
                 engine_instance: Some(self.relay_delete.instance().to_owned()),
             }),

@@ -251,7 +251,7 @@ impl Carrier {
                 _ => anyhow::bail!("the other end did not ack an outbox transfer in order"),
             };
             deferred |= matches!(ack.outcome, VmOutboxOutcome::Deferred { .. });
-            self.take_ack(descriptor, ack)?;
+            self.take_ack(descriptor, ack);
         }
         if deferred {
             self.pace(set.kind, &set.set);
@@ -318,8 +318,11 @@ impl Carrier {
     /// agreed version and retires the retransmission state, a deferral keeps
     /// it and writes nothing, a refusal drops it and is not sent again until
     /// the member changes. A durable or refused answer that does not record
-    /// is returned: the answer stands, and the transfer is replayed later.
-    fn take_ack(&mut self, transfer: &VmOutboxDescriptor, ack: VmOutboxAck) -> anyhow::Result<()> {
+    /// stands, and its exact record is kept to write again: the kind waits
+    /// on its carrier records both ways until that record is written, before
+    /// its next scan, and the session goes on to the set's other acks (FIX
+    /// 7624).
+    fn take_ack(&mut self, transfer: &VmOutboxDescriptor, ack: VmOutboxAck) {
         let (kind, member) = (transfer.kind, transfer.member.as_str());
         let gate = Arc::clone(&self.gate);
         let held = gate.hold();
@@ -345,7 +348,7 @@ impl Carrier {
                     member,
                     &format!("deferred ({code:?}) on {bound}: {detail}"),
                 );
-                return Ok(());
+                return;
             }
             VmOutboxOutcome::Refused { code, detail } => {
                 self.say(kind, member, &format!("refused ({code:?}): {detail}"));
@@ -357,9 +360,10 @@ impl Carrier {
                 ));
             }
         }
-        self.store.put(kind, member, record)?;
+        if let Err(error) = self.store.put(kind, member, record.clone()) {
+            self.received_failed(kind, member, record, &error);
+        }
         drop(held);
-        Ok(())
     }
 
     /// Takes one set the other end sends, `first` its first transfer, and
@@ -588,6 +592,24 @@ impl Carrier {
             _ => Vec::new(),
         };
         let mismatch = checked.iter().any(Option::is_some);
+        // A retirement refused here, the member's origin, for a copy the
+        // other end does not know offers this end's copy again (FIX 6686).
+        for (item, check) in taken.iter().zip(&checked) {
+            let origin = item
+                .member
+                .as_ref()
+                .is_some_and(|member| member.origin == self.side);
+            let unknown = matches!(
+                check,
+                Some(VmOutboxOutcome::Refused {
+                    code: VmOutboxRefusal::ExpectedDigestMismatch,
+                    ..
+                })
+            );
+            if origin && unknown {
+                self.reoffer(kind, &item.descriptor.member);
+            }
+        }
         let mut acks = Vec::with_capacity(taken.len());
         for (index, item) in taken.into_iter().enumerate() {
             let outcome = match item.plan {

@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
@@ -46,6 +46,10 @@ use refusal::writes_frozen_body;
 mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
+/// A vault VM's live look at its outbox companion and the escrow
+/// recipients its carrier delivers (FIX 6683, FIX 6684).
+#[cfg(target_os = "linux")]
+mod carrier_watch;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
 /// Supervised boot, serve and shutdown: [`serve_managed`].
@@ -195,8 +199,9 @@ pub struct ManagedState {
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
     /// The vault VM outbox carrier's revision, as every `Ping` reports it
-    /// (FIX 5235): set once at boot; `None` on a node or without one.
-    vm_outbox_revision: Option<u32>,
+    /// (FIX 5235): set at boot, then as its companion answers each look
+    /// (FIX 6683); 0 for none, on a node or while no companion answers.
+    vm_outbox_revision: AtomicU32,
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
@@ -402,7 +407,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
-            vm_outbox_revision: None,
+            vm_outbox_revision: AtomicU32::new(0),
             restore: None,
             idle_backup: Arc::default(),
             relay_delete: Arc::default(),
