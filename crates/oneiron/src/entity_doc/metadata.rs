@@ -119,8 +119,9 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<Vec<u8>> {
-        if edits.is_empty() || edits.len() > 50 {
-            return Err(invalid("metadata edit requires 1 to 50 operations"));
+        // No count bounds the edit: every operation lands as one (FIX 9845).
+        if edits.is_empty() {
+            return Err(invalid("metadata edit requires an operation"));
         }
         let mut registry = self
             .entity_docs
@@ -128,6 +129,9 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let frontier = self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
+            // A shared vault's role and record scope, in the committing writer
+            // (FIX 9846).
+            self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
             let mut head = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &head)?;
             let before = doc.doc.oplog_vv();

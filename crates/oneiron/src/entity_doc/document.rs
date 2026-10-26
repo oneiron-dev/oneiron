@@ -186,8 +186,20 @@ impl EntityDoc {
         at: u64,
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
+        self.edit_with(actor, at, &[], edit)
+    }
+
+    /// [`Self::edit_as`], its receipt naming `sources`, the rows its writer
+    /// read for it (FIX 7790).
+    pub(super) fn edit_with(
+        &mut self,
+        actor: WriteActor,
+        at: u64,
+        sources: &[EntityId],
+        edit: impl FnOnce(&LoroText) -> Result<()>,
+    ) -> Result<()> {
         let result = edit(&self.doc.get_text(BODY));
-        stamp(&self.doc, actor, at, "edit")?;
+        stamp_with(&self.doc, actor, at, "edit", sources)?;
         result
     }
 
@@ -267,15 +279,28 @@ pub(super) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result
 }
 
 pub(super) fn stamp(doc: &LoroDoc, actor: WriteActor, at: u64, verb: &str) -> Result<()> {
-    let at = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
+    stamp_with(doc, actor, at, verb, &[])
+}
+
+/// [`stamp`], its receipt naming `sources`, the rows its writer read for it.
+pub(super) fn stamp_with(
+    doc: &LoroDoc,
+    actor: WriteActor,
+    at: u64,
+    verb: &str,
+    sources: &[EntityId],
+) -> Result<()> {
     // Sequence-bearing messages prevent Loro from folding two calls by the same
     // actor into one change. Peer bindings remain the authority for remote stamps.
-    let message = format!(
+    let stamped = format!(
         "{STAMP} {verb} actor={}.{} op={:?}",
         actor.entity_ref().to_hex(),
         crate::edit_distance::actor_class_token(actor.actor_class()),
         doc.oplog_vv()
     );
+    // The commit carries its made_by receipt (FIX 7790).
+    let message = super::commit_receipts::receipted(&stamped, actor, at, verb, sources)?;
+    let at = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
     doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
     Ok(())
 }
@@ -338,7 +363,7 @@ impl crate::Vault {
 }
 
 /// What one commit message says of its actor (FIX 6072, Engine R2).
-enum Stamped {
+pub(super) enum Stamped {
     /// A live actor's engine stamp.
     Live(WriteActor),
     /// An engine stamp whose actor was erased: no one.
@@ -349,7 +374,7 @@ enum Stamped {
 
 /// The one stamp grammar the reader and the checkpoint split share: what
 /// one reads as a stamp is what the other cuts.
-fn parse_stamp(message: Option<&str>) -> Stamped {
+pub(super) fn parse_stamp(message: Option<&str>) -> Stamped {
     let Some((_, id, tail)) = message.and_then(cut_stamp) else {
         return Stamped::NotStamped;
     };
@@ -371,8 +396,9 @@ fn stamp_class(tail: &str) -> Option<crate::EdgeActorClass> {
 
 /// `message` cut around its actor id, when it is an engine stamp spelled
 /// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<id>.<class>
-/// op=...`, single spaced): the message before the id, the id (an actor's,
-/// or [`ERASED_CALL_IDENTITY`]), and the rest from the class on.
+/// op=...`, single spaced, then its receipt): the message before the id, the
+/// id (an actor's, or [`ERASED_CALL_IDENTITY`]), and the rest from the class
+/// on.
 pub(super) fn cut_stamp(message: &str) -> Option<(&str, &str, &str)> {
     let rest = message.strip_prefix(STAMP)?.strip_prefix(' ')?;
     let (verb, rest) = rest.split_once(' ')?;
