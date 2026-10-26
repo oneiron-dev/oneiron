@@ -22,14 +22,14 @@ use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
-use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
+use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats, PackWorldShare};
 use super::super::validation::{
     disclosure_admits_candidate, disclosure_admits_target, validate_hydrated_pack_entities,
     validate_pack_disclosure, validate_pack_edge_references, validate_pack_entity_reference,
     validate_scored_candidates,
 };
 use super::super::world_partition::{
-    annotate_stale_federated_worlds, partition_results_by_world, resolve_edge_short_ids,
+    annotate_stale_federated_worlds, partition_pack_claims, resolve_edge_short_ids,
 };
 use super::{
     ContextPackBuilder, ContextPackRun, ContextPackTelemetry, HydrateOptions,
@@ -153,16 +153,19 @@ impl<'a> ContextPackBuilder<'a> {
             total_in_scope: run.total_in_scope,
             clamped: run.clamped,
             replay_config: run.replay_config,
+            critical: run.critical,
+            world_share: run.world_share,
         };
         lane.end_recall_plan()?;
-        let receipt = match lane.filter_context_pack_under(&mut pending.value, disclosure.as_ref())
-        {
+        let receipt = match pending.filter_scoped_under(lane, disclosure.as_ref()) {
             Ok(receipt) => receipt,
             Err(error) => {
                 pending.discard_telemetry();
                 return Err(error);
             }
         };
+        // Instruction files name only units this read returns (FIX 9761).
+        pending.project_instruction_files_under(lane, disclosure.as_ref())?;
         // Counts exposed by recall refer only to rows admitted by this read.
         pending.value.stats.candidates_considered = pending.value.results.len();
         let finalized = pending.finish_post_filter()?;
@@ -181,18 +184,29 @@ impl<'a> ContextPackBuilder<'a> {
         self,
         config: &SerializeConfig,
     ) -> Result<RetrievalWithTelemetry<ContextPack>> {
-        Ok(self
-            .run_unfinalized_with_telemetry()?
-            .finish_projected_json(config))
+        let (vault, read, reader) = (self.vault, self.read, self.l2_summary_reader);
+        let (destination, clamp) = (self.destination.clone(), self.disclosure.clone());
+        // Instruction files name only units the projection's cuts kept (FIX 9761).
+        self.run_unfinalized_with_telemetry()?
+            .finish_projected_json(config, |pack| {
+                super::instruction_files::returned_pack_instruction_files(
+                    vault,
+                    &read,
+                    reader,
+                    &destination,
+                    clamp.as_ref(),
+                    pack,
+                )
+            })
     }
 
     /// # Errors
     ///
     /// Refuses an assembly issued INSIDE a room (ONE-1570 Arm B). The deferred
     /// door hands the caller an [`UnfinalizedContextPack`] whose finalize runs
-    /// in [`UnfinalizedContextPack::finish_projected_json`], which returns no
-    /// `Result` — so a room's failed registration would have nowhere to go but
-    /// a warning, and a warning past it is the log-and-continue the settle
+    /// in [`UnfinalizedContextPack::finish_projected_json`] as best effort —
+    /// so a room's failed registration would have nowhere to go but a
+    /// warning, and a warning past it is the log-and-continue the settle
     /// contract forbids. A room's assembly takes the finalizing doors, which
     /// can fail.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
@@ -211,6 +225,8 @@ impl<'a> ContextPackBuilder<'a> {
             total_in_scope: run.total_in_scope,
             clamped: run.clamped,
             replay_config: run.replay_config,
+            critical: run.critical,
+            world_share: run.world_share,
         })
     }
 
@@ -230,6 +246,8 @@ impl<'a> ContextPackBuilder<'a> {
                 total_in_scope: 0,
                 clamped: Vec::new(),
                 replay_config: None,
+                critical: Default::default(),
+                world_share: None,
             });
         }
         let started = Instant::now();
@@ -424,18 +442,20 @@ impl<'a> ContextPackBuilder<'a> {
             }
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
-            // default `All` scope, group surviving claims by world — base section
-            // first, then one section per non-base world. The pipeline already
-            // selected under the world share; the cap here only bites when
-            // hydration dropped a base claim. Flat (unchanged) for Base / World(id).
+            // default `All` scope, a result the share removes seeds no
+            // neighbor (FIX 9759). The pass after the walk holds the share
+            // over every claim the pack emits.
+            let mut critical = pipeline_output.critical;
             if matches!(self.world_scope, WorldScope::All) {
-                partition_results_by_world(
+                let (cut, _) = partition_pack_claims(
                     &self.read,
                     &rtxn,
                     &mut results,
+                    &mut Vec::new(),
                     self.non_base_world_fraction,
                     &claim_bodies,
                 )?;
+                critical.budget_omitted_ids.extend(cut);
             }
 
             // ONE-1411: read ONCE per pack run and reused by every stage below
@@ -487,6 +507,7 @@ impl<'a> ContextPackBuilder<'a> {
             let edge_walk = if let Some(neighbor_pipeline) = neighbor_pipeline.as_ref() {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
+                let world_scope = neighbor_pipeline.neighbor_world_scope(&rtxn)?;
                 walk_edges(
                     &self.read,
                     &rtxn,
@@ -500,6 +521,8 @@ impl<'a> ContextPackBuilder<'a> {
                         device_local: device_local.as_ref(),
                         type_filter: &neighbor_filter,
                         named_types,
+                        world_scope: &world_scope,
+                        critical_policy: (self.criticality != Some(false)).then_some(&policy),
                     },
                 )?
             } else {
@@ -552,6 +575,30 @@ impl<'a> ContextPackBuilder<'a> {
                 };
                 neighbors.push(entity);
             }
+
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117), once over
+            // every claim the pack emits (FIX 9759): under the default `All`
+            // scope, base section first, then one section per non-base world,
+            // with non-base claims held to the share. Flat (unchanged) for the
+            // other scopes, which the walk already held to their worlds.
+            critical.extend(edge_walk.critical);
+            let world_share = if matches!(self.world_scope, WorldScope::All) {
+                let (cut, non_base_claims) = partition_pack_claims(
+                    &self.read,
+                    &rtxn,
+                    &mut results,
+                    &mut neighbors,
+                    self.non_base_world_fraction,
+                    &claim_bodies,
+                )?;
+                critical.budget_omitted_ids.extend(cut);
+                Some(PackWorldShare {
+                    fraction: self.non_base_world_fraction,
+                    non_base_claims,
+                })
+            } else {
+                None
+            };
 
             // ONE-1411: a stale world that survived the walk did so because the
             // scope named it. Mark it on exactly the rule the results follow.
@@ -624,7 +671,8 @@ impl<'a> ContextPackBuilder<'a> {
             };
             let mut signals_used = self.signals_used;
             signals_used.extend(pipeline_signals.into_iter().map(pack_signal_from_retrieval));
-            let stats = PackStats {
+            critical.settle(&results, &neighbors);
+            let mut stats = PackStats {
                 critical_over_budget: false,
                 critical_count: 0,
                 candidates_considered,
@@ -638,6 +686,7 @@ impl<'a> ContextPackBuilder<'a> {
                 items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
                 items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
             };
+            critical.report(&mut stats);
             let empty = empty_context(
                 pack_is_empty,
                 &stats,
@@ -645,12 +694,18 @@ impl<'a> ContextPackBuilder<'a> {
                 &retrieval_quality,
             );
 
-            // The snapshot's last read is above. `code_instruction_handles`
-            // opens its own read txn, and a second live reader on this thread
-            // fails as Storage (MDB_BAD_RSLOT), so this one ends first (FIX 7611).
+            // Resolved in this snapshot, so no second reader opens while it is
+            // held (FIX 7611), and over the rows the pack keeps (FIX 9761).
+            let instruction_files = super::instruction_files::pack_instruction_files(
+                &self.read,
+                self.l2_summary_reader,
+                &rtxn,
+                &results,
+                &neighbors,
+                clamp,
+                device_local.as_ref(),
+            )?;
             drop(rtxn);
-            let units: Vec<_> = results.iter().chain(&neighbors).map(|row| row.id).collect();
-            let instruction_files = self.vault.code_instruction_handles(&units)?;
             Ok(ContextPackRun {
                 embedding_matches: pipeline_output.embedding_matches,
                 vector_completed: pipeline_output.vector_completed,
@@ -671,6 +726,8 @@ impl<'a> ContextPackBuilder<'a> {
                 total_in_scope,
                 clamped,
                 replay_config,
+                critical,
+                world_share,
             })
         })();
 

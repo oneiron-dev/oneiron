@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde::de::IgnoredAny;
 use serde_json::{Value, json};
 
-use crate::http::{GraphQlBody, LinearBodyLine, decode_held};
+use crate::http::{GraphQlBody, GraphQlValue, LinearBodyLine, decode_sized, decoded_size};
 use crate::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, invalid};
 
 /// The `content_ref` an operation's frozen request resolves by.
@@ -241,7 +241,7 @@ impl<'v, T> LinearResponseJournal<'v, T> {
     /// # Errors
     /// A request erased with its TASK, a decode that waited out its memory
     /// turn, and storage errors.
-    pub(crate) fn read_request(&self, reference: &str) -> LinearSyncResult<Option<Value>> {
+    pub(crate) fn read_request(&self, reference: &str) -> LinearSyncResult<Option<GraphQlValue>> {
         let Some(suffix) = reference.strip_prefix("linear:request:v1:") else {
             return Ok(None);
         };
@@ -272,17 +272,19 @@ impl<'v, T> LinearResponseJournal<'v, T> {
         &self,
         id: &[u8; 32],
         task: EntityId,
-    ) -> LinearSyncResult<Option<Value>> {
+    ) -> LinearSyncResult<Option<GraphQlValue>> {
         self.kept(task, id, LinearBodyRole::Response)
     }
 
-    /// `task`'s `role` body of `id`, decoded on the host's memory line.
+    /// `task`'s `role` body of `id`, decoded on the host's memory line by
+    /// the memory its value takes, counted in a first read of the body
+    /// (FIX 9383); each read opens and ends its own, never inside the other.
     fn kept(
         &self,
         task: EntityId,
         id: &[u8; 32],
         role: LinearBodyRole,
-    ) -> LinearSyncResult<Option<Value>> {
+    ) -> LinearSyncResult<Option<GraphQlValue>> {
         let erased = || invalid("Linear body was erased with its TASK; nothing is read again");
         let len = match self.vault.linear_body_len(task, id, role)? {
             LinearBody::Held(len) => len,
@@ -290,8 +292,15 @@ impl<'v, T> LinearResponseJournal<'v, T> {
             LinearBody::Erased => return Err(erased()),
         };
         let line = self.body_line.as_deref();
+        let size = match self.vault.linear_read_body(task, id, role, |reader| {
+            decoded_size(line, len, reader).map_err(LinearSyncError::from)
+        })? {
+            LinearBody::Held(size) => size,
+            LinearBody::Absent => return Ok(None),
+            LinearBody::Erased => return Err(erased()),
+        };
         match self.vault.linear_read_body(task, id, role, |reader| {
-            decode_held(line, len, reader).map_err(LinearSyncError::from)
+            decode_sized(line, size, reader).map_err(LinearSyncError::from)
         })? {
             LinearBody::Held(value) => Ok(Some(value)),
             LinearBody::Absent => Ok(None),
@@ -303,6 +312,13 @@ impl<'v, T> LinearResponseJournal<'v, T> {
         File::open(&self.journal_dir)
             .and_then(|dir| dir.sync_all())
             .map_err(|_| GraphQlTransportError::Uncertain)
+    }
+
+    /// Whether `id`'s durable state is the endpoint's refusal of its
+    /// credential (FIX 8611): nothing ran (FIX 9379). An absent, pending or
+    /// unreadable state proves nothing.
+    pub(crate) fn rejected(&self, id: &[u8; 32]) -> bool {
+        matches!(self.delivery(id), Ok(Some(Delivery::Rejected { .. })))
     }
 
     /// The delivery state of `id`; `None` for an operation never sent. A
@@ -348,14 +364,14 @@ impl<'v, T> LinearResponseJournal<'v, T> {
         let create = call.query.contains("issueCreate(");
         let (issue, frozen) = match body {
             GraphQlBody::Decoded(value) => {
-                let issue = Answer::deserialize(&value)
+                let issue = Answer::deserialize(&*value)
                     .ok()
                     .and_then(|answer| answer.issue(create))
                     .ok_or(GraphQlTransportError::Uncertain)?;
                 let frozen =
                     self.vault
                         .linear_freeze_body(task, id, LinearBodyRole::Response, |out| {
-                            serde_json::to_writer(out, &value).map_err(std::io::Error::other)
+                            serde_json::to_writer(out, &*value).map_err(std::io::Error::other)
                         });
                 (issue, frozen)
             }
@@ -415,7 +431,7 @@ impl<T: GraphQlExecutor> LinearResponseJournal<'_, T> {
                             .flatten()
                             .and_then(|value| {
                                 let create = call.query.contains("issueCreate(");
-                                Answer::deserialize(&value).ok()?.issue(create)
+                                Answer::deserialize(&*value).ok()?.issue(create)
                             })
                             .ok_or(GraphQlTransportError::Uncertain)?;
                         self.put_delivery(
@@ -470,6 +486,9 @@ impl<T: GraphQlExecutor> LinearResponseJournal<'_, T> {
             Err(GraphQlTransportError::Uncertain | GraphQlTransportError::Waiting) => {
                 return Err(GraphQlTransportError::Uncertain);
             }
+            // FIX 9385: the endpoint's status may follow a run, so the
+            // pending marker stays; the status goes on with the uncertainty.
+            Err(error @ GraphQlTransportError::HttpStatus { .. }) => return Err(error),
         };
         self.keep_answer(&id, task, call, body)
     }

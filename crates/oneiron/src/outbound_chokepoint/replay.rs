@@ -77,6 +77,12 @@ pub(super) fn replay_record<T: OutboundTransport>(
             )
         }
         (IntentState::Pending, None) if !record.idempotency_supported => {
+            // FIX 9379: a transport whose own record proves this call
+            // reached no provider retries it as a definite non-delivery.
+            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
+                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                return replay_record(vault, authority, proven, prepared, now_ms, transport);
+            }
             // A previous node may have sent before crashing. The stop reason
             // does not carry this delivery fact; store it independently.
             record_possible_delivery(vault, record.id)?;
@@ -99,6 +105,11 @@ pub(super) fn replay_record<T: OutboundTransport>(
             {
                 let txn = vault.store.env.read_txn().map_err(Error::from)?;
                 verify_booking_effect(vault, &txn, record.attempt_id, record.payload())?;
+            }
+            // FIX 9379: as above, a proven non-delivery is retried as one.
+            if transport.known_non_delivery(&FrozenOutboundCall::from_record(&record)) {
+                let proven = record_definite_non_delivery(vault, record.id, now_ms)?;
+                return replay_record(vault, authority, proven, prepared, now_ms, transport);
             }
             // This row was committed before a prior transport attempt. A crash
             // could have hidden a delivered response; persist that possibility
