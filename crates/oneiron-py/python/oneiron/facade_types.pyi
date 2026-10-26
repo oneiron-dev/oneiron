@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1160 facade rows, 4167 declarations.
+Census: 1160 facade rows, 4168 declarations.
 Inputs: 1095 of 1160 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1041 of 1160 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 105; unread shapes: 0.
@@ -3451,12 +3451,15 @@ class ScopeAxisSome(TypedDict, Generic[T]):
 ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
 ScopeId = str
 Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingBottom(TypedDict):
+class SensitivityCeilingWireBottom(TypedDict):
     kind: Literal["bottom"]
-class SensitivityCeilingAtMost(TypedDict):
+class SensitivityCeilingWireAll(TypedDict):
+    kind: Literal["all"]
+class SensitivityCeilingWireAtMost(TypedDict):
     kind: Literal["at_most"]
     value: Sensitivity
-SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
+SensitivityCeilingWire = SensitivityCeilingWireBottom | SensitivityCeilingWireAll | SensitivityCeilingWireAtMost
+SensitivityCeiling = SensitivityCeilingWire
 class Scope(TypedDict):
     worlds: NotRequired[ScopeAxis[ScopeId]]
     facets: NotRequired[ScopeAxis[ScopeId]]
@@ -3515,10 +3518,12 @@ ScopeAxisInput = ScopeAxisInputBottom | ScopeAxisInputAll | ScopeAxisInputSome[T
 ScopeSensitivityBand = Literal["public", "private", "sensitive", "restricted"]
 class ScopeSensitivityInputBottom(TypedDict):
     kind: Literal["bottom"]
+class ScopeSensitivityInputAll(TypedDict):
+    kind: Literal["all"]
 class ScopeSensitivityInputAtMost(TypedDict):
     kind: Literal["at_most"]
     value: ScopeSensitivityBand
-ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAtMost
+ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAll | ScopeSensitivityInputAtMost
 class ChannelCeiling(TypedDict):
     worlds: NotRequired[ScopeAxisInput[str]]
     facets: NotRequired[ScopeAxisInput[str]]
