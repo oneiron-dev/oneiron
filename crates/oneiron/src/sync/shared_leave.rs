@@ -27,7 +27,9 @@ use crate::side_table::{self, Named, Raw, SideTable};
 
 mod collect;
 
-pub(crate) use collect::{collect_left_env_bodies, left_env_body_collect_due_at};
+pub(crate) use collect::{
+    collect_left_env_bodies, collect_left_env_bodies_at_open, left_env_body_collect_due_at,
+};
 
 /// This device's leave records, keyed by the notice's receipt id.
 const LEAVE_RECEIPTS: SideTable<String, SharedLeaveReceipt, Named> =
