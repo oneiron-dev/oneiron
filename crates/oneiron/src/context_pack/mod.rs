@@ -36,13 +36,13 @@ pub use psych_mirror::{
     PsychProfilePackSection, PsychProfilePackStaleReason, psych_mirror_source_candidate_from_claim,
     psych_mirror_source_candidate_from_context_entity, psych_profile_pack_section,
 };
-pub(crate) use types::PackCriticalAccounting;
 pub use types::{
     ContextEntity, ContextPack, ContextPackRetrievalBudget, DEFAULT_MAX_FIELD_CHARS,
     DEFAULT_MAX_NEIGHBORS, FieldProfile, MAX_CONTEXT_NEIGHBORS, MAX_EDGE_HOP, PackFormat,
     PackItemAccounting, PackItemAccountingReason, PackItemTokenStats, PackSectionTokenStats,
     PackStats, PackTokenStats, TokenAllocation,
 };
+pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
 pub use world_partition::WORLD_STALE_FIELD;
 
 pub(crate) use validation::disclosure_admits_target;

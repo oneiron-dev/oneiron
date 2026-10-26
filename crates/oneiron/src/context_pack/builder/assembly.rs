@@ -22,7 +22,7 @@ use super::super::quarantine::load_pack_quarantine_index;
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
-use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats};
+use super::super::types::{ContextPack, ContextPackRetrievalBudget, PackStats, PackWorldShare};
 use super::super::validation::{
     disclosure_admits_candidate, disclosure_admits_target, validate_hydrated_pack_entities,
     validate_pack_disclosure, validate_pack_edge_references, validate_pack_entity_reference,
@@ -154,6 +154,7 @@ impl<'a> ContextPackBuilder<'a> {
             clamped: run.clamped,
             replay_config: run.replay_config,
             critical: run.critical,
+            world_share: run.world_share,
         };
         lane.end_recall_plan()?;
         let receipt = match pending.filter_scoped_under(lane, disclosure.as_ref()) {
@@ -183,18 +184,29 @@ impl<'a> ContextPackBuilder<'a> {
         self,
         config: &SerializeConfig,
     ) -> Result<RetrievalWithTelemetry<ContextPack>> {
-        Ok(self
-            .run_unfinalized_with_telemetry()?
-            .finish_projected_json(config))
+        let (vault, read, reader) = (self.vault, self.read, self.l2_summary_reader);
+        let (destination, clamp) = (self.destination.clone(), self.disclosure.clone());
+        // Instruction files name only units the projection's cuts kept (FIX 9761).
+        self.run_unfinalized_with_telemetry()?
+            .finish_projected_json(config, |pack| {
+                super::instruction_files::returned_pack_instruction_files(
+                    vault,
+                    &read,
+                    reader,
+                    &destination,
+                    clamp.as_ref(),
+                    pack,
+                )
+            })
     }
 
     /// # Errors
     ///
     /// Refuses an assembly issued INSIDE a room (ONE-1570 Arm B). The deferred
     /// door hands the caller an [`UnfinalizedContextPack`] whose finalize runs
-    /// in [`UnfinalizedContextPack::finish_projected_json`], which returns no
-    /// `Result` — so a room's failed registration would have nowhere to go but
-    /// a warning, and a warning past it is the log-and-continue the settle
+    /// in [`UnfinalizedContextPack::finish_projected_json`] as best effort —
+    /// so a room's failed registration would have nowhere to go but a
+    /// warning, and a warning past it is the log-and-continue the settle
     /// contract forbids. A room's assembly takes the finalizing doors, which
     /// can fail.
     pub fn run_unfinalized_with_telemetry(self) -> Result<UnfinalizedContextPack<'a>> {
@@ -214,6 +226,7 @@ impl<'a> ContextPackBuilder<'a> {
             clamped: run.clamped,
             replay_config: run.replay_config,
             critical: run.critical,
+            world_share: run.world_share,
         })
     }
 
@@ -234,6 +247,7 @@ impl<'a> ContextPackBuilder<'a> {
                 clamped: Vec::new(),
                 replay_config: None,
                 critical: Default::default(),
+                world_share: None,
             });
         }
         let started = Instant::now();
@@ -427,6 +441,23 @@ impl<'a> ContextPackBuilder<'a> {
                 results.push(entity);
             }
 
+            // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under the
+            // default `All` scope, a result the share removes seeds no
+            // neighbor (FIX 9759). The pass after the walk holds the share
+            // over every claim the pack emits.
+            let mut critical = pipeline_output.critical;
+            if matches!(self.world_scope, WorldScope::All) {
+                let (cut, _) = partition_pack_claims(
+                    &self.read,
+                    &rtxn,
+                    &mut results,
+                    &mut Vec::new(),
+                    self.non_base_world_fraction,
+                    &claim_bodies,
+                )?;
+                critical.budget_omitted_ids.extend(cut);
+            }
+
             // ONE-1411: read ONCE per pack run and reused by every stage below
             // — the result marker pass, the neighbor exclusion, and the
             // neighbor marker pass.
@@ -550,10 +581,9 @@ impl<'a> ContextPackBuilder<'a> {
             // scope, base section first, then one section per non-base world,
             // with non-base claims held to the share. Flat (unchanged) for the
             // other scopes, which the walk already held to their worlds.
-            let mut critical = pipeline_output.critical;
             critical.extend(edge_walk.critical);
-            if matches!(self.world_scope, WorldScope::All) {
-                let cut = partition_pack_claims(
+            let world_share = if matches!(self.world_scope, WorldScope::All) {
+                let (cut, non_base_claims) = partition_pack_claims(
                     &self.read,
                     &rtxn,
                     &mut results,
@@ -562,7 +592,13 @@ impl<'a> ContextPackBuilder<'a> {
                     &claim_bodies,
                 )?;
                 critical.budget_omitted_ids.extend(cut);
-            }
+                Some(PackWorldShare {
+                    fraction: self.non_base_world_fraction,
+                    non_base_claims,
+                })
+            } else {
+                None
+            };
 
             // ONE-1411: a stale world that survived the walk did so because the
             // scope named it. Mark it on exactly the rule the results follow.
@@ -691,6 +727,7 @@ impl<'a> ContextPackBuilder<'a> {
                 clamped,
                 replay_config,
                 critical,
+                world_share,
             })
         })();
 

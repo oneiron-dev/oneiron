@@ -4,7 +4,7 @@ use super::super::{
     MemoriesRequest, VadPayload, advance_memories_cursor, core_engine_error, hex_bytes,
 };
 use super::controls::{ContextPackBudgetControls, CoreDisclosureAssembly, CoreInterlocutorStamp};
-use super::instruction_files::project_instruction_files;
+use super::instruction_files::returned_instruction_files;
 use super::response_limits::{ContextPackResponseLimits, apply_context_pack_response_limits};
 use crate::error::ApiError;
 use crate::projection::View;
@@ -331,14 +331,7 @@ pub(crate) async fn run_context_pack_builder(
             tracing::error!(kind = ?error.kind(), "core context-pack reactions failed");
             core_engine_error("core context-pack reactions failed", error)
         })?;
-    apply_context_pack_response_limits(&mut pack.value, response_limits);
-    project_instruction_files(scoped_read, &mut pack.value, disclosure.as_ref()).map_err(
-        |error| {
-            pack.discard_telemetry();
-            tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
-            core_engine_error("core context-pack scoped read failed", error)
-        },
-    )?;
+    apply_context_pack_response_limits(&mut pack, response_limits);
     let assembly = disclosure.as_ref().map(|ctx| ctx.assembly(clamped_out));
     // Board provenance/snippets consume the same authorized snapshot, before
     // the requested JSON profile removes source fields for the separate pack.
@@ -357,7 +350,15 @@ pub(crate) async fn run_context_pack_builder(
         })
         .transpose()
         .map_err(|error| core_engine_error("memory provenance projection failed", error))?;
-    let pack = pack.finish_projected_json(&projection);
+    // Instruction files name only units the projection's cuts kept (FIX 9761).
+    let pack = pack
+        .finish_projected_json(&projection, |pack| {
+            returned_instruction_files(scoped_read, pack, disclosure.as_ref())
+        })
+        .map_err(|error| {
+            tracing::error!(kind = ?error.kind(), "core context-pack instruction files failed");
+            core_engine_error("core context-pack scoped read failed", error)
+        })?;
     let run_id = pack.run_id;
     let pack = pack.value;
     let evidence = core_context_pack_evidence(vault, run_id)?;

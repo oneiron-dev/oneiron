@@ -119,6 +119,16 @@ pub(crate) struct PackCriticalAccounting {
     pub(crate) budget_omitted_ids: BTreeSet<EntityId>,
 }
 
+/// An `All`-world pack's world share as its assembly left it, for a cut made
+/// after assembly (FIX 9759). Engine-internal: the ids never leave the engine.
+#[derive(Debug, Clone)]
+pub(crate) struct PackWorldShare {
+    /// The non-base claim fraction (ARCH-0004).
+    pub(crate) fraction: f32,
+    /// The non-base claims the pack emits; every other claim is base.
+    pub(crate) non_base_claims: BTreeSet<EntityId>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
 pub struct PackTokenStats {
     /// Stable tokenizer identifier used for every count in this struct.

@@ -2,7 +2,7 @@
 //! (ARCH-0004 / ARCH-0022 / ONE-1411).
 
 use crate::ports::EntityStoreRead;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use heed::RoTxn;
 
@@ -46,7 +46,7 @@ pub(super) fn resolve_edge_short_ids(
 /// (`pipeline::non_base_claim_cap`), keeping every base claim. The non-base
 /// claims kept are the critical ones first, then the rest, each in rank
 /// order: results by score, then neighbors in walk order (FIX 9760). Returns
-/// the critical claims the share left out.
+/// the critical claims the share left out, and the non-base claims it kept.
 ///
 /// When no non-base row survives, `results` are left flat in score order.
 pub(super) fn partition_pack_claims(
@@ -56,7 +56,7 @@ pub(super) fn partition_pack_claims(
     neighbors: &mut Vec<ContextEntity>,
     non_base_fraction: f32,
     claim_bodies: &HashMap<EntityId, ClaimBody>,
-) -> Result<Vec<EntityId>> {
+) -> Result<(Vec<EntityId>, BTreeSet<EntityId>)> {
     let mut result_worlds = Vec::with_capacity(results.len());
     for entity in results.iter() {
         result_worlds.push(entity_world(store, rtxn, entity, claim_bodies)?);
@@ -89,7 +89,7 @@ pub(super) fn partition_pack_claims(
         non_base_claims.len(),
         non_base_fraction,
     );
-    let mut kept_claims = HashSet::with_capacity(non_base_cap);
+    let mut kept_claims = BTreeSet::new();
     for critical_pass in [true, false] {
         for (id, critical) in &non_base_claims {
             if *critical == critical_pass && kept_claims.len() < non_base_cap {
@@ -131,7 +131,7 @@ pub(super) fn partition_pack_claims(
     // No fictional / dream row survived — leave the pack flat (score order).
     if non_base.is_empty() {
         *results = base;
-        return Ok(dropped_critical);
+        return Ok((dropped_critical, kept_claims));
     }
 
     // Group survivors by world; sections ordered by first (highest-score)
@@ -152,7 +152,7 @@ pub(super) fn partition_pack_claims(
         }
     }
     *results = out;
-    Ok(dropped_critical)
+    Ok((dropped_critical, kept_claims))
 }
 
 /// Hydrated-field key carrying the ONE-1411 stale-federation marker.

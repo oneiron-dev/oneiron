@@ -8,67 +8,18 @@ pub(crate) struct ContextPackResponseLimits {
     pub(crate) retrieval: oneiron::ContextPackRetrievalBudget,
 }
 
-/// Cuts `pack` to `limits`, critical rows first in every cut (FIX 9760). The
-/// pre-cut critical count stands; a critical row a cut leaves out raises the
-/// overflow warning.
+/// Cuts `pack` to `limits` by the pipeline's share-aware selection, critical
+/// rows first in every cut and an `All`-world pack's share held over its
+/// results and neighbors (FIX 9759, FIX 9760). The pre-cut critical count
+/// stands; a critical row a cut leaves out raises the overflow warning.
 pub(crate) fn apply_context_pack_response_limits(
-    pack: &mut oneiron::ContextPack,
+    pack: &mut oneiron::context_pack::UnfinalizedContextPack<'_>,
     limits: ContextPackResponseLimits,
 ) {
-    apply_context_pack_response_retrieval_budget(pack, limits.retrieval);
-    let results_cut = truncate_critical_first(&mut pack.results, limits.results);
-    let neighbors_cut = truncate_critical_first(&mut pack.neighbors, limits.neighbors);
-    pack.stats.critical_over_budget |= results_cut || neighbors_cut;
-    scrub_context_pack_visible_stats(pack);
-}
-
-/// Cuts `rows` to `limit`, critical rows first; the kept rows keep their
-/// order. Returns whether a critical row was cut.
-fn truncate_critical_first(
-    rows: &mut Vec<oneiron::context_pack::ContextEntity>,
-    limit: usize,
-) -> bool {
-    let mut taken = 0_usize;
-    let cut = oneiron::context_pack::select_critical_pack_rows(
-        rows,
-        |row| row.critical,
-        |_| {
-            let fits = taken < limit;
-            taken += usize::from(fits);
-            fits
-        },
-    );
-    !cut.is_empty()
-}
-
-pub(crate) fn apply_context_pack_response_retrieval_budget(
-    pack: &mut oneiron::ContextPack,
-    budget: oneiron::ContextPackRetrievalBudget,
-) {
-    let mut claims = 0_usize;
-    let mut turns = 0_usize;
-    let mut summaries = 0_usize;
-    let mut facets = 0_usize;
-    let mut other = 0_usize;
-    let cut = oneiron::context_pack::select_critical_pack_rows(
-        &mut pack.results,
-        |entity| entity.critical,
-        |entity| {
-            let (count, limit) = match entity.entity_type {
-                oneiron::registry::ENTITY_TYPE_CLAIM => (&mut claims, budget.claims),
-                oneiron::registry::ENTITY_TYPE_TURN => (&mut turns, budget.turns),
-                oneiron::registry::ENTITY_TYPE_SUMMARY => (&mut summaries, budget.summaries),
-                oneiron::registry::ENTITY_TYPE_FACET => (&mut facets, budget.facets),
-                _ => (&mut other, budget.other),
-            };
-            if *count >= limit {
-                return false;
-            }
-            *count += 1;
-            true
-        },
-    );
-    pack.stats.critical_over_budget |= !cut.is_empty();
+    let cut_critical =
+        pack.select_response_rows(limits.retrieval, limits.results, limits.neighbors);
+    pack.value.stats.critical_over_budget |= cut_critical;
+    scrub_context_pack_visible_stats(&mut pack.value);
 }
 
 /// Every empty pack reads alike, whoever reads it: no key reads every row

@@ -385,7 +385,8 @@ fn hydrate_selected_note_fields(
         }
         return Ok(decode_entity_fields(body).unwrap_or_default());
     }
-    let body = crate::note::live_body_in_txn(store.base(), rtxn, id, entity_type, body)?;
+    let body =
+        crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;
     let markdown = vault.note_text_from_in_txn(store, rtxn, *id)?;
     if crate::batch::export::write_door_refuses_body(&body)
         || crate::batch::export::write_door_refuses_body(markdown.as_bytes())

@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::StoreRead;
 
-use super::super::types::ContextEntity;
+use super::super::types::{ContextEntity, ContextPack};
 use super::super::validation::disclosure_admits_target;
 
 /// The instruction files of the code units among `results` and `neighbors`,
@@ -42,4 +42,36 @@ pub(super) fn pack_instruction_files(
                 None => true,
             })
     })
+}
+
+/// [`pack_instruction_files`] over the rows `pack` returns after a cut made
+/// once its assembly snapshot closed, in a fresh snapshot of `vault`, with
+/// the device-local worlds of `destination` read there.
+pub(super) fn returned_pack_instruction_files(
+    vault: &crate::Vault,
+    read: &StoreRead<'_>,
+    reader: Option<&crate::claim::ScopedRead<'_>>,
+    destination: &crate::settings::ReadDestination,
+    clamp: Option<&DisclosureContext>,
+    pack: &ContextPack,
+) -> Result<Vec<CodeInstructionHandle>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let device_local = if destination.is_off_device() {
+        Some(crate::settings::device_local_worlds_for(
+            vault,
+            &rtxn,
+            destination,
+        )?)
+    } else {
+        None
+    };
+    pack_instruction_files(
+        read,
+        reader,
+        &rtxn,
+        &pack.results,
+        &pack.neighbors,
+        clamp,
+        device_local.as_ref(),
+    )
 }
