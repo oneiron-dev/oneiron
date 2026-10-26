@@ -94,7 +94,10 @@ pub use history_handoff::*;
 pub use lexical_query_hint::*;
 pub(crate) use lifecycle::is_observed_preference;
 pub(crate) use machine_birth::SignedClaimBirth;
-pub use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
+pub use oneiron_contracts::claim::{
+    ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ConfidenceBand, ConfidenceDetails,
+    VerdictBasis,
+};
 pub use predicate_grammar::*;
 pub use predicate_validators::*;
 pub(crate) use read::*;

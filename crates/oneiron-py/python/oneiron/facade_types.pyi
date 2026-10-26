@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4146 declarations.
+Census: 1159 facade rows, 4148 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -2626,6 +2626,7 @@ class EmbeddingMatchEvidence(TypedDict):
     floor: float
     strong: float
     matched: bool
+VerdictBasis = Literal["calibrated_model", "deterministic_fallback"]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -2649,6 +2650,7 @@ class MemoryItem(TypedDict):
     value_text: str
     confidence: float
     hedge_bucket: str
+    confidence_basis: NotRequired[VerdictBasis | None]
     provenance: MemoryProvenance
     stale: NotRequired[MemoryStaleStamp | None]
     world: NotRequired[str | None]
@@ -10950,6 +10952,9 @@ class CodeFileEdit(TypedDict):
     expected: str
     replacement: str
     new_path: NotRequired[str | None]
+class ConfidenceDetails(TypedDict):
+    band: ConfidenceBand
+    basis: VerdictBasis
 class ClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -10965,6 +10970,7 @@ class ClaimInput(TypedDict):
     occurred_at: NotRequired[int | None]
     learned_at: NotRequired[int | None]
     salience: NotRequired[float | None]
+    confidence_details: NotRequired[ConfidenceDetails | None]
 class ForeignCodeEffectFileWrite(TypedDict):
     kind: Literal["file_write"]
     path: str
@@ -19061,6 +19067,7 @@ class GeneratedClaimInput(TypedDict):
     supersedes: NotRequired[str | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
+    confidence_details: NotRequired[ConfidenceDetails | None]
 class ConsolidationPromoteRequest(TypedDict):
     job_ref: str
     candidates: list[GeneratedClaimInput]

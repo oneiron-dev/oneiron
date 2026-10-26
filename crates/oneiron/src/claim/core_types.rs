@@ -31,11 +31,12 @@ pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_e
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
 /// Order is canonical: the engine's encoder emits present fields in this
-/// order, and the context-pack field profiles are prefixes of this list
-/// (Minimal = first 2, Standard = first 5, Full = first 12; the lifecycle
-/// keys `appr`/`life`/`stale` and optional session tag `sess` are excluded
-/// from every serialization profile).
-pub const CLAIM_BODY_KEYS: [&str; 19] = [
+/// order. The context-pack field profiles are drawn from this list (Minimal
+/// = its first 2; Standard and Full add the confidence band and basis, so a
+/// profile that carries `conf` carries what it means; the lifecycle keys
+/// `appr`/`life`/`stale` and optional session tag `sess` are excluded from
+/// every serialization profile).
+pub const CLAIM_BODY_KEYS: [&str; 21] = [
     "pred",
     "val",
     "conf",
@@ -55,6 +56,8 @@ pub const CLAIM_BODY_KEYS: [&str; 19] = [
     "scopeFacetId",
     "scopeProjectId",
     "scopeVersion",
+    "confBand",
+    "confBasis",
 ];
 
 const KEY_PRED: &str = CLAIM_BODY_KEYS[0];
@@ -73,11 +76,21 @@ const KEY_APPR: &str = CLAIM_BODY_KEYS[12];
 const KEY_LIFE: &str = CLAIM_BODY_KEYS[13];
 const KEY_STALE: &str = CLAIM_BODY_KEYS[14];
 pub(crate) const KEY_SESSION: &str = CLAIM_BODY_KEYS[15];
+const KEY_CONF_BAND: &str = CLAIM_BODY_KEYS[19];
+const KEY_CONF_BASIS: &str = CLAIM_BODY_KEYS[20];
 
 /// Context-pack CLAIM field profiles, derived from [`CLAIM_BODY_KEYS`] so the
 /// serializer cannot drift from the storage ABI.
 pub(crate) const CLAIM_FIELDS_MINIMAL: &[&str] = claim_keys_prefix(2);
-pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = claim_keys_prefix(5);
+pub(crate) const CLAIM_FIELDS_STANDARD: &[&str] = &[
+    "pred",
+    "val",
+    "conf",
+    "sal",
+    "evid",
+    KEY_CONF_BAND,
+    KEY_CONF_BASIS,
+];
 pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
     "pred",
     "val",
@@ -94,6 +107,8 @@ pub(crate) const CLAIM_FIELDS_FULL: &[&str] = &[
     "scopeFacetId",
     "scopeProjectId",
     "scopeVersion",
+    KEY_CONF_BAND,
+    KEY_CONF_BASIS,
 ];
 
 const fn claim_keys_prefix(len: usize) -> &'static [&'static str] {
@@ -195,6 +210,13 @@ pub struct ClaimBody {
     pub value: Value,
     /// `conf` — confidence, finite in `[0, 1]`.
     pub confidence: f32,
+    /// `confBand` — the band `conf` is read in, as its producer gave it or
+    /// the house table put it (FIX 7761). Readers hedge and compare by this
+    /// band, never by a fixed cutoff over `conf`.
+    pub confidence_band: ConfidenceBand,
+    /// `confBasis` — where `confBand` came from: a calibrated decider, or
+    /// the house table for a confidence given as a number alone.
+    pub confidence_basis: VerdictBasis,
     /// `appr` — approval status.
     pub approval: ClaimApprovalStatus,
     /// `life` — lifecycle status.
@@ -272,7 +294,8 @@ pub(crate) struct SessionClaimBundleMember {
 
 impl ClaimBody {
     /// Creates a claim body from the six required fields; all optional
-    /// fields start absent and `stale` starts `false`. The scope facet starts
+    /// fields start absent and `stale` starts `false`. The confidence starts
+    /// in its house band ([`Self::set_confidence`]). The scope facet starts
     /// as the subject's `substrate` FACET, a derived id, so construction
     /// refuses with an error where that derivation does.
     pub fn new(
@@ -288,6 +311,8 @@ impl ClaimBody {
             subject,
             value,
             confidence,
+            confidence_band: ConfidenceBand::house(confidence),
+            confidence_basis: VerdictBasis::DeterministicFallback,
             approval,
             lifecycle,
             salience: None,
@@ -303,6 +328,25 @@ impl ClaimBody {
             session_tag: None,
             stale: false,
         })
+    }
+
+    /// The band and basis kept beside `confidence`.
+    #[must_use]
+    pub const fn confidence_details(&self) -> ConfidenceDetails {
+        ConfidenceDetails {
+            band: self.confidence_band,
+            basis: self.confidence_basis,
+        }
+    }
+
+    /// Sets `confidence` with the band and basis its producer gave, or the
+    /// house band for a number given alone: a changed number never keeps
+    /// another number's band (FIX 7761).
+    pub fn set_confidence(&mut self, confidence: f32, details: Option<ConfidenceDetails>) {
+        let details = details.unwrap_or_else(|| ConfidenceDetails::house(confidence));
+        self.confidence = confidence;
+        self.confidence_band = details.band;
+        self.confidence_basis = details.basis;
     }
 }
 

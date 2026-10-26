@@ -84,7 +84,7 @@ pub(crate) fn inbox_claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     let mut normalized = body.clone();
     normalized.approval = ClaimApprovalStatus::Proposed;
     normalized.lifecycle = ClaimLifecycleStatus::Active;
-    normalized.confidence = 1.0;
+    normalized.set_confidence(1.0, None);
     normalized.salience = None;
     normalized.evidence = None;
     normalized.source = None;

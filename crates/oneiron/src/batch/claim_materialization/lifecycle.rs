@@ -23,7 +23,7 @@ impl ClaimMaterialization {
         Self::lifecycle_closed_by(store, txn, op, None)
     }
 
-    /// [`Self::lifecycle`] carrying the closer its typed door verified, set
+    /// The exact close of the current active row, carrying the closer its typed door verified, set
     /// before the binding's actor check runs.
     fn lifecycle_closed_by(
         store: &Store,

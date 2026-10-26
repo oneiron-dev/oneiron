@@ -76,6 +76,14 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
         scope_stamp::id_value(body.scope_project),
     ));
     entries.push(("scopeVersion".into(), 2u64.into()));
+    entries.push((
+        Value::from(KEY_CONF_BAND),
+        Value::from(body.confidence_band.as_str()),
+    ));
+    entries.push((
+        Value::from(KEY_CONF_BASIS),
+        Value::from(body.confidence_basis.as_str()),
+    ));
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("claim body MessagePack encode failed"))?;
@@ -90,8 +98,10 @@ pub(crate) fn encode_claim_body(body: &ClaimBody) -> Result<Vec<u8>> {
 ///
 /// * the body must be exactly one MessagePack map (no trailing bytes);
 /// * keys must be strings drawn from [`CLAIM_BODY_KEYS`], no duplicates;
-/// * required: `pred`, `subj`, `val`, `conf`, `appr`, `life`, `world`, `rel`;
+/// * required: `pred`, `subj`, `val`, `conf`, `confBand`, `confBasis`,
+///   `appr`, `life`, `world`, `rel`;
 /// * `conf` (and `sal` when present) must be finite numbers in `[0, 1]`;
+/// * `confBand`/`confBasis` must be the pinned band and basis strings;
 /// * `from`/`to` must be non-negative integers fitting `u64`;
 /// * `src`/`appr`/`life` must be the pinned enum strings;
 /// * `stale` must be a boolean (absent = `false`);
@@ -120,6 +130,8 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let mut subject: Option<ClaimSubject> = None;
     let mut claim_value: Option<Value> = None;
     let mut confidence: Option<f32> = None;
+    let mut confidence_band: Option<ConfidenceBand> = None;
+    let mut confidence_basis: Option<VerdictBasis> = None;
     let mut approval: Option<ClaimApprovalStatus> = None;
     let mut lifecycle: Option<ClaimLifecycleStatus> = None;
     let mut salience: Option<f32> = None;
@@ -164,6 +176,20 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
                     unit_interval_f32(&value)
                         .ok_or(Error::InvalidClaimBody("conf must be finite in [0, 1]"))?,
                 );
+            }
+            "confBand" => {
+                let parsed = value.as_str().and_then(ConfidenceBand::parse).ok_or(
+                    Error::InvalidClaimBody("confBand must be one of low|medium|high|certain"),
+                )?;
+                confidence_band = Some(parsed);
+            }
+            "confBasis" => {
+                let parsed = value.as_str().and_then(VerdictBasis::parse).ok_or(
+                    Error::InvalidClaimBody(
+                        "confBasis must be one of calibrated_model|deterministic_fallback",
+                    ),
+                )?;
+                confidence_basis = Some(parsed);
             }
             "sal" => {
                 salience = Some(
@@ -262,6 +288,10 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
     let subject = subject.ok_or(Error::InvalidClaimBody("missing required field subj"))?;
     let claim_value = claim_value.ok_or(Error::InvalidClaimBody("missing required field val"))?;
     let confidence = confidence.ok_or(Error::InvalidClaimBody("missing required field conf"))?;
+    let confidence_band =
+        confidence_band.ok_or(Error::InvalidClaimBody("missing required field confBand"))?;
+    let confidence_basis =
+        confidence_basis.ok_or(Error::InvalidClaimBody("missing required field confBasis"))?;
     let approval = approval.ok_or(Error::InvalidClaimBody("missing required field appr"))?;
     let lifecycle = lifecycle.ok_or(Error::InvalidClaimBody("missing required field life"))?;
     // `scope` stays opaque, but the entries the engine RECOGNIZES inside it
@@ -275,6 +305,8 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
         subject,
         value: claim_value,
         confidence,
+        confidence_band,
+        confidence_basis,
         approval,
         lifecycle,
         salience,
