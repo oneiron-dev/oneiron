@@ -213,6 +213,31 @@ pub(super) fn authority_anchored_secs(store: &StoreCore) -> Option<u64> {
         .anchored_secs(Instant::now())
 }
 
+/// What an authority reading does over a present floor that does not decode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthorityClockCorruptPolicy {
+    /// A handle that holds an anchor reads its anchored clock, measured from
+    /// a floor it read whole, and writes no floor; one that holds none
+    /// answers [`RecordError::AuthorityClockCorrupt`]. Never zero, and the
+    /// damaged row stays until the owner's repair replaces it.
+    AnchoredElseCorrupt,
+}
+
+/// The one rule over a damaged floor (CALLS `FIX 10106 authority clock
+/// corrupt policy`).
+pub const AUTHORITY_CLOCK_CORRUPT_POLICY: AuthorityClockCorruptPolicy =
+    AuthorityClockCorruptPolicy::AnchoredElseCorrupt;
+
+/// The reading over a damaged floor ([`AUTHORITY_CLOCK_CORRUPT_POLICY`]):
+/// this handle's anchored one, else `corrupt`.
+fn reading_over_damaged_floor(store: &StoreCore, corrupt: Error) -> crate::error::Result<u64> {
+    match AUTHORITY_CLOCK_CORRUPT_POLICY {
+        AuthorityClockCorruptPolicy::AnchoredElseCorrupt => {
+            authority_anchored_secs(store).ok_or(corrupt)
+        }
+    }
+}
+
 /// The verdict on a present authority clock floor that does not decode (FIX
 /// 10106).
 pub(crate) fn authority_clock_corrupt() -> Error {
@@ -255,7 +280,7 @@ pub(crate) fn authority_clock_reading_in_txn(
             candidate_wall_secs,
         )),
         Err(error) if is_authority_clock_corrupt(&error) => {
-            authority_anchored_secs(store).ok_or(error)
+            reading_over_damaged_floor(store, error)
         }
         Err(error) => Err(error),
     }
@@ -274,7 +299,7 @@ pub(crate) fn advance_authority_clock_in_txn(
     let floor = match read_authority_clock_floor_in_txn(store, wtxn) {
         Ok(floor) => floor.unwrap_or(0),
         Err(error) if is_authority_clock_corrupt(&error) => {
-            return authority_anchored_secs(store).ok_or(error);
+            return reading_over_damaged_floor(store, error);
         }
         Err(error) => return Err(error),
     };
