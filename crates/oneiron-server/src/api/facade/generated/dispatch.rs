@@ -1332,7 +1332,7 @@ async fn self_grants_answer(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_unnarrowed_facets()?;
     facade_outside_room_turn(call, "self.grants.answer")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("self.grants.answer", &value)?;

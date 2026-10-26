@@ -10520,7 +10520,7 @@ impl AgentVerb {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
             }
             Self::SelfGrantsAnswer => {
-                "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile."
+                "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."
             }
             Self::VaultPersonasPreview => {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."

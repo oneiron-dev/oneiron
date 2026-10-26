@@ -3429,7 +3429,7 @@ class Oneiron:
         def ask(self, spec: Facade.GrantAskRequest) -> Facade.GrantAskReceipt:
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
         def answer(self, spec: Facade.GrantAnswerRequest) -> Facade.GrantAnswered:
-            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile."""
+            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
     class _SelfBudgetVerbs:
         def __call__(self, spec: Facade.SelfBudgetRequest) -> Facade.AgentBudgetView:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""

@@ -5462,7 +5462,7 @@ class Oneiron:
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
         def answer(self, spec):
-            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile."""
+            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
             return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))
     class _SelfBudgetVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -473,7 +473,7 @@ export type GrantAnswerRequest = { request: EntityId; answer: GrantAnswer }
 /** `oneiron::verbs::grants::GrantRequestedScope` */
 export type GrantRequestedScope = { kind: "messages"; space_ref: EntityId } | { kind: "summaries"; space_ref: EntityId } | { kind: "relationship_claims"; space_ref: EntityId } | { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null }
 /** `oneiron::verbs::grants::GrantAnswered` */
-export type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null }
+export type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; excess_request?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null }
 /** `oneiron::verbs::persona::PersonaSnapshotPreviewRequest` */
 export type PersonaSnapshotPreviewRequest = { subject: EntityId }
 /** `oneiron::verbs::persona::PersonaSnapshotPreviewRow` */

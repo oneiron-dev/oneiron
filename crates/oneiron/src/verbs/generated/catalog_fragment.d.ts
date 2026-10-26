@@ -251,7 +251,7 @@ declare namespace Sdk {
   type GrantAnswer = "approve" | "deny";
   type GrantAnswerRequest = { request: EntityId; answer: GrantAnswer };
   type GrantRequestedScope = { kind: "messages"; space_ref: EntityId } | { kind: "summaries"; space_ref: EntityId } | { kind: "relationship_claims"; space_ref: EntityId } | { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null };
-  type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null };
+  type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; excess_request?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null };
   type PersonaSnapshotPreviewRequest = { subject: EntityId };
   type PersonaSnapshotPreviewRow = { row_id: string; kind: string; text: string; provenance_refs: string[]; attribution?: string | null; struck: boolean };
   type PersonaSnapshotPreview = { subject: EntityId; stamp: string; identity_line: string; rows: PersonaSnapshotPreviewRow[]; compiled_at: string; stale_after_secs: number };
@@ -4615,7 +4615,7 @@ declare namespace self {
     describe(input: Sdk.FoldUnfoldRequest): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
   };
   const grants: {
-    /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile. */
+    /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner. */
     answer(input: Sdk.GrantAnswerRequest): Promise<Sdk.GrantAnswered | StoredResult>;
     /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
     ask(input: Sdk.GrantAskRequest): Promise<Sdk.GrantAskReceipt | StoredResult>;

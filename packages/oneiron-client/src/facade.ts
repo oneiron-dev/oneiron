@@ -2395,7 +2395,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "self.message": { description: "Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "self.grants.ask": { description: "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.companions.access_requests.answer": { description: "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "self.grants.answer": { description: "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "self.grants.answer": { description: "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.personas.preview": { description: "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.personas.export": { description: "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.personas.edit": { description: "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -6208,7 +6208,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
       grants: {
         /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
         ask: (input: Facade.GrantAskRequest, options?: O): FacadeReturns<"self.grants.ask">[K] => invoke("self.grants.ask", input, options, newInvocation()),
-        /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves only access to their own companion profile. */
+        /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner. */
         answer: (input: Facade.GrantAnswerRequest, options?: O): FacadeReturns<"self.grants.answer">[K] => invoke("self.grants.answer", input, options, newInvocation()),
       },
       /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */

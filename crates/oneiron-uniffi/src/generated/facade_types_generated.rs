@@ -3996,6 +3996,12 @@ pub struct GrantAnswered {
     #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
     #[serde(
+        rename = "excess_request",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub excess_request: Option<String>,
+    #[serde(
         rename = "decided_by",
         default,
         skip_serializing_if = "Option::is_none"

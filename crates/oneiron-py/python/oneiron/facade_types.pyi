@@ -1253,6 +1253,7 @@ class GrantAnswered(TypedDict):
     status: AccessRequestStatus
     addressed_to: NotRequired[EntityId | None]
     grant_ref: NotRequired[EntityId | None]
+    excess_request: NotRequired[EntityId | None]
     decided_by: NotRequired[EntityId | None]
     decided_at: NotRequired[int | None]
 class PersonaSnapshotPreviewRequest(TypedDict):
