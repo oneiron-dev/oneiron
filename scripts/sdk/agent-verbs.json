@@ -1338,11 +1338,12 @@
       "task_decisions": true,
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
+        "born_record_scope": true,
         "readable": [
           "task_ref"
         ]
       },
+      "mcp_scope": "born",
       "section": true
     },
     {
@@ -1738,12 +1739,12 @@
     },
     {
       "name": "vault.tagging.status",
-      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason.",
+      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingStatusView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>",
       "call": "memory.tagging_status(&input)?",
       "scope": "Read",
       "admission": {
@@ -1757,12 +1758,12 @@
     },
     {
       "name": "vault.tagging.tags",
-      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them.",
+      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingTagsView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>",
       "call": "memory.tagging_tags(&input)?",
       "scope": "Read",
       "admission": {
@@ -1776,12 +1777,12 @@
     },
     {
       "name": "vault.tagging.history",
-      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome.",
+      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingHistoryView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>",
       "call": "memory.tagging_history(&input)?",
       "scope": "Read",
       "admission": {
@@ -1795,9 +1796,9 @@
     },
     {
       "name": "vault.tagging.mentions",
-      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller.",
+      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt.",
       "input": "crate::tagging::TaggingMentionsRequest",
-      "output": "crate::tagging::TaggingMentionsView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>",
       "call": "memory.tagging_mentions(&input)?",
       "scope": "Read",
       "admission": {
@@ -4087,9 +4088,9 @@
     },
     {
       "name": "vault.packs.sections.propose",
-      "description": "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.",
+      "description": "The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim.",
       "input": "crate::memory::PluginSectionProposeRequest",
-      "output": "crate::memory::PluginSectionProposal",
+      "output": "crate::memory::PluginSectionInstallOutcome",
       "call": "memory.plugin_section_propose(&input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -6944,7 +6945,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
@@ -6958,7 +6960,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.roots.requests.cancel",
@@ -10647,6 +10650,36 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.read_grants.grant",
+      "description": "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
+      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.read_grants.revoke",
+      "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
+      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.repo.anchor.bind",
       "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
@@ -12161,7 +12194,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.add",
-      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told.",
+      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record.",
       "input": "crate::workspace_roster::ThreadAudienceAddRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_add(&input)?",
@@ -12189,7 +12222,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.remove",
-      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it.",
+      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record.",
       "input": "crate::workspace_roster::ThreadAudienceRemoveRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_remove(&input)?",
@@ -13869,6 +13902,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
+      "mcp_page": true,
       "section": false
     },
     {
@@ -18207,7 +18242,7 @@
       ],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
-      "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",
+      "call": "memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true,

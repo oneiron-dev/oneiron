@@ -78,7 +78,7 @@ use oneiron_vault_contract::vm::{
     VM_HOST_CID, decode_vm_frame, encode_vm_frame,
 };
 use oneiron_vault_contract::vm_provision::{
-    VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
+    VM_PROVISION_REVISION, VmFscryptKey, VmProvision, VmProvisionFailure, VmProvisionReply,
 };
 use oneiron_vault_contract::vm_restore::VmRestoreBoot;
 use oneiron_vault_contract::{CONTRACT_VERSION, hex};
@@ -276,6 +276,12 @@ fn read_line(channel: &mut File) -> anyhow::Result<String> {
     Ok(String::from_utf8(line)?)
 }
 
+/// A provision frame's revision, read before the frame itself.
+#[derive(serde::Deserialize)]
+struct ProvisionRevision {
+    revision: u32,
+}
+
 /// The provision connection's guest side, up to its answer: the frame and
 /// the key, the binding's checks, a serving boot's config drive and network,
 /// the key's installation and the layout `boot` takes, a cold restore's
@@ -292,9 +298,20 @@ fn provision(
             format!("the provision frame: {error:#}"),
         )
     };
-    let frame: VmProvision = read_line(channel)
-        .and_then(|line| decode_vm_frame(&line))
-        .map_err(malformed)?;
+    let line = read_line(channel).map_err(malformed)?;
+    // The revision is read alone first, so a frame of another revision is
+    // answered as one whatever fields it carries, before its key frame is
+    // read (FIX 6630); this revision's frame takes no field it does not know.
+    let revision = decode_vm_frame::<ProvisionRevision>(&line)
+        .map_err(malformed)?
+        .revision;
+    if revision != VM_PROVISION_REVISION {
+        return Err(Refusal::new(
+            VmProvisionFailure::UnsupportedRevision,
+            "the provision frame is of another revision",
+        ));
+    }
+    let frame: VmProvision = decode_vm_frame(&line).map_err(malformed)?;
     let key = VmFscryptKey::read_from(&mut *channel).map_err(malformed)?;
     frame
         .validate()

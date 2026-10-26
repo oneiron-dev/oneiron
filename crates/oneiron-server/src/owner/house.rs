@@ -6,7 +6,6 @@
 //! board chose.
 
 use oneiron::Vault;
-use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 
 use super::OwnerResult;
@@ -40,13 +39,15 @@ pub(crate) fn bind_house_leader_at_start(vault: &Vault, secret: Option<&str>) {
 }
 
 fn bind_at_start(vault: &Vault, secret: Option<&str>) -> anyhow::Result<()> {
-    let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+    if secret.is_none_or(str::is_empty) {
         return Ok(());
-    };
+    }
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes())?;
+    // The root signs with this install's own issuer seed (FIX-LIST 3018);
+    // the configured secret only admits it.
+    let issuer = vault.load_host_slip_issuer()?;
     if vault.bind_default_house_leader(&super::local_owner(vault)?, &issuer)? {
         tracing::info!("the workspace's house mind now leads the root project");
     }

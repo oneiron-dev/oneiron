@@ -100,7 +100,14 @@ pub struct SyncServer {
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
-    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// Its presence says the vault is managed; the issuer inside is `None`
+    /// where this install holds no issuer seed for it (FIX-LIST 3018).
+    pub(crate) managed_issuer: Option<ManagedIssuer>,
+    /// The self-host root's issuer, loaded at construction from this
+    /// install's own issuer seed for the vault when a host secret is
+    /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
+    /// where this install holds no seed. Never the managed issuer.
+    pub(crate) host_root_issuer: Option<Arc<oneiron::authority::HostSlipIssuer>>,
     pub(crate) policy_doors: super::policy_doors::PolicyDoors,
     /// Node-side account API key verifier (OF-448), installed by a host
     /// that supplies the control-plane checker. `None`: account keys are
@@ -142,6 +149,9 @@ pub struct SyncServer {
     /// line and its mesh staging budget, one set its runtime's adapters and
     /// every mesh site share.
     pub(crate) model_budgets: crate::models::ModelHostBudgets,
+    /// This vault's one cloud registration client (G7), under the pins
+    /// `config.cloud_registration_pins` names, read at construction.
+    pub(crate) cloud_registration: crate::cloud_registration::CloudRegistration,
     /// The questions connectors asked mid-call, live for their callers
     /// (ONE-2510): every connector host this server builds keeps them here,
     /// and `connector.answer` reads them.
@@ -505,13 +515,26 @@ impl SyncServer {
     }
 
     /// Whether boot rooted this vault and provisioned the engine's machine
-    /// writers (the Dreamer among them): from the configured secret, or on
-    /// a managed vault from its DEK-derived issuer, which managed boot sets
-    /// once it has provisioned them (FIX 7261). Never on a blind relay.
+    /// writers (the Dreamer among them): with this install's own issuer
+    /// seed where a host secret is configured, or on a managed vault with
+    /// the issuer managed boot sets once it has provisioned them (FIX 7261,
+    /// FIX-LIST 3018). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
-        host_root_secret(&self.vault, &self.config).is_some()
-            || (self.managed_issuer.is_some()
+        self.host_root_issuer.is_some()
+            || (self
+                .managed_issuer
+                .as_ref()
+                .is_some_and(|managed| managed.issuer().is_some())
                 && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
+    }
+
+    /// The issuer this host signs with as the vault's root: the managed
+    /// issuer, else the self-host root's loaded at construction.
+    pub(crate) fn host_issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        match self.managed_issuer.as_ref() {
+            Some(managed) => managed.issuer(),
+            None => self.host_root_issuer.as_deref(),
+        }
     }
 
     /// Install the host's extraction egress predicate. An absent predicate
@@ -605,9 +628,10 @@ impl SyncServer {
     /// ([`oneiron::Vault::admit_task_work`]): at once while fewer than
     /// `limits.task_work` run, else in a fair line, one caller's work after
     /// another's, each caller's oldest first. Crossing the bound asks its
-    /// OF-520 question. Work is never refused: past `queue_wait_timeout_ms`
-    /// it runs without a turn. Hold the turn until the work ends; take it
-    /// before the engine opens a transaction.
+    /// OF-520 question. Work is never refused: it keeps its place until its
+    /// turn comes, however long, and never runs without one (FIX 10015).
+    /// Hold the turn until the work ends; take it before the engine opens a
+    /// transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
         self.vault
             .admit_task_work_observed(caller, crate::api::admission_observer())
@@ -632,6 +656,22 @@ impl SyncServer {
 /// Genuine host authority exists only off the relay posture and with a
 /// non-empty configured secret. Dev/no-secret and blind-relay modes mint
 /// nothing.
+/// A managed vault's host root issuer as managed boot set it: `None` inside
+/// where this install holds no issuer seed for the vault (FIX-LIST 3018), so
+/// the vault serves rootless and each host-signed act answers as a host with
+/// no issuer does.
+pub(crate) struct ManagedIssuer(Option<oneiron::authority::HostSlipIssuer>);
+
+impl ManagedIssuer {
+    pub(crate) fn new(issuer: Option<oneiron::authority::HostSlipIssuer>) -> Self {
+        Self(issuer)
+    }
+
+    pub(crate) fn issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        self.0.as_ref()
+    }
+}
+
 fn host_root_secret<'c>(vault: &oneiron::Vault, config: &'c SyncServerConfig) -> Option<&'c str> {
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return None;

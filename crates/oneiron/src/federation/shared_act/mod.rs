@@ -9,6 +9,7 @@
 //! Admin's ask for one is `erase_ask`.
 mod erase_ask;
 mod membership;
+mod removal_archive;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
@@ -43,9 +44,10 @@ pub const DELETED_VAULT_BACKUP_RETENTION_SECS: u64 = 90 * 24 * 60 * 60;
 const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
 
-/// Each export-first removal's archive, bound to the removed Owner. Key:
-/// hex32 (removed Owner) ":" hex32 (receipt id).
-const REMOVAL_EXPORT: SideTable<String, RemovalExportCopy, Named> =
+/// Each export-first removal's archive, bound to the removed Owner, with its
+/// records' frozen positions (FIX-LIST 8224). Key: hex32 (removed Owner)
+/// ":" hex32 (receipt id).
+const REMOVAL_EXPORT: SideTable<String, removal_archive::StoredRemovalExport, Named> =
     SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
 
 /// The row key of `member`'s archive from the removal receipt `receipt_id`.
@@ -594,8 +596,10 @@ impl Vault {
                     member,
                     crate::edge::EdgeActorClass::Human,
                 );
-                self.export_records_archive(&ids, reader)
-                    .map(|archive| (member, records.len() as u64, archive, ids))
+                self.export_records_archive(&ids, reader, |txn| {
+                    removal_archive::freeze_positions_in_txn(self, txn, &ids)
+                })
+                .map(|frozen| (member, records.len() as u64, frozen, ids))
             })
             .transpose()?;
         let mut txn = self.store.env.write_txn()?;
@@ -774,8 +778,8 @@ impl Vault {
             let summary = SharedActExport {
                 member: member.to_hex(),
                 records,
-                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
-                diary_reads: archive.diary_reads().to_vec(),
+                digest: blake3::hash(archive.0.bytes()).to_hex().to_string(),
+                diary_reads: archive.0.diary_reads().to_vec(),
             };
             (summary, archive)
         });
@@ -793,7 +797,7 @@ impl Vault {
             now,
         )?;
         let delivery = match (&receipt.export, archive) {
-            (Some(summary), Some(archive)) => {
+            (Some(summary), Some((archive, positions))) => {
                 let copy = RemovalExportCopy {
                     receipt_id: receipt.id.clone(),
                     vault_id: act.vault_id,
@@ -809,8 +813,10 @@ impl Vault {
                     },
                 };
                 let row_key = removal_export_key(&copy.member, &copy.receipt_id);
-                REMOVAL_EXPORT.put(&self.store, &mut txn, &row_key, &copy)?;
-                Some(copy.delivery())
+                let delivery = copy.delivery();
+                let stored = removal_archive::StoredRemovalExport::new(copy, positions);
+                REMOVAL_EXPORT.put(&self.store, &mut txn, &row_key, &stored)?;
+                Some(delivery)
             }
             _ => None,
         };
@@ -860,15 +866,15 @@ impl Vault {
             return Err(invalid());
         }
         let row_key = removal_export_key(member, receipt_id);
-        let Some(mut copy) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? else {
+        let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? else {
             return Ok(None);
         };
-        copy.delivered_at = now;
-        copy.expires_at = now
+        stored.copy.delivered_at = now;
+        stored.copy.expires_at = now
             .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
             .ok_or_else(invalid)?;
-        REMOVAL_EXPORT.put(&self.store, txn, &row_key, &copy)?;
-        Ok(Some(copy.delivery()))
+        REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+        Ok(Some(stored.copy.delivery()))
     }
 
     /// The export-first removal archives delivered to `member` that are still
@@ -883,7 +889,7 @@ impl Vault {
         Ok(REMOVAL_EXPORT
             .scan_from(&self.store, txn, prefix.as_bytes())?
             .into_iter()
-            .map(|(_, copy)| copy)
+            .map(|(_, stored)| stored.copy)
             .filter(|copy| now < copy.expires_at)
             .collect())
     }
@@ -901,6 +907,7 @@ impl Vault {
         let row_key = removal_export_key(&member.to_hex(), &receipt_id.to_hex());
         Ok(REMOVAL_EXPORT
             .get(&self.store, txn, &row_key)?
+            .map(|stored| stored.copy)
             .filter(|copy| now < copy.expires_at))
     }
 
@@ -915,7 +922,7 @@ impl Vault {
             REMOVAL_EXPORT
                 .scan(&self.store, &txn)?
                 .into_iter()
-                .filter(|(_, copy)| now >= copy.expires_at)
+                .filter(|(_, stored)| now >= stored.copy.expires_at)
                 .map(|(row_key, _)| row_key)
                 .collect()
         };
@@ -928,7 +935,7 @@ impl Vault {
         for row_key in &expired {
             let lapsed = REMOVAL_EXPORT
                 .get(&self.store, &txn, row_key)?
-                .is_some_and(|copy| now >= copy.expires_at);
+                .is_some_and(|stored| now >= stored.copy.expires_at);
             if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
                 dropped += 1;
             }

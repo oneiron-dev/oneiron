@@ -7,8 +7,7 @@ use super::{
     reject_overlay_member_base_write,
 };
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, decode_claim_body,
-    encode_claim_body,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, decode_claim_body, encode_claim_body,
 };
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -35,6 +34,10 @@ pub(crate) struct ClaimMaterialization {
     envelope: WriteEnvelope,
     prior: Option<[u8; 32]>,
     approval: bool,
+    /// The closer a typed lifecycle door verified for an exact close (FIX
+    /// 8655): the birth binding then proves the row, and the closer, not
+    /// the birth author's standing today, answers for the close.
+    closer: Option<WriteActor>,
 }
 
 impl ClaimMaterialization {
@@ -63,91 +66,8 @@ impl ClaimMaterialization {
             envelope,
             prior,
             approval: false,
+            closer: None,
         })
-    }
-
-    /// Only closing the current active row is admitted. No actor or evidence
-    /// argument exists. The body must be identical except for life and valid_to.
-    pub(crate) fn lifecycle(
-        store: &Store,
-        txn: &heed::RoTxn<'_>,
-        op: &BatchOp,
-    ) -> Result<Option<Self>> {
-        let BatchOp::Put {
-            id,
-            entity_type: crate::registry::ENTITY_TYPE_CLAIM,
-            occurred,
-            learned_at,
-            data,
-            allow_maintenance: false,
-            allow_reserved_predicate: false,
-            hub_sync_imported: false,
-        } = op
-        else {
-            return Err(binding_error());
-        };
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
-            .ok_or(Error::EntityNotFound)?;
-        let header = EntityMetadataHeader::parse(&raw).ok_or(binding_error())?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
-            return Err(binding_error());
-        }
-        let prior = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], false)?;
-        let next = crate::claim::validate_claim_body_and_decode(data, false)?;
-        let Some(valid_to) = next.valid_to else {
-            return Err(binding_error());
-        };
-        if valid_to < header.occurred_start {
-            return Err(Error::InvalidTimeRange {
-                start: header.occurred_start,
-                end: valid_to,
-            });
-        }
-        let mut expected = prior.clone();
-        expected.lifecycle = next.lifecycle;
-        expected.valid_to = next.valid_to;
-        if prior.lifecycle != ClaimLifecycleStatus::Active
-            || !matches!(
-                next.lifecycle,
-                ClaimLifecycleStatus::Retracted | ClaimLifecycleStatus::Superseded
-            )
-            || encode_claim_body(&expected)? != *data
-            || occurred.start != header.occurred_start
-            || occurred.end != valid_to
-            || *learned_at != header.learned_at
-        {
-            return Err(binding_error());
-        }
-        let Some(envelope) = lifecycle_envelope(store, txn, id, &prior)? else {
-            return Ok(None);
-        };
-        let binding = Self {
-            id: *id,
-            occurred: *occurred,
-            learned_at: *learned_at,
-            data: data.clone(),
-            reserved: false,
-            envelope,
-            prior: Some(row_digest(&raw)),
-            approval: false,
-        };
-        // Retraction records a gate decision before consuming the Put. Check
-        // the reconstructed actor now, before any non-transactional metrics.
-        binding.validate_actor(store, txn)?;
-        Ok(Some(binding))
-    }
-
-    /// Canonical lifecycle validator supplies both an optional author binding
-    /// and a sealed confidence-transition proof. Raw claims need no author
-    /// binding, but still carry the proof of their exact closure operation.
-    pub(crate) fn verified_lifecycle(
-        store: &Store,
-        txn: &heed::RoTxn<'_>,
-        op: &BatchOp,
-    ) -> Result<(Option<Self>, super::VerifiedClaimTransition)> {
-        let binding = Self::lifecycle(store, txn, op)?;
-        let proof = super::VerifiedClaimTransition::after_validation(store, txn, op)?;
-        Ok((binding, proof))
     }
 
     /// Admit only a current-row demotion and its exact ClaimOf weight update.
@@ -198,6 +118,7 @@ impl ClaimMaterialization {
                 envelope,
                 prior: Some(row_digest(&raw)),
                 approval: false,
+                closer: None,
             };
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
@@ -275,6 +196,7 @@ impl ClaimMaterialization {
             envelope,
             prior: Some(row_digest(&raw)),
             approval: false,
+            closer: None,
         };
         binding.validate_actor(&vault.store, txn)?;
         let machine = crate::authority::machine_claim_needs_history(&vault.store, txn, &next)?;
@@ -444,6 +366,7 @@ impl ClaimMaterialization {
                 envelope,
                 prior: Some(row_digest(&raw)),
                 approval: true,
+                closer: None,
             };
             binding.validate_actor(&vault.store, txn)?;
             bindings.push(binding);
@@ -499,6 +422,12 @@ impl ClaimMaterialization {
             }
         }
         crate::gate::validate_write_envelope(&self.envelope)?;
+        // A verified close answers for its closer: the checks above prove the
+        // row and its birth binding, and the door that closed it checked the
+        // closer (FIX 8655). The old author's standing today is not asked.
+        if self.closer.is_some() {
+            return Ok(());
+        }
         let actor = self.envelope.actor();
         let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &actor.entity_ref())?
             .ok_or(Error::EntityNotFound)?;
@@ -752,6 +681,7 @@ pub(crate) fn apply_owner_bound_claim_puts_with_transitions(
 }
 
 mod demotion;
+mod lifecycle;
 mod succession;
 use demotion::demotion_body;
 pub(crate) use succession::SuccessionWriter;

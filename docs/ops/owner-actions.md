@@ -314,7 +314,12 @@ It exits nonzero when a sweep failed or could not finish some of its records. It
 (with `--heal-invalid-vectors` to leave out stored vectors that do not validate),
 `--recompute-short-ids`, `--backfill-gate-claim-index`, `--migrate-conversation-dags`, and
 `--reindex-text`, which rebuilds the text index from the text each record was indexed with; it is
-the repair for a vault refused after an analyzer or dictionary change. A running server answers
+the repair for a vault refused after an analyzer or dictionary change.
+`--reclassify-corrupt-claim <ID>` (32 hex; repeat it for more) classifies a corrupt CLAIM by its
+audited repair, its bytes unchanged and one signed repair event kept, so its hard erase can finish.
+The report lists each named record under `repairs.corrupt_claim_repairs` with its `outcome`:
+`reclassified` (with its `repair_receipt`), `already_classified` (with the receipt it already has),
+or `not_corrupt` for a record that is no corrupt CLAIM, which is left as it is. A running server answers
 `POST /v1/owner/maintain` with the same report, without the repairs.
 
 ## A managed host's vault UID table
@@ -563,7 +568,7 @@ oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-to
   "value_base64": "<base64 of the token>"}'
 oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
   "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
-  "every_secs": 900, "sync_strategy": "schedule"}'
+  "every_secs": 900, "sync_strategy": "schedule", "visibility": "public"}'
 oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target, its strategy and last push
 oneiron api raw POST /v1/owner/origin-mirror/strategy \
   --data '{"repo": "demo", "sync_strategy": "ask_me"}'      # change the strategy alone
@@ -598,6 +603,22 @@ pauses automatic work not yet sent: a push already running finishes and is settl
 nothing more goes out whole. Clearing the mirror also settles its open plan at once, as cleared:
 refs whose push may already have gone out are recorded as unknown, and a push still running
 records its result against that plan.
+
+`visibility` (`public`, `private` or `unknown`) states who can read the mirror; the target shows
+it as `audience`. Only the owner states it, and no URL decides it. Left out, a mirror whose URL is
+unchanged keeps its visibility, and a new mirror or URL is `unknown`, which counts as public. A
+public or unknown mirror never takes history that holds a key marked as a live secret (the receive
+door marks pushed keys; a key counts as live until it is marked not a secret or revoked at its
+provider, and a local rotation does not count). The check runs at each send, after its claim and
+before the token leaves custody, over the whole history each ref reaches, tags and history the
+mirror already holds included. A clean history, and every send to a `private` mirror, goes out as
+before. An exact request it holds ends `refused` with `marked_live_secret`, or
+`secret_history_unknown` when the history or the marks could not be read whole. An automatic ref
+it holds is not sent and its run fails naming `secret_hold`; the run's other refs go out, and the
+plan stays open and is checked again on each later run. The ways out: mark the key not a secret,
+revoke it at its provider, purge it from history, or state the mirror `private` if it is. Until
+the not-a-secret, revocation and purge records land, every marked key counts as live. An exact
+return to the repository's own original source goes through the export door, not a mirror.
 
 ### What every automatic push records
 
@@ -664,7 +685,9 @@ verbs are `vault.code.origin.publish.request`, `.review`, `.get`, `.approve`, `.
    and no deletion, so the mirror's own branch protection stands. Before the push it checks the
    commit is still held here, the mirror's URL, user, token record and generation are the ones the
    request was made at, and the approval's owner or Grant still stands; a change ends the request
-   `refused` with `destination_changed` or `authority_changed`.
+   `refused` with `destination_changed` or `authority_changed`. On a public or unknown mirror, a
+   history that holds a marked live key ends it `refused` with `marked_live_secret` (or
+   `secret_history_unknown`), unsent.
 5. The outcome is never guessed and never retried. `published` is the mirror's acknowledgement.
    After a failed or uncertain push the engine reads the branch again: the commit there is
    `observed_published`; anything else ends the request `refused` with `rejected` (the mirror

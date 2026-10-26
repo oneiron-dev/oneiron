@@ -459,7 +459,8 @@ pub(super) fn apply_custody_body_in_txn(
     // marks them, in the writer that made it known (FIX 2781). A run-bound
     // record's value is its run's alone and is never keyed (FIX 8028): a
     // short code one run's browser found masks nothing else in the vault.
-    if !super::run_bound::is_run_bound_name(&rec.name)
+    // Nor is a cloud registration slot's (`known_values::never_keyed`).
+    if !super::known_values::never_keyed(&rec.name)
         && super::known_values::remember_in_txn(write.store, wtxn, id, rec)?
     {
         crate::batch::secret_scan::enqueue_known_remark_in_txn(write.store, wtxn, occurred_at)?;
@@ -542,7 +543,7 @@ impl Vault {
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
-    /// record within a write txn, requiring a binding that covers `effector`
+    /// record within a read or write txn, requiring a binding that covers `effector`
     /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
     /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied). Naming the effector is not by itself a
     /// read grant — the binding's declared scope is what admits plaintext, and
@@ -553,7 +554,7 @@ impl Vault {
     /// [`crate::secret_lease`] (ONE-1920).
     pub(crate) fn get_secret_value_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
         effector: &str,
     ) -> Result<Option<Vec<u8>>> {

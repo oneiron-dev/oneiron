@@ -225,16 +225,16 @@ pub(super) fn admission_in_txn(
         if !answer.grant {
             return Ok(Loaded::denied(answer));
         }
-        // A host's yes stands while that host still holds the room; an
-        // erased host's holds nothing.
+        // A yes stands while the actor that gave it still answers the room's
+        // admission, in the class its live entity holds: a host, or the
+        // nearest project leader (FIX 10236). An erased one's holds nothing.
         if let (Some(actor), Some(by)) = (answer.actor.id(), answer.by.id())
-            && room_host_in_txn(
+            && crate::workspace_roster::join_door::answering_party_in_txn(
                 vault,
                 txn,
                 request.room,
-                WriteActor::new(actor, EdgeActorClass::Human),
+                actor,
             )?
-            .is_some()
         {
             return Ok(admitted(
                 by,

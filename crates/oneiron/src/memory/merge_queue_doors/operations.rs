@@ -159,10 +159,10 @@ impl Memory<'_> {
                 &["Propose the change again from the current green commit."],
             ));
         }
-        // A received bundle is ONE queue proposal carrying all its files,
-        // each with its reviewed state change; the caller names none of it.
-        if row.received_candidate().is_some() {
-            return Ok(crate::repo_mutation::received_merge_proposal(
+        // A file bundle is ONE queue proposal carrying all its files, each
+        // with its reviewed state change; the caller names none of it.
+        if row.is_file_bundle() {
+            return Ok(crate::repo_mutation::bundle_merge_proposal(
                 self.vault, &row, base_green,
             )?);
         }

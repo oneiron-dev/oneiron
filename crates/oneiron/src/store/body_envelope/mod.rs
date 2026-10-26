@@ -52,7 +52,8 @@ pub(crate) use self::custody::{
 };
 pub(crate) use self::frames::{FileKey, SealedStream, SealingStream};
 pub(crate) use self::opaque_response::{
-    ResponseOwners, ResponseRead, ResponseScan, is_opaque_erased,
+    ResponseOwners, ResponseRead, ResponseScan, is_opaque_erased, opaque_retired_at,
+    stamp_opaque_erased,
 };
 pub(crate) use self::plan::{
     body_instances_in_rows, prune_retired_bodies_in_rows, require_body_instances,

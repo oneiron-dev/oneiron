@@ -35,11 +35,12 @@
 //! is read. A body must declare its length, and is read only once that fits a
 //! budget, which it holds until its request's work ends: small bodies
 //! (queries, a vault's document batches) and large ones each have their own,
-//! so a recall never waits behind an upload. An answer takes room for its
-//! rows and their encoding in the `embedder_answer_bytes` row of `[limits]`
-//! before the model makes it, and keeps it until it is delivered; the
-//! endpoint does not start when the row cannot hold its model's largest
-//! answer. Past the `embedder_requests` row, past a full budget or answer
+//! so a recall never waits behind an upload. Any number of inputs is
+//! embedded in batches of [`MAX_INPUTS`] ([`batches`]): each batch takes room
+//! for its rows and their encoding in the `embedder_answer_bytes` row of
+//! `[limits]` before the model makes it, and keeps it until its rows are
+//! handed on; the endpoint does not start when the row cannot hold its
+//! model's largest batch. Past the `embedder_requests` row, past a full budget or answer
 //! row, and past the few requests the model works on at once, a request with
 //! the key waits its turn in order, each wait up to the queue deadline; it is
 //! never refused for how many wait (the owner's rate law, ARCH-0044 C5).
@@ -59,7 +60,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use base64::Engine as _;
 use oneiron::embed::{Embedder, EmbeddingProvenance};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -68,15 +68,20 @@ use zeroize::Zeroizing;
 use super::local::evidence::RunProfile;
 use super::local::model_manager::ModelManager;
 use super::local::{Embedded, LocalEmbedder, Priority, Side};
-use crate::admission::{Admission, Permit};
+use crate::admission::Admission;
 use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::{EmbedderConfig, EmbedderProvider};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
+mod batches;
 mod budget;
-use budget::{Fixed, answer_bytes, encoding_bytes};
+use budget::answer_bytes;
+#[cfg(test)]
+use budget::encoding_bytes;
 
-/// Inputs one request may carry, as OpenAI caps them.
+/// Inputs the model embeds as one batch, as OpenAI caps one request: a
+/// request with more is embedded batch by batch, never refused for its count
+/// ([`batches`], FIX 9487).
 const MAX_INPUTS: usize = 2_048;
 /// Request bodies above this are refused before they are read.
 const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
@@ -406,25 +411,11 @@ enum Input {
     Many(Vec<String>),
 }
 
-#[derive(Serialize)]
-struct EmbeddingsResponse {
-    object: &'static str,
-    data: Vec<EmbeddingRow>,
-    model: String,
-    usage: Usage,
-    /// The model loaded, whichever name the request gave, how these vectors
-    /// were made and how it runs: a vault holds every answer to the listing
-    /// it admitted, so a server restarted with another model behind the same
-    /// name, or with other settings, is refused rather than mixed in.
-    model_id: String,
-    transform: String,
-    profile: RunProfile,
-    /// The device and runtime that computed these vectors, which the vault
-    /// marks them with. Not held to the listing: one model is one space on
-    /// every device.
-    provenance: EmbeddingProvenance,
-}
-
+/// One row of an answer's `data`. The answer around the rows also names the
+/// model loaded, whichever name the request gave, how these vectors were
+/// made and how it runs, which a vault holds every answer to, and the device
+/// and runtime that computed them, which the vault marks them with
+/// ([`batches`]).
 #[derive(Serialize)]
 struct EmbeddingRow {
     object: &'static str,
@@ -565,11 +556,13 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
         Input::One(text) => vec![text],
         Input::Many(texts) => texts,
     };
-    if texts.is_empty() || texts.len() > MAX_INPUTS {
+    // Any number of inputs is owed its answer, embedded a batch at a time
+    // ([`batches`], FIX 9487).
+    if texts.is_empty() {
         return refuse(
             StatusCode::BAD_REQUEST,
             "invalid_request_error",
-            &format!("a request carries 1 to {MAX_INPUTS} inputs"),
+            "a request carries at least 1 input",
         );
     }
     if let Some(index) = texts
@@ -613,140 +606,15 @@ async fn embeddings(State(served): State<Arc<Served>>, request: Request) -> Resp
             &format!("an instruction is at most {MAX_INSTRUCTION_BYTES} bytes"),
         );
     }
-    // The answer's room, taken before the model makes it: its rows and their
-    // encoding are held until it is delivered.
-    let Some(answer_held) = served
-        .answers
-        .reserve(
-            answer_bytes(texts.len(), served.embedder.dimensions()),
-            served.wait,
-            &served.questions,
-        )
-        .await
-    else {
-        return waited_out();
+    let work = batches::EmbeddingRequestWork {
+        texts,
+        side,
+        instruction: request.instruction,
+        priority,
+        base64,
+        model: request.model,
     };
-    let turns = match priority {
-        Priority::Query => &served.queries,
-        Priority::Bulk => &served.bulk,
-    };
-    let Ok(Ok(turn)) = tokio::time::timeout(served.wait, Arc::clone(turns).acquire_owned()).await
-    else {
-        return waited_out();
-    };
-    let embedder = Arc::clone(&served.embedder);
-    let instruction = request.instruction;
-    // The request's place and its answer's room go into the work and come
-    // back with its answer: a caller who hangs up frees nothing the work
-    // still takes, and both are held until the answer is delivered.
-    let embedded = tokio::task::spawn_blocking(move || {
-        let _turn = (turn, body_held);
-        (
-            embedder.embed_raw(&texts, side, instruction.as_deref(), priority),
-            (held, answer_held),
-        )
-    })
-    .await;
-    let (embedded, held) = match embedded {
-        Ok((Ok(embedded), held)) => (embedded, held),
-        Ok((Err(error), _)) => {
-            tracing::warn!(kind = ?error.kind(), "endpoint embedding failed");
-            return refuse(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "the model could not embed this request",
-            );
-        }
-        Err(error) => {
-            tracing::warn!(
-                panicked = error.is_panic(),
-                "endpoint embedding task failed"
-            );
-            return refuse(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "server_error",
-                "the model could not embed this request",
-            );
-        }
-    };
-    let inputs = embedded.rows.len();
-    let data = embedded
-        .rows
-        .into_iter()
-        .enumerate()
-        .map(|(index, row)| EmbeddingRow {
-            object: "embedding",
-            index,
-            embedding: if base64 {
-                let bytes: Vec<u8> = row.iter().flat_map(|value| value.to_le_bytes()).collect();
-                Encoded::Base64(base64::engine::general_purpose::STANDARD.encode(bytes))
-            } else {
-                Encoded::Float(row)
-            },
-        })
-        .collect();
-    let mut answer = Fixed(Vec::with_capacity(encoding_bytes(
-        inputs,
-        served.embedder.dimensions(),
-    )));
-    let encoded = serde_json::to_writer(
-        &mut answer,
-        &EmbeddingsResponse {
-            object: "list",
-            data,
-            model: request.model,
-            usage: Usage {
-                prompt_tokens: embedded.tokens,
-                total_tokens: embedded.tokens,
-            },
-            model_id: served.embedder.model_id().to_owned(),
-            transform: served.embedder.transform().to_owned(),
-            profile: served.embedder.profile().clone(),
-            provenance: served.embedder.provenance(),
-        },
-    );
-    let (Ok(()), Fixed(answer)) = (encoded, answer) else {
-        return refuse(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "server_error",
-            "the answer could not be encoded",
-        );
-    };
-    let length = answer.len();
-    let mut response = Response::new(answer_body(answer, held, served.idle));
-    let headers = response.headers_mut();
-    headers.insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/json"),
-    );
-    // A declared length makes an answer cut short at the idle limit a
-    // broken one to the client, never a shorter one.
-    headers.insert(header::CONTENT_LENGTH, header::HeaderValue::from(length));
-    response
-}
-
-/// Streams `answer` out in copied pieces, holding the request's place in
-/// `embedder_requests` and the answer's room in `embedder_answer_bytes`
-/// until the last piece is handed on, the client goes away, or the client
-/// reads nothing for `idle`.
-fn answer_body(answer: Vec<u8>, held: (Permit, HeldBytes), idle: Duration) -> axum::body::Body {
-    let (pieces, receiver) = tokio::sync::mpsc::channel::<axum::body::Bytes>(2);
-    tokio::spawn(async move {
-        let _held = held;
-        for piece in answer.chunks(ANSWER_PIECE) {
-            let piece = axum::body::Bytes::copy_from_slice(piece);
-            if pieces.send_timeout(piece, idle).await.is_err() {
-                return;
-            }
-        }
-    });
-    axum::body::Body::from_stream(futures_util::stream::unfold(
-        receiver,
-        |mut receiver| async move {
-            let piece = receiver.recv().await?;
-            Some((Ok::<_, std::io::Error>(piece), receiver))
-        },
-    ))
+    batches::stream_embedding_rows(Arc::clone(&served), work, (held, body_held)).await
 }
 
 /// The refusal for a request without the configured bearer key; `None` when

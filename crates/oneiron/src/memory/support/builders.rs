@@ -309,21 +309,26 @@ impl Memory<'_> {
 
     /// The reference a verb hook's ask saves for this credential caller's
     /// call, with the instrument its request was admitted on as its witness:
-    /// only for a verified slip whose instrument and door a host bound, in
-    /// the room turn that door named, if any, and with nothing else on the
-    /// surface its door could not rebuild (a host origin, a machine signer, a
-    /// TASK host, an off-record session or a thread's turn). `None` resumes
-    /// only on the caller's retry.
+    /// only for an instrument and door a host bound, in the room turn that
+    /// door named, if any, and with nothing else on the surface its door
+    /// could not rebuild (a host origin, a machine signer, a TASK host, an
+    /// off-record session or a thread's turn). A slip's is its verified slip
+    /// and the binding its request was admitted on; a managed vault's
+    /// attested owner's is the person, the actor this surface is bound to as
+    /// a human, with no slip (FIX 11063). `None` resumes only on the
+    /// caller's retry.
     #[must_use]
     pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
-        use crate::runtime_hooks::verb::{VerbAskCredential, VerbAskCredentialRef, VerbAskDoor};
+        use crate::runtime_hooks::verb::{
+            VerbAskCredential, VerbAskCredentialRef, VerbAskCredentialSource,
+            VerbAskCredentialWitness, VerbAskDoor,
+        };
         let door = self.credential_door.as_ref()?;
         let room = match door {
             VerbAskDoor::Facade { room } => *room,
-            VerbAskDoor::Mcp { .. } => None,
+            VerbAskDoor::Mcp { .. } | VerbAskDoor::McpOwner { .. } => None,
         };
         let rebuilt = self.credential
-            && self.read_proof.is_some()
             && self.room_turn.as_ref().map(|turn| turn.room) == room
             && self
                 .room_turn
@@ -336,15 +341,25 @@ impl Memory<'_> {
         if !rebuilt {
             return None;
         }
+        let instrument = self.credential_instrument.clone()?;
+        let witness = match instrument.source {
+            VerbAskCredentialSource::Slip { .. } => {
+                self.read_proof.as_ref()?;
+                VerbAskCredentialWitness::Slip(self.invocation_slip.clone()?)
+            }
+            VerbAskCredentialSource::AttestedOwner { holder } => {
+                if holder != self.actor || self.actor_class != crate::EdgeActorClass::Human {
+                    return None;
+                }
+                VerbAskCredentialWitness::AttestedOwner { holder }
+            }
+        };
         let reference = VerbAskCredentialRef {
-            instrument: self.credential_instrument.clone()?,
+            instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
         };
-        Some(VerbAskCredential::new(
-            reference,
-            self.invocation_slip.clone()?,
-        ))
+        Some(VerbAskCredential::new(reference, witness))
     }
 
     /// Binds the door's admission of a hook's rewritten args: a rewrite the

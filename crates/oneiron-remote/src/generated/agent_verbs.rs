@@ -350,18 +350,16 @@ impl OneironClient {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
                 "vault.tagging.status" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingStatusView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingStatusView>,
                 >(client, verb, &input),
-                "vault.tagging.tags" => {
-                    remote_agent_verb_output::<oneiron::tagging::TaggingTagsView>(
-                        client, verb, &input,
-                    )
-                }
+                "vault.tagging.tags" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingTagsView>,
+                >(client, verb, &input),
                 "vault.tagging.history" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingHistoryView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingHistoryView>,
                 >(client, verb, &input),
                 "vault.tagging.mentions" => remote_agent_verb_output::<
-                    oneiron::tagging::TaggingMentionsView,
+                    oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingMentionsView>,
                 >(client, verb, &input),
                 "vault.affect.claims.consolidate" => remote_agent_verb_output::<
                     oneiron::memory::affect::AffectClaimConsolidation,
@@ -819,7 +817,7 @@ impl OneironClient {
                     oneiron::skill_hub::pack_catalog::PackInstallReceipt,
                 >(client, verb, &input),
                 "vault.packs.sections.propose" => remote_agent_verb_output::<
-                    oneiron::memory::PluginSectionProposal,
+                    oneiron::memory::PluginSectionInstallOutcome,
                 >(client, verb, &input),
                 "vault.packs.sections.list" => remote_agent_verb_output::<
                     oneiron::memory::PluginSectionsView,
@@ -2160,6 +2158,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.repo.git_push.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GitPushGrantRevokeOutput,
+                >(client, verb, &input),
+                "vault.connectors.read_grants.grant" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorWitnessReadGranted,
+                >(client, verb, &input),
+                "vault.connectors.read_grants.revoke" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevoked,
                 >(client, verb, &input),
                 "vault.repo.anchor.bind" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RepoAnchorBindOutput,
@@ -4938,7 +4942,8 @@ impl OneironClient {
     pub fn vault_tagging_status(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingStatusView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingStatusView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4950,7 +4955,8 @@ impl OneironClient {
     pub fn vault_tagging_tags(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingTagsView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingTagsView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4962,7 +4968,8 @@ impl OneironClient {
     pub fn vault_tagging_history(
         &self,
         input: &oneiron::tagging::TaggingTurnRequest,
-    ) -> Result<oneiron::tagging::TaggingHistoryView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingHistoryView>, MemoryError>
+    {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -4974,7 +4981,8 @@ impl OneironClient {
     pub fn vault_tagging_mentions(
         &self,
         input: &oneiron::tagging::TaggingMentionsRequest,
-    ) -> Result<oneiron::tagging::TaggingMentionsView, MemoryError> {
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::tagging::TaggingMentionsView>, MemoryError>
+    {
         oneiron::memory::caps::check_limit_nonzero(input.limit)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -6792,7 +6800,7 @@ impl OneironClient {
     pub fn vault_packs_sections_propose(
         &self,
         input: &oneiron::memory::PluginSectionProposeRequest,
-    ) -> Result<oneiron::memory::PluginSectionProposal, MemoryError> {
+    ) -> Result<oneiron::memory::PluginSectionInstallOutcome, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -12084,6 +12092,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.repo.git_push.revoke", value)
+    }
+    pub fn vault_connectors_read_grants_grant(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorWitnessReadGranted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.read_grants.grant", value)
+    }
+    pub fn vault_connectors_read_grants_revoke(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevoked, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.read_grants.revoke", value)
     }
     pub fn vault_repo_anchor_bind(
         &self,

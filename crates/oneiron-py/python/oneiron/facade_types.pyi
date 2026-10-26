@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4139 declarations.
-Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1159 facade rows, 4157 declarations.
+Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -506,6 +506,7 @@ class HealthReviewReceipt(TypedDict):
     by_owner: bool
     at: int
     reviewer: str
+    reviewer_revision: NotRequired[EntityId | None]
     dial: int
     measured: int
     diagnostics: list[EntityId]
@@ -592,6 +593,7 @@ class AgentHealthCard(TypedDict):
     coach: NotRequired[AgentHealthCoachAsk | None]
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
+    reviewer_revision: NotRequired[EntityId | None]
     review_outcomes: list[HealthReviewReceipt]
     causes: list[HealthCauseSource]
     silence: NotRequired[HealthSilenceActivity | None]
@@ -609,7 +611,7 @@ class RunTreeEvent(TypedDict):
     actor: str
     kind: RunTreeEventKind
     note: NotRequired[str | None]
-class RunTreeNode(TypedDict):
+class RunTreeWireNode(TypedDict):
     job_id: str
     run_id: NotRequired[str | None]
     parent_id: NotRequired[str | None]
@@ -621,7 +623,7 @@ class RunTreeNode(TypedDict):
     timestamps: RunTreeTimestamps
     failure: NotRequired[RunTreeFailure | None]
     events: list[RunTreeEvent]
-    children: list[RunTreeNode]
+    children: list[int]
 class RunTreeRepairMissingParent(TypedDict):
     kind: Literal["missing_parent"]
     job_id: str
@@ -631,9 +633,11 @@ class RunTreeRepairParentCycle(TypedDict):
     job_id: str
     parent_id: str
 RunTreeRepair = RunTreeRepairMissingParent | RunTreeRepairParentCycle
-class RunTree(TypedDict):
-    roots: list[RunTreeNode]
+class RunTreeWire(TypedDict):
+    nodes: list[RunTreeWireNode]
+    roots: list[int]
     repairs: list[RunTreeRepair]
+RunTree = RunTreeWire
 class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
@@ -2624,6 +2628,7 @@ class EmbeddingMatchEvidence(TypedDict):
     floor: float
     strong: float
     matched: bool
+VerdictBasis = Literal["calibrated_model", "deterministic_fallback"]
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -2647,6 +2652,7 @@ class MemoryItem(TypedDict):
     value_text: str
     confidence: float
     hedge_bucket: str
+    confidence_basis: NotRequired[VerdictBasis | None]
     provenance: MemoryProvenance
     stale: NotRequired[MemoryStaleStamp | None]
     world: NotRequired[str | None]
@@ -2838,6 +2844,9 @@ class TaggingMarkerView(TypedDict):
     created_at: int
     updated_at: int
 TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+class TaggingFreshness(TypedDict):
+    stale: bool
+    pending_retag: bool
 ExecutionRuntime = Literal["candle", "endpoint", "mlx", "coreml"]
 ExecutionCompute = Literal["cpu", "metal", "cuda", "cpu_and_ne", "opaque"]
 ExecutionPick = Literal["calibrated", "free", "shorter_queue", "fallback", "pinned"]
@@ -2920,6 +2929,7 @@ class TaggingStatusView(TypedDict):
     retry_at: NotRequired[int | None]
     try_number: NotRequired[int | None]
     has_tags: bool
+    freshness: NotRequired[TaggingFreshness | None]
     saved_at: NotRequired[int | None]
     last_trace: NotRequired[TaggingTraceView | None]
 class MergeEvidenceView(TypedDict):
@@ -2930,6 +2940,14 @@ class TaggingVadView(TypedDict):
     valence: float
     arousal: float
     dominance: float
+class TaggingMoodPartView(TypedDict):
+    message_ref: str
+    start: int
+    end_message_ref: str
+    end: int
+    valence: float
+    arousal: float
+    dominance: float
 class TurnTagsView(TypedDict):
     turn_ref: str
     envelope: DerivationEnvelopeView
@@ -2937,8 +2955,11 @@ class TurnTagsView(TypedDict):
     mentions: list[TaggedMentionView]
     merge_evidence: list[MergeEvidenceView]
     mood: NotRequired[TaggingVadView | None]
+    mood_freshness: NotRequired[TaggingFreshness | None]
+    mood_parts: list[TaggingMoodPartView]
     saved_at: int
     surprise: NotRequired[float | None]
+    freshness: TaggingFreshness
 class TaggingTagsView(TypedDict):
     turn_ref: str
     tags: NotRequired[TurnTagsView | None]
@@ -2952,6 +2973,7 @@ class TaggingMentionHitView(TypedDict):
     turn_ref: str
     index: int
     mention: TaggedMentionView
+    freshness: TaggingFreshness
 class TaggingMentionsView(TypedDict):
     entity_ref: str
     mentions: list[TaggingMentionHitView]
@@ -3579,7 +3601,7 @@ class PulledImage(TypedDict):
     height: NotRequired[int | None]
 class CallReceiptRequest(TypedDict):
     receipt_ref: str
-CallTransport = Literal["http_facade", "mcp", "ws"]
+CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
 class CallOutcomeRefusedBody(TypedDict):
     code: str
 class CallOutcomeRefused(TypedDict):
@@ -3706,6 +3728,39 @@ class ConditionalExemptionEvidence(TypedDict):
     evidence: ComplianceExemptionEvidence
 ComplianceRuleKind = Literal["consent_class", "sender_id", "physical_address", "optout_mechanism", "optout_deadline", "content_marking", "records", "source_hygiene"]
 B2bExemption = Literal["yes", "no", "conditional"]
+class ConsentFactExplicitOptIn(TypedDict):
+    fact: Literal["explicit_opt_in"]
+class ConsentFactLegalFormIn(TypedDict):
+    fact: Literal["legal_form_in"]
+    tokens: list[str]
+class ConsentFactLegalFormNotIn(TypedDict):
+    fact: Literal["legal_form_not_in"]
+    tokens: list[str]
+class ConsentFactLegalFormRecorded(TypedDict):
+    fact: Literal["legal_form_recorded"]
+class ConsentFactObtainedInSale(TypedDict):
+    fact: Literal["obtained_in_sale"]
+class ConsentFactObtainedInSaleOrNegotiation(TypedDict):
+    fact: Literal["obtained_in_sale_or_negotiation"]
+class ConsentFactSimilarOffering(TypedDict):
+    fact: Literal["similar_offering"]
+class ConsentFactNoObjection(TypedDict):
+    fact: Literal["no_objection"]
+class ConsentFactOptOutOfferedAtCollection(TypedDict):
+    fact: Literal["opt_out_offered_at_collection"]
+class ConsentFactOptOutInMessage(TypedDict):
+    fact: Literal["opt_out_in_message"]
+class ConsentFactCharitablePurpose(TypedDict):
+    fact: Literal["charitable_purpose"]
+class ConsentFactExpressedSupport(TypedDict):
+    fact: Literal["expressed_support"]
+class ConsentFactPublicationContext(TypedDict):
+    fact: Literal["publication_context"]
+ConsentFact = ConsentFactExplicitOptIn | ConsentFactLegalFormIn | ConsentFactLegalFormNotIn | ConsentFactLegalFormRecorded | ConsentFactObtainedInSale | ConsentFactObtainedInSaleOrNegotiation | ConsentFactSimilarOffering | ConsentFactNoObjection | ConsentFactOptOutOfferedAtCollection | ConsentFactOptOutInMessage | ConsentFactCharitablePurpose | ConsentFactExpressedSupport | ConsentFactPublicationContext
+class ConsentBranch(TypedDict):
+    all_of: list[ConsentFact]
+class ConsentRequirement(TypedDict):
+    any_of: list[ConsentBranch]
 class ComplianceSource(TypedDict):
     citation: str
     url: str
@@ -3715,6 +3770,7 @@ class ComplianceRuleRow(TypedDict):
     rule_kind: ComplianceRuleKind
     requirement: str
     b2b_exemption: B2bExemption
+    consent: NotRequired[ConsentRequirement | None]
     source: ComplianceSource
     verified_at: int
     version: int
@@ -3774,7 +3830,7 @@ class CampaignEnrollRequest(TypedDict):
     person_ref: str
     channels: list[CampaignMemberChannelSpec]
     evidence_refs: list[str]
-CampaignEnrollmentState = Literal["enrolled"]
+CampaignEnrollmentState = Literal["enrolled", "paused", "exited", "suppressed"]
 class CampaignActionProvenance(TypedDict):
     actor_ref: str
     evidence_refs: list[str]
@@ -4025,6 +4081,15 @@ class SavedQueryMembersRequest(TypedDict):
     cursor: NotRequired[str | None]
     limit: NotRequired[int]
     at_epoch: NotRequired[int | None]
+class MembershipRowSourceSavedQuery(TypedDict):
+    kind: Literal["saved_query"]
+    query_ref: EntityId
+    membership_claim_ref: EntityId
+    epoch: int
+class MembershipRowSourceManualClaim(TypedDict):
+    kind: Literal["manual_claim"]
+    membership_claim_ref: EntityId
+MembershipRowSource = MembershipRowSourceSavedQuery | MembershipRowSourceManualClaim
 class SavedQueryMembershipRowView(TypedDict):
     entity_ref: EntityId
     state: str
@@ -4033,6 +4098,7 @@ class SavedQueryMembershipRowView(TypedDict):
     exited_valid: NotRequired[int | None]
     exited_detected: NotRequired[int | None]
     cause: NotRequired[str | None]
+    source: MembershipRowSource
 class SavedQueryMembershipPageView(TypedDict):
     rows: list[SavedQueryMembershipRowView]
     next_cursor: NotRequired[str | None]
@@ -5553,12 +5619,25 @@ class PluginSectionProposeRequest(TypedDict):
     manifest: SectionManifestEnvelope
     target: PluginSectionTargetInput
     turn_ref: str
-class PluginSectionProposal(TypedDict):
+class PluginSectionInstallOutcomeInstalled(TypedDict):
+    outcome: Literal["installed"]
+    claim_ref: str
+    section_id: str
+    skill_ref: str
+    manifest_digest: str
+    permissions: list[str]
+    undo_verb: str
+    manifest: SectionManifestEnvelope
+class PluginSectionInstallOutcomePermissionAsk(TypedDict):
+    outcome: Literal["permission_ask"]
     claim_ref: str
     pending_ref: str
     manifest_digest: str
     section_id: str
+    analysis: str
+    permissions: list[str]
     manifest: SectionManifestEnvelope
+PluginSectionInstallOutcome = PluginSectionInstallOutcomeInstalled | PluginSectionInstallOutcomePermissionAsk
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
     cursor: NotRequired[str | None]
@@ -5569,6 +5648,8 @@ class PluginSectionPendingRow(TypedDict):
     label: str
     origin: str
     awaiting_owner_consent: bool
+    analysis: NotRequired[str | None]
+    permissions: NotRequired[list[str]]
 class PluginSectionAdmittedRow(TypedDict):
     claim_ref: str
     section_id: str
@@ -6092,7 +6173,7 @@ class ModelStepCheckpoint(TypedDict):
     progression: StepProgression
     updated_ms: NotRequired[int | None]
     claim_ref: NotRequired[str | None]
-SavedIntentState = Literal["pending", "done", "abandoned"]
+SavedIntentState = Literal["pending", "done", "abandoned", "deferred"]
 class SavedResumeStepModel(TypedDict):
     kind: Literal["model"]
     attempt_id: str
@@ -8675,6 +8756,7 @@ class CleanupReviewItem(TypedDict):
     evidence: NotRequired[CleanupReviewEvidence | None]
     content: NotRequired[CleanupReviewContent | None]
     accept: CleanupAcceptEffect
+    changed_during_review: NotRequired[bool | None]
 class CleanupReviewView(TypedDict):
     proposal: EntityId
     attempt: str
@@ -10931,6 +11013,9 @@ class CodeFileEdit(TypedDict):
     expected: str
     replacement: str
     new_path: NotRequired[str | None]
+class ConfidenceDetails(TypedDict):
+    band: ConfidenceBand
+    basis: VerdictBasis
 class ClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -10946,6 +11031,7 @@ class ClaimInput(TypedDict):
     occurred_at: NotRequired[int | None]
     learned_at: NotRequired[int | None]
     salience: NotRequired[float | None]
+    confidence_details: NotRequired[ConfidenceDetails | None]
 class ForeignCodeEffectFileWrite(TypedDict):
     kind: Literal["file_write"]
     path: str
@@ -11642,6 +11728,11 @@ class OriginMirrorAutomation(TypedDict):
     pending_checks: list[OriginMirrorPendingCheck]
     remote_moved: list[str]
     refused: list[str]
+RepoDestinationVisibility = Literal["public", "private", "unknown"]
+RepoDestinationRole = Literal["mirror", "original_source"]
+class RepoDestinationAudience(TypedDict):
+    visibility: RepoDestinationVisibility
+    role: RepoDestinationRole
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str
@@ -11654,6 +11745,7 @@ class OriginMirrorTarget(TypedDict):
     strategy_revision: NotRequired[int]
     target_generation: NotRequired[EntityId | None]
     automation: NotRequired[OriginMirrorAutomation | None]
+    audience: RepoDestinationAudience
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -11664,6 +11756,7 @@ class OriginMirrorSetRequest(TypedDict):
     user: NotRequired[str | None]
     every_secs: int
     sync_strategy: NotRequired[OriginMirrorSyncStrategy | None]
+    visibility: NotRequired[RepoDestinationVisibility | None]
 class OriginMirrorStrategyRequest(TypedDict):
     repo: str
     sync_strategy: OriginMirrorSyncStrategy
@@ -11684,6 +11777,7 @@ class OriginPublishDestination(TypedDict):
     user: str
     secret_ref: str
     target_generation: NotRequired[EntityId | None]
+    audience: RepoDestinationAudience
 class OriginPublishRemoteAbsent(TypedDict):
     state: Literal["absent"]
 class OriginPublishRemoteAt(TypedDict):
@@ -11708,7 +11802,7 @@ class OriginPublishAuthorityGrant(TypedDict):
     grant: EntityId
 OriginPublishAuthority = OriginPublishAuthorityOwner | OriginPublishAuthorityGrant
 OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": OriginPublishActorClass, "authority": OriginPublishAuthority, "at": int})
-OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing"]
+OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing", "marked_live_secret", "secret_history_unknown"]
 class OriginPublishRefusal(TypedDict):
     reason: OriginPublishRefusalReason
     observed: NotRequired[OriginPublishRemote | None]
@@ -12321,6 +12415,25 @@ class GitPushGrantRevokeOutput(TypedDict):
     changed: bool
     member: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class ConnectorWitnessReadGrantRequest(TypedDict):
+    agent: EntityId
+    conversation: EntityId
+class ConnectorWitnessReadGranted(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    agent: EntityId
+    conversation: EntityId
+    reason: str
+    granted_at: int
+class ConnectorWitnessReadGrantRevokeRequest(TypedDict):
+    grant_ref: EntityId
+class ConnectorWitnessReadGrantRevoked(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    agent: EntityId
+    conversation: EntityId
+    reason: str
+    revoked_at: int
 class RepoAnchorBindInput(TypedDict):
     repo: str
     project: EntityId
@@ -14905,12 +15018,19 @@ class SpeakerLink(TypedDict):
     span: int
     target: SpeakerTarget
     confidence: float
+class MoodPart(TypedDict):
+    message: int
+    start: int
+    end_message: int
+    end: int
+    vad: Vad
 class EncoderOutput(TypedDict):
     spans: list[NerSpan]
     links: NotRequired[list[CorefLink]]
     vad: NotRequired[Vad | None]
     context_links: NotRequired[list[ContextLink]]
     speaker_links: NotRequired[list[SpeakerLink]]
+    mood_parts: NotRequired[list[MoodPart]]
     stack_sha16: NotRequired[str | None]
 class ModelRoleOutputGenerated(TypedDict):
     kind: Literal["generated"]
@@ -15576,6 +15696,7 @@ class LlmCatalogCost(TypedDict):
     output_per_million: str
     cache_read_per_million: NotRequired[str | None]
     cache_write_per_million: NotRequired[str | None]
+    currency: str | None
 class LlmCatalogEntry(TypedDict):
     model: ModelId
     display_name: str
@@ -17244,7 +17365,10 @@ class VerbHookStopCompletedWithError(TypedDict):
     message: str
     receipt_ref: NotRequired[str | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
-class MemoryError(MemoryWrongRoot):
+class FacadeMemoryError(TypedDict):
+    attempted: NotRequired[str]
+    replacement: NotRequired[str]
+    schemaRef: NotRequired[str]
     code: str
     message: str
     suggestions: list[str]
@@ -17266,7 +17390,7 @@ class EsignDocumentTrailReadable(TypedDict):
     audit: list[EsignEventRow]
 class EsignDocumentTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignDocumentTrail = EsignDocumentTrailReadable | EsignDocumentTrailUnreadable
 EsignDocumentView = dict[str, Any]
 class EsignLinksIssueRequest(TypedDict):
@@ -17425,7 +17549,7 @@ class EsignSealTrailReadable(TypedDict):
     status: DocumentStatus
 class EsignSealTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignSealTrail = EsignSealTrailReadable | EsignSealTrailUnreadable
 EsignSealView = dict[str, Any]
 class CoreWriteTextField(TypedDict):
@@ -17460,6 +17584,7 @@ class DagRecordAppendInput(TypedDict):
     conversation: str
     parent: NotRequired[str | None]
     reply_to: NotRequired[str | None]
+    containing_turn: NotRequired[str | None]
     addr: NotRequired[CoreDagAddressMode | None]
     to: NotRequired[list[str] | None]
     advance: bool
@@ -17471,10 +17596,23 @@ class DagRecordAppendInput(TypedDict):
     session: NotRequired[str | None]
     quote: NotRequired[CoreDagQuoteInput | None]
     thread_audience: NotRequired[list[str] | None]
+class DagReplyTargetTurn(TypedDict):
+    kind: Literal["turn"]
+    record: EntityId
+    revision: str
+class DagReplyTargetMessage(TypedDict):
+    kind: Literal["message"]
+    record: EntityId
+    revision: str
+    containing_turn: EntityId
+DagReplyTarget = DagReplyTargetTurn | DagReplyTargetMessage
 class DagRecordAppendReceipt(TypedDict):
     id: str
     head: NotRequired[str | None]
     parent: NotRequired[str | None]
+    entity_type: int
+    containing_turn: NotRequired[str | None]
+    reply_target: NotRequired[DagReplyTarget | None]
 class CoreBatchEntityInput(TypedDict):
     id: NotRequired[str | None]
     entity_type: int
@@ -19015,6 +19153,7 @@ class GeneratedClaimInput(TypedDict):
     supersedes: NotRequired[str | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
+    confidence_details: NotRequired[ConfidenceDetails | None]
 class ConsolidationPromoteRequest(TypedDict):
     job_ref: str
     candidates: list[GeneratedClaimInput]
@@ -19973,6 +20112,7 @@ class AuthorTakeRequest(TypedDict):
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
+    reason: NotRequired[str | None]
 class NoteReadRequest(TypedDict):
     note_ref: str
     reason: NotRequired[str | None]
@@ -20801,7 +20941,7 @@ class SessionManifest(TypedDict):
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
 BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem[T]
+BrowserAnswer = BrowserAnswerItem
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -20960,7 +21100,7 @@ class DialogAnswerFailure(TypedDict):
     kind: str
     accept: bool
     error: str
-class Observation2(TypedDict):
+class VerbsObservation(TypedDict):
     seq: int
     scope: str
     base_seq: NotRequired[int | None]
@@ -20978,9 +21118,9 @@ class Observation2(TypedDict):
     rebound: NotRequired[Rebound | None]
     fact: NotRequired[ActionFact | None]
     dialogs: NotRequired[list[DialogAnswerFailure]]
-class ObservationPage(Observation2):
+class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
-BrowserObservationPage = BrowserAnswer[ObservationPage]
+BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str
     seq: int
@@ -20997,7 +21137,7 @@ class FindOutput(TypedDict):
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
-BrowserFindOutput = BrowserAnswer[FindOutput]
+BrowserFindOutput = BrowserAnswer
 class ClickInput(TypedDict):
     ref: str
     base: NotRequired[ObservationBase | None]
@@ -21030,13 +21170,13 @@ class WaitForOutput(TypedDict):
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
+BrowserWaitForOutput = BrowserAnswer
 class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]
     partial: NotRequired[PartialTree | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserExpectOutput = BrowserAnswer[ExpectOutput]
+BrowserExpectOutput = BrowserAnswer
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
     since_capture: NotRequired[str | None]
@@ -21051,7 +21191,7 @@ class ScreenshotOutput(TypedDict):
     title: str
     capture_id: str
     unchanged_from: NotRequired[str | None]
-BrowserScreenshotOutput = BrowserAnswer[ScreenshotOutput]
+BrowserScreenshotOutput = BrowserAnswer
 class ViewInput(TypedDict):
     image: str
 class ImageOutput(TypedDict):
@@ -21061,7 +21201,7 @@ class ImageOutput(TypedDict):
     height: int
     bytes: int
     source: str
-BrowserImageOutput = BrowserAnswer[ImageOutput]
+BrowserImageOutput = BrowserAnswer
 class CropInput(TypedDict):
     image: str
     x: int
@@ -21089,7 +21229,7 @@ class FailedStepReceipt(TypedDict):
     step: NotRequired[int | None]
     stop_cause: BatchStopCause
     missed: NotRequired[list[CheckReceipt]]
-    observation: NotRequired[Observation2 | None]
+    observation: NotRequired[VerbsObservation | None]
     error: NotRequired[str | None]
     refusal: NotRequired[DestinationRefusal | None]
     next: NotRequired[str | None]
@@ -21104,13 +21244,13 @@ class BatchOutput(TypedDict):
     stop_cause: NotRequired[BatchStopCause | None]
     failed_receipt: NotRequired[FailedStepReceipt | None]
     elapsed_ms: int
-    observation: NotRequired[Observation2 | None]
+    observation: NotRequired[VerbsObservation | None]
     receipts: NotRequired[list[EffectReceipt]]
     decisions: NotRequired[list[Any]]
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
     rebindings: NotRequired[list[StepRebound]]
-BrowserBatchOutput = BrowserAnswer[BatchOutput]
+BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
@@ -21118,14 +21258,14 @@ class LibraryFindInput(TypedDict):
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
-BrowserLibraryFindOutput = BrowserAnswer[LibraryFindOutput]
+BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str
     postcondition: NotRequired[list[ExpectInput]]
     after_seq: NotRequired[int | None]
     through_seq: NotRequired[int | None]
     past_press: NotRequired[bool]
-BrowserLibraryDraftOutput = BrowserAnswer[DraftOutput]
+BrowserLibraryDraftOutput = BrowserAnswer
 class DemonstrationStartInput(TypedDict):
     label: NotRequired[str | None]
 class DemonstrationStarted(TypedDict):
@@ -21136,12 +21276,12 @@ class DemonstrationStarted(TypedDict):
     origin: NotRequired[str | None]
     url: str
     already_running: NotRequired[bool]
-BrowserDemonstrationStartOutput = BrowserAnswer[DemonstrationStarted]
+BrowserDemonstrationStartOutput = BrowserAnswer
 class DemonstrationStopInput(TypedDict):
     id: DemonstrationId
     subgoal: NotRequired[str]
     postcondition: NotRequired[list[ExpectInput]]
-BrowserDemonstrationStopOutput = BrowserAnswer[DemonstrationOutput]
+BrowserDemonstrationStopOutput = BrowserAnswer
 WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):
@@ -21178,13 +21318,13 @@ class ProposeOutput(TypedDict):
     replay: NotRequired[BatchOutput | None]
     replay_guest: NotRequired[ReplayGuest | None]
     superseded: NotRequired[SupersedeOutcome | None]
-BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
+BrowserLibraryProposeOutput = BrowserAnswer
 class LibraryRetireInput(TypedDict):
     workflow: str
     reason: NotRequired[str | None]
 class LibraryRetireOutput(TypedDict):
     retired: LibraryCard
-BrowserLibraryRetireOutput = BrowserAnswer[LibraryRetireOutput]
+BrowserLibraryRetireOutput = BrowserAnswer
 class LibraryRetiredInput(TypedDict):
     site: NotRequired[str | None]
 class RetiredCard(TypedDict):
@@ -21194,7 +21334,7 @@ class RetiredCard(TypedDict):
 class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
-BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
+BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
 class SecretArgHandle(TypedDict):
     handle: str
@@ -21215,20 +21355,20 @@ class LibraryRunOutput(TypedDict):
     model_free_unproven: NotRequired[int | None]
     unmet: NotRequired[list[int]]
     batch: BatchOutput
-BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]
+BrowserLibraryRunOutput = BrowserAnswer
 class HandoverInput(TypedDict):
     reason: str
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
-BrowserHandoverOutput = BrowserAnswer[HandoverOutput]
+BrowserHandoverOutput = BrowserAnswer
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
 class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]
-BrowserSwitchEngineOutput = BrowserAnswer[SwitchEngineOutput]
+BrowserSwitchEngineOutput = BrowserAnswer
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

@@ -1,7 +1,9 @@
 //! The `/v1/core/conversations` and `/v1/core/turns` routes: conversations and their turns.
 //! `CoreCreateTurnRequest` and the `*_core_conversation*` handlers are its call surface.
 //! `crate::api::conversations` defines these DTOs; the engine owns the turn rows.
-use super::CORE_MAX_LIST_LIMIT;
+mod turn_reads;
+
+use self::turn_reads::{core_list_conversation_turns, core_turn_for_read};
 use super::CoreCreateEntityRequest;
 use super::CoreEntityWriteResponse;
 use super::CoreListQuery;
@@ -9,7 +11,6 @@ use super::CoreTextField;
 use super::DagTurnQuery;
 use super::DagWriteError;
 use super::SearchResponse;
-use super::collect_live_entity_page;
 use super::core_engine_error;
 use super::core_entity_timestamps;
 use super::core_list_limit;
@@ -17,11 +18,9 @@ use super::core_private_threads_admit;
 use super::core_write_text;
 use super::encode_core_body;
 use super::facade::ROOM_TURN_HEADER;
-use super::is_deleted_shell_for_core_list;
 use super::json_payload;
 use super::parse_entity_id_param;
 use super::project_core_entity;
-use super::project_entity_ids;
 use super::query_params;
 use super::require_entity_type;
 use crate::auth::CoreAuth;
@@ -43,7 +42,6 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use oneiron::EdgeKind;
 use oneiron::claim::ScopedReadReceipt;
 use oneiron::core_write::{
     ConversationCreateInput, ConversationTurnCreateInput, CoreEntityWriteReceipt,
@@ -333,7 +331,8 @@ pub(crate) async fn create_core_conversation(
     };
     // OF-181: `vault.conversations.create`, as an action when the
     // credential binds one that writes as this actor, else through the
-    // row's own Vault door as the actor the request bound.
+    // row's own Vault door as the actor the request bound, held to the
+    // credential's write lane (FIX 10781).
     let receipt =
         match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
             Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
@@ -346,7 +345,10 @@ pub(crate) async fn create_core_conversation(
                 .await?;
                 entity_receipt(output)?
             }
-            _ => server.vault.write_core_conversation(&input, actor)?,
+            _ => {
+                let lane = super::facade::host_doors::core_write_lane(&server.vault, &auth)?;
+                server.vault.write_core_conversation(&input, actor, &lane)?
+            }
         };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = if members {
@@ -385,7 +387,7 @@ fn entity_receipt(output: Value) -> Result<CoreEntityWriteReceipt, ApiError> {
         (status = 200, description = "Conversation turns.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed conversation id or query.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read; the credential is narrowed by record, channel or scope, so the turns lie outside its read (`required_scope: record-scope`); or a hosted operator's root reads without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn listing failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -426,7 +428,7 @@ pub(crate) async fn list_core_conversation_turns(
         (status = 200, description = "Turn created and linked to conversation.", body = CoreEntityWriteResponse, content_type = "application/json"),
         (status = 400, description = "Malformed request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write; the conversation lies outside the credential's read; or a hosted operator's root writes without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "Child-of constraints rejected the turn create request; response uses INVALID_STATE.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn create failed.", body = ApiErrorEnvelope, content_type = "application/json")
@@ -507,7 +509,7 @@ pub(crate) async fn create_core_conversation_turn(
         (status = 200, description = "Projected turn entity.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed turn id or view.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read; the credential is narrowed by record, channel or scope, so the turn lies outside its read (`required_scope: record-scope`); or a hosted operator's root reads without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Turn was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -527,28 +529,13 @@ pub(crate) async fn get_core_turn(
     // (FIX 5652); below the owner, so does one its lane does not read (FIX
     // 5938). Its reply strip holds the turn it answers so too.
     let read = super::scoped_auth::scoped_read_for_core_auth(&server.vault, &auth)?;
-    let lane_row = core_turn_for_read(&server.vault, &read, &id)?;
-    let params = query_params(query)?;
+    // Its query's refusal comes after the turn's admission and before its
+    // words are read (FIX 5870).
+    let (params, (entity_type, learned_at, body)) =
+        core_turn_for_read(&server.vault, &read, &id, turn_read_query(query))?;
     let view = params.view.unwrap_or(View::Full);
-    if params
-        .with
-        .as_deref()
-        .is_some_and(|with| with != "reply_strip")
-    {
-        return Err(
-            crate::error::ApiError::bad_request("unknown TURN projection", Some("with")).into(),
-        );
-    }
-    let Json(mut item) = match lane_row {
-        None => project_core_entity(&server.vault, &id, view)?,
-        Some((entity_type, learned_at, body)) => Json(projection::project_entity_parts(
-            &id,
-            entity_type,
-            learned_at,
-            &body,
-            view,
-        )),
-    };
+    // The words its admission read, in that same snapshot (FIX 5870).
+    let mut item = projection::project_entity_parts(&id, entity_type, learned_at, &body, view);
     if params.with.as_deref() == Some("reply_strip") {
         let strip = server
             .vault
@@ -564,65 +551,22 @@ pub(crate) async fn get_core_turn(
     Ok(Json(item))
 }
 
-/// The conversation's turns `read`'s caller reads (FIX 5652): a turn of a
-/// private thread it does not read, the opener included, is no row here.
-/// Below the owner (`Vault::turn_doors_owner`), the conversation and each
-/// turn are read through the caller's own lane, and so is the body served;
-/// a conversation it does not read is not here (FIX 5938). A turn withheld
-/// is not projected, takes no place on a page, is never a cursor and is not
-/// counted.
-pub(crate) fn core_list_conversation_turns(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    conversation: &oneiron::EntityId,
-    params: CoreListQuery,
-    body_bytes: usize,
-) -> Result<Json<SearchResponse>, EnvelopedApiError> {
-    let view = params.view.unwrap_or(View::Summary);
-    let limit = core_list_limit(params.limit);
-    let after = params
-        .after
+/// The single TURN read's query, refused when it names a projection that
+/// read does not make.
+fn turn_read_query(
+    query: Result<Query<DagTurnQuery>, QueryRejection>,
+) -> Result<DagTurnQuery, EnvelopedApiError> {
+    let params = query_params(query)?;
+    if params
+        .with
         .as_deref()
-        .map(|after| parse_entity_id_param(after, "after"))
-        .transpose()?;
-    let owner = core_turn_doors_owner(vault, read)?;
-    if !owner && !core_turn_admits(vault, read, false, conversation)? {
-        return Err(ApiError::not_found("conversation", Some(&conversation.to_hex())).into());
+        .is_some_and(|with| with != "reply_strip")
+    {
+        return Err(
+            crate::error::ApiError::bad_request("unknown TURN projection", Some("with")).into(),
+        );
     }
-    let (ids, next_cursor) = collect_live_entity_page(
-        vault,
-        after,
-        limit,
-        |after, limit| {
-            vault
-                .sources_page(
-                    conversation,
-                    EdgeKind::ChildOf,
-                    Some(ENTITY_TYPE_TURN),
-                    after,
-                    limit,
-                )
-                .map_err(|error| {
-                    tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns failed");
-                    core_engine_error("core conversation turns failed", error).into()
-                })
-        },
-        |id| core_turn_admits(vault, read, owner, id).map_err(Into::into),
-    )?;
-    let items = if owner {
-        project_entity_ids(vault, ids, view, body_bytes)?
-    } else {
-        project_lane_turns(vault, read, &ids, view, body_bytes)?
-    };
-    let meta = match params.count_mode {
-        CountMode::None => ResponseMeta::none(),
-        CountMode::Estimate => ResponseMeta::estimate(items.len() as u64),
-        CountMode::Exact => ResponseMeta::new(
-            count_live_conversation_turns(vault, read, owner, conversation)?,
-            CountMode::Exact,
-        ),
-    };
-    Ok(Json(PaginatedResponse::new(items, next_cursor, meta)))
+    Ok(params)
 }
 
 /// Whether the TURN routes serve `read`'s caller as the vault owner
@@ -667,99 +611,6 @@ pub(crate) fn core_turn_served(
 ) -> Result<bool, ApiError> {
     let owner = core_turn_doors_owner(vault, read)?;
     core_turn_admits(vault, read, owner, id)
-}
-
-/// The turn `id` as the TURN routes serve it to `read`'s caller: `None` for
-/// the owner's own read, which projects the stored row once the turn's
-/// private threads admit it (FIX 5652); for any other caller, the row its
-/// lane reads (FIX 5938). A turn neither reads answers as missing.
-fn core_turn_for_read(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    id: &oneiron::EntityId,
-) -> Result<Option<(u8, u64, Vec<u8>)>, EnvelopedApiError> {
-    let missing = || ApiError::not_found("turn", Some(&id.to_hex()));
-    if core_turn_doors_owner(vault, read)? {
-        if !core_private_threads_admit(vault, read, id)? {
-            return Err(missing().into());
-        }
-        return Ok(None);
-    }
-    let row = read
-        .get_entity_parts_with_receipt(id, None)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core TURN read failed");
-            core_engine_error("core TURN read failed", error)
-        })?
-        .value;
-    Ok(Some(row.ok_or_else(missing)?))
-}
-
-/// [`project_entity_ids`] below the owner: each body as `read`'s lane reads
-/// it, all in one snapshot, under one budget of `body_bytes`. A row the lane
-/// withholds there is left out.
-fn project_lane_turns(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    ids: &[oneiron::EntityId],
-    view: View,
-    body_bytes: usize,
-) -> Result<Vec<Value>, ApiError> {
-    let rows = read
-        .get_entities_parts_with_receipt(ids, None)
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "core projection failed");
-            core_engine_error("core projection failed", error)
-        })?
-        .value;
-    let mut bodies = projection::BodyBudget::new(vault, body_bytes);
-    Ok(ids
-        .iter()
-        .zip(rows)
-        .filter_map(|(id, row)| {
-            let (entity_type, learned_at, body) = row?;
-            Some(bodies.project(id, entity_type, learned_at, &body, view))
-        })
-        .collect())
-}
-
-/// The live turns of `conversation` `read`'s caller reads (FIX 5652), each
-/// judged as [`core_turn_admits`] judges a page's (FIX 5938).
-pub(crate) fn count_live_conversation_turns(
-    vault: &oneiron::Vault,
-    read: &oneiron::claim::ScopedRead<'_>,
-    owner: bool,
-    conversation: &oneiron::EntityId,
-) -> Result<u64, EnvelopedApiError> {
-    let mut after = None;
-    let mut total = 0_u64;
-    loop {
-        let page = vault
-            .sources_page(
-                conversation,
-                EdgeKind::ChildOf,
-                Some(ENTITY_TYPE_TURN),
-                after.as_ref(),
-                CORE_MAX_LIST_LIMIT,
-            )
-            .map_err(|error| {
-                tracing::error!(error = %error, conversation = %conversation.to_hex(), "core conversation turns count failed");
-                core_engine_error("core conversation turns count failed", error)
-            })?;
-        for id in &page.ids {
-            if !is_deleted_shell_for_core_list(vault, id)?
-                && core_turn_admits(vault, read, owner, id)?
-            {
-                total = total.saturating_add(1);
-            }
-        }
-        // An exact count reads every page: a short page is not the end.
-        let Some(resume_after) = page.resume_after else {
-            break;
-        };
-        after = Some(resume_after);
-    }
-    Ok(total)
 }
 
 #[cfg(test)]

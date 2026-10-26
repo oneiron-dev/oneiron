@@ -124,7 +124,7 @@ impl Vault {
             scope_ref,
             observations: &observations,
         };
-        let ids = super::tripwires::signed(self, &input, &[&ConsentDeniedDetector])?;
+        let ids = super::tripwires::signed(self, &input, &[&ConsentDeniedDetector], None)?;
         self.capture_tier1_point_producer(&ids)?;
         Ok(ids)
     }

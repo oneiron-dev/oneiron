@@ -11,20 +11,20 @@
 //! as himself (FIX 5255): no connector registration stands behind him, and
 //! the exchange he proposes is his own. Calls are buffered: `stream: true` is
 //! refused, and `/v1/responses` is not served.
+mod receipt;
 mod wire;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
+    Router,
     body::Bytes,
     extract::{DefaultBodyLimit, State},
     http::{Extensions, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::post,
 };
-use oneiron::claim::CallerLocality;
 use oneiron::connector_key::PROXY_CONNECTOR;
 use oneiron::federation::{ScopeAxis, ScopeId};
 use oneiron::memory::RecallEffort;
@@ -36,6 +36,8 @@ use oneiron::{
 };
 use serde_json::json;
 
+pub(super) use self::receipt::PROXY_CALL_VERB;
+use self::receipt::{ProxyCaller, ProxyRequest};
 use self::wire::{error, invalid};
 use super::McpCallContext;
 use crate::auth::{CoreScope, Locality};
@@ -64,6 +66,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .layer(DefaultBodyLimit::max(16 * 1024 * 1024))
 }
 
+/// Recall, inject, forward, remember: one call's whole loop. Its caller is
+/// the one `/mcp` resolves: the registered connector its credential names,
+/// or a managed vault's attested owner. Its reply states the call's receipt
+/// (FIX 3389, [`receipt`]).
 async fn chat_completions(
     headers: HeaderMap,
     Locality(locality): Locality,
@@ -71,35 +77,34 @@ async fn chat_completions(
     connection: Extensions,
     body: Bytes,
 ) -> Response {
-    match complete(&headers, &connection, locality, &server, &body).await {
-        Ok(reply) => Json(reply).into_response(),
-        Err(refused) => refused,
-    }
-}
-
-/// Recall, inject, forward, remember: one call's whole loop. Its caller is
-/// the one `/mcp` resolves: the registered connector its credential names,
-/// or a managed vault's attested owner.
-async fn complete(
-    headers: &HeaderMap,
-    connection: &Extensions,
-    locality: CallerLocality,
-    server: &Arc<SyncServer>,
-    body: &[u8],
-) -> Result<ChatCompletionResponse, Response> {
-    let chat: ChatCompletionRequest = serde_json::from_slice(body)
-        .map_err(|refused| invalid("invalid_body", refused.to_string()))?;
-    let actor = super::resolve_mcp_caller(
+    let request = ProxyRequest::of(&body);
+    let chat: ChatCompletionRequest = match serde_json::from_slice(&body) {
+        Ok(chat) => chat,
+        Err(refused) => {
+            let refused = invalid("invalid_body", refused.to_string());
+            return request.unattributed(&server, refused);
+        }
+    };
+    let Ok(actor) = super::resolve_mcp_caller(
         McpSurfaceMode::Primary,
         "memory-proxy",
-        headers,
-        connection,
+        &headers,
+        &connection,
         locality,
-        server,
+        &server,
     )
     .await
-    .map_err(|_| unauthorized())?;
-    complete_as(server, actor, chat, &mut Vec::new()).await
+    else {
+        return request.unattributed(&server, unauthorized());
+    };
+    let caller = ProxyCaller::of(&server, &actor, &request);
+    let mut listed = Vec::new();
+    // OF-568 L4: the attempt whose live run the call holds, as the hold
+    // witnessed it.
+    let (answer, attempt) =
+        super::call_receipt::attempt_witnessed(complete_as(&server, actor, chat, &mut listed))
+            .await;
+    caller.answer(&server, request, attempt, &listed, answer)
 }
 
 /// The generated SDK/MCP/facade projection, after that door verified the
@@ -444,6 +449,7 @@ fn remember(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     };
     // The shared carried-proposal writer checks the credential, placement,
     // live proxy key and both slate legs in the transaction that writes.

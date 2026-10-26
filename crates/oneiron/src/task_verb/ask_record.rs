@@ -23,12 +23,14 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 mod attendee_entry;
+mod consult_answer;
 mod link_proof;
 mod word_admission;
 pub(crate) use attendee_entry::{
     AttendeeEntryFact, admit_attendee_entry_in_txn, admit_unasked_attendee_entry_in_txn,
     attendee_entry_id, read_attendee_entry_in,
 };
+pub(super) use consult_answer::record_answer;
 pub(super) use link_proof::{
     mint_key as mint_link_key, sign_settlement as sign_link_settlement,
     verify_settlement as verify_link_settlement,
@@ -127,6 +129,15 @@ struct AskAnswerFact {
     #[serde(default)]
     delegation_grant_ref: Option<String>,
     at: u64,
+    /// The verified credential chains the owner proof the writer's surface
+    /// carried held at admission (FIX 10693), so a consult consent case can
+    /// tell a word from its opener's own lineage; empty without a proof.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    credential_lineage: Vec<[u8; 32]>,
+    /// The proof's chains did not read at admission: the word was kept, and
+    /// its lineage is unknown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lineage_unread: bool,
 }
 
 pub(super) fn invalid() -> Error {
@@ -188,13 +199,35 @@ pub(super) fn owns_revision(
         TASK_ASK_ORIGIN,
         &[origin.as_bytes(), entity(&group.owner)?.as_bytes()],
     )?;
-    Ok(EntityId::derive(
-        TASK_ASK_INTENT,
-        &[
-            actor_origin.as_bytes(),
-            group.requested.intent_key.as_bytes(),
-        ],
-    )? == id)
+    let node_id = |intent_key: &str| {
+        EntityId::derive(
+            TASK_ASK_INTENT,
+            &[actor_origin.as_bytes(), intent_key.as_bytes()],
+        )
+    };
+    if node_id(&group.requested.intent_key)? == id {
+        return Ok(true);
+    }
+    // A consult consent case's ask is kept under its case ref (FIX 10692);
+    // its intent names the id this node derives for the case, which only the
+    // node that admitted it derives.
+    match super::consult_ladder_facade::case_ask_anchor(&group.requested.intent_key, id) {
+        Some((case_intent, anchor)) => Ok(node_id(&case_intent)? == anchor),
+        None => Ok(false),
+    }
+}
+
+/// The credential chains the word `word_ref` was admitted under (FIX
+/// 10693), read in `txn`: `None` when no word reads there or its chains
+/// were not read at admission.
+pub(super) fn answer_lineage_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    word_ref: EntityId,
+) -> Result<Option<Vec<[u8; 32]>>> {
+    Ok(read_answer(vault, txn, word_ref)?
+        .filter(|fact| !fact.lineage_unread)
+        .map(|fact| fact.credential_lineage))
 }
 
 fn value<T: Serialize>(subkind: &str, record: &T) -> Result<Vec<u8>> {
@@ -665,59 +698,6 @@ pub(super) fn replay_answer_option_matches(
         return Ok(false);
     };
     Ok(first.word.option == word.option && matching.all(|entry| entry.word.option == word.option))
-}
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one consult answer over its writer and the owner proof"
-)]
-pub(super) fn record_answer(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    task: EntityId,
-    body: &super::consult_result::TaskVerbBody,
-    actor: crate::WriteActor,
-    answer: (&super::TaskTerminalRecord, Option<&super::TaskAskOptionId>),
-    owner: Option<&crate::consent::AuthenticatedOwner>,
-    now: u64,
-) -> Result<Option<EntityId>> {
-    let (terminal, option) = answer;
-    let Some(payload) = &body.consult else {
-        return Ok(None);
-    };
-    let id = payload.correlation_ref;
-    let Some(group) = read_group(vault, txn, id)? else {
-        return Ok(None);
-    };
-    // Correlation alone NEVER confers group membership. A forged sibling may
-    // settle itself, but cannot settle an unrelated handle or mutate siblings.
-    if !group
-        .members
-        .iter()
-        .any(|member| member.task == task.to_hex() && member.actor == actor.entity_ref().to_hex())
-    {
-        return Ok(None);
-    }
-    if let Some(super::ConsultResultSummary::Answer { evidence_refs }) = &terminal.summary {
-        admit_word(
-            vault,
-            txn,
-            id,
-            &group,
-            actor,
-            &TaskAskWord {
-                result_ref: terminal.result_ref.ok_or_else(invalid)?,
-                option: option.cloned(),
-                inform_for: None,
-                companion_for: None,
-                confirmation: None,
-                provenance_refs: evidence_refs.iter().copied().collect(),
-            },
-            owner,
-            now,
-        )?;
-    }
-    Ok(Some(id))
 }
 
 pub(super) fn status_in(

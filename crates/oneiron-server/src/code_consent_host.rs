@@ -26,6 +26,7 @@ use oneiron::{EntityId, Vault};
 
 use crate::auth::CoreAuth;
 use crate::connector_call_host::ServedConnectorCallHost;
+use crate::error::ApiError;
 use crate::server::SyncServer;
 
 /// This server's code consent host. It holds the server weakly, as the
@@ -70,7 +71,7 @@ pub(crate) fn resume_answered(
 ) -> oneiron::Result<()> {
     if let Some(saved) = vault.code_consent_wait_credential(wait_id)?
         && let Some(instrument) = saved.instrument.as_ref()
-        && let Err(refusal) = kept_instrument_auth(server, instrument, &saved.witness, None)
+        && let Err(refusal) = kept_instrument_auth(server, instrument, Some(&saved.witness), None)
     {
         vault
             .refuse_answered_code_consent_wait(wait_id, refusal)
@@ -98,26 +99,36 @@ fn ledger_error(error: IntentLedgerError) -> oneiron::Error {
 /// it was admitted under. It reads nothing of where the caller sat: that
 /// places a caller's reads, never its authority. A code consent wait's host
 /// checks its original caller with it (DOOR-079 1a), for every caller shape
-/// that kept an instrument.
+/// that kept an instrument. A managed vault's attested owner kept no slip
+/// witness: he stands as [`attested_owner_auth`] finds him.
 pub(crate) fn kept_instrument_auth(
     server: &SyncServer,
     instrument: &VerbAskInstrument,
-    witness: &InvocationSlipBinding,
+    witness: Option<&InvocationSlipBinding>,
     door: Option<&str>,
 ) -> Result<CoreAuth, VerbAskRefusal> {
-    let verified = match instrument.source {
-        VerbAskCredentialSource::Slip => server
-            .vault
-            .verify_invocation_slip(witness)
-            .map_err(|_| standing(&server.vault, &instrument.slip))?,
+    let (slip, fingerprint) = match instrument.source {
+        VerbAskCredentialSource::Slip { slip, fingerprint } => (slip, fingerprint),
+        // A slip's witness beside the owner's instrument is no witness of his.
+        VerbAskCredentialSource::AttestedOwner { .. } if witness.is_some() => {
+            return Err(VerbAskRefusal::CredentialChanged);
+        }
+        VerbAskCredentialSource::AttestedOwner { holder } => {
+            return attested_owner_auth(server, instrument, holder);
+        }
     };
+    let witness = witness.ok_or(VerbAskRefusal::CredentialMissing)?;
+    let verified = server
+        .vault
+        .verify_invocation_slip(witness)
+        .map_err(|_| standing(&server.vault, &slip))?;
     if !same_instrument(instrument, &verified) {
         return Err(VerbAskRefusal::CredentialChanged);
     }
     let auth = CoreAuth::from_kept_slip(
         verified,
         witness.clone(),
-        instrument.fingerprint,
+        fingerprint,
         door,
         server.vault.as_ref(),
     )
@@ -133,7 +144,42 @@ pub(crate) fn kept_instrument_auth(
 /// vault it was minted for; a renewed or re-minted credential of the same
 /// actor never stands in.
 fn same_instrument(saved: &VerbAskInstrument, verified: &VerifiedSlip) -> bool {
-    verified.claims().slip_id == saved.slip && verified.claims().vault_id == saved.vault
+    saved.slip() == Some(verified.claims().slip_id) && verified.claims().vault_id == saved.vault
+}
+
+/// The attested owner `holder` a kept instrument names, as he stands now
+/// (FIX 11063): in the vault whose authority he was admitted in, while it
+/// records him as its live owner ([`attested_owner_standing`]). No slip,
+/// ceiling or lifetime is his, so nothing of his is compared, expired or
+/// revoked: the vault's live owner record alone decides.
+fn attested_owner_auth(
+    server: &SyncServer,
+    instrument: &VerbAskInstrument,
+    holder: EntityId,
+) -> Result<CoreAuth, VerbAskRefusal> {
+    match server.vault.authority_vault_id() {
+        Ok(Some(vault)) if vault == instrument.vault => attested_owner_standing(server, holder),
+        Ok(_) => Err(VerbAskRefusal::CredentialChanged),
+        Err(_) => Err(VerbAskRefusal::CredentialUnavailable),
+    }
+}
+
+/// `holder` as a managed vault's attested owner now
+/// ([`CoreAuth::for_attested_owner`]): refused as no longer its live owner
+/// only when the vault reads and records someone else, or no one, as its
+/// live owner. Standing this host could not read, or a vault no supervisor
+/// manages now, is unavailable.
+pub(crate) fn attested_owner_standing(
+    server: &SyncServer,
+    holder: EntityId,
+) -> Result<CoreAuth, VerbAskRefusal> {
+    CoreAuth::for_attested_owner(holder, server).map_err(|refused| {
+        if refused == ApiError::managed_owner_not_live() {
+            VerbAskRefusal::OwnerNotLive
+        } else {
+            VerbAskRefusal::CredentialUnavailable
+        }
+    })
 }
 
 /// The current scopes meet the original ceiling (OF-580 defaults): what a

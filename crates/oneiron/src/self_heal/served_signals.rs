@@ -9,7 +9,9 @@
 //! its rows read again from base (FIX 2449); one that does not stays a
 //! diagnostic only.
 
-use super::tripwires::{McpActionRejectedDetector, RetrievalRegressionDetector};
+use super::tripwires::{
+    McpActionRejectedDetector, ResolvedTripwireBounds, RetrievalRegressionDetector,
+};
 use super::{DiagnosticObservation, TIER1_SWEEP_SCOPE};
 use crate::limit_ask::EngineLimit;
 use crate::receipt::CallReceipt;
@@ -37,9 +39,21 @@ impl Vault {
     /// regression and queue-depth legs; the miss and MCP legs keep their own
     /// doors. Returns every diagnostic stored, sorted and deduplicated.
     pub fn run_served_signal_detectors(&self, now: u64) -> Result<Vec<EntityId>> {
+        let policy = self.resolved_tripwire_bounds()?;
+        self.run_served_signal_detectors_under(now, policy.as_ref())
+    }
+
+    /// [`Self::run_served_signal_detectors`] under a pass's one resolved
+    /// tripwire policy, `None` when a manifest forces tripwires closed.
+    pub(crate) fn run_served_signal_detectors_under(
+        &self,
+        now: u64,
+        policy: Option<&ResolvedTripwireBounds>,
+    ) -> Result<Vec<EntityId>> {
         let mut ids = self.run_retrieval_miss_detector(SERVED_RETRIEVAL_SCOPE)?;
         let runs = self.retrieval_runs(usize::MAX)?;
-        if let Some(bounds) = self.tripwire_bounds()? {
+        if let Some(policy) = policy {
+            let bounds = policy.bounds;
             let degraded = runs
                 .iter()
                 .filter_map(DiagnosticObservation::from_retrieval_degradation)
@@ -52,11 +66,12 @@ impl Vault {
                     bounds,
                     window_end: now,
                 }],
+                Some(&policy.receipt),
             )?;
             self.capture_tier1_served_regression(&regressions, &runs, bounds, now)?;
             ids.extend(regressions);
+            ids.extend(self.run_pending_consent_depth_under(TIER1_SWEEP_SCOPE, now, policy)?);
         }
-        ids.extend(self.run_pending_consent_depth(TIER1_SWEEP_SCOPE, now)?);
         let since = now.saturating_sub(SERVED_SPAN_SECS);
         let mut rejected: Vec<DiagnosticObservation> = Vec::new();
         {
@@ -84,6 +99,7 @@ impl Vault {
             TIER1_SWEEP_SCOPE,
             rejected,
             &[&McpActionRejectedDetector],
+            None,
         )?;
         self.capture_tier1_point_producer(&refused)?;
         ids.extend(refused);

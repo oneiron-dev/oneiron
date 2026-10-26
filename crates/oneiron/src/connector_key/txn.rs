@@ -354,6 +354,7 @@ pub(super) fn append_connector_key_op_record(
             grant_ref: Some(format!("ckey:{}", id.to_hex())),
             diff_handle: hasher.finalize().to_vec(),
             read_frontier_hash: policy_frontier,
+            context: Default::default(),
             redacted_at: None,
         },
     )

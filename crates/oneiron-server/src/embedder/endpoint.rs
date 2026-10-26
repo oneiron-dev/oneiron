@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use oneiron::config::VectorEvidenceFloors;
 use oneiron::embed::{
-    Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance, PendingEmbeddingInput,
+    EgressPredicate, Embedder, EmbedderLocality, EmbeddingDevice, EmbeddingProvenance,
+    PendingEmbeddingInput,
 };
 use oneiron::error::StoreError;
 use oneiron::federation::derivation::DerivationScope;
@@ -34,6 +35,10 @@ use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 use crate::models::BrokerContext;
 use crate::runtime::{GpuPool, GpuRegistryError};
+
+mod destination;
+use destination::EmbeddingDestination;
+pub(crate) use destination::{PodRelease, VaultRelease};
 
 pub(super) const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// Characters per token used to turn the provider-agnostic `max_input_tokens`
@@ -278,66 +283,22 @@ pub(crate) struct HttpEmbedder {
     pods: OnceLock<PodRoute>,
 }
 
-/// Which serving lane a request rides (ARCH-0019 §5). A query and the startup
-/// probe are interactive and stay on the configured endpoint; a document
-/// batch is retry-tolerant and may go to a leased GPU pod.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lane {
-    Interactive,
-    Batch,
-}
-
-/// The pool document batches lease a pod from, and how the pods are reached
-/// with their own key, never the endpoint's.
+/// The pool document batches lease a pod from (ARCH-0019 §5, the batch
+/// lane; a query and the startup probe stay on the configured endpoint), how
+/// the pods are reached with their own key, never the endpoint's, and what
+/// each row is judged by before it may go to one (FIX 9486,
+/// [`destination`]).
 struct PodRoute {
     pool: GpuPool,
     /// The holding vault's account, when one is bound: each request is then a
     /// derivation job whose answer is sealed to that account.
     scope: Option<DerivationScope>,
     client: Reach,
-}
-
-impl PodRoute {
-    /// Sends one request to a leased pod, or to the configured endpoint when
-    /// no pod is healthy. An answer from a pod whose lease lapsed meanwhile
-    /// (preempted, or unhealthy at the last poll) is dropped, and the
-    /// worker's retry sends the rows again.
-    fn post(&self, http: &HttpEmbedder, texts: &[&str], side: Side<'_>) -> oneiron::Result<Answer> {
-        let Some(scope) = self.scope else {
-            let lease = match self.pool.acquire() {
-                Ok(lease) => lease,
-                Err(GpuRegistryError::Unavailable) => {
-                    return http.post_at(&http.client, &http.endpoint, texts, side, Ok);
-                }
-                Err(error) => return Err(pod_error(&error)),
-            };
-            let answer = http.post_at(&self.client, lease.url(), texts, side, Ok)?;
-            return if lease.is_live() {
-                Ok(answer)
-            } else {
-                Err(pod_error(&GpuRegistryError::LeaseExpired))
-            };
-        };
-        let computation = format!("embed:{}", http.model_key).into_bytes();
-        let job = match self
-            .pool
-            .acquire_derivation(scope, computation, batch_digest(texts))
-        {
-            Ok(job) => job,
-            Err(GpuRegistryError::Unavailable) => {
-                return http.post_at(&http.client, &http.endpoint, texts, side, Ok);
-            }
-            Err(error) => return Err(pod_error(&error)),
-        };
-        let url = job.url().to_owned();
-        http.post_at(&self.client, &url, texts, side, |body| {
-            let sealed = job.complete(body).map_err(|error| pod_error(&error))?;
-            sealed
-                .read(scope.owner())
-                .map(<[u8]>::to_vec)
-                .ok_or_else(|| pod_error(&GpuRegistryError::InvalidInput))
-        })
-    }
+    /// The section's configured per-row egress list, when it has one; with
+    /// none, the world release alone judges each row.
+    egress: Option<Arc<dyn EgressPredicate>>,
+    /// The vault's world release toward a pod.
+    release: Arc<dyn PodRelease>,
 }
 
 /// What a derivation job is over: the batch's texts, each length-prefixed.
@@ -441,6 +402,8 @@ impl HttpEmbedder {
         pool: GpuPool,
         scope: Option<DerivationScope>,
         timeout: Duration,
+        egress: Option<Arc<dyn EgressPredicate>>,
+        release: Arc<dyn PodRelease>,
     ) -> oneiron::Result<()> {
         let client = Reach::pods(&pool, timeout)?;
         tracing::info!(
@@ -454,6 +417,8 @@ impl HttpEmbedder {
                 pool,
                 scope,
                 client,
+                egress,
+                release,
             })
             .is_err()
         {
@@ -603,16 +568,17 @@ impl HttpEmbedder {
         }
     }
 
-    /// Posts `texts` as one request, through the paid door when this remote
-    /// has one; the answer is held to what the vault admitted.
+    /// Posts `texts` as one request to `destination`, through the paid door
+    /// when this remote has one; the answer is held to what the vault
+    /// admitted.
     fn post_embeddings(
         &self,
         texts: &[&str],
         side: Side<'_>,
-        lane: Lane,
+        destination: &EmbeddingDestination,
     ) -> oneiron::Result<Answer> {
         let Some(door) = self.paid.get() else {
-            return self.post_once(texts, side, lane);
+            return self.post_once(texts, side, destination);
         };
         // A broker or key that is not there refuses the request before its
         // permit starts.
@@ -620,16 +586,23 @@ impl HttpEmbedder {
         // The door settles on the vectors; the mark rides beside them.
         let mut mark = None;
         let vectors = door.send(texts, &mut || {
-            let answer = self.post_once(texts, side, lane)?;
+            let answer = self.post_once(texts, side, destination)?;
             mark = answer.mark;
             Ok(answer.vectors)
         })?;
         Ok(Answer { vectors, mark })
     }
 
-    fn post_once(&self, texts: &[&str], side: Side<'_>, lane: Lane) -> oneiron::Result<Answer> {
-        match self.pods.get() {
-            Some(pods) if lane == Lane::Batch => pods.post(self, texts, side),
+    fn post_once(
+        &self,
+        texts: &[&str],
+        side: Side<'_>,
+        destination: &EmbeddingDestination,
+    ) -> oneiron::Result<Answer> {
+        match (destination, self.pods.get()) {
+            (EmbeddingDestination::Pod(target), Some(pods)) => {
+                pods.post_to(self, target, texts, side)
+            }
             _ => self.post_at(&self.client, &self.endpoint, texts, side, Ok),
         }
     }
@@ -867,7 +840,11 @@ impl HttpEmbedder {
 
     /// Embeds `inputs` as documents, one request or several, each sent only
     /// once `release` lets the rows it carries leave, and each vector marked
-    /// with the device and runtime that computed it.
+    /// with the device and runtime that computed it. With a GPU pool, the
+    /// batch's destination is chosen first and each row judged for it
+    /// ([`destination`], FIX 9486): the rows that may go to the pod go
+    /// there, the rest to this endpoint, and the vectors come back in row
+    /// order.
     fn embed_documents(
         &self,
         inputs: &[PendingEmbeddingInput],
@@ -877,6 +854,53 @@ impl HttpEmbedder {
             return Ok(Vec::new());
         }
         let wire = self.wire()?;
+        let (destination, to_pod) = match self.pods.get() {
+            None => (EmbeddingDestination::Primary, vec![false; inputs.len()]),
+            Some(pods) => {
+                let destination = destination::select_batch_destination(pods)?;
+                let to_pod = destination::partition_released_rows(&destination, pods, inputs)?;
+                (destination, to_pod)
+            }
+        };
+        let primary = EmbeddingDestination::Primary;
+        let mut placed: Vec<Option<(Vec<f32>, EmbeddingProvenance)>> = vec![None; inputs.len()];
+        for (target, wanted) in [(&destination, true), (&primary, false)] {
+            let picked: Vec<usize> = (0..inputs.len())
+                .filter(|index| to_pod[*index] == wanted)
+                .collect();
+            if picked.is_empty() {
+                continue;
+            }
+            let group: Vec<PendingEmbeddingInput> =
+                picked.iter().map(|index| inputs[*index].clone()).collect();
+            let vectors = self.embed_group(&group, release, wire, target)?;
+            if vectors.len() != picked.len() {
+                return Err(oneiron::Error::InvariantViolation(
+                    "embedder endpoint answered another number of rows than it sent",
+                ));
+            }
+            for (index, vector) in picked.into_iter().zip(vectors) {
+                placed[index] = Some(vector);
+            }
+        }
+        placed
+            .into_iter()
+            .map(|row| {
+                row.ok_or(oneiron::Error::InvariantViolation(
+                    "embedder endpoint left a row unanswered",
+                ))
+            })
+            .collect()
+    }
+
+    /// [`Self::embed_documents`] for the rows of one destination, in order.
+    fn embed_group(
+        &self,
+        inputs: &[PendingEmbeddingInput],
+        release: &dyn Fn(&[oneiron::EntityId]) -> oneiron::Result<()>,
+        wire: Wire,
+        destination: &EmbeddingDestination,
+    ) -> oneiron::Result<Vec<(Vec<f32>, EmbeddingProvenance)>> {
         let rows: Vec<oneiron::EntityId> = inputs.iter().map(|input| input.entity_id).collect();
         let texts: Vec<String> = inputs
             .iter()
@@ -891,7 +915,7 @@ impl HttpEmbedder {
         match wire {
             Wire::OpenAi => {
                 release(&rows)?;
-                Ok(self.marked(self.post_embeddings(&refs, Side::default(), Lane::Batch)?))
+                Ok(self.marked(self.post_embeddings(&refs, Side::default(), destination)?))
             }
             Wire::Oneiron => {
                 let side = Side {
@@ -906,7 +930,7 @@ impl HttpEmbedder {
                     vectors.extend(self.marked(self.post_embeddings(
                         request,
                         side,
-                        Lane::Batch,
+                        destination,
                     )?));
                 }
                 Ok(vectors)
@@ -928,7 +952,11 @@ impl QueryEmbedder for HttpEmbedder {
         let mut vectors = match self.wire()? {
             Wire::OpenAi => {
                 let prefixed = self.truncate(self.common.query_text(text));
-                self.post_embeddings(&[prefixed.as_str()], Side::default(), Lane::Interactive)?
+                self.post_embeddings(
+                    &[prefixed.as_str()],
+                    Side::default(),
+                    &EmbeddingDestination::Primary,
+                )?
             }
             Wire::Oneiron => self.post_embeddings(
                 &[text],
@@ -936,7 +964,7 @@ impl QueryEmbedder for HttpEmbedder {
                     input_type: Some("query"),
                     instruction: self.query_instruction.as_deref(),
                 },
-                Lane::Interactive,
+                &EmbeddingDestination::Primary,
             )?,
         }
         .vectors;
@@ -1069,7 +1097,11 @@ pub(crate) fn probe_endpoint(embedder: &HttpEmbedder) -> Result<ProbeOutcome, Pr
         .unwrap_or_else(PoisonError::into_inner) = Some(embedder.listing_of(listed.as_ref()));
     // Unmarked, so any remote answers it as a document; held to the listing
     // admitted, if any (none at startup, the listed one before a move).
-    match embedder.post_embeddings(&[PROBE_TEXT], Side::default(), Lane::Interactive) {
+    match embedder.post_embeddings(
+        &[PROBE_TEXT],
+        Side::default(),
+        &EmbeddingDestination::Primary,
+    ) {
         Ok(answer) => {
             let got = answer.vectors.first().map_or(0, Vec::len);
             if got == embedder.common.dimensions {

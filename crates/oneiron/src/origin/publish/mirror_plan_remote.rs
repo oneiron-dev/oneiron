@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use super::mirror_plan::MirrorRunScope;
 use super::mirror_plan_types::{MirrorObservedTip, MirrorPushPlan};
+use super::secret_hold::MirrorPlanSend;
 use super::types::OriginPublishDestination;
 use crate::Vault;
 use crate::error::{Error, Result};
@@ -60,8 +61,29 @@ impl Vault {
         }
     }
 
-    /// Pushes `members` of the plan in one child, each exactly as frozen.
+    /// Pushes `members` of the plan in one child, each exactly as frozen,
+    /// after the publication gate (`secret_hold`): a member it holds is
+    /// never sent, and none goes before the gate has answered.
     pub(super) fn push_mirror_plan_refs(
+        &self,
+        scope: &MirrorRunScope<'_, '_>,
+        plan: &MirrorPushPlan,
+        members: &[u32],
+    ) -> MirrorPlanSend {
+        let (held, sent) = self.gate_mirror_plan_refs(scope, plan, members);
+        let report = if sent.is_empty() {
+            Ok(GitPlanPushReport {
+                outcomes: Vec::new(),
+                failure: None,
+            })
+        } else {
+            self.push_mirror_plan_members(scope, plan, &sent)
+        };
+        MirrorPlanSend { held, sent, report }
+    }
+
+    /// The one child that pushes `members`.
+    fn push_mirror_plan_members(
         &self,
         scope: &MirrorRunScope<'_, '_>,
         plan: &MirrorPushPlan,

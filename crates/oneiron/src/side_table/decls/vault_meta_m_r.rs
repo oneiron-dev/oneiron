@@ -259,8 +259,13 @@ side_tables! {
     /// Key: ().
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
-    /// hash32.
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored;
+    /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
+        => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
+    /// What one ledger row's send came to beside its state, written with the ledger change it
+    /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
+    /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
+    OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).
@@ -362,7 +367,8 @@ side_tables! {
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
     /// Change-log record. Key: id16.
-    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named;
+    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named
+        => crate::ports::erase_change_log_actor_in_txn;
     /// Change-log by actor index. Key: id16 + u64be + id16.
     PORTS_CHANGE_BY_ACTOR: VaultMeta b"ports:change_actor:v1:" Raw;
     /// Change-log by entity index. Key: id16 + u64be + id16.
@@ -572,6 +578,10 @@ side_tables! {
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;
     /// Repo-conflict claim to reconciliation task. Key: id16.
     REPO_CONFLICT_RECONCILIATION_INDEX: VaultMeta b"repo_conflict:reconciliation:v1:" Raw;
+    /// The safe index copy of a text a model derived from a marked repo blob, or of a probe query
+    /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
+    /// secret value. Key: u8 (owner kind) + id16.
+    REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named

@@ -29,11 +29,28 @@ impl Memory<'_> {
         source_ref: &str,
         kind: &str,
     ) -> MemoryResult<EntityRefReceipt> {
+        self.create_note_from_entity_for(source_ref, kind, None)
+    }
+
+    /// [`Self::create_note_from_entity`], the source read through this
+    /// handle's own read lane in the copy's writer (FIX 9953): a source it
+    /// does not read is not live, and another author's diary entry is read
+    /// through that author's diary gate, stating `reason`, its read logged
+    /// with the copy.
+    pub fn create_note_from_entity_for(
+        &self,
+        source_ref: &str,
+        kind: &str,
+        reason: Option<&str>,
+    ) -> MemoryResult<EntityRefReceipt> {
         let source = self.resolve_ref(source_ref)?;
-        let id = self.vault.create_from_entity(
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        let id = self.vault.create_from_entity_read_by(
             source,
             kind,
             WriteActor::new(self.actor, self.actor_class),
+            &lane,
+            reason,
         )?;
         self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }

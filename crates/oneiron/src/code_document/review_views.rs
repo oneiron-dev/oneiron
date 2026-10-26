@@ -182,21 +182,16 @@ impl Memory<'_> {
         // on both sides, before they enter the diff (FIX 7608).
         let masks = self.repo_read_masks()?;
         let mut refs = OpRefs::new(self);
-        let received = proposal.received_candidate().is_some();
+        let bundle = proposal.is_file_bundle();
         let mut files = Vec::with_capacity(proposal.files.len());
         let mut diff = String::new();
-        for file in &proposal.files {
+        for (index, file) in proposal.files.iter().enumerate() {
             let old = masks.bytes(vault, base.read_file(&file.path)?.unwrap_or(b""))?;
             let new = masks.bytes(vault, file.content.as_deref().unwrap_or(b""))?;
             let (old, new) = (utf8(&old)?, utf8(&new)?);
-            // An ordinary proposal lands under its own id; a received
-            // bundle's file under its deterministic child operation.
-            let operation = match file.source_operation {
-                Some(source) if received => {
-                    crate::repo_mutation::received_file_operation(proposal.id, source)?
-                }
-                _ => proposal.id,
-            };
+            // An ordinary proposal lands under its own id; a bundle's file
+            // under its deterministic child operation.
+            let operation = proposal.file_operation(index)?;
             let landed =
                 vault
                     .code_file_edit_receipt(operation)?
@@ -224,7 +219,7 @@ impl Memory<'_> {
                 })
                 .collect();
             let (changes, file_diff) = refs.changes(changes)?;
-            if received {
+            if bundle {
                 let state = file
                     .metadata_edit
                     .as_ref()
@@ -242,7 +237,7 @@ impl Memory<'_> {
                 metadata_edit: file.metadata_edit.clone(),
             });
         }
-        let (path, changes, landed) = match (received, files.as_slice()) {
+        let (path, changes, landed) = match (bundle, files.as_slice()) {
             (false, [file]) => (
                 Some(file.path.clone()),
                 Some(file.changes.clone()),

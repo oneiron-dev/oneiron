@@ -200,7 +200,7 @@ fn transport_memory<'a>(
     if let Some(binding) = auth.and_then(CoreAuth::invocation_slip) {
         memory = memory.with_invocation_slip(binding);
     }
-    if let Some(instrument) = auth.and_then(verb_ask_instrument) {
+    if let Some(instrument) = auth.and_then(|auth| verb_ask_instrument(vault, auth)) {
         memory = memory.with_credential_instrument(instrument);
     }
     if let Some(auth) = auth {
@@ -259,17 +259,49 @@ pub(crate) fn mcp_credential_memory<'a>(
 
 /// The exact instrument a verified slip's request was admitted on, as a
 /// verb hook's ask names it: only a slip whose request kept its instrument
-/// for queued work has one, so the host can verify it again.
-fn verb_ask_instrument(auth: &CoreAuth) -> Option<VerbAskInstrument> {
-    auth.invocation_slip()?;
+/// for queued work has one, so the host can verify it again. A managed
+/// vault's attested owner, who presents no slip, has his own
+/// ([`attested_owner_instrument`]).
+fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+    if auth.invocation_slip().is_none() {
+        return attested_owner_instrument(vault, auth);
+    }
     let claims = auth.verified_slip()?.claims();
     Some(VerbAskInstrument {
-        source: VerbAskCredentialSource::Slip,
+        source: VerbAskCredentialSource::Slip {
+            slip: claims.slip_id,
+            fingerprint: auth.instrument()?,
+        },
         vault: claims.vault_id,
-        slip: claims.slip_id,
-        fingerprint: auth.instrument()?,
         ceiling: auth.authority_ceiling(),
     })
+}
+
+/// The instrument a verb hook's ask names for a managed vault's attested
+/// owner (FIX 11063): the person, the vault's authority id and the authority
+/// projected for him, which records what his call was admitted under and
+/// is never compared. Settlement runs his call again only while the vault
+/// records him as its live owner then. `None` for any other caller, and for
+/// him while the vault's authority does not read: his call resumes on his
+/// retry.
+fn attested_owner_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
+    let holder = attested_owner_holder(auth)?;
+    Some(VerbAskInstrument {
+        source: VerbAskCredentialSource::AttestedOwner { holder },
+        vault: vault.authority_vault_id().ok().flatten()?,
+        ceiling: auth.authority_ceiling(),
+    })
+}
+
+/// The managed vault's owner `auth` is, at owner grade, as
+/// [`CoreAuth::for_attested_owner`] built him: no slip of anyone's. A
+/// booking door's stale sign-in is nobody's owner and names none
+/// ([`CoreAuth::is_attested_booking_holder`]), and neither does any caller
+/// that presented a slip.
+pub(crate) fn attested_owner_holder(auth: &CoreAuth) -> Option<oneiron::EntityId> {
+    let holder = auth.managed_owner()?;
+    (auth.is_owner_grade() && auth.verified_slip().is_none() && auth.invocation_slip().is_none())
+        .then_some(holder)
 }
 
 /// The read `auth` makes, where its connection sits: a caller off this
@@ -411,11 +443,15 @@ pub(super) fn scoped_read_for_host_root(
         return Err(ApiError::forbidden_scope("owner"));
     }
     let vault = server.vault().as_ref();
-    if let Some(secret) = server.config.auth_secret.as_deref() {
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())
-            .map_err(|_| ApiError::unauthorized())?;
+    if server.config.auth_secret.is_some() {
+        // The self-host root signs with this install's own issuer seed
+        // (FIX-LIST 3018); a host holding none reads nothing as the root.
+        let issuer = server
+            .host_root_issuer
+            .as_deref()
+            .ok_or_else(ApiError::unauthorized)?;
         let proof = vault
-            .verified_host_root_slip(&issuer)
+            .verified_host_root_slip(issuer)
             .map_err(|_| ApiError::unauthorized())?;
         return Ok(vault.scoped_read(credential_read_key(vault, &proof)?.at(locality)));
     }

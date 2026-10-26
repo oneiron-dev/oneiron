@@ -112,7 +112,7 @@ impl Vault {
     ///
     /// A request the owner setters refuse, an attempt that is not a verified
     /// Dreamer attempt, or storage errors.
-    pub fn apply_dreamer_proactivity_policy(
+    pub fn file_dreamer_proactivity_policy(
         &self,
         attempt: crate::attempt_queue::AttemptId,
         request: &ProactivityPolicyRequest,
@@ -162,8 +162,9 @@ impl Vault {
     /// (the rhythm, `cadence.period_secs`) applies at once when it changed,
     /// the landing is fresh, the vault has one owner whose Grant names the
     /// Coach, the rows still read as `basis` and every record in `evidence`
-    /// still stands; it keeps its typed inverse and a receipt naming the
-    /// Coach and the Grant, and the owner reverts it. Every other changed
+    /// is a live claim the owner's own session wrote (FIX 9315); it keeps its
+    /// typed inverse and a receipt naming the Coach and the Grant, and the
+    /// owner reverts it. Every other changed
     /// field stays in the Proposed request, never dropped. Any error reading
     /// the Grant means a proposal, never an apply.
     ///
@@ -254,7 +255,9 @@ fn basis_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProactivityPolic
 
 /// The own-behaviour basis rechecked in the settings writer: the rows still
 /// read as `basis` drafted them, and the draft cites at least one record and
-/// each one still stands.
+/// each one is the owner's own (FIX 9315): a live claim the session of the
+/// vault's sole owner wrote. Anything else files the whole request as a
+/// proposal for him to confirm, never an apply.
 fn basis_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -264,11 +267,20 @@ fn basis_holds_in_txn(
     if evidence.is_empty() || basis_in_txn(vault, txn)? != *basis {
         return Ok(false);
     }
+    let owners = crate::policy_model::owners_in_txn(vault, txn)?;
+    let [owner] = owners.as_slice() else {
+        return Ok(false);
+    };
     for id in evidence {
-        if !matches!(
-            crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?,
-            crate::vault::LiveEntityRow::Live { .. }
-        ) {
+        let crate::vault::LiveEntityRow::Live { entity_type, body } =
+            crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?
+        else {
+            return Ok(false);
+        };
+        let own = entity_type == crate::registry::ENTITY_TYPE_CLAIM
+            && crate::claim::decode_claim_body(&body, true)
+                .is_ok_and(|claim| crate::claim::session_claim_producer(&claim) == Some(*owner));
+        if !own {
             return Ok(false);
         }
     }

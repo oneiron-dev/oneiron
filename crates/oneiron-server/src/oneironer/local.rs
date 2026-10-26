@@ -39,6 +39,7 @@ use backbone::{Backbone, Config};
 use heads::{Affect, CharacterBoundary, Coreference};
 use window::{Named, Span, conversation_tokenizer, decode};
 
+pub(crate) use window::InferenceWindows;
 pub(super) use window::{
     CHAR_REFINE_K, CHAR_REFINE_TAU, CharacterFeatures, Characters, DecodeLayers,
     ONEIRONER_DECODE_REVISION, Window, decode_ner,
@@ -528,6 +529,7 @@ impl LocalTagger {
             vad: None,
             context_links: Vec::new(),
             speaker_links: Vec::new(),
+            mood_parts: Vec::new(),
             stack_sha16: self.card.stack_sha16.clone(),
         };
         for (decoded, key) in moved {

@@ -22,7 +22,9 @@ use crate::agent_dispatch::{
     WidthCheckClass, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
+use crate::edit_distance::escalation::{
+    EscalationTrigger, standing_policy_for, standing_policy_for_in,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fanout_auto::{
@@ -282,7 +284,8 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
             if policy_in(self.vault(), txn, &run.input.policy_scope)? != governed
-                || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)? != standing
+                || standing_policy_for_in(self.vault(), txn, &scope, EscalationTrigger::Budget)?
+                    != standing
             {
                 return Err(consult_refusal(
                     MEMORY_CODE_INVALID_STATE,

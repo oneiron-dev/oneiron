@@ -18,6 +18,8 @@ import type {
   CheckpointPin,
   ClaimInput,
   CommitReceipt,
+  EngineReply,
+  EngineRequest,
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
@@ -724,6 +726,8 @@ vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
+vaultConnectorsReadGrantsGrant(input: unknown): unknown
+vaultConnectorsReadGrantsRevoke(input: unknown): unknown
 vaultRepoAnchorBind(input: unknown): unknown
 vaultRepoSnapshotsGet(input: unknown): unknown
 vaultRepoSnapshotsRead(input: unknown): unknown
@@ -1231,9 +1235,21 @@ export interface NativeEngineOptions {
   cpuMillisPerSecond?: number
 }
 
+/** A connection the app holds to its engine's server (FIX 4895). */
+export interface NativeEngineConnection {
+  send(bytes: Uint8Array): void
+  receive(): Uint8Array
+  close(): void
+}
+
 /** The engine-backed served client's native half, present only in an `engine` build. */
 export interface NativeEngine {
   client(key: string): NativeClient
+  localClient(): NativeClient
+  request(request: EngineRequest): EngineReply
+  requestArtifact(request: EngineRequest): EngineReply
+  connect(): NativeEngineConnection
+  connectArtifact(): NativeEngineConnection
   wake(): void
   stop(): void
   close(): void
