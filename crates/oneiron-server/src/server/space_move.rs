@@ -33,6 +33,8 @@ use super::core::SyncServer;
 use super::media_embedding::{MediaEgress, MediaEmbedRefusal, RuntimeMediaEmbedder};
 use crate::ai_host::CHAT_ROLE;
 
+mod repo_index_derivation;
+
 /// How long an undecided move waits before its probes run again.
 const SPACE_MOVE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 /// The media type a probe query is sent as.
