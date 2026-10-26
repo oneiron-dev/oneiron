@@ -19,6 +19,9 @@ const CURSOR_WIRE: &str = "wire:health:v1:cursor:wire";
 const CURSOR_LIMIT: &str = "wire:health:v1:cursor:limit:";
 /// How far it has read the e-sign ceremony's burst checks.
 const CURSOR_ESIGN: &str = "wire:health:v1:cursor:esign";
+/// One crossed set's newest revision: the subject of its check, kept in the
+/// fold that makes it, so the next revision reads one row (FIX 10866).
+const REVISION: &str = "wire:health:v1:revision:";
 /// Most actors or verbs one crossing's state names, busiest first.
 const MAX_NAMED: usize = 16;
 
@@ -311,32 +314,38 @@ pub(super) fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     Ok(unread)
 }
 
-/// The answer a new revision of `set` takes from the set's newest earlier
+/// The newest earlier revision of `set`, by its key: one read of the set's
+/// revision row and one of the check it names, never the set's every
+/// revision (FIX 10866). `None` before the set's first.
+fn newest_revision(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    set: &str,
+) -> Result<Option<(String, HealthCheck)>> {
+    let revision = format!("{REVISION}{set}");
+    let Some(subject) = vault.sync_state_get_in_write_txn(txn, &revision)? else {
+        return Ok(None);
+    };
+    let subject =
+        String::from_utf8(subject).map_err(|_| Error::CorruptedIndex("wire health revision"))?;
+    let key = format!("{CHECK}{subject}");
+    Ok(vault
+        .sync_state_get_in_write_txn(txn, &key)?
+        .map(|bytes| decode::<HealthCheck>(&bytes))
+        .transpose()?
+        .map(|check| (key, check)))
+}
+
+/// The answer a new revision takes from `earlier`, its set's newest earlier
 /// revision, when that one is answered and still covers `raised_at`: its
 /// answer, at the cover rung, citing that answer's question and unit. The
 /// revision keeps its own evidence and is not asked (FIX 9531). `None` when
 /// it is to be asked.
-fn covered(
-    vault: &Vault,
-    txn: &heed::RwTxn<'_>,
-    set: &str,
-    raised_at: u64,
-) -> Result<Option<CheckState>> {
-    let mut newest = None;
-    vault.sync_state_visit_prefix_in_write_txn(txn, &format!("{CHECK}{set}"), |_, bytes| {
-        newest = Some(bytes.to_vec());
-        Ok::<(), Error>(())
-    })?;
-    let Some(earlier) = newest
-        .map(|bytes| decode::<HealthCheck>(&bytes))
-        .transpose()?
-    else {
-        return Ok(None);
-    };
+fn covered(earlier: &HealthCheck, raised_at: u64) -> Option<CheckState> {
     if !earlier.covers(raised_at) {
-        return Ok(None);
+        return None;
     }
-    Ok(match earlier.state {
+    match &earlier.state {
         CheckState::Answered {
             answer,
             probability,
@@ -345,23 +354,40 @@ fn covered(
             unit,
             ..
         } => Some(CheckState::Answered {
-            answer,
-            probability,
+            answer: answer.clone(),
+            probability: *probability,
             by: AnsweredBy::Cover,
-            at,
-            question,
-            unit,
+            at: *at,
+            question: question.clone(),
+            unit: unit.clone(),
         }),
         _ => None,
-    })
+    }
+}
+
+/// `earlier`, an open revision a new held one supersedes (FIX 10868): it
+/// names the new one's subject, and the question and unit it was asked on.
+fn superseded(mut earlier: HealthCheck, by: &str) -> HealthCheck {
+    let (question, unit) = match &earlier.state {
+        CheckState::Asked { question, unit } => (Some(question.clone()), Some(unit.clone())),
+        _ => (None, None),
+    };
+    earlier.state = CheckState::Superseded {
+        by: by.to_owned(),
+        question,
+        unit,
+    };
+    earlier
 }
 
 /// Folds one crossing into its subject's check: an open check, or an answered
 /// one that still covers it, counts it; otherwise it is a new held check. A
 /// revision of a crossing is a new check of its own, which the newest earlier
-/// revision's answer answers while it covers it ([`covered`]). The check and
-/// the cursor past the crossing are kept in one write, so a crossing is never
-/// counted twice nor skipped.
+/// revision's answer answers while it covers it ([`covered`]); a new held
+/// revision supersedes that earlier one while it is still open
+/// ([`superseded`]), and becomes the set's newest. The checks, the set's
+/// revision row and the cursor past the crossing are kept in one write, so a
+/// crossing is never counted twice nor skipped.
 pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
     vault.with_write_txn_grouped(|txn| {
@@ -375,20 +401,42 @@ pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
                 check.last_raised = check.last_raised.max(crossing.raised_at);
                 check
             }
-            _ => HealthCheck {
-                state: match &crossing.revises {
-                    Some(set) => covered(vault, txn, set, crossing.raised_at)?,
+            _ => {
+                let earlier = match &crossing.revises {
+                    Some(set) => {
+                        let earlier = newest_revision(vault, txn, set)?;
+                        let newest = crossing.subject.as_bytes();
+                        vault.sync_state_put_in_write_txn(
+                            txn,
+                            &format!("{REVISION}{set}"),
+                            newest,
+                        )?;
+                        earlier
+                    }
                     None => None,
+                };
+                let state = earlier
+                    .as_ref()
+                    .and_then(|(_, earlier)| covered(earlier, crossing.raised_at))
+                    .unwrap_or(CheckState::Held);
+                if state == CheckState::Held
+                    && let Some((earlier_key, earlier)) =
+                        earlier.filter(|(_, earlier)| earlier.open())
+                {
+                    let earlier = superseded(earlier, &crossing.subject);
+                    vault.sync_state_put_in_write_txn(txn, &earlier_key, &encode(&earlier)?)?;
                 }
-                .unwrap_or(CheckState::Held),
-                subject: crossing.subject,
-                source: crossing.source,
-                crossing: crossing.summary,
-                first_raised: crossing.raised_at,
-                last_raised: crossing.raised_at,
-                crossings: 1,
-                asked_in: None,
-            },
+                HealthCheck {
+                    state,
+                    subject: crossing.subject,
+                    source: crossing.source,
+                    crossing: crossing.summary,
+                    first_raised: crossing.raised_at,
+                    last_raised: crossing.raised_at,
+                    crossings: 1,
+                    asked_in: None,
+                }
+            }
         };
         vault.sync_state_put_in_write_txn(txn, &key, &encode(&check)?)?;
         if let Some((cursor, read)) = crossing.read {

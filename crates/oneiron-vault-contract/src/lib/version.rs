@@ -440,6 +440,16 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// revision it merged in, with no `Ping` field: a supervisor that reads the
 /// readiness runs at or after the floor, and no reader of a readiness
 /// without them is kept. This version stays 3.
+///
+/// Superseded wire health checks (FIX 10868): a check on the owner's
+/// `/v1/owner/wire-health` read gains the state `superseded`, with `by`, the
+/// subject of the later revision of the same crossed set that was held while
+/// it was still held or asked, and `question` and `unit`, the ones it was
+/// asked on or `null`. A superseded check is never asked or polled again;
+/// the later revision is asked in its place. It carries a build floor, at the
+/// engine revision it merged in, with no `Ping` field: a reader of the checks
+/// runs against an engine at or after the floor, and no reader of a check
+/// without it is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
