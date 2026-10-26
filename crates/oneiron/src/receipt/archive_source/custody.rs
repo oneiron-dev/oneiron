@@ -1,5 +1,5 @@
 //! Identifier-only source custody. Binding never confers receipt or claim authority.
-use super::codec::{ReceiptArchive, decode, invalid};
+use super::codec::{ReceiptArchive, decode, id_of_bytes, invalid};
 use crate::{
     batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader},
     entity_id::EntityId,
@@ -72,7 +72,7 @@ pub(crate) fn validate_receipt_archive_put(
         return Ok(());
     };
     let holder = source.holder()?;
-    if source.id()? != *id
+    if id_of_bytes(body)? != *id
         || holder == *id
         || retired(store, txn, RETIRED_HOLDER, &holder)?
         || retired(store, txn, RETIRED_SOURCE, id)?
@@ -137,7 +137,7 @@ pub(crate) fn stage_receipt_archive_put(
                     .ok_or(Error::CorruptedIndex("pending receipt source"))?;
                 let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
                 if header.entity_type != ENTITY_TYPE_ASSET
-                    || source.id()? != source_id
+                    || id_of_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])? != source_id
                     || source.holder()? != *id
                 {
                     return Err(invalid());
@@ -182,8 +182,11 @@ pub(super) fn read_source(
     if header.entity_type != ENTITY_TYPE_ASSET {
         return Err(invalid());
     }
-    let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
-    if source.id()? != *id || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id) {
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    let source = decode(body)?.ok_or(invalid())?;
+    if id_of_bytes(body)? != *id
+        || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id)
+    {
         return Err(invalid());
     }
     if retired(store, txn, RETIRED_HOLDER, &source.holder()?)?
@@ -231,8 +234,9 @@ fn erase_source_payload(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId)
     };
     let header =
         EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("receipt source delete"))?;
-    let source = decode(&raw[ENTITY_METADATA_HEADER_LEN..])?.ok_or(invalid())?;
-    if header.entity_type != ENTITY_TYPE_ASSET || source.id()? != *id {
+    let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+    decode(body)?.ok_or(invalid())?;
+    if header.entity_type != ENTITY_TYPE_ASSET || id_of_bytes(body)? != *id {
         return Err(invalid());
     }
     let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, id)?;
