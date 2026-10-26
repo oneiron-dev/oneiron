@@ -5911,7 +5911,7 @@
      "path": "src/batch/export/archive_side_tables.rs",
      "purpose": "OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 5,
       "struct": 3
      }
@@ -5996,7 +5996,7 @@
      "path": "src/batch/export/bundle_validation.rs",
      "purpose": "Validate source identities, facet/body agreement and explicit archive-only omissions",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
