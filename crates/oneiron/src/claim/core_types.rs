@@ -641,6 +641,10 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::thread_passport::validate_thread_claim_structure(&body)?;
     } else if crate::channel_identity::is_channel_identity_claim_predicate(&body.predicate) {
         crate::channel_identity::validate_channel_identity_claim_structure(&body)?;
+    } else if crate::channel_identity_provider::is_line_chat_observation_claim_predicate(
+        &body.predicate,
+    ) {
+        crate::channel_identity_provider::validate_line_chat_observation_claim_structure(&body)?;
     } else if crate::identity_reputation::is_identity_reputation_claim_predicate(&body.predicate) {
         crate::identity_reputation::validate_identity_reputation_claim_structure(&body)?;
     } else if crate::provider_confidence::is_actor_confidence_prior_claim_predicate(&body.predicate)

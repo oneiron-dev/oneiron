@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, LineChat,
+    ChannelIdentityProviderProvision, LineChat, LineChatKind,
 };
 use super::shared_validate::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY,
@@ -302,6 +302,14 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
             line.received_at,
             true,
         );
+        // An unbound chat's message is answered in the chat, and its typed
+        // source stays the member who wrote it (FIX 10809).
+        if routed_chat.is_none()
+            && reply_chat.is_some()
+            && let Some(sender) = line_audience_key(None, source_user_id.as_deref())
+        {
+            input.source.user_ref = sender;
+        }
         input.payload_ref = line.payload_ref;
         Ok(input)
     }
@@ -319,6 +327,30 @@ pub fn line_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Opti
         (None, Some(user)) => Some(format!("line:user:{user}")),
         (None, None) => None,
     }
+}
+
+/// Whether `key` names a group or room audience in [`line_audience_key`]'s
+/// spelling (`line:group:<C…>`, `line:room:<R…>`).
+#[must_use]
+pub fn is_line_chat_audience_key(key: &str) -> bool {
+    key.strip_prefix("line:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(kind, _)| LineChatKind::parse(kind))
+        .is_some()
+}
+
+/// [`line_audience_key`] over a provider event's raw source ids, normalized
+/// as intake normalizes them, so an archived event and the reply target
+/// intake froze spell one audience alike. A chat id intake would not take
+/// falls back to the sender, as intake does; a sender intake would not take
+/// names nobody.
+#[must_use]
+pub fn line_source_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Option<String> {
+    let chat = chat.and_then(|chat| normalized_line_chat(chat).ok());
+    let user = user_id.and_then(|user| {
+        normalize_line_user_like_id(user, "LINE source user id", MAX_LINE_COMPONENT_BYTES).ok()
+    });
+    line_audience_key(chat.as_ref(), user.as_deref())
 }
 
 fn normalized_line_chat(chat: &LineChat) -> Result<LineChat> {

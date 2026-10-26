@@ -19,7 +19,9 @@ impl Vault {
     /// ([`InboundDisposition::Deliver`] or
     /// [`InboundDisposition::DeliverRetiring`]). A rotating, released or
     /// quarantined persona keeps its inbound; the routing door stamps the
-    /// retiring ones. `workspace_ref` is the stamp
+    /// retiring ones. An identity whose live facts do not read is passed
+    /// over with a warning, so it never stops another persona's delivery.
+    /// `workspace_ref` is the stamp
     /// [`super::SlackSharedPresenceAdapter::workspace_ref`] makes.
     pub fn slack_workspace_personas(&self, workspace_ref: &str) -> Result<Vec<String>> {
         let prefix = format!("{workspace_ref}:persona:");
@@ -30,8 +32,24 @@ impl Vault {
             let Some(identity) = self.get_channel_identity_in_txn(&txn, &id)? else {
                 continue;
             };
-            let Some(facts) = channel_identity_facts_in_txn(&self.store, &txn, &id)? else {
+            // Another channel's or workspace's identity is never read
+            // further: its facts cannot fail this workspace's delivery.
+            if identity.channel() != SLACK_CHANNEL
+                || !identity.address_or_handle().starts_with(&prefix)
+            {
                 continue;
+            }
+            let facts = match channel_identity_facts_in_txn(&self.store, &txn, &id) {
+                Ok(Some(facts)) => facts,
+                Ok(None) => continue,
+                Err(err) => {
+                    tracing::warn!(
+                        identity = %id.to_hex(),
+                        error = %err,
+                        "a Slack persona's live facts did not read; it takes no inbound"
+                    );
+                    continue;
+                }
             };
             let delivers = matches!(
                 facts.inbound_with_custody(identity.custody()),
