@@ -9125,6 +9125,8 @@ class SpaceProbe(TypedDict):
     query: str
     query_media: NotRequired[EntityId | None]
     family: EntityId
+    written_from: NotRequired[EntityId | None]
+    source_refs: NotRequired[list[EntityId]]
     targets: list[EntityId]
     author: str
     written_at: int
@@ -9139,6 +9141,7 @@ class EmbeddingSpaceProbePutRequest(TypedDict):
     query_media: NotRequired[EntityId | None]
     family: EntityId
     targets: NotRequired[list[EntityId]]
+    source_refs: NotRequired[list[EntityId]]
     author: str
 class EmbeddingSpaceProbeDeleteRequest(TypedDict):
     id: str

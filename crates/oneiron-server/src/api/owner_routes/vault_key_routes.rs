@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::vault_key::{self as view, PrfInput, SignerPin, VaultKeyReport, secret32};
 use crate::owner::{OwnerError, OwnerResult};
@@ -106,10 +107,10 @@ enum KeySecret {
 async fn unlock(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<KeySecret>, JsonRejection>,
+    payload: OwnerJsonBody<KeySecret>,
 ) -> OwnerReply<VaultKeyReport> {
     owner(&auth, &server)?;
-    let secret = json_payload(payload)?;
+    let secret = payload.read(&server).await?;
     let report = blocking(move || -> OwnerResult<VaultKeyReport> {
         let vault = server.vault();
         match secret {
@@ -139,10 +140,10 @@ struct PasswordRequest {
 async fn set_password(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PasswordRequest>, JsonRejection>,
+    payload: OwnerJsonBody<PasswordRequest>,
 ) -> OwnerReply<VaultKeyWrapInfo> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let info = blocking(move || -> OwnerResult<VaultKeyWrapInfo> {
         let password = Zeroizing::new(request.password);
         let vault = held(server.vault())?;
@@ -172,10 +173,10 @@ struct PasskeyRequest {
 async fn add_passkey(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PasskeyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<PasskeyRequest>,
 ) -> OwnerReply<VaultKeyWrapInfo> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let info = blocking(move || -> OwnerResult<VaultKeyWrapInfo> {
         let prf = prf_bytes(&request.prf)?;
         let vault = held(server.vault())?;
@@ -222,10 +223,10 @@ struct Removed {
 async fn remove(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RemoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RemoveRequest>,
 ) -> OwnerReply<Removed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let removed = blocking(move || -> OwnerResult<Removed> {
         server
             .vault()
@@ -251,10 +252,10 @@ struct RetireEscrowRequest {
 async fn retire_escrow(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RetireEscrowRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RetireEscrowRequest>,
 ) -> OwnerReply<EscrowRetirement> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let retired = blocking(move || -> OwnerResult<EscrowRetirement> {
         Ok(server
             .vault()

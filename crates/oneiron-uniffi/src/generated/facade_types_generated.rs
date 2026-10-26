@@ -27868,6 +27868,18 @@ pub struct SpaceProbe {
     pub query_media: Option<String>,
     #[serde(rename = "family")]
     pub family: String,
+    #[serde(
+        rename = "written_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub written_from: Option<String>,
+    #[serde(
+        rename = "source_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_refs: Option<Vec<String>>,
     #[serde(rename = "targets")]
     pub targets: Vec<String>,
     #[serde(rename = "author")]
@@ -27912,6 +27924,12 @@ pub struct EmbeddingSpaceProbePutRequest {
     pub family: String,
     #[serde(rename = "targets", default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
+    #[serde(
+        rename = "source_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_refs: Option<Vec<String>>,
     #[serde(rename = "author")]
     pub author: String,
 }

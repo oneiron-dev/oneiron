@@ -70,6 +70,9 @@ mod authority_checkpoint;
 mod blob_artifacts;
 // OF-604: zstd and gzip request bodies, and compressed JSON replies.
 mod body_codec;
+// FIX 8195, FIX 7917: owner request bodies, read after the route's door and
+// spooled whatever their length.
+mod body_spool;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
 // merged booking solver and lifecycle.
