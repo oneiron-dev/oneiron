@@ -53,6 +53,9 @@ const UNMASKABLE: &str =
 /// Why a blob carrying an item whose copy is unread this pass is withheld.
 const UNREAD: &str = "a window blob carrying a marked repo item whose copy is unread is withheld";
 
+/// Why a peer's write of a row whose copy is unread this pass is not admitted.
+const UNREAD_EDIT: &str = "a write of a marked repo row whose copy is unread is not admitted";
+
 /// What a peer's window blob becomes here.
 pub(crate) enum WindowAdmission<'a> {
     /// Import these bytes as today: the blob as it came, or translated onto
@@ -205,7 +208,7 @@ impl SyncSecretProjection {
                     return as_sent();
                 };
                 let mut held = Vec::new();
-                if !self.admit_parts(store, &mut parts, &mut held)? {
+                if !self.admit_parts(store, context, &mut parts, &mut held)? {
                     return as_sent();
                 }
                 if !held.is_empty() {
@@ -224,6 +227,7 @@ impl SyncSecretProjection {
                 if !translated.held.is_empty() {
                     return Ok(WindowAdmission::Held(translated.held));
                 }
+                self.unread_rows(store, context, &json)?;
                 if translated.sources.is_empty() {
                     return as_sent();
                 }
@@ -280,9 +284,14 @@ impl SyncSecretProjection {
 
     /// Each copy row value of `parts` as its source row, and each copy key as
     /// its source's, in place; whether any changed. Ruled holds go to `held`.
+    ///
+    /// # Errors
+    /// The visible diff's own failure, or a row [`Self::unread_row`] cannot
+    /// judge this pass.
     fn admit_parts(
         &self,
         store: &Store,
+        context: Option<&LoroDoc>,
         parts: &mut Parts,
         held: &mut Vec<(EntityId, RepoProjectionDiffResult)>,
     ) -> Result<bool> {
@@ -304,10 +313,70 @@ impl SyncSecretProjection {
                     changed = true;
                 }
                 InboundRow::Held { id, cause } => held.push((id, cause)),
-                InboundRow::Ordinary => {}
+                InboundRow::Ordinary => self.unread_row(store, context, &id)?,
             }
         }
         Ok(rekey_skeleton(&mut parts.skeleton, |key| self.source_key(key)) || changed)
+    }
+
+    /// Fails when this window's own row `id` (in `context`, its pad carrier
+    /// read) is a marked blob's whole bytes whose copy is unread this pass,
+    /// and `id` is no marked source: a peer's write of it may be an edit of
+    /// that copy, which this pass cannot judge, so it is not admitted and
+    /// stays the peer's pending work (fail closed for unknown markedness,
+    /// CALL S4FIX-UNKNOWN-MARK). A marked source's own id is a raw holder's
+    /// write, admitted as today.
+    fn unread_row(&self, store: &Store, context: Option<&LoroDoc>, id: &EntityId) -> Result<()> {
+        if self.unread.is_empty() || self.sources.contains_key(id) {
+            return Ok(());
+        }
+        let Some(context) = context else {
+            return Ok(());
+        };
+        let Some(loro::ValueOrContainer::Value(LoroValue::Binary(raw))) =
+            context.get_map(ROWS).get(&id.to_hex())
+        else {
+            return Ok(());
+        };
+        let raw: &[u8] = &raw;
+        let carrier = crate::world_keys::image_pad_row(store, raw);
+        let unread = carrier
+            .as_deref()
+            .unwrap_or(raw)
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .is_some_and(|body| self.unread.contains_key(blake3::hash(body).as_bytes()));
+        if unread {
+            return Err(Error::InvariantViolation(UNREAD_EDIT));
+        }
+        Ok(())
+    }
+
+    /// [`Self::unread_row`] for every row `json` writes.
+    fn unread_rows(
+        &self,
+        store: &Store,
+        context: Option<&LoroDoc>,
+        json: &JsonSchema,
+    ) -> Result<()> {
+        if self.unread.is_empty() {
+            return Ok(());
+        }
+        for op in json.changes.iter().flat_map(|change| &change.ops) {
+            let ContainerID::Root {
+                name,
+                container_type: ContainerType::Map,
+            } = &op.container
+            else {
+                continue;
+            };
+            if let (true, JsonOpContent::Map(MapOp::Insert { key, .. })) =
+                (name.as_str() == ROWS, &op.content)
+                && let Ok(id) = EntityId::from_hex(key)
+            {
+                self.unread_row(store, context, &id)?;
+            }
+        }
+        Ok(())
     }
 
     /// A blob the checkpoint does not take: released as it is only when
