@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::inbound_types::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound,
-    ChannelIdentityProviderProvision, LineChat,
+    ChannelIdentityProviderProvision, LineChat, LineChatKind,
 };
 use super::shared_validate::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LINE_OFFICIAL_ACCOUNT_PROVIDER_KEY,
@@ -302,6 +302,14 @@ impl ChannelIdentityProviderAdapter for LineOfficialAccountAdapter {
             line.received_at,
             true,
         );
+        // An unbound chat's message is answered in the chat, and its typed
+        // source stays the member who wrote it (FIX 10809).
+        if routed_chat.is_none()
+            && reply_chat.is_some()
+            && let Some(sender) = line_audience_key(None, source_user_id.as_deref())
+        {
+            input.source.user_ref = sender;
+        }
         input.payload_ref = line.payload_ref;
         Ok(input)
     }
@@ -319,6 +327,16 @@ pub fn line_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Opti
         (None, Some(user)) => Some(format!("line:user:{user}")),
         (None, None) => None,
     }
+}
+
+/// Whether `key` names a group or room audience in [`line_audience_key`]'s
+/// spelling (`line:group:<C…>`, `line:room:<R…>`).
+#[must_use]
+pub fn is_line_chat_audience_key(key: &str) -> bool {
+    key.strip_prefix("line:")
+        .and_then(|rest| rest.split_once(':'))
+        .and_then(|(kind, _)| LineChatKind::parse(kind))
+        .is_some()
 }
 
 /// [`line_audience_key`] over a provider event's raw source ids, normalized

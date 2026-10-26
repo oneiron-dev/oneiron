@@ -32,7 +32,7 @@ pub use self::inbound_types::{
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
-    line_audience_key, line_source_audience_key,
+    is_line_chat_audience_key, line_audience_key, line_source_audience_key,
 };
 pub(crate) use self::line_chat_binding::validate_line_chat_observation_claim_structure;
 pub use self::line_chat_binding::{
