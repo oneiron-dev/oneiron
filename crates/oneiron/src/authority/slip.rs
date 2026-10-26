@@ -524,6 +524,9 @@ pub(crate) struct TransferredBounds {
     scope: Scope,
     /// The named-record bound, when one constrains.
     records: Option<BTreeSet<String>>,
+    /// Whether the effective bounds name channels: an archived record
+    /// carries none, so a channel-bound transfer takes nothing here.
+    channel_bound: bool,
     deadline: u64,
     single_use: bool,
     pact: bool,
@@ -535,10 +538,11 @@ impl TransferredBounds {
     /// with no position is judged as if it stood everywhere: only bounds no
     /// caveat narrowed take it. A one-shot or pact-bound transfer takes
     /// nothing here: an archive read is no one-shot redemption, and a
-    /// removal archive is no pact's reach.
+    /// removal archive is no pact's reach. Nor does a channel-bound one: an
+    /// archived record stood on no channel, and this door is none.
     #[must_use]
     pub(crate) fn admits(&self, id: crate::EntityId, position: Option<&Scope>, now: u64) -> bool {
-        if now >= self.deadline || self.single_use || self.pact {
+        if now >= self.deadline || self.single_use || self.pact || self.channel_bound {
             return false;
         }
         if self
@@ -594,6 +598,7 @@ impl CapabilitySlip {
                 .expires_at
                 .min(effective.issued_at.saturating_add(effective.ttl_secs)),
             records: records_constrained.then_some(effective.records),
+            channel_bound: !effective.channels.is_empty(),
             scope: effective.scope,
             single_use: effective.single_use,
             pact: pact.is_some(),
