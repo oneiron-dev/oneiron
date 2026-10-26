@@ -1,6 +1,13 @@
 //! T2 for universal reports, sharing the bundle intake's cosine normalization.
+//! An ISSUE's erase reaches every cluster that copied its vector (`erase`).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+mod erase;
+pub(crate) use erase::{
+    forget_report_cluster_member_in_txn, forget_report_cluster_source_in_txn,
+    report_cluster_carriage, report_cluster_owners,
+};
 
 use super::{FeedbackDedup, normalized};
 use crate::feedback::{IssueCategory, ReportIssue, ReportKind, ReportRoute, ReportStatus};
@@ -11,7 +18,8 @@ const CLUSTERS: SideTable<EntityId, ReportCluster, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_CLUSTER);
 
 /// Membership is evidence, not a report counter. The centroid is recomputed
-/// from the retained host vectors, so it is never the only copy of a summary.
+/// from the retained host vectors, so it is never the only copy of a summary;
+/// intake remakes it from the members that count before it reads it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReportCluster {
@@ -34,8 +42,14 @@ impl Vault {
         if vector.len() != self.config.dimensions {
             return Err(Error::InvalidConfig("report embedding dimensions".into()));
         }
+        let incoming = EntityId::from_hex(&issue.issue_ref)?;
+        // A stale ingestion of an ISSUE erased or deleted since clusters
+        // nothing (FIX 9856).
+        if erase::incoming_erased_in_txn(&self.store, txn, &incoming)? {
+            return Ok(None);
+        }
         let mut best: Option<(f32, EntityId, ReportCluster)> = None;
-        for (id, cluster) in CLUSTERS.scan(&self.store, txn)? {
+        for (id, mut cluster) in CLUSTERS.scan(&self.store, txn)? {
             if cluster.category != issue.request.category
                 || cluster.kind != issue.request.kind
                 || cluster.route != issue.route
@@ -52,6 +66,10 @@ impl Vault {
             ) {
                 continue;
             }
+            // A member deleted since it joined counts nowhere (FIX 9856).
+            if !erase::remake_live_in_txn(self, txn, &mut cluster, None)? {
+                continue;
+            }
             let center = normalized(&cluster.centroid)?;
             let similarity = vector.iter().zip(&center).map(|(a, b)| a * b).sum::<f32>();
             if similarity >= dedup.min_similarity
@@ -63,7 +81,7 @@ impl Vault {
             }
         }
         let duplicate = best.as_ref().map(|(_, id, _)| *id);
-        let id = duplicate.unwrap_or(EntityId::from_hex(&issue.issue_ref)?);
+        let id = duplicate.unwrap_or(incoming);
         let mut cluster = best
             .map(|(_, _, cluster)| cluster)
             .unwrap_or_else(|| ReportCluster {
@@ -73,19 +91,10 @@ impl Vault {
                 members: BTreeMap::new(),
                 centroid: Vec::new(),
             });
-        cluster
-            .members
-            .insert(issue.issue_ref.clone(), vector.clone());
-        let mut centroid = vec![0.0; vector.len()];
-        for vector in cluster.members.values() {
-            if vector.len() != centroid.len() {
-                return Err(Error::CorruptedIndex("report cluster dimensions"));
-            }
-            for (sum, value) in centroid.iter_mut().zip(vector) {
-                *sum += value;
-            }
+        cluster.members.insert(issue.issue_ref.clone(), vector);
+        if !erase::remake_live_in_txn(self, txn, &mut cluster, Some(&issue.issue_ref))? {
+            return Err(Error::CorruptedIndex("report cluster dimensions"));
         }
-        cluster.centroid = normalized(&centroid)?;
         CLUSTERS.put(&self.store, txn, &id, &cluster)?;
         Ok(duplicate)
     }

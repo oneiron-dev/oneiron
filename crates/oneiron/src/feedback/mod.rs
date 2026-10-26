@@ -118,11 +118,10 @@ mod triage;
 
 pub use self::bundle::{
     FEEDBACK_APPROVE_ONCE_ACTION, FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2,
-    FEEDBACK_BUNDLE_KEYS, FEEDBACK_DAG_MAX_HOPS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES,
-    FEEDBACK_ENGINE_VERSION_MAX_BYTES, FEEDBACK_MAX_SUBJECT_REFS, FEEDBACK_REF_MAX_BYTES,
-    FEEDBACK_SEND_VERB, FEEDBACK_VERBS, FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot,
-    FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot,
-    FeedbackPlatform, FeedbackProposal, FeedbackVerb, decode_feedback_bundle,
+    FEEDBACK_BUNDLE_KEYS, FEEDBACK_EMBEDDING_MODEL_MAX_BYTES, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
+    FEEDBACK_REF_MAX_BYTES, FEEDBACK_SEND_VERB, FEEDBACK_VERBS, FeedbackBundle, FeedbackCategory,
+    FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis,
+    FeedbackHnswSnapshot, FeedbackPlatform, FeedbackProposal, FeedbackVerb, decode_feedback_bundle,
     decode_feedback_bundle_as, encode_feedback_bundle, feedback_bundle_digest,
     feedback_bundle_digest_as,
 };
