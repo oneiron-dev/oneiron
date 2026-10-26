@@ -10500,10 +10500,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/campaign/claims/member_replacement.rs",
+     "purpose": "The successor body for a live `campaign.member` head",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/campaign/claims/mod.rs",
      "purpose": "The CRM pack's claim families (CA-01)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 3
      }
     },
@@ -10574,10 +10584,37 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/campaign/compliance/amend_semantics.rs",
+     "purpose": "What an amendment does to the law a dispatch runs under: rows, lanes, bindings and dials",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/campaign/compliance/codec.rs",
-     "purpose": "Claim-store readers, comm-party mirror, and the msgpack value toolkit",
+     "purpose": "Claim-store readers and the msgpack value toolkit",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConsentBranch",
+      "ConsentFact",
+      "ConsentRequirement",
+      "HydratedConsentFacts"
+     ],
+     "path": "src/campaign/compliance/consent.rs",
+     "purpose": "Executable lawful-basis requirements: a consent-class row's alternatives as data",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -10626,7 +10663,7 @@
      "path": "src/campaign/compliance/evaluate.rs",
      "purpose": "Pure dispatch evaluator: jurisdiction selection, row matching, verdict",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -10639,7 +10676,7 @@
      "path": "src/campaign/compliance/hydrate.rs",
      "purpose": "External-effect gate leg and vault-to-facts hydration (evidence, jurisdiction, message elements)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 18
      }
     },
     {
@@ -10650,7 +10687,7 @@
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -10680,8 +10717,8 @@
      "path": "src/campaign/compliance/rules.rs",
      "purpose": "Pack identity consts, predicates, rule-row types, and the CompliancePack container",
      "surface": {
-      "const": 6,
-      "crate-vis": 9,
+      "const": 7,
+      "crate-vis": 10,
       "enum": 4,
       "struct": 4
      }
@@ -10852,6 +10889,7 @@
      "path": "src/campaign/judgments.rs",
      "purpose": "Campaign membership joins for resident-authored graph judgment workflows",
      "surface": {
+      "const": 1,
       "fn": 1,
       "struct": 1
      }
@@ -10863,7 +10901,21 @@
      "path": "src/campaign/presets/content.rs",
      "purpose": "Ratified consultancy-preset content: stage order, reply codes, and brief dials",
      "surface": {
-      "crate-vis": 23
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignPresetDefaults"
+     ],
+     "path": "src/campaign/presets/defaults.rs",
+     "purpose": "Shipped preset defaults (`defaults.json`) and the campaign's reply-snooze resolver",
+     "surface": {
+      "const": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -10883,7 +10935,8 @@
      "path": "src/campaign/presets/mod.rs",
      "purpose": "CA-08 consultancy preset: the CONTRACT, never the copy",
      "surface": {
-      "re-export": 2
+      "crate-vis": 1,
+      "re-export": 3
      }
     },
     {
@@ -10907,6 +10960,7 @@
      "purpose": "Typed consultancy-preset shape: identity consts plus every pub struct and enum",
      "surface": {
       "const": 2,
+      "crate-vis": 1,
       "enum": 2,
       "struct": 10
      }
@@ -10918,7 +10972,7 @@
      "path": "src/campaign/presets/validate.rs",
      "purpose": "Content-invariant validators plus the require_text and preset_error helpers",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -11090,14 +11144,14 @@
      "purpose": "Campaign record types, lifecycle operations, and vault storage",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 6,
       "struct": 4
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/campaign/surface/codec_json.rs",
@@ -11111,17 +11165,29 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ManualEpochPolicy",
       "MembershipPage",
       "MembershipReadRequest",
-      "MembershipRow"
+      "MembershipRow",
+      "MembershipRowSource"
      ],
      "path": "src/campaign/surface/membership.rs",
      "purpose": "Read-only membership projection over CA-01 heads and CA-02 event history",
      "surface": {
-      "const": 2,
-      "crate-vis": 1,
+      "const": 3,
+      "enum": 2,
       "fn": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/surface/membership/manual.rs",
+     "purpose": "Manual-enrollment rows: a head no saved query derived reports its own claim",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -11131,7 +11197,7 @@
      "path": "src/campaign/surface/mod.rs",
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 3,
       "re-export": 7
      }
     },
@@ -11142,7 +11208,7 @@
      "path": "src/campaign/surface/parse.rs",
      "purpose": "Request-body decoders and field-error helpers for the dispatch door",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -56009,7 +56075,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 3,
       "fn": 8,
       "struct": 2
@@ -56046,7 +56112,7 @@
      "path": "src/saved_query/mod.rs",
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 11
      }
     },
@@ -77188,7 +77254,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 52,
+     "files": 57,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -78583,7 +78649,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5179,
+   "source_files": 5184,
    "test_files": 902
   },
   "oneiron-android": {
@@ -110285,8 +110351,10 @@
       "ConnectorWitnessReadGranted",
       "ConsentActReceipt",
       "ConsentAnswer",
+      "ConsentBranch",
       "ConsentDenial",
       "ConsentDomain",
+      "ConsentFact",
       "ConsentGrantStatus",
       "ConsentNeed",
       "ConsentPart",
@@ -110295,6 +110363,7 @@
       "ConsentRegistryDelegation",
       "ConsentRegistryQuery",
       "ConsentRegistryRow",
+      "ConsentRequirement",
       "ConsentRevokeAction",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
@@ -111466,6 +111535,7 @@
       "MemberRelationshipContext",
       "MemberVerdict",
       "MembershipConsent",
+      "MembershipRowSource",
       "MemoryError",
       "MemoryExport",
       "MemoryGateDenial",
@@ -113521,8 +113591,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1015,
-      "struct": 3122
+      "enum": 1017,
+      "struct": 3124
      }
     },
     {
