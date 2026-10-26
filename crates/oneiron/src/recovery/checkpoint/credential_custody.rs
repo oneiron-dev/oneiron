@@ -39,8 +39,8 @@
 //! image carried it lands beside, saved, and lands in its place once that
 //! source reads again or the owner keeps the batch without it (FIX-LIST
 //! 10671, `crate::secret_custody` `pending_restore`); a copy beside its
-//! source drops each saved row an image carried. The restored vault takes
-//! each fence, its discovery owed,
+//! source drops each saved row of a cloud registration slot an image
+//! carried. The restored vault takes each fence, its discovery owed,
 //! so its own finisher retires every key the id names in the custody it
 //! holds now.
 
@@ -338,10 +338,10 @@ pub(super) fn require(
     if !matches!(custody, Custody::Fork(None) | Custody::Replace(..)) {
         vault_meta.retain(|(key, _)| !CredentialFences::image_owned(key));
     }
-    // A copy's fresh custody never holds a saved row's key (CALLS
-    // G7_COPY_RECOVERY).
+    // A copy never lands a cloud registration slot its fork withholds
+    // (CALLS G7_COPY_RECOVERY), from a saved row either.
     if matches!(custody, Custody::Fork(_)) {
-        vault_meta.retain(|(key, _)| !PendingRestoreStage::image_row(key));
+        vault_meta.retain(|(key, value)| !PendingRestoreStage::copy_withholds(key, value));
     }
     // The restored vault keeps every fence, its discovery owed, and every
     // row it saved.

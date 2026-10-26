@@ -31,6 +31,7 @@ use heed::RwTxn;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -204,12 +205,21 @@ impl PendingRestoreStage {
         self.rows
     }
 
-    /// Whether `vault_meta` key `key` is a saved row an image carried: a
-    /// copy served beside its source drops each, as its fresh custody never
-    /// holds their keys and never lands a slot its fork withholds (CALLS
-    /// G7_COPY_RECOVERY).
-    pub(crate) fn image_row(key: &[u8]) -> bool {
+    /// Whether `vault_meta` row `key`, `value` is a saved row an image
+    /// carried for a cloud registration slot: a copy served beside its
+    /// source drops each, so neither a pass nor the owner's confirm lands a
+    /// slot its fork withholds (CALLS G7_COPY_RECOVERY). A saved row that
+    /// does not read goes too.
+    pub(crate) fn copy_withholds(key: &[u8], value: &[u8]) -> bool {
         key.starts_with(PENDING.decl().prefix)
+            && PENDING
+                .decode_value(value)
+                .ok()
+                .and_then(|saved| {
+                    let body = saved.row.get(ENTITY_METADATA_HEADER_LEN..)?;
+                    super::storage_seal::decode_stored_custody_body(body).ok()
+                })
+                .is_none_or(|stored| super::is_cloud_registration_slot(&stored.record.name))
     }
 }
 
