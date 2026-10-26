@@ -44,7 +44,8 @@ mod text;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) use self::env::{
-    REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, is_unindexed_dotenv_name, masked_record_name,
+    repo_env_entries, repo_env_file,
 };
 pub(crate) use self::link::offer_secret_remediation_in_txn;
 use self::plan::Plan;

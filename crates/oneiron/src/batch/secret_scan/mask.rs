@@ -760,7 +760,7 @@ impl Masker {
             let id = write.store.clock.entity_id()?;
             let mut rec = SecretCustodyRecord {
                 schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: format!("masked/{}", id.to_hex()),
+                name: crate::repo_mutation::masked_record_name(found.reason, &found.value, &id),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
                 value_bytes: std::mem::take(&mut *found.value),

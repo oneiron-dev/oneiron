@@ -66,8 +66,8 @@ pub(crate) use self::received_file::{
     received_proposal_id,
 };
 pub(crate) use self::secret_remediation::{
-    REPO_ENV_VALUE_REASON, dotenv_value_lifts, offer_secret_remediation_in_txn, repo_env_entries,
-    repo_env_file,
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, is_unindexed_dotenv_name, masked_record_name,
+    offer_secret_remediation_in_txn, repo_env_entries, repo_env_file,
 };
 
 // The flat repo_mutation.rs module used to provide these names to the test

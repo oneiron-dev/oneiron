@@ -14,10 +14,23 @@
 
 use std::ops::Range;
 
+use crate::entity_id::EntityId;
 use crate::secret_manifest::is_secret_env_name;
 
 /// The reason a dotenv value's mark carries.
 pub(crate) const REPO_ENV_VALUE_REASON: &str = "gate.secret_scan.dotenv_value";
+
+/// The shortest dotenv value the vault-wide known-value index keys (lead
+/// ruling 10-26 on DOTENV-IMPORT). One constant, so a ruling changes one
+/// line.
+const DOTENV_INDEX_MIN_BYTES: usize = 8;
+
+/// The words a bare boolean dotenv value is, which never key the index.
+const BARE_BOOLEANS: [&str; 6] = ["true", "false", "yes", "no", "on", "off"];
+
+/// The custody name prefix of a dotenv value the known-value index never
+/// keys.
+const UNINDEXED_DOTENV_NAME_PREFIX: &str = "masked/dotenv/";
 
 /// The name parts that make a dotenv file an example of its names
 /// (`.env.example`, `example.env`), which documents names and loads none.
@@ -47,6 +60,55 @@ pub(crate) struct RepoEnvEntry {
 /// ruling changes one line.
 pub(crate) fn dotenv_value_lifts(value: &[u8]) -> bool {
     !value.is_empty()
+}
+
+/// CALL DOTENV-IMPORT (lead ruling 10-26): whether a lifted dotenv value
+/// also enters the vault-wide known-value index (FIX 5270), where it masks
+/// every later text holding it. Only a value of at least
+/// [`DOTENV_INDEX_MIN_BYTES`] that is no bare boolean or number does, so
+/// `1`, `true` or `3000` masks nothing else; every lifted value stays
+/// marked and masked in its own file. One hook.
+pub(crate) fn dotenv_value_indexes(value: &[u8]) -> bool {
+    value.len() >= DOTENV_INDEX_MIN_BYTES && !bare_scalar(value)
+}
+
+/// Whether `value` is a bare boolean word or a number: an optional sign,
+/// then digits with at most one decimal point.
+fn bare_scalar(value: &[u8]) -> bool {
+    let text = value.trim_ascii();
+    if BARE_BOOLEANS
+        .iter()
+        .any(|word| text.eq_ignore_ascii_case(word.as_bytes()))
+    {
+        return true;
+    }
+    let digits = text
+        .strip_prefix(b"-")
+        .or_else(|| text.strip_prefix(b"+"))
+        .unwrap_or(text);
+    digits.iter().any(u8::is_ascii_digit)
+        && digits
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+        && digits.iter().filter(|byte| **byte == b'.').count() <= 1
+}
+
+/// The custody name a found value is minted under as `id`: a dotenv value
+/// [`dotenv_value_indexes`] keeps out of the known-value index is named
+/// under its own prefix, which the index's `never_keyed` reads; every
+/// other value is `masked/<id>`, as before.
+pub(crate) fn masked_record_name(reason: &str, value: &[u8], id: &EntityId) -> String {
+    if reason == REPO_ENV_VALUE_REASON && !dotenv_value_indexes(value) {
+        format!("{UNINDEXED_DOTENV_NAME_PREFIX}{}", id.to_hex())
+    } else {
+        format!("masked/{}", id.to_hex())
+    }
+}
+
+/// Whether `name` is the record of a dotenv value the known-value index
+/// never keys.
+pub(crate) fn is_unindexed_dotenv_name(name: &str) -> bool {
+    name.starts_with(UNINDEXED_DOTENV_NAME_PREFIX)
 }
 
 /// What the dotenv file at the repo-relative `path` is for, or `None` when
