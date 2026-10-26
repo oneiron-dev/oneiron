@@ -34,7 +34,7 @@ use crate::edit_roundtrip::{
     SheetRowsAsk, UnitDecider,
 };
 use crate::edit_settle::PendingProposalView;
-use crate::llm::decision::{DecisionBandPolicy, DecisionRung, Reversibility};
+use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
@@ -381,8 +381,8 @@ impl Asking<'_> {
         }
         files.retain(|file| readable.contains(file));
         let definition = &self.record.definition;
-        let mut dial = definition.dial;
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
+        // The recorded ceiling stands, as on a manual ask (FIX 9912).
+        let dial = definition.dial;
         let budget = definition.deadline(vault)?;
         self.ask_recorded(artifact, observed, "standing", |reference| {
             let ask = ArtifactAsk {

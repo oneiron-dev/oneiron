@@ -863,7 +863,8 @@ pub(super) fn unit_audio(
 
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
-/// well formed.
+/// well formed. An abstention that asked the next authorised role (OF-506)
+/// ends on the person queue's pin: the ask is pending, never an answer.
 pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
@@ -871,6 +872,8 @@ pub fn validate_decision(
 ) -> Result<()> {
     let receipt = &decision.receipt;
     let answered = decision.answer != DecisionAnswer::Abstain;
+    let asked = !answered && decision.human_ask.is_some();
+    let last = receipt.providers.len().saturating_sub(1);
     if receipt.question != question.id
         || receipt.question_version != question.version
         || receipt.principal != principal
@@ -881,9 +884,11 @@ pub fn validate_decision(
             .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
         || receipt.band.validate().is_err()
         || receipt.providers.len() > 64
-        || receipt.providers.iter().any(|pin| {
-            pin.rung == DecisionRung::Human
-                || crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+        || receipt.providers.iter().enumerate().any(|(at, pin)| {
+            if pin.rung == DecisionRung::Human {
+                return !(asked && at == last);
+            }
+            crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
         })
         || receipt
             .time

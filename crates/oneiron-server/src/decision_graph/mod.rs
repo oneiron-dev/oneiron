@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 
 use oneiron::llm::decision::questions::{
     GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionCriteria,
-    close_due_outcome_windows, next_outcome_window_close_at, refresh_due_artifact_questions_while,
-    refresh_due_questions_by_role_while,
+    close_due_outcome_windows, next_outcome_window_close_at, question_unit_correlation,
+    refresh_due_artifact_questions_while, refresh_due_questions_by_role_while, standing_ask_route,
 };
 use oneiron::llm::decision::{
     AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
@@ -68,26 +68,27 @@ pub(crate) struct LadderGraphAnswerer<'s> {
 }
 
 impl<'s> LadderGraphAnswerer<'s> {
-    /// An answerer for `asker`, climbing `dial` with `budget` per unit. A
-    /// ceiling of `human` is held at `big`: a graph answer never queues an
-    /// owner ask.
+    /// An answerer for `asker`, climbing all of `dial` with `budget` per
+    /// unit. A dial up to the person asks the next authorised role (OF-506):
+    /// the asker as the responsible actor, climbing to the vault's owners,
+    /// as a standing question's ask does; it never stops at `big`.
     pub(crate) fn new(
         server: &'s SyncServer,
         asker: WriteActor,
-        mut dial: DecisionDial,
+        dial: DecisionDial,
         budget: Duration,
     ) -> Result<Self> {
-        dial.ceiling = dial.ceiling.min(DecisionRung::Big);
         if dial.first > dial.ceiling {
             return Err(Error::InvalidConfig(
-                "a graph question's dial starts at the owner ask".into(),
+                "a graph question's dial starts above its ceiling".into(),
             ));
         }
+        let principal = asker.entity_ref();
         Ok(Self::build(
             server,
-            asker.entity_ref(),
+            principal,
             asker,
-            None,
+            Some(standing_ask_route(principal)),
             dial,
             budget,
         ))
@@ -287,6 +288,14 @@ impl GraphAnswerer for LadderGraphAnswerer<'_> {
             ladder.local = Some(rung as &dyn DecisionProvider);
         }
         ladder.ask_to = self.ask_to.as_ref();
+        // Each unit's person ask is its own: a refresh of the same unit at the
+        // same version finds the same open ask (OF-506).
+        ladder.correlation = Some(question_unit_correlation(
+            question,
+            self.principal,
+            context.unit.as_bytes(),
+            &context.sources.first().map_or([0; 32], |unit| unit.hash),
+        )?);
         let ladder = self.postured(ladder);
         let text = images.is_empty() && audio.is_empty();
         if !text || self.posture.is_some() {

@@ -94,16 +94,10 @@ pub struct GraphAskSelection {
 
 impl GraphAskRequest {
     /// The ask's bounds, checked before any model work: the per-unit clock,
-    /// the ceiling, one selection of distinct units, and the question
-    /// itself.
+    /// one selection of distinct units, and the question itself. A ceiling
+    /// of human asks the next authorised role (OF-506), never stops at big.
     pub fn validate(&self) -> MemoryResult<()> {
         crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
-        if self.ceiling == Some(DecisionRung::Human) {
-            return Err(MemoryError::bad_request_with(
-                "vault.graph.ask never queues an owner ask",
-                &["Name a ceiling below human; big is the highest a graph answer climbs."],
-            ));
-        }
         match (&self.select, self.units.is_empty()) {
             (Some(_), false) => {
                 return Err(MemoryError::bad_request_with(
@@ -141,7 +135,7 @@ impl GraphAskRequest {
         {
             return Err(MemoryError::bad_request_with(
                 "the criteria are not valid",
-                &["Give each list at most 16 nonempty lines of at most 512 bytes."],
+                &["Give each list nonempty lines of at most 512 bytes."],
             ));
         }
         self.question.validate().map_err(|_| {

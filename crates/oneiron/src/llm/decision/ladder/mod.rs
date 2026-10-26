@@ -42,6 +42,7 @@ fn takes(
 /// Slots are fixed. A step up skips a rung with no provider, up to the dial's
 /// ceiling, and the receipt's pins name every rung that ran. The last rung is a
 /// queue, not a model-produced human answer.
+#[derive(Clone)]
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
