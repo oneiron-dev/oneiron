@@ -2187,6 +2187,9 @@ class Oneiron:
     class _VaultConnectorsReadGrantsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def grant(self, spec):
+            """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_read_grants_grant(json.dumps(spec))))
         def revoke(self, spec):
             """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
             return json.loads(_translate(lambda: self._client.vault_connectors_read_grants_revoke(json.dumps(spec))))

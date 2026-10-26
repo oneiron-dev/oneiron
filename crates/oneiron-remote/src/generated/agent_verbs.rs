@@ -2159,6 +2159,9 @@ impl OneironClient {
                 "vault.repo.git_push.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::GitPushGrantRevokeOutput,
                 >(client, verb, &input),
+                "vault.connectors.read_grants.grant" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ConnectorWitnessReadGranted,
+                >(client, verb, &input),
                 "vault.connectors.read_grants.revoke" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevoked,
                 >(client, verb, &input),
@@ -12089,6 +12092,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.repo.git_push.revoke", value)
+    }
+    pub fn vault_connectors_read_grants_grant(
+        &self,
+        input: &oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest,
+    ) -> Result<oneiron::task_verb::sdk::ConnectorWitnessReadGranted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.read_grants.grant", value)
     }
     pub fn vault_connectors_read_grants_revoke(
         &self,

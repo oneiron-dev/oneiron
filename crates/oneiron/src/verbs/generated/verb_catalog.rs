@@ -696,6 +696,7 @@ pub enum AgentVerb {
     VaultAgentsGrantsRevoke,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
+    VaultConnectorsReadGrantsGrant,
     VaultConnectorsReadGrantsRevoke,
     VaultRepoAnchorBind,
     VaultRepoSnapshotsGet,
@@ -1879,6 +1880,7 @@ impl AgentVerb {
         Self::VaultAgentsGrantsRevoke,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
+        Self::VaultConnectorsReadGrantsGrant,
         Self::VaultConnectorsReadGrantsRevoke,
         Self::VaultRepoAnchorBind,
         Self::VaultRepoSnapshotsGet,
@@ -3083,6 +3085,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
+            Self::VaultConnectorsReadGrantsGrant => "vault.connectors.read_grants.grant",
             Self::VaultConnectorsReadGrantsRevoke => "vault.connectors.read_grants.revoke",
             Self::VaultRepoAnchorBind => "vault.repo.anchor.bind",
             Self::VaultRepoSnapshotsGet => "vault.repo.snapshots.get",
@@ -4278,6 +4281,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
                 | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
@@ -5490,6 +5494,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
                 | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
@@ -6812,6 +6817,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
                 | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultAgentsBase
@@ -7671,6 +7677,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
                 | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsIngest
@@ -8692,6 +8699,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsGrant => &["spec"],
             Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
@@ -9876,6 +9884,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsGrant => &["spec"],
             Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
@@ -12412,6 +12421,9 @@ impl AgentVerb {
             }
             Self::VaultRepoGitPushRevoke => {
                 "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."
+            }
+            Self::VaultConnectorsReadGrantsGrant => {
+                "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."
             }
             Self::VaultConnectorsReadGrantsRevoke => {
                 "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."
