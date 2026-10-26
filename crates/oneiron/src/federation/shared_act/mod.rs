@@ -596,9 +596,10 @@ impl Vault {
                     member,
                     crate::edge::EdgeActorClass::Human,
                 );
-                let positions = removal_archive::freeze_positions(&records);
-                self.export_records_archive(&ids, reader)
-                    .map(|archive| (member, records.len() as u64, (archive, positions), ids))
+                self.export_records_archive(&ids, reader, |txn| {
+                    removal_archive::freeze_positions_in_txn(self, txn, &ids)
+                })
+                .map(|frozen| (member, records.len() as u64, frozen, ids))
             })
             .transpose()?;
         let mut txn = self.store.env.write_txn()?;

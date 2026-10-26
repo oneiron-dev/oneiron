@@ -495,7 +495,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/deindex.rs` | src | m | 8 crate-vis | — | — |
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
 | `src/batch/export/archive_index.rs` | src | m | 56 crate-vis | — | FIX 3678 (rule 5): the whole-vault import's disk-backed row index |
-| `src/batch/export/archive_project.rs` | src | s | 1 crate-vis | — | Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224… |
+| `src/batch/export/archive_project.rs` | src | m | 1 crate-vis | — | Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224… |
 | `src/batch/export/archive_read.rs` | src | m | 5 crate-vis | — | Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the… |
 | `src/batch/export/archive_side_tables.rs` | src | L | 3 struct · 5 enum · 11 crate-vis | ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree, ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason | OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the… |
 | `src/batch/export/archive_spool.rs` | src | m | 1 fn · 26 crate-vis | — | FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no… |
@@ -2547,7 +2547,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 26 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
 | `src/federation/record_scope/asset_body.rs` | src | s | 1 crate-vis | — | What a scoped door hands out for a row it admitted (FIX 3677, FIX 5397): a file-plane ASSET leaves as its… |
 | `src/federation/record_scope/asset_text.rs` | src | s | 4 crate-vis | — | Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is… |
-| `src/federation/record_scope/export.rs` | src | s | 2 fn | — | The scoped export door |
+| `src/federation/record_scope/export.rs` | src | s | 2 fn · 1 crate-vis | — | The scoped export door |
 | `src/federation/record_scope/note_world.rs` | src | m | 21 crate-vis | — | A NOTE's world (FIX-LIST 9433): where its live `InWorld` edges place it, read again at every read |
 | `src/federation/record_scope/secret_projection.rs` | src | s | 6 crate-vis | — | The masked copy a scoped export carries of a marked repo row (FIX 7608 slice 4, LEAF 4.2; L02 ack 17:2x and… |
 | `src/federation/record_scope/tests.rs` | test | s | — | — | — |
@@ -2868,7 +2868,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/human_task/signal_tests.rs` | test | s | — | — | cfg(test) C9 wait/signal, idempotency, interleave and reopen tests |
 | `src/human_task/storage.rs` | src | m | 10 crate-vis | — | vault_meta key codecs and msgpack rows for the follow-up cursor, wait binding and signal marker |
 | `src/human_task/wait.rs` | src | s | 6 fn · 1 crate-vis | — | C9 wait binding, identity-checked response signalling and release |
-| `src/identity.rs` | src | m | 22 crate-vis | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world… |
+| `src/identity.rs` | src | m | 23 crate-vis | — | Device identity for REDACTION_AUDIT origin attestation (ONE-1140) and this install's machine identity (world… |
 | `src/identity_redirect.rs` | src | m | 4 fn · 1 const · 7 crate-vis | — | ARCH-0055 redirect projection: the rebuildable `shell id -> head set` table and the read-time… |
 | `src/identity_redirect/tests.rs` | test | s | — | — | ONE-1744 (MS-02) unit tests: redirect-row derivation, resolve semantics (0/1/N + transitive chains), the… |
 | `src/identity_reputation.rs` | src | m | 5 struct · 5 enum · 16 fn · 17 const · 2 crate-vis | CampaignEmailWebhookEvent, EmailDeliveryDisposition, EmailReputationWebhookSignal, IdentityAttestationTier, IdentityReputation, IdentityReputationSignal, IdentityReputationStatus, IdentitySendRateClamp +2 | ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4) |
@@ -5140,6 +5140,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/base.rs` | src | m | 1 struct · 16 fn · 15 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | s | 3 fn | — | Public Connect delivery/rejoin over the production guest admission path |
 | `src/sync/client/documents.rs` | src | s | 2 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
+| `src/sync/client/endpoint.rs` | src | s | 3 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
 | `src/sync/client/federated.rs` | src | m | 1 enum · 6 fn · 4 crate-vis | ImportTier | Federated admission and staged vault-import confirmation |
 | `src/sync/client/federation_replay.rs` | src | s | 4 fn | — | Durable inbound federation drain, entered on startup, receive and timer ticks |
 | `src/sync/client/inbound.rs` | src | L | 3 fn · 3 crate-vis | — | Inbound wire dispatch, window-update import, and bulk history transfer |
@@ -5166,6 +5167,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/machine_history.rs` | src | s | 1 crate-vis | — | The machine-claim history this machine is owed, from the home (FIX 3820) |
 | `src/sync/client/residence/pad_custody.rs` | src | m | 2 crate-vis | — | Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine… |
 | `src/sync/client/residence/promoted_pads.rs` | src | s | 5 crate-vis | — | The pads of a promoted window's world (FIX 3789) |
+| `src/sync/client/residence/rpc.rs` | src | m | 8 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
 | `src/sync/client/residence/search.rs` | src | s | 1 crate-vis | — | A home search for more hits than one page carries (FIX 8865): the device keeps the caller's whole count and… |
 | `src/sync/client/sync_frames.rs` | src | m | 4 fn · 5 crate-vis | — | Initial-connect and re-bootstrap sync frame builders |
 | `src/sync/client/tests.rs` | test | XL | — | — | — |
@@ -5174,11 +5176,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/converge.rs` | src | s | 4 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
 | `src/sync/connection/directives.rs` | src | s | 1 crate-vis | — | The owner's residence directives, applied on the machine they name (OF-534) |
 | `src/sync/connection/handshake.rs` | src | m | 2 fn · 5 crate-vis | — | Handshake: run loop, connect_and_sync, overflow check, resync markers |
-| `src/sync/connection/home_handoff.rs` | src | s | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
+| `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 5 fn · 2 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
 | `src/sync/connection/mod.rs` | src | m | 3 struct · 17 fn · 3 re-export · 1 crate-vis | ConnectionConfig, ResidenceModeChange, SyncConnection | WebSocket connection manager with debounced sync and reconnection |
 | `src/sync/connection/node_batch.rs` | src | s | 2 crate-vis | — | One bounded node proposal batch per sync tick, then at most one owed artifact publication part as its own… |
 | `src/sync/connection/note_reads.rs` | src | s | 2 fn | — | Typed reads of a residence open, using the named connection's own vault |
+| `src/sync/connection/residence_mode.rs` | src | s | 2 crate-vis | — | FIX 8869: the residence mode follows the committed home |
 | `src/sync/connection/session.rs` | src | s | 20 crate-vis | — | Session types: WS aliases, pump budget, convergence session, resync markers |
 | `src/sync/connection/steady.rs` | src | m | 1 crate-vis | — | Steady state: debounced multiplex loop over WS, local updates, shutdown |
 | `src/sync/connection/tests.rs` | test | L | — | — | — |
@@ -5207,16 +5210,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/federation_burst/tests.rs` | test | s | 1 crate-vis | — | — |
 | `src/sync/federation_burst/types.rs` | src | s | 9 struct · 5 enum · 1 fn · 1 crate-vis | FederationBurstBaseline, FederationBurstBaselineState, FederationBurstDisposition, FederationBurstOutcome, FederationBurstPeerRequest, FederationBurstPolicy, FederationBurstPolicySetRequest, FederationBurstReceipt +6 | Public peer-relative burst policy, receipts and retained-work addresses |
 | `src/sync/home_handoff/arrival.rs` | src | s | 1 crate-vis | — | FIX 5661 C2b (FIX 6211): the new home's ordering |
-| `src/sync/home_handoff/delivery.rs` | src | m | 19 crate-vis | — | FIX 5661 C2a: what delivery asks of the carrier, additive beside C1 |
+| `src/sync/home_handoff/delivery.rs` | src | m | 20 crate-vis | — | FIX 5661 C2a: what delivery asks of the carrier, additive beside C1 |
 | `src/sync/home_handoff/drain.rs` | src | s | 1 crate-vis | — | FIX 5661 C2b (FIX 6212): the old home's drain |
 | `src/sync/home_handoff/envelope.rs` | src | m | 21 crate-vis | — | The sealed handoff and its ack |
 | `src/sync/home_handoff/lineage.rs` | src | s | 2 crate-vis | — | The home-state lineage (CALLS: home handoff lineage) |
-| `src/sync/home_handoff/mod.rs` | src | s | 22 crate-vis | — | FIX 5661 C1: the typed home-to-home handoff carrier |
+| `src/sync/home_handoff/mod.rs` | src | s | 23 crate-vis | — | FIX 5661 C1: the typed home-to-home handoff carrier |
 | `src/sync/home_handoff/registry.rs` | src | s | 4 crate-vis | — | FIX 5661 seam (Engine-approved 10-20 11:5x): the tables this build registers with the carrier, and the… |
 | `src/sync/home_handoff/restore.rs` | src | s | 3 crate-vis | — | FIX 5661 C2b: a restore over a live vault keeps every registered table's rows live |
+| `src/sync/home_handoff/routes.rs` | src | s | 4 crate-vis | — | FIX 6459: the routes a home move's target is captured at |
 | `src/sync/home_handoff/store.rs` | src | m | 25 crate-vis | — | The carrier's four side tables and their typed access |
 | `src/sync/home_handoff/table.rs` | src | s | 15 crate-vis | — | The tables a home move carries |
-| `src/sync/home_handoff/transfer.rs` | src | m | 7 crate-vis | — | The carrier's steps: the drain request an election records, the fence a registered table's write asks, the… |
+| `src/sync/home_handoff/transfer.rs` | src | m | 8 crate-vis | — | The carrier's steps: the drain request an election records, the fence a registered table's write asks, the… |
 | `src/sync/home_proof.rs` | src | s | 1 fn · 1 const · 2 crate-vis | — | OF-534 G6/G7: the home names itself to the device that dials it |
 | `src/sync/ingest/birth_watch.rs` | src | s | 3 crate-vis | — | The rows a federated import watches for their births |
 | `src/sync/ingest/delivery.rs` | src | m | 1 fn · 7 crate-vis | — | Which records a federation pact delivered here, and at which consent epoch (FIX 321) |

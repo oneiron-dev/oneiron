@@ -72,6 +72,14 @@ fn finish_reason(reason: &FinishReason) -> &str {
     }
 }
 
+/// A refusal's own code and message, carried on its reply for the call's
+/// receipt (FIX 3389) and never written to the wire.
+#[derive(Clone, Debug)]
+pub(super) struct Refusal {
+    pub(super) code: String,
+    pub(super) message: String,
+}
+
 /// An OpenAI error body: `{"error": {"message", "type", "param", "code"}}`.
 pub(super) fn error(
     status: StatusCode,
@@ -79,13 +87,19 @@ pub(super) fn error(
     code: &str,
     message: impl Into<String>,
 ) -> Response {
+    let message = message.into();
     let body = json!({"error": {
-        "message": message.into(),
+        "message": &message,
         "type": kind,
         "param": null,
         "code": code,
     }});
-    (status, Json(body)).into_response()
+    let mut response = (status, Json(body)).into_response();
+    response.extensions_mut().insert(Refusal {
+        code: code.to_owned(),
+        message,
+    });
+    response
 }
 
 pub(super) fn invalid(code: &str, message: impl Into<String>) -> Response {
