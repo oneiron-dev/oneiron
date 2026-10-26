@@ -39,6 +39,7 @@ pub(crate) mod coach_host;
 mod code_fix;
 mod confession_wording;
 mod connector_event;
+pub(crate) use connector_event::run_connector_reply_job;
 mod contribution;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
