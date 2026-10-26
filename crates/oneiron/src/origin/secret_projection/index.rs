@@ -164,6 +164,10 @@ pub(crate) struct RepoIndexMarks {
     facts: RepoMarkFacts,
     hashes: BTreeSet<[u8; 32]>,
     sources: BTreeMap<EntityId, [u8; 32]>,
+    /// Marked blobs a mark of which does not decode: their copy is unknown,
+    /// so every projection of them fails (FIX 10793). Empty for
+    /// [`Self::read_in_txn`].
+    unreadable: BTreeSet<[u8; 32]>,
 }
 
 impl RepoIndexMarks {
@@ -173,7 +177,24 @@ impl RepoIndexMarks {
     /// A store failure, or a mark that does not decode.
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
         let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
-        let hashes = facts.raw_hashes();
+        Self::of(facts, BTreeSet::new())
+    }
+
+    /// The marks `txn` reads, scoped per blob for a sync release (FIX 7608
+    /// slice 4, FIX 10793): a mark that does not decode fails only the
+    /// projections of the blob it names, which stays marked (its source and
+    /// copy ids derive as any other's). Every other blob reads as before.
+    ///
+    /// # Errors
+    /// A store failure, or a mark that does not decode and names no blob.
+    pub(crate) fn read_scoped_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
+        let (facts, unreadable) = RepoMarkFacts::read_scoped_in_txn(vault, txn)?;
+        Self::of(facts, unreadable)
+    }
+
+    fn of(facts: RepoMarkFacts, unreadable: BTreeSet<[u8; 32]>) -> Result<Self> {
+        let mut hashes = facts.raw_hashes();
+        hashes.extend(unreadable.iter().copied());
         let sources = hashes
             .iter()
             .map(|hash| Ok((snapshot_asset_entity_id(hash)?, *hash)))
@@ -182,7 +203,19 @@ impl RepoIndexMarks {
             facts,
             hashes,
             sources,
+            unreadable,
         })
+    }
+
+    /// The failure every projection of a blob [`Self::read_scoped_in_txn`]
+    /// found an undecodable mark of answers.
+    fn readable(&self, source: &[u8; 32]) -> Result<()> {
+        if self.unreadable.contains(source) {
+            return Err(crate::error::Error::CorruptedIndex(
+                "a repo secret mark does not decode",
+            ));
+        }
+        Ok(())
     }
 
     /// No mark anywhere: every input is its stored bytes.
@@ -219,6 +252,7 @@ impl RepoIndexMarks {
         txn: &RoTxn<'_>,
         source: &[u8; 32],
     ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+        self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {
             return Ok(None);
@@ -294,6 +328,7 @@ impl RepoIndexMarks {
         source: &[u8; 32],
         bytes: Vec<u8>,
     ) -> Result<RepoIndexInput> {
+        self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() {
             return Ok(RepoIndexInput::stored(bytes));

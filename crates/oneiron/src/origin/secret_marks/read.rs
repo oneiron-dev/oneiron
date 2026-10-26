@@ -193,6 +193,43 @@ impl RepoMarkFacts {
         Ok(Self { marks })
     }
 
+    /// [`Self::read_in_txn`], scoped per blob for a sync release (FIX 7608
+    /// slice 4, FIX 10793): a mark that does not decode marks only the blob
+    /// its `raw_blake3` still names, returned beside the facts as a blob
+    /// whose marks are unknown this pass. A mark that names no blob, or a
+    /// store failure, still fails the walk: no blob is then provably
+    /// unmarked.
+    ///
+    /// # Errors
+    /// A store failure, or a mark that does not decode and names no blob.
+    pub(crate) fn read_scoped_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+    ) -> Result<(Self, std::collections::BTreeSet<[u8; 32]>)> {
+        let mut marks = Vec::new();
+        let mut unreadable = std::collections::BTreeSet::new();
+        vault.for_each_readable_claim_with_predicate_in_txn(
+            txn,
+            REPO_SECRET_MARK_PREDICATE,
+            |id, body| {
+                match decode_mark(id, &body) {
+                    Ok(Some(mark)) => marks.push(mark),
+                    Ok(None) => {}
+                    Err(error) => {
+                        let hash = named_blob(&body).ok_or(error)?;
+                        tracing::warn!(
+                            mark = %id.to_hex(),
+                            "repo secret mark does not decode; its blob reads as unknown"
+                        );
+                        unreadable.insert(hash);
+                    }
+                }
+                Ok(())
+            },
+        )?;
+        Ok((Self { marks }, unreadable))
+    }
+
     /// No mark anywhere: every reader serves as before.
     pub(crate) fn is_empty(&self) -> bool {
         self.marks.is_empty()
@@ -286,6 +323,15 @@ pub(crate) fn for_each_repo_secret_mark_in_txn(
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("a repo secret mark does not decode")
+}
+
+/// The whole-blob BLAKE3 a mark that does not decode still names.
+fn named_blob(body: &ClaimBody) -> Option<[u8; 32]> {
+    let map = body.value.as_map()?;
+    field(map, "raw_blake3")
+        .ok()?
+        .as_slice()
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
 }
 
 /// One stored mark, at schema 1 only; `None` for one no approval stands
