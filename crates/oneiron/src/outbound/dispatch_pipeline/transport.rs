@@ -152,6 +152,17 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             .admit_in(txn)
             .map_err(crate::outbound_intent_ledger::IntentLedgerError::from)
     }
+
+    /// The sink's proof of non-delivery, for a call this transport would
+    /// send (FIX 9379).
+    fn known_non_delivery(&self, call: &crate::outbound_intent_ledger::FrozenOutboundCall) -> bool {
+        call.server() == self.request.intent.channel
+            && call.tool() == self.verb_contract.kind
+            && call.resolved_endpoint().is_none()
+            && self
+                .sink
+                .known_non_delivery(&self.request.intent_ref, call.idempotency_key())
+    }
 }
 /// A frozen call the dispatch transport cannot honor verbatim.
 fn invalid_frozen_call() -> crate::outbound_intent_ledger::OutboundSendOutcome {

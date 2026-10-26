@@ -1,12 +1,13 @@
 //! Host-owned GraphQL transport; credentials never enter the engine.
 //!
 //! A response is kept whole however large it is (FIX 8610): it streams to an
-//! unnamed spool file first, and a decode takes its bytes on the host's fair
-//! memory line ([`LinearBodyLine`]) before it allocates them. A decode that
+//! unnamed spool file first, and a decode takes the memory its value takes
+//! on the host's fair memory line ([`LinearBodyLine`]) before it allocates
+//! it, and keeps it with the value (FIX 9383, [`decode`]). A decode that
 //! waits out its turn is [`GraphQlTransportError::Waiting`], never a size
 //! refusal; transport timeouts are the host's request policy, unchanged.
 
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +17,10 @@ use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use crate::invalid;
+
+mod decode;
+pub use decode::GraphQlValue;
+pub(crate) use decode::{decode_sized, decode_spooled, decoded_size};
 
 /// One exact GraphQL call for the source or outbound door.
 #[derive(Debug, Clone, PartialEq)]
@@ -48,6 +53,19 @@ pub enum GraphQlTransportError {
     /// The response arrived and is kept; the host's memory line had no room
     /// to decode it before its wait ran out (FIX 8610).
     Waiting,
+    /// The endpoint answered `status`, not a success and not 401: the
+    /// request may have run, so delivery stays uncertain; the status is kept
+    /// so the refusal names it (FIX 9385).
+    HttpStatus {
+        status: u16,
+    },
+}
+
+/// `status` as its code and canonical reason, `503 Service Unavailable`;
+/// never a provider body.
+pub(crate) fn status_text(status: u16) -> String {
+    reqwest::StatusCode::from_u16(status)
+        .map_or_else(|_| status.to_string(), |code| code.to_string())
 }
 
 impl From<GraphQlTransportError> for LinearSyncError {
@@ -61,6 +79,10 @@ impl From<GraphQlTransportError> for LinearSyncError {
                 "Linear endpoint refused the credential ({status}); nothing ran"
             )),
             GraphQlTransportError::Waiting => Self::Waiting(LinearWait::BodyMemory),
+            GraphQlTransportError::HttpStatus { status } => crate::invalid(&format!(
+                "Linear request delivery is uncertain (HTTP {})",
+                status_text(status)
+            )),
         }
     }
 }
@@ -68,15 +90,21 @@ impl From<GraphQlTransportError> for LinearSyncError {
 /// A tracker response as the transport hands it over.
 #[derive(Debug)]
 pub enum GraphQlBody {
-    /// The response, decoded.
-    Decoded(Value),
+    /// The response, decoded, with its hold.
+    Decoded(GraphQlValue),
     /// The response's whole bytes, undecoded, in an unnamed file read from
     /// its start.
     Spooled(std::fs::File),
 }
 
 pub trait GraphQlExecutor {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError>;
+    /// The decoded response, holding the memory it takes until it is
+    /// dropped.
+    ///
+    /// # Errors
+    ///
+    /// Delivery certainty, as [`GraphQlTransportError`] names it.
+    fn execute(&mut self, call: &GraphQlCall) -> Result<GraphQlValue, GraphQlTransportError>;
 
     /// The response before it is decoded, for a caller that keeps it first
     /// (the outbound journal). By default the decoded response.
@@ -98,20 +126,6 @@ pub trait LinearBodyLine: Send + Sync {
     /// Holds `bytes` until the returned hold drops; `None` when the host's
     /// wait ran out first.
     fn hold(&self, bytes: u64) -> Option<Box<dyn Send>>;
-}
-
-/// Decodes the whole of `reader`, `len` bytes, holding them on `line` first.
-pub(crate) fn decode_held(
-    line: Option<&dyn LinearBodyLine>,
-    len: u64,
-    reader: impl Read,
-) -> Result<Value, GraphQlTransportError> {
-    let _held = match line {
-        Some(line) => Some(line.hold(len).ok_or(GraphQlTransportError::Waiting)?),
-        None => None,
-    };
-    serde_json::from_reader(std::io::BufReader::new(reader))
-        .map_err(|_| GraphQlTransportError::Uncertain)
 }
 
 /// Linear's own GraphQL API, the endpoint unless the host names another.
@@ -203,7 +217,9 @@ impl HttpLinearClient {
             });
         }
         if !response.status().is_success() {
-            return Err(GraphQlTransportError::Uncertain);
+            return Err(GraphQlTransportError::HttpStatus {
+                status: response.status().as_u16(),
+            });
         }
         let mut file = tempfile::tempfile().map_err(|_| GraphQlTransportError::Uncertain)?;
         let len = std::io::copy(&mut response, &mut file)
@@ -215,9 +231,9 @@ impl HttpLinearClient {
 }
 
 impl GraphQlExecutor for HttpLinearClient {
-    fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
+    fn execute(&mut self, call: &GraphQlCall) -> Result<GraphQlValue, GraphQlTransportError> {
         let (file, len) = self.spool(call)?;
-        decode_held(self.body_line.as_deref(), len, file)
+        decode_spooled(self.body_line.as_deref(), len, file)
     }
 
     fn execute_body(&mut self, call: &GraphQlCall) -> Result<GraphQlBody, GraphQlTransportError> {

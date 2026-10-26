@@ -152,6 +152,7 @@ fn birth_message_in_txn(
         field: TextField::MapField("content".to_owned()),
         generation: 0,
         pending: 0,
+        birth_frontier: Some(doc.frontier()),
     };
     storage::stamp_document_birth(&vault.store, txn, entity, actor, at, door)?;
     storage::persist(vault, txn, entity, &mut head, &doc, None)?;
