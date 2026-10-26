@@ -363,7 +363,7 @@ pub(crate) fn execute(
         run_direct_channel(scoped, request, &mut acc)?;
     }
     if request.effort == Effort::Light || acc.partial {
-        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
+        return finish_with_spend(acc, scoped, request.limit);
     }
     run_subquery_channels(scoped, request, &mut acc)?;
     if !request.deadline_reached(&mut acc) {
@@ -371,7 +371,7 @@ pub(crate) fn execute(
     }
     acc.fuse();
     if request.effort == Effort::Medium || acc.partial {
-        return acc.finish_scoped(scoped, request.limit).map_err(Into::into);
+        return finish_with_spend(acc, scoped, request.limit);
     }
     let backend = request.backend.expect("validated backend");
     let query = deep_query(request)?.to_owned();
@@ -388,7 +388,20 @@ pub(crate) fn execute(
             failure.tokens_used = failure.tokens_used.saturating_add(acc.tokens_used);
             failure
         })?;
-    acc.finish_scoped(scoped, request.limit).map_err(Into::into)
+    finish_with_spend(acc, scoped, request.limit)
+}
+
+/// The read's final ranking and admission. A failure there still carries
+/// every token the read's backend calls spent, captured before `acc` is
+/// consumed, so the host settles that usage once.
+fn finish_with_spend(
+    acc: DepthAccumulator,
+    scoped: &ScopedRead<'_>,
+    limit: usize,
+) -> RetrievalResult<DepthSearchResult> {
+    let tokens_used = acc.tokens_used;
+    acc.finish_scoped(scoped, limit)
+        .map_err(|error| RetrievalError { error, tokens_used })
 }
 
 impl DepthSearchRequest<'_> {
