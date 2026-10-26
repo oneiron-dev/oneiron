@@ -21,6 +21,7 @@ mod decision_posture;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
+mod step_quota;
 mod worker_lease;
 
 use futures_util::StreamExt;
@@ -37,7 +38,7 @@ use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
 use super::cooldown::{
-    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Refusal, Rest, leaves_device,
+    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
@@ -819,26 +820,11 @@ impl OfferLadder {
     /// limit for its wait or a backoff, a spent window until its reset,
     /// spent credit until the owner clears it (OF-305).
     fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
-        let refusal = match error {
-            LlmError::Retryable(RetryableLlmError::RateLimited {
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: None,
-            },
-            LlmError::Retryable(RetryableLlmError::QuotaSpent {
-                kind,
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: Some(*kind),
-            },
-            _ => return None,
+        let LlmError::Retryable(limited) = error else {
+            return None;
         };
+        // The providers' one limit vocabulary, read as every offer rest reads it.
+        let refusal = super::soniox::limit_refusal_of(limited)?;
         let rung = &self.rungs[index];
         let rest = self
             .rests
