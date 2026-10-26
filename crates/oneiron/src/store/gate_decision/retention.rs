@@ -379,6 +379,8 @@ impl Vault {
         self.finish_world_pad_retirements_after_commit();
         // KS-6 part 2: an erased credential's discovery and keys.
         self.finish_credential_retirements_after_commit();
+        // FIX 8875: an erased actor's erasable keys.
+        self.finish_erasable_retirements_after_commit();
     }
 
     /// Post-commit door for an erase that staged a world's pad retirements
@@ -391,6 +393,22 @@ impl Vault {
                 error = %error,
                 "world key pad retirement deferred to the next housekeeping pass"
             );
+        }
+    }
+
+    /// Post-commit door for an erase that staged an actor's erasable key
+    /// retirements (FIX 8875). The intents are durable, so a failure here is
+    /// retried by the next housekeeping pass and never reported as a failure
+    /// of the erase that already committed; each holder's copy stays owed by
+    /// name until its retirement is verified.
+    pub(crate) fn finish_erasable_retirements_after_commit(&self) {
+        match self.store.finish_erasable_retirements() {
+            Ok(true) => self.finish_redaction_erases_logged(),
+            Ok(false) => {}
+            Err(error) => tracing::warn!(
+                error = %error,
+                "erasable key retirement deferred to the next housekeeping pass"
+            ),
         }
     }
 

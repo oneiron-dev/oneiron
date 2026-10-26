@@ -180,7 +180,7 @@ impl Store {
         let id = value_subject(custody.binding(), credential)?.at(u64::from(generation));
         copy_leaf(
             CustodyKind::CredentialValue,
-            custody.get_or_create_journaled(&id)?.expose(),
+            custody.get_or_create(&id)?.expose(),
         )
     }
 
@@ -232,7 +232,7 @@ impl Store {
         let id = resume_subject(custody.binding(), call_ref)?.at(u64::from(generation));
         copy_leaf(
             CustodyKind::ConnectorResume,
-            custody.get_or_create_journaled(&id)?.expose(),
+            custody.get_or_create(&id)?.expose(),
         )
     }
 

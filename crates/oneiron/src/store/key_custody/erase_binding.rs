@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RoTxn;
 
+use super::erasable::ErasableItem;
 use super::identity::{CustodyKind, CustodySubject, hex_decode};
 use super::retirement::{RetireCause, retirement_in_txn, retirements_in_txn};
 use crate::entity_id::EntityId;
@@ -18,10 +19,11 @@ use crate::store::Store;
 
 /// The kinds an erase stages retirements of: its records' claim keys and
 /// known-value history, the body instances it retired or owes, the pads of
-/// a world it erased or of a pad row it erased, and an erased credential's
+/// a world it erased or of a pad row it erased, an erased credential's
 /// value and carrier keys (KS-6 part 2), matched by the credential's id as
-/// their items' first 16 bytes.
-const ERASE_KINDS: [CustodyKind; 7] = [
+/// their items' first 16 bytes, and an erased actor's erasable keys (FIX
+/// 8875), matched by the actor as their parent.
+const ERASE_KINDS: [CustodyKind; 8] = [
     CustodyKind::ClaimDecision,
     CustodyKind::KnownValueEntry,
     CustodyKind::BodyInstance,
@@ -29,6 +31,7 @@ const ERASE_KINDS: [CustodyKind; 7] = [
     CustodyKind::CredentialValue,
     CustodyKind::CustodyTransition,
     CustodyKind::CustodyRequestInput,
+    CustodyKind::ErasableKey,
 ];
 
 /// Whether `kind` is one an erased credential's id names (KS-6 part 2):
@@ -96,10 +99,11 @@ impl Store {
     /// record's claim key or known-value history, or for a pad of a world or
     /// pad row it erased, and each body instance the erase retired or owes
     /// (one another holder keeps waits on that holder, KS-2A), through the
-    /// newest generation it retires. Each credential it fenced owes its
-    /// whole erase too, under its value's name, even with no key found yet
-    /// (KS-6 part 2): its discovery and every key its id names, as late as
-    /// they are found. Empty when the erase owes none here, no custody bound
+    /// newest generation it retires, and each erasable key of an actor it
+    /// erased (FIX 8875). Each credential it fenced owes its whole erase
+    /// too, under its value's name, even with no key found yet (KS-6 part
+    /// 2): its discovery and every key its id names, as late as they are
+    /// found. Empty when the erase owes none here, no custody bound
     /// included: its explicit `not required`.
     ///
     /// # Errors
@@ -129,6 +133,8 @@ impl Store {
                 let ours = match kind {
                     CustodyKind::BodyInstance => owed.contains_key(&intent.subject),
                     CustodyKind::WorldPad => pad_of(&records, intent.subject.item()),
+                    CustodyKind::ErasableKey => ErasableItem::parent_of(&intent.subject)
+                        .is_some_and(|parent| records.contains(parent.as_slice())),
                     kind if credential_parent_kind(kind) => intent
                         .subject
                         .item()
@@ -217,6 +223,15 @@ impl Store {
                 return Ok(false);
             }
             if custody.first_unretired(&subject)? <= through {
+                return Ok(false);
+            }
+            // An erasable key another machine holds a copy of stays pending
+            // until that holder's retirement is verified (FIX 8875):
+            // `custody_remote_retirement_pending(<holder>)`.
+            if let Some(key) = ErasableItem::of_item(&item)
+                && kind == CustodyKind::ErasableKey
+                && !custody.holders_of(&key.key_ref)?.is_empty()
+            {
                 return Ok(false);
             }
             let obligations = self.custody_obligations_of(&subject)?;

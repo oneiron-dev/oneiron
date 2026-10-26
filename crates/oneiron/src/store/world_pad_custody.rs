@@ -129,9 +129,11 @@ impl Store {
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let id = pad_subject(custody.binding(), item)?.at(0);
         let secret = CustodySecret::from_bytes(Zeroizing::new(pad.to_vec()));
+        // A live entry must hold the same bytes, and its Mint is journaled
+        // all the same (FIX 6781): the mirror never stands on an unjournaled
+        // pad.
         match custody.state(&id)? {
-            EntryState::Missing => custody.publish_minted(&id, &secret),
-            EntryState::Live => custody.publish(&id, &secret),
+            EntryState::Missing | EntryState::Live => custody.publish_minted(&id, &secret),
             EntryState::Retired => Err(CustodyKind::WorldPad.corrupt()),
         }
     }

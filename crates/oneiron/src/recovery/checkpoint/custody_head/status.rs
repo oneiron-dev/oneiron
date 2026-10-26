@@ -9,7 +9,9 @@
 //! `custody_target_pending(<target id>)`, then `custody_anchor_pending`, then
 //! `custody_retirement_complete`. An unset anchor stays pending; a fenced
 //! writer is never complete; a hosted member stays pending until its adapter
-//! acks.
+//! acks. An erasable key another machine holds a copy of reads
+//! `custody_remote_retirement_pending(<holder machine>)` until that holder's
+//! retirement of it is verified (FIX 8875): pending, never `not required`.
 
 use serde::Serialize;
 
@@ -34,6 +36,9 @@ pub const CUSTODY_RETIREMENT_PENDING: &str = "custody_retirement_pending";
 /// Every handed-off retirement is acknowledged by every required target and
 /// anchored.
 pub const CUSTODY_RETIREMENT_COMPLETE: &str = "custody_retirement_complete";
+/// A retired erasable key's copy another machine holds is not verified
+/// retired yet (FIX 8875); its step names the holder machine.
+pub const CUSTODY_REMOTE_RETIREMENT_PENDING: &str = "custody_remote_retirement_pending";
 
 /// Where one vault's custody publication stands: the status read's state
 /// name, the positions it compared (writer epoch, log sequence numbers;
@@ -100,7 +105,9 @@ pub struct CustodyRetirement {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CustodyPendingStep {
     /// [`CUSTODY_RETIREMENT_PENDING`] (an intent not handed off yet),
-    /// [`CUSTODY_TARGET_PENDING`] or [`CUSTODY_ANCHOR_PENDING`].
+    /// [`CUSTODY_TARGET_PENDING`], [`CUSTODY_ANCHOR_PENDING`] or
+    /// [`CUSTODY_REMOTE_RETIREMENT_PENDING`] (its `target_id` the holder
+    /// machine).
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_id: Option<String>,
@@ -167,6 +174,16 @@ fn target_step(member: &MemberProgress) -> CustodyPendingStep {
     }
 }
 
+/// The step a retired erasable key's copy on `holder` (its machine's hex)
+/// owes until that holder's retirement is verified (FIX 8875).
+pub(super) fn remote_step(holder: String) -> CustodyPendingStep {
+    CustodyPendingStep {
+        state: CUSTODY_REMOTE_RETIREMENT_PENDING,
+        target_id: Some(holder),
+        reason: None,
+    }
+}
+
 fn anchor_step() -> CustodyPendingStep {
     CustodyPendingStep {
         state: CUSTODY_ANCHOR_PENDING,
@@ -214,14 +231,17 @@ pub(super) fn rollback_note(publication: &Publication) -> Option<&'static str> {
     publication.anchor_unset.then_some(ROLLBACK_NOT_PROVEN)
 }
 
-/// The retirement status from the journal's `progress` and the count of
-/// intents not handed off yet; `None` before any retirement.
+/// The retirement status from the journal's `progress`, the count of
+/// intents not handed off yet and the holders whose copy of a retired
+/// erasable key is not verified retired (FIX 8875); `None` before any
+/// retirement.
 pub(super) fn retirement(
     progress: Option<RetirementProgress>,
     standing: usize,
+    remote: Vec<String>,
     publication: &Publication,
 ) -> Option<CustodyRetirement> {
-    if standing == 0 && progress.is_none() {
+    if standing == 0 && progress.is_none() && remote.is_empty() {
         return None;
     }
     let mut pending = Vec::new();
@@ -232,6 +252,7 @@ pub(super) fn retirement(
             reason: None,
         });
     }
+    pending.extend(remote.into_iter().map(remote_step));
     let (outstanding, completed_seq, set_revision, targets) = match &progress {
         Some(progress) => {
             if let Some(&newest) = progress.outstanding.last() {

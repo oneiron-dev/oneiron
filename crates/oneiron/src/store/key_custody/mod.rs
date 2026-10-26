@@ -14,11 +14,14 @@
 mod anchor;
 mod body_history;
 mod credential_faults;
+mod erasable;
 mod erase_binding;
+mod erase_evidence;
 mod files;
 mod folder;
 mod fork;
 mod head;
+mod holders;
 mod home;
 mod identity;
 mod kept_images;
@@ -43,6 +46,14 @@ use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 
 pub(crate) use self::anchor::FileAnchor;
+// FIX 8875: the erasable key client and its holder debt, for the home
+// handoff's custody contract (`crate::store::home_handoff_custody`).
+pub(crate) use self::erasable::{
+    ErasableItem, ErasablePurpose, delete_erasable_ref_in_txn, erasable_refs_of_in_txn,
+    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+};
+// FIX 10584 item 3: erased credentials' facts on the custody head.
+pub(crate) use self::erase_evidence::{CredentialFenceFact, FenceFact};
 #[cfg(test)]
 pub(in crate::store) use self::files::arm_after_key_marker_check;
 pub(crate) use self::files::{EntryState, LocalCustody, custody_present};

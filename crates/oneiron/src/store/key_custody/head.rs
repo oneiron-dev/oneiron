@@ -27,9 +27,11 @@ use oneiron_crypto::{
 use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::body_history::HistoryRows;
+use super::erase_evidence::{CredentialFenceFact, FenceFact, fold_fact};
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::log::{
     AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_refused, seal_sym,
@@ -50,7 +52,10 @@ pub(crate) use self::pad_scope::{
 pub(crate) use self::scope::{CompartmentScope, CustodyOpener, CustodyRecipients};
 
 const HEAD_MAGIC: &[u8; 4] = b"OCHD";
-const HEAD_VERSION: u16 = 1;
+/// Version 2 carries erased credentials' evidence in every host-readable
+/// compartment (FIX 10584 item 3). A version-1 head reads as invalid until
+/// the next publication pass seals it again (FIX 10469): no old-head reader.
+const HEAD_VERSION: u16 = 2;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";
 const COMPARTMENT_RECIPIENT: &[u8] = b"oneiron/custody-head/compartment/v1";
@@ -92,6 +97,9 @@ pub(crate) struct OpenedHead {
     /// The lineage's body history at the head's position (FIX 6229), from
     /// the host-readable compartments the opener opened.
     pub(super) history: HistoryRows,
+    /// Each erased credential's fact at the head's position (FIX 10584 item
+    /// 3), from the host-readable compartments the opener opened.
+    pub(super) evidence: BTreeMap<EntityId, FenceFact>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -143,6 +151,16 @@ struct BodyWire {
     /// A host-readable compartment's: body history rows, ids only (FIX
     /// 6229), sealed under the compartment's key like its entries.
     history: Vec<HistoryWire>,
+    /// A host-readable compartment's: each erased credential's fact (FIX
+    /// 10584 item 3), value-free, whatever key eligibility keeps local.
+    evidence: Vec<EvidenceWire>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceWire {
+    credential: [u8; 16],
+    fact: u8,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -351,10 +369,14 @@ fn seal_compartment(
 }
 
 /// Seals a head at `position` holding `entries`, the retirement facts
-/// `retired`, the released escrow recipients `released` retired and the
-/// body history `history`, wrapped to `recipients`. The bytes are
-/// key-bearing: they go only to a custody target, never to a log, error or
-/// receipt.
+/// `retired`, the released escrow recipients `released` retired, the body
+/// history `history` and the erased credentials' facts `evidence`, wrapped
+/// to `recipients`. The bytes are key-bearing: they go only to a custody
+/// target, never to a log, error or receipt.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one head's whole content, each part its own kind"
+)]
 pub(super) fn seal_head(
     position: &CustodyPosition,
     control: &Control,
@@ -362,6 +384,7 @@ pub(super) fn seal_head(
     retired: Vec<CustodyId>,
     released: Vec<RecipientRetirement>,
     history: &HistoryRows,
+    evidence: &BTreeMap<EntityId, FenceFact>,
     recipients: &CustodyRecipients,
 ) -> Result<Zeroizing<Vec<u8>>> {
     // Each scope's entries go in as many compartments as they fill, each
@@ -371,7 +394,8 @@ pub(super) fn seal_head(
     let chunk_of = |scopes: &mut BTreeMap<CompartmentScope, Vec<BodyWire>>, scope| {
         let chunks = scopes.entry(scope).or_default();
         if chunks.last().is_none_or(|body| {
-            body.live.len() + body.retired.len() + body.history.len() >= COMPARTMENT_ENTRIES
+            body.live.len() + body.retired.len() + body.history.len() + body.evidence.len()
+                >= COMPARTMENT_ENTRIES
         }) {
             chunks.push(BodyWire::default());
         }
@@ -411,6 +435,18 @@ pub(super) fn seal_head(
                 value: value.clone(),
             });
     }
+    // Every erased credential's fact rides the host-readable compartments,
+    // whatever key eligibility keeps local (FIX 10584 item 3).
+    for (credential, fact) in evidence {
+        let scope = CompartmentScope::HostReadable;
+        let at = chunk_of(&mut scopes, scope);
+        scopes.get_mut(&scope).ok_or_else(head_corrupt)?[at]
+            .evidence
+            .push(EvidenceWire {
+                credential: *credential.as_bytes(),
+                fact: fact.code(),
+            });
+    }
     let mut compartments = Vec::with_capacity(scopes.len() + 1);
     let mut digests = Vec::with_capacity(scopes.len());
     let chunks = scopes
@@ -429,6 +465,7 @@ pub(super) fn seal_head(
         retired: Vec::new(),
         recipients: released,
         history: Vec::new(),
+        evidence: Vec::new(),
     };
     compartments.insert(
         0,
@@ -591,6 +628,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
     let mut control = open_body(&position, &control_id, &key, &first.sealed)?;
     let secret = Zeroizing::new(control.control.ok_or_else(head_corrupt)?);
     if !control.history.is_empty()
+        || !control.evidence.is_empty()
         || control.digests.len() != rest.len()
         || rest
             .iter()
@@ -607,6 +645,7 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         unopened: BTreeSet::new(),
         recipients: std::mem::take(&mut control.recipients),
         history: BTreeMap::new(),
+        evidence: BTreeMap::new(),
     };
     // A scope's compartments follow one another, scopes in order: one
     // canonical layout, which the control compartment's digests fix.
@@ -626,9 +665,17 @@ pub(crate) fn open_head(head: &[u8], opener: &CustodyOpener<'_>) -> Result<Opene
         };
         let mut body = open_body(&position, &id, &key, &compartment.sealed)?;
         if !body.recipients.is_empty()
-            || (!body.history.is_empty() && scope != CompartmentScope::HostReadable)
+            || ((!body.history.is_empty() || !body.evidence.is_empty())
+                && scope != CompartmentScope::HostReadable)
         {
             return Err(head_corrupt());
+        }
+        for wire in &body.evidence {
+            let fact = CredentialFenceFact {
+                credential: EntityId::from_bytes(wire.credential).map_err(|_| head_corrupt())?,
+                fact: FenceFact::from_code(wire.fact).ok_or_else(head_corrupt)?,
+            };
+            fold_fact(&mut opened.evidence, fact);
         }
         for row in std::mem::take(&mut body.history) {
             if !super::body_history::admits(&row.key) {

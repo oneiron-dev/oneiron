@@ -43,8 +43,8 @@ use crate::error::{Error, Result, SecretError};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyKind, CustodySubject, RetireCause, RetirementIntent, retirements_in_txn,
-    stage_retirement_in_txn,
+    CredentialFenceFact, CustodyKind, CustodySubject, FenceFact, RetireCause, RetirementIntent,
+    retirements_in_txn, stage_retirement_in_txn,
 };
 
 /// The kinds a credential's id names in custody, by its id as their items'
@@ -222,6 +222,58 @@ fn owed_fences_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId>> {
         }
     }
     Ok(owed)
+}
+
+impl Store {
+    /// Each erased credential's value-free fact for the custody head (FIX
+    /// 10584 item 3, KCEraseEvidence): owed while its fence's discovery is,
+    /// or while an erase intent of one of its keys stands whose fence did
+    /// not write; once discovered, no-subject or keyed; complete once its
+    /// erase finished here. Only an authorized erase makes one. A fence row
+    /// that does not read is warned and left; a finish that does not read
+    /// reads not complete yet.
+    ///
+    /// # Errors
+    /// Storage faults reading the fences or the intents.
+    pub(crate) fn credential_fence_facts_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+    ) -> Result<Vec<CredentialFenceFact>> {
+        let mut facts = std::collections::BTreeMap::new();
+        for (parent, intent) in credential_intents_in_txn(self, txn)? {
+            if intent.cause == RetireCause::Erase {
+                facts.insert(parent, FenceFact::Owed);
+            }
+        }
+        for row in FENCES.iter_raw_from(self, txn, &[])? {
+            let (key, value) = row?;
+            let (Some(id), Ok(discovery)) = (
+                <EntityId as SideKey>::decode_key(&key),
+                FENCES.decode_value(&value),
+            ) else {
+                tracing::warn!("a credential erase fence row did not read; left");
+                continue;
+            };
+            let fact = match discovery {
+                Discovery::Owed => FenceFact::Owed,
+                Discovery::Complete { .. }
+                    if self
+                        .credential_erase_finished_in_txn(txn, &id)
+                        .unwrap_or(false) =>
+                {
+                    FenceFact::Complete
+                }
+                Discovery::Complete { keys: false } => FenceFact::NoSubject,
+                Discovery::Complete { keys: true } => FenceFact::Keyed,
+            };
+            let slot = facts.entry(id).or_insert(fact);
+            *slot = (*slot).max(fact);
+        }
+        Ok(facts
+            .into_iter()
+            .map(|(credential, fact)| CredentialFenceFact { credential, fact })
+            .collect())
+    }
 }
 
 impl Store {
@@ -470,6 +522,9 @@ impl Store {
     /// An archived vault with a retirement standing, and storage and
     /// custody faults: the next pass retries.
     pub(crate) fn finish_credential_retirements(&self) -> Result<bool> {
+        // KCEraseEvidence (FIX 10584 item 3): every fence's value-free fact
+        // rides the custody head; a fault is warned and retried.
+        self.publish_credential_erase_evidence();
         let owed = {
             let txn = self.env.read_txn()?;
             !credential_intents_in_txn(self, &txn)?.is_empty()
