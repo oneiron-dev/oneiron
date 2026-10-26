@@ -84,6 +84,9 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<(ReplayedTombstoneOutcome, Vec<EntityId>)> {
+        // A Grant this replica holds, deleted by its peer, stays known
+        // withdrawn here, judged by its stored type alone (FIX-LIST 5107).
+        crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, wtxn, *id)?;
         let applied = self.replay_tombstone_effects_in_txn(wtxn, id, raw_value)?;
         self.reconcile_identity_topology_after_delete_in_txn(wtxn, id)?;
         Ok(applied)

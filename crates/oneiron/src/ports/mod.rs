@@ -41,6 +41,7 @@ pub(crate) use dependent_walk::{
 };
 mod integrity;
 mod lmdb_aux;
+pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;

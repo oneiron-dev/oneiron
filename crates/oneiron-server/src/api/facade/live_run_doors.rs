@@ -202,18 +202,9 @@ where
                 dispatcher = dispatcher.with_planner(planner);
             }
         }
-        // The same configured signing identity the resident runner uses.
-        let derived = match server.managed_issuer {
-            Some(_) => None,
-            None => server
-                .config
-                .auth_secret
-                .as_deref()
-                .filter(|secret| !secret.is_empty())
-                .map(|secret| oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()))
-                .transpose()?,
-        };
-        if let Some(issuer) = server.managed_issuer.as_ref().or(derived.as_ref()) {
+        // The same signing identity the resident runner uses: the managed
+        // issuer, else this install's own self-host root (FIX-LIST 3018).
+        if let Some(issuer) = server.host_issuer() {
             dispatcher = dispatcher.with_slip_issuer(issuer);
         }
         call(dispatcher)

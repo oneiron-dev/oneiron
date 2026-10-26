@@ -3,16 +3,18 @@
 //!
 //! A wrong-root open stays reported, never refused
 //! (`WRONG_ROOT_OPEN_REFUSES` in `local_open`). Re-keying is the owner's
-//! explicit act, never automatic: he supplies the settled root's secret,
-//! these doors check it against the root that stands and this install, and
-//! the host keeps it where its next open reads it. Nothing here changes the
-//! vault's root, its authority, this install's machine keys, its recovery
-//! pin or its standing: no Genesis is minted, no authority row is written,
-//! and the validator writes nothing to the vault. The one write is the
-//! in-place keystore replace of this install's retained `HostRoot` slot. No
-//! secret byte is returned, logged or named in an error.
+//! explicit act, never automatic: he supplies the settled root's issuer
+//! seed (FIX-LIST 3018: the root signs with that independent seed, never
+//! with a key a configured secret derives), these doors check it against
+//! the root that stands and this install, and the host keeps it where its
+//! next open reads it. Nothing here changes the vault's root, its
+//! authority, this install's machine keys, its recovery pin or its
+//! standing: no Genesis is minted, no authority row is written, and the
+//! validator writes nothing to the vault. The one write is the in-place
+//! keystore replace of this install's `HostIssuerSeed` slot. No secret byte
+//! is returned, logged or named in an error.
 
-use oneiron_keystore::{KeystoreError, KeystoreSlot, SlotKind};
+use oneiron_keystore::KeystoreError;
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -55,15 +57,15 @@ pub struct LocalHostRootValidated {
     /// What the owner was shown, unchanged when the check ran.
     pub context: LocalHostRootContext,
     /// The replacement's root binding key: a live owner key of the settled
-    /// root, which the secret derives.
+    /// root, which the seed derives.
     pub root_key: [u8; 32],
 }
 
 /// What [`Vault::replace_retained_host_root_secret`] did with this install's
-/// retained `HostRoot` slot.
+/// `HostIssuerSeed` slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RetainedHostRootReplace {
-    /// The slot now holds the validated secret, replaced in place.
+    /// The slot now holds the validated seed, replaced in place.
     Replaced(LocalHostRootValidated),
     /// The slot was empty, so nothing was written: a replace never fills one.
     Empty,
@@ -86,14 +88,15 @@ impl Vault {
         Ok(LocalHostRootContext { vault_id, install })
     }
 
-    /// Checks `replacement`, a host root secret the owner supplied for this
+    /// Checks `replacement`, a host issuer seed the owner supplied for this
     /// install, before any host keeps it. In one snapshot: `owner` is still
     /// a live owner of this vault; the settled root and this install are the
     /// ones `shown` names; this install's own carrier profile stands, naming
     /// both its keys (the check the profile door makes,
-    /// [`Vault::ensure_serving_install_profile`]); and the secret's issuer
-    /// ([`HostSlipIssuer::from_secret`]) is a live owner key of that settled
-    /// root (the check a host-root open and slip issuance make). Writes
+    /// [`Vault::ensure_serving_install_profile`]); and the seed's issuer
+    /// ([`HostSlipIssuer::from_seed`]) is a live owner key of that settled
+    /// root (the check a host-root open and slip issuance make). A
+    /// replacement that is not a seed's length is not the root. Writes
     /// nothing to the vault, mints no root and changes no authority.
     pub fn validate_local_host_root_replacement(
         &self,
@@ -101,7 +104,10 @@ impl Vault {
         shown: &LocalHostRootContext,
         replacement: &[u8],
     ) -> Result<LocalHostRootValidated> {
-        let issuer = HostSlipIssuer::from_secret(replacement)?;
+        let seed: &[u8; HOST_ISSUER_SEED_BYTES] = replacement
+            .try_into()
+            .map_err(|_| authority_refused(REKEY_NOT_THE_ROOT))?;
+        let issuer = HostSlipIssuer::from_seed(seed)?;
         match self.loaded_install_signer() {
             None => return Err(authority_refused(REKEY_KEYS_NOT_LOADED)),
             Some(signer) if signer.machine != shown.install => {
@@ -137,8 +143,8 @@ impl Vault {
         })
     }
 
-    /// Replaces this install's retained `HostRoot` slot, the one
-    /// [`Vault::retained_host_root_secret`] reads, with `replacement`, once
+    /// Replaces this install's `HostIssuerSeed` slot, the one
+    /// [`Vault::load_host_slip_issuer`] reads, with `replacement`, once
     /// [`Self::validate_local_host_root_replacement`] passes, through the
     /// keystore's in-place replace: never delete then create. An empty slot
     /// stays empty, and a keystore with no in-place update writes nothing;
@@ -150,13 +156,8 @@ impl Vault {
         replacement: &[u8; 32],
     ) -> Result<RetainedHostRootReplace> {
         let validated = self.validate_local_host_root_replacement(owner, shown, replacement)?;
-        let keystore = self.device_keystore()?;
-        let slot = KeystoreSlot {
-            vault_id: *self.vault_id().as_bytes(),
-            install: *validated.context.install.as_bytes(),
-            kind: SlotKind::HostRoot,
-        };
-        match keystore.replace(&slot, replacement) {
+        self.device_keystore()?;
+        match self.replace_host_issuer_seed(validated.context.install, replacement) {
             Ok(true) => {
                 tracing::info!(
                     "the owner replaced this install's retained host root in place; \
