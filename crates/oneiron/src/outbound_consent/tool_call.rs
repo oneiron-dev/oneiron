@@ -82,8 +82,23 @@ pub(crate) struct ConnectorManifestBinding {
 pub struct PreparedToolCall {
     payload: FrozenMcpPayload,
     frozen: FrozenToolCall,
+    /// The caller keeps no record (FIX 9372): its admitted ledger row keeps
+    /// the request sealed. Set only from the pending call's trusted flag,
+    /// never from the request's own arguments or headers.
+    keeps_no_record: bool,
 }
 impl PreparedToolCall {
+    /// This call as an off-record caller's, when `off_record` says so (FIX
+    /// 9372): its admitted ledger row keeps the request sealed.
+    #[must_use]
+    pub(crate) fn keeping_no_record(mut self, off_record: bool) -> Self {
+        self.keeps_no_record = off_record;
+        self
+    }
+    /// Whether the caller keeps no record (FIX 9372).
+    pub(crate) const fn keeps_no_record(&self) -> bool {
+        self.keeps_no_record
+    }
     pub(crate) fn manifest_binding(&self) -> Option<&ConnectorManifestBinding> {
         self.frozen.manifest_binding.as_ref()
     }
@@ -128,6 +143,7 @@ impl PreparedToolCall {
         Ok(Self {
             payload: FrozenMcpPayload::new(bytes.to_vec()),
             frozen,
+            keeps_no_record: false,
         })
     }
     #[cfg(test)]
@@ -466,6 +482,7 @@ pub fn prepare_tool_call(
     Ok(PreparedToolCall {
         payload: FrozenMcpPayload::new(bytes),
         frozen,
+        keeps_no_record: false,
     })
 }
 /// Decode a durable payload before recovery uses its manifest identity.

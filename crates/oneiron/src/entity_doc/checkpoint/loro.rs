@@ -1,11 +1,13 @@
 //! The entity document's actor carriers in its Loro history (FIX 6072): its
-//! birth's actor and every engine stamp's, split out and put back through
-//! the shared projection ([`crate::store::checkpoint_payload::loro`]). Every
-//! other operation of the document's schema (its body text and its metadata
-//! map) names no one; an operation outside that schema, or a message that is
-//! no engine stamp, keeps its whole group under the vault-wide seal. A birth
-//! or stamp whose actor did not open reads as no one, never as an actor some
-//! binding of its peer names (Engine R2).
+//! birth's actor and every engine stamp's, with a receipted message's
+//! receipt actors ([`super::message_receipts`], FIX 6479), split out and put
+//! back through the shared projection
+//! ([`crate::store::checkpoint_payload::loro`]). Every other operation of the
+//! document's schema (its body text and its metadata map) names no one; an
+//! operation outside that schema, or a message that is no engine stamp,
+//! keeps its whole group under the vault-wide seal. A birth or stamp whose
+//! actor did not open reads as no one, never as an actor some binding of its
+//! peer names (Engine R2).
 //!
 //! A fork snapshot is a group of its own. A shallow one, as the live writer
 //! keeps every one, stays under the vault-wide seal (Engine R3), and so does
@@ -18,7 +20,7 @@ use super::super::EntityDoc;
 use super::super::doc_actor::DocActor;
 use super::super::document::{BIRTH, BODY, Birth, META, cut_stamp, decode_frontier};
 use super::super::forks::ForkStatus;
-use super::hex_id;
+use super::{hex_id, message_receipts};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -35,7 +37,7 @@ use crate::store::checkpoint_payload::rows::{
 const FORK_ROUND_TRIP: RoundTripPolicy = RoundTripPolicy::HistoryEquivalent;
 
 /// The path of a stamp's actor in its message.
-const STAMP_ACTOR: &str = "actor";
+pub(super) const STAMP_ACTOR: &str = "actor";
 /// The path of the birth's actor in its record.
 const BIRTH_ACTOR: &str = "Birth.actor";
 
@@ -56,6 +58,11 @@ impl LoroActorCodec for EntityDocActors {
     const FAMILY: &'static str = "entity_doc";
 
     fn split_message(&self, message: &str) -> Split<String> {
+        // A receipted message is cut whole, never by its stamp alone: its
+        // receipt names the actor too.
+        if let Some(split) = message_receipts::split(message) {
+            return split;
+        }
         let (head, id, tail) = cut_stamp(message).ok_or(NOT_A_STAMP)?;
         if id == ERASED_CALL_IDENTITY {
             return Ok(SplitValue::kept(message.to_owned()));
@@ -68,6 +75,9 @@ impl LoroActorCodec for EntityDocActors {
     }
 
     fn fill_message(&self, no_one: &str, path: &str, actor: EntityId) -> Result<String> {
+        if let Some(filled) = message_receipts::fill(no_one, path, actor) {
+            return filled;
+        }
         let (head, id, tail) = cut_stamp(no_one).ok_or_else(rows::bad_part)?;
         if path != STAMP_ACTOR || id != ERASED_CALL_IDENTITY {
             return Err(rows::bad_part());
@@ -153,8 +163,9 @@ fn stored_birth(value: &LoroValue) -> Option<Birth> {
 }
 
 /// Splits one entity document group: its full snapshot, then its updates
-/// in replay order.
-pub(super) fn split(
+/// in replay order. Crate-visible for the sync checkpoint adapter (FIX
+/// 9126), which groups an update with its captured snapshot.
+pub(crate) fn split(
     rows: &[&[u8]],
     policy: RoundTripPolicy,
 ) -> std::result::Result<Vec<SplitRow>, Unresolved> {
@@ -162,7 +173,7 @@ pub(super) fn split(
 }
 
 /// Rebuilds one entity document group from its opened rows.
-pub(super) fn join(rows: &[OpenedRow<'_>]) -> Result<Vec<Vec<u8>>> {
+pub(crate) fn join(rows: &[OpenedRow<'_>]) -> Result<Vec<Vec<u8>>> {
     Ok(shared::join_loro(rows, &EntityDocActors)?.rows)
 }
 

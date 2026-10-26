@@ -2,8 +2,15 @@
 //! whole frozen record (its payload and its server, tool, endpoint and
 //! binding text) and its attempt binding under the call's own compartment,
 //! its attempt id and call sequence, never its intent or payload hash. A
-//! record names no actor, and on this head holds no recorded response, so
-//! nothing goes to KS-2B.
+//! record names the actor that admitted it (FIX 9283) inside the call's
+//! compartment only; the accounting kept outside it stays actor-free. On
+//! this head it holds no recorded response, so nothing goes to KS-2B.
+//!
+//! Its payload is captured as stored: clear, sealed under the call's own
+//! ledger custody key (ConnectorResume, generation 0; FIX 9372, 2328), or
+//! erased (FIX 9283). A sealed payload opens only at use, through the same
+//! ConnectorResume custody restore that PENDING_CALLS' sealed arguments use
+//! (FIX 9157).
 //!
 //! Its accounting and state (what it charged, whether it was sent, settled
 //! or abandoned, and when) are also kept as structure outside the
@@ -129,8 +136,9 @@ pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
     rows::frame_owner(rows, owns)
 }
 
-/// A record must read with its codec (its payload hash and intent identity
-/// checked) under the id it carries.
+/// A record must read with its codec (its stored shape, digest and intent
+/// identity checked) under the id it carries. The hash of a sealed or erased
+/// payload is checked when it opens at use, not at restore.
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
     if at.in_table(LEDGER.decl()) {
         rows::check_row(LEDGER, at, value)?;

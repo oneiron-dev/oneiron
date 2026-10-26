@@ -19,9 +19,10 @@ use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
-    BudgetChargeMarker, BudgetClass, IntentEscalationReason, IntentLedgerError, IntentState,
-    OutboundCallRequest, RecordedOutboundOutcome, force_sync, insert_pending_in_txn,
-    insert_suppressed_in_txn, read_intent_for_attempt_in_txn, read_intent_record_in_txn,
+    BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
+    LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
+    insert_pending_in_txn, insert_suppressed_in_txn, read_intent_for_attempt_in_txn,
+    read_intent_record_in_txn, stored_admission_in_txn,
 };
 use crate::ports::TombstoneStore;
 
@@ -310,6 +311,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         None => None,
     };
 
+    // FIX 9283, 9372: the actor the Gate verified and whether the caller keeps
+    // no record, kept with the row's payload; never read from the request.
+    let payload_context = LedgerPayloadContext {
+        actor: prepared.gate.provenance.actor_entity_ref,
+        off_record: matches!(
+            &prepared.authorization,
+            PreparedAuthorization::ScopedMcp { prepared, .. } if prepared.keeps_no_record()
+        ),
+    };
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
     // use the vault's own clock, not a caller-selected future timestamp.
@@ -357,7 +367,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         suppressed.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
             IntentEscalationReason::DedupeSuppressed,
         ));
-        insert_suppressed_in_txn(vault, &mut wtxn, &suppressed)?;
+        let stored = stored_admission_in_txn(vault, &mut wtxn, &suppressed, &payload_context)?;
+        insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
         crate::receipt::put_suppression_in_txn(vault, &mut wtxn, &intent_id, &receipt, dedupe_now)?;
         wtxn.commit().map_err(Error::from)?;
         force_sync(vault)?;
@@ -564,7 +575,8 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         co_spent = co.spent_press_digest().zip(co_keep);
         gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
     }
-    insert_pending_in_txn(vault, &mut wtxn, &pending)?;
+    let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
+    insert_pending_in_txn(vault, &mut wtxn, &stored)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
