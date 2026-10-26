@@ -215,7 +215,7 @@ pub(super) fn authority_anchored_secs(store: &StoreCore) -> Option<u64> {
 
 /// What an authority reading does over a present floor that does not decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AuthorityClockCorruptPolicy {
+pub(crate) enum AuthorityClockCorruptPolicy {
     /// A handle that holds an anchor reads its anchored clock, measured from
     /// a floor it read whole, and writes no floor; one that holds none
     /// answers [`RecordError::AuthorityClockCorrupt`]. Never zero, and the
@@ -225,7 +225,7 @@ pub enum AuthorityClockCorruptPolicy {
 
 /// The one rule over a damaged floor (CALLS `FIX 10106 authority clock
 /// corrupt policy`).
-pub const AUTHORITY_CLOCK_CORRUPT_POLICY: AuthorityClockCorruptPolicy =
+pub(crate) const AUTHORITY_CLOCK_CORRUPT_POLICY: AuthorityClockCorruptPolicy =
     AuthorityClockCorruptPolicy::AnchoredElseCorrupt;
 
 /// The reading over a damaged floor ([`AUTHORITY_CLOCK_CORRUPT_POLICY`]):

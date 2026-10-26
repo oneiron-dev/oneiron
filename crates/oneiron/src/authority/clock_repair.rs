@@ -122,7 +122,7 @@ impl crate::Vault {
     /// writer before the owner's proof is judged against it, and committed
     /// with its provenance receipt only when that proof holds. With no proof
     /// it is [`AuthorityClockRepairOutcome::Unproven`]. Every outcome
-    /// revalidates `owner` first.
+    /// revalidates `owner` in this writer.
     pub fn repair_authority_clock(
         &self,
         owner: &AuthenticatedOwner,

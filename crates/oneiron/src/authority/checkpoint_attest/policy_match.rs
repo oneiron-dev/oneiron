@@ -17,7 +17,7 @@ use crate::authority::checkpoint_image::{
 
 /// What a known candidate/current policy mismatch does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckpointPolicyMismatch {
+pub(super) enum CheckpointPolicyMismatch {
     /// The attestation is refused; the owner rebuilds the image under the
     /// policy the vault fixes now.
     RefuseKnownMismatch,
@@ -25,7 +25,7 @@ pub enum CheckpointPolicyMismatch {
 
 /// What an image whose policy cannot be read does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckpointPolicyUnknown {
+pub(super) enum CheckpointPolicyUnknown {
     /// The attestation goes on as it does today; the unknown is noted, never
     /// read as a match.
     KeepCurrent,
@@ -33,11 +33,12 @@ pub enum CheckpointPolicyUnknown {
 
 /// The one rule for a known mismatch (CALLS `FIX 2994 checkpoint policy
 /// bound before signing`, released by the Orchestrator 10-22 05:4x).
-pub const CHECKPOINT_POLICY_MISMATCH: CheckpointPolicyMismatch =
+pub(super) const CHECKPOINT_POLICY_MISMATCH: CheckpointPolicyMismatch =
     CheckpointPolicyMismatch::RefuseKnownMismatch;
 
 /// The one rule for an image whose policy cannot be read (same CALLS row).
-pub const CHECKPOINT_POLICY_UNKNOWN: CheckpointPolicyUnknown = CheckpointPolicyUnknown::KeepCurrent;
+pub(super) const CHECKPOINT_POLICY_UNKNOWN: CheckpointPolicyUnknown =
+    CheckpointPolicyUnknown::KeepCurrent;
 
 /// What a kept image says of the policy it was built under, against the
 /// policy an attestation names.
