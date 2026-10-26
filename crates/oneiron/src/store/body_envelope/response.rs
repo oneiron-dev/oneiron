@@ -226,7 +226,8 @@ pub(crate) enum ResponseFamily {
     VoiceBank,
     /// A centroid verdict's evidence snapshot (FIX 10094): the candidate's
     /// and labels' copied vectors and the retrieval run, carried whole and
-    /// owned by every source it copied; a retired snapshot leaves nothing.
+    /// owned by every source it copied; a retired snapshot keeps its erased
+    /// marker (FIX 10822).
     CentroidEvidence,
     /// A report cluster (FIX 9856): its member ISSUEs' copied vectors and
     /// their centroid, carried whole and owned by every member; a retired
@@ -490,13 +491,15 @@ impl ResponseFamily {
                 Ok(())
             }
             // A retired memo's row goes; the next evaluation derives anew. A
-            // retired centroid snapshot's row goes, as its source's erase
-            // deletes it live; a retired cluster's row goes, as its
-            // member's erase remakes it live without that member.
-            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
+            // retired cluster's row goes, as its member's erase remakes it
+            // live without that member.
+            Self::SavedQueryMemo | Self::ReportCluster => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
+            // A retired centroid snapshot's row keeps its stub, the erased
+            // marker, as its source's erase leaves it live (FIX 10822).
+            Self::CentroidEvidence => Ok(()),
             Self::ProgramStep
             | Self::StepState
             | Self::Replay
@@ -540,12 +543,13 @@ impl ResponseFamily {
             | Self::Replay
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
+            | Self::ModelStepSubmission
+            | Self::CentroidEvidence => store.side_vault_meta().put(wtxn, key, kept()?),
             Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
+            Self::SavedQueryMemo | Self::ReportCluster => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

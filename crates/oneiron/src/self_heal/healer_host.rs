@@ -291,6 +291,17 @@ impl Vault {
             if let Some(pr) = &pr {
                 RELEASE.put(&self.store, txn, id, pr)?;
             }
+            // The owner's verdict is an unbound proposal's review, and it
+            // reached a person (FIX 10821). A case-bound proposal keys no
+            // row under its id, so nothing is written for it here.
+            let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            crate::failure_ladder::oversight::reviewed_if_known_in_txn(
+                self,
+                txn,
+                &id.to_hex(),
+                now,
+                true,
+            )?;
             Ok(pr)
         })
     }
@@ -504,20 +515,26 @@ impl HealerRegistration<'_> {
             )?;
             // The case's oversight clock starts with its persisted proposal
             // (FIX 9852): a bound case at this write's own time, a sweep's
-            // case at the sweep's.
-            let counted = match (counted, &binding) {
-                (Some((case, now)), _) => Some((case, now)),
-                (None, Some(binding)) => Some((
+            // case at the sweep's, and an unbound submission under its
+            // proposal's id at this write's own time (FIX 10821).
+            let unbound;
+            let (case, now) = match (counted, &binding) {
+                (Some(counted), _) => counted,
+                (None, Some(binding)) => (
                     binding.case.case_ref.as_str(),
                     crate::ports::recorded_at_in_txn(&self.vault.store, txn)?,
-                )),
-                (None, None) => None,
-            };
-            if let Some((case, now)) = counted {
-                crate::failure_ladder::oversight::proposed_in_txn(self.vault, txn, case, now)?;
-                if route == RepairConsentRoute::HumanReview {
-                    crate::failure_ladder::oversight::routed_in_txn(self.vault, txn, case, now)?;
+                ),
+                (None, None) => {
+                    unbound = proposal_id.to_hex();
+                    (
+                        unbound.as_str(),
+                        crate::ports::recorded_at_in_txn(&self.vault.store, txn)?,
+                    )
                 }
+            };
+            crate::failure_ladder::oversight::proposed_in_txn(self.vault, txn, case, now)?;
+            if route == RepairConsentRoute::HumanReview {
+                crate::failure_ladder::oversight::routed_in_txn(self.vault, txn, case, now)?;
             }
             Ok(bundle)
         })
