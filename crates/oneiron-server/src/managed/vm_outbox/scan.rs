@@ -14,7 +14,7 @@
 
 use super::Carrier;
 use super::local::{self, FileStamp};
-use super::source_check::SourceScan;
+use super::source_check::{self, SourceScan};
 use super::store::{Cached, MemberRecord, Version};
 use oneiron_vault_contract::vm_outbox::{
     VmOutboxDescriptor, VmOutboxKind, VmOutboxOperation, vm_outbox_member,
@@ -221,7 +221,9 @@ impl Carrier {
     }
 }
 
-/// The put `member`'s file at `version` needs, if any.
+/// The put `member`'s file at `version` needs, if any. A put the other end
+/// refused as `digest_mismatch`, its file read again and still hashing to
+/// it, goes again even where it is the agreed version.
 fn put_op(
     record: &mut MemberRecord,
     member: &str,
@@ -242,11 +244,12 @@ fn put_op(
         // The tree moved past an unacked transfer the other end may hold:
         // the next change goes past its revision, whatever it is.
         past = past.max(pending.revision);
-    } else if record
-        .agreed
-        .as_ref()
-        .is_some_and(|agreed| agreed.blake3 == version.blake3)
-        || record.refused.as_deref() == Some(format!("put:{}", version.blake3).as_str())
+    } else if !source_check::resends(record, &version)
+        && (record
+            .agreed
+            .as_ref()
+            .is_some_and(|agreed| agreed.blake3 == version.blake3)
+            || record.refused.as_deref() == Some(format!("put:{}", version.blake3).as_str()))
     {
         return None;
     }

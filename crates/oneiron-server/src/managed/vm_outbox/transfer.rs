@@ -308,6 +308,9 @@ impl Carrier {
                 commit_set: false,
                 ..descriptor.clone()
             });
+            // A put sent again after `digest_mismatch` is replayed from here
+            // as any unacked one (FIX 11075).
+            record.source = None;
             self.store.put(kind, &descriptor.member, record)?;
             transfers.push((descriptor, file));
         }

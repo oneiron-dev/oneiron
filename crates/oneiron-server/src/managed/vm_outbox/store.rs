@@ -85,7 +85,8 @@ pub(super) struct MemberRecord {
     pub(super) refused: Option<String>,
     /// This end's own file, once the other end refused a put of it as
     /// `digest_mismatch`: due to be read again, or damaged here; `None`
-    /// otherwise, and once the member changes.
+    /// otherwise, once that put is recorded as sent again, and once the
+    /// member changes.
     #[serde(default)]
     pub(super) source: Option<SourceStatus>,
 }
@@ -98,7 +99,8 @@ pub(super) struct MemberRecord {
 pub(super) enum SourceStatus {
     /// The refused put named `blake3`: the set's next paced look reads the
     /// file again whole and hashes it, and sends it again while it still
-    /// hashes to that digest.
+    /// hashes to that digest, even where it is the agreed version. It stands
+    /// until that put is recorded as sent.
     Recheck { blake3: String },
     /// The file at `stamp`, read again, hashes to `read`, no longer to
     /// `recorded`, its own recorded digest: the source is damaged, and none

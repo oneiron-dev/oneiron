@@ -3,8 +3,11 @@
 //! transit passes, so the put is not dropped for good: its set goes again at
 //! the pacing of a deferral, with no clock or cap of its own, and that next
 //! paced look reads this end's file again whole, hashes it, and sends it
-//! again while it still hashes to the digest recorded for it. A file that no
-//! longer does is damaged here: its record keeps a typed
+//! again while it still hashes to the digest recorded for it, even where
+//! that is the agreed version: the put that named it did not arrive whole.
+//! The status stands until that put is recorded as sent, so a look whose set
+//! does not go reads it again at the next. A file that no longer hashes to
+//! it, unchanged since, is damaged here: its record keeps a typed
 //! [`SourceStatus::SourceDigestMismatch`], and none of it is sent until the
 //! member changes.
 
@@ -59,11 +62,21 @@ pub(super) fn recheck(
     damaged
 }
 
+/// Whether `version` of a file is the put the other end refused as
+/// `digest_mismatch`, read again and still hashing to its digest: it goes
+/// again even where it is the agreed version or a refused change.
+pub(super) fn resends(record: &MemberRecord, version: &Version) -> bool {
+    matches!(
+        &record.source,
+        Some(SourceStatus::Recheck { blake3 }) if *blake3 == version.blake3
+    )
+}
+
 impl Carrier {
     /// How `kind`'s scan at `now` takes the member of `set` whose record is
     /// `record`, its file listed at `stamp`, by that record's source status.
-    /// A status the member changed past is cleared in `record`, which the
-    /// scan writes.
+    /// A damaged status the member changed past is cleared in `record`,
+    /// which the scan writes.
     pub(super) fn source_scan(
         &self,
         kind: VmOutboxKind,
@@ -77,21 +90,19 @@ impl Carrier {
             Some(SourceStatus::SourceDigestMismatch { stamp: damaged, .. }) => {
                 (*damaged == stamp).then_some(SourceScan::Skip)
             }
-            Some(SourceStatus::Recheck { blake3 }) => {
-                // The file the refused digest was recorded for is still there.
-                let unchanged = record.cached.as_ref().is_some_and(|cached| {
-                    cached.stamp == stamp && cached.version.blake3 == *blake3
-                });
-                let waits = self
+            // Read again once its set's pacing is due, changed since or not:
+            // a file changed back to the refused bytes still sends them.
+            Some(SourceStatus::Recheck { .. }) => Some(
+                if self
                     .paced
                     .get(&(kind, set.to_owned()))
-                    .is_some_and(|(at, _)| *at > now);
-                unchanged.then_some(if waits {
+                    .is_some_and(|(at, _)| *at > now)
+                {
                     SourceScan::Skip
                 } else {
                     SourceScan::Reread
-                })
-            }
+                },
+            ),
         };
         // The member changed since: it goes as any change.
         scan.unwrap_or_else(|| {
@@ -101,10 +112,11 @@ impl Carrier {
     }
 
     /// Whether `member`'s file, read again at `stamp` as `version`, goes:
-    /// once it still hashes to the digest the refused put named, or it
-    /// changed since that digest was recorded, its status is cleared and it
-    /// goes as any change. One unchanged that no longer hashes to it is
-    /// damaged here: `record` keeps that, typed, and it does not go.
+    /// one that still hashes to the digest the refused put named keeps its
+    /// status and goes again ([`resends`]), and one changed since that
+    /// digest was recorded has its status cleared and goes as any change.
+    /// One unchanged that no longer hashes to it is damaged here: `record`
+    /// keeps that, typed, and it does not go.
     pub(super) fn source_goes(
         &self,
         kind: VmOutboxKind,
@@ -120,11 +132,15 @@ impl Carrier {
                 return true;
             }
         };
+        if version.blake3 == recorded {
+            record.source = Some(SourceStatus::Recheck { blake3: recorded });
+            return true;
+        }
         let unchanged = record
             .cached
             .as_ref()
             .is_some_and(|cached| cached.stamp == stamp && cached.version.blake3 == recorded);
-        if !unchanged || version.blake3 == recorded {
+        if !unchanged {
             return true;
         }
         tracing::warn!(
