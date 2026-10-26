@@ -18,7 +18,8 @@
 //! folded records it derives from), not the requester's session alone, and
 //! takes every row of each conversation it reaches: a later state of the
 //! same session carries what an earlier one did. A row whose dependency set
-//! is not precise, or that does not decode, goes on any erase.
+//! is not precise, that does not decode, or whose key is no catalog id goes
+//! on any erase.
 use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
@@ -30,7 +31,7 @@ use crate::error::Result;
 use crate::llm::{
     CacheDigest, CacheIdentity, ConditioningDigest, ScopeDigest, TokenDigest, VaultRef,
 };
-use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable};
+use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable, SideTableDbs};
 use crate::store::Store;
 
 /// The catalog row's format version.
@@ -294,55 +295,68 @@ impl SnapshotRecord {
 /// does not decode.
 pub(super) type CatalogRow = (SnapshotId, Option<SnapshotRecord>);
 
-/// Every row of the catalog, in id order. A key of the wrong width, which
-/// no writer here makes, is skipped.
-pub(super) fn rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<CatalogRow>> {
+/// One catalog row as an erase reads it: its key bytes after the table's
+/// prefix, and the row as read when those bytes are a catalog id.
+type RawRow = (Vec<u8>, Option<CatalogRow>);
+
+/// Every row of the catalog, in key order, each with its raw key. A key of
+/// the wrong width, which no writer here makes, has no id.
+fn raw_rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<RawRow>> {
     let mut out = Vec::new();
     for row in CATALOG.iter_raw_from(store, txn, &[])? {
         let (key, bytes) = row?;
-        let Some(id) = SnapshotId::decode_key(&key) else {
-            continue;
-        };
-        out.push((id, CATALOG.decode_value(&bytes).ok()));
+        let row = SnapshotId::decode_key(&key).map(|id| (id, CATALOG.decode_value(&bytes).ok()));
+        out.push((key, row));
     }
     Ok(out)
 }
 
+/// Every row of the catalog, in id order. A key of the wrong width, which
+/// no writer here makes, is skipped.
+pub(super) fn rows(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<CatalogRow>> {
+    Ok(raw_rows(store, txn)?
+        .into_iter()
+        .filter_map(|(_, row)| row)
+        .collect())
+}
+
 /// The rows an erase of `id` takes: every row whose dependency set names
-/// it, whose set is not precise or that does not decode, and every other
-/// row of each conversation those reach.
-fn erased_rows(rows: &[CatalogRow], id: &EntityId) -> Vec<SnapshotId> {
-    let mut gone = BTreeSet::new();
-    let mut conversations = BTreeSet::new();
-    for (key, record) in rows {
-        match record {
-            Some(record) if record.dependencies.precise && !record.depends_on(id) => {}
-            Some(record) => {
-                gone.insert(*key);
-                conversations.insert(record.manifest.conversation);
-            }
-            None => {
-                gone.insert(*key);
-            }
-        }
-    }
-    for (key, record) in rows {
-        if record
-            .as_ref()
-            .is_some_and(|record| conversations.contains(&record.manifest.conversation))
-        {
-            gone.insert(*key);
-        }
-    }
-    gone.into_iter().collect()
+/// it, whose set is not precise, that does not decode or whose key is no
+/// catalog id, and every other row of each conversation those reach.
+fn erased_rows<'r>(rows: &'r [RawRow], id: &EntityId) -> Vec<&'r RawRow> {
+    let reached = |row: &RawRow| match row {
+        (_, Some((_, Some(record)))) => !record.dependencies.precise || record.depends_on(id),
+        _ => true,
+    };
+    let conversations: BTreeSet<EntityId> = rows
+        .iter()
+        .filter(|row| reached(*row))
+        .filter_map(|(_, row)| row.as_ref()?.1.as_ref())
+        .map(|record| record.manifest.conversation)
+        .collect();
+    rows.iter()
+        .filter(|row| {
+            reached(*row)
+                || matches!(row, (_, Some((_, Some(record))))
+                    if conversations.contains(&record.manifest.conversation))
+        })
+        .collect()
+}
+
+/// Deletes the catalog row stored under `key`, the bytes after the table's
+/// prefix, whatever their width; `true` when a row was there.
+fn delete_raw(store: &Store, wtxn: &mut RwTxn<'_>, key: &[u8]) -> Result<bool> {
+    let full = [CATALOG.decl().prefix, key].concat();
+    store.side_vault_meta().delete(wtxn, &full)
 }
 
 /// The erase of `id` takes every snapshot it reaches (FIX 10466), in the
 /// erase's own transaction at both delete doors: every row whose
-/// dependency set names it, whose set is not precise, or that does not
-/// decode, and the rest of each conversation those reach; each key's
-/// retirement is staged with its row's delete. Bodies, custody entries and
-/// live copies go after the commit.
+/// dependency set names it, whose set is not precise, that does not decode
+/// or whose key is no catalog id, and the rest of each conversation those
+/// reach. Each row goes by its raw key; a key's retirement is staged with
+/// its row's delete wherever the key is a catalog id. Bodies, custody
+/// entries and live copies go after the commit.
 ///
 /// # Errors
 ///
@@ -350,9 +364,12 @@ fn erased_rows(rows: &[CatalogRow], id: &EntityId) -> Vec<SnapshotId> {
 pub(crate) fn erase_in_txn(store: &Store, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     // Inside the erase's writer: a publish waiting behind it sees the move.
     store.inference_snapshots.erased();
-    let rows = rows(store, &*wtxn)?;
-    for key in erased_rows(&rows, id) {
-        super::store::retire_in_txn(store, wtxn, &key)?;
+    let rows = raw_rows(store, &*wtxn)?;
+    for (key, row) in erased_rows(&rows, id) {
+        match row {
+            Some((snapshot, _)) => super::store::retire_in_txn(store, wtxn, snapshot)?,
+            None => delete_raw(store, wtxn, key)?,
+        };
     }
     Ok(())
 }

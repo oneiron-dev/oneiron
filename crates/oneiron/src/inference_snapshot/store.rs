@@ -504,8 +504,7 @@ impl Vault {
                     fs::metadata(dir.join(body_name(&id)))
                         .is_ok_and(|meta| meta.is_file() && meta.len() == record.sealed_bytes)
                 });
-                if !whole {
-                    retire_in_txn(store, &mut wtxn, &id)?;
+                if !whole && retire_in_txn(store, &mut wtxn, &id)? {
                     retired += 1;
                 }
             }
