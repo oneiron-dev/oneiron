@@ -364,10 +364,18 @@ impl<'a> HostSelfDispatcher<'a> {
                         .and_then(|step| step.direct_spawn.as_ref()),
                 ),
             },
-            AgentDispatchOutcome::ProposedWiden(proposal) => SelfAgentSpawnResult::ProposedWiden {
-                proposal_ref: proposal.proposal_id,
-                unapplied,
-            },
+            // FIX 9051: a proposal answers with the receipt its first call
+            // kept, fresh or repeated; none kept, or none read, lists none.
+            AgentDispatchOutcome::ProposedWiden(proposal) => {
+                let first = AgentDispatcher::new(vault)
+                    .widen_direct_spawn_receipt(&proposal)
+                    .ok()
+                    .flatten();
+                SelfAgentSpawnResult::ProposedWiden {
+                    proposal_ref: proposal.proposal_id,
+                    unapplied: kept(first.as_ref()),
+                }
+            }
         }))
     }
 

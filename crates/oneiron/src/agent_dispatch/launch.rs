@@ -210,8 +210,9 @@ impl AgentDispatcher<'_> {
         self.admit_nodes_in_txn(txn, tree, budget, nodes, unit, now)
     }
 
-    /// The effective scope a caller spends under: its parent attempt's, or
-    /// the open root scope a root names. `None`: unmetered by any lease tree.
+    /// The scope a caller spends under: its parent attempt's own, open or
+    /// closed, or the open root scope a root names. `None`: unmetered by any
+    /// lease tree.
     /// Shared by every launch and fan-out statement, so each reads the
     /// caller's cap once, the same way.
     pub(super) fn caller_tree_in_txn(
@@ -230,8 +231,14 @@ impl AgentDispatcher<'_> {
                 if let Some(row) = AttemptQueue::new(self.vault).get_in_txn(txn, parent)? {
                     super::workflow_record::reject_wrapper_parent(&row)?;
                 }
+                // FIX 10541: the parent's own scope, open or closed; the
+                // terms below book it at its open host.
                 match self.scope_for_attempt_in_txn(txn, parent)? {
-                    Some(scope) => Some(self.effective_scope_in_txn(txn, &scope)?),
+                    Some(scope) => Some(
+                        SCOPE
+                            .get(&self.vault.store, txn, &scope.0)?
+                            .ok_or_else(|| invalid("spend scope is missing"))?,
+                    ),
                     None => None,
                 }
             }
@@ -265,11 +272,7 @@ impl AgentDispatcher<'_> {
     ) -> Result<LaunchAdmission> {
         // An unmetered workflow has no wrapper scope; its leaves are unmetered.
         let scope = SpendScopeId::for_attempt(&wrapper);
-        let tree = if SCOPE.contains(&self.vault.store, txn, &scope.0)? {
-            Some(self.effective_scope_in_txn(txn, &scope)?)
-        } else {
-            None
-        };
+        let tree = SCOPE.get(&self.vault.store, txn, &scope.0)?;
         let unit = tree
             .as_ref()
             .map_or_else(LeaseUnit::tokens, |scope| scope.unit.clone());
@@ -407,10 +410,11 @@ impl AgentDispatcher<'_> {
                 parent_scope: None,
                 spendable: Some(cap_units),
             },
-            (Some(host), budget) => {
-                let available = self.available_from_in_txn(txn, &host)?;
-                let binding = self.binding_cap_in_txn(txn, &host)?;
-                let parent = host.scope.clone();
+            // The launch reserves under the caller's own scope (FIX 10541),
+            // drawing through each closed hard scope above it.
+            (Some(tree), budget) => {
+                let (available, binding) = self.reservable_in_txn(txn, &tree.scope)?;
+                let parent = tree.scope;
                 match budget {
                     Some(cap_units) => SpendTerms {
                         cap: Some(SpendCapView {

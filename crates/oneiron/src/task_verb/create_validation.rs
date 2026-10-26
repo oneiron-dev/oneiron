@@ -535,7 +535,18 @@ pub(crate) fn settled_task_result_binding(
     vault: &Vault,
     task_ref: EntityId,
 ) -> Result<Option<(TaskTerminalDisposition, EntityId)>> {
-    Ok(task_verb_body(vault, task_ref)?
+    let txn = vault.store.env.read_txn()?;
+    settled_task_result_binding_in_txn(vault, &txn, task_ref)
+}
+
+/// [`settled_task_result_binding`] in the caller's transaction, for a
+/// `contextFrom` check that runs inside a writer or a snapshot it holds.
+pub(crate) fn settled_task_result_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> Result<Option<(TaskTerminalDisposition, EntityId)>> {
+    Ok(task_verb_body_in(vault, txn, task_ref)?
         .and_then(|body| body.terminal().cloned())
         .and_then(|terminal| {
             terminal

@@ -254,7 +254,10 @@ impl AgentPatternLaunchRunner {
 /// where the exposure its source run (the run its checkpoint names) kept
 /// says, and takes nothing again. The pack's manifest row and the exposure
 /// are then recorded on the run's own lease, the row once and the exposure
-/// under the run's own id, which a continuation of this run reads.
+/// under the run's own id, which a continuation of this run reads. When an
+/// erase took the intent before that record (FIX 9184), the run goes on
+/// without the pack: a fresh run's task gives back the exact span it just
+/// took, and the answer is `None`.
 ///
 /// # Errors
 ///
@@ -296,8 +299,26 @@ pub(super) fn leader_exposure(
             revision,
         )
     };
-    dispatcher.record_planned_leader_run(leased, &exposure, config.model.as_str(), at)?;
-    Ok(Some(exposure))
+    if dispatcher.record_planned_leader_run(leased, &exposure, config.model.as_str(), at)? {
+        return Ok(Some(exposure));
+    }
+    if !continues {
+        take_back(&mut config.task, &exposure);
+    }
+    Ok(None)
+}
+
+/// Removes `exposure` from the end of `task`, where the fresh append just
+/// put it: only that exact span, and only while it still hashes as the
+/// exposure says. Every other byte of the task stays.
+fn take_back(task: &mut String, exposure: &TaskExposure) {
+    let appended = exposure.end == task.len()
+        && task
+            .get(exposure.start..exposure.end)
+            .is_some_and(|span| *blake3::hash(span.as_bytes()).as_bytes() == exposure.content_hash);
+    if appended {
+        task.truncate(exposure.start);
+    }
 }
 
 /// The frozen pack's SKILL.md, exactly as it loaded, trimmed as a run's

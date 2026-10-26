@@ -141,6 +141,12 @@ struct PlannedIntent {
     /// agent its parent's own dispatch runs as; `None` once an erase has
     /// forgotten it.
     actor: Option<EntityId>,
+    /// The asker's erase selector (FIX 9182): a domain-separated hash of the
+    /// asker's id, kept when a plain scrub forgets the asker, so a later hard
+    /// erase of that asker still finds the intent. It names no one, confers
+    /// nothing and is never shown; the asker's erase clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    asker_erase_key: Option<[u8; 32]>,
     /// The spawning attempt; an owner's root intent has none.
     parent: Option<AttemptId>,
     /// The original ask as its asker gave it, and its digest; neither once
@@ -371,6 +377,7 @@ impl AgentDispatcher<'_> {
         let mut reserved = match existing {
             None => PlannedIntent {
                 actor: Some(actor),
+                asker_erase_key: Some(erase::asker_erase_key(&actor)),
                 parent,
                 ask: Some(ask()),
                 ask_digest: Some(name.digest),
