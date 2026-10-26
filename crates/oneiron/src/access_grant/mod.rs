@@ -13,7 +13,8 @@ pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus};
 mod codec;
 mod companion_admission;
 pub use companion_admission::{
-    COMPANION_GRANT_EXCESS_PENDS, CompanionGrantBounds, CompanionGrantIssuer, CompanionGrantOutcome,
+    COMPANION_GRANT_EXCESS_PENDS, COMPANION_GRANT_OUTLIVES_ISSUER, CompanionGrantBounds,
+    CompanionGrantIssuer, CompanionGrantOutcome,
 };
 mod record;
 mod vault_doors;

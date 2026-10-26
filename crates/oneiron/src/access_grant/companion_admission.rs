@@ -25,6 +25,11 @@ use super::{AccessGrant, AccessRequest};
 /// access request for the owner. False would refuse it instead.
 pub const COMPANION_GRANT_EXCESS_PENDS: bool = true;
 
+/// Policy hook (CALLS "OF-8140 issuer lifetime", open): a grant a slip
+/// issues outlives that slip, as an owner-approved grant does; false keeps
+/// it to the slip's own expiry, filing a longer one as a pending request.
+pub const COMPANION_GRANT_OUTLIVES_ISSUER: bool = true;
+
 /// The bounds a slip-issued companion grant carries: the issuing slip, and
 /// the record ceiling its world and facet axes set, every other axis top.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -168,6 +173,8 @@ fn slip_ceiling(slip: &VerifiedSlip, grant: &AccessGrant) -> Option<CompanionGra
         && claims.channels.is_empty()
         && !claims.single_use
         && slip.pact().is_none()
+        && (COMPANION_GRANT_OUTLIVES_ISSUER
+            || grant.expires_at.is_some_and(|end| end <= claims.expires_at))
         && axis_admits(&ceiling.worlds, None)
         && axis_admits(&ceiling.facets, facet))
     .then(|| CompanionGrantBounds {
