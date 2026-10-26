@@ -27,6 +27,11 @@ credential.
   the merge floor.
 - No older image is booted, and no reader of an image without the field is
   kept. `CONTRACT_VERSION` stays 3, and `Ping` has no field for this.
+- A cold restore's receipt names the engine's own build in `engine_build`
+  (FIX 6581): the 40-hex commit the build exported as
+  `ONEIRON_ENGINE_REVISION`, else the commit its source checkout's `HEAD`
+  named, else `null`. A release build exports the same commit it records as
+  the manifest's `engine_revision`, so the host can compare the two.
 - The custody anchor channels (FIX 6517) add two required manifest fields,
   published together: `anchor_wire_revision: 1` and `anchor_proxy_revision: 1`.
   Every serving cold boot of an image at or after their floor dials the anchor
