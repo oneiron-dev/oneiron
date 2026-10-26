@@ -4,9 +4,13 @@ use super::agent_grants::{AskedFilter, HeldGrants};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::claim::{ClaimBody, decode_claim_body};
+use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::Scope;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 use std::cell::RefCell;
 
@@ -212,9 +216,72 @@ impl<'v> ScopedRead<'v> {
             Some(context) => context,
             None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
         };
-        let allowed = read.allowed_by(&context);
+        let allowed = read.allowed_by(&context)
+            || self.conversation_message_granted_in(txn, id, &read, &context);
         *held = Some(context);
         Ok(allowed)
+    }
+
+    /// Whether `context` holds a live read grant over the conversation the
+    /// MESSAGE `id` is part of (FIX 10895): a MESSAGE that names no
+    /// relationship and no private scope, which no membership or
+    /// relationship grant admits, is read on a `ConversationMessages` grant
+    /// over its conversation, found on this read's content as the
+    /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
+    /// conversation). The grant stands in for the relationship check alone;
+    /// every other check on the row still binds. Edges that do not read
+    /// admit nothing.
+    fn conversation_message_granted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+        context: &AccessContext<'_>,
+    ) -> bool {
+        let RelationshipRead::Gated {
+            kind: ENTITY_TYPE_MESSAGE,
+            space: None,
+            private: false,
+            record,
+        } = read
+        else {
+            return false;
+        };
+        if !context.holds_conversation_grants() {
+            return false;
+        }
+        self.edge_targets_in(txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
+            .iter()
+            .flat_map(|turn| {
+                self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+            })
+            .any(|conversation| {
+                context.allows_conversation_message_at_snapshot(conversation, record)
+            })
+    }
+
+    /// The targets of `id`'s outgoing `kind` edges whose rows are of
+    /// `entity_type`, on this read's content; none when the edges do not
+    /// read.
+    fn edge_targets_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: EdgeKind,
+        entity_type: u8,
+    ) -> Vec<EntityId> {
+        let Ok(edges) = self.out_edges_in(txn, id, Some(kind)) else {
+            return Vec::new();
+        };
+        edges
+            .filter_map(|edge| edge.ok().map(|edge| edge.target))
+            .filter(|target| {
+                self.entity_record_in(txn, target)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|row| row.entity_type == entity_type)
+            })
+            .collect()
     }
 }
 

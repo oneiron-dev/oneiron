@@ -698,6 +698,7 @@ both bindings and their export-census tests in one change.
 - `vault.agents.grants.revoke`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
+- `vault.connectors.read_grants.revoke`
 - `vault.repo.anchor.bind`
 - `vault.repo.snapshots.get`
 - `vault.repo.snapshots.read`

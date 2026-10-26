@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1157 facade rows, 4142 declarations.
-Inputs: 1092 of 1157 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1040 of 1157 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1158 facade rows, 4144 declarations.
+Inputs: 1093 of 1158 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1041 of 1158 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -12339,6 +12339,15 @@ class GitPushGrantRevokeOutput(TypedDict):
     changed: bool
     member: NotRequired[EntityId | None]
     act_ref: NotRequired[str | None]
+class ConnectorWitnessReadGrantRevokeRequest(TypedDict):
+    grant_ref: EntityId
+class ConnectorWitnessReadGrantRevoked(TypedDict):
+    grant_ref: EntityId
+    changed: bool
+    agent: EntityId
+    conversation: EntityId
+    reason: str
+    revoked_at: int
 class RepoAnchorBindInput(TypedDict):
     repo: str
     project: EntityId

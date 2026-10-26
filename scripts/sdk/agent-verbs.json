@@ -10647,6 +10647,21 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.read_grants.revoke",
+      "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
+      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.repo.anchor.bind",
       "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
