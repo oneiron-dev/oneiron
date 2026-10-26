@@ -63,6 +63,11 @@ pub struct WorkflowDispatchStatus {
     /// The whole workflow's launch statement (OF-532): one agent per leaf,
     /// the sum of their expected spend, and the cap, frozen at admission.
     pub launch: Option<super::LaunchStatement>,
+    /// Why the next step's release was refused (FIX 10602): its agent
+    /// definition is missing, inactive or unapproved now. The workflow waits,
+    /// its completed steps kept, and the pump releases it once the
+    /// definition admits it again. `None` while nothing refuses.
+    pub release_refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +172,10 @@ pub(super) struct WorkflowRecord {
     /// pass over ended runs settles each once. A TASK-less run never sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_settled: Option<String>,
+    /// The successor release's refusal the pump saved (FIX 10602), cleared
+    /// when the release lands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_refusal: Option<String>,
 }
 
 /// A frozen step's dispatch input, as a release reads it.
@@ -249,8 +258,9 @@ impl super::AgentDispatcher<'_> {
     /// durable report and the actual completed producer attempts. Arbitrary
     /// result refs are not output handles; a malformed output handle refuses.
     /// This never alters the unrelated memory/ancestor projection.
-    pub(super) fn workflow_output_refs_for_attempt(
+    pub(super) fn workflow_output_refs_for_attempt_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         attempt: AttemptId,
         parent: Option<AttemptId>,
     ) -> Result<Vec<WorkflowOutputContextRef>> {
@@ -259,20 +269,20 @@ impl super::AgentDispatcher<'_> {
         };
         let queue = AttemptQueue::new(self.vault);
         // Context resolution can run while a caller owns the writer (widen
-        // admission does). It must never acquire a nested write transaction.
-        let txn = self.vault.store.env.read_txn()?;
-        let Some(wrapper) = queue.get_in_txn(&txn, root)? else {
+        // admission does): it reads in the caller's transaction, and never
+        // opens a snapshot or a writer of its own.
+        let Some(wrapper) = queue.get_in_txn(txn, root)? else {
             return Err(invalid("workflow context parent is missing"));
         };
         if !is_wrapper(&wrapper) {
             return Ok(Vec::new());
         }
-        let record = self.read_workflow(&txn, &wrapper)?;
+        let record = self.read_workflow(txn, &wrapper)?;
         if record.results.len() >= record.steps.len() {
             return Err(invalid("workflow context is not the active step"));
         }
         let current = queue
-            .get_in_txn(&txn, attempt)?
+            .get_in_txn(txn, attempt)?
             .ok_or_else(|| invalid("workflow context step is missing"))?;
         // The cursor can lag a retry tip until the pump advances it. Prove
         // the attempted leaf descends from that cursor without taking the
@@ -282,7 +292,7 @@ impl super::AgentDispatcher<'_> {
         while cursor.id != record.active {
             let previous = queue
                 .get_in_txn(
-                    &txn,
+                    txn,
                     cursor
                         .retry_of
                         .ok_or_else(|| invalid("workflow context retry lineage"))?,
@@ -310,7 +320,7 @@ impl super::AgentDispatcher<'_> {
         if payload.parent_attempt != Some(root) || current.run_id != record.intent.run_id {
             return Err(invalid("workflow context step has foreign lineage"));
         }
-        output_refs_in(&queue, &txn, root, &record)
+        output_refs_in(&queue, txn, root, &record)
     }
 
     /// The output handles of a completed TASK-bound run's own steps, read by
@@ -368,6 +378,7 @@ impl super::AgentDispatcher<'_> {
             results: Vec::new(),
             launch: None,
             task_settled: None,
+            release_refusal: None,
         };
         RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
         Ok(record.intent)
@@ -557,6 +568,7 @@ impl super::AgentDispatcher<'_> {
             active_step: record.active,
             results: record.results.clone(),
             launch: record.launch.clone(),
+            release_refusal: record.release_refusal.clone(),
         })
     }
 }

@@ -429,9 +429,12 @@ impl Vault {
     /// edge and error with [`Error::IndexOverflow`] past
     /// `MAX_EDGE_QUERY_RESULTS`), this walks only until `limit` matches accrue,
     /// so a high-degree node never allocates its full edge set. When `kind` is
-    /// set the walk is further narrowed to the `[id | kind]` key span.
-    pub(crate) fn neighbor_edges_bounded(
+    /// set the walk is further narrowed to the `[id | kind]` key span. It
+    /// reads in the caller's transaction, so a walk inside a writer reads the
+    /// writer's own view and opens no snapshot beside it.
+    pub(crate) fn neighbor_edges_bounded_in_txn(
         &self,
+        rtxn: &heed::RoTxn<'_>,
         center: &EntityId,
         outbound: bool,
         kind: Option<EdgeKind>,
@@ -446,12 +449,8 @@ impl Vault {
         } else {
             EdgeDirection::In
         };
-        let rtxn = self.store.env.read_txn()?;
         let mut edges = Vec::new();
-        for entry in self
-            .store
-            .port_edges(&rtxn, center, direction, kind, None)?
-        {
+        for entry in self.store.port_edges(rtxn, center, direction, kind, None)? {
             let edge = entry?;
             if min_weight.is_some_and(|min| edge.weight < min) {
                 continue;

@@ -222,6 +222,23 @@ pub fn resolve_context_spec(
     vault: &Vault,
     request: ContextResolutionRequest,
 ) -> Result<ResolvedContextProjection> {
+    let txn = vault.store.env.read_txn()?;
+    resolve_context_spec_in_txn(vault, &txn, request)
+}
+
+/// [`resolve_context_spec`] in the caller's transaction: every read the
+/// resolution makes, in the same order and under the same limits and
+/// surfacing rules, comes from `txn`, so a dispatch writer resolves in its
+/// own view and opens no snapshot beside it.
+///
+/// # Errors
+///
+/// As [`resolve_context_spec`].
+pub(crate) fn resolve_context_spec_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    request: ContextResolutionRequest,
+) -> Result<ResolvedContextProjection> {
     let ContextResolutionRequest {
         spec,
         parent,
@@ -238,9 +255,9 @@ pub fn resolve_context_spec(
     let layers = spec.layers.clone();
     // 2. Memory.
     let memory_sections =
-        resolve_memory_sections(vault, &spec.memory, parent.as_ref(), world_scope)?;
+        resolve_memory_sections(vault, txn, &spec.memory, parent.as_ref(), world_scope)?;
     // 3. Chat.
-    let chat_sections = resolve_chat_sections(vault, &spec.chat, parent.as_ref())?;
+    let chat_sections = resolve_chat_sections(vault, txn, &spec.chat, parent.as_ref())?;
     // 4. Briefing — parent-authored delegation text, never a read grant. The
     //    dev-only `_annotation` is dropped here and reaches no prompt.
     let briefing = spec.briefing;
@@ -250,7 +267,7 @@ pub fn resolve_context_spec(
         memory_sections,
         chat_sections,
         briefing,
-        sibling_result_refs: resolve_sibling_results(vault, &context_from)?,
+        sibling_result_refs: resolve_sibling_results(vault, txn, &context_from)?,
         workflow_output_refs: Vec::new(),
         pre_lane: None,
     };
@@ -282,6 +299,7 @@ fn kept_in(sections: &[String], kept: &[String]) -> Vec<String> {
 
 fn resolve_memory_sections(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     projection: &MemoryProjection,
     parent: Option<&ResolvedContextProjection>,
     world_scope: Option<WorldScope>,
@@ -295,16 +313,20 @@ fn resolve_memory_sections(
                 Ok(parent.memory_bound().to_vec())
             }
             Some(parent) => Ok(intersect_with_parent(
-                scan_memory_sections(vault, None, parent.memory_bound().len(), world_scope)?,
+                scan_memory_sections(vault, txn, None, parent.memory_bound().len(), world_scope)?,
                 Some(parent.memory_bound()),
                 parent.memory_bound().len(),
             )),
-            None => {
-                scan_memory_sections(vault, None, CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT, world_scope)
-            }
+            None => scan_memory_sections(
+                vault,
+                txn,
+                None,
+                CONTEXT_SPEC_DEFAULT_MEMORY_LIMIT,
+                world_scope,
+            ),
         },
         MemoryProjection::Scoped { domains, limit } => {
-            let sections = scan_memory_sections(vault, Some(domains), *limit, world_scope)?;
+            let sections = scan_memory_sections(vault, txn, Some(domains), *limit, world_scope)?;
             Ok(intersect_with_parent(
                 sections,
                 parent.map(ResolvedContextProjection::memory_bound),
@@ -316,6 +338,7 @@ fn resolve_memory_sections(
 
 fn resolve_chat_sections(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     projection: &ChatProjection,
     parent: Option<&ResolvedContextProjection>,
 ) -> Result<Vec<String>> {
@@ -323,10 +346,10 @@ fn resolve_chat_sections(
         ChatProjection::Exclude => Ok(Vec::new()),
         ChatProjection::Default => match parent {
             Some(parent) => Ok(parent.chat_bound().to_vec()),
-            None => scan_chat_sections(vault, CONTEXT_SPEC_DEFAULT_CHAT_LAST_N),
+            None => scan_chat_sections(vault, txn, CONTEXT_SPEC_DEFAULT_CHAT_LAST_N),
         },
         ChatProjection::Recent { last_n } => {
-            let sections = scan_chat_sections(vault, *last_n)?;
+            let sections = scan_chat_sections(vault, txn, *last_n)?;
             Ok(intersect_with_parent(
                 sections,
                 parent.map(ResolvedContextProjection::chat_bound),
@@ -356,11 +379,13 @@ fn intersect_with_parent(
 /// Live read: the newest CLAIM rows whose predicate namespace is in scope.
 fn scan_memory_sections(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     domains: Option<&[String]>,
     limit: usize,
     world_scope: Option<WorldScope>,
 ) -> Result<Vec<String>> {
-    let rows = vault.latest_entity_bodies_by_type(
+    let rows = vault.latest_entity_bodies_by_type_in_txn(
+        txn,
         ENTITY_TYPE_CLAIM,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
@@ -370,7 +395,7 @@ fn scan_memory_sections(
         if sections.len() >= limit {
             break;
         }
-        let Some(claim) = vault.get_claim(&id)? else {
+        let Some(claim) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
         // `get_claim` is the deliberately-ungated history door (claim.rs D19):
@@ -385,8 +410,7 @@ fn scan_memory_sections(
             WorldScope::World(world) => claim.world.is_none() || claim.world == Some(*world),
             WorldScope::WorldSet(worlds) => worlds.admits(claim.world),
             WorldScope::CodebaseSet(key) => {
-                let txn = vault.store.env.read_txn()?;
-                crate::codebase::codebase_candidate_matches_scope_key(&vault.store, &txn, &id, key)?
+                crate::codebase::codebase_candidate_matches_scope_key(&vault.store, txn, &id, key)?
             }
             // Also outside the AgentScope mapping (ONE-1420): the per-turn
             // ActiveSet selection lives on the retrieval builder, and this
@@ -418,14 +442,15 @@ fn scan_memory_sections(
 /// consult-expiry receipts, marker bodies) are filtered BEFORE `last_n`
 /// applies, so they can neither reach a chat projection nor displace real
 /// conversational turns under the bounded over-scan.
-fn scan_chat_sections(vault: &Vault, last_n: usize) -> Result<Vec<String>> {
+fn scan_chat_sections(vault: &Vault, txn: &heed::RoTxn<'_>, last_n: usize) -> Result<Vec<String>> {
     let mut sections = Vec::with_capacity(last_n);
-    for (id, _learned_at, body) in vault.latest_entity_bodies_by_type(
+    for (id, _learned_at, body) in vault.latest_entity_bodies_by_type_in_txn(
+        txn,
         ENTITY_TYPE_TURN,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
     )? {
-        if !is_conversational_turn_body(vault, &id, &body)? {
+        if !is_conversational_turn_body(vault, txn, &id, &body)? {
             continue;
         }
         sections.push(format!("tn_{}", id.to_hex()));
@@ -445,6 +470,7 @@ fn scan_chat_sections(vault: &Vault, last_n: usize) -> Result<Vec<String>> {
 /// least one marker and is excluded.
 pub(super) fn is_conversational_turn_body(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     turn: &EntityId,
     body: &[u8],
 ) -> Result<bool> {
@@ -478,14 +504,15 @@ pub(super) fn is_conversational_turn_body(
         return Ok(false);
     }
     // Witnessed conversations use an empty TURN container with MESSAGE children.
-    for edge in vault.neighbor_edges_bounded(
+    for edge in vault.neighbor_edges_bounded_in_txn(
+        txn,
         turn,
         false,
         Some(EdgeKind::PartOf),
         None,
         CONTEXT_SPEC_MEMORY_SCAN_LIMIT,
     )? {
-        let Some(raw) = vault.get_raw(&edge.target)? else {
+        let Some(raw) = vault.get_raw_sealed_in_txn(txn, &edge.target)? else {
             continue;
         };
         let Some(header) = EntityMetadataHeader::parse(&raw) else {
@@ -543,11 +570,15 @@ fn memory_domain_of(predicate: &str) -> &str {
 ///    proves each ref's create-owner is the parent attempt's dispatched row
 ///    and that the spawn rides the parent's run, so a ref from a different
 ///    parent or run rejects.
-fn resolve_sibling_results(vault: &Vault, context_from: &[EntityId]) -> Result<Vec<EntityId>> {
+fn resolve_sibling_results(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    context_from: &[EntityId],
+) -> Result<Vec<EntityId>> {
     let mut resolved = Vec::with_capacity(context_from.len());
     for entity_ref in context_from {
         let Some((disposition, result_ref)) =
-            crate::task_verb::settled_task_result_binding(vault, *entity_ref)?
+            crate::task_verb::settled_task_result_binding_in_txn(vault, txn, *entity_ref)?
         else {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names no settled sibling TASK result",

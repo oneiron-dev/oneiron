@@ -130,9 +130,7 @@ pub(crate) fn decode_birth_source(bytes: &[u8]) -> Result<Option<AgentBirthSourc
     if marker.format != FORMAT {
         return Ok(None);
     }
-    if bytes.len() > 32 * 1024 * 1024 {
-        return Err(invalid("size"));
-    }
+    // Any size decodes (rule 5, FIX 10542); a put observes the bytes.
     let source: AgentBirthSource = serde_json::from_slice(bytes).map_err(|_| invalid("shape"))?;
     source.validate()?;
     if serde_json::to_vec(&source).map_err(|_| invalid("encode"))? != bytes {
@@ -162,6 +160,7 @@ pub(crate) fn validate_birth_source_put(
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode_birth_source(bytes)?
     {
+        super::byte_observation::observe_birth_source_bytes(store, txn, id, bytes);
         super::birth_custody::check_birth_custody(store, txn, &source.child()?)?;
         super::birth_dependencies::check_inputs(store, txn, &source.dependencies()?)?;
         if birth_source_id(&EntityId::from_hex(&source.child_id)?)? != *id {

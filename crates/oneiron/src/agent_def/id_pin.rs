@@ -203,6 +203,7 @@ pub(crate) fn agent_id_pin_for_put_in_txn(
     def: &AgentDefinition,
 ) -> Result<Option<StagedRow>> {
     scan::observe_list_entries(store, txn, id, def);
+    super::byte_observation::observe_definition_bytes(store, txn, id, def);
     let next = match bound_in_txn(store, txn, id)? {
         None => AgentIdPin {
             ceiling: def.ceiling,

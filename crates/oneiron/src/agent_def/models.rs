@@ -51,11 +51,9 @@ const NO_LISTED_MODEL_TEXT: &str = "no listed model is eligible";
 /// ([`note_unbound_listed_run`]).
 pub const UNBOUND_LIST_KEEPS_ROUTE: bool = false;
 
-const MODEL_REF_TEXT: &str =
-    "model entry model_ref must be a provider/name@revision model id at most 256 bytes";
-const WHEN_TEXT: &str = "model entry when must be a non-empty UTF-8 string at most 4096 bytes";
-const COMPACTION_MODEL_TEXT: &str =
-    "compaction_model must be a provider/name@revision model id at most 256 bytes";
+const MODEL_REF_TEXT: &str = "model entry model_ref must be a provider/name@revision model id";
+const WHEN_TEXT: &str = "model entry when must be a non-empty UTF-8 string";
+const COMPACTION_MODEL_TEXT: &str = "compaction_model must be a provider/name@revision model id";
 
 /// One model on an agent's list: a revision-pinned model and the owner's
 /// description of when the agent should run on it.
@@ -137,10 +135,10 @@ fn decode_model_id(value: &Value, context: &'static str) -> Result<ModelId> {
         .map_err(|_| invalid(context))
 }
 
-/// The list rules every encode and decode holds: each entry a model id at
-/// most 256 bytes listed once, with a non-blank `when` at most
-/// 4096 bytes. The compaction model need not be listed: it compacts the
-/// agent's window and runs none of its wakes.
+/// The list rules every encode and decode holds: each entry a model id
+/// listed once, with a non-blank `when`, of any length (a put observes
+/// their bytes, FIX 10542). The compaction model need not be listed: it
+/// compacts the agent's window and runs none of its wakes.
 pub(super) fn validate_agent_models(def: &AgentDefinition) -> Result<()> {
     for (index, model) in def.models.iter().enumerate() {
         validate_text_field(

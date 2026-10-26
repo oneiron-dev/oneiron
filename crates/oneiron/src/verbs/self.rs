@@ -6,7 +6,7 @@
 //! owner route, on their own authenticated session ([`steer_child_as_owner`]).
 use serde::{Deserialize, Serialize};
 
-use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{
     EntityRefReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError,
@@ -110,16 +110,7 @@ pub struct SteerReceipt {
 /// refused, not proposed: a nudge carries no effect a review could approve.
 pub fn steer_child(memory: &Memory<'_>, input: SteerRequest) -> MemoryResult<SteerReceipt> {
     crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
-    steer_live_run(memory, input, |txn, task| {
-        if task_create_owner_in(memory.vault(), txn, task)? != Some(memory.actor()) {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "only the task's spawner steers it",
-                &["Steer a task you created; say(...) reaches any other agent."],
-            ));
-        }
-        Ok(())
-    })
+    steer_live_run(memory, input, |txn, task| spawner_admits(memory, txn, task))
 }
 
 /// The owner's `steer` (FIX 783, Engine ruling 10-18): the vault's owner
@@ -132,26 +123,146 @@ pub fn steer_child_as_owner(
     owner: &AuthenticatedOwner,
     input: SteerRequest,
 ) -> MemoryResult<SteerReceipt> {
-    steer_live_run(memory, input, |txn, _task| {
-        if owner.revalidate_in_txn(memory.vault(), txn)? != memory.actor()
-            || memory.actor_class() != EdgeActorClass::Human
-        {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                "the owner proof must name the bound caller",
-                &["Steer as the vault owner on your own session."],
-            ));
-        }
-        Ok(())
-    })
+    steer_live_run(memory, input, |txn, _task| owner_admits(memory, owner, txn))
 }
 
-/// Both steers: `admit` decides who may steer `task` inside the read
-/// transaction, then the signal lands in the task's live attempt's inbox.
+/// [`steer_child`] at one exact run of the TASK (FIX 8534): `attempt`, as a
+/// concern card recorded it, never the TASK's later try. Its signal lands in
+/// that attempt's own inbox, and a resend with the same key answers the
+/// first receipt, after the run has ended too.
+pub fn steer_child_at(
+    memory: &Memory<'_>,
+    input: SteerRequest,
+    attempt: AttemptId,
+) -> MemoryResult<SteerReceipt> {
+    crate::memory::verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
+    steer_run(
+        memory,
+        input,
+        |txn, task| spawner_admits(memory, txn, task),
+        |txn, task| attempt_run_in(memory, txn, task, attempt),
+    )
+}
+
+/// [`steer_child_as_owner`] at one exact run of the TASK (FIX 8534), as
+/// [`steer_child_at`] reaches it.
+pub fn steer_child_at_as_owner(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: SteerRequest,
+    attempt: AttemptId,
+) -> MemoryResult<SteerReceipt> {
+    steer_run(
+        memory,
+        input,
+        |txn, _task| owner_admits(memory, owner, txn),
+        |txn, task| attempt_run_in(memory, txn, task, attempt),
+    )
+}
+
+/// The spawner's admission: only the TASK's creator steers it.
+fn spawner_admits(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, task: EntityId) -> MemoryResult<()> {
+    if task_create_owner_in(memory.vault(), txn, task)? != Some(memory.actor()) {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "only the task's spawner steers it",
+            &["Steer a task you created; say(...) reaches any other agent."],
+        ));
+    }
+    Ok(())
+}
+
+/// The owner's admission: the owner proof, rechecked in `txn`, names the
+/// bound human caller.
+fn owner_admits(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    txn: &heed::RoTxn<'_>,
+) -> MemoryResult<()> {
+    if owner.revalidate_in_txn(memory.vault(), txn)? != memory.actor()
+        || memory.actor_class() != EdgeActorClass::Human
+    {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the owner proof must name the bound caller",
+            &["Steer as the vault owner on your own session."],
+        ));
+    }
+    Ok(())
+}
+
+/// Both TASK-current steers: `admit` decides who may steer `task` inside the
+/// read transaction, then the signal lands in the task's live attempt's
+/// inbox.
 fn steer_live_run(
     memory: &Memory<'_>,
     input: SteerRequest,
     admit: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> MemoryResult<()>,
+) -> MemoryResult<SteerReceipt> {
+    steer_run(memory, input, admit, |txn, task| {
+        live_run_in(memory, txn, task)
+    })
+}
+
+/// The task's live attempt and its run: the newest try no retry superseded
+/// and no terminal state ended.
+fn live_run_in(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> MemoryResult<(AttemptId, String)> {
+    let task_key = task.to_hex();
+    let records: Vec<_> = AttemptQueue::new(memory.vault())
+        .list_in_txn(txn)?
+        .into_iter()
+        .filter(|record| record.task_ref.as_deref() == Some(task_key.as_str()))
+        .collect();
+    let superseded = superseded_attempt_ids(&records);
+    let live = records
+        .iter()
+        .rev()
+        .filter(|record| !superseded.contains(&record.id) && !record.state.is_terminal())
+        .find_map(|record| record.run_id.clone().map(|run_id| (record.id, run_id)));
+    live.ok_or_else(|| {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "the task has no live run to steer",
+            &["Steer a task while its run is live."],
+        )
+    })
+}
+
+/// `attempt` and its run, when it is a run of `task`: that attempt alone,
+/// never a retry tip. Whether it is still live is the signal's own check,
+/// after a resend's replay.
+fn attempt_run_in(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+    attempt: AttemptId,
+) -> MemoryResult<(AttemptId, String)> {
+    let task_key = task.to_hex();
+    AttemptQueue::new(memory.vault())
+        .get_in_txn(txn, attempt)?
+        .filter(|record| record.task_ref.as_deref() == Some(task_key.as_str()))
+        .and_then(|record| record.run_id.map(|run_id| (record.id, run_id)))
+        .ok_or_else(|| {
+            MemoryError::new(
+                MEMORY_CODE_INVALID_STATE,
+                "the attempt is no run of this task",
+                &["Steer an attempt the task ran."],
+            )
+        })
+}
+
+/// Every steer: `admit` decides who may steer `task` and `run` names the
+/// attempt and run, both inside one read transaction; then the signal lands
+/// in that attempt's inbox.
+fn steer_run(
+    memory: &Memory<'_>,
+    input: SteerRequest,
+    admit: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> MemoryResult<()>,
+    run: impl FnOnce(&heed::RoTxn<'_>, EntityId) -> MemoryResult<(AttemptId, String)>,
 ) -> MemoryResult<SteerReceipt> {
     let task = EntityId::from_hex(&input.task_ref)
         .map_err(|_| MemoryError::bad_request("task_ref is not an entity id"))?;
@@ -163,25 +274,7 @@ fn steer_live_run(
             .read_txn()
             .map_err(crate::Error::from)?;
         admit(&txn, task)?;
-        let task_key = task.to_hex();
-        let records: Vec<_> = AttemptQueue::new(memory.vault())
-            .list_in_txn(&txn)?
-            .into_iter()
-            .filter(|record| record.task_ref.as_deref() == Some(task_key.as_str()))
-            .collect();
-        let superseded = superseded_attempt_ids(&records);
-        let live = records
-            .iter()
-            .rev()
-            .filter(|record| !superseded.contains(&record.id) && !record.state.is_terminal())
-            .find_map(|record| record.run_id.clone().map(|run_id| (record.id, run_id)));
-        live.ok_or_else(|| {
-            MemoryError::new(
-                MEMORY_CODE_INVALID_STATE,
-                "the task has no live run to steer",
-                &["Steer a task while its run is live."],
-            )
-        })?
+        run(&txn, task)?
     };
     let signal = RunTreeAdapter::new(memory.vault()).signal(RunSignalInput {
         branch,

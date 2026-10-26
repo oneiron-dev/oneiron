@@ -62,8 +62,17 @@ impl AgentDispatcher<'_> {
         row: &AttemptRecord,
     ) -> Result<Option<EntityId>> {
         let txn = self.vault.store.env.read_txn()?;
+        self.workflow_member_in_txn(&txn, row)
+    }
+
+    /// [`Self::workflow_member`] in the caller's transaction.
+    pub(in crate::agent_dispatch) fn workflow_member_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: &AttemptRecord,
+    ) -> Result<Option<EntityId>> {
         Ok(self
-            .workflow_task_source_in_txn(&txn, row)?
+            .workflow_task_source_in_txn(txn, row)?
             .filter(|bind| {
                 bind.payer_required && bind.bound_by.actor_class() == EdgeActorClass::Human
             })
@@ -71,7 +80,7 @@ impl AgentDispatcher<'_> {
             .filter(|person| {
                 !crate::memory::actor_is_vault_owner_in_txn(
                     self.vault,
-                    &txn,
+                    txn,
                     *person,
                     EdgeActorClass::Human,
                 )
@@ -84,10 +93,11 @@ impl AgentDispatcher<'_> {
     /// status, in one snapshot, and only the readable ones kept, in order.
     /// The key is the one a non-owner's handle with no credential reads
     /// under. Its grants are judged at the clock the vault last persisted,
-    /// which the workflow host persists before it runs a step; this opens
-    /// no writer, as it may run inside one.
-    pub(in crate::agent_dispatch) fn member_context(
+    /// which the workflow host persists before it runs a step. It reads in
+    /// the caller's transaction, as it may run inside a writer.
+    pub(in crate::agent_dispatch) fn member_context_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         projection: ResolvedContextProjection,
         member: EntityId,
     ) -> Result<ResolvedContextProjection> {
@@ -106,9 +116,8 @@ impl AgentDispatcher<'_> {
             .vault
             .scoped_read(lane)
             .with_claim_status(ClaimReadStatus::Recorded);
-        let txn = self.vault.store.env.read_txn()?;
-        let memory = readable_in(&read, &txn, &projection.memory_sections)?;
-        let chat = readable_in(&read, &txn, &projection.chat_sections)?;
+        let memory = readable_in(&read, txn, &projection.memory_sections)?;
+        let chat = readable_in(&read, txn, &projection.chat_sections)?;
         Ok(projection.lane_narrowed(memory, chat))
     }
 
@@ -120,12 +129,21 @@ impl AgentDispatcher<'_> {
         &self,
         row: &AttemptRecord,
     ) -> Result<Option<WriteActor>> {
-        if self.workflow_member(row)?.is_some() {
+        let txn = self.vault.store.env.read_txn()?;
+        self.workflow_binder_in_txn(&txn, row)
+    }
+
+    /// [`Self::workflow_binder`] in the caller's transaction.
+    pub(in crate::agent_dispatch) fn workflow_binder_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: &AttemptRecord,
+    ) -> Result<Option<WriteActor>> {
+        if self.workflow_member_in_txn(txn, row)?.is_some() {
             return Ok(None);
         }
-        let txn = self.vault.store.env.read_txn()?;
         Ok(self
-            .workflow_task_source_in_txn(&txn, row)?
+            .workflow_task_source_in_txn(txn, row)?
             .map(|bind| bind.bound_by))
     }
 
@@ -141,9 +159,11 @@ impl AgentDispatcher<'_> {
     /// and nothing refills them (`SELECTOR_ORDER_KEPT`,
     /// `SELECTOR_REFILL_AFTER_BINDER_FILTER`). Nothing here refuses: a store
     /// or room-walk failure the admission check meets leaves its row out
-    /// (`OWN_ENTRY_UNJUDGED_ROW_KEPT`).
-    pub(in crate::agent_dispatch) fn binder_context(
+    /// (`OWN_ENTRY_UNJUDGED_ROW_KEPT`). It reads in the caller's
+    /// transaction.
+    pub(in crate::agent_dispatch) fn binder_context_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         projection: ResolvedContextProjection,
         binders: &[WriteActor],
     ) -> Result<ResolvedContextProjection> {
@@ -177,7 +197,6 @@ impl AgentDispatcher<'_> {
             })
             .map(|binder| binder.entity_ref())
             .collect();
-        let txn = self.vault.store.env.read_txn()?;
         let dbs = self.vault.store.read();
         let entry = AudienceCache::default();
         let kept = |sections: &[String]| -> Vec<String> {
@@ -188,8 +207,8 @@ impl AgentDispatcher<'_> {
                 };
                 if reads
                     .iter()
-                    .all(|read| read.private_threads_admit_in(&txn, &row).unwrap_or(false))
-                    && own_entry_admits_in(self.vault, &entry, &dbs, &txn, row, &own_entry)
+                    .all(|read| read.private_threads_admit_in(txn, &row).unwrap_or(false))
+                    && own_entry_admits_in(self.vault, &entry, &dbs, txn, row, &own_entry)
                         .unwrap_or(OWN_ENTRY_UNJUDGED_ROW_KEPT)
                 {
                     kept.push(section.clone());

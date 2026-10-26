@@ -12,7 +12,9 @@
 //! writes the erased form back, never the text. A launch on an erased
 //! target records that outcome and launches nothing. Without the marker an
 //! actor's scrub forgets the asker alone, as it always has (FIX 4582): the
-//! intent keeps the rest, and one in flight is in doubt (FIX 5097).
+//! intent keeps the rest, and one in flight is in doubt (FIX 5097). It keeps
+//! the asker's erase selector too, a hash that names no one, so that asker's
+//! later hard erase still reaches the intent (FIX 9182).
 
 use std::collections::BTreeSet;
 
@@ -25,6 +27,18 @@ use crate::store::Store;
 use crate::team::{PlannedIntentView, SpawnErasure};
 
 use super::{INTENTS, IntentName, IntentPhase, LaunchStand, PlannedIntent, PlannedLaunch};
+
+/// The derivation context of an asker's erase selector.
+const ASKER_ERASE_KEY_CONTEXT: &str = "oneiron spawn planned intent asker erase v1";
+
+/// The erase selector of the asker `actor` (FIX 9182): a domain-separated
+/// hash of its id, which an erase of `actor` recomputes to find the intents
+/// it asked after a plain scrub forgot it. It grants nothing.
+pub(super) fn asker_erase_key(actor: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(ASKER_ERASE_KEY_CONTEXT);
+    hasher.update(actor.as_bytes());
+    *hasher.finalize().as_bytes()
+}
 
 /// Who among an intent's asker and its plan's target an erase reached.
 #[derive(Clone, Copy)]
@@ -46,6 +60,7 @@ impl PlannedIntent {
     fn erase(&mut self, reached: Reached) {
         if reached.asker {
             self.actor = None;
+            self.asker_erase_key = None;
         }
         let cause = if reached.target {
             SpawnErasure::TargetErased
@@ -71,9 +86,10 @@ impl AgentDispatcher<'_> {
     /// Behind its permanent hard-delete marker it is an erase, as an asker
     /// or a target: [`Self::erase_planned_intent_content_in_txn`]. Without
     /// the marker, each intent it asked keeps its key, ask, custody, plan or
-    /// refusal, frozen start and pack, launch and leader exposures, and
-    /// names no asker: its asker can no longer replay, settle or launch it,
-    /// and a launched team's leader still runs with what its launch froze.
+    /// refusal, frozen start and pack, launch and leader exposures and its
+    /// asker's erase selector, and names no asker: its asker can no longer
+    /// replay, settle or launch it, and a launched team's leader still runs
+    /// with what its launch froze.
     /// One still in flight moves to in doubt (FIX 5097): its custody can no
     /// longer settle it. One-way, in the scrub's own transaction. An id
     /// whose entity is no actor scans nothing.
@@ -113,7 +129,9 @@ impl AgentDispatcher<'_> {
     /// An erase of `erased` from the planned intents (Engine 10-22): each
     /// intent one of them asked, or whose plan seats one as its target,
     /// takes its erased form in every phase, and an erased asker is
-    /// forgotten. One pass over the intents, in the erase's own transaction.
+    /// forgotten. An asker a plain scrub forgot is found by its erase
+    /// selector (FIX 9182). One pass over the intents, in the erase's own
+    /// transaction.
     /// An id stored as anything but a person, a machine or an AGENT_DEF
     /// asks and seats nothing, and is passed over.
     ///
@@ -126,9 +144,11 @@ impl AgentDispatcher<'_> {
         erased: &BTreeSet<EntityId>,
     ) -> Result<()> {
         let mut ids = BTreeSet::new();
+        let mut selectors = BTreeSet::new();
         for id in erased {
             if !names_no_actor(store, wtxn, id)? {
                 ids.insert(*id);
+                selectors.insert(asker_erase_key(id));
             }
         }
         if ids.is_empty() {
@@ -138,7 +158,10 @@ impl AgentDispatcher<'_> {
         for row in INTENTS.iter_from(store, wtxn, &[])? {
             let (key, mut intent) = row?;
             let reached = Reached {
-                asker: intent.actor.is_some_and(|actor| ids.contains(&actor)),
+                asker: intent.actor.is_some_and(|actor| ids.contains(&actor))
+                    || intent
+                        .asker_erase_key
+                        .is_some_and(|selector| selectors.contains(&selector)),
                 target: intent.target().is_some_and(|target| ids.contains(&target)),
             };
             if reached.asker || reached.target {

@@ -197,7 +197,8 @@ pub use runner_done::{
 
 pub(crate) use create_validation::{
     completed_task_at_in_txn, reject_born_expired_task_deadline, reject_incoherent_task_terminal,
-    settled_task_result_binding, task_human_assignee, task_is_terminal,
+    settled_task_result_binding, settled_task_result_binding_in_txn, task_human_assignee,
+    task_is_terminal,
 };
 pub(crate) use rate_limit::task_create_owner;
 pub(crate) use task_continuation::{

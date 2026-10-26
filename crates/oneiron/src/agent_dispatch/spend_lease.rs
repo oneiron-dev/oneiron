@@ -35,6 +35,7 @@ use super::spend_record::{
 use super::widen_record::invalid;
 
 mod ancestry;
+mod closed_scope;
 
 pub(super) use self::ancestry::observe as observe_spend_walk;
 
@@ -188,13 +189,19 @@ impl AgentDispatcher<'_> {
         }
         let additional = maximum.units - scope.cap_units;
         if scope.parent.is_some() {
-            let host = self.open_parent_in_txn(&txn, &scope)?;
+            // FIX 10541: the increase holds at the booking host and once
+            // through each closed hard scope on the way, no more than its room.
+            let Host { host, boundaries } = self.host_in_txn(&txn, &scope)?;
+            if let Some(refused) = closed_scope::boundary_refusal(&boundaries, additional) {
+                return Err(refused.into());
+            }
             let mut host = self.make_local_in_txn(&mut txn, host, additional)?;
             host.held_units = host
                 .held_units
                 .checked_add(additional)
                 .ok_or(crate::Error::ArithmeticOverflow("spend lease top-up"))?;
             SCOPE.put(&self.vault.store, &mut txn, &host.scope.0, &host)?;
+            closed_scope::hold_through(self, &mut txn, boundaries, additional)?;
         }
         scope.cap_units = maximum.units;
         scope.shown_at_ms = Some(shown.at_ms);
@@ -206,7 +213,10 @@ impl AgentDispatcher<'_> {
     /// Reserves `child`'s scope under `parent` in one transaction: units move
     /// from the parent's available into its held units. Refuses only a carve
     /// the nearest hard ancestor cannot cover. A hold larger than what is
-    /// available holds what is available; the cap is enforced at spend.
+    /// available holds what is available; the cap is enforced at spend. The
+    /// child keeps `parent` as its parent; a closed parent books at its
+    /// nearest open ancestor, through each closed hard scope between, which
+    /// holds the reservation too and bounds it to its room (FIX 10541).
     pub fn reserve_child_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -233,13 +243,13 @@ impl AgentDispatcher<'_> {
         if SCOPE.contains(&self.vault.store, txn, &id.0)? {
             return Err(invalid("the child's spend scope is already reserved").into());
         }
-        let host = self.effective_scope_in_txn(txn, parent)?;
-        let available = self.available_from_in_txn(txn, &host)?;
+        let booking = self.booking_in_txn(txn, parent)?;
+        let available = self.available_through_in_txn(txn, &booking)?;
         let (amount, hard) = match ask {
             ChildSpend::Carve { cap_units } => {
                 if cap_units > available {
                     return Err(SpendRefused::OverCap {
-                        scope: host.scope,
+                        scope: closed_scope::refusing_scope(&booking, cap_units),
                         available_units: available,
                         asked_units: cap_units,
                     });
@@ -248,12 +258,14 @@ impl AgentDispatcher<'_> {
             }
             ChildSpend::Hold { expected_units } => (expected_units.min(available), false),
         };
+        let Host { host, boundaries } = booking;
         let mut host = self.make_local_in_txn(txn, host, amount)?;
         host.held_units = host.held_units.saturating_add(amount);
         SCOPE.put(&self.vault.store, txn, &host.scope.0, &host)?;
+        closed_scope::hold_through(self, txn, boundaries, amount)?;
         let scope = SpendScope {
             scope: id,
-            parent: Some(host.scope),
+            parent: Some(parent.clone()),
             unit: host.unit,
             cap_units: amount,
             hard,
@@ -307,7 +319,9 @@ impl AgentDispatcher<'_> {
     /// Spends `units` against `scope`. A soft scope past its hold draws the
     /// excess from its parent chain; a hard scope, or the hard ancestor the
     /// chain reaches, refuses with [`SpendRefused::OverCap`] and records
-    /// nothing. A charge to a closed scope lands on its nearest open ancestor.
+    /// nothing. A charge to a closed scope lands on its nearest open ancestor,
+    /// which alone pays, and is tallied at each closed hard scope on the way
+    /// (FIX 10541).
     pub fn charge_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -566,7 +580,10 @@ impl AgentDispatcher<'_> {
         units: u64,
         record_whole: bool,
     ) -> std::result::Result<SpendRead, SpendRefused> {
-        let target = self.effective_scope_in_txn(txn, scope)?;
+        let Host {
+            host: target,
+            boundaries,
+        } = self.booking_in_txn(txn, scope)?;
         let drawn = if record_whole {
             units.min(self.available_from_in_txn(txn, &target)?)
         } else {
@@ -575,6 +592,7 @@ impl AgentDispatcher<'_> {
         let mut target = self.make_local_in_txn(txn, target, drawn)?;
         target.spent_units = target.spent_units.saturating_add(units);
         SCOPE.put(&self.vault.store, txn, &target.scope.0, &target)?;
+        closed_scope::tally_through(self, txn, boundaries, units)?;
         Ok(self.spend_read_in_txn(txn, &target)?)
     }
 

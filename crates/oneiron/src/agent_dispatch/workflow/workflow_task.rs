@@ -165,7 +165,9 @@ impl AgentDispatcher<'_> {
             .parent_dispatch_input_in_txn(txn, parent)
             .and_then(|parent_input| {
                 parent_input
-                    .map(|parent_input| self.effective_context_spec(parent, &parent_input))
+                    .map(|parent_input| {
+                        self.effective_context_spec_in_txn(txn, parent, &parent_input)
+                    })
                     .transpose()
             });
         let Ok(Some(parent_spec)) = parent_spec else {
