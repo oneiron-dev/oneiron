@@ -76,6 +76,9 @@ pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
+pub(crate) use self::reply_job::{
+    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

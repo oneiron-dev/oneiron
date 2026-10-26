@@ -7,19 +7,31 @@
 //!
 //! The queue is the source of truth: a job survives a restart, and a rerun
 //! after one reuses the kept body and replays the logical send, so it never
-//! asks the model twice or sends twice.
+//! asks the model twice or sends twice. A held or failed send, and a fault
+//! the job may get past on its own, wait in the queue and run again after a
+//! backoff, as the Dreamer pass once resumed its parked wake; an ambiguous
+//! send, or a fault that waits on the owner, ends the job failed.
+//!
+//! Erase reaches the job (FIX 2405): a hard erase of its agent, its
+//! receiving identity, its actor or its known counterparty leaves the job's
+//! event without its payload and takes the job's result with it.
+
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, ClaimAttempt, ClaimOutcome,
     CleanupAttemptLeases, CompleteAttempt, EnqueueAttempt, EnqueueOutcome, FailAttempt,
-    SetAttemptResult,
+    RequeueAttempt, SetAttemptResult,
 };
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::connector_key::events::ConnectorEvent;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::store::Store;
+use crate::surface_event::{SurfaceConnectorPayload, SurfaceCounterpartyStamp};
 use crate::{EntityId, TimeRange, Vault, WriteActor};
 
 /// The attempt kind a connector reply job is queued under.
@@ -33,6 +45,15 @@ const CONNECTOR_REPLY_RESULT_DOMAIN: &[u8] = b"oneiron:connector-reply-job-resul
 const CONNECTOR_REPLY_RESULT_MEDIA_TYPE: &str = "application/json";
 /// The lease owner the host's reply worker claims jobs as.
 const CONNECTOR_REPLY_JOB_LEASE_OWNER: &str = "connector-reply-worker";
+/// How old a lease must be before a pass returns it to the queue. The
+/// worker holds none between passes, so any lease at least this old is
+/// left behind; the queue takes no zero.
+const CONNECTOR_REPLY_LEASE_RECLAIM_SECS: u64 = 1;
+/// The wait before a requeued job's first rerun; each rerun after it waits
+/// twice as long, up to [`CONNECTOR_REPLY_RETRY_MAX_SECS`]. The reply
+/// worker's own backoff.
+const CONNECTOR_REPLY_RETRY_FIRST_SECS: u64 = 1;
+const CONNECTOR_REPLY_RETRY_MAX_SECS: u64 = 60;
 
 /// One agent's reply to one connector event, handed off by the Dreamer
 /// pass that woke the agent.
@@ -55,13 +76,17 @@ pub enum ConnectorReplyStage {
     /// The reply left through the recorded dispatch (delivered, degraded,
     /// suppressed or let go: see `outcome`).
     Dispatched,
-    /// The Gate held the reply.
+    /// The Gate held the reply; the job runs again after a backoff, and
+    /// the send goes once the hold is gone.
     Held,
-    /// The send failed.
+    /// The send failed; the job runs again after a backoff.
     Failed,
-    /// The send may have landed; it waits for a look, never a resend.
+    /// The send may have landed; the job ends failed and waits for a look,
+    /// never a resend.
     Ambiguous,
-    /// The job could not run: the agent, the model or the vault failed.
+    /// The job could not run: the agent, the model or the vault failed. It
+    /// runs again after a backoff, unless the failure waits on the owner
+    /// (`waits_on_owner`), which ends it failed.
     Fault,
 }
 
@@ -89,6 +114,10 @@ pub struct ConnectorReplyJobResult {
     pub witness_repair: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+    /// A fault only the owner can clear (an authority, consent, secret or
+    /// disabled-agent refusal), as a parked wake once waited on the owner.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waits_on_owner: bool,
 }
 
 impl ConnectorReplyJobResult {
@@ -104,6 +133,25 @@ impl ConnectorReplyJobResult {
             witness_refs: Vec::new(),
             witness_repair: None,
             reason: None,
+            waits_on_owner: false,
+        }
+    }
+
+    /// Ends the job at `Fault` on `error`, keeping what it had already done.
+    pub fn fault(&mut self, error: &Error) {
+        self.stage = ConnectorReplyStage::Fault;
+        self.reason = Some(error.to_string());
+        self.waits_on_owner = crate::dreamer_wake::waits_on_owner_act(error.kind());
+    }
+
+    /// Whether the job runs again after a backoff rather than ending here.
+    fn runs_again(&self) -> bool {
+        match self.stage {
+            ConnectorReplyStage::Held | ConnectorReplyStage::Failed => true,
+            ConnectorReplyStage::Fault => !self.waits_on_owner,
+            ConnectorReplyStage::NoReply
+            | ConnectorReplyStage::Dispatched
+            | ConnectorReplyStage::Ambiguous => false,
         }
     }
 }
@@ -134,9 +182,10 @@ impl Vault {
         })
     }
 
-    /// Returns to the queue every job a stopped process left leased, so a
-    /// restart picks them up. The reply worker runs it once as it starts,
-    /// before it claims anything.
+    /// Returns to the queue every job left leased, by a stopped process or
+    /// by a pass whose settle failed, so the next claim picks it up. The
+    /// reply worker runs it at the start of every pass, when it holds no
+    /// lease of its own.
     ///
     /// # Errors
     /// The queue write fails.
@@ -145,7 +194,7 @@ impl Vault {
             CONNECTOR_REPLY_JOB_KIND,
             CleanupAttemptLeases {
                 now,
-                lease_timeout_secs: 0,
+                lease_timeout_secs: CONNECTOR_REPLY_LEASE_RECLAIM_SECS,
             },
         )?;
         Ok(())
@@ -187,12 +236,16 @@ impl Vault {
         }
     }
 
-    /// Keeps `result` as the claimed job's result and settles it: a job that
-    /// answered or had nothing to answer completes; a held, failed,
-    /// ambiguous or faulted one fails with its stage as the reason, so it
-    /// waits for a look and its requeue reuses the kept body. The first
-    /// result a job keeps stands; a rerun after a restart names the same
-    /// ref. Returns that ref.
+    /// Settles the claimed job with `result`. A held or failed send, or a
+    /// fault the job may get past on its own, returns the job to the queue
+    /// as the same row, due after a backoff that doubles with each run: the
+    /// rerun reuses the kept body and replays the logical send, which sends
+    /// once the hold or the provider clears. Otherwise `result` is kept as
+    /// the job's result and the job ends: completed when it answered or had
+    /// nothing to answer, failed with its stage as the reason when the send
+    /// is ambiguous or the fault waits on the owner. The first result a job
+    /// keeps stands; a rerun after a restart names the same ref. Returns
+    /// that ref, or `None` for a requeued job.
     ///
     /// # Errors
     /// The result does not encode, or a vault or queue write fails.
@@ -202,11 +255,28 @@ impl Vault {
         job: &ConnectorReplyJob,
         result: &ConnectorReplyJobResult,
         now: u64,
-    ) -> Result<String> {
-        let artifact_id = EntityId::derive(
-            CONNECTOR_REPLY_RESULT_DOMAIN,
-            &[claimed.id.as_bytes().as_slice()],
-        )?;
+    ) -> Result<Option<String>> {
+        let queue = AttemptQueue::new(self);
+        let reason = || {
+            result
+                .reason
+                .clone()
+                .unwrap_or_else(|| format!("connector reply {:?}", result.stage))
+        };
+        if result.runs_again() {
+            let shift = claimed.attempt_count.saturating_sub(1).min(6);
+            let wait =
+                (CONNECTOR_REPLY_RETRY_FIRST_SECS << shift).min(CONNECTOR_REPLY_RETRY_MAX_SECS);
+            queue.requeue(RequeueAttempt {
+                id: claimed.id,
+                lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
+                attempt_count: claimed.attempt_count,
+                reason: reason(),
+                due_at: now.saturating_add(wait),
+            })?;
+            return Ok(None);
+        }
+        let artifact_id = connector_reply_result_id(claimed.id)?;
         let result_ref = format!("{CONNECTOR_REPLY_RESULT_PREFIX}{}", artifact_id.to_hex());
         if self.get_blob_artifact(&artifact_id)?.is_none() {
             let bytes = serde_json::to_vec(result)
@@ -231,7 +301,6 @@ impl Vault {
                 now,
             )?;
         }
-        let queue = AttemptQueue::new(self);
         queue.set_result(SetAttemptResult {
             id: claimed.id,
             lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
@@ -256,16 +325,110 @@ impl Vault {
                     id: claimed.id,
                     lease_owner: CONNECTOR_REPLY_JOB_LEASE_OWNER.to_owned(),
                     attempt_count: claimed.attempt_count,
-                    reason: result
-                        .reason
-                        .clone()
-                        .unwrap_or_else(|| format!("connector reply {:?}", result.stage)),
+                    reason: reason(),
                     now,
                 })?;
             }
         }
-        Ok(result_ref)
+        Ok(Some(result_ref))
     }
+}
+
+/// The artifact a job attempt's result is kept as.
+fn connector_reply_result_id(attempt: AttemptId) -> Result<EntityId> {
+    EntityId::derive(
+        CONNECTOR_REPLY_RESULT_DOMAIN,
+        &[attempt.as_bytes().as_slice()],
+    )
+}
+
+/// Leaves a reply job row's payload without its event's payload when the
+/// job names anyone among `erased`: its agent, or the event's actor,
+/// receiving identity or known counterparty. The event's id, connector,
+/// kind and predicate stay, so the row still decodes; a claim of it answers
+/// nothing. Returns whether the row changed: a row that does not decode, or
+/// one already erased, names nobody.
+///
+/// # Errors
+/// The erased job does not encode.
+pub(crate) fn erase_connector_reply_job_payload(
+    record: &mut AttemptRecord,
+    erased: &BTreeSet<EntityId>,
+) -> Result<bool> {
+    let Ok(mut job) = serde_json::from_slice::<ConnectorReplyJob>(&record.payload) else {
+        return Ok(false);
+    };
+    if job.event.payload.is_null() {
+        return Ok(false);
+    }
+    let names_erased = erased.contains(&job.agent)
+        || SurfaceConnectorPayload::from_connector_event(&job.event).is_ok_and(|origin| {
+            let known = match &origin.counterparty {
+                SurfaceCounterpartyStamp::Known { counterparty_ref } => {
+                    EntityId::from_hex(counterparty_ref).ok()
+                }
+                SurfaceCounterpartyStamp::Unknown { .. }
+                | SurfaceCounterpartyStamp::Unparsed { .. } => None,
+            };
+            [origin.actor().ok(), origin.receiving_identity().ok(), known]
+                .into_iter()
+                .flatten()
+                .any(|id| erased.contains(&id))
+        });
+    if !names_erased {
+        return Ok(false);
+    }
+    job.event.payload = serde_json::Value::Null;
+    record.payload = serde_json::to_vec(&job)
+        .map_err(|_| Error::InvariantViolation("erased connector reply job did not encode"))?;
+    Ok(true)
+}
+
+/// Erases the result each of `attempts`, reply job rows the payload pass
+/// erased, kept: its artifact is removed whole in the erase's transaction,
+/// as a staged job's artifact is, with its version chain, head and indexes.
+/// An attempt that kept no result is left alone; a legal hold on the
+/// artifact keeps it, logged, and the rest of the erase goes on.
+///
+/// # Errors
+/// Storage errors.
+pub(crate) fn erase_connector_reply_results_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    attempts: &[AttemptId],
+) -> Result<()> {
+    for attempt in attempts {
+        let artifact = connector_reply_result_id(*attempt)?;
+        let stored = EntityStoreRead::port_entity_raw(store, txn, &artifact)?
+            .as_deref()
+            .and_then(crate::batch::EntityMetadataHeader::parse)
+            .map(|header| header.entity_type);
+        if stored != Some(crate::registry::ENTITY_TYPE_BLOB_ARTIFACT) {
+            continue;
+        }
+        if let Err(error) = store.reject_legal_hold_in_txn(txn, artifact.as_bytes()) {
+            if !crate::store::legal_hold::held_in_txn(store, txn, artifact.as_bytes())? {
+                return Err(error);
+            }
+            tracing::warn!(
+                artifact = %artifact.to_hex(),
+                "connector reply erase: a legal hold keeps the job's result"
+            );
+            continue;
+        }
+        crate::provenance::erase_row_provenance_without_attempt_payloads_in_txn(
+            store, txn, &artifact, true,
+        )?;
+        let (_, vector, graph, neighbors) = crate::batch::deindex_entity(store, txn, &artifact)?;
+        crate::ppr::invalidate_ppr_for_delete(store, txn, &artifact, &neighbors)?;
+        if graph {
+            crate::ppr::increment_graph_version(store, txn)?;
+        }
+        if vector {
+            crate::hnsw::increment_vector_version(store, txn)?;
+        }
+    }
+    Ok(())
 }
 
 /// The dedupe and run key of one agent's reply job for one event.
