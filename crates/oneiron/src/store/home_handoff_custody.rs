@@ -527,15 +527,18 @@ pub(crate) fn holder_retired(s: &Store, k: KeyRef, holder: EntityId) -> Result<(
 }
 
 /// The catalog scrub of `KEY_CUSTODY_ERASABLE_REF` (FIX 8875), run in an
-/// erase of `actor`'s own transaction: stages the retirement of every key
-/// of the actor, each metadata row's and each orphan custody holds, then
-/// deletes the actor's rows. Holder debts stay until each holder's
+/// erase of `actor`'s own transaction (an entity that is no actor has
+/// none): stages the retirement of every key of the actor, each metadata
+/// row's and each orphan custody holds, then deletes the actor's rows. Holder debts stay until each holder's
 /// retirement is verified. An archived vault's custody is its
 /// replacement's: its rows go, its keys are not touched.
 ///
 /// # Errors
 /// Storage and custody faults.
 pub(crate) fn scrub_actor_in_txn(vault: &Vault, w: &mut RwTxn<'_>, actor: &EntityId) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, w, actor)? {
+        return Ok(());
+    }
     let store = &vault.store;
     let purpose = ErasablePurpose::HomeHandoff;
     let mut items: std::collections::BTreeSet<ErasableItem> =
