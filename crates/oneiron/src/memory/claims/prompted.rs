@@ -6,12 +6,13 @@
 
 use super::*;
 use crate::provenance::birth::RowBirth;
+use crate::provenance::birth::prompted::prompt_input_held_in_txn;
 use crate::provenance::made_by::MadeByClass;
 
 impl Memory<'_> {
     /// [`Self::claim_propose`] for words a model wrote from a prompt that
     /// carried `producers`, read as `read` through `door`: the proposal's
-    /// birth names each producer still live here as a prompt input
+    /// birth names each producer as a prompt input
     /// ([`Self::prompted_birth`]). With no producer it is
     /// [`Self::claim_propose`].
     pub fn claim_propose_prompted(
@@ -34,10 +35,10 @@ impl Memory<'_> {
 
     /// The birth of `input`, proposed through `door` by this handle's actor
     /// from a prompt that carried `producers` and read as `read`: each
-    /// producer still live here, once, as a prompt input. A producer gone
-    /// since the prompt was built names no row a birth may point at, so it
-    /// drops out. `None` when no producer is live: the proposal is born as
-    /// any proposal is.
+    /// producer, once, as a prompt input, an erased one included, by ref
+    /// (rule 5 of FIX 8192). Only an id this vault never held as a row is
+    /// left out, since it names nothing. `None` when no producer is left:
+    /// the proposal is born as any proposal is.
     pub(super) fn prompted_birth(
         &self,
         input: &ClaimInput,
@@ -48,23 +49,22 @@ impl Memory<'_> {
         if producers.is_empty() {
             return Ok(None);
         }
-        let live = {
+        let held = {
             let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
-            let mut live = Vec::with_capacity(producers.len());
+            let mut held = Vec::with_capacity(producers.len());
             for row in producers {
-                let state = crate::vault::live_entity_row_in_txn(&self.vault.store, &rtxn, row)?;
-                if state.is_live() {
-                    live.push(*row);
+                if prompt_input_held_in_txn(&self.vault.store, &rtxn, row)? {
+                    held.push(*row);
                 }
             }
-            live
+            held
         };
         let class = MadeByClass::of_source(self.claim_source(&input.source)?);
         Ok(RowBirth::prompted(
             WriteActor::new(self.actor, self.actor_class),
             class,
             door,
-            &live,
+            &held,
             read,
             self.vault.store.clock.now_recorded_at(),
         ))

@@ -147,9 +147,11 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "insufficient_quota",
             "quota_spent",
         ),
-        LlmError::Retryable(RetryableLlmError::Timeout) => {
-            (StatusCode::GATEWAY_TIMEOUT, "api_error", "timeout")
-        }
+        LlmError::Retryable(RetryableLlmError::Timeout) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "api_error",
+            super::choices::TIMEOUT_CODE,
+        ),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => (
             StatusCode::SERVICE_UNAVAILABLE,
             "api_error",

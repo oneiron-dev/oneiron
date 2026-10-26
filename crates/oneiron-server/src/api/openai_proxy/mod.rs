@@ -39,6 +39,7 @@ use oneiron::{
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 
+pub(super) use self::choices::TIMEOUT_CODE;
 pub(super) use self::receipt::PROXY_CALL_VERB;
 use self::exchange::Exchange;
 use self::receipt::{ProxyCaller, ProxyRequest};
@@ -81,6 +82,7 @@ async fn chat_completions(
     connection: Extensions,
     body: Bytes,
 ) -> Response {
+    let arrived = tokio::time::Instant::now();
     let request = ProxyRequest::of(&body);
     let chat: ChatCompletionRequest = match serde_json::from_slice(&body) {
         Ok(chat) => chat,
@@ -89,6 +91,8 @@ async fn chat_completions(
             return request.unattributed(&server, refused);
         }
     };
+    // FIX 8189: the caller's clock runs from arrival, its resolution included.
+    let clock = choices::CallerClock::starting(arrived, chat.deadline_ms);
     let Ok(actor) = super::resolve_mcp_caller(
         McpSurfaceMode::Primary,
         "memory-proxy",
@@ -105,9 +109,8 @@ async fn chat_completions(
     let mut listed = Vec::new();
     // OF-568 L4: the attempt whose live run the call holds, as the hold
     // witnessed it.
-    let (answer, attempt) =
-        super::call_receipt::attempt_witnessed(complete_as(&server, actor, chat, &mut listed))
-            .await;
+    let completed = complete_as(&server, actor, chat, clock, &mut listed);
+    let (answer, attempt) = super::call_receipt::attempt_witnessed(completed).await;
     caller.answer(&server, request, attempt, &listed, answer)
 }
 
@@ -120,10 +123,11 @@ pub(crate) async fn ai_chat_completions(
     session: Option<EntityId>,
     chat: ChatCompletionRequest,
 ) -> super::facade::host_doors::Listed<ChatCompletionResponse> {
+    let clock = choices::CallerClock::starting(tokio::time::Instant::now(), chat.deadline_ms);
     let actor = super::mcp_gateway::resolve_mcp_actor_for_auth(server, auth, session).await;
     let mut listed = Vec::new();
     let answer = match actor {
-        Ok(actor) => complete_as(server, actor, chat, &mut listed).await,
+        Ok(actor) => complete_as(server, actor, chat, clock, &mut listed).await,
         Err(_) => Err(unauthorized()),
     };
     let answer = match answer {
@@ -138,6 +142,7 @@ async fn complete_as(
     server: &Arc<SyncServer>,
     actor: McpCallContext,
     chat: ChatCompletionRequest,
+    clock: choices::CallerClock,
     listed: &mut Vec<EntityId>,
 ) -> Result<ChatCompletionResponse, Response> {
     if chat.stream == Some(true) {
@@ -147,7 +152,6 @@ async fn complete_as(
         ));
     }
     let count = choices::choice_count(chat.n)?;
-    let clock = choices::CallerClock::starting_now(chat.deadline_ms);
     let Some(newest) = chat.messages.iter().rposition(ChatMessage::is_user) else {
         return Err(invalid(
             "user_message_required",
@@ -165,20 +169,11 @@ async fn complete_as(
     // they are read for both, on this device only when both are.
     let reads_for =
         crate::device_local::prompt_destination(actor.destination(), request.envelope.locality);
-    let recall_deadline = clock.recall_deadline_ms(server.vault.call_mode_deadline());
-    let recalled = recall(
-        server,
-        &actor,
-        &reads_for,
-        query.clone(),
-        recall_deadline,
-        listed,
-    )
-    .await?;
+    let recalled = recall(server, &actor, &reads_for, query.clone(), clock, listed).await?;
     let injected = recalled.is_some();
     // The rows the prompt carried, and its memory block as the model read it
     // (FIX 8191, 8192): none when nothing went in.
-    let memory_text = recalled.as_ref().map(|memory| wire::answer_text(memory));
+    let memory_text = recalled.as_ref().map(wire::answer_text);
     let producers: &[EntityId] = if injected { listed.as_slice() } else { &[] };
     if let Some(memory) = recalled {
         // Just before the message it was recalled for.
@@ -194,7 +189,7 @@ async fn complete_as(
     // proposes nothing.
     admit_connector(&actor, server)?;
     let answers = choices::answer_texts(&first, &rest);
-    release::completed_answers(server, &actor, producers, &answers)?;
+    release::completed_answers(server, &actor, producers)?;
     let read = memory_text.as_deref().map(str::as_bytes);
     let exchange = Exchange {
         user: &query,
@@ -363,7 +358,7 @@ async fn recall(
     actor: &McpCallContext,
     reads_for: &ReadDestination,
     query: String,
-    deadline_ms: Option<u64>,
+    clock: choices::CallerClock,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
     let proof = actor
@@ -378,7 +373,7 @@ async fn recall(
         limit: Some(RECALL_LIMIT),
         format: Some("md".to_owned()),
         as_of: None,
-        deadline_ms,
+        deadline_ms: clock.recall_deadline_ms(server.vault.call_mode_deadline()),
         media: None,
         query_affect: None,
         telemetry: None,
@@ -394,7 +389,11 @@ async fn recall(
         )
         .await;
     served.extend(listed.iter().copied());
+    // A recall the caller's clock cut is the call's timeout (FIX 8189).
     let pack = pack.map_err(|failed| {
+        if clock.ran_out() {
+            return choices::timeout();
+        }
         error(
             StatusCode::SERVICE_UNAVAILABLE,
             "api_error",

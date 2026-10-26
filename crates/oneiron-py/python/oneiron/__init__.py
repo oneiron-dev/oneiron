@@ -40,7 +40,9 @@ class OneironError(RuntimeError):
     ``suggestions`` is never empty. ``hook`` is the verb hook's stop when one
     stopped the call: on ``PENDING_ASK`` it is ``{"status": "pending",
     "invocation", "ask"}``, and :meth:`Oneiron.retry` resends the call under
-    that invocation.
+    that invocation. ``retry_after`` (seconds) and ``resets_at`` (Unix
+    seconds, in the source's order) say when to call again, when the
+    refusal's source said (FIX 8190).
     """
 
     def __init__(
@@ -50,6 +52,8 @@ class OneironError(RuntimeError):
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
         hook: dict[str, Any] | None = None,
+        retry_after: int | None = None,
+        resets_at: list[int] | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -59,6 +63,9 @@ class OneironError(RuntimeError):
         self.wrong_root = wrong_root
         # The verb hook's stop (ARCH-0080 §3), as the engine's MemoryError names it.
         self.hook = hook
+        # When to call again, as the refusal's source said (FIX 8190).
+        self.retry_after = retry_after
+        self.resets_at = tuple(resets_at) if resets_at is not None else None
 
 
 def _typed_error(payload: object, fallback: str) -> OneironError:
@@ -84,7 +91,17 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         wrong_root = correction if all(isinstance(value, str) for value in correction.values()) else None
         hook = payload.get("hook")
         hook = hook if isinstance(hook, dict) and isinstance(hook.get("status"), str) else None
-        return OneironError(payload["code"], payload["message"], suggestions, wrong_root, hook)
+        retry_after = payload.get("retry_after")
+        retry_after = retry_after if isinstance(retry_after, int) else None
+        resets_at = payload.get("resets_at")
+        resets_at = (
+            resets_at
+            if isinstance(resets_at, list) and all(isinstance(entry, int) for entry in resets_at)
+            else None
+        )
+        return OneironError(
+            payload["code"], payload["message"], suggestions, wrong_root, hook, retry_after, resets_at
+        )
     return OneironError(
         "INTERNAL_SERVER_ERROR",
         fallback,

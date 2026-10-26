@@ -3,10 +3,12 @@
 //! Each choice is its own admitted model call on the call's one run, sent in
 //! index order once the one before it settles, so `n` choices pace through
 //! the ladder one call at a time and hold no more of it at once than one call
-//! does. The caller's `deadline_ms`, counted once from when the call arrived,
-//! is the one clock for its recall, every choice and each wait for a resting
-//! offer; nothing renews it. With no deadline a choice waits for an offer as
-//! `generate` does, for the vault's longest wait.
+//! does. The caller's `deadline_ms`, counted once from when the call arrived
+//! (before its caller is resolved), is the one clock for its recall, every
+//! choice and each wait for a resting offer; nothing renews it. With no
+//! deadline a choice waits for an offer as `generate` does, for the vault's
+//! longest wait. Release and remember run after the last answer, outside the
+//! clock, so an answer the model finished is never lost to it.
 
 use std::time::Duration;
 
@@ -20,6 +22,16 @@ use oneiron::{FatalLlmError, LlmError, LlmRequest, LlmResponse, RetryableLlmErro
 use tokio::time::Instant;
 
 use crate::models::OfferLadder;
+
+/// The code a call the caller's clock cut answers with, raw (504) and on the
+/// typed facade, which gives it the same status.
+pub(in crate::api) const TIMEOUT_CODE: &str = "timeout";
+
+/// The refusal of a call the caller's clock cut: 504 [`TIMEOUT_CODE`], as a
+/// model call that ran out of time answers.
+pub(super) fn timeout() -> Response {
+    super::wire::upstream_error(RetryableLlmError::Timeout.into())
+}
 
 /// How many choices the body asks for: one when it names none. A count of
 /// zero asks for nothing and is refused, as a malformed one is.
@@ -42,17 +54,22 @@ pub(super) struct CallerClock {
 }
 
 impl CallerClock {
-    /// The clock of a call arriving now with `deadline_ms`. A deadline past
-    /// what the clock can count is as good as none being near: the call
-    /// waits for the furthest instant it can name.
-    pub(super) fn starting_now(deadline_ms: Option<u64>) -> Self {
-        let arrived = Instant::now();
+    /// The clock of a call that arrived at `arrived` with `deadline_ms`. A
+    /// deadline past what the clock can count is as good as none being near:
+    /// the call waits until `u32::MAX` seconds (about 136 years) after it
+    /// arrived.
+    pub(super) fn starting(arrived: Instant, deadline_ms: Option<u64>) -> Self {
         let deadline = deadline_ms.map(|ms| {
             arrived
                 .checked_add(Duration::from_millis(ms))
                 .unwrap_or_else(|| arrived + Duration::from_secs(u64::from(u32::MAX)))
         });
         Self { deadline }
+    }
+
+    /// Whether the caller's deadline has passed.
+    pub(super) fn ran_out(&self) -> bool {
+        self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
     }
 
     /// The recall's own `deadline_ms`: what is left of the caller's, when it
@@ -102,10 +119,10 @@ impl CallerClock {
 }
 
 /// The call's answers, choice 0 first: `count` answers to `request`, each
-/// its own admitted call on `run`, in index order, on `clock`. The first
-/// choice's failure is the call's error. A later failure ends the call with
-/// the answers before it, already paid for, so a call cut short answers with
-/// fewer choices than it asked for, never with none.
+/// its own admitted call on `run`, in index order, on `clock`. A reply lists
+/// every choice it asked for or none: any choice's failure is the call's
+/// error, with its own code and timing, and a choice the clock cut is a
+/// `timeout`.
 pub(super) async fn answer_choices(
     ladder: &OfferLadder,
     run: &RunAdmission,
@@ -116,10 +133,7 @@ pub(super) async fn answer_choices(
     let first = clock.generate(ladder, run, request.clone()).await?;
     let mut rest = Vec::new();
     for _ in 1..count {
-        match clock.generate(ladder, run, request.clone()).await {
-            Ok(answer) => rest.push(answer),
-            Err(_) => break,
-        }
+        rest.push(clock.generate(ladder, run, request.clone()).await?);
     }
     Ok((first, rest))
 }
