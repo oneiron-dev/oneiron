@@ -31369,7 +31369,7 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "mod": 2,
       "re-export": 10
      }
@@ -31569,6 +31569,16 @@
      "surface": {
       "crate-vis": 6,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/sweep.rs",
+     "purpose": "The sweep's entity documents (FIX 10159): the slot each retained head names, and the owner's own compaction…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54588,7 +54598,7 @@
      "path": "src/recovery/checkpoint/payload/mod.rs",
      "purpose": "The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -64860,6 +64870,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sweep/compact/documents.rs",
+     "purpose": "The entity each persisted `e:` slot holds the document of (FIX 10159)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sweep/corrupt.rs",
      "purpose": "The full-carrier pass a corrupt CLAIM's erase asks of the sweep (FIX 7800, ARCH-0038)",
      "surface": {
@@ -65159,6 +65179,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/checkpoint_payload/documents.rs",
+     "purpose": "The native entity-document carriers grouped with their document (FIX 10932): a pending text edit (`qd:e:`)…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -65175,7 +65205,7 @@
      "path": "src/sync/checkpoint_payload/mod.rs",
      "purpose": "The mixed sync carriers in a checkpoint (KS-7, FIX 5688 KS7-3a, Engine design (d)): the type boundary…",
      "surface": {
-      "crate-vis": 38
+      "crate-vis": 42
      }
     },
     {
@@ -65225,7 +65255,7 @@
      "path": "src/sync/checkpoint_payload/rows.rs",
      "purpose": "The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
      }
     },
     {
@@ -78708,7 +78738,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79464,14 +79494,14 @@
      "purpose": "Inbound SurfaceEvent adapter contract (OF-347 CID-6)"
     },
     "sweep": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 274,
+     "files": 275,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79676,7 +79706,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5275,
+   "source_files": 5278,
    "test_files": 902
   },
   "oneiron-android": {
