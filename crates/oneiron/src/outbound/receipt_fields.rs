@@ -566,7 +566,7 @@ fn append_effector_budget_receipt(
             .read
             .rows
             .iter()
-            .filter(|row| charge.matched_rows.contains(&row.row_index))
+            .filter(|row| charge.matched_rows.contains(&row.row))
             .map(|row| row.remaining)
             .min();
         if let Some(binding_remaining) = binding_remaining {
@@ -589,7 +589,7 @@ fn append_effector_budget_receipt(
             let pool_remaining = charge.read.pool.as_ref().and_then(|read| {
                 read.rows
                     .iter()
-                    .filter(|row| pool.matched_rows.contains(&row.row_index))
+                    .filter(|row| pool.matched_rows.contains(&row.row))
                     .map(|row| row.remaining)
                     .min()
             });

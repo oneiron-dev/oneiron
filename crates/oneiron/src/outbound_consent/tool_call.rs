@@ -126,6 +126,12 @@ impl PreparedToolCall {
     pub fn call(&self) -> &ScopedMcpCallContext {
         &self.frozen.call
     }
+    /// Whether the approved tool declared itself read-only and not
+    /// destructive: retrieval, for its budget class (FIX 8688).
+    pub(crate) fn is_read_only(&self) -> bool {
+        self.frozen.read_only_hint == Some(true) && !self.frozen.destructive_hint
+    }
+
     pub fn idempotency_supported(&self) -> bool {
         self.frozen.idempotency_supported()
     }

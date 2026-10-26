@@ -2376,7 +2376,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "fn": 4
      }
     },
@@ -10492,7 +10492,7 @@
      "path": "src/campaign/claims/codec.rs",
      "purpose": "MessagePack codecs, write-door validator, and map/key/token toolkit",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "fn": 7
      }
     },
@@ -10765,7 +10765,7 @@
      "path": "src/campaign/enrollment/detection.rs",
      "purpose": "Persisted membership-transition events, detection pass, cause routing, and per-query baseline",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -10796,7 +10796,7 @@
      "path": "src/campaign/enrollment/manual.rs",
      "purpose": "Manual enrollment beside the saved-query MACRO ingress",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -10806,7 +10806,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "re-export": 9
      }
     },
@@ -10846,6 +10846,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/reconcile.rs",
+     "purpose": "One effective `campaign.member` head per person and campaign (FIX 9663, 9664, 10221)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "CampaignEnrollmentAttemptPayload",
       "CampaignEnrollmentClaim",
@@ -10855,7 +10865,7 @@
      "path": "src/campaign/enrollment/runner.rs",
      "purpose": "Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -11076,7 +11086,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LaneClockPolicy",
@@ -12861,6 +12871,16 @@
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/authority_fingerprint.rs",
+     "purpose": "A canonical fingerprint of the live read authority behind one actor key (FIX 9661), the second half of a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -18385,10 +18405,21 @@
      "path": "src/connector_key/accounting.rs",
      "purpose": "Connector key budget admission and spend settlement",
      "surface": {
-      "const": 1,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 6
+      "fn": 4,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/accounting/batch.rs",
+     "purpose": "Connector-key batch admission: a batch of send-like dispatches charged through one key, one transaction…",
+     "surface": {
+      "const": 1,
+      "fn": 2
      }
     },
     {
@@ -18635,6 +18666,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/measure.rs",
+     "purpose": "Advisory measurements of a connector key's shape against its `[limits]` rows (FIX 8680, 8685, 8687)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18648,9 +18689,9 @@
      "path": "src/connector_key/meter.rs",
      "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
-      "const": 5,
-      "crate-vis": 21,
-      "re-export": 1,
+      "const": 4,
+      "crate-vis": 22,
+      "re-export": 2,
       "struct": 6
      }
     },
@@ -18690,11 +18731,29 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "EffectorBudgetLadderEvent",
+      "EffectorBudgetLocation",
+      "EffectorBudgetRowId",
+      "EffectorBudgetRowSource"
+     ],
+     "path": "src/connector_key/meter/row.rs",
+     "purpose": "Effector budget row identity: the source (key budget row or compiled charter cap) and the ordinal a usage…",
+     "surface": {
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 4,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/connector_key/mod.rs",
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 2,
       "re-export": 16
      }
@@ -18793,7 +18852,6 @@
      "path": "src/connector_key/record/budgets.rs",
      "purpose": "Effector-budget rows: dimension/window/exhaust/reserve enums, EffectorBudget constructors, row and…",
      "surface": {
-      "const": 1,
       "crate-vis": 3,
       "enum": 5,
       "fn": 11,
@@ -18817,7 +18875,7 @@
      "path": "src/connector_key/record/key_record.rs",
      "purpose": "Key and catalog registry shapes: status, call class, catalog entry, key spec/record with validate, charter…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "enum": 2,
       "fn": 10,
       "struct": 7
@@ -19000,6 +19058,16 @@
      "path": "src/connector_key/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/connector_key/tool_effect.rs",
+     "purpose": "The budget effect of one dispatched scoped tool call (FIX 8688): the tool's own approved declaration first…",
+     "surface": {
+      "crate-vis": 4
+     }
     },
     {
      "bucket": "m",
@@ -49064,13 +49132,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound_consent/connector_call_asks.rs",
      "purpose": "The owner ask a held connector call queues (ONE-2510)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -49125,6 +49193,16 @@
      "surface": {
       "crate-vis": 4,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_consent/connector_call_driver/governance.rs",
+     "purpose": "The one grant, governing key and approved-schema resolution a connector call and a schema read share (FIX…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -49221,6 +49299,7 @@
       "ConnectorCallRequest",
       "ConnectorCallState",
       "ConnectorQuestion",
+      "ConnectorResultAbsence",
       "ConnectorToolSchema",
       "PendingConnectorCallRef",
       "UntrustedToolResult"
@@ -49228,7 +49307,7 @@
      "path": "src/outbound_consent/connector_call_types.rs",
      "purpose": "The connector-call shapes: the request, the host seam, its replies and questions, and the caller's status view",
      "surface": {
-      "enum": 2,
+      "enum": 3,
       "struct": 8,
       "trait": 1
      }
@@ -49392,7 +49471,7 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 3,
       "fn": 18,
       "re-export": 1,
@@ -71572,7 +71651,7 @@
      "path": "src/verbs/connector_call.rs",
      "purpose": "`connector.call` and `connector.schema` (ONE-2510): one tool of one catalogued connector, called by name…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "enum": 3,
       "fn": 10,
       "struct": 7
@@ -77254,7 +77333,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -77310,7 +77389,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77450,7 +77529,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 44,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78024,7 +78103,7 @@
      "purpose": "Replay-first outbound effect execution"
     },
     "outbound_consent": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78649,7 +78728,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5184,
+   "source_files": 5191,
    "test_files": 902
   },
   "oneiron-android": {
