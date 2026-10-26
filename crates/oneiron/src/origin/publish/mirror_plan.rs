@@ -239,7 +239,10 @@ fn plan_digest(plan: &MirrorPushPlan) -> String {
     field(&mut hasher, destination.secret_ref.as_bytes());
     let generation = destination.target_generation.map(|id| id.to_hex());
     field(&mut hasher, generation.unwrap_or_default().as_bytes());
-    field(&mut hasher, destination.audience.visibility.as_str().as_bytes());
+    field(
+        &mut hasher,
+        destination.audience.visibility.as_str().as_bytes(),
+    );
     field(&mut hasher, destination.audience.role.as_str().as_bytes());
     field(&mut hasher, plan.strategy.as_str().as_bytes());
     hasher.update(&plan.strategy_revision.to_le_bytes());

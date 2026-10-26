@@ -293,7 +293,8 @@ fn tip_hold(
         Ok(peeled) => peeled,
         Err(error) => return (Some(unknown(&error)), None),
     };
-    let tagged = blocking.contains(tip) || peeled.tags.iter().any(|tag| blocking.contains(&tag.tag));
+    let tagged =
+        blocking.contains(tip) || peeled.tags.iter().any(|tag| blocking.contains(&tag.tag));
     let end = match &peeled.end {
         GitRefEnd::Commit(oid) | GitRefEnd::Tree(oid) | GitRefEnd::Blob(oid) => oid,
     };
