@@ -510,6 +510,7 @@ pub(super) fn record_disposition_in_txn(
         _ => IDENTITY_PROVISIONAL_KIND,
     };
     let mut receipt = decision(actor, kind, APPLY_REASON, target, ask.to_vec(), now);
+    receipt.context = decision_context::disposition(facet);
     vault
         .store
         .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;

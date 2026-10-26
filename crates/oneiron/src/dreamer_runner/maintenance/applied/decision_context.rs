@@ -7,7 +7,11 @@
 use super::MaintenanceTarget;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
-use crate::store::{GateDecisionContext, GateDecisionId, GateDecisionReadContext};
+use crate::dreamer_runner::authority::{BaseAgent, base_agent_for_facet};
+use crate::store::{
+    GateDecisionContext, GateDecisionId, GateDecisionReadContext, GateLoopLink, GateLoopOrigin,
+    GateLoopSource,
+};
 
 /// The context of `attempt`'s applied write on `target`. A finding's claim
 /// is stored, so its row is what a reader is judged against; a fork names
@@ -32,6 +36,20 @@ pub(super) fn applied(
             .collect(),
         analysis: None,
     }
+}
+
+/// The context of a background identity disposition its `facet` recorded:
+/// the base agent that facet runs as. The pass records no attempt or run
+/// with it, so none is kept, and an ask names no row to read it by.
+pub(super) fn disposition(facet: &str) -> GateDecisionContext {
+    let source = match base_agent_for_facet(facet) {
+        BaseAgent::Dreamer => GateLoopSource::Dreamer,
+        BaseAgent::Coach => GateLoopSource::Coach,
+    };
+    GateDecisionContext::linked(
+        GateLoopLink::action(source, None, None, GateLoopOrigin::Unresolved),
+        None,
+    )
 }
 
 /// The context of a revert of the write whose receipt is `applied`: that

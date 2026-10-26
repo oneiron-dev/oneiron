@@ -437,7 +437,7 @@ impl ScopedRead<'_> {
         // now; the Owner reads every classified event already.
         let kept = match (&named, read.reader) {
             (None, LoopReader::Subject(_) | LoopReader::Admin(_)) => answered(
-                self.loop_context_about_in(txn, read, &record, claim_id),
+                self.loop_context_admitted_in(txn, read, &record, claim_id),
                 "kept read context",
             )?,
             _ => None,
@@ -452,10 +452,10 @@ impl ScopedRead<'_> {
             let about = named
                 .as_ref()
                 .map(|(_, about)| about.as_slice())
-                .or(kept.as_deref());
+                .or(kept.as_ref().map(|kept| kept.about.as_slice()));
             dependencies.extend(self.loop_subject_admits_in(txn, read, subject, actor, about)?);
         }
-        dependencies.extend(kept.into_iter().flatten());
+        dependencies.extend(kept.into_iter().flat_map(|kept| kept.dependencies));
         let actor_ref = self.loop_actor_ref_in(txn, read, actor)?;
         let claim_ref = named.map(|(id, _)| id);
         dependencies.extend(claim_ref);

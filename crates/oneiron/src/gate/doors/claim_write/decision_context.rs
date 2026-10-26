@@ -1,9 +1,9 @@
 //! A claim decision's context, computed once from the full candidate before
 //! its record is built (FIX 7499, 7500, 7801): the candidate's read context,
-//! the Dreamer run that wrote it, and the ruled risk vector over its value
-//! and evidence (ARCH-0040 `dr:SK07`). Every part is metadata. No result here
-//! decides, holds or refuses a write, and nothing is computed after the
-//! record is appended.
+//! the Dreamer run that wrote it, and the ruled risk vector over its value,
+//! evidence, scope and session tag (ARCH-0040 `dr:SK07`). Every part is
+//! metadata. No result here decides, holds or refuses a write, and nothing
+//! is computed after the record is appended.
 
 use rmpv::Value;
 
@@ -11,7 +11,7 @@ use crate::claim::ClaimBody;
 use crate::entity_id::EntityId;
 use crate::store::{
     GateAnalysisCoverage, GateDecisionAnalysis, GateDecisionContext, GateDecisionReadContext,
-    GateLoopFamily, GateLoopLink, GateLoopOrigin, GateLoopSource, GateRiskAxis, GateRiskState,
+    GateLoopLink, GateLoopOrigin, GateLoopSource, GateRiskAxis, GateRiskState,
 };
 
 /// The rule set the risk vector below is computed by (CALLS "FIX 7801 risk
@@ -53,12 +53,13 @@ pub(super) fn claim_decision_context(
     GateDecisionContext {
         read: GateDecisionReadContext::claim(id, body).into_iter().collect(),
         links: run
-            .map(|run| GateLoopLink {
-                family: GateLoopFamily::Action,
-                source: GateLoopSource::Runner,
-                run: Some(run.to_owned()),
-                attempt: None,
-                origin: GateLoopOrigin::Unresolved,
+            .map(|run| {
+                GateLoopLink::action(
+                    GateLoopSource::Runner,
+                    Some(run.to_owned()),
+                    None,
+                    GateLoopOrigin::Unresolved,
+                )
             })
             .into_iter()
             .collect(),
@@ -66,25 +67,46 @@ pub(super) fn claim_decision_context(
     }
 }
 
-/// The ruled risk vector of `body`'s value and evidence.
+/// The ruled risk vector of `body`: its value, evidence and scope, each
+/// walked for path and command keys and scanned for secret shapes, and its
+/// session tag scanned as text. The envelope names each surface read; the
+/// predicate, a grammar-checked name, is not one.
 pub(crate) fn claim_analysis(body: &ClaimBody) -> GateDecisionAnalysis {
     let mut paths = AxisScan::default();
     let mut commands = AxisScan::default();
     let mut secrets = AxisScan::default();
-    for value in std::iter::once(&body.value).chain(body.evidence.as_ref()) {
+    let mut surfaces = Vec::new();
+    let structured = [
+        ("value", Some(&body.value)),
+        ("evidence", body.evidence.as_ref()),
+        ("scope", body.scope.as_ref()),
+    ];
+    for (surface, value) in structured {
+        let Some(value) = value else {
+            continue;
+        };
         walk(value, &mut paths, &mut commands);
         let mut bytes = Vec::new();
         if rmpv::encode::write_value(&mut bytes, value).is_err() {
             secrets.unread += 1;
             continue;
         }
+        surfaces.push(surface.to_owned());
         secrets.read += 1;
         if let Some(code) = crate::batch::secret_scan::write_payload_hit(&bytes) {
             secrets.hit(code);
         }
     }
+    if let Some(tag) = &body.session_tag {
+        surfaces.push("session_tag".to_owned());
+        secrets.read += 1;
+        if let Some(code) = crate::batch::secret_scan::write_payload_hit(tag.as_bytes()) {
+            secrets.hit(code);
+        }
+    }
     GateDecisionAnalysis {
         rules: GATE_RISK_RULES.to_owned(),
+        surfaces,
         sensitive_path: paths.into_axis(),
         secret_argument: secrets.into_axis(),
         dangerous_command: commands.into_axis(),
@@ -108,13 +130,15 @@ impl AxisScan {
         }
     }
 
+    /// A hit stands whatever was left unread; no hit is `NoHit` only when
+    /// every surface was read, else `NotAnalysed`, never a clean stamp.
     fn into_axis(self) -> GateRiskAxis {
         let state = if !self.matched.is_empty() {
             GateRiskState::Hit
-        } else if self.read > 0 {
-            GateRiskState::NoHit
         } else if self.unread > 0 {
             GateRiskState::NotAnalysed
+        } else if self.read > 0 {
+            GateRiskState::NoHit
         } else {
             GateRiskState::NotApplicable
         };

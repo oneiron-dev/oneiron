@@ -14,7 +14,16 @@ use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
 use crate::gate::ClaimReadView;
+use crate::federation::{ScopeAxis, ScopeId};
 use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
+
+/// What a kept read context admitted: the rows the decision is about, for
+/// relevance, and every live row its admission stood on, so a recheck reads
+/// the item again when one of them changes.
+pub(super) struct KeptAdmission {
+    pub(super) about: Vec<EntityId>,
+    pub(super) dependencies: Vec<EntityId>,
+}
 
 /// The family a stored decision reads as: its tag's, for the direct loop
 /// tags, else that of the first loop link its writer stamped on it. A row
@@ -29,19 +38,19 @@ pub(super) fn record_family(record: &GateDecisionRecord) -> Option<LoopDecisionF
 }
 
 impl ScopedRead<'_> {
-    /// The rows `record`'s kept read context makes it about, when the reader
-    /// is admitted to every read context it kept (a bundle's every member):
-    /// `None` when it kept none or one does not admit. A decision on a claim
-    /// `claim` that is stored now is judged by its row alone, as before, and
-    /// so is a kept record position under a read narrowed to a room, worlds,
-    /// an audience, peers or another device.
-    pub(super) fn loop_context_about_in(
+    /// What `record`'s kept read context admits, when the reader is admitted
+    /// to every read context it kept (a bundle's every member): `None` when
+    /// it kept none or one does not admit. A decision on a claim `claim`
+    /// that is stored now is judged by its row alone, as before, and so is a
+    /// kept record position under a read narrowed to a room, worlds, an
+    /// audience, peers or another device.
+    pub(super) fn loop_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
         read: &LoopRead,
         record: &GateDecisionRecord,
         claim: Option<EntityId>,
-    ) -> Result<Option<Vec<EntityId>>> {
+    ) -> Result<Option<KeptAdmission>> {
         let contexts = &record.context.read;
         if contexts.is_empty() {
             return Ok(None);
@@ -52,13 +61,20 @@ impl ScopedRead<'_> {
             return Ok(None);
         }
         let mut about = BTreeSet::new();
+        let mut dependencies = BTreeSet::new();
         for context in contexts {
             if !self.loop_read_context_admitted_in(txn, read, context)? {
                 return Ok(None);
             }
             about.extend(context.about.iter().copied());
+            dependencies.extend(context.about.iter().copied());
+            dependencies.extend(context.record);
+            dependencies.extend(context.position.iter().flat_map(position_rows));
         }
-        Ok(Some(about.into_iter().collect()))
+        Ok(Some(KeptAdmission {
+            about: about.into_iter().collect(),
+            dependencies: dependencies.into_iter().collect(),
+        }))
     }
 
     /// One kept read context under the reader's live authority: each row it
@@ -132,6 +148,21 @@ impl ScopedRead<'_> {
                 &position.scope,
             ));
         };
+        let confidence = f32::from_bits(claim.confidence_bits);
+        let salience = claim.salience_bits.map(f32::from_bits);
+        // The principal audience and the scalar floor an ordinary claim read
+        // applies; its status, evidence and landing govern the claim, not
+        // whether its decision may be seen.
+        if !self.principal_admits(claim.principal)
+            || !crate::pipeline::claim_scalars_ceiling_allowed(
+                &read.filter,
+                claim.sensitivity_band,
+                confidence,
+                salience,
+            )
+        {
+            return Ok(false);
+        }
         if !self.relationship_axes_allowed_in(
             txn,
             claim.relationship,
@@ -151,8 +182,8 @@ impl ScopedRead<'_> {
             record: position.scope.clone(),
             scope: scope.as_ref(),
             stale: claim.stale,
-            confidence: f32::from_bits(claim.confidence_bits),
-            salience: claim.salience_bits.map(f32::from_bits),
+            confidence,
+            salience,
             facets: &[],
         };
         Ok(crate::gate::scoped_read_claim_view_allowed(
@@ -174,4 +205,22 @@ impl ScopedRead<'_> {
             || !self.peer_reads.is_empty()
             || self.actor_key.off_device()
     }
+}
+
+/// The live rows a kept position's admission stood on: its worlds, facet and
+/// project, the claim's relationship and its principal.
+fn position_rows(position: &GateReadPosition) -> Vec<EntityId> {
+    let scope = &position.scope;
+    let mut rows: Vec<EntityId> = [&scope.worlds, &scope.facets, &scope.audience]
+        .into_iter()
+        .flat_map(|axis| match axis {
+            ScopeAxis::Some(ids) => ids.iter().map(|ScopeId(id)| *id).collect::<Vec<_>>(),
+            ScopeAxis::Bottom | ScopeAxis::All => Vec::new(),
+        })
+        .collect();
+    if let Some(claim) = &position.claim {
+        rows.extend(claim.relationship);
+        rows.extend(claim.principal);
+    }
+    rows
 }

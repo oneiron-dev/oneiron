@@ -336,7 +336,8 @@ impl Memory<'_> {
                     marker.as_bytes().to_vec(),
                     now,
                 );
-                receipt.context = decision_context::answering_claim(self.vault, &*txn, marker);
+                receipt.context =
+                    decision_context::answering_claim(self.vault, &*txn, marker, None);
                 receipt.grant_ref = grant_ref;
                 self.vault
                     .store
@@ -368,7 +369,7 @@ impl Memory<'_> {
                     now,
                 );
                 record.context =
-                    decision_context::answering_claim(self.vault, &*txn, approved.claim);
+                    decision_context::answering_claim(self.vault, &*txn, approved.claim, None);
                 record.grant_ref.clone_from(&grant_ref);
                 self.vault.store.append_gate_decision_in_txn(txn, &record)?;
                 Some(format!("gate:{}", record.decision_id.to_hex()))
@@ -384,7 +385,7 @@ impl Memory<'_> {
             marker.as_bytes().to_vec(),
             now,
         );
-        receipt.context = decision_context::answering_claim(self.vault, &*txn, marker);
+        receipt.context = decision_context::answering_claim(self.vault, &*txn, marker, None);
         receipt.grant_ref = grant_ref;
         self.vault
             .store
@@ -504,7 +505,8 @@ impl Memory<'_> {
                 reverted.marker.as_bytes().to_vec(),
                 now,
             );
-            receipt.context = decision_context::answering_claim(self.vault, &*txn, resolved);
+            receipt.context =
+                decision_context::answering_claim(self.vault, &*txn, resolved, Some(KIND));
             self.vault
                 .store
                 .append_gate_decision_in_txn(txn, &receipt)?;

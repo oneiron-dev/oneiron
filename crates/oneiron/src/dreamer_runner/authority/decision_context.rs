@@ -1,6 +1,6 @@
 //! The loop link an attempt's action carries on its Gate decision (FIX 7500),
-//! from the attempt's own authority stamp: the agent it runs as and the
-//! receipt that admitted it. Read only; nothing here refuses.
+//! from the attempt's own authority stamp: the agent or program it runs as
+//! and the receipt that admitted it. Read only; nothing here refuses.
 
 use super::{ATTEMPT, RESIDENT_ATTEMPT};
 use crate::Vault;
@@ -8,10 +8,11 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::store::{GateDecisionId, GateLoopLink, GateLoopOrigin, GateLoopSource};
 
 impl Vault {
-    /// The link of an action attempt `attempt` took: the base agent or the
-    /// resident its stamp names, the receipt that admitted it, and the run
-    /// its queue row names. A stamp or row that does not read leaves that
-    /// part unresolved; the action's own record never waits on it.
+    /// The link of an action attempt `attempt` took: the base agent, the
+    /// resident or the turn program its stamp names, the receipt that
+    /// admitted it, and the run its queue row names. A stamp or row that
+    /// does not read leaves that part unresolved; the action's own record
+    /// never waits on it.
     pub(crate) fn attempt_action_link_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -32,7 +33,10 @@ impl Vault {
             )),
             _ => match RESIDENT_ATTEMPT.get(&self.store, txn, &attempt) {
                 Ok(Some(stamp)) => Some((GateLoopSource::Resident, stamp.receipt_id)),
-                _ => None,
+                _ => crate::dreamer_runner::program::program_attempt_receipt_in_txn(
+                    self, txn, attempt,
+                )
+                .map(|receipt| (GateLoopSource::TurnProgram, receipt)),
             },
         };
         let (source, origin) = match stamped {

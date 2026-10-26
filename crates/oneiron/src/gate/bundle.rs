@@ -563,7 +563,7 @@ impl Vault {
                     },
                 )?;
             }
-            let mut record = GateDecisionRecord {
+            let record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
                 created_at: now,
@@ -587,10 +587,10 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: bundle_id.to_vec(),
                 read_frontier_hash: frontier.finalize().into(),
-                context: Default::default(),
+                context: decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids),
                 redacted_at: None,
             };
-            decision_context::append(self, wtxn, &mut record, dreamer_run_id, &member_claim_ids)?;
+            decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
             Ok((
                 GateConsentBundleReceipt {

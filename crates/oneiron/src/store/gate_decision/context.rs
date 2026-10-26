@@ -52,9 +52,14 @@ pub struct GateReadPosition {
     pub claim: Option<GateClaimReadSelectors>,
 }
 
-/// What a claim's read selectors judge beside its Scope, kept bit for bit.
+/// What a claim's read selectors and scalar floor judge beside its Scope,
+/// kept bit for bit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateClaimReadSelectors {
+    /// The one person its scope names as its principal audience.
+    pub principal: Option<EntityId>,
+    /// Its sensitivity band, as its scope stamps it.
+    pub sensitivity_band: Option<u8>,
     /// The relationship the claim is scoped to.
     pub relationship: Option<EntityId>,
     /// Whether its scope marks it private.
@@ -82,6 +87,9 @@ pub struct GateLoopLink {
     pub attempt: Option<[u8; 16]>,
     /// The decision that admitted the loop.
     pub origin: GateLoopOrigin,
+    /// The decision this one answers, when it answers one: the basis it
+    /// was made on, kept apart from the loop's admission.
+    pub basis: Option<GateDecisionId>,
 }
 
 /// Which part of a loop a decision is.
@@ -117,8 +125,8 @@ pub enum GateLoopOrigin {
     SelfDecision,
     /// An earlier decision in the ledger.
     Decision(GateDecisionId),
-    /// The loop is proven by its run or attempt; the decision that admitted
-    /// it was not resolved where this one was written.
+    /// The decision that admitted the loop was not resolved where this one
+    /// was written.
     Unresolved,
 }
 
@@ -128,6 +136,9 @@ pub enum GateLoopOrigin {
 pub struct GateDecisionAnalysis {
     /// The rule set that computed it.
     pub rules: String,
+    /// The input's surfaces the rules read, each by name; a surface not
+    /// named was not read, so no axis speaks for it.
+    pub surfaces: Vec<String>,
     /// A path to a credential or secret store.
     pub sensitive_path: GateRiskAxis,
     /// A secret-shaped argument or value.
@@ -194,9 +205,9 @@ impl GateDecisionContext {
     }
 
     /// The read context and links `original` carries, for a decision that
-    /// answers it: each link now names `original` as its origin where it was
-    /// the admission itself. No analysis is carried, since this decision
-    /// judged no fresh input.
+    /// answers it: each link names `original` as its basis, and as its origin
+    /// where it was the admission itself. No analysis is carried, since this
+    /// decision judged no fresh input.
     #[must_use]
     pub fn answering(original: &GateDecisionRecord) -> Self {
         Self {
@@ -212,12 +223,16 @@ impl GateDecisionContext {
     }
 
     /// [`Self::answering`] over every decision in `originals`, each read
-    /// context and link once, in order.
+    /// context and link once, in order. The read contexts are all of the
+    /// members' or none: one member that kept none leaves the aggregate
+    /// none, so no reader is judged on fewer members than it has.
     #[must_use]
     pub fn answering_all(originals: &[GateDecisionRecord]) -> Self {
         let mut context = Self::default();
+        let mut every_member_read = true;
         for original in originals {
             let answered = Self::answering(original);
+            every_member_read &= !answered.read.is_empty();
             for read in answered.read {
                 if !context.read.contains(&read) {
                     context.read.push(read);
@@ -229,21 +244,27 @@ impl GateDecisionContext {
                 }
             }
         }
+        if !every_member_read {
+            context.read.clear();
+        }
         context
     }
 
     /// Whether any part names `id`: a read context's record, an `about` row,
-    /// its relationship, or its scope selector's bytes.
+    /// its principal, its relationship, or its scope selector's bytes.
     pub(super) fn names(&self, id: &EntityId) -> bool {
         self.read.iter().any(|read| read.names(id))
     }
 
-    /// Takes every read context that names `id` out, whole: no scope is made
-    /// up in its place. Links and analysis name no entity and stay.
+    /// Takes the read contexts out, all of them, when one names `id`: no
+    /// scope is made up in its place, and an aggregate never stands on the
+    /// members left. Links and analysis name no entity and stay.
     pub(super) fn scrub(&mut self, id: &EntityId) -> bool {
-        let before = self.read.len();
-        self.read.retain(|read| !read.names(id));
-        self.read.len() != before
+        if !self.names(id) {
+            return false;
+        }
+        self.read.clear();
+        true
     }
 }
 
@@ -261,9 +282,24 @@ impl GateDecisionReadContext {
 
     /// The read context of the claim `id` written as `body`, landed or not:
     /// its subject (both ends of an edge), its record Scope and its own read
-    /// selectors, bit for bit. `None` when its scope selector does not
-    /// encode, so no part of its position is guessed.
+    /// selectors and scalars, bit for bit. `None` when its scope does not
+    /// encode or names no single principal, so no part of its position is
+    /// guessed, and for a claim no position alone can judge: a machine
+    /// history control, which ordinary recall never reads, or one whose
+    /// words come from records past its subject (a conversation summary, a
+    /// merge header, a reaction outcome), which only its row walks.
     pub(crate) fn claim(id: &EntityId, body: &crate::claim::ClaimBody) -> Option<Self> {
+        if crate::claim::history_store::machine_history_kind(&body.predicate).is_some()
+            || matches!(
+                body.predicate.as_str(),
+                "conversation.summary"
+                    | "merge.summary"
+                    | crate::reaction::PREDICATE_REACTION_OUTCOME
+            )
+        {
+            return None;
+        }
+        let principal = crate::claim::claim_principal_id(body).ok()?;
         let scope = match &body.scope {
             None => None,
             Some(value) => {
@@ -284,6 +320,8 @@ impl GateDecisionReadContext {
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 scope: body.record_scope("read"),
                 claim: Some(GateClaimReadSelectors {
+                    principal,
+                    sensitivity_band: crate::claim::claim_sensitivity_band(body),
                     relationship,
                     private,
                     scope,
@@ -300,7 +338,8 @@ impl GateDecisionReadContext {
             || self.about.contains(id)
             || self.position.as_ref().is_some_and(|position| {
                 position.claim.as_ref().is_some_and(|claim| {
-                    claim.relationship == Some(*id)
+                    claim.principal == Some(*id)
+                        || claim.relationship == Some(*id)
                         || claim.scope.as_deref().is_some_and(|bytes| {
                             contains(bytes, id.as_bytes())
                                 || contains(bytes, id.to_hex().as_bytes())
@@ -324,6 +363,7 @@ impl GateLoopLink {
             run,
             attempt,
             origin: GateLoopOrigin::SelfDecision,
+            basis: None,
         }
     }
 
@@ -341,16 +381,19 @@ impl GateLoopLink {
             run,
             attempt,
             origin,
+            basis: None,
         }
     }
 
-    /// This link as a decision answering `original` carries it.
+    /// This link as a decision answering `original` carries it: `original`
+    /// is its basis, and its origin when it was the admission itself.
     fn answered_by(&self, original: GateDecisionId) -> Self {
         Self {
             origin: match self.origin {
                 GateLoopOrigin::SelfDecision => GateLoopOrigin::Decision(original),
                 origin => origin,
             },
+            basis: Some(original),
             ..self.clone()
         }
     }
@@ -363,8 +406,8 @@ impl GateDecisionRecord {
         self.actor_ref.as_deref() == Some(actor.to_hex().as_str()) || self.context.names(actor)
     }
 
-    /// Takes `actor` out of this decision: its actor ref and each read
-    /// context that names it. Whether anything changed.
+    /// Takes `actor` out of this decision: its actor ref, and its read
+    /// contexts when one names it. Whether anything changed.
     pub(super) fn scrub_actor(&mut self, actor: &EntityId) -> bool {
         let mut changed = false;
         if self.actor_ref.as_deref() == Some(actor.to_hex().as_str()) {
