@@ -2427,7 +2427,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/failure_ladder/ladder.rs` | src | m | 1 struct · 4 fn | FailureLadder | FailureLadder entry point, surface context, healer routing, and correlation refs |
 | `src/failure_ladder/lineage.rs` | src | s | 4 struct · 4 enum · 2 crate-vis | FailureLadderOutcome, HandleAttemptFailure, HealerCase, HealerOutcome, HealerRepairRoute, RetryLineagePathology, RetryOrdinal, SurfacedFailure | Retry-lineage walk/ordinal, healer case/route, and surfaced-failure outcome types |
 | `src/failure_ladder/mod.rs` | src | s | 1 mod · 8 re-export · 4 crate-vis | — | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
-| `src/failure_ladder/oversight.rs` | src | s | 2 struct · 1 enum · 5 fn · 2 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
+| `src/failure_ladder/oversight.rs` | src | m | 2 struct · 1 enum · 5 fn · 4 crate-vis | OversightCounts, OversightKind, OversightReceipt | Per-vault signed oversight over healer proposals and review decisions |
 | `src/failure_ladder/scope.rs` | src | s | 2 struct · 1 enum · 1 fn | FailureEscalationMode, FailureScope, FailureScopePolicy | Escalation mode, failure scope, and per-scope consecutive-transient policy |
 | `src/failure_ladder/tests.rs` | test | L | — | — | ONE-1887 failure-ladder tests, mapped 1:1 to the brief's acceptance criteria: classification, bounded retry… |
 | `src/failure_ladder/tests/coach_wake.rs` | test | s | — | — | The default policy's Auto escalation wakes the Coach (owner ruling 2026-10-16), not a reserved slot that… |
@@ -4455,8 +4455,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/blocked_reports/source.rs` | src | m | 18 crate-vis | — | A blocked report's replay source (FIX 2343, OF-380), and the exact model request a code fix replays (FIX… |
 | `src/self_heal/blocked_reports/source/response.rs` | src | s | 2 crate-vis | — | A blocked report's captured requests in checkpoint images (FIX 6708, KEY STORE = A): each receipt row and… |
 | `src/self_heal/canonical_tests.rs` | test | s | — | — | Regressions for the released diagnostic wire grammar |
-| `src/self_heal/centroid_evidence.rs` | src | m | 2 struct · 5 fn · 1 const · 1 crate-vis | CentroidCorpus, CentroidReplay | Immutable, content-addressed centroid inputs beside vault-local telemetry |
-| `src/self_heal/consent_depth.rs` | src | s | 1 fn · 4 crate-vis | — | Whole-tray consent queue depth (ARCH-0066 §4, "consent-storm queue depth"; OF-298) |
+| `src/self_heal/centroid_evidence.rs` | src | m | 2 struct · 5 fn · 1 const · 3 crate-vis | CentroidCorpus, CentroidReplay | Immutable, content-addressed centroid inputs beside vault-local telemetry |
+| `src/self_heal/centroid_evidence/erase.rs` | src | s | 6 crate-vis | — | A centroid snapshot's sources and their erase (FIX 10094) |
+| `src/self_heal/consent_depth.rs` | src | s | 1 fn · 5 crate-vis | — | Whole-tray consent queue depth (ARCH-0066 §4, "consent-storm queue depth"; OF-298) |
 | `src/self_heal/consent_detector.rs` | src | s | 1 struct · 2 fn | ConsentDeniedDetector | Receipt-backed consent diagnostics; this detector never proposes or applies repairs |
 | `src/self_heal/detector_pass.rs` | src | s | 1 struct · 6 fn · 1 const | T3Finding | The host's scheduled T2/T3 pass (ARCH-0066 #tiers, OF-418): which telemetry windows a detector has graded… |
 | `src/self_heal/detector_runner.rs` | src | s | 2 fn · 3 crate-vis | — | Deterministic detector execution: working-set validation, run loop, event ids, Vault entry points |
@@ -4464,14 +4465,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/distillation.rs` | src | m | 5 struct · 1 enum · 10 fn · 3 crate-vis | ClosedFormPredicate, GraduatedT1, MintedExample, MintedRegistration, MintedT2, ReviewedFinding | Owner-labeled T3 evidence -> T2 policy -> closed-form T1 proof |
 | `src/self_heal/event.rs` | src | m | 4 struct · 4 enum · 1 trait · 10 fn · 2 const · 9 crate-vis | AgentHealthSignal, DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind +1 | Closed diagnostic event vocabulary: classes, sources, criticality, event and working-set types, bounds |
 | `src/self_heal/heal_context.rs` | src | m | 3 struct · 2 enum · 2 fn · 1 crate-vis | HealContextPolicy, HealContextSeed, HealEvidenceContext, HealLink, HealUnavailable | What a heal reads about a failure's recorded cause (OF-418 L2, L10; ARCH-0066 §4, §6) |
+| `src/self_heal/heal_context/admitted.rs` | src | m | 4 crate-vis | — | The reader's admission of a heal context's recorded trace (FIX 10093) |
 | `src/self_heal/heal_context/records.rs` | src | s | 3 crate-vis | — | How a heal's context renders what it read (OF-418 L2, L10): the source order of a walk's links, a code run's… |
-| `src/self_heal/healer_host.rs` | src | m | 5 struct · 2 enum · 10 fn · 4 crate-vis | HealerDeployment, HealerProposalRecord, HealerRegistration, HealerRunReceipt, PatchPullRequest, ProposalBurstCheck, ProposalState | External healer capability, durable propose receipts, and human-only PR release |
+| `src/self_heal/healer_host.rs` | src | m | 5 struct · 2 enum · 10 fn · 5 crate-vis | HealerDeployment, HealerProposalRecord, HealerRegistration, HealerRunReceipt, PatchPullRequest, ProposalBurstCheck, ProposalState | External healer capability, durable propose receipts, and human-only PR release |
 | `src/self_heal/healer_host_tests.rs` | test | m | — | — | — |
 | `src/self_heal/invariant_canonical.rs` | src | s | 2 crate-vis | — | Canonicalization of invariant field values for stable comparison |
 | `src/self_heal/issue_evidence.rs` | src | m | 15 crate-vis | — | What the Coach observes of its model issues after filing them, and when one resolves (OF-418 L3; ARCH-0066 §6) |
 | `src/self_heal/issue_work.rs` | src | m | 20 crate-vis | — | The Coach's Issues work from both of its sources (OF-418 L3; ARCH-0066 §4, §6) |
 | `src/self_heal/issue_work/recurrence_index.rs` | src | s | 2 crate-vis | — | Each model finding's issue under its recurrence key (FIX 7343): one membership row per issue, written in the… |
-| `src/self_heal/mod.rs` | src | s | 8 mod · 11 re-export · 10 crate-vis | — | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
+| `src/self_heal/mod.rs` | src | s | 8 mod · 11 re-export · 11 crate-vis | — | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity |
 | `src/self_heal/production_tests.rs` | test | s | — | — | — |
 | `src/self_heal/receipt_serde.rs` | src | s | 12 crate-vis | — | Strict serde adapters for ids and provenance in local healer receipts |
 | `src/self_heal/repair/dev_runner.rs` | src | m | 3 struct · 1 enum · 2 fn | DevRunnerDispatch, DevRunnerFailure, DevRunnerRequest, DevRunnerTarget | Dev-time Coach jobs over the existing BYO runner and human patch-review doors |
@@ -4479,8 +4481,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/repair/mod.rs` | src | s | 4 struct · 3 enum · 1 trait · 8 fn · 2 re-export · 2 crate-vis | Healer, RepairActor, RepairBundle, RepairConsentRoute, RepairCriticality, RepairOperation, RepairProposal, ReviewedRepair | Propose-only repair contracts |
 | `src/self_heal/repair/tests.rs` | test | s | — | — | ONE-1395 runner tests |
 | `src/self_heal/repair/validation.rs` | src | s | 1 crate-vis | — | Structural checks for proposal-only output |
-| `src/self_heal/scheduled.rs` | src | s | 1 struct · 3 fn | SignedDetectorRun | Signed host-scheduled T1 runs |
-| `src/self_heal/served_signals.rs` | src | s | 1 fn · 1 const | — | The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault… |
+| `src/self_heal/scheduled.rs` | src | s | 1 struct · 3 fn · 1 crate-vis | SignedDetectorRun | Signed host-scheduled T1 runs |
+| `src/self_heal/served_signals.rs` | src | s | 1 fn · 1 const · 1 crate-vis | — | The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault… |
 | `src/self_heal/session_text.rs` | src | m | 2 struct · 1 enum · 1 fn · 1 crate-vis | SessionLine, SessionResult, SessionText | What a session judge reads (FIX 2079): every readable line of the conversations a session window's runs were… |
 | `src/self_heal/sweep.rs` | src | s | 1 struct · 2 fn · 1 const | Tier1Sweep | The Coach's scheduled tier-1 sweep (ARCH-0066 §4) and its proposed-only repair bridge |
 | `src/self_heal/tests.rs` | test | m | — | — | — |
@@ -4489,7 +4491,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/tiered.rs` | src | m | 4 struct · 1 enum · 7 fn · 1 const · 8 crate-vis | DetectorDecisions, DetectorPolicy, ProposedDiagnostic, ProposedTier, WindowGrade | Model-graded detection over ARCH-0037 runs |
 | `src/self_heal/tiered_tests.rs` | test | m | — | — | Observable propose-only outputs and reviewed distillation |
 | `src/self_heal/tripwire_tests.rs` | test | s | — | — | — |
-| `src/self_heal/tripwires.rs` | src | m | 6 struct · 10 fn · 1 const · 8 crate-vis | ConsentStormDetector, DreamerRunFacts, PredicateDriftDetector, RetrievalRegressionDetector, TripwireBounds | Closed-form T1 projections |
+| `src/self_heal/tripwires.rs` | src | m | 6 struct · 10 fn · 1 const · 1 re-export · 10 crate-vis | ConsentStormDetector, DreamerRunFacts, PredicateDriftDetector, RetrievalRegressionDetector, TripwireBounds | Closed-form T1 projections |
+| `src/self_heal/tripwires/policy.rs` | src | s | 4 struct · 1 enum · 1 fn · 5 crate-vis | ResolvedTripwireBounds, TripwireBound, TripwireBoundOrigin, TripwirePolicyReceipt, TripwirePolicySource | The tripwire policy a pass applied, as it was resolved (FIX 10096): the four bounds every detector of the… |
 | `src/self_heal/untrusted_text.rs` | src | s | 3 crate-vis | — | Untrusted detail-text validation and escaping |
 | `src/serialize/credential_nulling.rs` | src | m | 6 crate-vis | — | Unconditional credential removal before any context/export format writer |
 | `src/serialize/export_actor_references.rs` | src | s | 1 crate-vis | — | Preserve only the actor ledger's validated binary reference positions |
