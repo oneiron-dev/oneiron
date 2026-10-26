@@ -42,12 +42,6 @@ use crate::server::SyncServer;
 
 mod line_chats;
 
-/// A folder read from disk stops here; the pack source applies its own,
-/// tighter bounds after.
-const MAX_FOLDER_FILES: usize = 1024;
-/// Organ builds ride in the folder and leave the source as blob assets.
-const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
-
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
         .route("/packs", get(installed).post(put))
@@ -214,7 +208,8 @@ impl From<PackInstallDisposition> for PackPut {
     }
 }
 
-/// A pack folder's files, relative and `/`-separated. Dot entries such as
+/// A pack folder's files, relative and `/`-separated, every one of them
+/// whatever the folder's size (FIX 8202, Rule 5). Dot entries such as
 /// `.git` are skipped.
 pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
     if !root.is_absolute() {
@@ -223,7 +218,6 @@ pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
         ));
     }
     let mut files = Vec::new();
-    let mut total = 0_u64;
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         let entries = std::fs::read_dir(&dir).map_err(|error| OwnerError::Host(error.into()))?;
@@ -243,15 +237,6 @@ pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
             if !kind.is_file() {
                 return Err(OwnerError::Invalid(
                     "a pack folder holds plain files only".to_owned(),
-                ));
-            }
-            total += entry
-                .metadata()
-                .map_err(|error| OwnerError::Host(error.into()))?
-                .len();
-            if files.len() >= MAX_FOLDER_FILES || total > MAX_FOLDER_BYTES {
-                return Err(OwnerError::Invalid(
-                    "the pack folder is too large".to_owned(),
                 ));
             }
             let relative = path

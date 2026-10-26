@@ -109,11 +109,10 @@ pub(crate) fn export_source_tree(files: &[HubFile]) -> Result<ExportFileTree> {
 }
 
 impl ExportFileTree {
+    /// Checks the tree's paths, file proofs and hash, whatever its number of
+    /// files or bytes: a pack source of any size installs, so it exports
+    /// and imports back (FIX 8202, Rule 5).
     pub(crate) fn validate(&self) -> Result<()> {
-        if self.files.len() > crate::skill_hub::MAX_HUB_PACKAGE_FILES {
-            return Err(invalid("too many source files"));
-        }
-        let mut total = 0usize;
         let mut prior: Option<&str> = None;
         let mut complete = true;
         let mut files = Vec::new();
@@ -138,14 +137,6 @@ impl ExportFileTree {
                 }
                 _ => return Err(invalid("source file proof is invalid")),
             };
-            total = total
-                .checked_add(content.len())
-                .ok_or_else(|| invalid("source size overflow"))?;
-            if content.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
-                || total > crate::skill_hub::MAX_HUB_PACKAGE_TOTAL_BYTES
-            {
-                return Err(invalid("source files exceed package bounds"));
-            }
             files.push((file.path.as_str(), content));
         }
         // Also rejects traversal, absolute paths and case-fold aliases for redacted trees.
