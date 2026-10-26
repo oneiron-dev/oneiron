@@ -317,12 +317,23 @@ impl Vault {
         // The session's earlier roster is read and replaced in one write, so
         // two runs never mint the same revision for different placements.
         self.with_write_txn_grouped(|wtxn| {
-            // Every print this run placed a speaker by, checked again in the
-            // write: a stale result is never kept (FIX 10217, FIX 10219).
-            super::recognition::recheck_roster_evidence_in(self, wtxn, &roster, &request.purpose)?;
             let mut roster = roster;
-            if let Some(prior) = ROSTER.get(&self.store, wtxn, &digest)? {
-                carry_unheard_speakers(&mut roster, &prior);
+            let heard = roster.segments.len();
+            let prior = ROSTER.get(&self.store, wtxn, &digest)?;
+            if let Some(prior) = &prior {
+                carry_unheard_speakers(&mut roster, prior);
+            }
+            // Every print the roster places a speaker by, this run's and the
+            // carried ones, checked again in the write under this request's
+            // purpose: a stale result is never kept (FIX 10217, FIX 10219).
+            super::recognition::recheck_roster_evidence_in(
+                self,
+                wtxn,
+                &mut roster,
+                heard,
+                &request.purpose,
+            )?;
+            if let Some(prior) = prior {
                 roster.roster_revision = if placements(&roster) == placements(&prior) {
                     prior.roster_revision
                 } else {

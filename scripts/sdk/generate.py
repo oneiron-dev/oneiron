@@ -1410,38 +1410,13 @@ def facade_dispatch(facade_rows):
                 let args = hooks.args.clone();
                 let ran = async {{
                 let input: oneiron::memory::ExportOptions = facade_input(args)?;
-                // Beside the archive, the rows its snapshot read past where
+                // Beside the answer, the rows its snapshot read past where
                 // the caller's rows go (its locality, with the machine its
                 // connection proved; FIX 4937): every owner path lists them.
-                // A slip keeps its own path; a host action with no slip (the
-                // dev mode) takes the engine's host-action export; the
-                // attested owner takes the engine's request-proof export,
-                // toward its own destination. Each arm's receipt records the
-                // owner's act, with where he spoke from as this request proved
-                // it (audit only; FIX 4625, 4626).
-                let surface = call.surface();
-                let (output, rows) = match (proof, action, owner) {{
-                    (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?
-                    }}
-                    (Some(proof), _, _) => {{
-                        let (actor, class) = facade_actor(server, auth)?;
-                        let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).for_destination(&auth.destination()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
-                        (output, producers.take())
-                    }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.destination())?,
-                    (None, None, Some(owner)) => {{
-                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.destination())?
-                    }}
-                    (None, None, None) => {{
-                        return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
-                    }}
-                }};
-                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
-                    "export result encoding failed", ["Report this SDK response mismatch."]
-                ))?;
+                // The answer is the archive inline, or kept on the server and
+                // named by a transfer, as the caller's `delivery` asks (FIX
+                // 3676); the leaf runs all four owner paths for both.
+                let (output, rows) = super::export_transfer::vault_export_answer(server, call, &input, proof, action, owner)?;
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
                 let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};

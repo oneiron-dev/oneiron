@@ -7,11 +7,24 @@
 //! folder refuses; a link inside it reads as a copy of the file it names.
 use super::HubFile;
 use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
-use super::package_codec::{MAX_ENCODED, encoded_file_bytes, invalid};
+use super::package_codec::{encoded_file_bytes, invalid};
 use super::package_work::PackageFileProgress;
 use crate::error::Result;
 use std::io::{Cursor, Read};
 use std::time::Instant;
+
+/// The most bytes a skill archive's entries expand to, and the bytes past
+/// them its gzip yields: a decompression bound on an archive a discovery
+/// index serves, kept apart from the package byte bounds so that loosening
+/// those never loosens this. Its value is the encoded package bound it was
+/// derived from (32 MiB of files plus 8 MiB of framing).
+const MAX_SKILL_ARCHIVE_EXPANDED_BYTES: usize = 40 * 1024 * 1024;
+
+/// The decompression bound in force for one skill archive: the one policy
+/// hook a ruling on [`MAX_SKILL_ARCHIVE_EXPANDED_BYTES`] changes.
+const fn skill_archive_expanded_bound() -> usize {
+    MAX_SKILL_ARCHIVE_EXPANDED_BYTES
+}
 
 /// A tar block.
 const BLOCK: usize = 512;
@@ -53,7 +66,7 @@ fn tar_gz(bytes: &[u8], progress: &mut PackageFileProgress) -> Result<Vec<HubFil
             octal(&header[124..136]).ok_or_else(|| invalid("a skill archive entry has no size"))?;
         bodies = bodies
             .checked_add(size)
-            .filter(|bodies| *bodies <= MAX_ENCODED)
+            .filter(|bodies| *bodies <= skill_archive_expanded_bound())
             .ok_or_else(|| invalid("a skill archive exceeds the package bounds"))?;
         let body = match header[156] {
             0 | b'0' | b'7' | b'x' | b'L' => read_body(&mut tar, size)?,
@@ -89,7 +102,7 @@ fn tar_gz(bytes: &[u8], progress: &mut PackageFileProgress) -> Result<Vec<HubFil
     // The rest of the gzip, the tar's closing blocks and record padding
     // included, is read to its end so the gzip trailer's CRC and length are
     // checked; it counts against the same bound as the entry bodies.
-    let room = MAX_ENCODED.saturating_sub(bodies) as u64;
+    let room = skill_archive_expanded_bound().saturating_sub(bodies) as u64;
     let rest = std::io::copy(
         &mut tar.by_ref().take(room.saturating_add(1)),
         &mut std::io::sink(),
@@ -204,7 +217,7 @@ impl Files {
             .saturating_add(encoded_file_bytes(path.len(), content.len()));
         if content.len() > MAX_HUB_FILE_BYTES
             || self.total > MAX_HUB_PACKAGE_TOTAL_BYTES
-            || self.encoded > MAX_ENCODED
+            || self.encoded > skill_archive_expanded_bound()
         {
             return Err(invalid("a skill archive exceeds the package bounds"));
         }
