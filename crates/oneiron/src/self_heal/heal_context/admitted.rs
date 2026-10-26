@@ -180,20 +180,20 @@ impl Gather<'_> {
 
     /// The window's runs. A run's state, counts and config record no source rows, so a
     /// run is the owner's alone; the owner's copy leaves out every result, candidate and
-    /// ref the lane does not admit.
+    /// ref the lane does not admit, and is made only once the lane admits the run.
     fn runs_in(&mut self, admit: &Admit<'_, '_, '_>) {
         let Some(runs) = self.runs.take() else {
             return;
         };
         let mut shown = Vec::with_capacity(runs.len());
-        for mut run in runs {
+        for run in runs {
             let id = run.run_id.to_hex();
             let part = format!("run:{id}");
             if !admit.owner {
                 self.unavailable(part, UNPROVABLE);
                 continue;
             }
-            let sources: Vec<EntityId> = run_sources(&run)
+            let sources: Vec<EntityId> = run_sources(run)
                 .into_iter()
                 .filter_map(|source| EntityId::from_bytes(source).ok())
                 .collect();
@@ -210,13 +210,17 @@ impl Gather<'_> {
                 .filter(|(_, readable)| !readable)
                 .map(|(source, _)| *source.as_bytes())
                 .collect();
-            if !denied.is_empty() {
+            let record = if denied.is_empty() {
+                serde_json::to_value(run)
+            } else {
+                let mut run = run.clone();
                 withhold_run_sources(&mut run, &denied);
                 self.unavailable(part, format!("withheld:{}", denied.len()));
-            }
+                serde_json::to_value(&run)
+            };
             shown.push(json!({
                 "run": id,
-                "record": serde_json::to_value(&run).unwrap_or_default(),
+                "record": record.unwrap_or_default(),
             }));
         }
         self.untrusted.insert("runs".into(), Value::Array(shown));

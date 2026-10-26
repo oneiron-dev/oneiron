@@ -118,20 +118,28 @@ impl VaultUsage {
                 // A reservation is not measured provider usage. A call left
                 // without a price is never priced at zero, and its record
                 // says why, the first that holds: it measured no tokens; no
-                // rates were frozen on it at admission; or they quote no rate
+                // rates were frozen on it at admission; they name no currency
+                // and are not free in any (FIX 9534); or they quote no rate
                 // for cache dimensions it measured, named.
                 let measured = usage_reported && usage.is_some();
                 let unpriced = match &rates {
-                    Some(rates) if measured && rates.prices(&token_counts) => None,
+                    Some(rates) if measured && rates.prices(&token_counts) && rates.priced() => {
+                        None
+                    }
                     _ if token_counts == UsageTokenCounts::default() => {
                         Some(UnpricedReason::NoUsage)
                     }
                     None => Some(UnpricedReason::UnpricedModel),
+                    Some(rates) if !rates.priced() => Some(UnpricedReason::UnknownCurrency),
                     Some(rates) => Some(UnpricedReason::UnquotedCache {
                         dimensions: rates.unquoted_cache(&token_counts),
                     }),
                 };
-                let rates = rates.filter(|rates| measured && rates.prices(&token_counts));
+                // A priced call keeps the rates it is priced at; one unpriced
+                // for their unknown currency keeps them too, their snapshot
+                // and digest with them.
+                let rates = rates
+                    .filter(|_| matches!(unpriced, None | Some(UnpricedReason::UnknownCurrency)));
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();
