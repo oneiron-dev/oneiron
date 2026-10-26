@@ -165,8 +165,12 @@ struct Gather<'v> {
     reader: EntityId,
     context: HealEvidenceContext,
     untrusted: Map<String, Value>,
-    /// A window seed's exact runs, admitted when the trace is read.
-    runs: Option<Vec<RetrievalRunRecord>>,
+    /// A window seed's exact runs, borrowed until the trace is read and admitted
+    /// (FIX 10824).
+    runs: Option<&'v [RetrievalRunRecord]>,
+    /// The run a report seed was filed for: the other reports it filed are verified
+    /// once the reader's lane is asked (FIX 10824).
+    report_run: Option<EntityId>,
     /// Attempts the cause walk starts from.
     roots: Vec<AttemptId>,
     /// Each blocked report read, with its entry.
@@ -198,6 +202,7 @@ impl<'v> Gather<'v> {
             },
             untrusted: Map::new(),
             runs: None,
+            report_run: None,
             roots: Vec::new(),
             reports: Vec::new(),
             attempts: Vec::new(),
@@ -235,7 +240,7 @@ impl<'v> Gather<'v> {
     /// A window's exact runs, each with the bodies its results, its trace's stage
     /// candidates and its replay refs name; the runs and the conversations they were
     /// retrieved for are read once the reader's lane opens.
-    fn window(&mut self, runs: &[RetrievalRunRecord]) {
+    fn window(&mut self, runs: &'v [RetrievalRunRecord]) {
         for run in runs {
             let id = run.run_id.to_hex();
             match &run.trace {
@@ -279,19 +284,19 @@ impl<'v> Gather<'v> {
                 None => self.unavailable(format!("replay_inputs:{id}"), "unrecorded"),
             }
         }
-        self.runs = Some(runs.to_vec());
+        self.runs = Some(runs);
     }
 
     /// The conversations a window's runs were retrieved for, read by the session judge's
     /// own recipe as the reader reads them.
     fn conversations(&mut self) {
-        let Some(runs) = self.runs.take() else {
+        let Some(runs) = self.runs else {
             return;
         };
         if runs.iter().all(|run| run.turn.is_none()) {
             self.unavailable("conversations".into(), "unrecorded");
         } else {
-            match self.vault.session_judge_context(self.reader, &runs) {
+            match self.vault.session_judge_context(self.reader, runs) {
                 Ok(text) => {
                     for line in &text.lines {
                         if let Some(message) = &line.message
@@ -307,7 +312,6 @@ impl<'v> Gather<'v> {
                 Err(error) => self.unavailable("conversations".into(), kind(&error)),
             }
         }
-        self.runs = Some(runs);
     }
 
     /// Every part the seed named, unavailable with `code` when the reader's lane would
@@ -370,6 +374,15 @@ impl<'v> Gather<'v> {
         if let Ok(attempt) = AttemptId::from_bytes(run.as_bytes()) {
             self.roots.push(attempt);
         }
+        self.report_run = Some(run);
+    }
+
+    /// Every other verified report a report seed's run filed, its receipts verified once
+    /// the reader's lane is asked (FIX 10824).
+    fn run_reports(&mut self) {
+        let Some(run) = self.report_run.take() else {
+            return;
+        };
         let filed = self
             .vault
             .blocked_reports_of_run(run)
@@ -526,7 +539,11 @@ impl<'v> Gather<'v> {
             .vault
             .memory(self.reader, EdgeActorClass::Human)
             .at(CallerLocality::OffDevice);
-        match memory.read_lane(ClaimReadStatus::Recorded) {
+        let lane = memory.read_lane(ClaimReadStatus::Recorded);
+        // A report seed's run's other reports, verified once the lane is asked: a lane
+        // that would not open still names each one unavailable.
+        self.run_reports();
+        match lane {
             Ok(lane) => {
                 self.report_bodies(&lane);
                 self.conversations();
