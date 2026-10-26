@@ -330,11 +330,7 @@ pub(super) fn mcp_scope_covers_entity(
     {
         // A NOTE sits in a world by its live `InWorld` edges, as at every
         // other door: any of its worlds that is this one (FIX 10373).
-        let held = scoped_read
-            .vault()
-            .note_in_world(id, world_ref)
-            .map_err(|error| mcp_engine_error("mcp scope note world read failed", error))?;
-        if !held {
+        if !scoped_read.vault().note_in_world(id, world_ref) {
             return Ok(false);
         }
     } else if let Some(world_ref) = scope.world_ref {
