@@ -197,8 +197,9 @@ pub struct ConnectorKeyRecord {
     pub suggested_budgets: Vec<EffectorBudget>,
     pub registered_at: u64,
     pub status_changed_at: Option<u64>,
-    /// `"budget_exhausted:row:{i}"` | `"budget_exhausted:charter_row:{i}"`
-    /// (GOV-10) | an owner-supplied reason.
+    /// `"budget_exhausted:key:{hex}:row:{i}"` |
+    /// `"budget_exhausted:key:{hex}:charter_row:{i}"` (GOV-10), naming the
+    /// key that owns the row (FIX 3760) | an owner-supplied reason.
     pub suspended_reason: Option<String>,
     /// GOV-10 fills; GOV-01 encodes Nil.
     pub charter: Option<ConnectorCharterBlock>,
