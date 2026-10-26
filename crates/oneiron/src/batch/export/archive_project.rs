@@ -23,7 +23,7 @@
 //! file. A file reference is a digest in a field the writer writes file
 //! descriptors in ([`FILE_DESCRIPTOR_FIELDS`]), never any string equal to
 //! one. An attached file stays only when a kept row refers to it and goes as
-//! it is stored; a rebuilt bundle's new file goes from its text. Every member
+//! it is stored; a rebuilt bundle's text members stay in its row. Every member
 //! the manifest lists is rebuilt with its new rows, length and BLAKE3. Every
 //! manifest list naming a record keeps only what a kept or unarchived record
 //! declares, and the declarations the readback checks against the rows (a
@@ -40,7 +40,7 @@ use super::archive_index::edge_key;
 use super::archive_side_tables::project_side_rows;
 use super::bundle_validation::{agent_omission_reason, provenance_subject_key};
 use super::{
-    AgentBundleOmission, ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ArchiveSideRow,
+    AgentBundleOmission, ArchiveRecordFile, ArchiveRecordKind, ArchiveSideRow,
     BundleOmissionReason, ExportBundleOmission, ExportEdge, ExportEntity, ExportImportRefusal,
     VAULT_ARCHIVE_MANIFEST_PATH, WholeVaultDocumentManifest, archive_file_path,
 };
@@ -153,11 +153,6 @@ pub(crate) fn project_stored_archive(
         member.read_to_end(&mut bytes).map_err(|_| invalid())?;
         serde_json::from_slice(&bytes).map_err(|_| invalid())?
     };
-    let listed: BTreeSet<String> = manifest
-        .files
-        .iter()
-        .map(|file| file.blake3.clone())
-        .collect();
     let mut referenced = BTreeSet::new();
     let mut declared = KeptDeclarations::default();
     let mut members = Vec::with_capacity(manifest.records.len());
@@ -247,9 +242,8 @@ pub(crate) fn project_stored_archive(
         }
     }
     // FIX-LIST 11109: each kept agent bundle is rebuilt from the kept rows;
-    // a file its rebuild writes that the archive does not hold goes from
-    // its text.
-    let mut added = BTreeMap::new();
+    // its text members stay in its row (FIX 10101), and a member stored as a
+    // file keeps the archive file it names.
     if !agents.is_empty() {
         let mut ids = Vec::with_capacity(agents.len());
         for &(at, row) in &agents {
@@ -259,13 +253,16 @@ pub(crate) fn project_stored_archive(
         let rows = KeptAgentRows::read(&manifest.records, &members, &kept_agents)?;
         for ((at, row), (id, fork_hash)) in agents.into_iter().zip(ids) {
             let rebuilt = rows.rebuild(id, fork_hash, &mut declared)?;
-            for (blake3, text) in rebuilt.files {
-                if !listed.contains(&blake3) {
-                    added.entry(blake3.clone()).or_insert(text);
-                }
-                referenced.insert(blake3);
-            }
-            members[at][row].0 = rebuilt.line;
+            referenced.extend(
+                strings_at(
+                    &rebuilt,
+                    ArchiveRecordKind::AgentPack,
+                    FILE_DESCRIPTOR_FIELDS,
+                )
+                .into_iter()
+                .map(str::to_owned),
+            );
+            members[at][row].0 = serde_json::to_vec(&rebuilt).map_err(|_| invalid())?;
         }
     }
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
@@ -296,16 +293,6 @@ pub(crate) fn project_stored_archive(
     manifest
         .files
         .retain(|file| referenced.contains(&file.blake3));
-    for (blake3, text) in &added {
-        let at = manifest.files.partition_point(|file| file.blake3 < *blake3);
-        manifest.files.insert(
-            at,
-            ArchiveFile {
-                blake3: blake3.clone(),
-                bytes: text.len() as u64,
-            },
-        );
-    }
     declared.declare(&mut manifest, archived, kept);
     let head = serde_json::to_vec_pretty(&manifest).map_err(|_| invalid())?;
     out.start_file(VAULT_ARCHIVE_MANIFEST_PATH, options)
@@ -318,12 +305,6 @@ pub(crate) fn project_stored_archive(
     }
     for file in &manifest.files {
         let path = archive_file_path(&file.blake3);
-        if let Some(text) = added.get(&file.blake3) {
-            out.start_file(path.as_str(), options)
-                .map_err(|_| invalid())?;
-            out.write_all(text)?;
-            continue;
-        }
         let mut member = source.by_name(&path).map_err(|_| invalid())?;
         out.start_file(path.as_str(), options)
             .map_err(|_| invalid())?;
@@ -370,13 +351,6 @@ struct KeptAgentRows {
 #[derive(serde::Deserialize)]
 struct SkillRow {
     entity: ExportEntity,
-}
-
-/// A kept agent bundle as the export writes it from the kept rows, and the
-/// text of each file it names.
-struct RebuiltAgent {
-    line: Vec<u8>,
-    files: Vec<(String, Vec<u8>)>,
 }
 
 impl KeptAgentRows {
@@ -442,15 +416,14 @@ impl KeptAgentRows {
 
     /// The bundle of the kept agent `id`, whose stored bundle carries
     /// `fork_hash`, rebuilt from these rows with the export's builder in its
-    /// knowledge form, and written as the export's writer writes a source
-    /// tree: each file's text under `files/<blake3>`. Its own omission is
-    /// noted in `declared`.
+    /// knowledge form, as the row the export's writer writes: each text
+    /// member in the row. Its own omission is noted in `declared`.
     fn rebuild(
         &self,
         id: EntityId,
         fork_hash: Option<String>,
         declared: &mut KeptDeclarations,
-    ) -> Result<RebuiltAgent> {
+    ) -> Result<Value> {
         let definition = self.definitions.get(&id).ok_or_else(invalid)?;
         let forked = fork_hash.is_some();
         let bundle = crate::serialize::agent_bundle(
@@ -465,28 +438,7 @@ impl KeptAgentRows {
             forked,
             omission: bundle.omission,
         });
-        let mut row = serde_json::to_value(&bundle).map_err(|_| invalid())?;
-        let mut files = Vec::new();
-        if let Some(entries) = row
-            .get_mut("source_tree")
-            .and_then(|tree| tree.get_mut("files"))
-            .and_then(Value::as_array_mut)
-        {
-            for entry in entries {
-                let Some(fields) = entry.as_object_mut() else {
-                    continue;
-                };
-                if let Some(Value::String(text)) = fields.get_mut("content").map(Value::take) {
-                    let blake3 = blake3::hash(text.as_bytes()).to_hex().to_string();
-                    fields.insert("file".to_owned(), Value::from(blake3.clone()));
-                    files.push((blake3, text.into_bytes()));
-                }
-            }
-        }
-        Ok(RebuiltAgent {
-            line: serde_json::to_vec(&row).map_err(|_| invalid())?,
-            files,
-        })
+        serde_json::to_value(&bundle).map_err(|_| invalid())
     }
 }
 
