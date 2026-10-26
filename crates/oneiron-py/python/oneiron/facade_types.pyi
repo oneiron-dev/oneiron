@@ -15599,6 +15599,7 @@ class LlmCatalogCost(TypedDict):
     output_per_million: str
     cache_read_per_million: NotRequired[str | None]
     cache_write_per_million: NotRequired[str | None]
+    currency: str | None
 class LlmCatalogEntry(TypedDict):
     model: ModelId
     display_name: str

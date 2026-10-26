@@ -475,7 +475,9 @@ side_tables! {
     /// zero-padded to 20 digits; window start).
     WIRE_LIMIT_QUESTION: SyncState b"wire:limit-question:v1:" Named;
     /// A raised question recording that a wire call-volume window crossed its per-verb or per-actor
-    /// threshold. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).
+    /// threshold, kept once each time another verb or actor crossed (FIX 9531). Key: "seq:" u64
+    /// (decimal, zero-padded to 20 digits; the order questions were kept in) | "window:" u64 ":"
+    /// u64 ":" u64 (each zero-padded to 20 digits; window start:end, then the question's seq).
     RC42_WIRE_QUESTION: SyncState b"wire:question:v2:" Named;
     /// Persisted per-window wire call-volume counters (by verb and by actor) for one observation
     /// window. Key: u64 ":" u64 (decimal, zero-padded to 20 digits; window start:end).

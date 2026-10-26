@@ -48726,6 +48726,8 @@ pub struct LlmCatalogCost {
         skip_serializing_if = "Option::is_none"
     )]
     pub cache_write_per_million: Option<String>,
+    #[serde(rename = "currency", default)]
+    pub currency: Option<String>,
 }
 
 /// `oneiron_model::llm::catalog::LlmCatalogEntry`.

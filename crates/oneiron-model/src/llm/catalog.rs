@@ -272,6 +272,11 @@ pub struct LlmCatalogCost {
     pub cache_read_per_million: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write_per_million: Option<String>,
+    /// The currency the provider quotes these rates in, as its three-letter
+    /// code (`USD`); `null` when it named none, which is a fact and never
+    /// read as any currency (FIX 9534). Required, `null` included.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

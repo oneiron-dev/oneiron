@@ -15,8 +15,8 @@ use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, Ru
 
 use self::pricing::CatalogPrices;
 use crate::usage::{
-    UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent,
-    UsageEventType, UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
+    UnpricedReason, UsageAllocation, UsageCostRates, UsageError, UsageEvent, UsageEventType,
+    UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
 };
 
 mod pricing;
@@ -89,19 +89,15 @@ impl VaultUsage {
     /// price: an explicit override of the catalog's price for calls admitted
     /// on exactly `offer`, `None` to drop it. Already-admitted calls keep
     /// their snapshot. Without a price, quantities are still recorded and no
-    /// money amount is invented.
+    /// money amount is invented; rates that name no currency are kept as
+    /// such (FIX 9534).
     pub fn set_cost_rates(
         &self,
         offer: impl Into<String>,
         rates: Option<UsageCostRates>,
     ) -> Result<(), UsageError> {
         if let Some(rates) = &rates {
-            UsageCostInput {
-                token_counts: UsageTokenCounts::default(),
-                cost_rates: rates.clone(),
-                service_amount: 0,
-            }
-            .calculate()?;
+            rates.validate()?;
         }
         let mut tables = self
             .provider_rates

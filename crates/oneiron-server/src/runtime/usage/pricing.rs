@@ -2,7 +2,8 @@
 //! vault's priced catalog row for that exact model, read once when the call
 //! is admitted and frozen on it. A settlement is never repriced, and a catalog
 //! edit reaches the next admitted call. The price is the catalog's top-level
-//! model list price, the one the training offer drafts from; never a backend
+//! model list price, the one the training offer drafts from, in the currency
+//! the catalog names for it or in none it names (FIX 9534); never a backend
 //! pin's price, a selling price, tax or an exchange rate.
 use std::sync::Arc;
 
@@ -12,10 +13,6 @@ use oneiron::{EntityId, ModelId};
 
 use crate::usage::{UsageCostRates, catalog_cost_rates};
 
-/// The catalog's per-million list prices carry no currency; they are read as
-/// this one, as the training offer and the launch quote read them. No
-/// currency is inferred from a provider or a payer.
-const CATALOG_CURRENCY: &str = "USD";
 /// Domain tag of the price-table snapshot digest.
 const SNAPSHOT_DOMAIN: &[u8] = b"oneiron.usage.catalog-list-price.v1";
 
@@ -55,18 +52,20 @@ impl CatalogPrices {
                 return (None, None);
             }
         };
-        let rates = row.catalog.cost.as_ref().and_then(|cost| {
-            catalog_cost_rates(cost, CATALOG_CURRENCY, snapshot_id(facts, model, cost))
-        });
+        let rates = row
+            .catalog
+            .cost
+            .as_ref()
+            .and_then(|cost| catalog_cost_rates(cost, snapshot_id(facts, model, cost)));
         (rates, row.source_rows)
     }
 }
 
 /// The price-table snapshot id: a BLAKE3 digest over the admitted offer,
 /// model, route and catalog revision, the four rates as the catalog spells
-/// them (an unquoted one included) and the currency they are read in. Each
-/// field is length-prefixed, an absent one marked, so a price-only catalog
-/// edit changes the id.
+/// them (an unquoted one included) and the currency it names them in, or
+/// none. Each field is length-prefixed, an absent one marked, so a price- or
+/// currency-only catalog edit changes the id.
 fn snapshot_id(facts: &PermitFacts, model: &ModelId, cost: &LlmCatalogCost) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SNAPSHOT_DOMAIN);
@@ -79,7 +78,7 @@ fn snapshot_id(facts: &PermitFacts, model: &ModelId, cost: &LlmCatalogCost) -> S
         Some(cost.output_per_million.as_str()),
         cost.cache_read_per_million.as_deref(),
         cost.cache_write_per_million.as_deref(),
-        Some(CATALOG_CURRENCY),
+        cost.currency.as_deref(),
     ] {
         match field {
             Some(text) => {

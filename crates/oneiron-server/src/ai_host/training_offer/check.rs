@@ -94,7 +94,12 @@ pub(in crate::ai_host) fn check(
     if let Some(outcome) = Unverifiable::of(&usage) {
         return outcome.record(vault, admitted, &offer, &approved, usage.refs, sources, now);
     }
-    let comparable = usage.currency.as_deref() == Some(offer.cost.currency.as_str());
+    // Every call is priced here; a window that names no currency had only
+    // calls free in any, whose zero compares in the offer's (FIX 9534).
+    let comparable = usage
+        .currency
+        .as_deref()
+        .is_none_or(|currency| currency == offer.cost.currency.as_str());
     let observed = comparable
         .then(|| usage.cost_amount as f64 / 1e9 * MONTH_SECS as f64 / (now - from) as f64);
     let cost_held = observed

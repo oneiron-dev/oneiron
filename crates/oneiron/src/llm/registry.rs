@@ -6,6 +6,8 @@ mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 mod source_erase;
 pub(crate) use source_erase::erase_registry_source_in_txn;
+mod stored_rows;
+use stored_rows::StoredRows;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;
@@ -18,9 +20,10 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// One priced model registry row. Key: string (model id).
-const REGISTRY_ROW: SideTable<String, ModelRegistryRow, LegacyJson> =
-    SideTable::new(&side_table::LLM_REGISTRY_ROW);
+/// One priced model registry row. Key: string (model id). A stored copy of
+/// the installed pack's row reads under that pack's currency contract (FIX
+/// 9534).
+const REGISTRY_ROW: StoredRows = StoredRows;
 /// Bounded recent benchmark-score change history for one model. Key: string (model id) + NUL.
 const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
     SideTable::new(&side_table::LLM_SCORE_DIFFS);

@@ -3,8 +3,11 @@ use super::{CATALOG_CURRENCY, MONTH_SECS, ModelRegistryRow, SeatUsage, SeatWorkl
 use crate::usage::catalog_cost_rates;
 
 /// A month of the workload at a row's list price; `None` when the window was
-/// not metered throughout or the row's price does not read. A partial window
-/// is never multiplied into a bill. The row's rates are read as a settlement
+/// not metered throughout, the row's price does not read, or it is not quoted
+/// in the offer's currency: a rate in another currency, or in none its
+/// provider named, is never read as the offer's (FIX 9534), unless every rate
+/// is zero, which is zero in any currency. A partial window is never
+/// multiplied into a bill. The row's rates are read as a settlement
 /// reads them (`catalog_cost_rates`), and the seat's cached prompt tokens in
 /// `usage` are priced at the row's quoted cache rates; a cache rate the row
 /// does not quote leaves those tokens at its input price.
@@ -16,7 +19,9 @@ pub(super) fn monthly(
     if !workload.complete {
         return None;
     }
-    let rates = catalog_cost_rates(row.catalog.cost.as_ref()?, CATALOG_CURRENCY, String::new())?;
+    let rates = catalog_cost_rates(row.catalog.cost.as_ref()?, String::new()).filter(|rates| {
+        rates.free_in_any_currency() || rates.currency.as_deref() == Some(CATALOG_CURRENCY)
+    })?;
     let window = workload
         .until
         .checked_sub(workload.from)
