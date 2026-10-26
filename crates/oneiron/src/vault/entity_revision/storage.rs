@@ -95,7 +95,6 @@ pub(super) fn revision_text_fields(
     revision: RevisionRef,
     body: &[u8],
 ) -> Result<Vec<(String, String)>> {
-    #[cfg(feature = "sync")]
     if let Some(field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
         let frontier = FRONTIER
             .get(store, txn, &(*id, revision.0))?
@@ -104,7 +103,6 @@ pub(super) fn revision_text_fields(
             .ok_or(Error::EntityNotFound)?;
         return crate::entity_doc::document_text_fields(&doc, &field);
     }
-    let _ = (store, txn, id, revision);
     Ok(text_fields(body))
 }
 
@@ -178,7 +176,6 @@ pub(super) fn load_doc(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LoroDoc> {
-    #[cfg(feature = "sync")]
     if let Some(doc) = crate::entity_doc::record_document(store, txn, id, None)? {
         return Ok(doc.doc);
     }
@@ -197,7 +194,6 @@ pub(crate) fn fork_revision(
     let raw = FRONTIER
         .get(store, txn, &(*id, revision.0))?
         .ok_or(Error::EntityNotFound)?;
-    #[cfg(feature = "sync")]
     if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
         return Ok(doc.doc);
     }
@@ -226,7 +222,6 @@ pub(crate) fn capture_entity_revision(
     id: &EntityId,
     new_raw: &[u8],
 ) -> Result<()> {
-    #[cfg(feature = "sync")]
     if crate::entity_doc::has_record_head(store, txn, id)? {
         return Ok(());
     }
@@ -392,7 +387,6 @@ fn raw_for_revision(
     raw: &[u8],
     revision: Option<RevisionRef>,
 ) -> Result<Vec<u8>> {
-    #[cfg(feature = "sync")]
     if crate::entity_doc::has_record_head(store, txn, id)? {
         let body = match revision {
             Some(revision) => {

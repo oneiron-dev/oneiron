@@ -45,8 +45,7 @@ const MAX_SEARCH_DIGESTS: usize = 4096;
 /// Messages a turn may hold for a search past its current sources; a larger
 /// turn's text revision resolves only while its sources stand.
 const MAX_SEARCH_MEMBERS: usize = 64;
-/// Entity-document heads, read in every build: a build without `sync` reads
-/// no document, but still sees which messages have one.
+/// Entity-document heads: which messages' words live in a document.
 const DOCUMENT_HEADS: SideTable<HexId, rmpv::Value, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
 
@@ -346,10 +345,6 @@ fn current_sources_in_txn(
 /// An entity document is the vault's, so its frontier is read on the vault's
 /// own store.
 fn current_state_in_txn(
-    #[cfg_attr(
-        not(feature = "sync"),
-        expect(unused_variables, reason = "no document reads")
-    )]
     vault: &Vault,
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -363,10 +358,7 @@ fn current_state_in_txn(
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, message)? else {
         return Ok(None);
     };
-    #[cfg(feature = "sync")]
     let frontier = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, message)?;
-    #[cfg(not(feature = "sync"))]
-    let frontier: Option<Vec<u8>> = None;
     let commitment = match frontier {
         Some(frontier) => document_commitment(message, &raw, &frontier),
         None => row_commitment(message, &raw),
@@ -379,8 +371,7 @@ fn current_state_in_txn(
 }
 
 /// Whether `message`'s words live in its entity document, which no row
-/// revision of it holds. Every build sees this, whether or not it reads the
-/// document.
+/// revision of it holds.
 pub(crate) fn message_has_document_in_txn(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -392,8 +383,8 @@ pub(crate) fn message_has_document_in_txn(
 /// The member `message` as a search may pick it: every state it retains in
 /// which it shows text, `current` first. A row-backed message's are its
 /// row at each retained revision; a document-backed one's are its
-/// document's retained states alone, which a build without `sync` does not
-/// read ([`MAX_SOURCE_STATES`] of each). Each keeps its body for `release`.
+/// document's retained states alone ([`MAX_SOURCE_STATES`] of each). Each
+/// keeps its body for `release`.
 fn source_in_txn(
     vault: &Vault,
     store: &impl ManifestDbs,
@@ -425,9 +416,8 @@ fn source_in_txn(
             None => source.may_be_absent = true,
         };
     // Once its text lives in its document, its rows from before the move
-    // never stand for it, whether or not this build reads the document.
+    // never stand for it.
     if DOCUMENT_HEADS.contains(&vault.store, txn, &HexId(message))? {
-        #[cfg(feature = "sync")]
         if let Some(raw) =
             crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &message)?
             && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)

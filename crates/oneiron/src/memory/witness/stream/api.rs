@@ -143,7 +143,6 @@ impl Memory<'_> {
             }
             let (receipts, next_after_generation) =
                 storage::receipt_history(self.vault, txn, message, after, limit)?;
-            #[cfg(feature = "sync")]
             let (document_exists, document_history) = {
                 let raw = self
                     .vault
@@ -179,8 +178,6 @@ impl Memory<'_> {
                     .collect::<MemoryResult<Vec<_>>>()?;
                 (exists, history)
             };
-            #[cfg(not(feature = "sync"))]
-            let (document_exists, document_history) = (false, Vec::new());
             Ok(Some(MessageDurability {
                 message_id: message.to_hex(),
                 completion: message_completion_in_txn(self.vault, txn, &message)?,

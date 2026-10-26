@@ -507,26 +507,6 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
-        // The document runtime is optional, but its ownership of stored bodies is
-        // not. A featureless handle must never overwrite a pointer or delete its
-        // row while leaving document history, forks and citation quotes behind.
-        #[cfg(not(feature = "sync"))]
-        {
-            use crate::side_table::{self, HexId, Named, SideTable};
-            const HEADS: SideTable<HexId, rmpv::Value, Named> =
-                SideTable::new(&side_table::ENTITY_DOC_HEAD);
-            let txn = store.env.read_txn()?;
-            if HEADS
-                .iter_raw_from(&store, &txn, &[])?
-                .next()
-                .transpose()?
-                .is_some()
-            {
-                return Err(Error::InvalidConfig(
-                    "this vault contains entity documents and requires the sync feature".to_owned(),
-                ));
-            }
-        }
         crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
