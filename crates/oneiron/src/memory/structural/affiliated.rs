@@ -28,6 +28,21 @@ struct NoteProse<'a> {
 const NOTE_PROSE_ROW: &str = "memory.author_note";
 const NOTE_PROSE_FIELD: &str = "/markdown";
 
+/// The `unlinked` facts a NOTE's `markdown` earns for `memory`'s writer, the
+/// read [`Memory::author_note`] runs, for a bound raw put of a NOTE body
+/// (FIX 3734).
+pub(super) fn note_prose_unlinked(
+    memory: &Memory<'_>,
+    markdown: &str,
+) -> MemoryResult<Vec<crate::receipt::ReferenceRefusalFacts>> {
+    unlinked_prose_links(
+        memory,
+        NOTE_PROSE_ROW,
+        &NoteProse { markdown },
+        &[NOTE_PROSE_FIELD],
+    )
+}
+
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
