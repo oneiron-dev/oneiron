@@ -4,7 +4,8 @@ use super::super::{
     MemoriesRequest, VadPayload, advance_memories_cursor, core_engine_error, hex_bytes,
 };
 use super::controls::{ContextPackBudgetControls, CoreDisclosureAssembly, CoreInterlocutorStamp};
-use super::resolve::{ContextPackResponseLimits, apply_context_pack_response_limits};
+use super::instruction_files::project_instruction_files;
+use super::response_limits::{ContextPackResponseLimits, apply_context_pack_response_limits};
 use crate::error::ApiError;
 use crate::projection::View;
 use oneiron::retrieval_quality::{ConfidenceAdjustment, RetrievalDegradation, RetrievalQuality};
@@ -756,34 +757,4 @@ pub(crate) struct CoreReactionSignal {
     pub glyph: String,
     pub occurred_at: u64,
     pub recorded_at: u64,
-}
-
-/// Keeps each instruction handle `pack` carries only over the units it still
-/// returns, and only while `read` reads its CODE_ARTIFACT, all in one
-/// snapshot (FIX 646): the handles are gathered before the scoped filter,
-/// over units the caller may not be shown.
-fn project_instruction_files(
-    read: &oneiron::claim::ScopedRead<'_>,
-    pack: &mut oneiron::ContextPack,
-) -> oneiron::Result<()> {
-    let returned: BTreeSet<_> = pack
-        .results
-        .iter()
-        .chain(&pack.neighbors)
-        .map(|entity| entity.id)
-        .collect();
-    for handle in &mut pack.instruction_files {
-        handle.units.retain(|unit| returned.contains(unit));
-    }
-    pack.instruction_files
-        .retain(|handle| !handle.units.is_empty());
-    let artifacts: Vec<_> = pack
-        .instruction_files
-        .iter()
-        .map(|handle| vec![handle.code_artifact_id])
-        .collect();
-    let mut readable = read.refs_readable_each(&artifacts)?.into_iter();
-    pack.instruction_files
-        .retain(|_| readable.next().unwrap_or(false));
-    Ok(())
 }
