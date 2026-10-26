@@ -132,14 +132,7 @@ const BASIS_NAMES: &str = "confidence_basis must be one of calibrated_model|dete
 
 /// The band and basis a producer gives a confidence, beside its number.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct ConfidenceDetails {

@@ -134,7 +134,10 @@ impl Memory<'_> {
         // by this writer in the durable run its dispatcher is bound to, or
         // recorded not proven once the turn lands. The reply stands either way.
         if let Some(read) = assertions {
-            let run = self.host_origin.as_ref().and_then(HostWriteOrigin::bound_run);
+            let run = self
+                .host_origin
+                .as_ref()
+                .and_then(HostWriteOrigin::bound_run);
             let created = unproven_creations_in(dbs, wtxn, &plan.turn.assertions, self.actor, run);
             read.unproven.set(created);
         }

@@ -68,11 +68,12 @@ pub(in crate::memory::witness) fn unproven_creations_in(
     let mut unproven = Vec::new();
     for (index, record) in assertions.created.iter().enumerate() {
         let proven = match (EntityId::from_hex(&record.id), run) {
-            (Ok(id), Some(run)) => birth_proves_in(dbs, txn, &id, writer, run)
-                .unwrap_or_else(|error| {
+            (Ok(id), Some(run)) => {
+                birth_proves_in(dbs, txn, &id, writer, run).unwrap_or_else(|error| {
                     tracing::warn!(%error, "a created record's birth was not read; not proven");
                     false
-                }),
+                })
+            }
             _ => false,
         };
         if !proven {

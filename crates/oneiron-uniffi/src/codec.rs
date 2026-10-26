@@ -1029,9 +1029,7 @@ impl Lift<engine::MemoryItem> for MemoryItem {
             value_text: item.value_text,
             confidence: item.confidence,
             hedge_bucket: item.hedge_bucket,
-            confidence_basis: item
-                .confidence_basis
-                .map(|basis| basis.as_str().to_owned()),
+            confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
             provenance: MemoryProvenance {
                 source: item.provenance.source,
                 source_revision_ids: item.provenance.source_revision_ids,

@@ -126,7 +126,9 @@ impl ClaimBody {
 /// evidence it always was, and nothing refuses it.
 fn slot_refs(slot: &Value) -> Result<Vec<EvidenceRef>> {
     if named(slot, EVIDENCE_REFS_KEY) > 1 {
-        return Err(Error::InvalidClaimBody("evidence names evidence_refs twice"));
+        return Err(Error::InvalidClaimBody(
+            "evidence names evidence_refs twice",
+        ));
     }
     Ok(public_evidence_refs(Some(slot)).unwrap_or_default())
 }

@@ -141,7 +141,7 @@ pub(crate) fn erase_change_log_actor_in_txn(
             .get(wtxn, &key)?
             .ok_or(Error::CorruptedIndex("changelog index"))?;
         let mut record: ChangeLogRecord =
-            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("changelog record"))?;
+            rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex("changelog record"))?;
         record.actor_principal = unattributed;
         let bytes = rmp_serde::to_vec_named(&record)
             .map_err(|_| Error::InvariantViolation("changelog encode"))?;

@@ -291,7 +291,9 @@ fn check_claim_policy_for_write_with_record_inner(
     // ceilinged and receipted as that closer (FIX 8655).
     let closing_actor = closer::exact_close_closer(store, &*wtxn, id, body, transition);
     let verified_close = closing_actor.is_some();
-    let lineage = envelope.map(WriteEnvelope::lineage).filter(|_| !verified_close);
+    let lineage = envelope
+        .map(WriteEnvelope::lineage)
+        .filter(|_| !verified_close);
 
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
     // provenance handle carries it into the evaluator input below. Pre-commit

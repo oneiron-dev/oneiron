@@ -184,11 +184,13 @@ pub fn decode_claim_body(data: &[u8], allow_reserved_predicate: bool) -> Result<
                 confidence_band = Some(parsed);
             }
             "confBasis" => {
-                let parsed = value.as_str().and_then(VerdictBasis::parse).ok_or(
-                    Error::InvalidClaimBody(
-                        "confBasis must be one of calibrated_model|deterministic_fallback",
-                    ),
-                )?;
+                let parsed =
+                    value
+                        .as_str()
+                        .and_then(VerdictBasis::parse)
+                        .ok_or(Error::InvalidClaimBody(
+                            "confBasis must be one of calibrated_model|deterministic_fallback",
+                        ))?;
                 confidence_basis = Some(parsed);
             }
             "sal" => {

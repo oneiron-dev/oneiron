@@ -831,12 +831,7 @@ impl Vault {
         // check.
         let direction = EdgeDirection::Out;
         let kind = EdgeKind::Supersedes;
-        let scope = [
-            &[direction as u8][..],
-            new_id.as_bytes(),
-            &[kind as u8][..],
-        ]
-        .concat();
+        let scope = [&[direction as u8][..], new_id.as_bytes(), &[kind as u8][..]].concat();
         let mut count = ScanCount::start(&self.store, &*wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut linked = false;
         for entry in self.port_edges(&*wtxn, new_id, direction, Some(kind), None)? {
