@@ -5,6 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{AuthorityEntryHash, AuthorityFold, AuthorityFoldIssue, AuthorityOp};
 
+/// The code an audit row carries for an entry this install holds back
+/// (FIX 1104): a diagnostic beside `fold_valid`, never a verdict on it.
+pub(crate) const AUTHORITY_AUDIT_HELD_BACK_CODE: &str = "held_back";
+
 /// The fold's diagnostics, indexed by what they name.
 pub(super) struct FoldIssues {
     by_entry: BTreeMap<AuthorityEntryHash, Vec<&'static str>>,
@@ -88,7 +92,30 @@ impl FoldIssues {
                 .or_default()
                 .push("refused_conversation_training");
         }
+        for entry in fold.held_back_entries() {
+            issues
+                .by_entry
+                .entry(*entry)
+                .or_default()
+                .push(AUTHORITY_AUDIT_HELD_BACK_CODE);
+        }
         issues
+    }
+
+    /// The codes of a cold row: the diagnostics naming its entry, and the
+    /// memory floor's. A cold row has no op, so no confirm conflict.
+    pub(super) fn cold_codes(&self, hash: &AuthorityEntryHash) -> Vec<String> {
+        let mut codes: Vec<String> = self
+            .by_entry
+            .get(hash)
+            .into_iter()
+            .flatten()
+            .map(|code| (*code).to_owned())
+            .collect();
+        if self.memory_floor {
+            codes.push("fold_memory_floor".to_owned());
+        }
+        codes
     }
 
     pub(super) fn codes(&self, hash: &AuthorityEntryHash, op: &AuthorityOp) -> Vec<String> {

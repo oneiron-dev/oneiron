@@ -214,6 +214,10 @@ pub struct ColdAuthorityAuditRow {
     /// entries: the current fold's verdict, not the image's, and not "in
     /// effect".
     pub fold_valid: bool,
+    /// The fold's diagnostics that name this entry, snake_case, as a stored
+    /// row carries them (`held_back` among them, FIX 1104).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issue_codes: Vec<String>,
 }
 
 /// One page of the audit.
@@ -289,7 +293,7 @@ impl Vault {
                     next_cold = covered.next().transpose()?;
                     last = Some(cold.id);
                     if lists_cold_rows(&query.kinds) {
-                        cold_attested.push(project_cold_row(cold, &fold));
+                        cold_attested.push(project_cold_row(cold, &fold, &issues));
                     }
                 }
                 Examined::Stored(id) => {
@@ -313,7 +317,7 @@ impl Vault {
                         if let Some(cold) = covered_here
                             && lists_cold_rows(&query.kinds)
                         {
-                            cold_attested.push(project_cold_row(cold, &fold));
+                            cold_attested.push(project_cold_row(cold, &fold, &issues));
                         }
                         continue;
                     }
@@ -637,7 +641,11 @@ fn lists_cold_rows(kinds: &BTreeSet<AuthorityAuditEventKind>) -> bool {
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER || kinds.is_empty()
 }
 
-fn project_cold_row(cold: Covered<'_>, fold: &AuthorityFold) -> ColdAuthorityAuditRow {
+fn project_cold_row(
+    cold: Covered<'_>,
+    fold: &AuthorityFold,
+    issues: &FoldIssues,
+) -> ColdAuthorityAuditRow {
     ColdAuthorityAuditRow {
         entry_ref: cold.id,
         entry_hash: hex_lower(cold.hash),
@@ -651,6 +659,7 @@ fn project_cold_row(cold: Covered<'_>, fold: &AuthorityFold) -> ColdAuthorityAud
             .map(|parent| hex_lower(parent))
             .collect(),
         fold_valid: fold.valid_entries.contains(cold.hash),
+        issue_codes: issues.cold_codes(cold.hash),
     }
 }
 
