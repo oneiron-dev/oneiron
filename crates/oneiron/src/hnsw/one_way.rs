@@ -107,6 +107,27 @@ pub(super) fn forget_one_way_holder(
     Ok(())
 }
 
+/// Drops `holder` from the exception record of each target its old forward
+/// list `old` named and its replacement `new` does not: a record never names a
+/// link that is gone, so a later delete of `holder`, which reads only its
+/// current list, leaves no stale record behind. Targets still linked keep
+/// their records; orphan protection is unchanged.
+pub(super) fn reconcile_removed_one_way_links(
+    store: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    holder: &EntityId,
+    old: &[EntityId],
+    new: &[EntityId],
+    ops: &mut u64,
+) -> Result<()> {
+    let removed: Vec<EntityId> = old
+        .iter()
+        .filter(|target| !new.contains(target))
+        .copied()
+        .collect();
+    forget_one_way_holder(store, wtxn, holder, &removed, ops)
+}
+
 /// Scrubs a node being deleted out of every holder that kept a one-way link to
 /// it (orphan protection), then drops the exception record. This is the half
 /// of a symmetric delete that the deleted node's own forward list cannot reach

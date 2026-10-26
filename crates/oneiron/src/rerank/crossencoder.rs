@@ -12,9 +12,14 @@ use std::io::Read;
 use std::time::Duration;
 use zeroize::Zeroizing;
 
+mod batches;
+pub use batches::CrossEncoderWork;
+
 const MAX_REQUEST_BYTES: usize = 1_048_576;
 const MAX_RESPONSE_BYTES: u64 = 1_048_576;
-const MAX_CANDIDATES: usize = 50;
+/// Candidates in one request. A larger admitted block is scored in batches
+/// of this size, never refused for its count.
+const BATCH_SIZE: usize = 50;
 
 /// A host-selected local loopback service or remote HTTPS model.
 /// The service implements the indexed `/rerank` response contract.
@@ -26,6 +31,9 @@ pub struct CrossEncoder {
     identity: String,
     bearer: Option<Zeroizing<String>>,
     documents: BTreeMap<EntityId, String>,
+    /// The host's fair line each batch waits its turn on; `None` sends each
+    /// batch as soon as the one before it returns.
+    work: Option<CrossEncoderWork>,
 }
 
 #[derive(Serialize)]
@@ -106,6 +114,7 @@ impl CrossEncoder {
             identity,
             bearer: bearer.map(Zeroizing::new),
             documents: BTreeMap::new(),
+            work: None,
         })
     }
     /// Supplies text for non-claim candidates. Only admitted candidate ids are sent.
@@ -122,7 +131,7 @@ impl CrossEncoder {
         if candidates.is_empty() {
             return Ok(BackendSpend::free(Vec::new()));
         }
-        if query.trim().is_empty() || candidates.len() > MAX_CANDIDATES || token_budget == Some(0) {
+        if query.trim().is_empty() || candidates.len() > BATCH_SIZE || token_budget == Some(0) {
             return Err(invalid("invalid crossencoder batch").into());
         }
         let documents = candidates
@@ -152,11 +161,17 @@ impl CrossEncoder {
         if body.len() > MAX_REQUEST_BYTES {
             return Err(invalid("crossencoder request too large").into());
         }
+        let turn = self.admit_turn()?;
         // Blocking reqwest owns a runtime. Create/use/drop it on a dedicated
         // worker, never on an async caller's executor thread or under LMDB.
+        // The batch's turn on the host's line travels with that worker.
         std::thread::scope(|scope| {
             scope
-                .spawn(|| self.send_batch(body, candidates.len(), token_budget))
+                .spawn(move || {
+                    let scored = self.send_batch(body, candidates.len(), token_budget);
+                    drop(turn);
+                    scored
+                })
                 .join()
                 .map_err(|_| {
                     RetrievalError::from(invalid("crossencoder transport worker failed"))
@@ -203,6 +218,7 @@ impl CrossEncoder {
     }
     /// Performs inference outside the pipeline read transaction. The returned rung is immutable.
     /// The caller owns and settles the supplied lease using the returned actual usage.
+    /// A block of any size is scored in batches, and makes one rung.
     pub fn prepare(
         &self,
         query: &str,
@@ -210,8 +226,11 @@ impl CrossEncoder {
         token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<PreparedCrossEncoder>> {
-        let scored = self.score(query, candidates, token_budget)?;
-        let fingerprint = fingerprint(query, candidates)?;
+        let scored = self.score_batches(query, candidates, token_budget)?;
+        // Past this point every failure still reports the batches' usage.
+        let tokens_used = scored.tokens_used;
+        let spent = |error: Error| RetrievalError { error, tokens_used };
+        let fingerprint = fingerprint(query, candidates).map_err(spent)?;
         // Prepared lookup contents are part of the fork identity, including
         // non-claim text which the pipeline's candidate DTO does not carry.
         let mut identity = Sha256::new();
@@ -222,7 +241,7 @@ impl CrossEncoder {
                 let document = self
                     .documents
                     .get(&candidate.id)
-                    .ok_or_else(|| invalid("crossencoder candidate text missing"))?;
+                    .ok_or_else(|| spent(invalid("crossencoder candidate text missing")))?;
                 identity.update((document.len() as u64).to_le_bytes());
                 identity.update(document);
             }
@@ -311,7 +330,7 @@ impl DeepSearchBackend for CrossEncoder {
         token_budget: Option<u64>,
         _lease: &BudgetLease,
     ) -> RetrievalResult<BackendSpend<Vec<f32>>> {
-        self.score(query, candidates, token_budget)
+        self.score_batches(query, candidates, token_budget)
     }
 }
 fn validate_response(
