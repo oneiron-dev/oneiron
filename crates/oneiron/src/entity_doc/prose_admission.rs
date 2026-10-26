@@ -94,7 +94,10 @@ fn reads(actor: WriteActor) -> bool {
 /// else on its own.
 fn in_place(body: &str, place: usize, text: &Admitted, lifted: &LiftedKeys) -> Vec<String> {
     let said = text.said.as_str();
-    let start = body.char_indices().nth(place).map_or(body.len(), |(at, _)| at);
+    let start = body
+        .char_indices()
+        .nth(place)
+        .map_or(body.len(), |(at, _)| at);
     let stored = text.stored.as_str();
     let Some(after) = body.get(start..).and_then(|rest| rest.strip_prefix(stored)) else {
         return authored(said, 0..said.len());
