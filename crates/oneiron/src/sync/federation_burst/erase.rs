@@ -85,10 +85,10 @@ pub(crate) fn forget_in_txn(
 }
 
 /// Whether a retained item still carries one of `ids`.
-pub(crate) fn retained_copies_in<'a>(
+pub(crate) fn retained_copies_in(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
-    ids: impl IntoIterator<Item = &'a EntityId>,
+    ids: impl IntoIterator<Item = &EntityId>,
 ) -> Result<bool> {
     for id in ids {
         if !CARRIER
