@@ -5,11 +5,13 @@
 //! Waiting admissions queue per caller, keyed by the MACHINE the gate proved:
 //! first in, first out for one caller, and round-robin across callers, so one
 //! machine's burst never holds another's turn. Each carries its arrival and
-//! its deadline ([`ADMISSION_DEADLINE`]); no count refuses one. An accept
-//! hands the next caller in turn its grant, one grant at a time; the
-//! admission then rechecks its grant, sends the acknowledgement its dialer
-//! waits for, and only then is admitted. With nothing else waiting, an
-//! admission is granted as soon as an accept asks.
+//! its deadline ([`ADMISSION_DEADLINE`]); no count refuses one. Grants go out
+//! in that order whenever a slot is free ([`ADMISSION_SLOTS`]: grants under
+//! way and admitted connections no accept took yet), so acknowledgements run
+//! side by side and a slow one holds only its own slot. A granted admission
+//! rechecks its grant, sends the acknowledgement its dialer waits for, and
+//! only then is admitted; one that expired waiting is never acknowledged.
+//! With a slot free, an admission is granted as it arrives.
 //!
 //! Every exit after the gate's proof leaves one path receipt through the
 //! admission's guard: admitted once its acknowledgement is sent, or failed
@@ -18,7 +20,7 @@
 //! before dispatch leaves the gate's refusal receipt instead. TLS, pre-gate
 //! and policy failures keep the receipts the gate already leaves.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use tokio::sync::{Notify, oneshot};
 
@@ -28,6 +30,11 @@ use super::*;
 /// its acknowledgement sent, before it fails and its connection closes
 /// (CALLS ADMISSION_DEADLINE).
 const ADMISSION_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Grants under way and admitted connections no accept took yet, at once:
+/// the capacity of the channel admitted connections queued on before
+/// (CALLS ADMISSION_SLOTS).
+const ADMISSION_SLOTS: usize = 64;
 
 /// An admitted connection for the next accept: its MACHINE, its ALPN and the
 /// connection.
@@ -47,9 +54,9 @@ struct Queue {
     waiting: BTreeMap<MachineId, VecDeque<Waiting>>,
     /// The callers with an admission waiting, in turn order.
     turns: VecDeque<MachineId>,
-    /// The admission whose grant is under way: its acknowledgement has not
-    /// ended yet.
-    granting: Option<u64>,
+    /// The admissions whose grants are under way: their acknowledgements
+    /// have not ended yet.
+    granted: BTreeSet<u64>,
     /// Admitted connections for the next accepts, oldest first.
     ready: VecDeque<Admitted>,
     /// The id the next waiting admission takes.
@@ -73,7 +80,7 @@ struct Waiting {
 enum Withdrawal {
     /// It waited, and is off the queue now.
     Withdrawn,
-    /// Its grant was sent: it holds the grant under way.
+    /// Its grant was sent: its grant is under way.
     Granted,
     /// It was gone: passed over at its deadline, or dropped as the queue
     /// closed.
@@ -110,9 +117,9 @@ impl Admissions {
             if first {
                 queue.turns.push_back(machine);
             }
+            queue.grant_free_slots();
             id
         };
-        self.changed.notify_waiters();
         Some((id, granted))
     }
 
@@ -120,7 +127,7 @@ impl Admissions {
     /// it stood.
     fn withdraw(&self, machine: MachineId, id: u64) -> Withdrawal {
         let mut queue = self.queue();
-        if queue.granting == Some(id) {
+        if queue.granted.contains(&id) {
             return Withdrawal::Granted;
         }
         let Some(waiting) = queue.waiting.get_mut(&machine) else {
@@ -138,14 +145,13 @@ impl Admissions {
     }
 
     /// Ends grant `id`: `admitted`, when it was admitted, joins the
-    /// connections the next accepts take, and the next turn may be granted.
+    /// connections the next accepts take, and a slot it frees is granted.
     fn grant_ended(&self, id: u64, admitted: Option<Admitted>) {
         {
             let mut queue = self.queue();
-            if queue.granting == Some(id) {
-                queue.granting = None;
-            }
+            queue.granted.remove(&id);
             queue.ready.extend(admitted);
+            queue.grant_free_slots();
         }
         self.changed.notify_waiters();
     }
@@ -162,10 +168,10 @@ impl Admissions {
         self.changed.notify_waiters();
     }
 
-    /// The next admitted connection, granting the next caller in turn while
-    /// none is ready. Cancel-safe: a grant it handed out lands with the next
-    /// call. `Unavailable` once the queue is closed and nothing admitted
-    /// waits.
+    /// The next admitted connection, oldest first; the slot it frees is
+    /// granted. Cancel-safe: it takes a connection only as it returns it.
+    /// `Unavailable` once the queue is closed and nothing granted or admitted
+    /// is left.
     pub(super) async fn next(&self) -> Result<Admitted, MeshError> {
         loop {
             let changed = self.changed.notified();
@@ -174,13 +180,11 @@ impl Admissions {
             {
                 let mut queue = self.queue();
                 if let Some(admitted) = queue.ready.pop_front() {
+                    queue.grant_free_slots();
                     return Ok(admitted);
                 }
-                if queue.granting.is_none() {
-                    if queue.closed {
-                        return Err(MeshError::Unavailable);
-                    }
-                    queue.grant_next();
+                if queue.closed && queue.granted.is_empty() {
+                    return Err(MeshError::Unavailable);
                 }
             }
             changed.await;
@@ -189,10 +193,16 @@ impl Admissions {
 }
 
 impl Queue {
+    /// Grants waiting admissions, in turn order, while a slot is free.
+    fn grant_free_slots(&mut self) {
+        while self.granted.len() + self.ready.len() < ADMISSION_SLOTS && self.grant_next() {}
+    }
+
     /// Sends the next caller in turn the grant of its oldest admission:
     /// round-robin across callers, first in first out for each. One past its
-    /// deadline, or whose admission already ended, is passed over.
-    fn grant_next(&mut self) {
+    /// deadline, or whose admission already ended, is passed over. `false`
+    /// when none waits.
+    fn grant_next(&mut self) -> bool {
         let now = Instant::now();
         while let Some(machine) = self.turns.pop_front() {
             let Some(waiting) = self.waiting.get_mut(&machine) else {
@@ -208,10 +218,11 @@ impl Queue {
                 && entry.deadline > now
                 && entry.grant.send(()).is_ok()
             {
-                self.granting = Some(entry.id);
-                return;
+                self.granted.insert(entry.id);
+                return true;
             }
         }
+        false
     }
 }
 
@@ -286,8 +297,8 @@ struct Admission<'a> {
 }
 
 impl GateHandler {
-    /// Admits `connection`, which the gate proved, once an accept grants its
-    /// turn: its grant is rechecked as it arrives and again just before its
+    /// Admits `connection`, which the gate proved, once its turn's grant
+    /// comes: its grant is rechecked as it arrives and again just before its
     /// acknowledgement. Every exit leaves its receipt.
     pub(super) async fn admit(&self, connection: Connection) {
         // Recheck: revocation can race the completed handshake before dispatch.
