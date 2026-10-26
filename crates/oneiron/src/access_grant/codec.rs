@@ -278,6 +278,13 @@ pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
             ),
             (Value::from("space_ref"), Value::from(space_ref.to_hex())),
         ]),
+        AccessGrantScope::ConversationMessages { conversation_ref } => Value::Map(vec![
+            (Value::from("kind"), Value::from("conversation_messages")),
+            (
+                Value::from("conversation_ref"),
+                Value::from(conversation_ref.to_hex()),
+            ),
+        ]),
         AccessGrantScope::DiaryCoreference {
             left_ref,
             right_ref,
@@ -354,6 +361,12 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
                 "messages" => AccessGrantScope::Messages { space_ref },
                 "summaries" => AccessGrantScope::Summaries { space_ref },
                 _ => AccessGrantScope::RelationshipClaims { space_ref },
+            })
+        }
+        "conversation_messages" => {
+            validate_keys(entries, &["kind", "conversation_ref"])?;
+            Ok(AccessGrantScope::ConversationMessages {
+                conversation_ref: decode_entity_ref(required_value(entries, "conversation_ref")?)?,
             })
         }
         "diary_coreference" => {

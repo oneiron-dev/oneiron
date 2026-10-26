@@ -165,6 +165,39 @@ impl<'v> AccessContext<'v> {
         self.allows_at(entity_type, space, private, record, self.observed_at)
     }
 
+    /// Whether this context holds a live grant over some conversation's
+    /// MESSAGEs (FIX 10895): only then is a MESSAGE that names no
+    /// relationship walked to its conversation.
+    pub(crate) fn holds_conversation_grants(&self) -> bool {
+        self.grants.iter().any(|grant| {
+            matches!(
+                grant.scope,
+                super::AccessGrantScope::ConversationMessages { .. }
+            )
+        })
+    }
+
+    /// Whether a live grant of this context's principal admits a MESSAGE of
+    /// `conversation` that names no relationship, at `record`, as of this
+    /// context's snapshot (FIX 10895).
+    pub(crate) fn allows_conversation_message_at_snapshot(
+        &self,
+        conversation: EntityId,
+        record: &crate::federation::Scope,
+    ) -> bool {
+        let Some(principal) = self.principal else {
+            return false;
+        };
+        self.grants.iter().any(|grant| {
+            grant.allows_conversation_message_read(
+                principal,
+                conversation,
+                record,
+                self.observed_at,
+            )
+        })
+    }
+
     fn allows_at(
         &self,
         entity_type: u8,

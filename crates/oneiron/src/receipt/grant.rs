@@ -210,6 +210,11 @@ fn access_grant_receipt(
         grant.capability.as_str().to_owned(),
     );
     append_access_grant_scope_fields(&mut fields, &grant.scope);
+    // A grant the engine issued on the owner's standing policy names why
+    // (FIX 10895).
+    if let Some(reason) = crate::ingest::connector_witness_read_reason(&id, grant) {
+        fields.insert("reason".to_owned(), reason.to_owned());
+    }
 
     ReceiptRecord {
         receipt_id: format!("scoped_read:{}:{event_name}", id.to_hex()),
@@ -469,6 +474,10 @@ fn append_access_grant_scope_fields(
         | AccessGrantScope::RelationshipClaims { space_ref } => {
             fields.insert("scope".into(), scope.required_capability().as_str().into());
             fields.insert("space_ref".into(), space_ref.to_hex());
+        }
+        AccessGrantScope::ConversationMessages { conversation_ref } => {
+            fields.insert("scope".to_owned(), "conversation_messages".to_owned());
+            fields.insert("conversation_ref".to_owned(), conversation_ref.to_hex());
         }
         AccessGrantScope::ChannelIdentity {
             identity_ref,
