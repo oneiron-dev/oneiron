@@ -38,6 +38,16 @@ pub fn maintenance_reader(vault: &Vault) -> Result<Option<ScopedRead<'_>>> {
     if !open {
         return Ok(None);
     }
+    dreamer_reader(vault).map(Some)
+}
+
+/// The Dreamer's relationship-granted lane, whether or not an ask is open:
+/// the nightly re-check settles a mention only as it reads it (FIX 10374).
+///
+/// # Errors
+///
+/// When the vault cannot resolve the Dreamer's principal.
+pub(super) fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
     let dreamer = vault.dreamer_authority()?;
     let key = ScopedReadActorKey::with_actor_class(
         dreamer.entity_ref().to_hex(),
@@ -45,7 +55,7 @@ pub fn maintenance_reader(vault: &Vault) -> Result<Option<ScopedRead<'_>>> {
     )
     .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
     .require_relationship_grants(Some(dreamer.entity_ref()));
-    Ok(Some(vault.scoped_read(key)))
+    Ok(vault.scoped_read(key))
 }
 
 /// One lane's judgement in one snapshot: the lane, and the live policy it
