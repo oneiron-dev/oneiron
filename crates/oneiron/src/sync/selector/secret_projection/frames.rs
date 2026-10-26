@@ -90,6 +90,8 @@ impl SyncSecretProjection {
     /// `encoded`, a window blob leaving this device, as a sync peer gets it;
     /// `context` holds an update's dependencies, copied and never changed.
     /// `None` when nothing marked is in it: the caller sends it as it is.
+    /// `home` is set for a device's send to its home: an update that goes as
+    /// it is then also carries each marked copy re-authored (FIX 10729).
     ///
     /// # Errors
     /// A store failure, or a blob carrying a marked item that cannot be
@@ -99,6 +101,7 @@ impl SyncSecretProjection {
         store: &Store,
         encoded: &[u8],
         context: Option<&LoroDoc>,
+        home: bool,
     ) -> Result<Option<Vec<u8>>> {
         if self.is_empty() {
             return Ok(None);
@@ -142,7 +145,18 @@ impl SyncSecretProjection {
                 resolve_carriers(store, &mut json, |_, _| true);
                 let carried = self.project_history(&mut json);
                 if carried.changed.is_empty() && carried.preserving {
-                    return Ok(None);
+                    // Its registers are not rebuilt, so a re-authored copy
+                    // rides along without meeting a rekeyed one (FIX 10729).
+                    return match context.filter(|_| home) {
+                        Some(window) => self.reauthored(
+                            store,
+                            window,
+                            window.peer_id(),
+                            encoded,
+                            spans_of(&input),
+                        ),
+                        None => Ok(None),
+                    };
                 }
                 let spans = spans_of(&input);
                 let Some(mut parts) = parts_of(&scratch).filter(|_| carried.preserving) else {
@@ -558,7 +572,7 @@ fn decode(context: &'static str) -> impl FnOnce(loro::LoroError) -> Error {
 /// stays one, or as a plain snapshot when the checkpoint does not take it
 /// (FIX 10794); a fresh document without one. `None` when neither copy
 /// reads.
-fn isolated(context: Option<&LoroDoc>) -> Option<LoroDoc> {
+pub(super) fn isolated(context: Option<&LoroDoc>) -> Option<LoroDoc> {
     let Some(context) = context else {
         return Some(LoroDoc::new());
     };

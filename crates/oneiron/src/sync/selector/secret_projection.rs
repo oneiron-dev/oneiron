@@ -48,6 +48,7 @@
 mod documents;
 mod frames;
 mod history;
+mod reauthor;
 mod release;
 mod rows;
 
@@ -76,7 +77,8 @@ pub use documents::{
 };
 pub(crate) use history::ProjectedHistory;
 pub use release::{
-    RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame, repo_copy_generation,
+    RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame,
+    prepare_repo_sync_frame_for_home, repo_copy_generation,
 };
 pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::{CopyRow, InboundRow};
