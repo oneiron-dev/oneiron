@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 14 | 1 | 0 |
 | [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 8 | 2 | 0 |
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
-| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 5 | 2 | 0 |
+| [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 6 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 47 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 25 | 1 | 2 |
 | [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 36 | 4 | 1 |
@@ -49,7 +49,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1302 | 182 | 31 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1303 | 182 | 31 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 51 | 1 | 0 |
@@ -582,7 +582,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
-| `iroh_transport` | file+dir | 2 | m | Private iroh data plane |
+| `iroh_transport` | file+dir | 3 | m | Private iroh data plane |
 | `sync_dialer` | file | 1 | s | The sync client's carrier to its home machine over the mesh (OF-535) |
 | `transport_key` | file | 1 | s | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 
@@ -724,7 +724,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `decision_host` | dir | 5 | m | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `decision_verdict` | file | 1 | L | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `device_local` | file | 1 | s | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
-| `device_sync` | file+dir | 4 | m | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
+| `device_sync` | file+dir | 5 | m | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `document_memory` | file | 1 | s | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `embedded` | file+dir | 7 | m | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
 | `embedder` | dir | 28 | L | The embedder provider slot |
