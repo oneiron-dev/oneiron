@@ -101,25 +101,22 @@ fn route_home(
     }
 }
 
-/// FIX 5661 C2a: the endpoint a home move to node `to` is captured at. A
-/// snapshot that names endpoints gives that node's, or none when it names
-/// none for it; one that names none leaves residence reads on the route the
-/// host keeps (else `server`), and that route is the move's. Delivery dials
-/// it only while its socket proves the move's target.
-fn move_endpoint(
+/// FIX 6459: feeds the routes a home move's target is captured at, before
+/// the election they inform: each candidate's endpoint when the snapshot
+/// names them, and the route residence reads take where it names none (the
+/// host's route, else `server`). The election's own writer captures each
+/// move's route from them; delivery dials it only while its socket proves
+/// the move's target.
+fn feed_routes(
+    vault: &Vault,
     snapshot: &TopologySnapshot,
     route: Option<&ResidenceHomeRoute>,
     server: &str,
-    to: u64,
-) -> Option<String> {
-    match snapshot.endpoints.as_ref() {
-        Some(endpoints) => endpoints.get(&to).cloned(),
-        None => Some(
-            route
-                .and_then(ResidenceHomeRoute::current)
-                .unwrap_or_else(|| server.to_owned()),
-        ),
-    }
+) {
+    let fallback = route
+        .and_then(ResidenceHomeRoute::current)
+        .unwrap_or_else(|| server.to_owned());
+    super::home_handoff::feed_move_routes(vault, snapshot.endpoints.clone(), fallback);
 }
 
 /// Apply the initial snapshot before any socket work, then consume later
@@ -128,8 +125,8 @@ fn move_endpoint(
 /// owner's home pick re-elects where it lands, in its own commit; on the
 /// wake that follows, the route moves to the committed home over the last
 /// host snapshot, and only a host update replaces that snapshot. Each
-/// election that moved the home captures the move's route from that same
-/// snapshot (FIX 5661 C2a).
+/// snapshot's routes are fed before its election, which captures a move's
+/// route as it commits the move (FIX 6459).
 pub(super) fn watch_topology(
     vault: Arc<Vault>,
     source: &HomeNodeTopology,
@@ -140,12 +137,10 @@ pub(super) fn watch_topology(
     let mut updates = source.subscribe();
     let mut wakes = vault.subscribe_proactivity_changes();
     let mut snapshot = updates.borrow_and_update().clone();
+    feed_routes(&vault, &snapshot, route.as_ref(), &server);
     let mut routed =
         DreamerRunnerStore::new(&vault).sync_topology_changed(&snapshot.candidates, now_secs())?;
     route_home(route.as_ref(), &snapshot, routed.as_ref());
-    super::home_handoff::capture_move_route(&vault, |to| {
-        move_endpoint(&snapshot, route.as_ref(), &server, to)
-    });
     Ok(TopologyWatcher(tokio::spawn(async move {
         loop {
             let home = tokio::select! {
@@ -154,6 +149,7 @@ pub(super) fn watch_topology(
                         break;
                     }
                     snapshot = updates.borrow_and_update().clone();
+                    feed_routes(&vault, &snapshot, route.as_ref(), &server);
                     DreamerRunnerStore::new(&vault)
                         .sync_topology_changed(&snapshot.candidates, now_secs())
                 }
@@ -168,9 +164,6 @@ pub(super) fn watch_topology(
             match home {
                 Ok(home) => {
                     route_home(route.as_ref(), &snapshot, home.as_ref());
-                    super::home_handoff::capture_move_route(&vault, |to| {
-                        move_endpoint(&snapshot, route.as_ref(), &server, to)
-                    });
                     routed = home;
                 }
                 Err(error) => {
