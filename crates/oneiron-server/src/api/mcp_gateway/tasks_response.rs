@@ -226,6 +226,15 @@ pub(crate) async fn execute_mcp_generated_verb(
     .await?;
     // The granted budget is ENFORCED here, not merely reported.
     mcp_cap_verb_rows(&mut output, &mut page, snapshot.source);
+    // A continuation that goes back inside the call's own argument (FIX 9175).
+    if let Some(resume) = snapshot
+        .source
+        .resume
+        .filter(|resume| resume.within.is_some())
+    {
+        let arguments = serde_json::to_value(&args.payload.arguments).unwrap_or_default();
+        page.resume_within(resume, arguments.get(resume.argument));
+    }
     // A step's type feedback leaves on its own release (FIX 10390).
     let feedback = super::type_feedback_release::hold_verb_feedback(args.tool.name, &mut output);
     let structured = json!({
