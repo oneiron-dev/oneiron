@@ -10,9 +10,10 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::store::Store;
 
-use super::super::codec::invalid_body;
+use super::super::codec::{SECRET_CUSTODY_SEALED_VALUE_KEY, invalid_body};
 use super::super::types::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SecretBinding, SecretCustodyStatus,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_STORED_SCHEMA_VERSION,
+    SecretBinding, SecretCustodyStatus,
 };
 
 /// The admission projection of a custody record: every field SECRET-02's
@@ -123,14 +124,16 @@ fn binding_from_value_ref(value: &ValueRef<'_>) -> Result<SecretBinding> {
     })
 }
 
-/// Decodes the admission projection from a custody body WITHOUT
+/// Decodes the admission projection from a stored custody body WITHOUT
 /// materializing the value: the borrowing MessagePack reader leaves
-/// `value_bytes` a slice of the LMDB-resident page, so the admission path
-/// holds no heap copy of the plaintext at all (SOL-1920-04). The keys the
-/// doors consume plus the presence/shape of `value_bytes` validate with
-/// the same missing-or-duplicated reject discipline as
-/// [`decode_secret_custody_body`]; keys the doors never read stay the full
-/// codec's affair (registration already ran it).
+/// `sealed_value` a slice of the LMDB-resident page, so the admission path
+/// holds no heap copy of the value at all (SOL-1920-04). The keys the doors
+/// consume validate with the same missing-or-duplicated reject discipline
+/// as [`decode_secret_custody_body`], and the value slot as the strict
+/// stored decoder reads it (KS-6, FIX-LIST 9246 item 2): the stored schema,
+/// exactly one binary `sealed_value`, and no `value_bytes` slot; keys the
+/// doors never read stay the full codec's affair (registration already ran
+/// it).
 pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<SecretCustodyAdmission> {
     use std::io::Cursor;
 
@@ -143,15 +146,28 @@ pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<Secre
     let ValueRef::Map(entries) = value else {
         return Err(invalid_body("secret custody body must be a map"));
     };
-    // Present and byte-shaped, never copied: the value, sealed at rest or a
-    // restored image's carrier (KS-6), stays a borrow of the store page.
-    match (
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[4]),
-        required_value_ref(&entries, super::codec::SECRET_CUSTODY_SEALED_VALUE_KEY),
-    ) {
-        (Some(ValueRef::Binary(_) | ValueRef::String(_)), None)
-        | (None, Some(ValueRef::Binary(_))) => {}
-        _ => return Err(invalid_body("value_bytes")),
+    // A value rests sealed under the stored stamp, or not at all: a body
+    // with a plaintext slot, even one a duplicate hides, is no stored body
+    // (KS-6, no old-format reader). The sealed bytes stay a borrow of the
+    // store page.
+    let schema = u64_ref(
+        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[0])
+            .ok_or(invalid_body("schema_version"))?,
+        "schema_version",
+    )?;
+    if schema != u64::from(SECRET_CUSTODY_STORED_SCHEMA_VERSION) {
+        return Err(invalid_body("unsupported secret custody schema version"));
+    }
+    let plaintext_slot = entries.iter().any(|(key, _)| {
+        matches!(key, ValueRef::String(s) if s.as_str() == Some(SECRET_CUSTODY_BODY_KEYS[4]))
+    });
+    if plaintext_slot
+        || !matches!(
+            required_value_ref(&entries, SECRET_CUSTODY_SEALED_VALUE_KEY),
+            Some(ValueRef::Binary(_))
+        )
+    {
+        return Err(invalid_body("value_bytes"));
     }
     let name = str_ref(
         required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[1]).ok_or(invalid_body("name"))?,
