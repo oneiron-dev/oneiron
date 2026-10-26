@@ -57,7 +57,10 @@ pub(crate) struct CloudRegistration {
     trust: Trust,
     flows: Mutex<Flows>,
     /// Serializes every act that sends a slot's token, so no two refreshes
-    /// of one family overlap in this process.
+    /// of one family overlap in this process. A logout or an erase advances
+    /// the flows' cancel epoch under it, and a poll links under it only at
+    /// the epoch it took its flow at, so no login in flight links after
+    /// either. Taken before `flows`, never while `flows` is held.
     family: Mutex<()>,
 }
 
@@ -169,6 +172,9 @@ pub(crate) enum Started {
     Failed {
         reason: String,
     },
+    /// A logout or an erase ran while the start's request did: no login
+    /// is held.
+    Cancelled,
 }
 
 /// What one poll of a login answered.
@@ -211,6 +217,12 @@ pub(crate) enum Polled {
     /// The flow ended without a link: log in again.
     Failed {
         reason: String,
+    },
+    /// A logout or an erase ran while this poll's request did: the flow
+    /// ended and nothing was linked. `revoke` is the issued tokens' revoke
+    /// when the answer carried them.
+    Cancelled {
+        revoke: Option<Revoke>,
     },
 }
 

@@ -56,7 +56,8 @@ impl CloudRegistration {
     /// Starts a login for `owner`: discovery, then the device authorization.
     /// The owner is shown the verification URI and the user code apart,
     /// never a URL that carries the code (§2). `replace` lets its link
-    /// replace a current link to another subject.
+    /// replace a current link to another subject. A logout or an erase
+    /// while its request runs ends it unheld.
     ///
     /// # Errors
     /// The owner proof's own.
@@ -71,6 +72,7 @@ impl CloudRegistration {
             Err(failure) => return Ok(started_failure(failure)),
         };
         let actor = owner.actor_for_read(vault)?;
+        let epoch = self.flows().epoch();
         let started = Instant::now();
         let begun = Http::new().and_then(|http| {
             let endpoints = discover(&http, pins)?;
@@ -113,7 +115,10 @@ impl CloudRegistration {
         let handle = {
             let mut flows = self.flows();
             flows.expire(Instant::now());
-            flows.hold(flow)
+            flows.hold(flow, epoch)
+        };
+        let Some(handle) = handle else {
+            return Ok(Started::Cancelled);
         };
         Ok(Started::Pending {
             flow: handle,
@@ -125,7 +130,8 @@ impl CloudRegistration {
     }
 
     /// One poll of the login `handle` names, by a fresh request of the owner
-    /// who started it: at most one token request, sent only when due.
+    /// who started it: at most one token request, sent only when due. A
+    /// logout or an erase while its request runs ends the flow unlinked.
     ///
     /// # Errors
     /// The owner proof's own; the vault's refusal of the link.
@@ -145,11 +151,11 @@ impl CloudRegistration {
         };
         let actor = owner.actor_for_read(vault)?;
         let now = Instant::now();
-        let taken = {
+        let (taken, epoch) = {
             let mut flows = self.flows();
             let taken = flows.take(handle, &actor);
             flows.expire(now);
-            taken
+            (taken, flows.epoch())
         };
         let Some(mut flow) = taken else {
             return Ok(Polled::UnknownFlow);
@@ -164,13 +170,15 @@ impl CloudRegistration {
                 next_poll_in: whole_secs(wait),
                 expires_in: whole_secs(flow.left(now)),
             };
-            self.flows().put_back(handle.to_owned(), flow);
+            if !self.flows().put_back(handle.to_owned(), flow, epoch) {
+                return Ok(Polled::Cancelled { revoke: None });
+            }
             return Ok(pending);
         }
         let http = match Http::new() {
             Ok(http) => http,
             Err(failure) => {
-                self.flows().put_back(handle.to_owned(), flow);
+                self.flows().put_back(handle.to_owned(), flow, epoch);
                 return Ok(Polled::Failed {
                     reason: failure.reason(),
                 });
@@ -201,6 +209,14 @@ impl CloudRegistration {
                     });
                 }
             };
+            // Under the family guard a logout or an erase advances the
+            // epoch, so none can land between this read and the link.
+            let _family = self.family();
+            if self.flows().epoch() != epoch {
+                return Ok(Polled::Cancelled {
+                    revoke: Some(revoke(&http, &flow.endpoints, &tokens.refresh_token)),
+                });
+            }
             return self.link(vault, owner, pins, &http, &flow, &tokens);
         }
         let pending = |flow: &Flow| Polled::Pending {
@@ -232,13 +248,16 @@ impl CloudRegistration {
                 });
             }
         };
-        self.flows().put_back(handle.to_owned(), flow);
+        if !self.flows().put_back(handle.to_owned(), flow, epoch) {
+            return Ok(Polled::Cancelled { revoke: None });
+        }
         Ok(polled)
     }
 
-    /// The approved login's link: the token reply verified against the pins,
-    /// then the owner's link committed with it; only then is it reported,
-    /// with its first online check. Tokens that cannot be kept are revoked.
+    /// The approved login's link, under the family guard its caller holds:
+    /// the token reply verified against the pins, then the owner's link
+    /// committed with it; only then is it reported, with its first online
+    /// check. Tokens that cannot be kept are revoked.
     fn link(
         &self,
         vault: &Vault,
@@ -268,7 +287,6 @@ impl CloudRegistration {
         };
         // The current link's refresh token, copied out before the link
         // replaces it, so its family can be revoked after.
-        let _family = self.family();
         let current = vault.cloud_registration_as_owner(owner, &pins.issuer)?;
         let replaced_token = current
             .as_ref()
@@ -398,7 +416,9 @@ impl CloudRegistration {
     /// Stops the owner's link here, then tries the RFC 7009 revoke with a
     /// copy of its refresh token taken first; with `erase`, the owner's
     /// erase: every slot the owner linked fenced and erased, under every
-    /// issuer when no pins name one. Pending logins of this owner end.
+    /// issuer when no pins name one. Pending logins of this owner end, and
+    /// so does every start or poll in flight: the cancel epoch advances
+    /// under the family guard, before any of this.
     ///
     /// # Errors
     /// The owner proof's own; storage faults; a legal hold on a slot.
@@ -409,8 +429,8 @@ impl CloudRegistration {
         erase: bool,
     ) -> oneiron::Result<LoggedOut> {
         let actor = owner.actor_for_read(vault)?;
-        self.flows().cancel(&actor);
         let _family = self.family();
+        self.flows().cancel(&actor);
         let pins = self.pins().ok();
         let binding = match pins {
             Some(pins) => vault.cloud_registration_as_owner(owner, &pins.issuer)?,

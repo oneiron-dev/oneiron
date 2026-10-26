@@ -79,14 +79,29 @@ impl Flow {
     }
 }
 
-/// Every pending flow of this process, by its opaque local handle.
+/// Every pending flow of this process, by its opaque local handle, and the
+/// cancel epoch: every logout and erase advances it, so a start or a poll
+/// whose request was in flight then sees it moved and never links.
 #[derive(Default)]
-pub(crate) struct Flows(BTreeMap<String, Flow>);
+pub(crate) struct Flows {
+    held: BTreeMap<String, Flow>,
+    epoch: u64,
+}
 
 impl Flows {
+    /// The cancel epoch now: a start reads it before its request, a poll
+    /// with its `take`.
+    pub(crate) const fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
     /// Holds `flow` under a fresh random handle, which names it to its
-    /// owner and nothing else.
-    pub(crate) fn hold(&mut self, flow: Flow) -> String {
+    /// owner and nothing else, when no logout or erase ran since `epoch`;
+    /// `None` when one did, and the flow ends.
+    pub(crate) fn hold(&mut self, flow: Flow, epoch: u64) -> Option<String> {
+        if epoch != self.epoch {
+            return None;
+        }
         let mut handle = [0u8; 16];
         rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut handle);
         let mut hex = String::with_capacity(2 * handle.len());
@@ -94,31 +109,43 @@ impl Flows {
             let _ = write!(hex, "{byte:02x}");
         }
         let handle = hex;
-        self.0.insert(handle.clone(), flow);
-        handle
+        self.held.insert(handle.clone(), flow);
+        Some(handle)
     }
 
     /// Takes the flow `handle` names out, when `actor` started it: a poll
     /// holds it alone while its one request runs.
     pub(crate) fn take(&mut self, handle: &str, actor: &EntityId) -> Option<Flow> {
-        if self.0.get(handle).is_some_and(|flow| flow.actor == *actor) {
-            return self.0.remove(handle);
+        if self
+            .held
+            .get(handle)
+            .is_some_and(|flow| flow.actor == *actor)
+        {
+            return self.held.remove(handle);
         }
         None
     }
 
-    /// Puts a flow still pending back under its handle.
-    pub(crate) fn put_back(&mut self, handle: String, flow: Flow) {
-        self.0.insert(handle, flow);
+    /// Puts a flow still pending back under its handle, when no logout or
+    /// erase ran since its poll took it at `epoch`; `false` when one did,
+    /// and the flow ends.
+    pub(crate) fn put_back(&mut self, handle: String, flow: Flow, epoch: u64) -> bool {
+        if epoch != self.epoch {
+            return false;
+        }
+        self.held.insert(handle, flow);
+        true
     }
 
-    /// Ends every flow `actor` started: a logout or an erase cancels them.
+    /// A logout or an erase: the cancel epoch advances, and every flow
+    /// `actor` started ends.
     pub(crate) fn cancel(&mut self, actor: &EntityId) {
-        self.0.retain(|_, flow| flow.actor != *actor);
+        self.epoch += 1;
+        self.held.retain(|_, flow| flow.actor != *actor);
     }
 
     /// Ends every flow whose code expired by `now`.
     pub(crate) fn expire(&mut self, now: Instant) {
-        self.0.retain(|_, flow| !flow.left(now).is_zero());
+        self.held.retain(|_, flow| !flow.left(now).is_zero());
     }
 }
