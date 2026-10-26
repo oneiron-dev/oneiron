@@ -88,11 +88,17 @@ pub(crate) fn forget_in_txn(
 pub(crate) fn retained_copies_in(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
-    ids: impl IntoIterator<Item = &EntityId>,
+    ids: impl IntoIterator<Item = impl std::borrow::Borrow<EntityId>>,
 ) -> Result<bool> {
     for id in ids {
         if !CARRIER
-            .scan_keys(dbs, txn, id.to_hex().as_bytes())?
+            .scan_keys(
+                dbs,
+                txn,
+                std::borrow::Borrow::<EntityId>::borrow(&id)
+                    .to_hex()
+                    .as_bytes(),
+            )?
             .is_empty()
         {
             return Ok(true);
