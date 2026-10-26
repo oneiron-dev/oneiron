@@ -31,6 +31,10 @@ pub fn campaign_record_to_json(record: &CampaignRecord) -> Value {
         "lifecycle".to_owned(),
         Value::String(record.definition.lifecycle.as_str().to_owned()),
     );
+    definition.insert(
+        "reply_snooze_policy".to_owned(),
+        record.definition.reply_snooze_policy.to_json(),
+    );
 
     let mut root = JsonMap::new();
     root.insert(

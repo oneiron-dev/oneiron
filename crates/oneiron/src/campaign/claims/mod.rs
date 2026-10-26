@@ -26,6 +26,7 @@
 //! explicitly NOT this ticket's job.
 
 mod codec;
+mod member_replacement;
 mod store;
 mod types;
 
@@ -53,6 +54,7 @@ pub(crate) use self::codec::validate_campaign_pack_claim_structure;
 // absent otherwise so the non-test build carries no unused import.
 #[cfg(test)]
 use self::codec::decode_comm_bounce_value;
+pub(in crate::campaign) use self::member_replacement::member_replacement_body;
 pub(crate) use self::store::{
     counterparty_do_not_contact_in_txn, do_not_contact_subjects_in_txn,
     subjects_do_not_contact_in_txn,

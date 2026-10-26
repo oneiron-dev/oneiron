@@ -49,7 +49,9 @@ pub use self::campaign::{
     CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign, read_campaign,
     update_campaign,
 };
-pub(crate) use self::campaign::{campaign_type_byte, load_campaign_in_txn, owned_campaign_in_txn};
+pub(crate) use self::campaign::{
+    campaign_type_byte, load_campaign_in_txn, load_registered_campaign, owned_campaign_in_txn,
+};
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};
 pub(crate) use self::membership::read_saved_query_members_scoped;
 pub use self::membership::{
