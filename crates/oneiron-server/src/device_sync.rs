@@ -54,6 +54,7 @@ type Admission = Box<dyn Send>;
 
 mod dial;
 mod enrolment;
+mod removal_delivery;
 #[cfg(feature = "mesh")]
 mod renewal;
 #[cfg(feature = "mesh")]
@@ -67,6 +68,8 @@ pub(crate) use enrolment::{EnrolmentFiles, enrol};
 pub(crate) struct DeviceSyncHost {
     stop: oneshot::Sender<()>,
     task: JoinHandle<()>,
+    /// The archive receiver, kept after membership loss (FIX 3396).
+    removal: Option<removal_delivery::Receiver>,
 }
 
 impl DeviceSyncHost {
@@ -116,19 +119,21 @@ impl DeviceSyncHost {
         }
     }
 
-    /// The connection to `dial`'s home, or `None` with the line that says
-    /// why. `admission`, when given, ends with the connection's task.
+    /// The connection to `dial`'s home and its archive receiver, or, with the
+    /// line that says why, the receiver alone or `None`. `admission` ends with the task.
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,
         mesh: Option<&MeshHost>,
         admission: Option<Admission>,
     ) -> Option<Self> {
+        // The receiver runs whether or not the link opens (FIX 3396).
+        let removal = removal_delivery::Receiver::start(&dial);
         match open(server, dial, mesh, admission).await {
-            Ok(host) => Some(host),
+            Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
-                None
+                removal.map(Self::receiving)
             }
         }
     }
@@ -140,6 +145,9 @@ impl DeviceSyncHost {
         let _ = self.stop.send(());
         if let Err(error) = self.task.await {
             tracing::warn!(%error, "device sync task");
+        }
+        if let Some(removal) = self.removal {
+            removal.stop().await;
         }
     }
 }
@@ -281,7 +289,11 @@ async fn open(
         };
         tokio::join!(catalog, dialing);
     });
-    Ok(DeviceSyncHost { stop, task })
+    Ok(DeviceSyncHost {
+        stop,
+        task,
+        removal: None,
+    })
 }
 
 /// What each connection to the home is built from, but its credential.
