@@ -127,12 +127,11 @@ fn authority_cache_key(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityCacheKey> {
-    let floor = AUTHORITY_FIRST_SEEN
-        .get_lenient(store, txn, &authority_first_seen_clock_key())?
-        .unwrap_or(0);
+    // A damaged floor is no reading from zero (FIX 10106).
+    let now_secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
     Ok(AuthorityCacheKey {
         generation: authority_cache_generation(store, txn)?,
-        now_secs: authority_observation_secs(store, floor, store.clock.now_recorded_at()),
+        now_secs,
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
         pin: super::pinned_root::read_pinned_root_in_txn(store, txn)?,

@@ -185,6 +185,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.authority.audit"
         | "vault.authority.history.export"
         | "vault.authority.history.import"
+        | "vault.authority.clock.repair"
         | "vault.mesh.path_receipts"
         | "vault.mesh.identity"
         | "vault.mesh.bind_machine"

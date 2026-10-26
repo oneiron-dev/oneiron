@@ -150,18 +150,25 @@ impl Vault {
         mut owner: AuthenticatedOwner,
         credential: crate::authority::VerifiedSlip,
     ) -> Result<AuthenticatedOwner> {
-        let claims = credential.claims();
-        if !credential.is_full_vault_owner_grade()
-            || claims.holder_ref != owner.actor.to_hex()
-            || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
-        {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "credential is not this owner's own full slip",
-            )));
-        }
+        own_full_slip(&owner, &credential)?;
         owner.credential = Some(Box::new(credential));
         self.recheck_owner(&owner)?;
         Ok(owner)
+    }
+
+    /// [`Self::bind_owner_credential`] judged in the caller's transaction
+    /// `txn`, answering the owner's actor: the owner's repair of a damaged
+    /// authority clock judges it against the floor it staged there (FIX
+    /// 10106).
+    pub(crate) fn bind_owner_credential_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+    ) -> Result<EntityId> {
+        own_full_slip(&owner, &credential)?;
+        owner.credential = Some(Box::new(credential));
+        owner.revalidate_in_txn(self, txn)
     }
 
     /// Rechecks `owner` against the vault as it stands now: the person is
@@ -199,4 +206,21 @@ impl Vault {
         Ok(crate::claim::ScopedReadActorKey::vault_owner(actor)
             .guarded_by_owner_proof(owner.clone()))
     }
+}
+
+/// Whether `credential` is `owner`'s own unattenuated human slip.
+fn own_full_slip(
+    owner: &AuthenticatedOwner,
+    credential: &crate::authority::VerifiedSlip,
+) -> Result<()> {
+    let claims = credential.claims();
+    if !credential.is_full_vault_owner_grade()
+        || claims.holder_ref != owner.actor.to_hex()
+        || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+    {
+        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            "credential is not this owner's own full slip",
+        )));
+    }
+    Ok(())
 }

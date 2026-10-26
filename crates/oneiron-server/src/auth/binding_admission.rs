@@ -146,14 +146,27 @@ struct AdmittedBinding {
     admitted: Option<AdmittedCaller>,
 }
 
+/// The owner's authority clock repair route (FIX 10106). A damaged clock
+/// floor refuses every holder proof this door judges, so it spends none for
+/// this one path: the repair judges the owner's slip and proof, and spends
+/// the nonce, in its own writer against the floor it proves.
+pub(crate) const AUTHORITY_CLOCK_REPAIR_PATH: &str = "/v1/owner/authority/clock/repair";
+
 /// This door's decision on a request to `path` with `headers`, with no
 /// reply made yet: its slip's holder proof spent once, or the refusal it
-/// gets. A request with no slip is admitted on no proof.
+/// gets. A request with no slip is admitted on no proof, and so is the
+/// authority clock repair's ([`AUTHORITY_CLOCK_REPAIR_PATH`]).
 fn admit_binding(
     server: &SyncServer,
     path: &str,
     headers: &HeaderMap,
 ) -> Result<AdmittedBinding, ApiError> {
+    if path == AUTHORITY_CLOCK_REPAIR_PATH {
+        return Ok(AdmittedBinding {
+            machine: PeerMachine::Unknown,
+            admitted: None,
+        });
+    }
     // Public endpoints retain their no-credential behavior. Their protected
     // siblings still reject absent or malformed credentials in the handler.
     // The OpenAI proxy takes the MCP connector credential as `/mcp` does, so

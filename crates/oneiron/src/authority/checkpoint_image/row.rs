@@ -36,9 +36,9 @@ pub struct AuthorityCheckpointRow {
     /// The canonical signed body of a row a fold or a store door past the
     /// image reads whole (an approval, a binding, a confirm, a revocation, a
     /// handoff, an enrollment, the genesis, a root record, a machine profile,
-    /// a world edit, a grant travel choice, a world-key record or an owner
-    /// work request or result); None for every other row. Present exactly
-    /// when `body_required`.
+    /// a world edit, a grant travel choice, a world-key record, an owner
+    /// work request or result, or an owner handover); None for every other
+    /// row. Present exactly when `body_required`.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
 }
@@ -53,7 +53,8 @@ pub struct AuthorityCheckpointRow {
 /// owner's own device key enrollment among them, FIX 4920), the root records
 /// that name owner anchors, the actor revocations a signer's
 /// revocations count, and the world edits, grant travel choices and frontier
-/// joins that may be a stranger's.
+/// joins that may be a stranger's; and each owner handover, whose signed
+/// grant ids a restore across it reads (FIX 5765).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -71,6 +72,7 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::ConversationTrainingVaultSet(_)
                 | AuthorityOp::AgentGrantAct(_)
                 | AuthorityOp::FrontierJoin(_)
+                | AuthorityOp::OwnerHandover(_)
         )
 }
 

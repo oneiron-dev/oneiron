@@ -365,6 +365,14 @@ pub enum RecordError {
         /// The authority entry hashes the fold needs, ascending.
         missing: Vec<[u8; 32]>,
     },
+    /// The persisted authority clock floor is present and does not decode
+    /// (FIX 10106): the vault no longer knows the least second it has
+    /// observed, so no authority reading stands on it, never a reading from
+    /// zero. The owner repairs it with `vault.authority.clock.repair`.
+    #[error(
+        "authority clock floor is damaged; the owner repairs it from this vault's own evidence"
+    )]
+    AuthorityClockCorrupt,
     /// The decision seals' standing digest could not be computed (FIX
     /// 5248): the causal fold it rests on, or one seal's judgment in it,
     /// failed to read or re-verify, so the vault cannot prove how its seals
@@ -470,6 +478,7 @@ impl RecordError {
             Self::AuthorityLogSignerPending { .. } => ErrorKind::AuthorityLogSignerPending,
             Self::AuthorityLogFull { .. } => ErrorKind::AuthorityLogFull,
             Self::AuthorityHistoryRequired { .. } => ErrorKind::AuthorityHistoryRequired,
+            Self::AuthorityClockCorrupt => ErrorKind::AuthorityClockCorrupt,
             Self::SealStandingUnverifiable { .. } => ErrorKind::SealStandingUnverifiable,
         }
     }

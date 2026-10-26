@@ -10,6 +10,7 @@
 //! from the live vault's, never restored silently. `every_canonical_family_and_kind_has_one_class`
 //! fails when a declaration or kind is added without a class.
 
+mod handover;
 mod sync_state;
 mod vault_meta_a_c;
 mod vault_meta_d_l;
@@ -502,6 +503,9 @@ pub(super) struct Classes {
     /// GrantRevoke act in its authority log names (FIX 5732). A read that
     /// fails keeps none, so those shells refuse as before.
     revoked_agent_grants: BTreeSet<Vec<u8>>,
+    /// The rows valid owner handovers name (FIX 5765). A read that fails
+    /// names none, so those rows keep their class.
+    handover: handover::HandoverRows,
     /// The rows of the tables a home move carries, by database (FIX 5661
     /// C2b): each table's live keys in `current` and the image's keys it
     /// manages. They restore live, so an old export never comes back over
@@ -558,6 +562,7 @@ impl Classes {
             .revoked_agent_grants_in_txn(&txn)
             .map(|revoked| revoked.iter().map(|id| id.as_bytes().to_vec()).collect())
             .unwrap_or_default();
+        let handover = handover::HandoverRows::read(current, &txn);
         drop(txn);
         #[cfg(feature = "sync")]
         let crate::sync::home_handoff::HomeManaged {
@@ -592,6 +597,7 @@ impl Classes {
                 .unwrap_or_default(),
             serving_machine,
             revoked_agent_grants,
+            handover,
             home_managed,
             home_unreadable,
             free_time_attempts,
@@ -645,6 +651,12 @@ impl Classes {
                         {
                             return Some(OWNER_AGENT_GRANTS);
                         }
+                        // A grant a valid owner handover wrote (FIX 5765).
+                        if header.entity_type == ENTITY_TYPE_FEDERATION_GRANT
+                            && let Some(class) = self.handover.grant_class(key, bodyless_row(value))
+                        {
+                            return Some(class);
+                        }
                         self.kinds[usize::from(header.entity_type)]
                     })
                     .unwrap_or(UNCLASSIFIED_KINDS),
@@ -685,7 +697,14 @@ impl Classes {
                         (LIVE, prefix.len())
                     }
                     Some((prefix, class)) if key.starts_with(prefix) => {
-                        (self.binding_class(database, key, class), prefix.len())
+                        // A shared-act row a valid owner handover signed
+                        // (FIX 5765), before the family's own class.
+                        let handover = (database == "vault_meta")
+                            .then(|| self.handover.act_class(prefix, key, value))
+                            .flatten();
+                        let class =
+                            handover.unwrap_or_else(|| self.binding_class(database, key, class));
+                        (class, prefix.len())
                     }
                     _ => (UNCLASSIFIED_ROWS, 0),
                 }

@@ -12,16 +12,15 @@
 //! every sign-in mints one, so a busy owner's log gains thousands a year.
 //! Nor does the owner's will this install carries under its own install key
 //! (FIX 7930): known by key possession, never by a local or replicated flag.
-//! Any other key stores up to the `authority_log_signer_bound` policy row;
-//! past it, its rows wait, never refused, a typed check asks the owner, and
-//! raising the row lands them on the next drain. An owner anchor this
+//! Any other key a slip issuer's consent vouches for stores past the
+//! `authority_log_signer_bound` policy row too: the count only asks, through
+//! a typed check, and holds no row (FIX 8564, 8876). An owner anchor this
 //! install does not pin is a stranger, since a root needs nothing but a
-//! fresh key: every stranger's row shares that one row (world privacy P6b,
-//! r23). A key's first revocation of a device or binding the fold holds live
-//! always lands. The fold refuses only a log whose projected peak passes the
-//! `authority_log_fold_memory_floor` row: it holds no root and reads as a
-//! conflicted one, which every authority gate refuses, and its typed issue
-//! names the floor.
+//! fresh key: every stranger's row shares that one row and waits past it,
+//! never refused (world privacy P6b, r23). The fold refuses only a log whose
+//! projected peak passes the `authority_log_fold_memory_floor` row: it holds
+//! no root and reads as a conflicted one, which every authority gate refuses,
+//! and its typed issue names the floor.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -35,8 +34,15 @@ use super::*;
 use crate::store::Store;
 
 /// The default of the `authority_log_signer_bound` policy row: the rows a
-/// key no slip issuer vouches for stores before the rest wait.
+/// key no slip issuer vouches for stores before its typed check asks.
 pub const MAX_AUTHORITY_ROWS_PER_SIGNER: usize = 2048;
+
+/// Whether a vouched, non-stranger signer's stored rows past the
+/// `authority_log_signer_bound` row only ask (FIX 8564, 8876; CALLS
+/// `FIX 8564 8876 signer count advisory`): its row lands and
+/// [`AuthorityLogCheck::SIGNER_BOUND`] names the count. No count cap replaces
+/// it; strangers' shared bound and the fold's memory floor stay.
+pub const AUTHORITY_LOG_SIGNER_COUNT_ADVISORY: bool = true;
 
 /// What one fold holds at its peak, per row and per ancestor pair, measured
 /// on the fleet (10-16) and rounded up: at most 11.6 KB a row with no
@@ -263,8 +269,6 @@ pub(crate) struct AuthorityDoorView {
     structure: AuthorityStructure,
     /// Per signer: its stored rows.
     rows: BTreeMap<AuthorityKey, usize>,
-    /// Each signer's stored revocations, by what they revoke.
-    revocations: BTreeSet<(AuthorityKey, Revoked)>,
     /// The stored rows a fold counts: all but the slip issuers' slip ops.
     counted: usize,
     /// The stored handoffs a slip issuer signed.
@@ -281,7 +285,6 @@ pub(crate) struct AuthorityDoorView {
 #[derive(Default)]
 struct Tally {
     rows: BTreeMap<AuthorityKey, usize>,
-    revocations: BTreeSet<(AuthorityKey, Revoked)>,
     counted: usize,
     issuer_handoffs: usize,
     strangers: usize,
@@ -290,8 +293,8 @@ struct Tally {
 impl Tally {
     /// Counts one row by its signer, whether it is a slip op, and its signed
     /// body when the door reads it whole. A row read only by its summary is
-    /// no revocation, handoff or stranger's row: an adopted image carries the
-    /// body of every such row.
+    /// no handoff or stranger's row: an adopted image carries the body of
+    /// every such row.
     fn count(
         &mut self,
         structure: &AuthorityStructure,
@@ -303,9 +306,6 @@ impl Tally {
             entry.is_some_and(|entry| structure.vouches_for(entry) && structure.is_stranger(entry)),
         );
         *self.rows.entry(signer.clone()).or_default() += 1;
-        if let Some(revoked) = entry.and_then(|entry| Revoked::of(&entry.op)) {
-            self.revocations.insert((signer.clone(), revoked));
-        }
         let issuer = structure.issuers.contains(signer);
         self.counted += usize::from(!(issuer && slip_op));
         self.issuer_handoffs += usize::from(issuer && entry.is_some_and(is_handoff));
@@ -384,7 +384,6 @@ pub(super) fn door_view(
         Ok(AuthorityDoorView {
             structure,
             rows: tally.rows,
-            revocations: tally.revocations,
             counted: tally.counted,
             issuer_handoffs: tally.issuer_handoffs,
             strangers: tally.strangers,
@@ -419,47 +418,13 @@ pub(crate) fn signer_has_standing(
     Ok(door_view(store, txn)?.structure.stands(signer))
 }
 
-/// What a revocation takes away: a device, or an actor binding. A machine
-/// revision is no revocation here: the fold applies one only from an owner
-/// key, which is a slip issuer, so no other key's removal ever restricts.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum Revoked {
-    Device(AuthorityKey),
-    Binding(AuthorityKey),
-}
-
-impl Revoked {
-    fn of(op: &AuthorityOp) -> Option<Self> {
-        match op {
-            AuthorityOp::RevokeDevice { revoked_key } => Some(Self::Device(revoked_key.clone())),
-            AuthorityOp::RevokeActor { authority_key, .. } => {
-                Some(Self::Binding(authority_key.clone()))
-            }
-            _ => None,
-        }
-    }
-
-    /// Whether the local fold holds it live. A revocation of nothing
-    /// changes nothing, so it can wait like any other row.
-    fn is_live(&self, fold: &AuthorityFold) -> bool {
-        match self {
-            Self::Device(key) => fold.roster.get(key).is_some_and(|device| !device.revoked),
-            Self::Binding(key) => fold
-                .actor_bindings
-                .get(key)
-                .is_some_and(|binding| binding.status == ActorBindingStatus::Active),
-        }
-    }
-}
-
 /// What a store door does with an AUTHORITY_LOG row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthorityDoor {
     Lands,
-    /// The row waits: its signer, which no slip issuer vouched for here, is
-    /// at its bound, or it is a stranger's row past the bound all strangers'
-    /// rows share, or it is a handoff no slip issuer signed, which the fold
-    /// never applies. A replica retries it on every drain.
+    /// The row waits: it is a stranger's row past the bound all strangers'
+    /// rows share, or a handoff no slip issuer signed, which the fold never
+    /// applies. A replica retries it on every drain.
     AtBound,
     /// No key that may vouch for the row signed it. The fold applies no row
     /// without an owner's or admin's consent, and no world edit but its
@@ -471,19 +436,17 @@ pub(crate) enum AuthorityDoor {
 /// The door's verdict on storing `entry`, at every door, local or
 /// replicated. A row already stored always lands. The owner's work, a row a
 /// slip issuer signs or cosigns, always lands, but a handoff only when a
-/// slip issuer signs it. Any other key's row lands while its signer is under
-/// the `authority_log_signer_bound` row, and past it only as its first
-/// revocation of a device or actor binding the fold holds live; the rest
-/// wait (rule 5: never refused). So such a key stores at most its bound and
-/// one row per live thing it revokes, even when the fold refuses them all.
-/// A stranger's row, which an anchor this install does not take as its own
-/// vouches for, lands only while every such stored row together is under
-/// that row, so fresh anchors never add a bound each. The door reads the
-/// stored log's structure as the fold's bounds do.
+/// slip issuer signs it. Any other vouched key's row lands too: past the
+/// `authority_log_signer_bound` row its count only asks
+/// ([`AUTHORITY_LOG_SIGNER_COUNT_ADVISORY`]), so a revocation lands as every
+/// other row does. A stranger's row, which an anchor this install does not
+/// take as its own vouches for, lands only while every such stored row
+/// together is under that row, so fresh anchors never add a bound each; the
+/// rest wait (rule 5: never refused). The door reads the stored log's
+/// structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    posture: crate::HostingPrivacyPosture,
     entry: &AuthorityLogEntry,
 ) -> crate::error::Result<AuthorityDoor> {
     #[cfg(test)]
@@ -518,20 +481,11 @@ pub(crate) fn authority_door(
         });
     }
     if signed_by(entry, issuers)
+        || AUTHORITY_LOG_SIGNER_COUNT_ADVISORY
         || view.rows.get(signer).copied().unwrap_or_default() < signer_bound(store, txn)?
         || carries_own_will(store, txn, entry)?
     {
         return Ok(AuthorityDoor::Lands);
-    }
-    if let Some(revoked) = Revoked::of(&entry.op)
-        && !view
-            .revocations
-            .contains(&(signer.clone(), revoked.clone()))
-    {
-        let fold = authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-        if revoked.is_live(&fold) {
-            return Ok(AuthorityDoor::Lands);
-        }
     }
     Ok(AuthorityDoor::AtBound)
 }
@@ -541,7 +495,7 @@ pub(crate) fn authority_door(
 /// with after they revalidate the owner or an agent's Grant, and carrying
 /// that will (an owner or delegated act, or owner work's request, result or
 /// cancel), or the frontier join such an act rides on (FIX 7908). Such a row leaves the lifetime signer bound, which still raises
-/// its typed check; strangers, other installs' rows and a replica's retries
+/// its typed check, were the count not advisory; strangers, other installs' rows and a replica's retries
 /// keep their treatment. No local or replicated flag is read. An install
 /// whose key is not known yet keeps today's path
 /// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
@@ -598,9 +552,9 @@ pub struct AuthorityLogCheck {
 }
 
 impl AuthorityLogCheck {
-    /// A key no slip issuer vouches for reached the
-    /// `authority_log_signer_bound` row: its further rows wait until the
-    /// owner raises the row, and then land on the next drain.
+    /// A key that is no slip issuer reached the `authority_log_signer_bound`
+    /// row. Its further rows land as before: the check only asks
+    /// ([`AUTHORITY_LOG_SIGNER_COUNT_ADVISORY`]).
     pub const SIGNER_BOUND: &'static str = "authority_log_signer_bound";
     /// The rows of anchors this install does not pin reached the
     /// `authority_log_signer_bound` row they share: their root records, their

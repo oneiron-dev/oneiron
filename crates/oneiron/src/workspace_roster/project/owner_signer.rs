@@ -44,18 +44,11 @@ impl<'a> OwnerProjectSigner<'a> {
 /// The time an owner door signs at: the authority clock, as a live proof is
 /// judged.
 pub(super) fn owner_signed_at(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    let floor = crate::authority::AUTHORITY_FIRST_SEEN
-        .get_lenient(
-            &vault.store,
-            txn,
-            &crate::authority::authority_first_seen_clock_key(),
-        )?
-        .unwrap_or(0);
-    Ok(crate::authority::authority_observation_secs(
+    crate::authority::authority_clock_reading_in_txn(
         &vault.store,
-        floor,
+        txn,
         vault.store.clock.now_recorded_at(),
-    ))
+    )
 }
 
 impl Vault {

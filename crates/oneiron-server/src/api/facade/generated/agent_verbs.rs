@@ -301,6 +301,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.authority.audit", post(facade_route))
         .route("/vault.authority.history.export", post(facade_route))
         .route("/vault.authority.history.import", post(facade_route))
+        .route("/vault.authority.clock.repair", post(facade_route))
         .route("/vault.wire_health.thresholds.get", post(facade_route))
         .route("/vault.wire_health.thresholds.set", post(facade_route))
         .route("/vault.slim.policy", post(facade_route))

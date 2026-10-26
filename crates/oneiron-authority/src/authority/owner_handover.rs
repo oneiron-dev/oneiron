@@ -4,7 +4,10 @@
 //! left gets one on proof of control, the host writing the handover. The
 //! entry is the signed record of the change the shared-act execution applies
 //! (its receipt names it back); the fold admits it as any roster-signed Owner
-//! action and keeps no state of its own for it.
+//! action and keeps no state of its own for it. It signs the exact grant ids
+//! the change wrote and the own-device grants it retired (FIX 5765), so a
+//! checkpoint restore across it keeps those rows as the live vault holds
+//! them.
 
 use rmpv::Value;
 
@@ -16,7 +19,20 @@ use super::*;
 pub const OP_KIND_OWNER_HANDOVER: &str = "owner_handover";
 /// Longest act id, receipt id or role name an entry carries.
 pub const OWNER_HANDOVER_REF_MAX: usize = 128;
-const REQUIRED_KEYS: [&str; 5] = [OP_KEY_KIND, "shared_vault", "cause", "from", "receipt"];
+const REQUIRED_KEYS: [&str; 7] = [
+    OP_KEY_KIND,
+    "shared_vault",
+    "cause",
+    "from",
+    "receipt",
+    AFFECTED_GRANTS_KEY,
+    RETIRED_OWN_DEVICE_GRANTS_KEY,
+];
+const AFFECTED_GRANTS_KEY: &str = "affected_grants";
+const RETIRED_OWN_DEVICE_GRANTS_KEY: &str = "retired_own_device_grants";
+/// How many grant ids one list carries: none caps it (CALLS `FIX 5765
+/// handover evidence`).
+pub const HANDOVER_ID_LIST_LIMIT: Option<usize> = None;
 const OPTIONAL_KEYS: [&str; 4] = ["to", "from_keeps", "act", "proof"];
 /// A proof digest is a BLAKE3 hash, lowercase hex.
 const PROOF_HEX_LEN: usize = 64;
@@ -73,6 +89,29 @@ pub struct OwnerHandover {
     pub proof: Option<String>,
     /// The execution receipt's id.
     pub receipt: String,
+    /// Every grant id the change rewrote, minted or deleted: the successor's
+    /// and the leaver's grants and the delegates it dropped. Ascending,
+    /// unique, uncapped; empty when it wrote none.
+    pub affected_grants: Vec<EntityId>,
+    /// The own-device grant ids the leaver's demotion retired, exactly as
+    /// the retirement returned them. Ascending, unique, uncapped.
+    pub retired_own_device_grants: Vec<EntityId>,
+}
+
+/// Whether `ids` ascend strictly by id bytes and stay within
+/// [`HANDOVER_ID_LIST_LIMIT`].
+fn canonical_ids(ids: &[EntityId]) -> bool {
+    ids.windows(2).all(|pair| pair[0] < pair[1])
+        && HANDOVER_ID_LIST_LIMIT.is_none_or(|limit| ids.len() <= limit)
+}
+
+/// The canonical form of `ids`: ascending by id bytes, each once.
+#[must_use]
+pub fn canonical_handover_ids(ids: impl IntoIterator<Item = EntityId>) -> Vec<EntityId> {
+    let mut ids: Vec<EntityId> = ids.into_iter().collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 impl OwnerHandover {
@@ -108,6 +147,8 @@ impl OwnerHandover {
             || !proof_ok
             || !refs_ok
             || !role_ok
+            || !canonical_ids(&self.affected_grants)
+            || !canonical_ids(&self.retired_own_device_grants)
         {
             return Err(invalid_authority());
         }
@@ -116,7 +157,8 @@ impl OwnerHandover {
 }
 
 /// Canonical field order: kind, shared_vault, cause, from, then `to`,
-/// `from_keeps`, `act` and `proof` when present, then receipt.
+/// `from_keeps`, `act` and `proof` when present, then receipt, then the
+/// affected and the retired grant ids, each an array of lowercase hex ids.
 pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
     let mut entries = vec![
         (
@@ -146,6 +188,18 @@ pub(super) fn owner_handover_value(handover: &OwnerHandover) -> Value {
         Value::from("receipt"),
         Value::from(handover.receipt.as_str()),
     ));
+    for (key, ids) in [
+        (AFFECTED_GRANTS_KEY, &handover.affected_grants),
+        (
+            RETIRED_OWN_DEVICE_GRANTS_KEY,
+            &handover.retired_own_device_grants,
+        ),
+    ] {
+        entries.push((
+            Value::from(key),
+            Value::Array(ids.iter().map(|id| Value::from(id.to_hex())).collect()),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -165,6 +219,8 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
         "act",
         "proof",
         "receipt",
+        AFFECTED_GRANTS_KEY,
+        RETIRED_OWN_DEVICE_GRANTS_KEY,
     ];
     let positions: Vec<_> = entries
         .iter()
@@ -180,6 +236,15 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
             .ok_or_else(invalid_authority)
     };
     let id = |name: &str| super::machine_profile::decode_canonical_id(required(entries, name)?);
+    let ids = |name: &str| -> Result<Vec<EntityId>> {
+        let Value::Array(values) = required(entries, name)? else {
+            return Err(invalid_authority());
+        };
+        values
+            .iter()
+            .map(super::machine_profile::decode_canonical_id)
+            .collect()
+    };
     let handover = OwnerHandover {
         shared_vault: required(entries, "shared_vault")?
             .as_u64()
@@ -196,6 +261,8 @@ pub(super) fn decode_owner_handover(entries: &[(Value, Value)]) -> Result<Author
         act: present("act").then(|| text("act")).transpose()?,
         proof: present("proof").then(|| text("proof")).transpose()?,
         receipt: text("receipt")?,
+        affected_grants: ids(AFFECTED_GRANTS_KEY)?,
+        retired_own_device_grants: ids(RETIRED_OWN_DEVICE_GRANTS_KEY)?,
     };
     handover.validate()?;
     Ok(AuthorityOp::OwnerHandover(handover))

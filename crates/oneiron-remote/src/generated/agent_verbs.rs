@@ -898,6 +898,9 @@ impl OneironClient {
                 "vault.authority.history.import" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AuthorityHistoryImported,
                 >(client, verb, &input),
+                "vault.authority.clock.repair" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AuthorityClockRepair,
+                >(client, verb, &input),
                 "vault.wire_health.thresholds.get" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WireThresholds,
                 >(client, verb, &input),
@@ -7136,6 +7139,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.history.import", value)
+    }
+    pub fn vault_authority_clock_repair(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::task_verb::sdk::AuthorityClockRepair, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.authority.clock.repair", value)
     }
     pub fn vault_wire_health_thresholds_get(
         &self,

@@ -2416,6 +2416,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_authority_clock_repair(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.clock.repair", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_wire_health_thresholds_get(
         &self,
         input: serde_json::Value,

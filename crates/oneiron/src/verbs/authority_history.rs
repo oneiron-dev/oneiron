@@ -1,4 +1,5 @@
-//! Byte-preserving signed authority history transfer for the vault owner.
+//! Byte-preserving signed authority history transfer for the vault owner,
+//! and the owner's repair of a damaged authority clock floor (FIX 10106).
 //! The engine owns signature checks, append-only storage and the local fold;
 //! these DTOs only carry the original signed envelopes over JSON.
 use base64::Engine as _;
@@ -6,6 +7,7 @@ use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 
@@ -63,4 +65,15 @@ pub fn import_authority_history_as_owner(
         .map(|id| id.to_hex())
         .collect();
     Ok(AuthorityHistoryImported { entry_refs })
+}
+
+/// `vault.authority.clock.repair`: a damaged authority clock floor is
+/// replaced by the highest second this vault proves it observed, judged
+/// against the owner's proof in the repair's own writer; a whole floor, or
+/// one nothing here proves, is left as it is and said so.
+pub fn repair_authority_clock_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<AuthorityClockRepair> {
+    Ok(vault.repair_authority_clock(owner)?)
 }

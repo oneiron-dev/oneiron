@@ -419,6 +419,7 @@ fn mcp_agent_verb_input(
         "vault.authority.audit" => a.spec.clone().ok_or_else(invalid),
         "vault.authority.history.export" => Ok(Value::Object(serde_json::Map::new())),
         "vault.authority.history.import" => a.spec.clone().ok_or_else(invalid),
+        "vault.authority.clock.repair" => a.spec.clone().ok_or_else(invalid),
         "vault.wire_health.thresholds.get" => a.spec.clone().ok_or_else(invalid),
         "vault.wire_health.thresholds.set" => a.spec.clone().ok_or_else(invalid),
         "vault.slim.policy" => a.spec.clone().ok_or_else(invalid),
@@ -2330,6 +2331,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         }
         "vault.authority.history.export" => {}
         "vault.authority.history.import" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.authority.clock.repair" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.wire_health.thresholds.get" => {
@@ -9339,6 +9343,21 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_authority_history_import(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
+            served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.authority.clock.repair" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.authority.clock.repair", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_authority_clock_repair(server, auth, input)
                     .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
