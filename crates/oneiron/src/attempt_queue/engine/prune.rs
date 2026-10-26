@@ -50,7 +50,16 @@ impl AttemptQueue<'_> {
                 }
                 break;
             };
-            let record = decode_record(&raw, id)?;
+            // FIX 10708: an erased marker is a retired row that was never
+            // prunable; the walk stops at it, counted, as at a missing one.
+            let record = match decode_record(&raw, id) {
+                Ok(record) => record,
+                Err(error) if super::reads::retired_marker(&error) => {
+                    super::reads::warn_erased_rows("prune_retry_chain", 1);
+                    break;
+                }
+                Err(error) => return Err(error),
+            };
             if !crate::attempt_queue::owner_retained_kind(&record.kind)
                 || !record.state.is_terminal()
                 || record.run_id.is_some()

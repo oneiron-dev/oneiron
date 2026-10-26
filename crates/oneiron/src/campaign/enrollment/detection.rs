@@ -97,10 +97,26 @@ pub fn campaign_enrollment_event(
     vault: &Vault,
     event_ref: EntityId,
 ) -> Result<Option<CampaignEnrollmentEvent>> {
+    Ok(campaign_enrollment_event_and_hold(vault, event_ref)?.map(|(event, _)| event))
+}
+
+/// [`campaign_enrollment_event`] with the review hold its detection decided
+/// and persisted on it (FIX 9661).
+///
+/// # Errors
+///
+/// Storage errors propagate; a malformed row is [`Error::CorruptedIndex`].
+pub(super) fn campaign_enrollment_event_and_hold(
+    vault: &Vault,
+    event_ref: EntityId,
+) -> Result<Option<(CampaignEnrollmentEvent, bool)>> {
     let rtxn = vault.store.env.read_txn()?;
     EVENT
         .get(&vault.store, &rtxn, &event_ref)?
-        .map(|row| decode_event(event_ref, row))
+        .map(|row| {
+            let review_hold = row.review_hold;
+            decode_event(event_ref, row).map(|event| (event, review_hold))
+        })
         .transpose()
 }
 
@@ -179,7 +195,7 @@ pub(super) async fn detect_enrollments(
 ) -> Result<(Vec<CampaignEnrollmentEvent>, WakeVisit)> {
     let vault = evaluator.vault;
     let record = read_saved_query(vault, owner_actor, query_ref)?.ok_or(Error::EntityNotFound)?;
-    let scope_digest = effective_scope_digest(&record.definition.scope, evaluator.owner_grants);
+    let scope_digest = cause_scope_digest(evaluator, &record.definition.scope, query_ref);
     let definition_version = record.definition.definition_version;
     let cause = derive_cause(vault, query_ref, definition_version, &scope_digest)?;
     let (outcome, visit) = evaluator
@@ -237,6 +253,59 @@ pub(super) async fn detect_enrollments(
     Ok((recorded, visit))
 }
 
+/// A FRESH entry for the member `spent` entered, derived at its saved wake
+/// (FIX 9662). The spent entry is never replayed: the query is evaluated
+/// again under its owner's read now, and a match mints a new epoch with its
+/// own cause, evidence and derivation state. `None` when the member no longer
+/// matches. Nothing is persisted here; the caller writes the event beside the
+/// attempt that carries it.
+///
+/// # Errors
+///
+/// [`Error::EntityNotFound`] when the query is absent; evaluation and storage
+/// errors propagate.
+pub(super) async fn reentry_event(
+    evaluator: &SavedQueryEvaluator<'_>,
+    spent: &CampaignEnrollmentEvent,
+    now: u64,
+) -> Result<Option<CampaignEnrollmentEvent>> {
+    let vault = evaluator.vault;
+    let record = read_saved_query(vault, spent.owner_actor, spent.query_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let scope_digest = cause_scope_digest(evaluator, &record.definition.scope, spent.query_ref);
+    let definition_version = record.definition.definition_version;
+    let cause = derive_cause(vault, spent.query_ref, definition_version, &scope_digest)?;
+    let outcome = evaluator
+        .evaluate_entity(&EvaluationRequest {
+            query_ref: spent.query_ref,
+            campaign_ref: spent.campaign_ref,
+            entity_ref: spent.entity_ref,
+            definition: &record.definition,
+            cause,
+            valid_at: now,
+            detected_at: now,
+        })
+        .await?;
+    if outcome.decision.verdict != MatchVerdict::Match {
+        return Ok(None);
+    }
+    Ok(Some(CampaignEnrollmentEvent {
+        event_ref: vault.store.clock.entity_id()?,
+        query_ref: spent.query_ref,
+        campaign_ref: spent.campaign_ref,
+        entity_ref: spent.entity_ref,
+        owner_actor: spent.owner_actor,
+        epoch: next_membership_epoch(vault, spent.query_ref, spent.campaign_ref, spent.entity_ref)?,
+        valid_at: now,
+        detected_at: now,
+        transition: MembershipTransition::Entered,
+        cause,
+        evidence_hash: outcome.evidence_hash,
+        definition_version,
+        scope_digest,
+    }))
+}
+
 /// Routes the transition onto ONE of the three closed causes.
 ///
 /// Precedence is definition > scope > data, because a definition move can also
@@ -258,6 +327,10 @@ pub(super) async fn detect_enrollments(
 ///
 /// A query with no baseline yet has no prior definition or scope that could
 /// have moved, so the first detection pins one and reads as data movement.
+///
+/// The scope digest carries both halves of [`cause_scope_digest`], so a move
+/// of the owner's live read authority alone, a grant gained or lost among
+/// them, reads as `ScopeChange`, not `DataChange` (FIX 9661).
 fn derive_cause(
     vault: &Vault,
     query_ref: EntityId,
@@ -274,6 +347,29 @@ fn derive_cause(
         MembershipCause::ScopeChange
     } else {
         MembershipCause::DataChange
+    })
+}
+
+/// Whether `event`'s cause holds its write for the owner's review, decided
+/// once, at detection, in the writer that persists the event (FIX 9661): a
+/// definition move does, and a scope move does when its declared ∩ granted
+/// QueryScope half differs from the accepted baseline's, as every scope move
+/// did before. A move of the live read-authority half alone is an
+/// explanation, not a new hold: it applies as data movement did. With no
+/// accepted baseline nothing could have moved, as in [`derive_cause`]. The
+/// runner reads the persisted decision and never re-derives it.
+fn review_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+) -> Result<bool> {
+    Ok(match event.cause {
+        MembershipCause::DataChange => false,
+        MembershipCause::DefinitionChange => true,
+        MembershipCause::ScopeChange => read_baseline_in_txn(vault, txn, event.query_ref)?
+            .is_some_and(|baseline| {
+                baseline.scope_digest[..SCOPE_HALF] != event.scope_digest[..SCOPE_HALF]
+            }),
     })
 }
 
@@ -297,6 +393,42 @@ pub fn accept_enrollment_baseline(vault: &Vault, event: &CampaignEnrollmentEvent
         event.definition_version,
         &event.scope_digest,
     )
+}
+
+/// Bytes of each half of a cause scope digest.
+const SCOPE_HALF: usize = 16;
+
+/// The scope digest an event and a baseline carry (FIX 9661), in the existing
+/// 32-byte field: the first half is [`effective_scope_digest`], the declared ∩
+/// granted QueryScope; the second is the owner read key's live
+/// read-authority fingerprint (`ScopedReadActorKey::read_authority_fingerprint`):
+/// its grant standing and scopes, relationship reach and key ceilings in one
+/// snapshot. The fingerprint explains a cause and baselines it; it never
+/// authorizes anything. A fingerprint that cannot be read keeps the accepted
+/// baseline's half (zeros without one), so the QueryScope half alone routes
+/// the cause, as before, and nothing is refused.
+fn cause_scope_digest(
+    evaluator: &SavedQueryEvaluator<'_>,
+    declared: &QueryScope,
+    query_ref: EntityId,
+) -> [u8; 32] {
+    let vault = evaluator.vault;
+    let mut digest = [0u8; 32];
+    digest[..SCOPE_HALF]
+        .copy_from_slice(&effective_scope_digest(declared, evaluator.owner_grants)[..SCOPE_HALF]);
+    match evaluator.owner_read.read_authority_fingerprint(vault) {
+        Ok(authority) => digest[SCOPE_HALF..].copy_from_slice(&authority[..SCOPE_HALF]),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a saved query owner's read authority did not fingerprint; its QueryScope alone routes the enrollment cause (FIX 9661)"
+            );
+            if let Ok(Some(baseline)) = read_baseline(vault, query_ref) {
+                digest[SCOPE_HALF..].copy_from_slice(&baseline.scope_digest[SCOPE_HALF..]);
+            }
+        }
+    }
+    digest
 }
 
 /// Digest of the scope the query will ACTUALLY run under: declared ∩ granted.
@@ -344,6 +476,8 @@ struct EventRow {
     evidence_hash: String,
     definition_version: u64,
     scope_digest: String,
+    /// The review hold detection decided (FIX 9661).
+    review_hold: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -360,7 +494,11 @@ struct EnrollmentBaseline {
 }
 
 pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<()> {
-    let row = EventRow {
+    vault.with_write_txn_grouped(|wtxn| put_event_in_txn(vault, wtxn, event))
+}
+
+fn event_row(event: &CampaignEnrollmentEvent, review_hold: bool) -> EventRow {
+    EventRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         query_ref: event.query_ref.to_hex(),
         campaign_ref: event.campaign_ref.to_hex(),
@@ -374,11 +512,25 @@ pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Resul
         evidence_hash: bytes_to_hex_lower(&event.evidence_hash),
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
-    };
-    vault.with_write_txn_grouped(|wtxn| {
-        EVENT.put(&vault.store, wtxn, &event.event_ref, &row)?;
-        Ok(())
-    })
+        review_hold,
+    }
+}
+
+/// [`put_event`] inside the caller's writer, with the review hold decided
+/// there.
+pub(super) fn put_event_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+) -> Result<()> {
+    let review_hold = review_hold_in_txn(vault, wtxn, event)?;
+    EVENT.put(
+        &vault.store,
+        wtxn,
+        &event.event_ref,
+        &event_row(event, review_hold),
+    )?;
+    Ok(())
 }
 
 fn decode_event(event_ref: EntityId, row: EventRow) -> Result<CampaignEnrollmentEvent> {
@@ -403,9 +555,18 @@ fn decode_event(event_ref: EntityId, row: EventRow) -> Result<CampaignEnrollment
 }
 
 fn read_baseline(vault: &Vault, query_ref: EntityId) -> Result<Option<EnrollmentBaseline>> {
-    const CONTEXT: &str = "campaign enrollment baseline";
     let rtxn = vault.store.env.read_txn()?;
-    let Some(row) = BASELINE.get(&vault.store, &rtxn, &query_ref)? else {
+    read_baseline_in_txn(vault, &rtxn, query_ref)
+}
+
+/// [`read_baseline`] in the caller's transaction.
+fn read_baseline_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+) -> Result<Option<EnrollmentBaseline>> {
+    const CONTEXT: &str = "campaign enrollment baseline";
+    let Some(row) = BASELINE.get(&vault.store, txn, &query_ref)? else {
         return Ok(None);
     };
     pin_schema(row.schema_version, CONTEXT)?;

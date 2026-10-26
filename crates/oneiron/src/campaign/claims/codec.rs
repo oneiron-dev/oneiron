@@ -60,6 +60,10 @@ pub(super) const KEY_JURISDICTION: &str = "jurisdiction";
 
 pub(super) const KEY_OBSERVED_AT: &str = "observed_at";
 
+/// Claim-evidence key of a query's exit recorded on a `campaign.member` head
+/// whose state another source owns.
+const KEY_RECORDED_EXIT: &str = "recorded_exit";
+
 /// Upper bound for every bounded text field in these families.
 const MAX_TEXT_BYTES: usize = 512;
 
@@ -293,6 +297,35 @@ fn decode_member_derivation(value: &Value) -> Result<CampaignMemberDerivation> {
         evidence_hash: required_evidence_hash(entries, KEY_EVIDENCE_HASH)?,
         epoch: required_u64(entries, KEY_EPOCH)?,
     })
+}
+
+/// The claim evidence of a `campaign.member` head that records a query's exit
+/// while another source owns the membership (FIX 9664): the exit's
+/// derivation, so its spent epoch rides the replicated claim beside the
+/// owning derivation instead of replacing it.
+pub(crate) fn encode_member_recorded_exit(derivation: &CampaignMemberDerivation) -> Value {
+    Value::Map(vec![(
+        Value::from(KEY_RECORDED_EXIT),
+        encode_member_derivation(derivation),
+    )])
+}
+
+/// The recorded exit a `campaign.member` head's claim evidence carries, or
+/// `None` when it carries none.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a duplicated key or a recorded exit of the
+/// wrong shape.
+pub(crate) fn decode_member_recorded_exit(
+    evidence: Option<&Value>,
+) -> Result<Option<CampaignMemberDerivation>> {
+    let Some(Value::Map(entries)) = evidence else {
+        return Ok(None);
+    };
+    optional_value(entries, KEY_RECORDED_EXIT)?
+        .map(decode_member_derivation)
+        .transpose()
 }
 
 /// Decodes a `crm.fit` value.

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::attempt_queue::{
-    AttemptQueue, AttemptRecord, ClaimOutcome, CompleteAttempt, FailAttempt,
+    AttemptQueue, AttemptRecord, ClaimOutcome, CompleteAttempt, FailAttempt, RetryAttempt,
 };
 use oneiron::campaign::enrollment::{
     CampaignEnrollmentClaim, CampaignEnrollmentRunner, EnrollmentExecution, audience_programs,
@@ -192,11 +192,21 @@ async fn execute(
     runner.execute_claimed(node, attempt, &evaluator, now).await
 }
 
-/// Completes or fails one executed attempt. An attempt whose membership leg
-/// concluded (applied, already applied, or stale) completes; one awaiting the
-/// owner's review, or one that errored, fails with its reason. When the
-/// designation moved between claim and write the row is left leased for the
-/// new home node once its lease lapses, and the pass stops: returns `false`.
+/// How one executed attempt settles.
+enum Settlement {
+    Complete,
+    /// The member's saved pause falls due at this instant (FIX 9662).
+    RetryAt(u64),
+    Fail(String),
+}
+
+/// Completes, retries or fails one executed attempt. An attempt whose
+/// membership leg concluded (applied, already applied, or stale) completes;
+/// one deferred to a member's saved wake runs again at that instant; one
+/// awaiting the owner's review, or one that errored, fails with its reason.
+/// When the designation moved between claim and write the row is left leased
+/// for the new home node once its lease lapses, and the pass stops: returns
+/// `false`.
 fn settle(
     vault: &Vault,
     attempt: &AttemptRecord,
@@ -208,8 +218,9 @@ fn settle(
             | EnrollmentExecution::AlreadyApplied { .. }
             | EnrollmentExecution::SkippedStale
             | EnrollmentExecution::RejectedStaleEpoch { .. },
-        ) => Ok(()),
-        Ok(EnrollmentExecution::ReviewRequired { cause }) => Err(format!(
+        ) => Settlement::Complete,
+        Ok(EnrollmentExecution::DeferredUntil { until }) => Settlement::RetryAt(until),
+        Ok(EnrollmentExecution::ReviewRequired { cause }) => Settlement::Fail(format!(
             "a {} enrollment awaits the owner's review",
             cause.as_str()
         )),
@@ -218,7 +229,7 @@ fn settle(
         }
         // The reason is recorded on the attempt, not logged: it can quote
         // the vault.
-        Err(error) => Err(error.to_string()),
+        Err(error) => Settlement::Fail(error.to_string()),
     };
     let queue = AttemptQueue::new(vault);
     let now = vault.now_recorded_at();
@@ -232,7 +243,7 @@ fn settle(
         })
     };
     let settled = match result {
-        Ok(()) => queue
+        Settlement::Complete => queue
             .complete(CompleteAttempt {
                 id: attempt.id,
                 lease_owner: LEASE_OWNER.to_owned(),
@@ -240,7 +251,17 @@ fn settle(
                 now,
             })
             .map(drop),
-        Err(reason) => fail(reason).or_else(|_| fail(FAILED.to_owned())).map(drop),
+        Settlement::RetryAt(until) => queue
+            .retry(RetryAttempt {
+                id: attempt.id,
+                lease_owner: LEASE_OWNER.to_owned(),
+                attempt_count: attempt.attempt_count,
+                backoff_until: until,
+                last_error: None,
+                now,
+            })
+            .map(drop),
+        Settlement::Fail(reason) => fail(reason).or_else(|_| fail(FAILED.to_owned())).map(drop),
     };
     if let Err(error) = settled {
         tracing::warn!(kind = ?error.kind(), attempt = ?attempt.id, "a campaign enrollment attempt was not settled");

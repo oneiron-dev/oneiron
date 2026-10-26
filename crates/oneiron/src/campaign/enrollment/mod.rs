@@ -37,10 +37,15 @@ mod home_node;
 mod manual;
 mod outbound_leg;
 mod program;
+mod reconcile;
 mod runner;
 mod storage;
 
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
+pub(crate) use self::reconcile::{
+    IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
+};
+pub(crate) use self::runner::reentry_dedupe_key;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
 pub use self::detection::{

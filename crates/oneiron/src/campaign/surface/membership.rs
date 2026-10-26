@@ -7,7 +7,9 @@ use crate::campaign::claims::{
     decode_campaign_member_value,
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject, ScopedRead, decode_claim_body};
+use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
+use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::saved_query::{MembershipEvent, MembershipTransition, membership_events_in_txn};
 use crate::{EntityId, Vault};
@@ -150,7 +152,8 @@ pub fn read_campaign_members(
 ///
 /// The query-side twin of [`read_campaign_members`], with the same read-only
 /// guarantee, the same admission and the same event source; only the filter
-/// axis differs, and a manual head is never on a query's page.
+/// axis differs, and a manual head is on a query's page only when it replaced
+/// a head that query derived.
 ///
 /// # Errors
 ///
@@ -346,7 +349,7 @@ fn membership_heads_in_txn(
         let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
             continue;
         };
-        if head_matches(&body, owner_ref, owner)?.is_some() {
+        if head_matches(vault, txn, claim_id, &body, owner_ref, owner)?.is_some() {
             nominated.push(*claim_id);
         }
     }
@@ -360,14 +363,21 @@ fn membership_heads_in_txn(
             continue;
         }
         let body = decode_claim_body(&raw, true)?;
-        let Some((entity_ref, value)) = head_matches(&body, owner_ref, owner)? else {
+        let Some((entity_ref, value)) =
+            head_matches(vault, txn, &claim_ref, &body, owner_ref, owner)?
+        else {
             continue;
         };
-        let source = match value.derivation {
-            Some(derivation) => MembershipHeadSource::SavedQuery {
+        // A query's page folds the member from that query's own history,
+        // whichever source the reconciled head names now (FIX 9664).
+        let source = match (owner, value.derivation) {
+            (MembershipOwner::SavedQuery, _) => MembershipHeadSource::SavedQuery {
+                query_ref: owner_ref,
+            },
+            (MembershipOwner::Campaign, Some(derivation)) => MembershipHeadSource::SavedQuery {
                 query_ref: derivation.source_query,
             },
-            None => MembershipHeadSource::ManualClaim {
+            (MembershipOwner::Campaign, None) => MembershipHeadSource::ManualClaim {
                 state: value.state,
                 valid_at: body.valid_from.unwrap_or(recorded_at),
                 recorded_at,
@@ -389,10 +399,56 @@ fn membership_heads_in_txn(
         .collect())
 }
 
+/// Whether a `campaign.member` claim `head` replaced, directly or through
+/// earlier replacements, was derived from `query_ref`, read in the caller's
+/// `txn`.
+fn lineage_names_query_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    head: &EntityId,
+    query_ref: EntityId,
+) -> Result<bool> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut next = vec![*head];
+    while let Some(id) = next.pop() {
+        for edge in vault.store.port_edges(
+            txn,
+            &id,
+            EdgeDirection::Out,
+            Some(EdgeKind::Supersedes),
+            None,
+        )? {
+            let older = edge?.target;
+            if !seen.insert(older) {
+                continue;
+            }
+            let Some(body) = vault.get_claim_in_txn(txn, &older)? else {
+                continue;
+            };
+            if body.predicate != PREDICATE_CAMPAIGN_MEMBER {
+                continue;
+            }
+            if decode_campaign_member_value(&body.value)?
+                .derivation
+                .is_some_and(|derivation| derivation.source_query == query_ref)
+            {
+                return Ok(true);
+            }
+            next.push(older);
+        }
+    }
+    Ok(false)
+}
+
 /// The member and the decoded value when `body` is a live `campaign.member`
 /// head on the chosen axis. A campaign page takes every head of the campaign,
-/// derived or manual; a query page takes only the heads that query derived.
+/// derived or manual; a query page takes the heads that query derived, and a
+/// reconciled head that names another source but replaced, directly or
+/// through earlier replacements, a head that query derived (FIX 9664).
 fn head_matches(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_ref: &EntityId,
     body: &ClaimBody,
     owner_ref: EntityId,
     owner: MembershipOwner,
@@ -407,10 +463,13 @@ fn head_matches(
     let value = decode_campaign_member_value(&body.value)?;
     let matches = match owner {
         MembershipOwner::Campaign => value.campaign == owner_ref,
-        MembershipOwner::SavedQuery => value
-            .derivation
-            .as_ref()
-            .is_some_and(|derivation| derivation.source_query == owner_ref),
+        MembershipOwner::SavedQuery => {
+            value
+                .derivation
+                .as_ref()
+                .is_some_and(|derivation| derivation.source_query == owner_ref)
+                || lineage_names_query_in_txn(vault, txn, claim_ref, owner_ref)?
+        }
     };
     Ok(matches.then_some((entity_ref, value)))
 }

@@ -44,10 +44,16 @@ pub struct CampaignEnrollmentReceipt {
     pub receipt_ref: String,
 }
 
+/// The membership's effective state after an enrollment (FIX 9664, 10221): a
+/// manual intake reconciles with the person's one membership and keeps a
+/// pause, an exit or a suppression it finds.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CampaignEnrollmentState {
     Enrolled,
+    Paused,
+    Exited,
+    Suppressed,
 }
 
 /// Evidence carries a class and a basis; elapsed time is never an evidence class.
