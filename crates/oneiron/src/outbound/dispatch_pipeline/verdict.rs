@@ -2,7 +2,9 @@
 use crate::connector_key::EffectorBudgetCharge;
 use crate::gate::GateOutcome;
 use crate::outbound::dispatch_types::{OutboundDispatchOutcome, OutboundExecutionOutcome};
-use crate::outbound_intent_ledger::{IntentResolution, IntentState};
+use crate::outbound_intent_ledger::{
+    IntentResolution, IntentState, ProviderRetryDirective, ReservationStatus,
+};
 use crate::receipt::ReceiptRecord;
 
 pub(in crate::outbound) struct DispatchVerdict {
@@ -26,4 +28,11 @@ pub(in crate::outbound) struct DispatchVerdict {
     pub(in crate::outbound) held_approval_digest: Option<String>,
     /// The actor whose decision named `held_approval_digest`.
     pub(in crate::outbound) held_approval_actor: Option<crate::entity_id::EntityId>,
+    /// The provider wait the ledger keeps for this send (FIX 8818).
+    pub(in crate::outbound) provider_wait: Option<ProviderRetryDirective>,
+    /// The provider's edge, when that wait held this dispatch and nothing
+    /// was sent.
+    pub(in crate::outbound) provider_wait_held_until: Option<u64>,
+    /// Where this send's reserved budget stands (FIX 7964).
+    pub(in crate::outbound) budget_reservation: Option<ReservationStatus>,
 }

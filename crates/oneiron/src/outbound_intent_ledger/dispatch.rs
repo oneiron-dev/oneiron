@@ -292,7 +292,8 @@ pub(super) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
         };
 
         match record.state {
-            IntentState::Done => report.skipped_done += 1,
+            // A Deferred send is never sent again (FIX 7960).
+            IntentState::Done | IntentState::Deferred => report.skipped_done += 1,
             IntentState::Abandoned => {
                 report.skipped_abandoned += 1;
                 // Durable Abandoned state re-derives the signal after a crash.
@@ -322,7 +323,9 @@ pub(super) fn recover_outbound_intents<S: OutboundSender + ?Sized>(
                         complete_record(vault, record.id, now_ms)?;
                         report.completed += 1;
                     }
-                    OutboundSendOutcome::Ambiguous => report.pending += 1,
+                    OutboundSendOutcome::Ambiguous | OutboundSendOutcome::Deferred => {
+                        report.pending += 1;
+                    }
                     OutboundSendOutcome::Failed(failure) => {
                         // Recovery reaches this arm only for idempotent Pending rows.
                         report.pending += 1;
@@ -400,7 +403,7 @@ fn replay_dispatch<S: OutboundSender + ?Sized>(
     now_ms: u64,
 ) -> IntentLedgerResult<IntentDispatchResult> {
     match record.state {
-        IntentState::Done => Ok(dispatch_without_send(&record, true, None)),
+        IntentState::Done | IntentState::Deferred => Ok(dispatch_without_send(&record, true, None)),
         IntentState::Abandoned => Ok(dispatch_without_send(
             &record,
             true,
@@ -479,7 +482,9 @@ fn finish_send(
                 }),
             )
         }
-        OutboundSendOutcome::Failed(_) => (Some(IntentState::Pending), None),
+        OutboundSendOutcome::Failed(_) | OutboundSendOutcome::Deferred => {
+            (Some(IntentState::Pending), None)
+        }
     };
     Ok(IntentDispatchResult {
         class: OutboundCallClass::Effectful,

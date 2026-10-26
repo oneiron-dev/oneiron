@@ -7,8 +7,9 @@ use super::*;
 impl EffectorBudgetCharge {
     /// Folds the catalog pool's own charge into this per-grant key's: the
     /// pool's read rides `read.pool`, the rest `pool`.
-    fn meet_pool(&mut self, pool: Self) {
+    fn meet_pool(&mut self, mut pool: Self) {
         self.read.pool = Some(Box::new(pool.read));
+        self.debits.append(&mut pool.debits);
         self.pool = Some(EffectorPoolCharge {
             key_ref: pool.key_ref,
             sends_debit: pool.sends_debit,
@@ -57,6 +58,7 @@ fn evaluated_charge(
             .collect(),
         ladder_events: Vec::new(),
         pool: None,
+        debits: Vec::new(),
     })
 }
 
@@ -301,6 +303,7 @@ fn charge_key_budgets(
             matched_rows,
             ladder_events: Vec::new(),
             pool: None,
+            debits: Vec::new(),
         }));
     }
 
@@ -334,15 +337,23 @@ fn charge_key_budgets(
                 matched_rows,
                 ladder_events: Vec::new(),
                 pool: None,
+                debits: Vec::new(),
             },
         });
     }
 
     let mut sends_debit = 0;
     let mut ladder_events = Vec::new();
+    let mut debits = Vec::new();
     for state in states.iter_mut().filter(|state| state.matched) {
         if state.amount > 0 {
             state.usage.entries.push((now, state.amount));
+            debits.push(EffectorBudgetDebit {
+                key_ref: *key_id,
+                row_index: state.row_index,
+                amount: state.amount,
+                at: now,
+            });
             if state.budget.dimension == EffectorBudgetDimension::Sends {
                 sends_debit = 1;
             }
@@ -390,5 +401,6 @@ fn charge_key_budgets(
         matched_rows,
         ladder_events,
         pool: None,
+        debits,
     }))
 }

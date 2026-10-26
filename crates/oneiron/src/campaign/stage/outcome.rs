@@ -1,8 +1,7 @@
 //! Calendar-outcome ingress: held promotion, no-show recovery, silence-is-never-held.
 
 use super::ladder::{
-    NoShowRecoveryRule, PromotionMode, StageLadderDefinition, StageTransitionRule,
-    evidence_class_rule, validate_ladder,
+    NoShowRecoveryRule, PromotionMode, StageLadderDefinition, evidence_class_rule, validate_ladder,
 };
 use super::projector::{
     StageProjectResult, StageProjectorInput, StageRoute, project_stage_transition, stage_position,
@@ -125,9 +124,7 @@ fn promote_on_held(
     ) else {
         return Ok(StageProjectResult::NoChange);
     };
-    let Some(basis) = admissible_basis(outcome.value.basis, rule) else {
-        return Ok(StageProjectResult::NoChange);
-    };
+    let basis = outcome_evidence_basis(outcome.value.basis);
     project_stage_transition(
         vault,
         &StageProjectorInput {
@@ -146,26 +143,21 @@ fn promote_on_held(
     )
 }
 
-/// Carries CAL-07's basis onto the stage head, or refuses it.
+/// Carries CAL-07's basis onto the stage head (FIX 9666).
 ///
-/// An owner who answered the check-in is not a machine observation, and writing
-/// one as the other would launder the attestation past the ladder's own dial and
-/// out of the head a reader inspects. So the basis rides through, and a
-/// transition that does not admit attestation declines the promotion instead of
-/// relabelling it — a configuration statement, not an error.
+/// Both of CAL-07's Held bases advance under the same configured transition:
+/// the owner's check-in is CAL-07's ratified owner-attested producer, and the
+/// head records it as owner-attested rather than relabelling it a machine
+/// observation, so a reader still sees which one it was.
 ///
 /// The proposal-stage boundary [`require_owner_attestable`] applies is
 /// deliberately NOT applied here: it governs the downstream evidence HOOKS,
 /// whose truth lives in the counterparty ledger, whereas a calendar outcome is
-/// CAL-07's own recorded fact and the owner check-in is its ratified
-/// owner-attested producer. The per-transition dial is the whole gate on this
-/// path.
-fn admissible_basis(basis: EventOutcomeBasis, rule: &StageTransitionRule) -> Option<EvidenceBasis> {
+/// CAL-07's own recorded fact.
+const fn outcome_evidence_basis(basis: EventOutcomeBasis) -> EvidenceBasis {
     match basis {
-        EventOutcomeBasis::Machine => Some(EvidenceBasis::Machine),
-        EventOutcomeBasis::OwnerAttested => rule
-            .owner_attested_allowed
-            .then_some(EvidenceBasis::OwnerAttested),
+        EventOutcomeBasis::Machine => EvidenceBasis::Machine,
+        EventOutcomeBasis::OwnerAttested => EvidenceBasis::OwnerAttested,
     }
 }
 

@@ -14,9 +14,11 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 mod approval;
 pub(crate) mod checkpoint;
 pub(super) mod pending;
+mod remote_task;
 mod transition;
 mod validate;
 
+pub(crate) use self::remote_task::defer_record;
 pub(crate) use self::validate::hash_frozen_payload;
 pub(super) use self::validate::validate_record;
 
@@ -395,6 +397,7 @@ pub(super) fn transition_record(
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let outcome = match next {
         IntentState::Done => RecordedOutboundOutcome::Acked,
+        IntentState::Deferred => RecordedOutboundOutcome::Deferred,
         IntentState::Abandoned => {
             RecordedOutboundOutcome::Abandoned(IntentEscalationReason::PreviouslyAbandoned)
         }
@@ -524,6 +527,7 @@ pub(crate) fn reconcile_connector_intent_in_txn(
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
         record.updated_ms = now_ms.max(record.created_ms);
         put_ledger_record(vault, wtxn, &record)?;
+        super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
     }
     Ok(Some(super::resolution::IntentResolution::from_record(
         &record,
@@ -541,6 +545,26 @@ pub(crate) fn record_definite_non_delivery(
         None,
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         now_ms,
+        |_, _| Ok(()),
+    )
+}
+
+/// A provider's rate or quota refusal (FIX 8818): the send certainly did not
+/// go, as [`record_definite_non_delivery`] records, and the provider's wait
+/// is kept with it in the same writer, so no attempt goes before its edge.
+pub(crate) fn record_provider_refusal(
+    vault: &Vault,
+    id: [u8; 32],
+    directive: super::settlement::ProviderRetryDirective,
+    now_ms: u64,
+) -> IntentLedgerResult<IntentLedgerRecord> {
+    update_pending_recorded_outcome(
+        vault,
+        id,
+        None,
+        Some(RecordedOutboundOutcome::DefiniteNonDelivery),
+        now_ms,
+        |wtxn, _| super::settlement::keep_provider_wait_in_txn(vault, wtxn, &id, directive),
     )
 }
 
@@ -568,6 +592,12 @@ pub(crate) fn begin_definite_non_delivery_retry(
         Some(RecordedOutboundOutcome::DefiniteNonDelivery),
         None,
         now_ms,
+        // The retry this claim opens ends the provider's wait (FIX 8818); a
+        // takeover's abandon gives its reserved budget back (FIX 7964).
+        |wtxn, record| {
+            super::settlement::clear_provider_wait_in_txn(vault, wtxn, &id)?;
+            super::settlement::settle_reservation_in_txn(vault, wtxn, record)
+        },
     )
 }
 
@@ -577,6 +607,7 @@ fn update_pending_recorded_outcome(
     expected: Option<RecordedOutboundOutcome>,
     next: Option<RecordedOutboundOutcome>,
     now_ms: u64,
+    also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord) -> IntentLedgerResult<()>,
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
     let mut record = get_ledger_record(vault, &wtxn, &id)?.ok_or(
@@ -602,6 +633,7 @@ fn update_pending_recorded_outcome(
     }
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    also(&mut wtxn, &record)?;
     open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);

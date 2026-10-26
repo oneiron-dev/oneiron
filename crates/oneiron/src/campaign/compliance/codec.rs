@@ -1,17 +1,14 @@
-//! Claim-store readers, comm-party mirror, and the msgpack value toolkit.
+//! Claim-store readers and the msgpack value toolkit.
 
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
-use sha2::Digest;
-use sha2::Sha256;
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SideTableRowProblem, StoreError};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
-use crate::side_table::{self, Raw, SideTable};
+use crate::error::{Error, Result};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
 
 /// Live claim heads of `predicate` on `subject`.
@@ -94,68 +91,6 @@ pub(super) fn claim_body_in_txn(
     decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).map(Some)
 }
 
-/// Node-local party shortcut owned by `comm.rs`, re-validated against synced
-/// truth. Read-only mirror; CA never writes this index — this binding exists
-/// only for the read below, `comm` owns the declaration and its own writes.
-const COMM_PARTY_INDEX: SideTable<[u8; 32], EntityId, Raw> =
-    SideTable::new(&side_table::COMM_PARTY_INDEX);
-
-/// Synced-truth field naming a comm-owned PERSON's party.
-const COMM_PARTY_KEY_FIELD: &str = "party_key";
-
-/// Resolves the PERSON behind an external-effect `counterparty` address.
-///
-/// A stale shortcut resolves to NOTHING rather than to the wrong person: the
-/// row must still be a PERSON carrying exactly this `party_key`. Answering
-/// `None` withdraws compliance from the effect, which is why the re-validation
-/// is not optional — it is the difference between "not a campaign send" and
-/// "someone else's compliance facts".
-pub(super) fn resolve_comm_party_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    counterparty: &str,
-) -> Result<Option<EntityId>> {
-    let party_key = counterparty.trim();
-    if party_key.is_empty() {
-        return Ok(None);
-    }
-    let digest: [u8; 32] = Sha256::digest(party_key.as_bytes()).into();
-    // A malformed shortcut resolves to NOTHING, not an error: it is a
-    // disposable cache `comm.rs` owns and may overwrite at will.
-    let id = match COMM_PARTY_INDEX.get(store, txn, &digest) {
-        Ok(Some(id)) => id,
-        Ok(None) => return Ok(None),
-        Err(Error::Store(StoreError::SideTableRow {
-            problem: SideTableRowProblem::Undecodable,
-            ..
-        })) => return Ok(None),
-        Err(err) => return Err(err),
-    };
-    Ok(person_with_party_key_in_txn(store, txn, &id, party_key)?.then_some(id))
-}
-
-fn person_with_party_key_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    party_key: &str,
-) -> Result<bool> {
-    let Some(raw) = store.port_entity_record(txn, id)? else {
-        return Ok(false);
-    };
-
-    if raw.entity_type != ENTITY_TYPE_PERSON {
-        return Ok(false);
-    }
-    let mut cursor = std::io::Cursor::new(&raw.body);
-    let Ok(body) = rmpv::decode::read_value(&mut cursor) else {
-        return Ok(false);
-    };
-    Ok(map_entries(&body).iter().any(|(key, value)| {
-        key.as_str() == Some(COMM_PARTY_KEY_FIELD) && value.as_str() == Some(party_key)
-    }))
-}
-
 // ---------------------------------------------------------------------------
 // MessagePack value helpers
 // ---------------------------------------------------------------------------
@@ -187,6 +122,21 @@ pub(super) fn nested_map<'a>(
 pub(super) fn nested_text(entries: &[(rmpv::Value, rmpv::Value)], key: &str) -> Option<String> {
     let text = lookup(entries, key)?.as_str()?.trim();
     (!text.is_empty()).then(|| text.to_owned())
+}
+
+/// The non-blank strings of the array at `key`, trimmed; anything else in it
+/// is skipped, and a missing or non-array value is an empty list.
+pub(super) fn nested_texts(entries: &[(rmpv::Value, rmpv::Value)], key: &str) -> Vec<String> {
+    let Some(rmpv::Value::Array(items)) = lookup(entries, key) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(rmpv::Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 pub(super) fn nested_flag(entries: &[(rmpv::Value, rmpv::Value)], key: &str) -> bool {
