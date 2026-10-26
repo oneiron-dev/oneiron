@@ -16170,7 +16170,7 @@
     },
     {
       "name": "vault.batch",
-      "description": "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
+      "description": "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
       "input": "crate::core_write::CoreBatchWriteInput",
       "output": "crate::core_write::CoreBatchWriteReceipt",
       "call": "memory.core_batch_write(&input)?",

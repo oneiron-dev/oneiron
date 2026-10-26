@@ -13,7 +13,6 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-pub(crate) use oneiron::core_write::shape::CORE_MAX_BATCH_ENTITIES;
 #[cfg(test)]
 pub(crate) use oneiron::core_write::shape::{
     PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE, PLATFORM_ANNOUNCEMENT_VOICE,
