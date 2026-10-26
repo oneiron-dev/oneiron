@@ -39665,7 +39665,7 @@
      "path": "src/llm/registry/installed_pack.rs",
      "purpose": "The shipped catalog is read from an installed first-party hub pack",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -39677,6 +39677,16 @@
      "purpose": "An erased row out of the registry rows' source sets (FIX 6933)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/registry/stored_rows.rs",
+     "purpose": "The registry's stored rows",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -73232,7 +73242,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 19,
+      "fn": 21,
       "struct": 4,
       "trait": 2
      }
@@ -77101,7 +77111,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77810,7 +77820,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5113,
+   "source_files": 5114,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99327,9 +99337,6 @@
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
-      "SeatCommand",
-      "SeatLoginPlanArgs",
-      "SeatRunnerPolicyArgs",
       "SkillsPackArgs",
       "TokenAgentArgs",
       "TokenBootstrapArgs",
@@ -99342,10 +99349,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 12,
+      "enum": 11,
       "fn": 3,
-      "re-export": 13,
-      "struct": 22
+      "re-export": 14,
+      "struct": 20
      }
     },
     {
@@ -99515,6 +99522,22 @@
      "surface": {
       "enum": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatCommand",
+      "SeatLoginPlanArgs",
+      "SeatRunnerPolicyArgs"
+     ],
+     "path": "src/cli/seat_args.rs",
+     "purpose": "`oneiron seat …` arguments: the official-seat sign-in surface (OF-375)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -105998,7 +106021,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 7
+      "fn": 6
      }
     },
     {
@@ -106073,16 +106096,29 @@
       "RunnerProviderRow",
       "RunnerSeatDreamerExecutor",
       "RunnerSeatPolicySettings",
-      "RunnerSeatSettings",
-      "SeatLoginSurface",
-      "SeatRouteRow",
-      "SeatSettings"
+      "RunnerSeatSettings"
      ],
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
-      "fn": 10,
-      "struct": 12
+      "fn": 6,
+      "re-export": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatLoginSurface",
+      "SeatRouteRow",
+      "SeatSettings"
+     ],
+     "path": "src/runtime/seat_login/surface.rs",
+     "purpose": "The owner-facing half of an official seat (OF-375): the settings the owner writes, the sign-in surface built…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -106956,9 +106992,9 @@
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
-      "fn": 9,
+      "fn": 11,
       "struct": 10
      }
     },
@@ -107310,8 +107346,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/wire_health/evidence.rs",
+     "purpose": "What the health check reads: each kind of kept crossing past its cursor, as one subject's crossing, and how…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "LimitQuestions",
+      "WireCrossed",
       "WireLimitQuestion",
       "WireQuestion",
       "WireQuestionKind",
@@ -107325,7 +107372,7 @@
       "enum": 1,
       "fn": 11,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -107736,7 +107783,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -108065,7 +108112,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -108135,10 +108182,10 @@
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
     "wire_health": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
@@ -108151,7 +108198,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1262,
+   "source_files": 1265,
    "test_files": 182
   },
   "oneiron-spawn": {
