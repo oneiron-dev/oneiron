@@ -9,9 +9,9 @@
 //! - While the room is off record, a put, a batch of puts, an edge or a
 //!   vector stages in the room's overlay as one segment, every op or none,
 //!   after the refusals its base write meets: the public raw-put and edge
-//!   checks, the actor's proof, an agent definition's owner-only widening,
-//!   and a claim's gate on base policy, whose decision the room does not
-//!   keep. It rides no turn of the room, so close drops it with the room;
+//!   checks, the actor's proof, the caller's write lane over stored rows,
+//!   an agent definition's owner-only widening, and a claim's gate on base
+//!   policy, whose decision the room does not keep. It rides no turn of the room, so close drops it with the room;
 //!   nothing reaches base unless the vault comes to hold it.
 //! - While the room is on record, the write is ordinary memory and lands in
 //!   base as an unbound session's does. An anonymous room keeps nothing: its
@@ -184,6 +184,16 @@ impl Memory<'_> {
                 source_run: source_run.clone(),
             });
         }
+        // The caller's write lane, as on base (FIX 6068): a put over a stored
+        // row it does not read refuses as missing.
+        let lane = self.core_write_lane()?;
+        let put_ids: Vec<EntityId> = ops
+            .iter()
+            .filter_map(|op| match op {
+                RawOp::Put(put) => Some(put.id),
+                RawOp::Edge { .. } | RawOp::Vector { .. } => None,
+            })
+            .collect();
         let mut refusal = None;
         let staged = session.overlay_write_routed(&route, |wtxn, apply| {
             let proven = self
@@ -192,6 +202,9 @@ impl Memory<'_> {
             if let Err(error) = proven {
                 refusal = Some(error);
                 return Err(Error::InvariantViolation("a bound raw write was refused"));
+            }
+            if !lane.admits_puts_in(wtxn, &put_ids)? {
+                return Err(Error::EntityNotFound);
             }
             for entry in entries {
                 apply(wtxn, entry)?;
