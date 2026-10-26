@@ -124,9 +124,9 @@ pub(crate) fn scoped_read_claim_view_allowed(
         return false;
     }
 
-    if explicit_scope.is_some_and(|scope| {
-        !scope.admits("read", &claim.record, &crate::federation::Scope::top())
-    }) {
+    if explicit_scope
+        .is_some_and(|scope| !scope.admits("read", &claim.record, &crate::federation::Scope::top()))
+    {
         return false;
     }
     let mut saw_core_read_grant = false;
