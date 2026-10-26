@@ -284,7 +284,7 @@ struct SealedHead {
 /// input decoded into a file of its own (FIX 7917); the floor keeps the room
 /// the engine stores the input in until the change returns. The custody
 /// door takes the input as one slice, so it is read from that file once,
-/// here (FIX-LIST: L04's reader path through persistence and execution).
+/// here (FIX 11140: L04's reader path through persistence and execution).
 async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
