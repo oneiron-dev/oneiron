@@ -22,40 +22,71 @@ use oneiron::registry::ENTITY_TYPE_TURN;
 /// A served row: its kind, time and body.
 type TurnParts = (u8, u64, Vec<u8>);
 
-/// The turn `id` as the TURN routes serve it to `read`'s caller: for the
-/// owner's own read (`Vault::turn_doors_owner`), the stored row once the
-/// turn's private threads admit it (FIX 5652), judged and read in one
-/// snapshot (FIX 5870); for any other caller, the row its lane reads, in its
-/// read's own snapshot (FIX 5938). A turn neither reads answers as missing.
-pub(super) fn core_turn_for_read(
+/// What the owner's read of one turn found in its one snapshot.
+enum OwnerTurn<V> {
+    /// The TURN doors serve the caller below the owner; its request's own
+    /// check is not yet raised.
+    Below(Result<V, EnvelopedApiError>),
+    /// The owner's turn, admitted and checked, and its row when one is
+    /// served.
+    Served(V, Option<TurnParts>),
+    /// The owner's turn, refused: not admitted, or by its request's check.
+    Refused(EnvelopedApiError),
+}
+
+/// The turn `id` as the TURN routes serve it to `read`'s caller, with its
+/// request's own check (`checked`), raised in this order: for the owner's
+/// own read (`Vault::turn_doors_owner`), the turn's private threads admit it
+/// (FIX 5652), then the check's refusal, then the stored row is read, all in
+/// one snapshot (FIX 5870); for any other caller, the row its lane reads, in
+/// its read's own snapshot (FIX 5938), then the check. A turn neither reads
+/// answers as missing.
+pub(super) fn core_turn_for_read<V>(
     vault: &oneiron::Vault,
     read: &oneiron::claim::ScopedRead<'_>,
     id: &oneiron::EntityId,
-) -> Result<TurnParts, EnvelopedApiError> {
+    checked: Result<V, EnvelopedApiError>,
+) -> Result<(V, TurnParts), EnvelopedApiError> {
     let failed = |error: oneiron::Error| {
         tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core TURN read failed");
         core_engine_error("core TURN read failed", error)
     };
-    let (owner, owner_row) = vault
-        .with_read_snapshot(|txn| -> oneiron::Result<(bool, Option<TurnParts>)> {
+    let missing = || ApiError::not_found("turn", Some(&id.to_hex()));
+    let owner_turn = vault
+        .with_read_snapshot(|txn| -> oneiron::Result<OwnerTurn<V>> {
             if !vault.turn_doors_owner_in_txn(read, txn)? {
-                return Ok((false, None));
+                return Ok(OwnerTurn::Below(checked));
             }
+            if !vault.turn_door_admits_in_txn(read, txn, true, id)? {
+                return Ok(OwnerTurn::Refused(missing().into()));
+            }
+            let checked = match checked {
+                Ok(checked) => checked,
+                Err(refused) => return Ok(OwnerTurn::Refused(refused)),
+            };
             let row = vault
                 .turn_door_parts_in_txn(read, txn, true, std::slice::from_ref(id))?
                 .pop()
                 .flatten();
-            Ok((true, row))
+            Ok(OwnerTurn::Served(checked, row))
         })
         .map_err(failed)?;
-    let row = if owner {
-        owner_row.filter(|(entity_type, _, _)| *entity_type == ENTITY_TYPE_TURN)
-    } else {
-        read.get_entity_parts_with_receipt(id, None)
-            .map_err(failed)?
-            .value
+    let (checked, row) = match owner_turn {
+        OwnerTurn::Below(checked) => {
+            let row = read
+                .get_entity_parts_with_receipt(id, None)
+                .map_err(failed)?
+                .value;
+            (checked, row)
+        }
+        OwnerTurn::Served(checked, row) => (
+            Ok(checked),
+            row.filter(|(entity_type, _, _)| *entity_type == ENTITY_TYPE_TURN),
+        ),
+        OwnerTurn::Refused(refused) => return Err(refused),
     };
-    Ok(row.ok_or_else(|| ApiError::not_found("turn", Some(&id.to_hex())))?)
+    let row = row.ok_or_else(missing)?;
+    Ok((checked?, row))
 }
 
 /// What one TURN list read admitted, in its one snapshot.

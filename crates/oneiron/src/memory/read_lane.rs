@@ -46,6 +46,42 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// [`Self::read_lane`], or `None` exactly when this handle's bound
+    /// credential grants its actor no read (FIX 6068, 1223): a writer with
+    /// none is held to the bounds of what its credential may write to
+    /// instead. Every other refusal is the error [`Self::read_lane`] gives.
+    pub(crate) fn read_lane_if_granted(
+        &self,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<Option<ScopedRead<'_>>> {
+        // The room resolver opens its own snapshots, so it runs only once the
+        // verification snapshot here has closed: LMDB allows one per thread.
+        let key = {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(|error| MemoryError::from(Error::from(error)))?;
+            match (&self.host_action, &self.read_proof) {
+                (None, Some(proof)) => {
+                    verify_actor_binding_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+                    let owner = self.is_vault_owner_in_txn(&txn)?;
+                    let key = self
+                        .vault
+                        .credential_read_key_in_txn(&txn, proof, self.actor, owner)?;
+                    match key {
+                        Some(key) => key,
+                        None => return Ok(None),
+                    }
+                }
+                _ => self.identity_read_key_in_txn(&txn)?,
+            }
+        };
+        let key = self.in_room_turn(key.for_destination(&self.destination))?;
+        Ok(Some(self.vault.scoped_read(key).with_claim_status(claims)))
+    }
+
     /// The key every read verb on this handle reads under: its proof's, its
     /// locality's and its room turn's. A verb hook a call fires reads
     /// through it, capped by the hook's grant (ARCH-0080 §3).
