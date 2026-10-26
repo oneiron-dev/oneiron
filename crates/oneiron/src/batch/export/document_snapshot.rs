@@ -109,12 +109,17 @@ impl Vault {
     /// Each record's side rows and stored files go with it as they do in the
     /// whole-vault archive, never past `records`, and no vault-wide row does
     /// (FIX 3681). Its diary reads are `reader`'s, the owner who receives it.
-    pub(crate) fn export_records_archive(
+    /// `freeze` reads in the archive's own snapshot, before its rows, so
+    /// what it answers (the removal's frozen positions, FIX-LIST 8224) and
+    /// the bytes archived are one state.
+    pub(crate) fn export_records_archive<T>(
         &self,
         records: &BTreeSet<EntityId>,
         reader: WriteActor,
-    ) -> Result<WholeVaultExport> {
-        self.export_in_memory(|vault, spool| {
+        freeze: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
+    ) -> Result<(WholeVaultExport, T)> {
+        let mut frozen = None;
+        let archive = self.export_in_memory(|vault, spool| {
             vault
                 .export_archive_snapshot(
                     CallerLocality::OffDevice,
@@ -122,11 +127,16 @@ impl Vault {
                     ExportCut::Archive,
                     false,
                     reader,
-                    |_| Ok::<_, Error>(()),
+                    |rtxn| {
+                        frozen = Some(freeze(rtxn)?);
+                        Ok::<_, Error>(())
+                    },
                     spool,
                 )
                 .map(|(_, receipt)| receipt)
-        })
+        })?;
+        let frozen = frozen.ok_or(Error::InvariantViolation("records archive froze nothing"))?;
+        Ok((archive, frozen))
     }
 
     /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
