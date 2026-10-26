@@ -331,7 +331,8 @@ pub(crate) async fn create_core_conversation(
     };
     // OF-181: `vault.conversations.create`, as an action when the
     // credential binds one that writes as this actor, else through the
-    // row's own Vault door as the actor the request bound.
+    // row's own Vault door as the actor the request bound, held to the
+    // credential's write lane (FIX 10781).
     let receipt =
         match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
             Some(bound) if actor.is_none_or(|actor| actor == bound.writes_as()) => {
@@ -344,7 +345,10 @@ pub(crate) async fn create_core_conversation(
                 .await?;
                 entity_receipt(output)?
             }
-            _ => server.vault.write_core_conversation(&input, actor)?,
+            _ => {
+                let lane = super::facade::host_doors::core_write_lane(&server.vault, &auth)?;
+                server.vault.write_core_conversation(&input, actor, &lane)?
+            }
         };
     let id = parse_entity_id_param(&receipt.id, "id")?;
     let item = if members {
