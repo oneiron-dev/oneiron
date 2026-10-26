@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::claim::ClaimBody;
+use crate::codebase::CodeInstructionHandle;
 use crate::disclosure::DisclosureContext;
 use crate::edge::EdgeInfo;
 use crate::entity_id::EntityId;
@@ -17,7 +18,9 @@ use super::super::empty_pack::{
 use super::super::telemetry::{
     discard_failed_context_pack_telemetry, finalize_context_pack_telemetry,
 };
-use super::super::types::{ContextPack, PackStats};
+use super::super::types::{
+    ContextPack, ContextPackRetrievalBudget, PackCriticalAccounting, PackStats, PackWorldShare,
+};
 
 #[derive(Debug, Clone)]
 pub struct SerializedContextPack {
@@ -113,6 +116,10 @@ pub(in crate::context_pack) struct ContextPackRun<'a> {
     /// Scored candidates the disclosure clamp's candidate sweep dropped.
     pub(in crate::context_pack) clamped: Vec<EntityId>,
     pub(in crate::context_pack) replay_config: Option<serde_json::Value>,
+    /// The critical rows the run found and its budgets cut (FIX 9760).
+    pub(in crate::context_pack) critical: PackCriticalAccounting,
+    /// An `All`-world pack's world share, for a cut after assembly (FIX 9759).
+    pub(in crate::context_pack) world_share: Option<PackWorldShare>,
 }
 
 pub struct UnfinalizedContextPack<'a> {
@@ -122,6 +129,8 @@ pub struct UnfinalizedContextPack<'a> {
     pub(super) total_in_scope: usize,
     pub(super) clamped: Vec<EntityId>,
     pub(super) replay_config: Option<serde_json::Value>,
+    pub(super) critical: PackCriticalAccounting,
+    pub(super) world_share: Option<PackWorldShare>,
 }
 
 impl UnfinalizedContextPack<'_> {
@@ -156,22 +165,95 @@ impl UnfinalizedContextPack<'_> {
         Ok(count)
     }
 
+    /// Filters the pack to what `read` may be served under `disclosure`
+    /// (`ScopedRead::filter_context_pack_under`), and counts its critical
+    /// claims, the ones its budgets cut included, over the ids `read` is
+    /// admitted to (FIX 9760).
+    pub fn filter_scoped_under(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<crate::claim::ScopedReadReceipt> {
+        read.filter_context_pack_critical_under(&mut self.value, &self.critical, disclosure)
+    }
+
+    /// Cuts the pack to a response's limits by the pipeline's share-aware
+    /// selection: its results to the per-kind `budget` and `results`, then its
+    /// neighbors to `neighbors`, critical rows first in each, an `All`-world
+    /// pack's share held over both (FIX 9759, FIX 9760). The kept rows keep
+    /// their order. Returns whether a cut left out a critical row.
+    pub fn select_response_rows(
+        &mut self,
+        budget: ContextPackRetrievalBudget,
+        results: usize,
+        neighbors: usize,
+    ) -> bool {
+        crate::pipeline::select_context_pack_rows(
+            &mut self.value.results,
+            &mut self.value.neighbors,
+            budget,
+            (results, neighbors),
+            self.world_share.as_ref(),
+        )
+    }
+
+    /// Resolves the pack's instruction files afresh over the units it now
+    /// returns, under `read` and `disclosure` (FIX 9761): call it after the
+    /// pack's last row filter and cut. A failure discards the provisional run
+    /// row before it returns.
+    pub fn project_instruction_files_under(
+        &mut self,
+        read: &crate::claim::ScopedRead<'_>,
+        disclosure: Option<&DisclosureContext>,
+    ) -> Result<()> {
+        let units: Vec<EntityId> = self
+            .value
+            .results
+            .iter()
+            .chain(&self.value.neighbors)
+            .map(|row| row.id)
+            .collect();
+        match read.context_pack_instruction_files_under(&units, disclosure) {
+            Ok(files) => {
+                self.value.instruction_files = files;
+                Ok(())
+            }
+            Err(error) => {
+                self.discard_telemetry();
+                Err(error)
+            }
+        }
+    }
+
+    /// Projects the pack for a JSON response, then sets its instruction files
+    /// to what `instruction_files` resolves over the rows that projection's
+    /// token and item cuts kept, its last cut (FIX 9761), and only then
+    /// finalizes the run row. A failed resolution discards the provisional
+    /// run row before it returns.
     pub fn finish_projected_json(
         mut self,
         config: &SerializeConfig,
-    ) -> RetrievalWithTelemetry<ContextPack> {
+        instruction_files: impl FnOnce(&ContextPack) -> Result<Vec<CodeInstructionHandle>>,
+    ) -> Result<RetrievalWithTelemetry<ContextPack>> {
         let pre_projection_stats = self.value.stats.clone();
         let pre_projection_had_results =
             !self.value.results.is_empty() || self.value.l2_base.is_some();
         let mut pack = crate::serialize::project_pack_for_json_response(self.value, config);
         refresh_projected_empty_context(&mut pack);
+        pack.instruction_files = match instruction_files(&pack) {
+            Ok(files) => files,
+            Err(error) => {
+                discard_failed_context_pack_telemetry(self.telemetry, self.telemetry_run_id.take());
+                return Err(error);
+            }
+        };
         let surfaced_result_ids: Vec<[u8; 16]> = pack
             .results
             .iter()
             .map(|entity| *entity.id.as_bytes())
             .collect();
         // BASE-ONLY by construction: `run_unfinalized_with_telemetry` refuses
-        // a room's assembly precisely because this signature has no channel to
+        // a room's assembly precisely because this finalize has no channel to
         // carry a room's registration failure, and the base arm's posture is
         // best-effort `Ok`. The `Err` arm is therefore unreachable here, and
         // flattening it cannot hide a room's failure.
@@ -197,11 +279,11 @@ impl UnfinalizedContextPack<'_> {
         )
         .ok()
         .flatten();
-        RetrievalWithTelemetry {
+        Ok(RetrievalWithTelemetry {
             retrieval_quality: pack.retrieval_quality.clone(),
             value: pack,
             run_id: telemetry_run_id,
-        }
+        })
     }
 
     /// Finalizes this assembly's retrieval-run row against the pack AS IT NOW

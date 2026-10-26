@@ -56,6 +56,9 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) ppr_expand_executed: bool,
     pub(super) early_empty_no_telemetry: bool,
     pub(super) temporal_report: Option<super::super::TemporalSearchReport>,
+    /// The pack's critical candidates before its cuts, and those the cuts
+    /// left out (FIX 9760). Empty outside a pack run.
+    pub(super) critical: crate::context_pack::PackCriticalAccounting,
 }
 
 /// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`

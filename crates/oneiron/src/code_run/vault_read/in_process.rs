@@ -365,9 +365,8 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         // door, and nothing leaves this method unfiltered. A failed filter
         // discards the provisional row before the error returns, so a refused
         // read leaves no residue behind it.
-        let narrowing = self
-            .scoped_read
-            .filter_context_pack(&mut pack.value)
+        let narrowing = pack
+            .filter_scoped_under(&self.scoped_read, None)
             .map_err(|error| {
                 pack.discard_telemetry();
                 engine_failure(METHOD, &error)
@@ -379,6 +378,9 @@ impl<'v> InProcessVaultReadAdapter<'v> {
         pack.value.results.truncate(limit);
         pack.value.neighbors.truncate(max_neighbors);
         scrub_context_pack_visible_stats(&mut pack.value);
+        // Instruction files name only units this read returns (FIX 9761).
+        pack.project_instruction_files_under(&self.scoped_read, None)
+            .map_err(|error| engine_failure(METHOD, &error))?;
         // Publish LAST, off the post-filter, post-truncate pack: the durable
         // run row then carries exactly the ids this actor received, so a
         // denied entity is as absent from telemetry as it is from the

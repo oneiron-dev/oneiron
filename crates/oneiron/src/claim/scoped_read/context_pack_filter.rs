@@ -1,6 +1,6 @@
 //! Final actor-bound context-pack filtering before rendering and telemetry.
 use super::*;
-use crate::context_pack::{ContextPack, EmptyContext, EmptyReason};
+use crate::context_pack::{ContextPack, EmptyContext, EmptyReason, PackCriticalAccounting};
 
 impl ScopedRead<'_> {
     pub fn filter_context_pack(&self, pack: &mut ContextPack) -> Result<ScopedReadReceipt> {
@@ -15,6 +15,25 @@ impl ScopedRead<'_> {
     pub fn filter_context_pack_under(
         &self,
         pack: &mut ContextPack,
+        disclosure: Option<&crate::disclosure::DisclosureContext>,
+    ) -> Result<ScopedReadReceipt> {
+        self.filter_context_pack_critical_under(
+            pack,
+            &PackCriticalAccounting::default(),
+            disclosure,
+        )
+    }
+
+    /// [`Self::filter_context_pack_under`] for a pack whose run found the
+    /// critical claims `critical` names. Its stats count a critical claim
+    /// only while this read admits it in the filter's snapshot: a critical
+    /// row the filter kept, or one a budget cut that this read would
+    /// retrieve and `disclosure` admits. A hidden candidate never counts
+    /// (FIX 9760). With no accounting, only the kept rows count.
+    pub(crate) fn filter_context_pack_critical_under(
+        &self,
+        pack: &mut ContextPack,
+        critical: &PackCriticalAccounting,
         disclosure: Option<&crate::disclosure::DisclosureContext>,
     ) -> Result<ScopedReadReceipt> {
         let rtxn = self.grant_read_txn()?;
@@ -99,6 +118,21 @@ impl ScopedRead<'_> {
             pack.neighbors = neighbors;
             pack.stats.claims_suppressed +=
                 result_suppressed + neighbor_suppressed + reachability_claims;
+            let mut admitted = PackCriticalAccounting::default();
+            for id in &critical.budget_omitted_ids {
+                if self.is_entity_retrievable_with_policy_in(&rtxn, &policy, &filter, id)?
+                    && crate::context_pack::disclosure_admits_target(
+                        &self.store_read(),
+                        &rtxn,
+                        disclosure,
+                        id,
+                    )?
+                {
+                    admitted.budget_omitted_ids.insert(*id);
+                }
+            }
+            admitted.settle(&pack.results, &pack.neighbors);
+            admitted.report(&mut pack.stats);
 
             if (previous_count > 0 || had_capabilities || had_l2_base)
                 && pack.capabilities.is_empty()

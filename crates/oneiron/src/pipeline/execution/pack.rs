@@ -61,6 +61,7 @@ impl PipelineBuilder<'_> {
                 signals: Vec::new(),
                 temporal_hints: Vec::new(),
                 temporal_report: None,
+                critical: Default::default(),
             });
         }
         self.claim_aging_profiles =
@@ -255,6 +256,7 @@ impl PipelineBuilder<'_> {
                 signals: telemetry_signals,
                 temporal_hints,
                 temporal_report: attempt.temporal_report,
+                critical: Default::default(),
             });
         }
         let mut temporal_report = attempt.temporal_report;
@@ -280,6 +282,7 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs = attempt.replay_inputs;
+        let mut critical = attempt.critical;
 
         self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
 
@@ -359,6 +362,7 @@ impl PipelineBuilder<'_> {
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
+                critical = retry.critical;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
                 claims_suppressed = 0;
@@ -575,6 +579,7 @@ impl PipelineBuilder<'_> {
             signals: telemetry_signals,
             temporal_hints,
             temporal_report,
+            critical,
         })
     }
 

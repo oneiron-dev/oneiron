@@ -23,12 +23,14 @@ use super::super::blend::{
 };
 use super::super::budget::{
     WorldShare, apply_context_pack_retrieval_budget, context_pack_evidence_abstains,
+    keep_critical_through, pack_critical_accounting, truncate_critical_first,
     truncate_under_world_share, withhold_undisclosed,
 };
 use super::super::builder::PipelineBuilder;
 use super::super::capabilities::{memory_candidate_count, partition_capabilities};
 use super::super::channels::{execute_phonetic, fusion_fetch_limit};
 use super::super::corpus_filter::CorpusFilter;
+use super::super::criticality::critical_candidate_ids;
 use super::super::filters::{apply_claim_status_gate, apply_relationship_filter};
 use super::super::trace::{
     capture_replay_inputs, record_ppr_cache_outcome, retrieval_trace_fused_scores,
@@ -44,7 +46,7 @@ use crate::error::Result;
 use crate::fusion;
 use crate::query_expansion::retry_channel_limit;
 use crate::store::RetrievalSignal;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
 struct SnapshotInputs<'a> {
@@ -504,6 +506,7 @@ impl PipelineBuilder<'_> {
                     ppr_expand_executed: false,
                     early_empty_no_telemetry: !capture_replay_enabled,
                     temporal_report: metadata_cache.temporal_report,
+                    critical: Default::default(),
                 });
             }
 
@@ -763,6 +766,12 @@ impl PipelineBuilder<'_> {
                 fraction,
                 claim_gate: &claim_gate,
             });
+            // A pack's critical claims, resolved on its admitted candidates
+            // before any cut below; each cut takes them first (FIX 9760).
+            let critical = match self.context_pack_budget {
+                Some(_) => critical_candidate_ids(&scores, &claim_gate, &self.read, rtxn)?,
+                None => HashSet::new(),
+            };
             if let Some(context_pack_budget) = self.context_pack_budget {
                 let share_held_back = apply_context_pack_retrieval_budget(
                     &mut scores,
@@ -771,13 +780,16 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                     context_pack_budget,
                     world_share,
+                    &critical,
                 )?;
                 emptied_by_policy |= share_held_back && scores.is_empty();
             }
             // Only admitted final candidates participate. This selection cannot
             // surface hidden bridge nodes, undo filters, or multiply scores twice.
             if let Some(diversity) = community_diversity {
-                diversity.apply(&mut scores, self.result_limit, &self.ppr_community)?;
+                keep_critical_through(&mut scores, &critical, |scores| {
+                    diversity.apply(scores, self.result_limit, &self.ppr_community)
+                })?;
             }
             match world_share {
                 Some(share) => {
@@ -786,14 +798,16 @@ impl PipelineBuilder<'_> {
                         &mut scores,
                         self.result_limit,
                         share,
+                        &critical,
                         &self.read,
                         rtxn,
                         &mut metadata_cache,
                     )?;
                     emptied_by_policy |= had_rows && scores.is_empty();
                 }
-                None => scores.truncate(self.result_limit),
+                None => truncate_critical_first(&mut scores, self.result_limit, &critical),
             }
+            let critical = pack_critical_accounting(critical, &scores);
             if before_limit > 0 && scores.is_empty() && !emptied_by_policy {
                 empty_reason = Some(EmptyReason::BelowThreshold);
             }
@@ -932,6 +946,7 @@ impl PipelineBuilder<'_> {
                 ppr_expand_executed,
                 early_empty_no_telemetry: false,
                 temporal_report: metadata_cache.temporal_report,
+                critical,
             })
         }
     }
