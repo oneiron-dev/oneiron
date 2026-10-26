@@ -95914,6 +95914,36 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool.rs",
+     "purpose": "An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5)",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool/json.rs",
+     "purpose": "One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool/owner_json.rs",
+     "purpose": "Every `/v1/owner` JSON route's body (FIX 8195, Rule 5)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -100306,9 +100336,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/secret_control_routes/sealed_spool.rs",
-     "purpose": "The sealed custody change's body, spooled (FIX 5674, Rule 5)",
+     "purpose": "The sealed custody change's body, spooled and decoded (FIX 5674, FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -101250,7 +101280,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -110318,7 +110348,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 576,
+     "files": 579,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -110803,7 +110833,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1311,
+   "source_files": 1314,
    "test_files": 182
   },
   "oneiron-spawn": {
