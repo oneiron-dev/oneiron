@@ -3685,6 +3685,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/left_notices/delivery.rs",
+     "purpose": "The host's delivery of an export-first removal's archive to its removed holder (FIX 3215, 3396), beside the…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "LocalHostRootContext",
       "LocalHostRootValidated",
@@ -65774,9 +65784,9 @@
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 4,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -78279,7 +78289,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79751,7 +79761,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5281,
+   "source_files": 5282,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101291,6 +101301,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/auth/left_notices/delivery.rs",
+     "purpose": "`POST /v1/shared/removal-delivery` and `POST /v1/shared/removal-delivery/ack` (FIX 3215, 3396): the host…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/auth/locality.rs",
      "purpose": "Where the caller of a request sits (DEC-0005): on this device or off it",
      "surface": {
@@ -103687,6 +103707,16 @@
      "purpose": "A device's enrolment with its home (ARCH-0023b: \"a device connects the moment it is enrolled\")",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/removal_delivery.rs",
+     "purpose": "The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -108960,7 +108990,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 5
      }
     },
@@ -109112,6 +109142,16 @@
      "notable": [],
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/removal_delivery.rs",
+     "purpose": "The host's side of removal-archive delivery (FIX 3215, 3396): the wakes that end a removed holder's held…",
      "surface": {
       "crate-vis": 6
      }
@@ -110233,7 +110273,7 @@
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -110401,7 +110441,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -110639,7 +110679,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110711,7 +110751,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1308,
+   "source_files": 1311,
    "test_files": 182
   },
   "oneiron-spawn": {
