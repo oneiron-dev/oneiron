@@ -239,6 +239,7 @@ impl Vault {
                     grant_ref: Some(format!("foreign:{}", foreign.to_hex())),
                     diff_handle: vec![u8::from(requested == PolicyApprovalCeiling::Auto)],
                     read_frontier_hash: frontier,
+                    context: Default::default(),
                     redacted_at: None,
                 },
             )?;
@@ -409,6 +410,7 @@ impl Vault {
                 diff_handle,
                 read_frontier_hash: resolve_policy_manifest(&self.store, txn)?
                     .read_frontier_hash()?,
+                context: Default::default(),
                 redacted_at: None,
             };
             self.store

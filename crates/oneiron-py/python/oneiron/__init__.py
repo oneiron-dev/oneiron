@@ -1363,16 +1363,16 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def status(self, spec):
-            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_status(json.dumps(spec))))
         def tags(self, spec):
-            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_tags(json.dumps(spec))))
         def history(self, spec):
-            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_history(json.dumps(spec))))
         def mentions(self, spec):
-            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."""
             return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
     class _VaultClusterVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -2130,6 +2130,9 @@ class Oneiron:
         @property
         def calls(self) -> "Oneiron._VaultConnectorsCallsVerbs":
             return Oneiron._VaultConnectorsCallsVerbs(self._client)
+        @property
+        def read_grants(self) -> "Oneiron._VaultConnectorsReadGrantsVerbs":
+            return Oneiron._VaultConnectorsReadGrantsVerbs(self._client)
     class _VaultConnectorsProxyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2181,6 +2184,15 @@ class Oneiron:
         def approve_once(self, spec):
             """The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent."""
             return json.loads(_translate(lambda: self._client.vault_connectors_calls_approve_once(json.dumps(spec))))
+    class _VaultConnectorsReadGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def grant(self, spec):
+            """The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_read_grants_grant(json.dumps(spec))))
+        def revoke(self, spec):
+            """The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_read_grants_revoke(json.dumps(spec))))
     class _VaultAuthorityVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

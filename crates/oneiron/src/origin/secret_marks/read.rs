@@ -110,6 +110,13 @@ impl RepoBlobMarks {
         self.marks.push(mark);
     }
 
+    /// Each readable mark of this blob, in walk order: what a current-code
+    /// remediation replaces, by place and custody record (FIX 7608 slice
+    /// 6). No value.
+    pub(crate) fn marks(&self) -> &[RepoSecretMark] {
+        &self.marks
+    }
+
     /// Each span mark's custody record, once each, in mark order: the keys
     /// a real-byte file reveal of this blob asks for (FIX 7608 2b-ii). A
     /// record id, never a value.
@@ -193,6 +200,74 @@ impl RepoMarkFacts {
         Ok(Self { marks })
     }
 
+    /// [`Self::read_in_txn`], scoped per blob for a sync release (FIX 7608
+    /// slice 4, FIX 10793): a mark that does not decode marks only the blob
+    /// it still names, returned beside the facts as a blob whose marks are
+    /// unknown this pass. It names its blob by its `raw_blake3`, or by its
+    /// blob OID when a readable mark of the same OID gives that blob's
+    /// BLAKE3. A claim whose body does not decode and whose predicate still
+    /// reads as another one is no mark. A mark that names no blob, or a
+    /// store failure in the walk, is the one case no blob is provably
+    /// unmarked: `fails_closed` (the one policy hook,
+    /// `UNATTRIBUTABLE_MARK_FAILS_CLOSED`) fails the walk on it, or else
+    /// the walk goes on without it and reports it.
+    ///
+    /// # Errors
+    /// With `fails_closed`: a store failure, or a mark that does not decode
+    /// and names no blob.
+    pub(crate) fn read_scoped_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        fails_closed: bool,
+    ) -> Result<(Self, std::collections::BTreeSet<[u8; 32]>)> {
+        let mut marks: Vec<RepoSecretMark> = Vec::new();
+        let mut undecodable: Vec<(EntityId, Option<NamedBlob>, Error)> = Vec::new();
+        let mut undecoded: Vec<(EntityId, Option<NamedBlob>, Error)> = Vec::new();
+        let walked = vault.for_each_readable_claim_with_predicate_or_undecoded_in_txn(
+            txn,
+            REPO_SECRET_MARK_PREDICATE,
+            |id, body| {
+                match decode_mark(id, &body) {
+                    Ok(Some(mark)) => marks.push(mark),
+                    Ok(None) => {}
+                    Err(error) => undecodable.push((id, named_blob(&body.value), error)),
+                }
+                Ok(())
+            },
+            |id, body, error| {
+                if let Undecoded::Mark(blob) = undecoded_mark(body) {
+                    undecoded.push((id, blob, error));
+                }
+                Ok(())
+            },
+        );
+        if let Err(error) = walked {
+            unattributed(fails_closed, error)?;
+        }
+        let mut unreadable = std::collections::BTreeSet::new();
+        for (id, blob, error) in undecodable.into_iter().chain(undecoded) {
+            tracing::warn!(
+                mark = %id.to_hex(),
+                "repo secret mark does not decode; its blob reads as unknown"
+            );
+            let hash = match blob {
+                Some(NamedBlob::Hash(hash)) => Some(hash),
+                Some(NamedBlob::Oid(oid)) => marks
+                    .iter()
+                    .find(|mark| mark.blob_oid == oid)
+                    .map(|mark| mark.raw_blake3),
+                None => None,
+            };
+            match hash {
+                Some(hash) => {
+                    unreadable.insert(hash);
+                }
+                None => unattributed(fails_closed, error)?,
+            }
+        }
+        Ok((Self { marks }, unreadable))
+    }
+
     /// No mark anywhere: every reader serves as before.
     pub(crate) fn is_empty(&self) -> bool {
         self.marks.is_empty()
@@ -218,6 +293,20 @@ impl RepoMarkFacts {
     /// for.
     pub(crate) fn raw_hashes(&self) -> std::collections::BTreeSet<[u8; 32]> {
         self.marks.iter().map(|mark| mark.raw_blake3).collect()
+    }
+
+    /// The Git OID of every blob, in any store, one of whose marks `keep`
+    /// selects, sorted and once each (FIX 7608 slice 9): the objects a
+    /// public send's history is joined against.
+    pub(crate) fn blob_oids<F: Fn(&RepoSecretMark) -> bool>(
+        &self,
+        keep: F,
+    ) -> std::collections::BTreeSet<GitOid> {
+        self.marks
+            .iter()
+            .filter(|mark| keep(mark))
+            .map(|mark| mark.blob_oid.clone())
+            .collect()
     }
 
     /// The marks of `address`'s blob in its store.
@@ -286,6 +375,62 @@ pub(crate) fn for_each_repo_secret_mark_in_txn(
 
 fn corrupt() -> Error {
     Error::CorruptedIndex("a repo secret mark does not decode")
+}
+
+/// The blob a mark that does not decode still names.
+enum NamedBlob {
+    /// Its whole BLAKE3.
+    Hash([u8; 32]),
+    /// Its Git OID, which a readable mark of the same OID ties to a BLAKE3.
+    Oid(GitOid),
+}
+
+/// The blob the mark value `value` still names, its BLAKE3 first.
+fn named_blob(value: &Value) -> Option<NamedBlob> {
+    let map = value.as_map()?;
+    let hash = field(map, "raw_blake3")
+        .ok()
+        .and_then(Value::as_slice)
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes).ok());
+    match hash {
+        Some(hash) => Some(NamedBlob::Hash(hash)),
+        None => field(map, "blob_oid")
+            .ok()
+            .and_then(|value| oid(value).ok())
+            .map(NamedBlob::Oid),
+    }
+}
+
+/// What a readable claim body that does not decode still says.
+enum Undecoded {
+    /// Its predicate reads as another one: it is no mark.
+    OtherPredicate,
+    /// A mark, or a body whose predicate does not read: the blob its value
+    /// still names, if any.
+    Mark(Option<NamedBlob>),
+}
+
+/// `body`, a claim body that does not decode, read only as far as its
+/// predicate and value go.
+fn undecoded_mark(body: &[u8]) -> Undecoded {
+    let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(body)) else {
+        return Undecoded::Mark(None);
+    };
+    match field(&entries, "pred").ok().and_then(Value::as_str) {
+        Some(predicate) if predicate != REPO_SECRET_MARK_PREDICATE => Undecoded::OtherPredicate,
+        _ => Undecoded::Mark(field(&entries, "val").ok().and_then(named_blob)),
+    }
+}
+
+/// The policy for a mark failure no blob is tied to (`fails_closed`, read
+/// from `UNATTRIBUTABLE_MARK_FAILS_CLOSED`, CALL S4FIX-UNKNOWN-MARK): the
+/// error, or a report and nothing.
+fn unattributed(fails_closed: bool, error: Error) -> Result<()> {
+    if fails_closed {
+        return Err(error);
+    }
+    tracing::warn!(%error, "a repo secret mark names no blob; this pass goes on without it");
+    Ok(())
 }
 
 /// One stored mark, at schema 1 only; `None` for one no approval stands

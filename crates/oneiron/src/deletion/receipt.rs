@@ -440,6 +440,10 @@ impl Vault {
                 wtxn,
                 &holder,
             )?);
+            // The cloud registration slots an owner's erase took (G7).
+            ids.extend(crate::secret_custody::cloud_registration_erased_with(
+                &holder,
+            ));
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         // A classified corrupt CLAIM this erase took the audited exception for

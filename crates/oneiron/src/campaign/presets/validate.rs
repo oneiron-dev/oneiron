@@ -1,11 +1,10 @@
 //! Content-invariant validators plus the require_text and preset_error helpers.
 
 use super::content::{
-    CONSULTANCY_AUDIT_WINDOW_DAYS, CONSULTANCY_DESK_PERIOD, CONSULTANCY_SNOOZE_MAX_SECS,
-    CONSULTANCY_SNOOZE_MIN_SECS, CONSULTANCY_STAGE_EVIDENCE, MOM_TEST_PARTICIPANT_ROLE,
-    MOM_TEST_QUESTION_BLOCK_KEYS, MOM_TEST_TEMPLATE_KEY, ONE_PAGER_EVIDENCE_SECTION,
-    ONE_PAGER_SECTION_KEYS, PROSPECT_PARTICIPANT_ROLE, RATIFIED_REPLY_CODES,
-    REQUIRED_RHYTHM_ANCHORS, SOW_EVIDENCE_SECTION, SOW_SECTION_KEYS, STAGE_REPLIED,
+    CONSULTANCY_STAGE_EVIDENCE, MOM_TEST_PARTICIPANT_ROLE, MOM_TEST_QUESTION_BLOCK_KEYS,
+    MOM_TEST_TEMPLATE_KEY, ONE_PAGER_EVIDENCE_SECTION, ONE_PAGER_SECTION_KEYS,
+    PROSPECT_PARTICIPANT_ROLE, RATIFIED_REPLY_CODES, REQUIRED_RHYTHM_ANCHORS, SOW_EVIDENCE_SECTION,
+    SOW_SECTION_KEYS, STAGE_REPLIED,
 };
 use super::shape::{
     BriefTemplateData, BriefTemplateKind, BriefTemplateSet, CONSULTANCY_PRESET_ID,
@@ -45,12 +44,6 @@ pub(super) fn validate_preset(preset: &CampaignPresetData) -> Result<()> {
     validate_no_show_recovery(&preset.stage_ladder.no_show_recovery)?;
     validate_lane_policy(&preset.lane_policy)?;
     validate_snooze_policy(&preset.snooze_policy)?;
-    if preset.audit_window_days != CONSULTANCY_AUDIT_WINDOW_DAYS {
-        return Err(preset_error(format!(
-            "audit window must be {CONSULTANCY_AUDIT_WINDOW_DAYS} days, found {}",
-            preset.audit_window_days
-        )));
-    }
     validate_templates(&preset.templates)?;
     validate_desk_month(&preset.desk_month)?;
     validate_campaign_templates(&preset.campaign_templates)
@@ -177,25 +170,17 @@ fn validate_lane_policy(policy: &LanePolicyData) -> Result<()> {
     Ok(())
 }
 
-fn validate_snooze_policy(policy: &SnoozePolicyData) -> Result<()> {
-    if policy.min_secs != CONSULTANCY_SNOOZE_MIN_SECS
-        || policy.max_secs != CONSULTANCY_SNOOZE_MAX_SECS
-    {
-        return Err(preset_error(format!(
-            "positive-later snooze must span {CONSULTANCY_SNOOZE_MIN_SECS}..={CONSULTANCY_SNOOZE_MAX_SECS} seconds, found {}..={}",
-            policy.min_secs, policy.max_secs
-        )));
-    }
+/// The positive-later snooze, checked as data (FIX 9665): its default sits
+/// inside its own range, and re-entry restarts at touch 1, the one restart the
+/// ladder runs. The shipped 60 to 90 days in `defaults.json` are where a preset
+/// starts, not a range it must match; zero is an immediate wake, and whether a
+/// fresh trigger also wakes the membership is the owner's setting.
+pub(crate) fn validate_snooze_policy(policy: &SnoozePolicyData) -> Result<()> {
     if !(policy.min_secs..=policy.max_secs).contains(&policy.default_secs) {
         return Err(preset_error(format!(
-            "default snooze {} is outside the ratified range",
-            policy.default_secs
+            "default snooze {} is outside its range {}..={}",
+            policy.default_secs, policy.min_secs, policy.max_secs
         )));
-    }
-    if !policy.wake_on_new_trigger {
-        return Err(preset_error(
-            "positive-later snooze must wake on a new trigger",
-        ));
     }
     if policy.restart_touch_index != 0 {
         return Err(preset_error("campaign re-entry restarts at touch 1"));
@@ -281,12 +266,7 @@ fn validate_brief(
 /// evidence hook on each so a checkpoint has something to collect, and offsets
 /// that point the direction their anchor names.
 fn validate_desk_month(rhythm: &CommitmentRhythmData) -> Result<()> {
-    if rhythm.period != CONSULTANCY_DESK_PERIOD {
-        return Err(preset_error(format!(
-            "desk period must be {CONSULTANCY_DESK_PERIOD:?}, found {:?}",
-            rhythm.period
-        )));
-    }
+    require_text("desk period", &rhythm.period)?;
     let mut anchors: Vec<RhythmAnchor> = Vec::with_capacity(rhythm.checkpoints.len());
     let mut keys: Vec<&str> = Vec::with_capacity(rhythm.checkpoints.len());
     for checkpoint in &rhythm.checkpoints {

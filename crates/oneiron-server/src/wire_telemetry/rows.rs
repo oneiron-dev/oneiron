@@ -213,6 +213,8 @@ impl LimitRow {
         Self::Engine(EngineLimit::BackupHandoffPendingBytes),
         Self::Engine(EngineLimit::AuthorityRecordItems),
         Self::Engine(EngineLimit::ConnectorLiveQuestions),
+        Self::Engine(EngineLimit::ConnectorReplyContextBytes),
+        Self::Engine(EngineLimit::CampaignJudgmentRows),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

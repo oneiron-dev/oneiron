@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 120] = [
+    pub const ALL: [Self; 122] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -126,6 +126,8 @@ impl EngineLimit {
         Self::BackupHandoffPendingBytes,
         Self::AuthorityRecordItems,
         Self::ConnectorLiveQuestions,
+        Self::ConnectorReplyContextBytes,
+        Self::CampaignJudgmentRows,
     ];
 
     /// The config key that sets the row.
@@ -251,6 +253,8 @@ impl EngineLimit {
             Self::BackupHandoffPendingBytes => "limits.backup_handoff_pending_bytes",
             Self::AuthorityRecordItems => "limits.authority_record_items",
             Self::ConnectorLiveQuestions => "limits.connector_live_questions",
+            Self::ConnectorReplyContextBytes => "limits.connector_reply_context_bytes",
+            Self::CampaignJudgmentRows => "limits.campaign_judgment_rows",
         }
     }
 
@@ -431,6 +435,12 @@ impl EngineLimit {
             Self::AuthorityRecordItems => 4_096,
             // The connector question registry's old fixed bound.
             Self::ConnectorLiveQuestions => 64,
+            // Eight times the briefing cut a reply's context once had
+            // (CONTEXT_SPEC_MAX_TEXT_BYTES): a long conversation asks, a
+            // short one never does.
+            Self::ConnectorReplyContextBytes => 65_536,
+            // The judgment join's old fixed refusal.
+            Self::CampaignJudgmentRows => 4_096,
         }
     }
 }

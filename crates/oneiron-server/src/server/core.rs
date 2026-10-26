@@ -138,6 +138,13 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
+    /// line and its mesh staging budget, one set its runtime's adapters and
+    /// every mesh site share.
+    pub(crate) model_budgets: crate::models::ModelHostBudgets,
+    /// This vault's one cloud registration client (G7), under the pins
+    /// `config.cloud_registration_pins` names, read at construction.
+    pub(crate) cloud_registration: crate::cloud_registration::CloudRegistration,
     /// The questions connectors asked mid-call, live for their callers
     /// (ONE-2510): every connector host this server builds keeps them here,
     /// and `connector.answer` reads them.

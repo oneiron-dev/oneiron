@@ -142,6 +142,11 @@ impl Vault {
         // agent grant revoke door as its one-tap revoke.
         rows.extend(self.agent_grant_registry_rows_in_txn(&rtxn, query.include_revoked)?);
         rows.extend(self.git_push_registry_rows_in_txn(&rtxn, query.include_revoked)?);
+        // An agent's witness-read grant over a connector conversation
+        // (FIX 10895), with its own one-tap revoke.
+        rows.extend(
+            self.connector_witness_read_registry_rows_in_txn(&rtxn, query.include_revoked)?,
+        );
         drop(rtxn);
         rows.sort_by(|left, right| {
             right

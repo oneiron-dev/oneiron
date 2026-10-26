@@ -3,7 +3,7 @@
 use super::gate::{
     advertised_service, authenticate_request, header_value, push_caller, remote_user, repo_name,
 };
-use super::projection::git_read_context_of;
+use super::projection::git_read_context_for;
 use super::serve::run_serve;
 use crate::auth::CoreScope;
 use crate::server::SyncServer;
@@ -88,7 +88,7 @@ pub(crate) async fn git_info_refs(
     };
     let name = repo_name(&repo).to_owned();
     let request = advertisement_request(&name, service, remote_user(&auth));
-    let read = git_read_context_of(&auth);
+    let read = git_read_context_for(&auth, &parts.headers);
     run_serve(
         server,
         name,
@@ -188,7 +188,7 @@ async fn serve_rpc(
         remote_user: remote_user(&auth),
         remote_addr: None,
     };
-    let read = git_read_context_of(&auth);
+    let read = git_read_context_for(&auth, &parts.headers);
     run_serve(server, name, request, body, push_caller(&auth), read).await
 }
 
@@ -216,7 +216,7 @@ async fn lease_info_refs(
     request
         .query_string
         .push_str(&format!("&checkout-lease={lease}"));
-    let read = git_read_context_of(&auth);
+    let read = git_read_context_for(&auth, &parts.headers);
     run_serve(
         server,
         name,

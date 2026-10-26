@@ -17,6 +17,7 @@ use super::types::{
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_custody::{CustodyTier, SecretBinding, SecretCustodyFloor};
+use zeroize::Zeroizing;
 
 use crate::vault::Vault;
 
@@ -111,17 +112,43 @@ impl Vault {
         effector: &str,
         apply: &mut dyn FnMut(&[u8]) -> Result<()>,
     ) -> Result<DoorInjectionReceipt> {
-        let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        admit_record_use(rec, effector, CustodyTier::T0Doored, &floor)?;
-        crate::credential_door::admit_materialization_in_txn(&self.store, &wtxn, effector, None)?;
-        let generation = rec.rotation_generation;
-        let value = read_value_for_ref_in_txn(self, &wtxn, id, effector)?;
+        let (generation, value) = self.admit_t0_value_in_txn(&wtxn, id, rec, effector)?;
         // The value bytes are owned; nothing was written. Release the write
         // txn BEFORE running caller code — caller closures never execute
         // inside an LMDB write txn.
         drop(wtxn);
         apply(&value)?;
-        Ok(DoorInjectionReceipt {
+        Ok(self.door_injection_receipt(secret_ref, effector, generation))
+    }
+
+    /// The T0 admission and value copy every door shares, on one snapshot:
+    /// the live floor, the one admission rule, the door policy, then the
+    /// value through the bound door (status, revocation and read scope).
+    /// It reads only; a write txn passes as its read view.
+    pub(super) fn admit_t0_value_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        rec: &crate::secret_custody::SecretCustodyAdmission,
+        effector: &str,
+    ) -> Result<(u32, Zeroizing<Vec<u8>>)> {
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
+        admit_record_use(rec, effector, CustodyTier::T0Doored, &floor)?;
+        crate::credential_door::admit_materialization_in_txn(&self.store, txn, effector, None)?;
+        let generation = rec.rotation_generation;
+        let value = read_value_for_ref_in_txn(self, txn, id, effector)?;
+        Ok((generation, value))
+    }
+
+    /// The return token of a T0 door: name, effector, time, generation and
+    /// taint, never value bytes.
+    pub(super) fn door_injection_receipt(
+        &self,
+        secret_ref: &str,
+        effector: &str,
+        generation: u32,
+    ) -> DoorInjectionReceipt {
+        DoorInjectionReceipt {
             secret_ref: secret_ref.to_owned(),
             effector: effector.to_owned(),
             injected_at: self.store.clock.now_recorded_at(),
@@ -130,7 +157,7 @@ impl Vault {
                 secret_ref: secret_ref.to_owned(),
                 generation,
             }],
-        })
+        }
     }
 
     /// Whether [`Vault::inject_secret_at_door`] would release `secret_ref` to

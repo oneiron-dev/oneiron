@@ -34,8 +34,9 @@ pub(super) struct ProbeRetest {
 }
 
 /// The versions of `kind`'s probe set and of its answer key, each 32 hex, over the stored
-/// `probes`: the set is which probes of the kind are stored (each id names its kind, family,
-/// query and media query); the key is each one's targets and how a run is scored.
+/// `probes`: the set is which probes of the kind are run (each id names its kind, family,
+/// query and media query) and the query each runs, a repo copy's included (FIX 10408); the key
+/// is each one's targets and how a run is scored.
 pub(super) fn probe_versions(
     probes: &[([u8; 16], SpaceProbe)],
     kind: InputKind,
@@ -49,6 +50,7 @@ pub(super) fn probe_versions(
     key.update(&[kind as u8]);
     for (id, probe) in probes.iter().filter(|(_, probe)| probe.kind == kind) {
         set.update(id);
+        set.update(blake3::hash(probe.query.as_bytes()).as_bytes());
         key.update(id);
         key.update(&(probe.targets.len() as u64).to_le_bytes());
         for target in &probe.targets {

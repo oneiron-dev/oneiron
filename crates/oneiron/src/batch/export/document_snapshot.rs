@@ -649,7 +649,8 @@ fn note_diary_author(
 /// record goes as its handle, to re-enter after import. The stored body is
 /// sealed (KS-6): the archive's is the plaintext DTO, its value opened
 /// explicitly from current custody; one that does not open goes as its
-/// handle, warned.
+/// handle, warned. A cloud registration slot's value never goes, on this
+/// device or not: it is the engine's own, and its owner signs in again.
 fn archive_custody_secret(
     store: &crate::store::Store,
     id: &EntityId,
@@ -663,6 +664,7 @@ fn archive_custody_secret(
     let (record, plain) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
+            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {

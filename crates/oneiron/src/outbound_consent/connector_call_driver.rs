@@ -518,7 +518,8 @@ impl Vault {
             host.abandon_awaiting_input(&left.handle);
         }
         let sent = prepared.call().clone();
-        let dispatch = prepared.execute(
+        // An off-record caller's admitted request stays sealed in the ledger (FIX 9372).
+        let dispatch = prepared.keeping_no_record(pending.off_record).execute(
             self,
             &authority,
             grant_id,

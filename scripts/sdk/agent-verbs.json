@@ -1738,12 +1738,12 @@
     },
     {
       "name": "vault.tagging.status",
-      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason.",
+      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingStatusView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingStatusView>",
       "call": "memory.tagging_status(&input)?",
       "scope": "Read",
       "admission": {
@@ -1757,12 +1757,12 @@
     },
     {
       "name": "vault.tagging.tags",
-      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them.",
+      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingTagsView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingTagsView>",
       "call": "memory.tagging_tags(&input)?",
       "scope": "Read",
       "admission": {
@@ -1776,12 +1776,12 @@
     },
     {
       "name": "vault.tagging.history",
-      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome.",
+      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt.",
       "refs": [
         "/turn_ref"
       ],
       "input": "crate::tagging::TaggingTurnRequest",
-      "output": "crate::tagging::TaggingHistoryView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingHistoryView>",
       "call": "memory.tagging_history(&input)?",
       "scope": "Read",
       "admission": {
@@ -1795,9 +1795,9 @@
     },
     {
       "name": "vault.tagging.mentions",
-      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller.",
+      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt.",
       "input": "crate::tagging::TaggingMentionsRequest",
-      "output": "crate::tagging::TaggingMentionsView",
+      "output": "crate::claim::ScopedReadResult<crate::tagging::TaggingMentionsView>",
       "call": "memory.tagging_mentions(&input)?",
       "scope": "Read",
       "admission": {
@@ -10647,6 +10647,36 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.read_grants.grant",
+      "description": "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
+      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.read_grants.revoke",
+      "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevoked",
+      "call": "crate::task_verb::sdk::revoke_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.repo.anchor.bind",
       "description": "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing.",
       "input": "crate::task_verb::sdk::RepoAnchorBindInput",
@@ -18207,7 +18237,7 @@
       ],
       "input": "CreateNoteFromEntityRequest",
       "output": "crate::memory::EntityRefReceipt",
-      "call": "memory.create_note_from_entity(&input.source_ref, &input.kind)?",
+      "call": "memory.create_note_from_entity_for(&input.source_ref, &input.kind, input.reason.as_deref())?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true,

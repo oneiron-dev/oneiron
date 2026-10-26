@@ -68,6 +68,10 @@ pub const COACH_WEAVE_DIGEST_SETTINGS_FACET: &str = "coach.weave_digest_settings
 /// vault's own history by the eval-authoring skill, and applied through
 /// [`Vault::run_coach_eval_authoring`].
 pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
+/// Browser programs (CUA E8, FIX 7605): programs proposed from solved runs
+/// and repairs of failed ones, with no model, through
+/// [`Vault::run_coach_browser_programs`].
+pub const COACH_BROWSER_PROGRAMS_FACET: &str = "coach.browser_programs";
 /// One offer's promise check, queued for the host on the offer's check date.
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
@@ -163,12 +167,13 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 16] = [
+const HOST_FACETS: [&str; 17] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
     COACH_EVAL_AUTHORING_FACET,
+    COACH_BROWSER_PROGRAMS_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,

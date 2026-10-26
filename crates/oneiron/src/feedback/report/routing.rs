@@ -152,7 +152,7 @@ impl Vault {
             let (disclosure, basis) = self.report_disclosure_choice_in_txn(
                 txn,
                 owner,
-                publisher_ref,
+                (&issue.issue_ref, publisher_ref),
                 &issue.request,
                 choice,
             )?;

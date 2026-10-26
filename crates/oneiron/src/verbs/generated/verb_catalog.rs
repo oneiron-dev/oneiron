@@ -696,6 +696,8 @@ pub enum AgentVerb {
     VaultAgentsGrantsRevoke,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
+    VaultConnectorsReadGrantsGrant,
+    VaultConnectorsReadGrantsRevoke,
     VaultRepoAnchorBind,
     VaultRepoSnapshotsGet,
     VaultRepoSnapshotsRead,
@@ -1878,6 +1880,8 @@ impl AgentVerb {
         Self::VaultAgentsGrantsRevoke,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
+        Self::VaultConnectorsReadGrantsGrant,
+        Self::VaultConnectorsReadGrantsRevoke,
         Self::VaultRepoAnchorBind,
         Self::VaultRepoSnapshotsGet,
         Self::VaultRepoSnapshotsRead,
@@ -3081,6 +3085,8 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
+            Self::VaultConnectorsReadGrantsGrant => "vault.connectors.read_grants.grant",
+            Self::VaultConnectorsReadGrantsRevoke => "vault.connectors.read_grants.revoke",
             Self::VaultRepoAnchorBind => "vault.repo.anchor.bind",
             Self::VaultRepoSnapshotsGet => "vault.repo.snapshots.get",
             Self::VaultRepoSnapshotsRead => "vault.repo.snapshots.read",
@@ -4275,6 +4281,8 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
@@ -5486,6 +5494,8 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
@@ -6807,6 +6817,8 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
@@ -7665,6 +7677,8 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsGrant
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsIngest
                 | Self::VaultRepoWorkOpen
@@ -8685,6 +8699,8 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsGrant => &["spec"],
+            Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
@@ -9868,6 +9884,8 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsGrant => &["spec"],
+            Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
@@ -10661,16 +10679,16 @@ impl AgentVerb {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
             }
             Self::VaultTaggingStatus => {
-                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."
+                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt."
             }
             Self::VaultTaggingTags => {
-                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."
+                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt."
             }
             Self::VaultTaggingHistory => {
-                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."
+                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt."
             }
             Self::VaultTaggingMentions => {
-                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."
+                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt."
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
@@ -12403,6 +12421,12 @@ impl AgentVerb {
             }
             Self::VaultRepoGitPushRevoke => {
                 "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."
+            }
+            Self::VaultConnectorsReadGrantsGrant => {
+                "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing."
+            }
+            Self::VaultConnectorsReadGrantsRevoke => {
+                "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."
             }
             Self::VaultRepoAnchorBind => {
                 "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."
