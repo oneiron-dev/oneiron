@@ -321,6 +321,36 @@ pub(crate) fn stored_value_opens_in_txn(
             .is_ok()
 }
 
+/// Whether entity row `raw`, record `id`'s as an image carried it, holds a
+/// value sealed at `generation` that opens now under the exact leaf `leaf`
+/// gives: a pending restore's check before it lands the row (FIX-LIST 10671
+/// (a)). The opened bytes are wiped at once; any fault reads as `false`.
+pub(crate) fn stored_row_opens(
+    raw: &[u8],
+    id: &EntityId,
+    generation: u32,
+    leaf: impl FnOnce(&EntityId, u32) -> Result<CredentialLeaf>,
+) -> bool {
+    let stored = EntityMetadataHeader::parse(raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_SECRET_CUSTODY)
+        .and_then(|_| decode_stored_custody_body(&raw[ENTITY_METADATA_HEADER_LEN..]).ok());
+    let Some(StoredCustody {
+        value: StoredValue::Sealed {
+            generation: sealed_at,
+            bytes,
+        },
+        ..
+    }) = stored
+    else {
+        return false;
+    };
+    sealed_at == generation
+        && !bytes.is_empty()
+        && leaf(id, generation)
+            .and_then(|leaf| open_value(&leaf, id, generation, &bytes))
+            .is_ok()
+}
+
 /// Record `id` with its value opened from current custody: the read every
 /// door that hands the value on takes. Strict: a key that does not open is
 /// an error, never an empty value.

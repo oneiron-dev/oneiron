@@ -106,6 +106,9 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // A restore's credentials pending on their source's evidence are
+        // judged again on it (FIX-LIST 10671).
+        self.resolve_pending_credential_restores_logged();
         // A root request's wait ends with the request, whether or not any
         // work names this install now (FIX 5582).
         if let Err(error) = self.settle_root_request_waits() {

@@ -39,7 +39,7 @@ use super::body_history::{HistoryRows, merge_history_into_rows};
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
 use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
-use super::head::{CustodyOpener, OpenedHead, open_head, serde_bytes_vec};
+use super::head::{CompartmentScope, CustodyOpener, OpenedHead, open_head, serde_bytes_vec};
 use super::identity::{
     CustodyBinding, CustodyId, CustodyKind, CustodySecret, CustodySubject, decode_native_path,
 };
@@ -184,6 +184,8 @@ pub(crate) struct AdmittedCustody {
     recipients: BTreeMap<[u8; 32], RecipientRetirement>,
     /// The lineage's body history: the head's, and the log's after it.
     history: HistoryRows,
+    /// The head holds an owner-only compartment its opener did not open.
+    owner_unopened: bool,
 }
 
 impl AdmittedCustody {
@@ -325,6 +327,7 @@ pub(crate) fn admit_recovery(
             .map(|fact| (fact.fingerprint, fact))
             .collect(),
         history: opened.history,
+        owner_unopened: opened.unopened.contains(&CompartmentScope::OwnerOnly),
     };
     if let Some(record) = record {
         let anchored =

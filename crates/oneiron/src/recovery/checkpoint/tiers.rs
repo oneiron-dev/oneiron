@@ -62,6 +62,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
                 HOST_HOLD_PREFIX,
+                // An owner's confirm stands only where he gave it: an image's
+                // receipt is never an election (FIX-LIST 10671).
+                b"secret_custody:restore_election:v1:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

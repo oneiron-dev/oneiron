@@ -672,6 +672,7 @@ impl Vault {
         // The image a restore in this vault's place set aside reads, and
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
+        vault.resolve_pending_credential_restores_logged();
         Ok(vault)
     }
 
