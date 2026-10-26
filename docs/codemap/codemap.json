@@ -147,13 +147,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -6462,7 +6462,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 42,
+      "crate-vis": 43,
       "enum": 1,
       "re-export": 1
      }
@@ -36306,7 +36306,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorWitness"
@@ -36314,18 +36314,19 @@
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ingest/connector_witness_grant.rs",
      "purpose": "The witness-read grant (FIX 10895, owner ruling WITNESS-READ)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -42638,7 +42639,7 @@
      "path": "src/memory/outbound/errors.rs",
      "purpose": "Calendar/dispatch error mappers and outcome-name table",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -48149,7 +48150,7 @@
      "purpose": "Outbound capability vocabulary and registry reads",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 4,
       "fn": 10,
       "struct": 5
@@ -48296,6 +48297,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/dispatch_pipeline/replay_presentation.rs",
+     "purpose": "A completed send's admitted presentation (FIX 8815): the space posting and effective policy risk its frozen…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -48375,9 +48386,9 @@
      "path": "src/outbound/dispatch_types.rs",
      "purpose": "Outbound dispatch inputs and outcomes",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 4,
-      "fn": 30,
+      "fn": 31,
       "struct": 6,
       "trait": 1
      }
@@ -48454,7 +48465,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 1,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -48465,6 +48476,20 @@
      "purpose": "Outbound receipt field projection",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundRecoverySuggestion"
+     ],
+     "path": "src/outbound/recovery_suggestions.rs",
+     "purpose": "Typed recovery suggestions on a failed or uncertain outbound receipt (FIX 7965): what the caller may do…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 1
      }
     },
     {
@@ -48664,7 +48689,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/window_door.rs",
@@ -49164,7 +49189,7 @@
      "path": "src/outbound_consent/tool_call.rs",
      "purpose": "Resolve header parameters once and freeze them with the consent-visible tool call",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 3,
       "fn": 18,
       "re-export": 1,
@@ -49308,6 +49333,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/codec/nested.rs",
+     "purpose": "The nested values of a ledger row (approval, budget marker, capability provenance, recorded outcome) and the…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -49325,8 +49360,18 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/payload.rs",
+     "purpose": "A ledger row's payload at rest (FIX 9283, 9372, 2328, 2331)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -49356,7 +49401,7 @@
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 29
      }
     },
     {
@@ -49395,6 +49440,16 @@
      "notable": [],
      "path": "src/outbound_intent_ledger/store/transition.rs",
      "purpose": "One ledger row's transition in the caller's writer (FIX 7188): the body the ledger's own transition doors…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/validate.rs",
+     "purpose": "The ledger row's own validation: endpoint, binding, approval, budget marker, state and outcome, payload hash…",
      "surface": {
       "crate-vis": 2
      }
@@ -71252,14 +71307,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
-      "ConnectorWitnessReadGrantRevoked"
+      "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted"
      ],
      "path": "src/verbs/connector_witness_read_grant.rs",
      "purpose": "`vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a…",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -71569,7 +71626,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1190
+      "fn": 1191
      }
     },
     {
@@ -77608,7 +77665,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 49,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77636,7 +77693,7 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 12,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78247,7 +78304,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5152,
+   "source_files": 5157,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90098,7 +90155,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1158
+      "fn": 1159
      }
     },
     {
@@ -91470,7 +91527,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1159
+      "fn": 1160
      }
     },
     {
@@ -95588,9 +95645,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/connector_witness_read_doors.rs",
-     "purpose": "The host door of an agent's witness-read grant over a connector conversation (FIX 10895)…",
+     "purpose": "The host doors of an agent's witness-read grant over a connector conversation…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -109904,8 +109961,10 @@
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
       "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted",
       "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
@@ -113142,7 +113201,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3119
+      "struct": 3121
      }
     },
     {

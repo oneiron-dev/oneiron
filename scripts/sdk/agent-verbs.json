@@ -10647,6 +10647,21 @@
       "openapi": true
     },
     {
+      "name": "vault.connectors.read_grants.grant",
+      "description": "The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing.",
+      "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRequest",
+      "output": "crate::task_verb::sdk::ConnectorWitnessReadGranted",
+      "call": "crate::task_verb::sdk::grant_connector_witness_read_grant_as(memory.vault(), &memory.embedded_owner(\"vault.connectors.read_grants.grant\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.connectors.read_grants.revoke",
       "description": "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing.",
       "input": "crate::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest",
