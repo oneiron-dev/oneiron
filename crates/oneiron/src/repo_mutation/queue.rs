@@ -78,8 +78,8 @@ pub(super) enum PreparedRepoMutationExecution {
         commit: PreparedCommitFile,
         recovery: PreparedConflictResolution,
     },
-    /// A received bundle's ONE staged commit and its exact tree change.
-    ReceivedFiles {
+    /// A file bundle's ONE staged commit and its exact tree change.
+    FileBundle {
         commit: PreparedCommitFile,
         edits: Vec<super::received_file::tree::ReceivedTreeEdit>,
     },
@@ -106,7 +106,7 @@ impl PreparedRepoMutationExecution {
     pub(super) fn commit_file(&self) -> Result<&PreparedCommitFile> {
         match self {
             Self::CommitFile(prepared) => Ok(prepared),
-            Self::ResolveConflictFile { commit, .. } | Self::ReceivedFiles { commit, .. } => {
+            Self::ResolveConflictFile { commit, .. } | Self::FileBundle { commit, .. } => {
                 Ok(commit)
             }
             Self::Direct => Err(Error::InvariantViolation(
@@ -128,7 +128,7 @@ impl PreparedRepoMutationExecution {
         match self {
             Self::Direct => Ok(()),
             Self::CommitFile(prepared) => remove_queue_worktree(repo_root, &prepared.worktree_path),
-            Self::ResolveConflictFile { commit, .. } | Self::ReceivedFiles { commit, .. } => {
+            Self::ResolveConflictFile { commit, .. } | Self::FileBundle { commit, .. } => {
                 remove_queue_worktree(repo_root, &commit.worktree_path)
             }
         }
@@ -304,8 +304,9 @@ impl Vault {
             require_pinned_head(repo_ref, pre_action_snapshot.head.as_deref())?;
         }
         let prepared_execution = match &request.operation {
-            RepoMutationOperation::ReceivedFiles { .. } => {
-                self.prepare_received_files_execution(repo_root, request, proposal)
+            RepoMutationOperation::ReceivedFiles { .. }
+            | RepoMutationOperation::CommitFiles { .. } => {
+                self.prepare_bundle_execution(repo_root, request, proposal)
             }
             _ => prepare_repo_mutation_execution(&self.store.clock, repo_root, request),
         };
@@ -365,7 +366,7 @@ impl Vault {
                     }
                     PreparedRepoMutationExecution::Direct
                     | PreparedRepoMutationExecution::CommitFile(_)
-                    | PreparedRepoMutationExecution::ReceivedFiles { .. } => None,
+                    | PreparedRepoMutationExecution::FileBundle { .. } => None,
                 },
                 status: RepoMutationStatus::Prepared.as_str().to_owned(),
                 failure: None,
@@ -557,22 +558,11 @@ pub(super) fn expected_post_action_fork_hash(
         | RepoMutationOperation::ResolveConflictFile { path, content, .. } => {
             (path.as_str(), content.as_slice())
         }
-        RepoMutationOperation::ReceivedFiles { .. } => {
-            let PreparedRepoMutationExecution::ReceivedFiles { commit, edits } = execution else {
-                return Err(Error::InvariantViolation(
-                    "a received bundle is missing its prepared tree change",
-                ));
-            };
-            if pre_action_snapshot.head.as_deref() != Some(commit.base_head.as_str()) {
-                return Err(Error::ConcurrentWrite(
-                    "repo HEAD changed while preparing write-ahead intent",
-                ));
-            }
-            return super::received_file::tree::received_post_snapshot(
+        RepoMutationOperation::ReceivedFiles { .. } | RepoMutationOperation::CommitFiles { .. } => {
+            return super::bundle::bundle_post_action_fork_hash(
                 custody,
                 pre_action_snapshot,
-                edits,
-                &commit.new_head,
+                execution,
             );
         }
         RepoMutationOperation::RecoverSnapshot { fork_hash } => return Ok(*fork_hash),
@@ -709,6 +699,10 @@ pub(super) fn execute_repo_mutation(
                 repo_root,
                 execution.commit_file()?,
             )?;
+            Ok(None)
+        }
+        RepoMutationOperation::CommitFiles { .. } => {
+            super::bundle::apply_native_bundle(repo_root, request, execution.commit_file()?)?;
             Ok(None)
         }
     }

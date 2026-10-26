@@ -26,8 +26,8 @@ pub(super) fn require_candidate(
             "tested change is not exactly one reviewed proposal",
         ));
     }
-    if row.received_candidate().is_some() {
-        return require_received_candidate(row, candidate, snapshot);
+    if row.is_file_bundle() {
+        return require_bundle_candidate(row, candidate, snapshot);
     }
     let (path, content) = row.ordinary_file()?;
     if candidate.files.len() != 1 || candidate.files[0].metadata_edit.is_some() {
@@ -86,25 +86,23 @@ fn snapshot_bytes(entry: Option<&StoredRepoSnapshotEntry>) -> Option<Vec<u8>> {
     })
 }
 
-/// A received bundle's tested change is its whole reviewed file set, in
+/// A file bundle's tested change is its whole reviewed file set, in
 /// order: each path's reviewed bytes and state change, and the bytes and
 /// state the stack's snapshot holds there as the expected base. No file of
 /// it is a single-file surrogate.
-fn require_received_candidate(
+fn require_bundle_candidate(
     row: &RepoProposal,
     candidate: &crate::merge_queue::MergeProposal,
     snapshot: &StoredRepoSnapshot,
 ) -> Result<()> {
     if candidate.files.len() != row.files.len() || row.files.is_empty() {
-        return Err(invalid(
-            "tested change is not the received bundle's file set",
-        ));
+        return Err(invalid("tested change is not the bundle's file set"));
     }
     for (tested, reviewed) in candidate.files.iter().zip(&row.files) {
         let state = reviewed
             .metadata_edit
             .as_ref()
-            .ok_or(invalid("a received file carries its reviewed state change"))?;
+            .ok_or(invalid("a bundle file carries its reviewed state change"))?;
         let entry = snapshot
             .entries
             .iter()
@@ -150,8 +148,8 @@ pub(super) fn require_document_base(
 ) -> Result<()> {
     let repo = RepoRef::parse(&row.repo)?;
     let scope = super::oplog::repo_mutation_repo_key(&repo);
-    if row.received_candidate().is_some() {
-        return require_received_document_bases(vault, row, snapshot, &scope);
+    if row.is_file_bundle() {
+        return require_bundle_document_bases(vault, row, snapshot, &scope);
     }
     let (path, content) = row.ordinary_file()?;
     let old = snapshot
@@ -187,21 +185,18 @@ pub(super) fn require_document_base(
     }
 }
 
-/// The received bundle's read-only preflight: each file's document, when
-/// one lives at its path and no receipt of its operation landed yet, still
+/// A file bundle's read-only preflight: each file's document, when one
+/// lives at its path and no receipt of its operation landed yet, still
 /// holds the text the stack's snapshot holds there. The grouped ingress
 /// rechecks every file at execution.
-fn require_received_document_bases(
+fn require_bundle_document_bases(
     vault: &Vault,
     row: &RepoProposal,
     snapshot: &StoredRepoSnapshot,
     scope: &str,
 ) -> Result<()> {
-    for file in &row.files {
-        let source = file
-            .source_operation
-            .ok_or(invalid("a received file names its source operation"))?;
-        let operation = super::received_file::received_file_operation(row.id, source)?;
+    for (index, file) in row.files.iter().enumerate() {
+        let operation = row.file_operation(index)?;
         if vault.code_file_edit_receipt(operation)?.is_some()
             || vault.code_document_frontier(scope, &file.path)?.is_none()
         {
