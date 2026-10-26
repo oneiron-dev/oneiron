@@ -27,8 +27,8 @@ impl CentroidEvidence {
 }
 
 /// Every row a retrieval run names: its results, its scored results, every
-/// trace stage's candidates, and its query and corpus refs. A heal context
-/// admits a run record against the same set.
+/// trace stage's candidates, its turn, and its query and corpus refs. A heal
+/// context admits a run record against the same set.
 pub(in crate::self_heal) fn run_sources(run: &RetrievalRunRecord) -> BTreeSet<[u8; 16]> {
     let mut sources: BTreeSet<[u8; 16]> = run.result_ids.iter().copied().collect();
     sources.extend(run.score_breakdown.iter().map(|row| row.result_id));
@@ -44,6 +44,9 @@ pub(in crate::self_heal) fn run_sources(run: &RetrievalRunRecord) -> BTreeSet<[u
                 &trace.final_stage.candidates,
             ]);
         sources.extend(stages.flatten().map(|candidate| candidate.result_id));
+    }
+    if let Some(turn) = &run.turn {
+        sources.insert(turn.turn_id);
     }
     if let Some(inputs) = &run.replay_inputs {
         for at in [&inputs.query_ref, &inputs.corpus_snapshot_ref]

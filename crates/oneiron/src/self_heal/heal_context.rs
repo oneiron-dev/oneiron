@@ -429,6 +429,7 @@ impl<'v> Gather<'v> {
                         continue;
                     }
                 };
+                self.narrow(&read.receipt);
                 if read.receipt.suppressed_count > 0 {
                     let withheld = format!("withheld:{}", read.receipt.suppressed_count);
                     self.unavailable(format!("{name}:{id}"), withheld);

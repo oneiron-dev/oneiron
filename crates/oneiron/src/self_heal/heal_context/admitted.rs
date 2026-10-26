@@ -497,7 +497,7 @@ impl Gather<'_> {
 }
 
 /// Leaves out of a run every id the reader may not read: its results, scored results,
-/// every trace stage's candidates, and a query or corpus ref.
+/// every trace stage's candidates, its turn, and a query or corpus ref.
 fn withhold_run_sources(run: &mut RetrievalRunRecord, denied: &BTreeSet<[u8; 16]>) {
     run.result_ids.retain(|id| !denied.contains(id));
     run.score_breakdown
@@ -516,6 +516,13 @@ fn withhold_run_sources(run: &mut RetrievalRunRecord, denied: &BTreeSet<[u8; 16]
         for candidates in stages {
             candidates.retain(|candidate| !denied.contains(&candidate.result_id));
         }
+    }
+    if run
+        .turn
+        .as_ref()
+        .is_some_and(|turn| denied.contains(&turn.turn_id))
+    {
+        run.turn = None;
     }
     if let Some(inputs) = &mut run.replay_inputs {
         for at in [&mut inputs.query_ref, &mut inputs.corpus_snapshot_ref] {
