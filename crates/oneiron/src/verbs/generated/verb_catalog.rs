@@ -6056,6 +6056,7 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
+                | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList

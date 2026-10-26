@@ -472,3 +472,23 @@ pub(super) fn live_world_kept(kind: u8, prior: &Scope, proposed: &Scope) -> bool
             }
         }
 }
+
+impl crate::Vault {
+    /// Whether the NOTE `id` sits in `world` now, by any of its live
+    /// `InWorld` edges, as a door holding it under the one-world ceiling
+    /// `{world}` places it (FIX 10373). An edge-less NOTE sits in base reality
+    /// alone. A lookup fault, its edges or its read transaction, proves no
+    /// world, so it sits in none.
+    pub fn note_in_world(&self, id: &EntityId, world: EntityId) -> bool {
+        let Ok(txn) = self.store.env.read_txn() else {
+            tracing::warn!(
+                "a NOTE's world lookup did not open a read; it sits in no world (FIX-LIST 10373)"
+            );
+            return false;
+        };
+        match note_worlds_in(&self.store, &txn, *id) {
+            NoteWorlds::In(worlds) => worlds.contains(&ScopeId(world)),
+            NoteWorlds::NoSingleWorld => false,
+        }
+    }
+}

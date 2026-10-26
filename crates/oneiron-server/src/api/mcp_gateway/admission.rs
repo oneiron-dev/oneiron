@@ -303,8 +303,10 @@ pub(super) fn mcp_credential_reads(
 /// credential's world. A TASK carries no `world` key, so it is projected
 /// through the engine's record-scope stamp instead (`mcp_task_in_world`):
 /// the board's TASK rows, a call addressing a TASK and the STREAM events about
-/// one all take that one projection (ARCH-0067 §5). Any other row that carries
-/// no `world` key cannot be PROVEN in this credential's world and is refused.
+/// one all take that one projection (ARCH-0067 §5). A NOTE is in this world
+/// when any of its live `InWorld` edges names it (an edge-less NOTE is in base
+/// reality alone). Any other row that carries no `world` key cannot be PROVEN
+/// in this credential's world and is refused.
 /// Prerelease law: the admission is narrowed outright, with no compatibility
 /// carve-out for the rows the old CLAIM-only check let through.
 pub(super) fn mcp_scope_covers_entity(
@@ -321,6 +323,14 @@ pub(super) fn mcp_scope_covers_entity(
         .map_err(|error| mcp_engine_error("mcp scope type read failed", error))?;
     if entity_type == Some(oneiron::registry::ENTITY_TYPE_TASK) {
         if !mcp_task_in_world(scoped_read.vault(), scope, id)? {
+            return Ok(false);
+        }
+    } else if let Some(world_ref) = scope.world_ref
+        && entity_type == Some(oneiron::registry::ENTITY_TYPE_NOTE)
+    {
+        // A NOTE sits in a world by its live `InWorld` edges, as at every
+        // other door: any of its worlds that is this one (FIX 10373).
+        if !scoped_read.vault().note_in_world(id, world_ref) {
             return Ok(false);
         }
     } else if let Some(world_ref) = scope.world_ref {

@@ -196,8 +196,13 @@ for row in ROWS:
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
 # engine call (`record_refs_check`), so every door that reaches the row meets
-# the check once. Only a plain memory row's doors all reach that fn.
+# the check once. Only a plain memory row's doors all reach that fn. A row's
+# `refs_check` swaps in its own checker for those refs (FIX 7566): a Rust path
+# to a fn, read only beside nonempty `refs`.
 for row in ROWS:
+    if 'refs_check' in row and ('refs' not in row or not isinstance(row['refs_check'], str)
+            or not re.fullmatch(r'(crate|super|self)(::[A-Za-z_][A-Za-z0-9_]*)+', row['refs_check'])):
+        raise ValueError(f'{row["name"]}: refs_check is a Rust fn path (crate::...), and only beside refs')
     if 'refs' not in row: continue
     if row.get('context', 'memory') != 'memory' or row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade'):
         raise ValueError(f'{row["name"]}: only a plain memory row checks its record refs in its engine fn')

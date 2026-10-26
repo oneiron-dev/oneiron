@@ -81,6 +81,10 @@ pub struct McpPageSource {
 pub struct McpPageResume {
     pub field: &'static str,
     pub argument: &'static str,
+    /// The key the continuation takes inside `argument`, when `argument` is
+    /// an object the call sent: the call goes back with that object whole,
+    /// this key set (FIX 9175). `None`: the continuation is `argument` itself.
+    pub within: Option<&'static str>,
 }
 
 impl McpPageSource {
@@ -140,7 +144,29 @@ impl McpPageSource {
     /// and a caller passes it back as `argument`.
     #[must_use]
     pub const fn resumed_by(mut self, field: &'static str, argument: &'static str) -> Self {
-        self.resume = Some(McpPageResume { field, argument });
+        self.resume = Some(McpPageResume {
+            field,
+            argument,
+            within: None,
+        });
+        self
+    }
+
+    /// Names the producer's own continuation inside one of its call's
+    /// arguments: `field` of the output holds it, and a caller passes back the
+    /// object it sent as `argument`, with `key` set to it (FIX 9175).
+    #[must_use]
+    pub const fn resumed_within(
+        mut self,
+        field: &'static str,
+        argument: &'static str,
+        key: &'static str,
+    ) -> Self {
+        self.resume = Some(McpPageResume {
+            field,
+            argument,
+            within: Some(key),
+        });
         self
     }
 
@@ -311,6 +337,25 @@ impl McpPageBudget {
     /// to `value`.
     pub fn resume_with(&mut self, argument: &'static str, value: Value) {
         self.resume = Some((argument, value));
+    }
+
+    /// Puts the continuation [`Self::resume_with`] named back inside the
+    /// call's own argument, for a producer that resumes within one
+    /// ([`McpPageSource::resumed_within`]): `call_argument` whole, with the
+    /// resume's key set to the continuation and every other key as the call
+    /// sent it. With no such object the page has no way on, and says so.
+    pub fn resume_within(&mut self, resume: McpPageResume, call_argument: Option<&Value>) {
+        let Some(key) = resume.within else {
+            return;
+        };
+        let Some((argument, value)) = self.resume.take() else {
+            return;
+        };
+        if let Some(Value::Object(sent)) = call_argument {
+            let mut sent = sent.clone();
+            sent.insert(key.to_owned(), value);
+            self.resume = Some((argument, Value::Object(sent)));
+        }
     }
 
     /// A non-terminal page that carries NO way on says so explicitly.

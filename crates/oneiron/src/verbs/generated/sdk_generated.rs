@@ -7007,6 +7007,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.get",
     "vault.research.reserve_exploration",
     "vault.research.budget",
+    "vault.authority.handoff_alarms",
+    "vault.authority.handoff_alarms.acknowledge",
     "vault.cleanup.run",
     "vault.cleanup.review",
     "vault.cleanup.decide",
@@ -8473,6 +8475,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.research.budget" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchBudgetView,
         >(),
+        "vault.authority.handoff_alarms" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::authority::AuthorityHandoffAlarm>,
+        >(),
+        "vault.authority.handoff_alarms.acknowledge" => {
+            crate::code_run::vault_read::request_schema::<crate::authority::AuthorityHandoffAlarm>()
+        }
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
