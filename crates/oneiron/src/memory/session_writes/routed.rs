@@ -281,6 +281,7 @@ impl Memory<'_> {
             occurred_at: input.occurred_at,
             learned_at: input.learned_at,
             salience: input.salience,
+            confidence_details: None,
         })?;
         self.verified_actor_class()?;
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
