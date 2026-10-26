@@ -10,10 +10,13 @@
 //!   correction is a data revision, not a code change. The two machine checks a
 //!   conditional exemption can demand (`ComplianceExemptionEvidence`) are
 //!   mechanical primitives; which jurisdiction demands which is a pack row.
+//!   So are a consent-class row's lawful-basis alternatives
+//!   (`ConsentRequirement`): generic facts the row combines, never a country.
 //! * **Evidence is hydrated, never presence-checked.** The evaluator accepts
-//!   only `HydratedListProvenance` / `HydratedJpPublicationFacts`, both of
-//!   which exist only after the referenced record was resolved from the vault,
-//!   bound to this counterparty, and class-validated. A dangling reference is
+//!   only `HydratedListProvenance` / `HydratedJpPublicationFacts` /
+//!   `HydratedConsentFacts`, each of which exists only after the referenced
+//!   record was resolved from the vault, bound to this counterparty, and
+//!   class-validated. A dangling reference is
 //!   not weaker evidence, it is no evidence, and the strict path applies.
 //! * **This is enforcement, not a new approval surface.** A blocking verdict
 //!   maps to a hard gate deny in `gate.rs`. Nothing here asks a human to
@@ -29,7 +32,9 @@
 //! substrate is a later integrator's concern.
 
 mod amend;
+mod amend_semantics;
 mod codec;
+mod consent;
 mod contracts;
 mod doors;
 mod evaluate;
@@ -42,6 +47,7 @@ pub use self::amend::{
     compliance_amendment_notices, compliance_proposal_hash, ingest_published_compliance_update,
     propose_compliance_amendment, stamp_compliance_amendment,
 };
+pub use self::consent::{ConsentBranch, ConsentFact, ConsentRequirement, HydratedConsentFacts};
 pub use self::contracts::{
     ComplianceAmendRequest, ComplianceApprovalRequest, ComplianceDisposition, ComplianceOperation,
     ComplianceOwnerStamp, CompliancePendingProposal, ComplianceReceipt, ComplianceResult,
@@ -57,9 +63,10 @@ pub use self::pack_store::{
 pub use self::rules::{
     B2bExemption, CAMPAIGN_COMPLIANCE_PACK_ID, CAMPAIGN_COMPLIANCE_SEED_JSON,
     ComplianceExemptionEvidence, CompliancePack, ComplianceRuleKind, ComplianceRuleRow,
-    ComplianceSource, ConditionalExemptionEvidence, PREDICATE_CRM_COMPLIANCE_EVIDENCE,
-    PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION, PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE,
-    PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS, UnknownJurisdictionDefault,
+    ComplianceSource, ConditionalExemptionEvidence, PREDICATE_CRM_COMPLIANCE_CONSENT,
+    PREDICATE_CRM_COMPLIANCE_EVIDENCE, PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION,
+    PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+    UnknownJurisdictionDefault,
 };
 
 pub(crate) use self::evaluate::ComplianceBinding;

@@ -1,14 +1,14 @@
 //! Membership-side writes: lane selection, snooze-with-wake pause, and the shared member-replacement helper.
 
-use super::projector::{at, elapsed, evidence_value, invalid};
+use super::projector::{at, elapsed, invalid};
 use crate::campaign::claims::{
     CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
-    decode_campaign_member_value, encode_campaign_member_value,
+    decode_campaign_member_value, member_replacement_body,
 };
 use crate::campaign::enrollment::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentRunner, enrollment_dedupe_key,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
+use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::{EntityId, Result, Vault};
 
 // ---------------------------------------------------------------------------
@@ -236,41 +236,36 @@ pub(super) struct MemberStateChange<'a> {
 /// Writes a replacement `campaign.member` head carrying a new STATE and
 /// supersedes the head it replaces, in one transaction.
 ///
-/// The replacement is built from the head it replaces, so channels and any
-/// derivation survive. The identity checks run inside the same txn as the write:
-/// a claim that is not this party's live membership in this campaign is rejected
-/// before anything lands.
+/// The replacement is the head it replaces with only its value and evidence
+/// changed (FIX 9656), so channels, any derivation, and the predecessor's
+/// world, relationship, facet, project and approval stamps all survive. The
+/// identity checks run inside the same txn as the write: a claim that is not
+/// this party's live membership in this campaign is rejected before anything
+/// lands.
 pub(super) fn replace_member_state(
     vault: &Vault,
     change: &MemberStateChange<'_>,
 ) -> Result<EntityId> {
     let new_id = vault.store.clock.entity_id()?;
     vault.with_write_txn_grouped(|wtxn| {
-        let value = require_member_head(vault, wtxn, change)?;
+        let (old, value) = require_member_head(vault, wtxn, change)?;
         let replacement = CampaignMemberValue {
             state: change.state,
             ..value
         };
-        let mut body = ClaimBody::new(
-            PREDICATE_CAMPAIGN_MEMBER,
-            ClaimSubject::Entity(change.party_ref),
-            encode_campaign_member_value(&replacement),
-            1.0,
-            ClaimApprovalStatus::Approved,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.evidence = Some(evidence_value(&[change.evidence_ref]));
+        let body = member_replacement_body(&old, &replacement, change.evidence_ref);
         vault.put_claim_in_txn(wtxn, &new_id, &body, at(change.now), change.now)?;
         vault.supersede_claim_in_txn(wtxn, &new_id, change.membership_claim_ref, change.now)
     })?;
     Ok(new_id)
 }
 
+/// The live head `change` names, as its body and its decoded value.
 pub(super) fn require_member_head(
     vault: &Vault,
     wtxn: &heed::RwTxn<'_>,
     change: &MemberStateChange<'_>,
-) -> Result<CampaignMemberValue> {
+) -> Result<(ClaimBody, CampaignMemberValue)> {
     let body = vault
         .get_claim_in_txn(wtxn, change.membership_claim_ref)?
         .ok_or(invalid("campaign.member head is missing"))?;
@@ -288,5 +283,5 @@ pub(super) fn require_member_head(
     if value.campaign != change.campaign_ref {
         return Err(invalid("campaign.member campaign mismatch"));
     }
-    Ok(value)
+    Ok((body, value))
 }

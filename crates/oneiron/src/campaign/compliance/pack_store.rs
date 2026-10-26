@@ -80,6 +80,16 @@ fn validate_compliance_row(row: &ComplianceRuleRow) -> Result<()> {
     if row.verified_at == 0 || row.version == 0 {
         return Err(invalid_pack("rule row needs a verified_at and a version"));
     }
+    if let Some(requirement) = &row.consent {
+        if row.rule_kind != ComplianceRuleKind::ConsentClass {
+            return Err(invalid_pack(
+                "only a consent-class row carries a consent requirement",
+            ));
+        }
+        if let Some(defect) = requirement.shape_defect() {
+            return Err(invalid_pack(defect));
+        }
+    }
     Ok(())
 }
 
@@ -101,9 +111,12 @@ fn validate_pack_coverage(pack: &CompliancePack) -> Result<()> {
     {
         return Err(invalid_pack("strict pole has no rows"));
     }
+    // A row with an executable consent requirement is checked against that
+    // requirement alone, so it needs no binding.
     let unbound = pack.rows.iter().find(|row| {
         row.b2b_exemption == B2bExemption::Conditional
             && row.rule_kind == ComplianceRuleKind::ConsentClass
+            && row.consent.is_none()
             && row.jurisdiction != JURISDICTION_NONE
             && pack.exemption_evidence(&row.jurisdiction).is_none()
     });

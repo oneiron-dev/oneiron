@@ -422,6 +422,26 @@ pub fn membership_events(
         .collect())
 }
 
+/// [`membership_events`] in the caller's snapshot, so a reader that admits
+/// heads in one transaction folds their history from the same one.
+///
+/// # Errors
+///
+/// As [`membership_events`].
+pub(crate) fn membership_events_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+    entity_ref: EntityId,
+) -> Result<Vec<MembershipEvent>> {
+    let prefix = event_pair_prefix(&query_ref, &entity_ref);
+    Ok(MEMBERSHIP_EVENTS
+        .scan_from(&vault.store, txn, &prefix)?
+        .into_iter()
+        .map(|(_, event)| event)
+        .collect())
+}
+
 /// The epoch floor this `(query, entity)` pair may not write at or below in
 /// `campaign_ref`.
 ///

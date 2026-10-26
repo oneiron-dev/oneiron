@@ -9,8 +9,6 @@ use crate::campaign::stage::ReplyCode;
 // Ratified content
 // ---------------------------------------------------------------------------
 
-const SECS_PER_DAY: u64 = 24 * 60 * 60;
-
 pub(super) const STAGE_REPLIED: &str = "replied";
 
 pub(super) const STAGE_CALL_BOOKED: &str = "call_booked";
@@ -53,14 +51,6 @@ pub(super) const RATIFIED_REPLY_CODES: [ReplyCode; 6] = [
     ReplyCode::NotInterested,
     ReplyCode::Complaint,
 ];
-
-pub(super) const CONSULTANCY_SNOOZE_MIN_SECS: u64 = 60 * SECS_PER_DAY;
-
-pub(super) const CONSULTANCY_SNOOZE_MAX_SECS: u64 = 90 * SECS_PER_DAY;
-
-pub(super) const CONSULTANCY_AUDIT_WINDOW_DAYS: u32 = 14;
-
-pub(super) const CONSULTANCY_DESK_PERIOD: &str = "P1M";
 
 pub(super) const SOW_SECTION_KEYS: [&str; 8] = [
     "context_and_evidence",

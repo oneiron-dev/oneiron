@@ -1,6 +1,10 @@
 //! Pack identity consts, predicates, rule-row types, and the CompliancePack container.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
+
+use super::consent::ConsentRequirement;
 
 /// Stable id of the compliance pack this module governs.
 pub const CAMPAIGN_COMPLIANCE_PACK_ID: &str = "crm.compliance.v1";
@@ -25,6 +29,11 @@ pub const PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION: &str = "crm.compliance.jp_pub
 
 /// Predicate of the sending identity's message-element configuration.
 pub const PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS: &str = "crm.compliance.message_elements";
+
+/// Predicate of a recipient's consent record: the lawful-basis facts an
+/// executable [`ConsentRequirement`] reads (FIX 9657). The evidence claim
+/// cites it by reference, like every other provenance record.
+pub const PREDICATE_CRM_COMPLIANCE_CONSENT: &str = "crm.compliance.consent";
 
 /// Jurisdiction token of the explicit unknown-jurisdiction disposition row.
 pub(super) const JURISDICTION_NONE: &str = "none";
@@ -119,6 +128,11 @@ pub struct ComplianceRuleRow {
     pub requirement: String,
     /// Whether a business recipient is exempt.
     pub b2b_exemption: B2bExemption,
+    /// A consent-class row's lawful basis in executable form. Present, it is
+    /// the row's whole consent check; absent, the row keeps the conditional
+    /// exemption its binding names and demands no other consent.
+    #[serde(default)]
+    pub consent: Option<ConsentRequirement>,
     /// Where the requirement was read from.
     pub source: ComplianceSource,
     /// When a human last verified the row against its source (Unix seconds).
@@ -134,6 +148,8 @@ impl ComplianceRuleRow {
         (&self.jurisdiction, &self.channel, self.rule_kind)
     }
 
+    /// What the row demands of a dispatch, apart from its executable consent
+    /// requirement, which the amendment classifier orders on its own.
     pub(super) fn semantics(&self) -> (&str, B2bExemption) {
         (&self.requirement, self.b2b_exemption)
     }
@@ -204,6 +220,8 @@ pub struct CompliancePack {
 }
 
 impl CompliancePack {
+    /// The evidence `jurisdiction`'s conditional rows demand: its FIRST
+    /// binding, exactly as [`Self::effective_exemption_bindings`] keeps it.
     pub(super) fn exemption_evidence(
         &self,
         jurisdiction: &str,
@@ -212,6 +230,22 @@ impl CompliancePack {
             .iter()
             .find(|binding| binding.jurisdiction == jurisdiction)
             .map(|binding| binding.evidence)
+    }
+
+    /// The bindings evaluation runs (FIX 9660): one per jurisdiction, the
+    /// first one listed. A later binding for the same jurisdiction is inert,
+    /// so it is neither refused nor read; the amendment classifier compares
+    /// this view, and the proposal hash keeps the listed order that decides it.
+    pub(super) fn effective_exemption_bindings(
+        &self,
+    ) -> BTreeMap<&str, ComplianceExemptionEvidence> {
+        let mut bindings = BTreeMap::new();
+        for binding in &self.conditional_exemption_evidence {
+            bindings
+                .entry(binding.jurisdiction.as_str())
+                .or_insert(binding.evidence);
+        }
+        bindings
     }
 
     /// A row is trustworthy only inside the window that OPENS when a human

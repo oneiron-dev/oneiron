@@ -473,6 +473,10 @@ pub enum EngineLimit {
     /// everything is okay and the call reads the context whole; nothing is
     /// cut, refused or skipped.
     ConnectorReplyContextBytes,
+    /// Rows one campaign judgment request joins (FIX 9655). Past it the row
+    /// asks whether everything is okay and every row is still joined, a
+    /// read chunk at a time; nothing is refused or cut.
+    CampaignJudgmentRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

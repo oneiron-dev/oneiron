@@ -3,6 +3,7 @@
 use crate::entity_id::EntityId;
 use std::collections::BTreeSet;
 
+use super::consent::HydratedConsentFacts;
 use super::rules::{
     B2bExemption, CHANNEL_WILDCARD, ComplianceExemptionEvidence, CompliancePack,
     ComplianceRuleKind, ComplianceRuleRow, JURISDICTION_NONE, UnknownJurisdictionDefault,
@@ -39,7 +40,7 @@ pub struct HydratedJpPublicationFacts {
 
 impl HydratedJpPublicationFacts {
     /// All three Art. 3(1)(iv) facts hold.
-    const fn exemption_holds(&self) -> bool {
+    pub(super) const fn exemption_holds(&self) -> bool {
         self.published_by_recipient
             && self.in_course_of_business
             && self.no_marketing_statement_attached
@@ -63,6 +64,9 @@ pub struct DispatchComplianceFacts {
     pub list_provenance: Option<HydratedListProvenance>,
     /// Resolved publication context, absent when unresolved.
     pub jp_publication: Option<HydratedJpPublicationFacts>,
+    /// The recipient's resolved consent record, all `false` when none
+    /// resolved.
+    pub consent: HydratedConsentFacts,
     /// The message carries an unconcealed sender identity.
     pub sender_identity_present: bool,
     /// The message carries a postal address.
@@ -86,6 +90,8 @@ pub enum ComplianceBlockReason {
     MissingPublicationContext,
     /// A mandatory message element is absent.
     MissingRequiredMessageElement,
+    /// No branch of a consent-class row's lawful-basis requirement holds.
+    MissingLawfulBasis,
     /// The governing row is older than the pack's verification-age dial.
     StaleRule,
     /// The row is violated on its own terms, or the pack cannot apply it.
@@ -111,6 +117,7 @@ impl ComplianceBlockReason {
             Self::MissingRequiredMessageElement => {
                 "counterparty_compliance_missing_message_element"
             }
+            Self::MissingLawfulBasis => "counterparty_compliance_missing_lawful_basis",
             Self::StaleRule => "counterparty_compliance_stale_rule",
             Self::RuleViolation => "counterparty_compliance_rule_violation",
         }
@@ -241,7 +248,7 @@ fn trusted_jurisdiction(pack: &CompliancePack, facts: &DispatchComplianceFacts) 
 /// The unknown-jurisdiction row is excluded on purpose: it states a
 /// disposition, not a requirement, and [`effective_jurisdiction`] has already
 /// applied it.
-fn matching_rows<'a>(
+pub(super) fn matching_rows<'a>(
     pack: &'a CompliancePack,
     jurisdiction: &str,
     channel: &str,
@@ -316,11 +323,18 @@ fn evaluate_row(
     (!element_present).then(|| block(ComplianceBlockReason::MissingRequiredMessageElement, row))
 }
 
+/// A row carrying an executable requirement is checked against it, and that
+/// requirement is the row's whole consent check (FIX 9657). A row without one
+/// keeps the conditional-exemption check its binding names.
 fn evaluate_consent_class(
     pack: &CompliancePack,
     row: &ComplianceRuleRow,
     facts: &DispatchComplianceFacts,
 ) -> Option<ComplianceVerdict> {
+    if let Some(requirement) = &row.consent {
+        return (!requirement.holds(facts))
+            .then(|| block(ComplianceBlockReason::MissingLawfulBasis, row));
+    }
     if row.b2b_exemption != B2bExemption::Conditional {
         return None;
     }

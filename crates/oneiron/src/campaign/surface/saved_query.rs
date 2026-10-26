@@ -12,7 +12,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{MembershipPage, MembershipReadRequest, MembershipRow};
+use super::{MembershipPage, MembershipReadRequest, MembershipRow, MembershipRowSource};
 use crate::entity_id::EntityId;
 use crate::saved_query::{
     ClaimComparison, CreateSavedQueryRequest, EvalMode, EvalPolicy, FilterAst, MatchVerdict,
@@ -457,6 +457,8 @@ pub struct SavedQueryMembershipRowView {
     pub exited_detected: Option<u64>,
     /// Cause of the newest folded event.
     pub cause: Option<String>,
+    /// Where the row comes from: on a query's page, always that query.
+    pub source: MembershipRowSource,
 }
 
 /// One page of membership rows, as `self.saved_query.members` answers.
@@ -581,6 +583,7 @@ fn membership_row_view(row: &MembershipRow) -> SavedQueryMembershipRowView {
         exited_valid: row.exited_valid,
         exited_detected: row.exited_detected,
         cause: row.cause.clone(),
+        source: row.source.clone(),
     }
 }
 

@@ -2,7 +2,7 @@
 
 use serde_json::{Map as JsonMap, Value};
 
-use super::{CampaignRecord, MembershipPage, MembershipRow};
+use super::{CampaignRecord, MembershipPage, MembershipRow, MembershipRowSource};
 use crate::saved_query::{
     EvalPolicy, FilterAst, MatcherSpec, QueryScope, SavedQueryLifecycle, SavedQueryRecord,
 };
@@ -30,6 +30,10 @@ pub fn campaign_record_to_json(record: &CampaignRecord) -> Value {
     definition.insert(
         "lifecycle".to_owned(),
         Value::String(record.definition.lifecycle.as_str().to_owned()),
+    );
+    definition.insert(
+        "reply_snooze_policy".to_owned(),
+        record.definition.reply_snooze_policy.to_json(),
     );
 
     let mut root = JsonMap::new();
@@ -279,5 +283,35 @@ fn membership_row_to_json(row: &MembershipRow) -> Value {
             .as_ref()
             .map_or(Value::Null, |cause| Value::String(cause.clone())),
     );
+    root.insert("source".to_owned(), membership_source_to_json(&row.source));
+    Value::Object(root)
+}
+
+fn membership_source_to_json(source: &MembershipRowSource) -> Value {
+    let mut root = JsonMap::new();
+    match source {
+        MembershipRowSource::SavedQuery {
+            query_ref,
+            membership_claim_ref,
+            epoch,
+        } => {
+            root.insert("kind".to_owned(), Value::String("saved_query".to_owned()));
+            root.insert("query_ref".to_owned(), Value::String(query_ref.to_hex()));
+            root.insert(
+                "membership_claim_ref".to_owned(),
+                Value::String(membership_claim_ref.to_hex()),
+            );
+            root.insert("epoch".to_owned(), Value::from(*epoch));
+        }
+        MembershipRowSource::ManualClaim {
+            membership_claim_ref,
+        } => {
+            root.insert("kind".to_owned(), Value::String("manual_claim".to_owned()));
+            root.insert(
+                "membership_claim_ref".to_owned(),
+                Value::String(membership_claim_ref.to_hex()),
+            );
+        }
+    }
     Value::Object(root)
 }

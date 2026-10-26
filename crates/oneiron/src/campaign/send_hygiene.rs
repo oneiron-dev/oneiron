@@ -37,11 +37,10 @@ use rmpv::Value;
 use crate::Vault;
 use crate::campaign::claims::{
     BounceKind, CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, CommBounceValue,
-    CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_CAMPAIGN_MEMBER,
-    PREDICATE_COMM_BOUNCE, PREDICATE_COMM_DO_NOT_CONTACT, encode_campaign_member_value,
-    encode_comm_bounce_value, encode_do_not_contact_value, identical_live_head_in_txn,
-    live_campaign_member_head_in_txn, live_campaign_member_heads_in_txn,
-    normalize_campaign_pack_token,
+    CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_BOUNCE,
+    PREDICATE_COMM_DO_NOT_CONTACT, encode_comm_bounce_value, encode_do_not_contact_value,
+    identical_live_head_in_txn, live_campaign_member_head_in_txn,
+    live_campaign_member_heads_in_txn, member_replacement_body, normalize_campaign_pack_token,
 };
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -241,7 +240,6 @@ fn suppress_membership_in_txn(
             vault,
             wtxn,
             MemberHeadReplacement {
-                person_ref: input.person_ref,
                 value: &suppressed,
                 evidence_ref: input.evidence_ref,
                 occurred: input.occurred_at,
@@ -257,7 +255,6 @@ fn suppress_membership_in_txn(
 
 /// One replacement of a live `campaign.member` head.
 struct MemberHeadReplacement<'a> {
-    person_ref: EntityId,
     value: &'a CampaignMemberValue,
     evidence_ref: EntityId,
     occurred: u64,
@@ -267,21 +264,24 @@ struct MemberHeadReplacement<'a> {
 /// Writes a replacement `campaign.member` head and supersedes the old head with
 /// it in the same txn, so a rejected supersession rolls the replacement back
 /// with it rather than leaving two live memberships.
+///
+/// The replacement is the predecessor's own body, read in this txn, with only
+/// its value and evidence changed (FIX 9656): its world, relationship, facet,
+/// project and approval stamps carry over, so a suppression or a sender binding
+/// never widens who may read the membership.
 fn replace_member_head_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     replacement: MemberHeadReplacement<'_>,
 ) -> Result<EntityId> {
+    let old =
+        vault
+            .get_claim_in_txn(wtxn, &replacement.old_id)?
+            .ok_or(Error::InvariantViolation(
+                "a scanned campaign.member head is absent in its own txn",
+            ))?;
     let new_id = vault.store.clock.entity_id()?;
-    let mut body = ClaimBody::new(
-        PREDICATE_CAMPAIGN_MEMBER,
-        ClaimSubject::Entity(replacement.person_ref),
-        encode_campaign_member_value(replacement.value),
-        1.0,
-        ClaimApprovalStatus::Approved,
-        ClaimLifecycleStatus::Active,
-    )?;
-    body.evidence = Some(evidence_value(replacement.evidence_ref));
+    let body = member_replacement_body(&old, replacement.value, replacement.evidence_ref);
     vault.put_claim_in_txn(
         wtxn,
         &new_id,
@@ -610,7 +610,6 @@ pub(crate) fn bind_sticky_sender_in_txn(
         vault,
         wtxn,
         MemberHeadReplacement {
-            person_ref,
             value: &value,
             evidence_ref: basis_evidence,
             occurred: occurred_at,
