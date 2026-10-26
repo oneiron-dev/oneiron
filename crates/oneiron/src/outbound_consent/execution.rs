@@ -514,6 +514,10 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
     fn settled_result(&self) -> Option<&[u8]> {
         self.settled_body.as_deref()
     }
+
+    fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
+        self.inner.remote_task()
+    }
 }
 
 /// What one live connector question binds (ONE-2510): the original call's
