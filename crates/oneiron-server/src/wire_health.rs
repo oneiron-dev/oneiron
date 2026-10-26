@@ -173,17 +173,17 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("wire health check"))
 }
 
-/// Every health check this server keeps, by subject. Each page starts after
-/// the last key the one before it read, so no count bounds the family (FIX
-/// 10866); the page door deletes nothing here.
+/// Every health check this server keeps, by subject. Each page is one read
+/// transaction, starting after the last key the one before it read, so no
+/// count bounds the family and the writer is never taken (FIX 10866).
 pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
     let mut checks = Vec::new();
     let mut after: Option<String> = None;
     loop {
         let next =
-            vault.sync_state_reclaim_prefix_page(CHECK, after.as_deref(), CHECK_PAGE, |bytes| {
+            vault.sync_state_prefix_page(CHECK, after.as_deref(), CHECK_PAGE, |_, bytes| {
                 checks.push(decode(bytes)?);
-                Ok(false)
+                Ok(())
             })?;
         match next {
             Some(next) => after = Some(next),

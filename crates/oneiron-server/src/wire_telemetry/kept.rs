@@ -11,24 +11,24 @@ const KEPT_PAGE: usize = 256;
 impl WireTelemetry {
     /// The call-volume questions kept after the one under `after`, from the
     /// first with `None`, by key, in the order they were kept: what the
-    /// health check reads past its cursor. Each page starts after the last
-    /// key the one before it read, so the family is never read whole and no
-    /// count bounds it (FIX 10863); the page door deletes nothing here.
+    /// health check reads past its cursor. Each page is one read
+    /// transaction, starting after the last key the one before it read, so
+    /// the family is never read whole, no count bounds it and the writer is
+    /// never taken (FIX 10863).
     pub(crate) fn kept_questions_after(
         &self,
         after: Option<&str>,
     ) -> Result<Vec<(String, WireQuestion)>> {
-        let mut kept = Vec::new();
+        let mut kept: Vec<(String, WireQuestion)> = Vec::new();
         let mut after = after.map(str::to_owned);
         loop {
-            let next = self.vault.sync_state_reclaim_prefix_page(
+            let next = self.vault.sync_state_prefix_page(
                 QUESTION_SEQ,
                 after.as_deref(),
                 KEPT_PAGE,
-                |bytes| {
-                    let question: WireQuestion = decode(bytes)?;
-                    kept.push((format!("{QUESTION_SEQ}{:020}", question.seq), question));
-                    Ok(false)
+                |key, bytes| {
+                    kept.push((key.to_owned(), decode(bytes)?));
+                    Ok(())
                 },
             )?;
             match next {
