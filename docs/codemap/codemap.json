@@ -3871,6 +3871,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ManagedOwnerCheck",
+      "ManagedOwnerCheckError"
+     ],
+     "path": "src/authority/managed_owner_check.rs",
+     "purpose": "The live-owner check a managed vault's attested owner's queued work runs under (FIX 11090)",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 2,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -3908,8 +3924,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 36,
-      "re-export": 61
+      "crate-vis": 37,
+      "re-export": 62
      }
     },
     {
@@ -19370,7 +19386,7 @@
      "path": "src/consent/doors.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "fn": 11,
       "struct": 2
      }
@@ -21529,8 +21545,23 @@
       "const": 1,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 8,
+      "fn": 6,
+      "re-export": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TurnActionAuthority"
+     ],
+     "path": "src/conversation/turn_actions/standing.rs",
+     "purpose": "What a queued turn action stands on, judged again against the live vault whenever its standing is: the…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 3
      }
     },
     {
@@ -27401,7 +27432,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 23,
       "fn": 1
      }
     },
@@ -27965,7 +27996,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_wake/driver/settle.rs",
-     "purpose": "Where one executed attempt settles: its budget, its completion, its deferral, landing or park, with the…",
+     "purpose": "Where one executed attempt settles: its budget, its completion, its failure, deferral, landing or park, with…",
      "surface": {
       "crate-vis": 2
      }
@@ -44193,7 +44224,7 @@
      "path": "src/memory/support/builders.rs",
      "purpose": "Handle binders: the `with_*` methods and the accessors that read back what a binder set",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 21
      }
     },
@@ -54309,6 +54340,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "RestorePadState"
+     ],
+     "path": "src/recovery/checkpoint/epochs.rs",
+     "purpose": "What a restore epoch still owes of its world key pads (PAD-2, FIX 10470; CALLS…",
+     "surface": {
+      "crate-vis": 6,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "BackupHoldVisibility",
       "BackupHolds",
       "HostOrderHolds"
@@ -54368,7 +54413,7 @@
       "crate-vis": 2,
       "enum": 2,
       "fn": 19,
-      "re-export": 11,
+      "re-export": 13,
       "struct": 3
      }
     },
@@ -54381,8 +54426,24 @@
      "path": "src/recovery/checkpoint/pad_custody.rs",
      "purpose": "A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadReopenFault",
+      "PadReopenReport",
+      "PadReopenStage"
+     ],
+     "path": "src/recovery/checkpoint/pad_reopen.rs",
+     "purpose": "Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -63637,6 +63698,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/key_custody/recovery/pads.rs",
+     "purpose": "A restored vault's world pads, admitted again from the custody head beside its backup (PAD-2, FIX 10470)…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/key_custody/recovery/unopened.rs",
      "purpose": "What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by…",
      "surface": {
@@ -64326,7 +64397,17 @@
      "path": "src/store/world_pad_custody/current.rs",
      "purpose": "One world's current pads, moved between the owner's machines (KS-5, FIX 6706, L04 leaf): what pad hydration…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/world_pad_custody/install.rs",
+     "purpose": "One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -76549,7 +76630,7 @@
      "purpose": "This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid…",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -76703,13 +76784,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/pad_image.rs",
      "purpose": "A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -77955,7 +78036,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 200,
+     "files": 201,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78284,7 +78365,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78949,7 +79030,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 95,
+     "files": 97,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -79194,7 +79275,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 150,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79427,7 +79508,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5253,
+   "source_files": 5259,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101865,6 +101946,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_commands/open_pads.rs",
+     "purpose": "`oneiron restore BACKUP --open-pads [--pad-machine ID]` (PAD-2, FIX 10470): on the configured vault, which…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -105733,6 +105824,16 @@
      "purpose": "The standalone VM host's acknowledged wake ledger",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed_owner_check.rs",
+     "purpose": "This server's check that a managed vault's attested owner is its live owner, which his queued work runs…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -109852,7 +109953,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 53,
+     "files": 54,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -110096,6 +110197,13 @@
      "layout": "dir",
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
+    "managed_owner_check": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "This server's check that a managed vault's attested owner is its live owner, which his queued work runs…"
+    },
     "mcp": {
      "files": 23,
      "impl_vault": false,
@@ -110253,7 +110361,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1300,
+   "source_files": 1302,
    "test_files": 182
   },
   "oneiron-spawn": {
