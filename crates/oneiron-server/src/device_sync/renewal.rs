@@ -14,6 +14,10 @@
 //! that fails, keeps the old file and connection, whose slip stays live
 //! until it runs out, and tries again. A refusal (an expired or revoked slip)
 //! stands until this machine is paired again.
+//!
+//! A move of the home the link's dials resolve to (FIX 3131) hands the link
+//! its current credential the same way, unwritten, so it rebuilds its
+//! connection on the home the move names ([`super::route`]).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -65,6 +69,9 @@ const PAIR_AGAIN: &str = "pair this machine again: stop the vault, remove its de
 pub(super) struct Candidate {
     pub(super) credential: PairedCredentialFile,
     ttl_secs: u64,
+    /// The file's own credential, handed back as the home the link dials
+    /// moved: nothing is written for it.
+    retarget: bool,
 }
 
 /// Why a renewal did not land.
@@ -93,16 +100,20 @@ pub(super) struct Renewal {
     in_flight: Option<JoinHandle<Result<Candidate, Failure>>>,
     /// Refused or unusable: no renewal until the next start.
     refused: bool,
+    /// Moves of the home the link's dials resolve to (FIX 3131).
+    route: super::route::RouteChanges,
 }
 
 impl Renewal {
     /// Renews the credential in `credential_file` at the home `url` names,
-    /// over `dialer` when the link has one, the first time at once.
+    /// over `dialer` when the link has one, the first time at once, and
+    /// hands it back unrenewed on each move `route` sees.
     pub(super) fn new(
         url: &str,
         credential_file: PathBuf,
         vault: Arc<oneiron::Vault>,
         dialer: Option<Arc<dyn oneiron::sync::SyncDialer>>,
+        route: super::route::RouteChanges,
     ) -> Self {
         let origin = origin(url);
         if origin.is_none() {
@@ -120,21 +131,34 @@ impl Renewal {
             retry: RETRY_FIRST,
             in_flight: None,
             refused: false,
+            route,
         }
     }
 
     /// The next renewed credential, not yet written: the caller writes it
     /// with [`Self::commit`], or reports it unused with [`Self::failed`].
-    /// Never ends once a renewal is refused. Cancel-safe: a renewal still
-    /// under way when the caller stops waiting is the one the next call
-    /// waits on, and one no call takes writes nothing.
+    /// A move of the home the link dials hands back the current credential
+    /// instead ([`Self::retarget`]). Never ends once a renewal is refused,
+    /// but on such a move. Cancel-safe: a renewal still under way when the
+    /// caller stops waiting is the one the next call waits on, and one no
+    /// call takes writes nothing.
     pub(super) async fn next(&mut self) -> Candidate {
         loop {
             let Some(origin) = self.origin.clone().filter(|_| !self.refused) else {
-                return std::future::pending().await;
+                self.route.changed().await;
+                match self.retarget() {
+                    Some(candidate) => return candidate,
+                    None => continue,
+                }
             };
             if self.in_flight.is_none() {
-                tokio::time::sleep_until(self.due).await;
+                tokio::select! {
+                    () = tokio::time::sleep_until(self.due) => {}
+                    () = self.route.changed() => match self.retarget() {
+                        Some(candidate) => return candidate,
+                        None => continue,
+                    },
+                }
                 let (path, vault) = (self.credential_file.clone(), Arc::clone(&self.vault));
                 let dialer = self.dialer.clone();
                 self.in_flight = Some(tokio::spawn(async move {
@@ -147,7 +171,13 @@ impl Renewal {
             let Some(in_flight) = self.in_flight.as_mut() else {
                 continue;
             };
-            let outcome = in_flight.await;
+            let outcome = tokio::select! {
+                outcome = in_flight => outcome,
+                () = self.route.changed() => match self.retarget() {
+                    Some(candidate) => return candidate,
+                    None => continue,
+                },
+            };
             self.in_flight = None;
             let reason = match outcome {
                 Ok(Ok(candidate)) => return candidate,
@@ -178,6 +208,10 @@ impl Renewal {
     /// at half the new slip's lifetime. A failed write keeps the old file and
     /// is tried again as any failed renewal is.
     pub(super) fn commit(&mut self, candidate: &Candidate) -> bool {
+        if candidate.retarget {
+            tracing::info!("device sync follows the home its dials resolve to");
+            return true;
+        }
         let written = credential_file::replace(
             &self.credential_file,
             candidate.credential.credential().as_bytes(),
@@ -193,6 +227,26 @@ impl Renewal {
             Err(error) => {
                 self.failed(&format!("{error:#}"));
                 false
+            }
+        }
+    }
+
+    /// The file's own credential, for the link to rebuild its connection on
+    /// as the home its dials resolve to moved; `None`, warned, when the file
+    /// does not read, and the link stays as it is.
+    fn retarget(&self) -> Option<Candidate> {
+        match PairedCredentialFile::read(&self.credential_file) {
+            Ok(credential) => Some(Candidate {
+                credential,
+                ttl_secs: 0,
+                retarget: true,
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    error = %format!("{error:#}"),
+                    "device sync stays on its home: the credential did not read"
+                );
+                None
             }
         }
     }
@@ -530,6 +584,7 @@ fn candidate(replacement: &str) -> Result<Candidate, Failure> {
     Ok(Candidate {
         credential,
         ttl_secs,
+        retarget: false,
     })
 }
 

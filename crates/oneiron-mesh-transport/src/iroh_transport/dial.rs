@@ -7,6 +7,26 @@ use super::*;
 /// It occupies a unidirectional stream, never an application's duplex stream.
 pub(super) const ADMISSION: &[u8] = b"oneiron/mesh-admitted/1";
 
+/// The owner's complete MACHINE lookup by endpoint key (FIX 8622): every
+/// MACHINE row, however many, read under the owner's proof, where the
+/// lookup any key may make stops at its bound.
+pub type OwnerMachineLookup =
+    Box<dyn FnOnce([u8; 32]) -> Result<Option<MachineId>, MeshError> + Send>;
+
+/// [`OwnerMachineLookup`] through `vault`'s owner door, under `owner`'s proof
+/// (`Vault::mesh_machine_by_endpoint_as_owner`).
+pub fn owner_machine_lookup(
+    vault: Arc<oneiron::Vault>,
+    owner: oneiron::consent::AuthenticatedOwner,
+) -> OwnerMachineLookup {
+    Box::new(move |key| {
+        vault
+            .mesh_machine_by_endpoint_as_owner(&owner, key)
+            .map(|found| found.map(|(machine, _)| machine))
+            .map_err(crate::roster_error)
+    })
+}
+
 impl IrohTransport {
     /// One authenticated handshake, followed by the remote gate's admission
     /// acknowledgement. TLS completion alone does not mean the peer admitted us.
@@ -47,6 +67,22 @@ impl IrohTransport {
         &self,
         address: &crate::MeshMachineAddress,
         alpn: &[u8],
+    ) -> Result<MeshPathReceipt, MeshError> {
+        self.dial_address_attributed(address, alpn, None).await
+    }
+
+    /// [`Self::dial_address`] for the owner's diagnostic (FIX 8622). The
+    /// completed dial's receipt is written first, naming the MACHINE the
+    /// bounded lookup any key may make finds, or none when that lookup stops
+    /// at its bound. `owner_lookup` then reads every MACHINE and the same
+    /// receipt is written again with the one it names. Without it, or when it
+    /// fails, the receipt keeps its unknown MACHINE and the lookup's error is
+    /// returned.
+    pub async fn dial_address_attributed(
+        &self,
+        address: &crate::MeshMachineAddress,
+        alpn: &[u8],
+        owner_lookup: Option<OwnerMachineLookup>,
     ) -> Result<MeshPathReceipt, MeshError> {
         // Every direct address the owner names is dialed (Phase2 A, FIX 7922);
         // the ALPN's own 1..255-byte bound stays.
@@ -97,15 +133,30 @@ impl IrohTransport {
             }
         };
         receipt.endpoint_key = Some(key_hex(address.endpoint_key));
-        receipt.machine = self
-            .policy
-            .roster
-            .by_endpoint(address.endpoint_key)?
+        let bounded = self.policy.roster.by_endpoint(address.endpoint_key);
+        receipt.machine = bounded
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
             .map(|(machine, _)| machine.to_hex());
         let recorder = self.receipts.as_ref().ok_or(MeshError::Unavailable)?;
+        let retained = || MeshError::Io("mesh path receipt could not be retained".into());
         receipt.id = write_receipt(&recorder.sink, &receipt)
             .await
-            .ok_or_else(|| MeshError::Io("mesh path receipt could not be retained".into()))?;
+            .ok_or_else(retained)?;
+        if let Err(bounded) = bounded {
+            let lookup = owner_lookup.ok_or(bounded)?;
+            let key = address.endpoint_key;
+            let found = tokio::task::spawn_blocking(move || lookup(key))
+                .await
+                .map_err(|error| MeshError::Io(error.to_string()))??;
+            if let Some(machine) = found {
+                receipt.machine = Some(machine.to_hex());
+                write_receipt(&recorder.sink, &receipt)
+                    .await
+                    .ok_or_else(retained)?;
+            }
+        }
         Ok(receipt)
     }
 }
@@ -195,13 +246,7 @@ impl MeshTransport for IrohTransport {
     }
     fn accept(&self) -> MeshFuture<'_, Box<dyn MeshConnection>> {
         Box::pin(async move {
-            let (machine, alpn, inner) = self
-                .accepted
-                .lock()
-                .await
-                .recv()
-                .await
-                .ok_or(MeshError::Unavailable)?;
+            let (machine, alpn, inner) = self.admissions.next().await?;
             let admitted = IrohConnection {
                 machine,
                 alpn,
