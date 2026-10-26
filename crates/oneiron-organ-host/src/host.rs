@@ -22,6 +22,7 @@ use crate::outcome::OrganOutcome;
 use crate::process::{CallFailure, Grant, OrganProcess, Revocations, Wait};
 use crate::regions::RegionCache;
 use crate::resource_memory::{MachineFloor, SharedFloor};
+use crate::shutdown::{self, MeshCancel};
 use crate::slot::{OrganStatus, Slot};
 use crate::spec::{HostConfig, LentInput, OrganCall, OrganInput, OrganSpec, SightedInput};
 
@@ -376,15 +377,18 @@ impl OrganHost {
     /// read every input from its own vault, under its own actor's
     /// authority, and sent the bytes: each comes with the artifact version
     /// it read (none for bytes its caller lent), and is hashed here again,
-    /// so the receipt holds what this host saw. `call.inputs` is empty.
+    /// so the receipt holds what this host saw. `call.inputs` is empty. It
+    /// runs under the mesh's `cancel` (FIX 4756): cut short, it says
+    /// [`HostError::Interrupted`].
     pub(crate) fn call_for_peer(
         &self,
         vault: &Vault,
         call: OrganCall,
         inputs: Vec<(Option<OrganInput>, LentInput)>,
         asks: &AskHandlers<'_>,
+        cancel: &MeshCancel,
     ) -> Result<OrganOutcome, HostError> {
-        self.run(vault, call, inputs, asks, Run::Warm)
+        cancel.scope(|| shutdown::settle(self.run(vault, call, inputs, asks, Run::Warm)))
     }
 
     fn run(
@@ -544,6 +548,7 @@ impl OrganHost {
         };
         let revoked = || self.grant_revoked(&call.grant);
         let grace = self.config.cancel_grace;
+        let _interruptible = shutdown::interruptible(process, grace);
         let wait = Wait {
             grant: Grant {
                 name: &call.grant,
@@ -555,6 +560,14 @@ impl OrganHost {
         };
         match process.call(wire, &fds, wait) {
             Ok((reply, fds, frame, moved)) => Ok((reply.outcome, fds, frame, moved)),
+            // The mesh's stop ended the call's wait: a live process is unharmed.
+            Err(failure)
+                if !matches!(failure, CallFailure::Revoked)
+                    && shutdown::interrupted()
+                    && process.is_alive() =>
+            {
+                Err(HostError::Interrupted)
+            }
             Err(CallFailure::Deadline { stopped }) => {
                 // An organ that took the cancel lives on, still tracked;
                 // only a killed one leaves its slot.

@@ -13,6 +13,9 @@
 //! listener's numbers; every mesh peer is a paired machine the handshake
 //! admitted, so there is no stranger to give a share. Every connection and
 //! refused attempt leaves a path receipt in the vault (`VaultPathReceipts`).
+//! A stream that waits for a place raises the mesh's own pressure check
+//! ([`pressure`], FIX 7737), and the listener's stop drains the work its
+//! routes admitted under one deadline ([`shutdown`], FIX 4755, 4756).
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -20,6 +23,11 @@ use std::sync::Arc;
 use axum::Router;
 
 use crate::http_listener::ConnectionLimits;
+
+#[cfg(feature = "mesh")]
+mod pressure;
+#[cfg(feature = "mesh")]
+mod shutdown;
 
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
@@ -134,11 +142,13 @@ mod host {
         AcceptPolicy, MeshConnection, MeshError, MeshFuture, MeshService, MeshTransport,
         PairedMachineGrants, SYNC_ALPN, VaultMachineRoster, VaultPathReceipts,
     };
-    use oneiron_organ_host::{AskHandlers, ORGAN_ALPN, OrganRouter, OrganService};
-    use tokio::sync::{Semaphore, watch};
+    use oneiron_organ_host::{AskHandlers, MeshCancel, ORGAN_ALPN, OrganRouter, OrganService};
+    use tokio::sync::watch;
     use tokio::task::{JoinHandle, JoinSet};
 
     use super::MeshProvedMachine;
+    use super::pressure::{self, MeshFloor};
+    use super::shutdown::{self, MeshShutdown};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -189,12 +199,13 @@ mod host {
     }
 
     /// The mesh listener's stop, which its accept loop and its sync
-    /// connections answer.
+    /// connections answer, and the stop of the work its routes admitted.
     pub(crate) struct MeshStop {
         winding: watch::Sender<Winding>,
         /// Each receiver subscribed to it is one sync connection's place: it
         /// is released once that connection's streams have all ended.
         sync_open: watch::Sender<()>,
+        shutdown: MeshShutdown,
     }
 
     impl MeshStop {
@@ -202,6 +213,7 @@ mod host {
             Self {
                 winding: watch::Sender::new(Winding::Serving),
                 sync_open: watch::Sender::new(()),
+                shutdown: MeshShutdown::new(),
             }
         }
 
@@ -232,46 +244,69 @@ mod host {
         // a node are re-driven on the tick (OF-575).
         let organs = Arc::clone(&server.organs);
         let router = Arc::new(OrganRouter::new().with_local(Arc::clone(&organs)));
+        // The organ work's stop and cancel, and the model calls' deadline.
+        let work = &stop.shutdown;
         MeshRoutes::default()
             .route(
                 SYNC_ALPN,
                 Arc::new(SyncRoute {
                     app: app.clone(),
                     limits,
-                    floor: Arc::new(Semaphore::new(limits.max_connections)),
+                    floor: MeshFloor::new(
+                        limits.max_connections,
+                        Arc::clone(&server.mesh_pressure),
+                    ),
                     stop: Arc::clone(stop),
                 }),
             )
             .route(
                 ORGAN_ALPN,
-                Arc::new(OrganService::new(organs, Arc::clone(vault))),
+                Arc::new(
+                    OrganService::new(organs, Arc::clone(vault)).with_cancel(work.organs.clone()),
+                ),
             )
             // This machine's models serve the owner's other nodes (OF-575).
             .route(
                 LLM_ALPN,
-                Arc::new(LlmMeshService::new(
-                    Arc::new(crate::api::MeshLlm(Arc::clone(server))),
-                    // What this node's model calls for other nodes hold at
-                    // once (FIX 8618), on the vault's one budget (FIX 9323).
-                    server.model_budgets.mesh_staging(),
-                )),
+                Arc::new(
+                    LlmMeshService::new(
+                        Arc::new(crate::api::MeshLlm(Arc::clone(server))),
+                        // What this node's model calls for other nodes hold at
+                        // once (FIX 8618), on the vault's one budget (FIX 9323).
+                        server.model_budgets.mesh_staging(),
+                    )
+                    .with_stop(work.deadline.subscribe()),
+                ),
             )
-            .tick(organ_redrive(router, Arc::clone(vault)))
-            .tick(server.pack_organ_tick())
+            .tick(organ_redrive(
+                router,
+                Arc::clone(vault),
+                work.organs.clone(),
+            ))
+            .tick(server.pack_organ_tick(work.organs.clone()))
     }
 
-    /// Runs every held organ call a node can take now, on a blocking thread.
-    fn organ_redrive(router: Arc<OrganRouter>, vault: Arc<oneiron::Vault>) -> MeshTick {
+    /// Runs every held organ call a node can take now, on a blocking thread,
+    /// under the listener's stop: once it begins no held call starts, and
+    /// one its cancel cuts short stays held (FIX 4755).
+    fn organ_redrive(
+        router: Arc<OrganRouter>,
+        vault: Arc<oneiron::Vault>,
+        organs: MeshCancel,
+    ) -> MeshTick {
         Arc::new(move || -> Pin<Box<dyn Future<Output = ()> + Send>> {
             let router = Arc::clone(&router);
             let vault = Arc::clone(&vault);
+            let organs = organs.clone();
             Box::pin(async move {
                 let ran = tokio::task::spawn_blocking(move || {
-                    router.redrive_waiting(&vault, &AskHandlers::none())
+                    organs.scope(|| router.redrive_waiting(&vault, &AskHandlers::none()))
                 })
                 .await;
-                if let Ok(Err(error)) = ran {
-                    tracing::warn!(%error, "organ redrive");
+                match ran {
+                    Ok(Ok(redriven)) => shutdown::held(&redriven),
+                    Ok(Err(error)) => tracing::warn!(%error, "organ redrive"),
+                    Err(_) => {}
                 }
             })
         })
@@ -310,19 +345,26 @@ mod host {
             self.stopping.wind(Winding::Ended).await;
         }
 
-        /// Stops the listener: its sync streams end, the ticks stop, the
-        /// endpoint closes, and this returns once every connection the
-        /// listener admitted has ended with it.
+        /// Stops the listener ([`shutdown`], FIX 4755): it takes no new
+        /// work, its sync streams end, and the work its routes admitted
+        /// drains until one deadline, the host's drain grace from now; what
+        /// still runs then is cancelled and reaped. Then the endpoint
+        /// closes, and this returns once every connection the listener
+        /// admitted has ended with it.
         pub(crate) async fn stop(self) {
+            let deadline = self.stopping.shutdown.begin();
             self.end_streams().await;
-            if let Some(ticks) = self.ticks {
-                ticks.abort();
-                let _ = ticks.await;
-            }
+            let accepts = self
+                .stopping
+                .shutdown
+                .drain(self.ticks, self.accepts, deadline)
+                .await;
             if let Err(error) = self.transport.shutdown().await {
                 tracing::warn!(%error, "mesh listener shutdown");
             }
-            let _ = self.accepts.await;
+            if let Some(accepts) = accepts {
+                let _ = accepts.await;
+            }
         }
     }
 
@@ -377,16 +419,8 @@ mod host {
         ));
         let ticks = (!routes.ticks.is_empty()).then(|| {
             let ticks = routes.ticks.clone();
-            tokio::spawn(async move {
-                let mut every = tokio::time::interval(TICK_EVERY);
-                every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                loop {
-                    every.tick().await;
-                    for tick in &ticks {
-                        tick().await;
-                    }
-                }
-            })
+            let organs = stopping.shutdown.organs.clone();
+            tokio::spawn(shutdown::tick(ticks, organs, TICK_EVERY))
         });
         Ok(Some(MeshHost {
             transport,
@@ -447,12 +481,13 @@ mod host {
     /// connection to the server's router, upgrades included, a task of the
     /// connection's own set. The streams held open at once stay under the TCP
     /// listener's connection floor, as a count of their own; past it, a new
-    /// stream waits for a place. On the listener's stop it takes no more
-    /// streams and ends with its open ones (OF-237).
+    /// stream waits for a place, and the mesh's pressure check is raised
+    /// while one does. On the listener's stop it takes no more streams and
+    /// ends with its open ones (OF-237).
     struct SyncRoute {
         app: Router,
         limits: ConnectionLimits,
-        floor: Arc<Semaphore>,
+        floor: Arc<MeshFloor>,
         stop: Arc<MeshStop>,
     }
 
@@ -482,11 +517,14 @@ mod host {
                     let place = tokio::select! {
                         biased;
                         () = wound_to(&mut winding, Winding::Closing) => break Ok(()),
-                        place = Arc::clone(&self.floor).acquire_owned() => match place {
-                            Ok(place) => place,
-                            Err(_) => break Err(MeshError::Unavailable),
+                        place = self.floor.place() => match place {
+                            Some(place) => place,
+                            None => break Err(MeshError::Unavailable),
                         },
                     };
+                    // Its peer's bytes count in the check under the machine
+                    // the connection proved, until the stream closes.
+                    let (stream, credential) = self.floor.observe(stream);
                     let routes = TowerToHyperService::new(self.app.clone());
                     let body_idle = self.limits.body_idle_timeout;
                     let service =
@@ -499,7 +537,7 @@ mod host {
                         });
                     let header_read_timeout = self.limits.header_read_timeout;
                     let mut stop = winding.clone();
-                    streams.spawn(async move {
+                    streams.spawn(pressure::keyed(credential, machine.0, async move {
                         // The place is the stream's until it closes, upgrades
                         // included.
                         let _place = place;
@@ -523,7 +561,7 @@ mod host {
                             served.as_mut().graceful_shutdown();
                             let _ = served.as_mut().await;
                         }
-                    });
+                    }));
                 };
                 // The open streams end on their own, after their requests
                 // once the listener closes, or where they are once it ends.
