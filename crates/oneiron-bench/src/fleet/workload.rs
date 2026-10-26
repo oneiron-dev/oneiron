@@ -79,6 +79,7 @@ fn seed_read_authority(vault: &Vault, agents: usize) -> Result<()> {
                 created_at: AT,
                 revoked_at: None,
                 expires_at: None,
+                companion_bounds: None,
             },
         )?;
     }

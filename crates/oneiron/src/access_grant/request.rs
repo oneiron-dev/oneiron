@@ -5,8 +5,9 @@ use super::{
     AccessGrant, AccessGrantScope, AccessGrantStatus, decode_access_grant_body,
     encode_access_grant_body,
 };
+use crate::authority::VerifiedSlip;
 use crate::consent::AuthenticatedOwner;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{EntityId, Vault};
 use std::ops::Bound;
@@ -34,6 +35,9 @@ pub struct AccessRequest {
     pub status: AccessRequestStatus,
     pub decided_by: Option<EntityId>,
     pub decided_at: Option<u64>,
+    /// The person or agent the request asks (FIX 1379), who may answer it
+    /// beside the owner. None: the owner answers it alone.
+    pub addressed_to: Option<EntityId>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -43,6 +47,20 @@ struct RequestRow {
     status: AccessRequestStatus,
     decided_by: Option<String>,
     decided_at: Option<u64>,
+    addressed_to: Option<String>,
+}
+
+/// Who answers an access request through the addressed door (FIX 1379).
+#[derive(Clone, Copy)]
+pub enum AccessRequestResponder<'a> {
+    /// A live person on their own proof: an owner of the vault, co-Owners
+    /// included, or the person the request asks.
+    Person(&'a AuthenticatedOwner),
+    /// An agent on its own verified credential, which names it as holder.
+    Agent {
+        actor: EntityId,
+        credential: &'a VerifiedSlip,
+    },
 }
 
 impl AccessRequest {
@@ -52,6 +70,7 @@ impl AccessRequest {
             status: self.status,
             decided_by: self.decided_by.map(|id| id.to_hex()),
             decided_at: self.decided_at,
+            addressed_to: self.addressed_to.map(|id| id.to_hex()),
         })
     }
 
@@ -59,6 +78,11 @@ impl AccessRequest {
         let grant = decode_access_grant_body(&row.grant)?;
         let decided_by = row
             .decided_by
+            .as_deref()
+            .map(EntityId::from_hex)
+            .transpose()?;
+        let addressed_to = row
+            .addressed_to
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
@@ -75,6 +99,7 @@ impl AccessRequest {
             status: row.status,
             decided_by,
             decided_at: row.decided_at,
+            addressed_to,
         })
     }
 }
@@ -82,6 +107,34 @@ impl AccessRequest {
 impl Vault {
     /// Requests cross-relationship access. Requesting confers no authority.
     pub fn request_access(&self, id: EntityId, grant: AccessGrant) -> Result<AccessRequest> {
+        self.request_access_to(id, grant, None)
+    }
+
+    /// [`Self::request_access`], asking `addressed_to` (FIX 1379): that
+    /// person or agent may answer it beside the owner. Asking confers no
+    /// authority, on the asker or on the one asked.
+    pub fn request_access_to(
+        &self,
+        id: EntityId,
+        grant: AccessGrant,
+        addressed_to: Option<EntityId>,
+    ) -> Result<AccessRequest> {
+        let mut txn = self.store.env.write_txn()?;
+        let request = self.insert_access_request_in(&mut txn, id, grant, addressed_to)?;
+        txn.commit()?;
+        Ok(request)
+    }
+
+    /// Files a pending request for `grant` at `id` in the caller's write
+    /// transaction, so a writer that decides to propose rather than grant
+    /// (FIX 8140) files it in the same transaction it decided in.
+    pub(super) fn insert_access_request_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        grant: AccessGrant,
+        addressed_to: Option<EntityId>,
+    ) -> Result<AccessRequest> {
         grant.validate()?;
         if grant.status != AccessGrantStatus::Active
             || !matches!(
@@ -100,16 +153,24 @@ impl Vault {
             status: AccessRequestStatus::Pending,
             decided_by: None,
             decided_at: None,
+            addressed_to,
         };
-        let mut txn = self.store.env.write_txn()?;
-        if REQUESTS.contains(&self.store, &txn, &id)? {
+        if REQUESTS.contains(&self.store, txn, &id)? {
             return Err(Error::Record(
                 crate::error::RecordError::AccessGrantAlreadyExists,
             ));
         }
-        REQUESTS.put(&self.store, &mut txn, &id, &request.to_row()?)?;
-        txn.commit()?;
+        REQUESTS.put(&self.store, txn, &id, &request.to_row()?)?;
         Ok(request)
+    }
+
+    /// Whether a request, pending or answered, already holds `id`.
+    pub(super) fn access_request_exists_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<bool> {
+        REQUESTS.contains(&self.store, txn, id)
     }
 
     pub fn get_access_request(&self, id: EntityId) -> Result<Option<AccessRequest>> {
@@ -192,8 +253,84 @@ impl Vault {
         // A grant is the vault's to give: a native host's proof shows a live
         // person, not whose vault this is.
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let request = self.answer_access_request_in(&mut txn, actor, id, approve, now, admit)?;
+        txn.commit()?;
+        Ok(request)
+    }
+
+    /// The addressed answer door (FIX 1379). An owner of the vault,
+    /// co-Owners included, answers any request as
+    /// [`Self::respond_access_request`] does. The person or agent a request
+    /// asks answers that request on their own proof, revalidated in the
+    /// answering transaction: they deny it, or approve access to their own
+    /// companion profile, the one thing here that is theirs to give. Any
+    /// other approval stays pending for the owner. A request not addressed
+    /// to them reads as one that does not exist.
+    pub fn respond_addressed_access_request(
+        &self,
+        responder: AccessRequestResponder<'_>,
+        id: EntityId,
+        approve: bool,
+        now: u64,
+    ) -> Result<AccessRequest> {
+        let mut txn = self.store.env.write_txn()?;
+        let actor = match responder {
+            AccessRequestResponder::Person(proof) => {
+                match proof.revalidate_as_vault_owner_in_txn(self, &txn) {
+                    Ok(owner) => {
+                        let request =
+                            self.answer_access_request_in(&mut txn, owner, id, approve, now, |_| {
+                                Ok(())
+                            })?;
+                        txn.commit()?;
+                        return Ok(request);
+                    }
+                    Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_))) => {
+                        proof.revalidate_person_in_txn(self, &txn)?
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+            AccessRequestResponder::Agent { actor, credential } => {
+                if credential.is_transferred()
+                    || credential.claims().holder_ref != actor.to_hex()
+                    || !self.capability_slip_is_live_in_txn(&txn, credential)?
+                {
+                    return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                        "the answering agent's own credential does not hold",
+                    )));
+                }
+                actor
+            }
+        };
+        let request = self.answer_access_request_in(&mut txn, actor, id, approve, now, |request| {
+            if request.addressed_to != Some(actor) {
+                return Err(Error::EntityNotFound);
+            }
+            if approve && !own_companion_profile(&request.grant, &actor) {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    ADDRESSED_APPROVAL_PAST_OWN_DATA,
+                )));
+            }
+            Ok(())
+        })?;
+        txn.commit()?;
+        Ok(request)
+    }
+
+    /// Records `actor`'s answer to request `id` in `txn`: the terminal
+    /// answer, and on approval its exact grant at the request's id.
+    fn answer_access_request_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        id: EntityId,
+        approve: bool,
+        now: u64,
+        admit: impl FnOnce(&AccessRequest) -> Result<()>,
+    ) -> Result<AccessRequest> {
         let row = REQUESTS
-            .get(&self.store, &txn, &id)?
+            .get(&self.store, txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         let mut request = AccessRequest::from_row(id, row)?;
         admit(&request)?;
@@ -208,21 +345,29 @@ impl Vault {
         request.decided_by = Some(actor);
         request.decided_at = Some(now);
         if approve {
-            self.check_companion_profile_target(&txn, &request.grant)?;
-            if crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, &id)? {
+            self.check_companion_profile_target(txn, &request.grant)?;
+            if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
                 return Err(invalid_grant());
             }
-            self.apply_access_grant_body(
-                &mut txn,
-                &id,
-                now,
-                encode_access_grant_body(&request.grant)?,
-            )?;
+            self.apply_access_grant_body(txn, &id, now, encode_access_grant_body(&request.grant)?)?;
         }
-        REQUESTS.put(&self.store, &mut txn, &id, &request.to_row()?)?;
-        txn.commit()?;
+        REQUESTS.put(&self.store, txn, &id, &request.to_row()?)?;
         Ok(request)
     }
+}
+
+/// The refusal of an addressed member's approval past their own data (CALLS
+/// "OF-1379 addressed member approval", open): the request stays pending
+/// for the owner, never approved with a partial grant.
+const ADDRESSED_APPROVAL_PAST_OWN_DATA: &str =
+    "an addressed member approves access only to their own companion profile; the owner answers the rest";
+
+/// Whether `grant` reads only `actor`'s own companion profile.
+fn own_companion_profile(grant: &AccessGrant, actor: &EntityId) -> bool {
+    grant
+        .scope
+        .companion_profile_refs()
+        .is_some_and(|(person, _)| person == *actor)
 }
 
 #[cfg(test)]

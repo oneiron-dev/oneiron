@@ -8,6 +8,7 @@ mod codec;
 mod keys;
 mod model;
 mod persona;
+mod profile_admission;
 mod queue;
 mod vault;
 
@@ -29,6 +30,9 @@ pub use self::model::{
     CompanionExpression, CompanionScope, CompanionSubject, CompanionSubjectKind, CompanionTaskKey,
 };
 pub use self::persona::{CompiledPersona, PERSONA_CHANGE_PREDICATE, PersonaChange, PersonaMadeBy};
+pub use self::profile_admission::{
+    COMPANION_PROFILE_WITHHOLDS_MIXED_SOURCES, CompanionProfileAdmission,
+};
 pub(crate) use self::persona::{body_fields as persona_body_fields, validated_persona_baseline};
 pub use self::queue::{
     ClaimCompanionTask, ClaimCompanionTaskOutcome, CompanionQueue, CompanionTask,

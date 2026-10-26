@@ -9,15 +9,16 @@ use serde::{Deserialize, Serialize};
 use super::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
-use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::agent_dispatch::{
     AddressDecision, AddressRefusal, AgentDispatchInput, CommReach, SenderDispatch,
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
-use crate::context_board::{People, PersonKind, PersonRow};
+use crate::context_board::{People, PersonRow};
 use crate::conversation::{ConversationBody, ConversationKind};
 use crate::{EdgeActorClass, EntityId, WriteActor};
+
+mod grants;
 
 /// Rows on one `vault.people.list` page.
 pub const PEOPLE_PAGE_SIZE: usize = 50;
@@ -197,8 +198,8 @@ pub struct GrantAskRequest {
     pub scope: GrantAskScope,
 }
 
-/// The pending access request. Asking grants nothing; the vault owner
-/// answers it.
+/// The pending access request. Asking grants nothing; the vault owner, or
+/// the person asked, answers it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantAskReceipt {
     pub request: String,
@@ -684,58 +685,5 @@ impl Memory<'_> {
             }
         }
         error
-    }
-
-    /// `self.grants.ask`: asks a person for access, on behalf of the caller.
-    /// The request grants nothing until the vault owner approves it.
-    pub fn grants_ask(&self, input: &GrantAskRequest) -> MemoryResult<GrantAskReceipt> {
-        super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        let people = self.people_roster()?;
-        let asked = Self::person_by_handle(&people, &input.pr)?;
-        if asked.kind != PersonKind::Human {
-            return Err(MemoryError::bad_request(format!(
-                "{} is an agent; only a human grants access",
-                asked.handle
-            )));
-        }
-        let scope = match &input.scope {
-            GrantAskScope::Messages { space_ref } => AccessGrantScope::Messages {
-                space_ref: hex_ref("space_ref", space_ref)?,
-            },
-            GrantAskScope::Summaries { space_ref } => AccessGrantScope::Summaries {
-                space_ref: hex_ref("space_ref", space_ref)?,
-            },
-            GrantAskScope::RelationshipClaims { space_ref } => {
-                AccessGrantScope::RelationshipClaims {
-                    space_ref: hex_ref("space_ref", space_ref)?,
-                }
-            }
-            GrantAskScope::CompanionProfile { facet_ref } => AccessGrantScope::CompanionProfile {
-                person_ref: asked.person,
-                facet_ref: facet_ref
-                    .as_deref()
-                    .map(|facet| hex_ref("facet_ref", facet))
-                    .transpose()?,
-            },
-        };
-        let request = self.vault.new_entity_id()?;
-        self.vault.request_access(
-            request,
-            AccessGrant {
-                authority_scope: crate::federation::Scope::top(),
-                principal_ref: self.actor,
-                capability: scope.required_capability(),
-                scope,
-                status: AccessGrantStatus::Active,
-                created_at: unix_ms() / 1_000,
-                revoked_at: None,
-                expires_at: None,
-            },
-        )?;
-        Ok(GrantAskReceipt {
-            request: request.to_hex(),
-            asked: asked.handle.clone(),
-            status: "pending".to_owned(),
-        })
     }
 }

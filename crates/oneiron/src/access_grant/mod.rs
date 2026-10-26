@@ -9,8 +9,13 @@
 mod context;
 pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
-pub use request::{AccessRequest, AccessRequestStatus};
+pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus};
 mod codec;
+mod companion_admission;
+pub use companion_admission::{
+    COMPANION_GRANT_EXCESS_PENDS, CompanionGrantBounds, CompanionGrantIssuer,
+    CompanionGrantOutcome,
+};
 mod record;
 mod vault_doors;
 

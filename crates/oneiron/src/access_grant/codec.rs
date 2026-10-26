@@ -12,10 +12,10 @@ use super::record::{AccessGrant, AccessGrantCapability, AccessGrantScope, Access
 use crate::error::RecordError;
 
 /// Current AccessGrant body schema version.
-pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 3;
+pub const ACCESS_GRANT_SCHEMA_VERSION: u64 = 4;
 
 /// Pinned on-disk MessagePack key set for AccessGrant bodies.
-pub const ACCESS_GRANT_BODY_KEYS: [&str; 9] = [
+pub const ACCESS_GRANT_BODY_KEYS: [&str; 10] = [
     "schema_version",
     "principal_ref",
     "scope",
@@ -25,6 +25,7 @@ pub const ACCESS_GRANT_BODY_KEYS: [&str; 9] = [
     "revoked_at",
     "expires_at",
     "authority_scope",
+    "companion_bounds",
 ];
 
 pub(crate) const ACCESS_GRANT_FIELDS_MINIMAL: &[&str] = &["scope", "capability", "status"];
@@ -47,6 +48,10 @@ pub(super) const KEY_STATUS: &str = ACCESS_GRANT_BODY_KEYS[4];
 pub(super) const KEY_CREATED_AT: &str = ACCESS_GRANT_BODY_KEYS[5];
 
 pub(super) const KEY_REVOKED_AT: &str = ACCESS_GRANT_BODY_KEYS[6];
+
+const KEY_COMPANION_BOUNDS: &str = ACCESS_GRANT_BODY_KEYS[9];
+
+const BOUNDS_KEYS: [&str; 2] = ["issuer_slip", "ceiling"];
 
 pub(super) const SCOPE_KEY_KIND: &str = "kind";
 
@@ -104,6 +109,10 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
             Value::from("expires_at"),
             grant.expires_at.map_or(Value::Nil, Value::from),
         ),
+        (
+            Value::from(KEY_COMPANION_BOUNDS),
+            encode_companion_bounds(grant.companion_bounds.as_ref())?,
+        ),
     ]);
 
     let mut out = Vec::new();
@@ -160,6 +169,7 @@ pub(crate) struct GrantTerms {
     pub(crate) created_at: u64,
     pub(crate) revoked_at: Option<u64>,
     pub(crate) expires_at: Option<u64>,
+    pub(crate) companion_bounds: Option<super::CompanionGrantBounds>,
 }
 
 impl GrantTerms {
@@ -173,6 +183,7 @@ impl GrantTerms {
             created_at: self.created_at,
             revoked_at: self.revoked_at,
             expires_at: self.expires_at,
+            companion_bounds: self.companion_bounds,
         }
     }
 }
@@ -243,6 +254,11 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
         Some(Value::Nil) => None,
         Some(value) => Some(value.as_u64().ok_or_else(invalid_grant)?),
     };
+    let companion_bounds = if legacy {
+        None
+    } else {
+        decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?
+    };
     let terms = GrantTerms {
         authority_scope: if legacy {
             crate::federation::scope_codec::read_preset()
@@ -259,8 +275,48 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
         created_at,
         revoked_at,
         expires_at,
+        companion_bounds,
     };
     Ok((principal, terms))
+}
+
+/// A companion grant's issuer bounds (FIX 8140): the issuing slip's id and
+/// its record ceiling, or nil.
+fn encode_companion_bounds(bounds: Option<&super::CompanionGrantBounds>) -> Result<Value> {
+    let Some(bounds) = bounds else {
+        return Ok(Value::Nil);
+    };
+    Ok(Value::Map(vec![
+        (
+            Value::from(BOUNDS_KEYS[0]),
+            Value::from(bounds.issuer_slip.as_str()),
+        ),
+        (
+            Value::from(BOUNDS_KEYS[1]),
+            crate::federation::scope_codec::encode_scope_value(&bounds.ceiling)?,
+        ),
+    ]))
+}
+
+fn decode_companion_bounds(value: &Value) -> Result<Option<super::CompanionGrantBounds>> {
+    let Value::Map(entries) = value else {
+        return match value {
+            Value::Nil => Ok(None),
+            _ => Err(invalid_grant()),
+        };
+    };
+    validate_keys(entries, &BOUNDS_KEYS)?;
+    Ok(Some(super::CompanionGrantBounds {
+        issuer_slip: required_value(entries, BOUNDS_KEYS[0])?
+            .as_str()
+            .ok_or_else(invalid_grant)?
+            .to_owned(),
+        ceiling: crate::federation::scope_codec::decode_scope_value(required_value(
+            entries,
+            BOUNDS_KEYS[1],
+        )?)
+        .map_err(|_| invalid_grant())?,
+    }))
 }
 
 pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
