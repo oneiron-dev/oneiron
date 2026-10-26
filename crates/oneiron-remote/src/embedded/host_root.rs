@@ -66,6 +66,7 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open: None,
         };
         Ok((client, HostRootProfile::from_core(profile)))
     }
@@ -84,6 +85,13 @@ impl HostRootProfile {
             LocalOpenProfile::AlreadyCarrying { wrong_root } => Self {
                 enrolled: false,
                 wrong_root,
+            },
+            // No profile stood and the given root is not the settled one:
+            // nothing was enrolled, and the open stands under the settled
+            // root (FIX 8120).
+            LocalOpenProfile::UnprofiledWrongRoot => Self {
+                enrolled: false,
+                wrong_root: true,
             },
             LocalOpenProfile::Skipped => Self {
                 enrolled: false,

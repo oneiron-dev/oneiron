@@ -44,6 +44,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// keeps its signed bytes for read quarantine instead of the local
     /// write-window refusal.
     pub(super) replicated_puts: std::collections::BTreeSet<EntityId>,
+    /// Each bound raw CLAIM put's verified caller envelope
+    /// (`BatchBuilder::caller_envelope`, FIX 8118), read by that put.
+    pub(super) caller_envelopes: HashMap<EntityId, crate::WriteEnvelope>,
 }
 
 impl ApplyOpsGateMode {
@@ -66,6 +69,7 @@ impl ApplyOpsGateMode {
             owner_authored: None,
             asset_files: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
+            caller_envelopes: HashMap::new(),
         }
     }
 
@@ -106,6 +110,15 @@ impl ApplyOpsGateMode {
         files: HashMap<EntityId, crate::store::AssetBodyFacts>,
     ) -> Self {
         self.asset_files = files;
+        self
+    }
+
+    /// Binds each bound raw CLAIM put to its caller's envelope (FIX 8118).
+    pub(super) fn with_caller_envelopes(
+        mut self,
+        envelopes: HashMap<EntityId, crate::WriteEnvelope>,
+    ) -> Self {
+        self.caller_envelopes = envelopes;
         self
     }
 
