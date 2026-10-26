@@ -63,8 +63,9 @@ impl ScopedRead<'_> {
 
     /// One kept read context under the reader's live authority: each row it
     /// is about passes the reader's own full row floor now, audience and
-    /// private threads included, and a record that may never have landed
-    /// sits where the reader's Scope, grants and relationships read it.
+    /// private threads included; a record stored now passes it too, and one
+    /// that never landed sits where the reader's Scope, grants and
+    /// relationships read it.
     fn loop_read_context_admitted_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -78,6 +79,16 @@ impl ScopedRead<'_> {
             if !self.is_entity_retrievable_with_policy_in(txn, &read.policy, &read.filter, row)? {
                 return Ok(false);
             }
+        }
+        if let Some(record) = context.record
+            && self.entity_record_in(txn, &record)?.is_some()
+        {
+            return self.is_entity_retrievable_with_policy_in(
+                txn,
+                &read.policy,
+                &read.filter,
+                &record,
+            );
         }
         match &context.position {
             None => Ok(true),

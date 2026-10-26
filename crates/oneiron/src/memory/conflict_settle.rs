@@ -15,6 +15,8 @@
 //! is retried once as the responder's approval of that alternative (FIX
 //! 5753).
 
+mod decision_context;
+
 use std::cell::Cell;
 
 use super::authorship::*;
@@ -334,6 +336,7 @@ impl Memory<'_> {
                     marker.as_bytes().to_vec(),
                     now,
                 );
+                receipt.context = decision_context::answering_claim(self.vault, &*txn, marker);
                 receipt.grant_ref = grant_ref;
                 self.vault
                     .store
@@ -364,6 +367,8 @@ impl Memory<'_> {
                         .collect(),
                     now,
                 );
+                record.context =
+                    decision_context::answering_claim(self.vault, &*txn, approved.claim);
                 record.grant_ref.clone_from(&grant_ref);
                 self.vault.store.append_gate_decision_in_txn(txn, &record)?;
                 Some(format!("gate:{}", record.decision_id.to_hex()))
@@ -379,6 +384,7 @@ impl Memory<'_> {
             marker.as_bytes().to_vec(),
             now,
         );
+        receipt.context = decision_context::answering_claim(self.vault, &*txn, marker);
         receipt.grant_ref = grant_ref;
         self.vault
             .store
@@ -489,7 +495,7 @@ impl Memory<'_> {
             self.conflict_review_owner(txn, owner)?;
             let actor = WriteActor::new(self.actor, self.actor_class);
             let reverted = revert_settlement_in_txn(self.vault, txn, resolved, actor, now)?;
-            let receipt = decision(
+            let mut receipt = decision(
                 actor,
                 REVERT_KIND,
                 "approved",
@@ -498,6 +504,7 @@ impl Memory<'_> {
                 reverted.marker.as_bytes().to_vec(),
                 now,
             );
+            receipt.context = decision_context::answering_claim(self.vault, &*txn, resolved);
             self.vault
                 .store
                 .append_gate_decision_in_txn(txn, &receipt)?;

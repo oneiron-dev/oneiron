@@ -39,6 +39,7 @@ use crate::error::GateError;
 
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
+mod decision_context;
 // The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
 mod pending_heal;
 
@@ -562,7 +563,7 @@ impl Vault {
                     },
                 )?;
             }
-            let record = GateDecisionRecord {
+            let mut record = GateDecisionRecord {
                 version: GATE_DECISION_LEDGER_VERSION,
                 decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
                 created_at: now,
@@ -589,7 +590,7 @@ impl Vault {
                 context: Default::default(),
                 redacted_at: None,
             };
-            self.store.append_gate_decision_in_txn(wtxn, &record)?;
+            decision_context::append(self, wtxn, &mut record, dreamer_run_id, &member_claim_ids)?;
 
             Ok((
                 GateConsentBundleReceipt {

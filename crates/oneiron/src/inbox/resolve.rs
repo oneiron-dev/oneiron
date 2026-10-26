@@ -534,6 +534,13 @@ fn accept_member_with_amendment_in_txn(
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+    // FIX 7499, 7500: the candidate as it lands, amended or not, and the
+    // loop links of the decision this answers.
+    let landed = amended.as_ref().unwrap_or(&reviewed);
+    let context = crate::store::GateDecisionContext {
+        read: crate::store::GateDecisionReadContext::claim(id, landed).into_iter().collect(),
+        ..crate::store::GateDecisionContext::answering(&original)
+    };
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
@@ -565,7 +572,7 @@ fn accept_member_with_amendment_in_txn(
         grant_ref: bundle_ref.map(str::to_owned),
         diff_handle: pending.diff_handle,
         read_frontier_hash: pending.read_frontier_hash,
-        context: Default::default(),
+        context,
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
@@ -685,7 +692,9 @@ fn append_bundle_decision_in_txn(
         read_frontier_hash: basis
             .first()
             .map_or([0; 32], |record| record.read_frontier_hash),
-        context: Default::default(),
+        // FIX 7499, 7500: every member's read context and loop links; the
+        // claim refs below bind each member's claim.
+        context: crate::store::GateDecisionContext::answering_all(basis),
         redacted_at: None,
     };
     let claim_refs = basis
