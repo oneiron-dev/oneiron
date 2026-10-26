@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -30,8 +30,9 @@ use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::api::params::hex_bytes;
-use crate::api::{json_payload, query_params};
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -326,10 +327,10 @@ async fn offer(
 async fn confirm(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConfirmOffer>, JsonRejection>,
+    payload: OwnerJsonBody<ConfirmOffer>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let delta = delta_bytes(&request.expected_delta)?;
         Ok(server
@@ -351,10 +352,10 @@ async fn confirm(
 async fn narrow(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<NarrowClearance>, JsonRejection>,
+    payload: OwnerJsonBody<NarrowClearance>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let contact = entity_id("contact", &request.contact)?;
         Ok(server
@@ -372,10 +373,10 @@ async fn narrow(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeClearance>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeClearance>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let contact = entity_id("contact", &request.contact)?;
         Ok(server
@@ -392,10 +393,10 @@ async fn revoke(
 async fn preclear(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PreclearSet>, JsonRejection>,
+    payload: OwnerJsonBody<PreclearSet>,
 ) -> OwnerReply<Vec<ClearanceReceipt>> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipts = blocking(move || -> OwnerResult<Vec<ClearanceReceipt>> {
         let contacts = request
             .contacts
@@ -431,10 +432,10 @@ async fn mode(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set_mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ModeSetting>, JsonRejection>,
+    payload: OwnerJsonBody<ModeSetting>,
 ) -> OwnerReply<ModeSetting> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let mode = blocking(move || -> OwnerResult<ModeSetting> {
         let mode = DisclosureOfferMode::parse(&request.mode).ok_or_else(|| {
             OwnerError::Invalid("mode is always_ask, auto or always_yes".to_owned())
@@ -454,10 +455,10 @@ async fn set_mode(
 async fn attendee(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AttendeeAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<AttendeeAnswer>,
 ) -> OwnerReply<AttendeeResolved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let resolved = blocking(move || -> OwnerResult<AttendeeResolved> {
         let ask_ref = entity_id("ask_ref", &request.ask_ref)?;
         let choice = match request.choice.as_str() {
@@ -539,10 +540,10 @@ async fn entry(
 async fn confirm_entry(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConfirmEntry>, JsonRejection>,
+    payload: OwnerJsonBody<ConfirmEntry>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
         let delta = delta_bytes(&request.expected_delta)?;
@@ -567,10 +568,10 @@ async fn confirm_entry(
 async fn decline_entry(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DeclineEntry>, JsonRejection>,
+    payload: OwnerJsonBody<DeclineEntry>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
         let delta = delta_bytes(&request.expected_delta)?;

@@ -26,7 +26,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -39,7 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -220,11 +219,11 @@ async fn challenge(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ChallengeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ChallengeRequest>,
 ) -> OwnerReply<ChallengeReply> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ChallengeReply> {
         let machine = entity_id("machine", &body.machine)?;
         let public_key = parse_revision("public_key", &body.public_key)?;
@@ -247,11 +246,11 @@ async fn enroll(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EnrollRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EnrollRequest>,
 ) -> OwnerReply<ReceiptReply> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReceiptReply> {
         let input = OwnerKeyEnrollment {
             machine: entity_id("machine", &body.machine)?,

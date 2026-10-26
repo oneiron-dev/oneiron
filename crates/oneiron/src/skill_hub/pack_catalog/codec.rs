@@ -51,9 +51,6 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Option<PackSource>> {
     if marker.format != FORMAT {
         return Ok(None);
     }
-    if bytes.len() > crate::skill_hub::MAX_HUB_PACKAGE_TOTAL_BYTES + 1024 * 1024 {
-        return Err(invalid("source envelope too large"));
-    }
     let envelope: Envelope =
         rmp_serde::from_slice(bytes).map_err(|_| invalid("invalid source envelope"))?;
     let source = PackSource::from_files(

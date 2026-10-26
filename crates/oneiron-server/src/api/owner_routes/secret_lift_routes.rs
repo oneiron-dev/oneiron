@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::policy_model::{
@@ -19,7 +18,7 @@ use oneiron::policy_model::{
 };
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
@@ -53,10 +52,10 @@ async fn status(
 async fn close(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SecretLiftClose>, JsonRejection>,
+    payload: OwnerJsonBody<SecretLiftClose>,
 ) -> OwnerReply<SecretLiftHistoryProposal> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let closed = blocking(move || -> OwnerResult<SecretLiftHistoryProposal> {
         Ok(server
             .vault()

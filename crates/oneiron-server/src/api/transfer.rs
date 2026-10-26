@@ -581,25 +581,51 @@ pub(super) async fn feed_body(
     idle: Duration,
     max_piece: usize,
 ) {
+    feed_pieces(body, pieces, Some(idle), max_piece).await;
+}
+
+/// [`feed_body`] with no wait of its own on the client: only the listener's
+/// body policy ends a body that goes quiet, as it does for a body read in
+/// memory (an owner route's spooled body, FIX 8195).
+pub(super) async fn feed_body_untimed(
+    body: Body,
+    pieces: mpsc::Sender<BodyPiece>,
+    max_piece: usize,
+) {
+    feed_pieces(body, pieces, None, max_piece).await;
+}
+
+async fn feed_pieces(
+    body: Body,
+    pieces: mpsc::Sender<BodyPiece>,
+    idle: Option<Duration>,
+    max_piece: usize,
+) {
     let mut stream = body.into_data_stream();
     loop {
-        let frame = match tokio::time::timeout(idle, stream.next()).await {
-            Ok(Some(Ok(frame))) => frame,
-            Ok(None) => {
+        let next = match idle {
+            Some(idle) => match tokio::time::timeout(idle, stream.next()).await {
+                Ok(next) => next,
+                Err(_) => {
+                    let _ = pieces
+                        .send(Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "request body stalled",
+                        )))
+                        .await;
+                    return;
+                }
+            },
+            None => stream.next().await,
+        };
+        let frame = match next {
+            Some(Ok(frame)) => frame,
+            None => {
                 let _ = pieces.send(Ok(None)).await;
                 return;
             }
-            Ok(Some(Err(error))) => {
+            Some(Err(error)) => {
                 let _ = pieces.send(Err(body_failure(error))).await;
-                return;
-            }
-            Err(_) => {
-                let _ = pieces
-                    .send(Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "request body stalled",
-                    )))
-                    .await;
                 return;
             }
         };

@@ -21,7 +21,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, PoisonError, TryLockError};
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::sse::{Event, Sse};
@@ -35,7 +35,8 @@ use serde::{Deserialize, Serialize};
 
 use super::desktop_takeover_routes::frame_stream;
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, OwnerResult};
@@ -157,10 +158,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn take(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> OwnerReply<Takeover> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let state = blocking(move || -> OwnerResult<Takeover> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let state = on_browser(&server, &request.run, |session| {
@@ -180,10 +181,10 @@ async fn take(
 async fn screen(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ScreenRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ScreenRequest>,
 ) -> Result<Response, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let png = blocking(move || -> OwnerResult<Vec<u8>> {
         owner.revalidate_principal_ref(server.vault())?;
         on_browser(&server, &request.run, |session| {
@@ -208,10 +209,10 @@ async fn screen(
 async fn input(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<InputRequest>, JsonRejection>,
+    payload: OwnerJsonBody<InputRequest>,
 ) -> OwnerReply<InputReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<InputReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let action = request.action;
@@ -230,10 +231,10 @@ async fn input(
 async fn hand_back(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> OwnerReply<ReturnReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReturnReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let run = run_of(&request.run)?;

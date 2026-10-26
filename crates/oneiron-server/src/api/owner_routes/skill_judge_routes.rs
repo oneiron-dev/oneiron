@@ -17,7 +17,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -33,7 +33,8 @@ use oneiron::skill_optimize::{
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::replay_judge::{self, JournalRow, ServeAxisBandit};
@@ -211,10 +212,10 @@ async fn decisions(
 async fn person_time(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RecordPersonTime>, JsonRejection>,
+    payload: OwnerJsonBody<RecordPersonTime>,
 ) -> OwnerReply<PersonTimeTotal> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let total = blocking(move || -> OwnerResult<PersonTimeTotal> {
         let vault = server.vault();
         replay_judge::record_person_time(vault, &request.receipt, request.minutes, &request.act)
@@ -234,10 +235,10 @@ async fn person_time(
 async fn measure(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Measure>, JsonRejection>,
+    payload: OwnerJsonBody<Measure>,
 ) -> OwnerReply<GoalAxisReport> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let report = blocking(move || -> OwnerResult<GoalAxisReport> {
         let proposal = entity_id("proposal", &request.proposal)?;
         let judge = replay_judge::registered()
@@ -288,10 +289,10 @@ async fn goal_project(
 async fn bind_goal_project(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindGoalProject>, JsonRejection>,
+    payload: OwnerJsonBody<BindGoalProject>,
 ) -> OwnerReply<GoalRevision> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let revision = blocking(move || -> OwnerResult<GoalRevision> {
         let skill = entity_id("skill", &request.skill)?;
         let project = request
@@ -346,10 +347,10 @@ async fn tradeoff_asks(
 async fn pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Pick>, JsonRejection>,
+    payload: OwnerJsonBody<Pick>,
 ) -> OwnerReply<Settled> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<Settled> {
         let proposal = entity_id("proposal", &request.proposal)?;
         let verdict = settle_skill_tradeoff_ask(
@@ -411,10 +412,10 @@ async fn swaps(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
 async fn swap_pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SwapPick>, JsonRejection>,
+    payload: OwnerJsonBody<SwapPick>,
 ) -> OwnerReply<JudgeSwapPick> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let pick = blocking(move || -> OwnerResult<JudgeSwapPick> {
         Ok(pick_judge_swap_case(
             server.vault(),
@@ -449,10 +450,10 @@ async fn pair_picks(
 async fn pair_pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PairPick>, JsonRejection>,
+    payload: OwnerJsonBody<PairPick>,
 ) -> OwnerReply<ResponsePairPick> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let pick = blocking(move || -> OwnerResult<ResponsePairPick> {
         Ok(pick_response_pair(
             server.vault(),
@@ -485,10 +486,10 @@ async fn swap_policy(
 async fn set_swap_policy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<JudgeSwapPolicy>, JsonRejection>,
+    payload: OwnerJsonBody<JudgeSwapPolicy>,
 ) -> OwnerReply<JudgeSwapPolicy> {
     let owner = owner(&auth, &server)?;
-    let policy = json_payload(payload)?;
+    let policy = payload.read(&server).await?;
     let policy = blocking(move || -> OwnerResult<JudgeSwapPolicy> {
         set_judge_swap_policy(server.vault(), &owner, &policy)?;
         Ok(policy)

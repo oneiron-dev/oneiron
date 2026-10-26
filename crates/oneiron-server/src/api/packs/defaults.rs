@@ -4,20 +4,20 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::skill_hub::{HubImportReceipt, default_skill_hub_id};
 use oneiron::{EntityId, TimeRange, Vault};
 use serde::Deserialize;
 
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
 use super::super::error_map::core_engine_error;
 use super::super::owner_routes::owner;
-use super::super::{json_payload, unix_seconds_now};
+use super::super::unix_seconds_now;
 
 type Reply<T> = Result<Json<T>, EnvelopedApiError>;
 
@@ -64,10 +64,10 @@ async fn restore_defaults(
 async fn import_hub_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HubSkillRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HubSkillRequest>,
 ) -> Reply<HubImportReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         owner.revalidate(vault)?;
@@ -86,10 +86,10 @@ async fn import_hub_skill(
 async fn restore_hub_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HubSkillRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HubSkillRequest>,
 ) -> Reply<HubImportReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         let at = unix_seconds_now();

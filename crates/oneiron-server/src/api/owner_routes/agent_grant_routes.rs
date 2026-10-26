@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -23,7 +22,7 @@ use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeReque
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{hooked_row, memory_refusal};
 use crate::server::SyncServer;
@@ -43,11 +42,11 @@ async fn mint(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AgentGrantMintRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AgentGrantMintRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -71,11 +70,11 @@ async fn revoke(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AgentGrantRevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AgentGrantRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();
         hooked_row(

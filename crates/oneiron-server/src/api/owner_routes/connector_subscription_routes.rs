@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -15,7 +15,8 @@ use oneiron::connector_key::ChannelMessageSubscription;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -115,10 +116,10 @@ async fn list(
 async fn subscribe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SubscribeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SubscribeRequest>,
 ) -> OwnerReply<ChannelMessageSubscription> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ChannelMessageSubscription> {
         let agent = entity_id("agent", &request.agent)?;
         server
@@ -135,10 +136,10 @@ async fn subscribe(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeRequest>,
 ) -> OwnerReply<Revoked> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Revoked> {
         let id = entity_id("subscription", &request.subscription)?;
         server

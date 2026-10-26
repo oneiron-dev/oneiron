@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -17,7 +17,8 @@ use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -174,10 +175,10 @@ async fn changes(
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertChange>, JsonRejection>,
+    payload: OwnerJsonBody<RevertChange>,
 ) -> OwnerReply<ChangeReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<ChangeReverted> {
         let change = entity_id("change", &request.change)?;

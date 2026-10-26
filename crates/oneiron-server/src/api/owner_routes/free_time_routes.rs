@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
 use axum::response::Json;
 use axum::routing::get;
@@ -19,7 +19,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, hooked_row};
 use crate::server::SyncServer;
@@ -71,10 +72,10 @@ async fn policy(
 async fn set_policy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FreeTimePolicySetRequest>, JsonRejection>,
+    payload: OwnerJsonBody<FreeTimePolicySetRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(

@@ -10,7 +10,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -21,7 +21,8 @@ use oneiron::secret_custody::{
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -229,10 +230,10 @@ async fn reveals(
 async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerReveal>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerReveal>,
 ) -> OwnerReply<AnsweredView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<AnsweredView> {
         let reveal = entity_id("reveal", &request.reveal)?;
         let digest = digest_bytes(&request.expected_digest)?;
@@ -257,10 +258,10 @@ async fn answer(
 async fn reveal(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<OwnerReveal>, JsonRejection>,
+    payload: OwnerJsonBody<OwnerReveal>,
 ) -> OwnerReply<RevealedView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let revealed = blocking(move || -> OwnerResult<RevealedView> {
         let target = match (request.handle, request.name) {
             (Some(handle), None) => RevealTarget::Handle(handle),

@@ -18,7 +18,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
@@ -27,7 +27,8 @@ use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, Foun
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -204,10 +205,10 @@ async fn found(
 async fn delete(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FoundKey>, JsonRejection>,
+    payload: OwnerJsonBody<FoundKey>,
 ) -> OwnerReply<SettledView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         Ok(server
             .vault()
@@ -225,10 +226,10 @@ async fn delete(
 async fn grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<GrantFoundKey>, JsonRejection>,
+    payload: OwnerJsonBody<GrantFoundKey>,
 ) -> OwnerReply<SettledView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         let agent = entity_id("agent", &request.agent)?;
         let project = request
@@ -253,11 +254,11 @@ async fn not_a_secret(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FoundKey>, JsonRejection>,
+    payload: OwnerJsonBody<FoundKey>,
 ) -> OwnerReply<SettledView> {
     let owner = owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<SettledView> {
         Ok(server
             .vault()

@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -35,7 +35,8 @@ use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
 use super::owner_routes::{blocking, owner};
-use super::{json_payload, query_params};
+use super::query_params;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, entity_id};
@@ -112,10 +113,10 @@ struct CutOriginAuthority {
 async fn cut_origin_authority(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CutOriginAuthority>, JsonRejection>,
+    payload: OwnerJsonBody<CutOriginAuthority>,
 ) -> Result<Json<OriginAuthority>, EnvelopedApiError> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
         let writer = match request.writer.as_deref() {
@@ -192,10 +193,10 @@ struct SetOriginMirror {
 async fn set_origin_mirror(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOriginMirror>, JsonRejection>,
+    payload: OwnerJsonBody<SetOriginMirror>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         Ok(server.vault().set_served_origin_mirror(
             &request.repo,
@@ -225,10 +226,10 @@ struct SetOriginMirrorStrategy {
 async fn set_origin_mirror_strategy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOriginMirrorStrategy>, JsonRejection>,
+    payload: OwnerJsonBody<SetOriginMirrorStrategy>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         Ok(server
             .vault()
@@ -265,10 +266,10 @@ async fn clear_origin_mirror(
 async fn push_origin_mirror(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RepoQuery>, JsonRejection>,
+    payload: OwnerJsonBody<RepoQuery>,
 ) -> Result<Json<OriginMirrorRun>, EnvelopedApiError> {
     owner(&auth, &server)?;
-    let RepoQuery { repo } = json_payload(payload)?;
+    let RepoQuery { repo } = payload.read(&server).await?;
     let run = blocking(move || Ok(server.vault().push_served_origin_mirror(&repo)?)).await?;
     Ok(Json(run))
 }

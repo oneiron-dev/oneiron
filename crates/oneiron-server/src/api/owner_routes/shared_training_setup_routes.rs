@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::get;
@@ -39,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
 use super::{OwnerReply, blocking};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -170,11 +169,11 @@ async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerSetup>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerSetup>,
 ) -> OwnerReply<SetupReply> {
     let person = holder(&auth, &server, SETUP_ACTS)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SetupReply> {
         let given = SharedTrainingSetupAnswer {
             question_ref: parse_revision("question_ref", &body.question_ref)?,

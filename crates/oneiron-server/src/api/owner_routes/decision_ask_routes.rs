@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -21,7 +21,8 @@ use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -96,10 +97,10 @@ async fn list(
 async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerAsk>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerAsk>,
 ) -> OwnerReply<DecisionAsk> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let ask = blocking(move || -> OwnerResult<DecisionAsk> {
         let asks = server.decision_host().asks();
         if asks.get(request.seq)?.is_none() {
@@ -144,10 +145,10 @@ async fn rules(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
 async fn revoke_rule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeRule>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeRule>,
 ) -> OwnerReply<HostRule> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let rule = blocking(move || -> OwnerResult<HostRule> {
         let id = EntityId::from_hex(&request.id)
             .map_err(|_| OwnerError::Invalid("rule id is not an entity id".into()))?;

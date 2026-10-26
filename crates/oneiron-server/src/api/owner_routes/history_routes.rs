@@ -5,14 +5,15 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::history::{self, EraseHistory, EraseOutcome, Erased, ExecuteErase};
 use crate::server::SyncServer;
@@ -50,10 +51,10 @@ async fn receipts(
 async fn erase(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EraseHistory>, JsonRejection>,
+    payload: OwnerJsonBody<EraseHistory>,
 ) -> OwnerReply<EraseOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let outcome = blocking(move || history::erase(server.vault(), &owner, &request)).await?;
     Ok(Json(outcome))
 }
@@ -63,10 +64,10 @@ async fn erase(
 async fn execute(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ExecuteErase>, JsonRejection>,
+    payload: OwnerJsonBody<ExecuteErase>,
 ) -> OwnerReply<Erased> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let erased = blocking(move || history::execute(server.vault(), &owner, &request)).await?;
     Ok(Json(erased))
 }

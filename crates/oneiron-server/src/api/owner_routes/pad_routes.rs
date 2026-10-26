@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EdgeActorClass;
@@ -15,7 +14,7 @@ use oneiron::memory::DiaryReadOutcome;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -37,10 +36,10 @@ struct ReadPads {
 async fn read(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReadPads>, JsonRejection>,
+    payload: OwnerJsonBody<ReadPads>,
 ) -> OwnerReply<DiaryReadOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let outcome = blocking(move || -> OwnerResult<DiaryReadOutcome> {
         let agent = entity_id("agent", &request.agent)?;

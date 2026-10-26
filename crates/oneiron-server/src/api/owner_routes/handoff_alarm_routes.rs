@@ -9,14 +9,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{EmptyRequest, HandoffAlarmRequest};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, hooked_row};
 use crate::server::SyncServer;
@@ -53,10 +52,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn acknowledge(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HandoffAlarmRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HandoffAlarmRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let alarm = blocking(move || {
         let vault = server.vault();
         hooked_row(

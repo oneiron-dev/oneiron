@@ -9,17 +9,18 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::get;
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -83,10 +84,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetPeerScale>, JsonRejection>,
+    payload: OwnerJsonBody<SetPeerScale>,
 ) -> OwnerReply<PeerScale> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let scale = blocking(move || -> OwnerResult<PeerScale> {
         let peer = entity_id("peer", &request.peer)?;
         let now = std::time::SystemTime::now()
@@ -176,11 +177,11 @@ async fn set_travel(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetGrantTravel>, JsonRejection>,
+    payload: OwnerJsonBody<SetGrantTravel>,
 ) -> OwnerReply<GrantTravel> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let travel = blocking(move || -> OwnerResult<GrantTravel> {
         let grant = entity_id("grant", &request.grant)?;
         // The revision the surface presented, passed through: a stale one is

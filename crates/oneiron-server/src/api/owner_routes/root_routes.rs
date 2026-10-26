@@ -28,7 +28,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -39,7 +38,7 @@ use serde_json::Value;
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::owner_work_routes::{OwnerWorkView, request_entry};
 use super::{OwnerReply, blocking, hooked_owner, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
 use crate::server::SyncServer;
@@ -144,11 +143,11 @@ async fn request(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RootRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RootRequest>,
 ) -> OwnerReply<OwnerWorkView> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<OwnerWorkView> {
         let target = entity_id("target", &body.target)?;
         let change = body.change()?;
@@ -172,11 +171,11 @@ async fn cancel(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CancelRootRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CancelRootRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let receipt = blocking(move || {
         hooked_row(
             server.vault(),

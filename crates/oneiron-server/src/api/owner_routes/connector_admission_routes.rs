@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -50,7 +50,8 @@ use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params, unix_seconds_now};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
@@ -288,10 +289,10 @@ fn unresolvable() -> OwnerError {
 async fn register(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RegisterRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RegisterRequest>,
 ) -> OwnerReply<Registered> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || register_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
@@ -414,10 +415,10 @@ async fn setup(
 async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AcceptRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AcceptRequest>,
 ) -> OwnerReply<SlateView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || accept_slate(server.vault(), &owner, request, None)).await?;
     Ok(Json(reply))
 }
@@ -494,10 +495,10 @@ pub(crate) fn accept_slate(
 async fn qualify(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<QualifyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<QualifyRequest>,
 ) -> OwnerReply<KeyView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || qualify_connector(&server, &owner, &request)).await?;
     Ok(Json(reply))
 }
@@ -617,10 +618,10 @@ fn probe(
 async fn refresh(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RefreshRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RefreshRequest>,
 ) -> OwnerReply<Refreshed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || refresh_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
@@ -731,12 +732,12 @@ fn refresh_connector(
 async fn enabled(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EnabledRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EnabledRequest>,
 ) -> OwnerReply<KeyView> {
     // The owner's proof rides into the switch's own transaction and is
     // revalidated there (FIX 8197).
     let proof = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || switch_connector(server.vault(), &request, &proof)).await?;
     Ok(Json(reply))
 }
@@ -778,10 +779,10 @@ fn switch_connector(
 async fn proxy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ProxyConnectorAdmitRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ProxyConnectorAdmitRequest>,
 ) -> OwnerReply<ProxyConnectorRegistration> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let admitted = server
@@ -800,10 +801,10 @@ async fn proxy(
 async fn revoke_proxy_write(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ProxyConnectorRevokeWriteRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ProxyConnectorRevokeWriteRequest>,
 ) -> OwnerReply<ProxyConnectorRegistration> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let key = entity_id("key", &request.key)?;

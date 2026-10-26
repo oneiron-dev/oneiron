@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::channel_identity::{
@@ -23,7 +22,7 @@ use oneiron::{EdgeActorClass, EntityId};
 use serde::Deserialize;
 
 use super::super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, memory_refusal};
 use crate::server::SyncServer;
@@ -65,10 +64,10 @@ async fn chat_offers(
 async fn bind_chat(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindLineChat>, JsonRejection>,
+    payload: OwnerJsonBody<BindLineChat>,
 ) -> OwnerReply<ChannelIdentityLifecycleReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let receipt = blocking(move || -> OwnerResult<ChannelIdentityLifecycleReceipt> {
         let Some(line) = server.builtin_handles.line() else {
