@@ -279,11 +279,10 @@ pub(super) fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     let telemetry = &server.wire_telemetry;
     let thresholds = telemetry.thresholds()?;
     let mut unread = Vec::new();
+    // Only the questions past the cursor are read (FIX 10863).
     let wire_after = cursor(vault, CURSOR_WIRE)?;
-    for (key, question) in telemetry.kept_questions()? {
-        if wire_after.as_ref().is_none_or(|after| key > *after) {
-            unread.push(wire_crossing(key, &question, &thresholds));
-        }
+    for (key, question) in telemetry.kept_questions_after(wire_after.as_deref())? {
+        unread.push(wire_crossing(key, &question, &thresholds));
     }
     for (key, question) in telemetry.kept_limit_questions()? {
         // The connection pool's check is its live pressure check (FIX 7656),
