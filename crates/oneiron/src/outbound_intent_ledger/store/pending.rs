@@ -7,7 +7,9 @@ use super::super::types::{
     RecordedOutboundOutcome,
 };
 use super::transition::transition_record_in_txn;
-use super::{INTENT_ATTEMPT_INDEX, LEDGER, check_intent_attempt_format, read_intent_record_in_txn};
+use super::{
+    INTENT_ATTEMPT_INDEX, LEDGER, check_intent_attempt_format, read_stored_intent_record_in_txn,
+};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 
@@ -26,7 +28,7 @@ pub(crate) fn attempt_has_pending_intent_in_txn(
         let Ok(id) = IntentId::try_from(raw.as_slice()) else {
             return Ok(true);
         };
-        match read_intent_record_in_txn(vault, txn, &id) {
+        match read_stored_intent_record_in_txn(vault, txn, &id) {
             Ok(Some(record)) if record.state != IntentState::Pending => {}
             _ => return Ok(true),
         }
@@ -66,7 +68,7 @@ pub(crate) fn abandon_attempt_pending_intents_in_txn(
     }
     let mut abandoned = 0_usize;
     for id in ids {
-        let Some(mut record) = read_intent_record_in_txn(vault, &*wtxn, &id)? else {
+        let Some(mut record) = read_stored_intent_record_in_txn(vault, &*wtxn, &id)? else {
             return Err(IntentLedgerError::InvalidRecord(
                 "outbound attempt index target is missing",
             ));

@@ -9,6 +9,7 @@ mod govern;
 mod pipeline;
 mod policy_risk;
 mod publisher_signature;
+mod replay_presentation;
 mod request_binding;
 pub(super) mod retry_after;
 pub(super) mod seat_policy;

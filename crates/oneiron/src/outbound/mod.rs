@@ -15,6 +15,7 @@ mod executor;
 mod intent;
 mod manifests;
 mod receipt_fields;
+mod recovery_suggestions;
 mod reply_content;
 mod reply_job;
 mod retry_audit;
@@ -65,6 +66,7 @@ pub use self::intent::{
     MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
     OutboundIntentSource, OutboundIntentTrigger,
 };
+pub use self::recovery_suggestions::OutboundRecoverySuggestion;
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
 pub use self::reply_job::{
     CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
