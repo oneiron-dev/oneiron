@@ -130,8 +130,8 @@ pub(crate) use self::doors::{
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
-    NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
+    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,

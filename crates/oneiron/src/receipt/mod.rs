@@ -88,7 +88,7 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
+    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
     GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
     QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
     QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,

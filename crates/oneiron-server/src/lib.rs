@@ -71,6 +71,7 @@ mod livequery;
 pub mod logging;
 mod machine;
 pub mod managed;
+mod managed_owner_check;
 pub mod mcp;
 mod model_artifacts;
 pub mod models;
