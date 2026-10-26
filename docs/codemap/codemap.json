@@ -34148,7 +34148,17 @@
      "path": "src/gate/resolution/accessors.rs",
      "purpose": "Read-only resolved-field accessors plus the frontier-hash entry",
      "surface": {
-      "crate-vis": 67
+      "crate-vis": 66
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/accessors/goal_limits.rs",
+     "purpose": "The resolved goal-limit bundle; split from its parent accessors",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34169,6 +34179,16 @@
      "purpose": "Read-frontier hash worker plus byte-level hash encoders",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/frontier_hash/goal_limits.rs",
+     "purpose": "The goal-limit bundle's frontier bytes; split from its parent hash worker",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -34904,6 +34924,7 @@
      "purpose": "Typed project proposal and owner-confirmed, write-free mint intent (OF-501)",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 7,
       "struct": 4
      }
@@ -74162,7 +74183,17 @@
      "path": "src/workspace_roster/codec.rs",
      "purpose": "Roster reads, journal records, and canonical onboarding encodings",
      "surface": {
-      "crate-vis": 45
+      "crate-vis": 48
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/companion_bind.rs",
+     "purpose": "The first binding of a member's companion to her principal, and the one check a brought companion passes…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -74305,7 +74336,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 22
      }
     },
@@ -74436,7 +74467,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "GoalAxis",
@@ -74499,13 +74530,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/goal/limits.rs",
-     "purpose": "DEC-0005 admission limits",
+     "purpose": "DEC-0005 goal limits: the thresholds a confirmed goal intake is counted against",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 14
      }
     },
     {
@@ -74561,9 +74592,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/project/joint/serve.rs",
-     "purpose": "The served side of a component's decision: each member's frontier, checked under its parents' served views…",
+     "purpose": "The served side of a component's decision: each member's frontier, checked under its parents' served views",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/project/joint/worlds.rs",
+     "purpose": "A component member's worlds, each folded, and the decision's work, both counted against the bounds the…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74699,7 +74740,7 @@
      "purpose": "A project question's kept answer, or a settled project card, that named an erased actor, as stored (FIX…",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2
      }
     },
@@ -75533,6 +75574,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/scrub.rs",
+     "purpose": "An erased actor leaves the workspace roster (FIX 3520): the member rows, the companion-principal bindings…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -77830,7 +77881,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 156,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78705,7 +78756,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 117,
+     "files": 120,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78728,7 +78779,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5191,
+   "source_files": 5196,
    "test_files": 902
   },
   "oneiron-android": {
