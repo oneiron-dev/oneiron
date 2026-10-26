@@ -262,6 +262,25 @@ pub(super) fn live_verdict(
     }
 }
 
+/// The turn the project question's source sits in on `message`, from its
+/// kept answer, live or history: the placement a listed card is read
+/// through.
+///
+/// # Errors
+///
+/// Storage errors, or a row that cannot be read.
+pub(super) fn source_turn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    message: &EntityId,
+) -> Result<Option<EntityId>> {
+    Ok(match VERDICT_ROWS.get(store, txn, message)? {
+        Some(VerdictRow::Live(verdict)) => Some(verdict.source.turn),
+        Some(VerdictRow::History { erased_history }) => Some(erased_history.source.turn),
+        None => None,
+    })
+}
+
 /// The live card filed under `key`, if any. One that turned history
 /// refuses: nothing shows, confirms or replays it (FIX 4229).
 ///
