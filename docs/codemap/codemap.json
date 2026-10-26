@@ -56107,6 +56107,48 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/cloud_registration/lifecycle.rs",
+     "purpose": "An erase's reach into the cloud registration (L04 08:3x, FIX 9056): the `CLOUD_REGISTRATION` table's actor…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CloudRegistrationBinding",
+      "CloudRegistrationErased",
+      "CloudRegistrationFence",
+      "CloudRegistrationLink",
+      "CloudRegistrationLinked",
+      "CloudRegistrationPhase",
+      "CloudRegistrationTokenUse"
+     ],
+     "path": "src/secret_custody/cloud_registration/mod.rs",
+     "purpose": "The engine's own custody for its cloud registration (G7, FIX 5347; L04 FIX 9056): the token set the native…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/secret_custody/cloud_registration/store.rs",
+     "purpose": "The owner's doors over the cloud registration's slots: each rechecks the owner proof and live ownership in…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 9
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -56319,7 +56361,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -56353,8 +56395,8 @@
      "path": "src/secret_custody/mod.rs",
      "purpose": "ARCH-0069 secret custody — SECRET-01 (ONE-1919): custody classes, the custody record that is the secret…",
      "surface": {
-      "crate-vis": 24,
-      "re-export": 11
+      "crate-vis": 25,
+      "re-export": 12
      }
     },
     {
@@ -56551,7 +56593,7 @@
      "path": "src/secret_custody/storage_seal/image.rs",
      "purpose": "A credential row in a checkpoint image, and a restore's or an archived vault's activation's plan of the…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -77737,7 +77779,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 50,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78124,7 +78166,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5142,
+   "source_files": 5145,
    "test_files": 902
   },
   "oneiron-android": {
@@ -97854,6 +97896,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/owner_routes/account_routes.rs",
+     "purpose": "`/v1/owner/cloud-registration`: the owner links this vault to the Oneiron cloud account and manages that…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/owner_routes/agent_grant_routes.rs",
      "purpose": "`/v1/owner/agent-grants`: the owner grants a named agent (the seeded Coach included) an explicit verb list…",
      "surface": {
@@ -99665,8 +99717,25 @@
      "surface": {
       "enum": 11,
       "fn": 3,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 20
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AccountCommand",
+      "AccountLoginArgs",
+      "AccountLogoutArgs",
+      "AccountServeArgs",
+      "AccountStatusArgs"
+     ],
+     "path": "src/cli/account_args.rs",
+     "purpose": "`oneiron account`: the owner links a stopped vault to the Oneiron cloud account and manages that link (G7)",
+     "surface": {
+      "enum": 1,
+      "struct": 4
      }
     },
     {
@@ -99898,6 +99967,96 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/binding.rs",
+     "purpose": "Login, status and logout: the device flow that ends in the owner's explicit link, the read of where it…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/device.rs",
+     "purpose": "The device grant's pending flows (LC cloud #97 §2, §3; L14 lead call 08:3x): each bound to the owner whose…",
+     "surface": {
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/discovery.rs",
+     "purpose": "Discovery as a locator alone (LC cloud #97 §1; L14 agreement 08:3x): `I/auth.md`'s `agent_auth` names where…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/http.rs",
+     "purpose": "The client's one HTTP path (L14 lead call 08:3x): the admission host's blocking client, with its bounds as…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/jwt.rs",
+     "purpose": "The access token, checked against the pins alone (LC cloud #97 §6, §7): header exactly RS256 `at+jwt` with a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/mod.rs",
+     "purpose": "The engine's native cloud registration client (G7, FIX 5347): the owner links this vault to the Oneiron…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/pins.rs",
+     "purpose": "The operator's pins: the one trust root of the cloud registration client (LC cloud #97 §1, §6; L14 lead call…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/refresh.rs",
+     "purpose": "The owner's explicit refresh (CALLS G7_REFRESH_TRIGGER): one rotation of the token family, serialized…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/cloud_registration/wire.rs",
+     "purpose": "LC cloud #97's wire, as fixed at cloud 519cfa1e0 (RFC 8628 device grant, refresh rotation, RFC 7009 revoke…",
+     "surface": {
+      "crate-vis": 21
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -99919,8 +100078,18 @@
       "const": 1,
       "crate-vis": 9,
       "fn": 12,
-      "re-export": 22,
+      "re-export": 23,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/account.rs",
+     "purpose": "`oneiron account`: the owner's cloud registration on a stopped vault (G7)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -101206,6 +101375,14 @@
       "fn": 5,
       "struct": 2
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/server_config/debug.rs",
+     "purpose": "The redacting `Debug` of [`SyncServerConfig`] and [`ServeConfig`]: a secret prints as redacted, never its…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -108061,7 +108238,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 564,
+     "files": 565,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -108117,11 +108294,18 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "—"
+    },
+    "cloud_registration": {
+     "files": 9,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The engine's native cloud registration client (G7, FIX 5347): the owner links this vault to the Oneiron…"
     },
     "code_consent_host": {
      "files": 1,
@@ -108131,14 +108315,14 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 52,
+     "files": 53,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 58,
+     "files": 59,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -108532,7 +108716,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1268,
+   "source_files": 1281,
    "test_files": 182
   },
   "oneiron-spawn": {
