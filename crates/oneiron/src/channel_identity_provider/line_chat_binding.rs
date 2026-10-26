@@ -218,7 +218,7 @@ impl Vault {
 
 /// The provider-inbound machine every archived provider event is kept
 /// under: the subject of every chat observation.
-fn provider_inbound_actor() -> Result<EntityId> {
+pub(super) fn provider_inbound_actor() -> Result<EntityId> {
     EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[])
 }
 
