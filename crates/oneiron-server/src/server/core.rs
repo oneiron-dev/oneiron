@@ -63,6 +63,8 @@ pub struct SyncServer {
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
     pub(crate) ephemeral_store: Arc<EphemeralStore>,
+    /// Each message partial's trusted scope in the hub (FIX 9537).
+    pub(crate) message_scopes: Arc<super::message_stream::MessageScopes>,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Node-local compiled standing blocks; rebuilt from claims, never synced.
@@ -118,6 +120,8 @@ pub struct SyncServer {
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The mesh listener's sync streams in their own pressure check (FIX 7737).
+    pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,

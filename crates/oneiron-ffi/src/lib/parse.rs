@@ -10,9 +10,7 @@ use oneiron::memory::{
 use oneiron::{EdgeKind, EntityId, PackFormat};
 
 use super::guard::{with_optional_slice, with_required_slice};
-use super::types::{
-    ENTITY_ID_LEN, MAX_FFI_DIMENSIONS, MAX_FFI_QUERY_BYTES, OneironStatus,
-};
+use super::types::{ENTITY_ID_LEN, MAX_FFI_DIMENSIONS, MAX_FFI_QUERY_BYTES, OneironStatus};
 
 pub(super) fn string_from_required(ptr: *const u8, len: usize) -> Result<String, OneironStatus> {
     with_required_slice(ptr, len, |bytes| {
