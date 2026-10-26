@@ -9,12 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 
-use super::EntityDoc;
-use super::pins;
 use super::storage::{self, ENTITY_DOC_HEAD};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, Result};
+use crate::error::{Error, Result};
 use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::side_table::HexId;
 use crate::store::ManifestDbs;
@@ -43,11 +41,10 @@ pub(crate) fn entity_doc_slots_in(
 /// `false`, with nothing read past the head, when no head of `entity`
 /// stands: the NOTE and text-plane path compacts it as before. Otherwise its
 /// cached document is held out while one writer checks the head and any
-/// legal hold again (OF-470): an erased entity's document goes through the
-/// erase door, and a live one's history is cut to the floor its pins,
-/// citation floors, receipts and pending forks leave, its text, version,
-/// generation and state vector kept. An unerased NOTE is the NOTE purge
-/// door's, left as it is.
+/// legal hold again (OF-470). An erased entity's document goes through the
+/// erase door. A live one keeps its whole history, text, version,
+/// generation and state vector: only its pending updates fold into a full
+/// snapshot. An unerased NOTE is the NOTE purge door's, left as it is.
 pub(crate) fn compact_entity_doc_for_sweep(
     vault: &Vault,
     entity: &EntityId,
@@ -97,46 +94,13 @@ fn compact_in_txn(
     if erased {
         return storage::erase_in_txn(store, txn, entity);
     }
+    // A live document keeps its whole history: its pending updates fold
+    // into one full snapshot, which holds every one of them.
     let doc = storage::load(store, txn, &head)?;
-    let Some(shallow) = cut(vault, txn, entity, &head.incarnation, &doc)? else {
-        tracing::warn!("sweep: an entity document's retention holds its history — kept whole");
-        return Ok(());
-    };
     let slot = DocumentSlot::from_hex(&head.document)?;
-    store.port_document_snapshot_put(txn, slot, &shallow.export_snapshot()?)?;
+    store.port_document_snapshot_put(txn, slot, &doc.export_snapshot()?)?;
     store.port_document_updates_delete(txn, slot)?;
-    store.port_document_state_vector_put(txn, slot, &shallow.doc.oplog_vv().encode())?;
-    store.port_document_shallow_since_put(txn, slot, &shallow.doc.shallow_since_vv().encode())?;
+    store.port_document_state_vector_put(txn, slot, &doc.doc.oplog_vv().encode())?;
     head.pending = 0;
     ENTITY_DOC_HEAD.put(store, txn, &HexId(*entity), &head)
-}
-
-/// `doc` cut as far as its owner's retention lets it go: to its own
-/// frontier, held back by every pin, live citation floor, settlement
-/// receipt, pending fork base and earlier purge. `None` where that retention
-/// refuses any cut (a pin at or before the history it keeps, or a cut that
-/// would change a pinned version): no more of it may go, and it stays whole.
-fn cut(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    entity: &EntityId,
-    incarnation: &str,
-    doc: &EntityDoc,
-) -> Result<Option<EntityDoc>> {
-    let held = |error: &Error| {
-        matches!(
-            error,
-            Error::Artifact(ArtifactError::InvalidEditManifest(_)) | Error::InvariantViolation(_)
-        )
-    };
-    let applied = match pins::floor(vault, txn, entity, incarnation, doc, &doc.frontier()) {
-        Ok(applied) => applied,
-        Err(error) if held(&error) => return Ok(None),
-        Err(error) => return Err(error),
-    };
-    match pins::shallow_at(vault, txn, entity, incarnation, doc, &applied) {
-        Ok(shallow) => Ok(Some(shallow)),
-        Err(error) if held(&error) => Ok(None),
-        Err(error) => Err(error),
-    }
 }
