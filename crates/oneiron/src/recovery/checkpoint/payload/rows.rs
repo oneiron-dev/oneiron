@@ -198,6 +198,10 @@ families! {
         BLOB_ARTIFACT_DECK_ID_MARKS BLOB_ARTIFACT_HIGHWATER BLOB_ARTIFACT_VERSION_CLAIM
         CHECKPOINT_CHAIN_HEAD CHECKPOINT_PAYLOAD_INSTANCE COACH_DIAGNOSTIC_ISSUE_BY_KEY
         CODE_DOCUMENT_GENERATION;
+    // A cloud registration slot's binding (G7): ids, the pinned issuer and
+    // audience, the verified subject, a phase and a generation; its tokens
+    // stay in the slot's sealed custody record.
+    Class::Structure => CLOUD_REGISTRATION;
     // A code run's response owner and wait holder hold ids, status and an
     // actor's id or its erasure, never the reply (FIX 6589).
     Class::Structure => CODE_RUN_RESPONSE_OWNER CODE_RUN_WAIT_HOLDER;

@@ -5,6 +5,10 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod account_args;
+pub use account_args::{
+    AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs,
+};
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
@@ -180,6 +184,10 @@ pub enum Command {
     /// Enrol this machine with its home, so `serve` dials it.
     #[command(subcommand)]
     Device(DeviceCommand),
+    /// Link a stopped vault to your Oneiron cloud account: login, status,
+    /// refresh and logout.
+    #[command(subcommand)]
+    Account(AccountCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
@@ -990,6 +998,10 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Device(DeviceCommand::Enrol(args)) => {
             crate::logging::off_runtime("device enrol", move || commands::device_enrol(*args))
                 .await?
+        }
+        // Blocking: the cloud registration is reached over blocking HTTP.
+        Command::Account(command) => {
+            crate::logging::off_runtime("account", move || commands::account(command)).await?
         }
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
