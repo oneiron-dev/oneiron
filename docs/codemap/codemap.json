@@ -53694,7 +53694,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "re-export": 1,
       "struct": 3,
       "type": 1
@@ -53707,7 +53707,7 @@
      "path": "src/recovery/checkpoint/watermark/marker.rs",
      "purpose": "The strict read of a label's backup marker (FIX 6777): what every public reader of the marker…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -61657,7 +61657,7 @@
      "path": "src/store/body_envelope/opaque_response.rs",
      "purpose": "Row-held responses that do not decode (FIX 6227)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -63068,7 +63068,7 @@
      "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
      "surface": {
       "crate-vis": 10,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -83848,7 +83848,7 @@
      "purpose": "Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed…",
      "surface": {
       "const": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -100428,7 +100428,7 @@
      "path": "src/config/diagnostics.rs",
      "purpose": "Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -105718,7 +105718,7 @@
      "path": "src/owner/backup/finalize.rs",
      "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {

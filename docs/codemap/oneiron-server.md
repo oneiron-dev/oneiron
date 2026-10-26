@@ -776,7 +776,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/connectors.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ConnectorHostConfig, ConnectorTransport | `[connectors.<name>]`: where this host installed each catalog connector's transport (ONE-2510) |
 | `src/config/desktop.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | DesktopConfig | `[desktop]`: the guest a code run's `self.desktop.*` verbs drive |
 | `src/config/device_sync.rs` | src | s | 1 struct · 6 crate-vis | DeviceSyncConfig | `[device_sync]`: the home this machine keeps its vault in sync with |
-| `src/config/diagnostics.rs` | src | s | 2 crate-vis | — | Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never… |
+| `src/config/diagnostics.rs` | src | s | 3 crate-vis | — | Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never… |
 | `src/config/embedder.rs` | src | m | 5 struct · 5 enum · 7 fn · 4 const · 1 re-export · 3 crate-vis | AutoDevicePrecedence, EmbedderConfig, EmbedderConfigOverride, EmbedderDevice, EmbedderLocality, EmbedderProvider, EmbedderQuant, EndpointEmbedderConfig +2 | The `[embedder]` section: provider selection and the keys each provider reads |
 | `src/config/embedder/args.rs` | src | s | 1 struct · 1 crate-vis | EmbedderArgs | The `[embedder]` section's flag and environment layers: `--embedder-*` and `ONEIRON_EMBEDDER_*` |
 | `src/config/embedder_shape.rs` | src | s | 2 enum · 2 fn · 2 crate-vis | EmbedderAttention, EmbedderOutputQuantization | Keys that override what a local checkpoint declares about its own shape |
@@ -1253,7 +1253,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/backup/custody/anchor_client.rs` | src | s | 2 crate-vis | — | The HTTP custody anchor (FIX 5788, CALLS CUSTODY_ANCHOR_URL): a host whose own disks would roll back with… |
 | `src/owner/backup/custody/anchor_credentials.rs` | src | s | 7 crate-vis | — | The owner credential a custody anchor door admits (FIX 5788), handed to the process that calls the door on a… |
 | `src/owner/backup/custody/anchor_transport.rs` | src | s | 4 crate-vis | — | A vault VM's way to its custody anchor door (FIX 6517): the guest has no network, so its bootstrap serves a… |
-| `src/owner/backup/finalize.rs` | src | s | 12 crate-vis | — | A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04) |
+| `src/owner/backup/finalize.rs` | src | s | 13 crate-vis | — | A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04) |
 | `src/owner/backup/handoff.rs` | src | s | 5 crate-vis | — | The prune pin (LC backup shipper rows, Engine 10-20) |
 | `src/owner/backup/rehearse.rs` | src | m | 14 crate-vis | — | Rehearsals of one vault's backups: restored into a scratch copy beside the live vault, opened, checked and… |
 | `src/owner/backup/relay_hold.rs` | src | s | 4 crate-vis | — | The relay delete guard over one vault's backup holds (FIX 1488): the adapter L14's relay locker delete takes… |
