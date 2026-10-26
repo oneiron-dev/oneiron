@@ -105,6 +105,11 @@ impl Vault {
         }
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
+        // An erased row takes the space probes written from it, and leaves the
+        // targets of those it only answers (FIX 9829).
+        if erase {
+            crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
+        }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so

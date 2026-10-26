@@ -3621,13 +3621,13 @@ export type EmbeddingSpaceMoveOutcome = "filling" | "swapped_in" | "kept" | "und
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceMoveChecked` */
 export type EmbeddingSpaceMoveChecked = { outcome: EmbeddingSpaceMoveOutcome; check?: SpaceMoveCheck | null }
 /** `oneiron::embed::space_probe::SpaceProbe` */
-export type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets: EntityId[]; author: string; written_at: number; cohort?: number | null }
+export type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; written_from?: EntityId | null; source_refs?: EntityId[]; targets: EntityId[]; author: string; written_at: number; cohort?: number | null }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbe` */
 export type EmbeddingSpaceProbe = SpaceProbe & { id: string }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbes` */
 export type EmbeddingSpaceProbes = { probes: EmbeddingSpaceProbe[] }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbePutRequest` */
-export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; author: string }
+export type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; source_refs?: EntityId[]; author: string }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleteRequest` */
 export type EmbeddingSpaceProbeDeleteRequest = { id: string }
 /** `oneiron::verbs::embedding_space::EmbeddingSpaceProbeDeleted` */

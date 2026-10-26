@@ -227,8 +227,9 @@ impl Vault {
     /// embedder at a third party is sent only the documents `egress` allows
     /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
     /// asked again right before its bytes leave ([`MediaEmbedder::embed_each_released`]); the
-    /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on this
-    /// device or the owner's server reads as it does without a gate.
+    /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on the
+    /// owner's server reads through `egress` when the host gives one (FIX 9830), and one on
+    /// this device reads as it does without a gate.
     ///
     /// # Errors
     ///
@@ -656,19 +657,22 @@ pub(super) fn is_text_document_type(entity_type: u8) -> bool {
 }
 
 /// The host's gate a pass with `embedder` reads through: a third-party embedder's must be
-/// there, or the pass is refused as it was before the gate; any other reads ungated.
+/// there, or the pass is refused as it was before the gate; one on the owner's server reads
+/// through the gate the host gives, or ungated with none (FIX 9830); one on this device reads
+/// ungated.
 pub(super) fn media_egress_for<'a>(
     embedder: &dyn MediaEmbedder,
     egress: Option<&'a dyn EgressPredicate>,
 ) -> Result<Option<&'a dyn EgressPredicate>> {
-    if embedder.locality() != EmbedderLocality::ThirdParty {
-        return Ok(None);
+    match embedder.locality() {
+        EmbedderLocality::OnDevice => Ok(None),
+        EmbedderLocality::OwnerServer => Ok(egress),
+        EmbedderLocality::ThirdParty => egress.map(Some).ok_or_else(|| {
+            Error::InvalidConfig(
+                "a third-party media embedder has no egress grant for stored media".into(),
+            )
+        }),
     }
-    egress.map(Some).ok_or_else(|| {
-        Error::InvalidConfig(
-            "a third-party media embedder has no egress grant for stored media".into(),
-        )
-    })
 }
 
 /// The text a text-bound space embeds for record `id`: what the text index would embed for it
