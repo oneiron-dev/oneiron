@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1158 facade rows, 4144 declarations.
+Census: 1158 facade rows, 4147 declarations.
 Inputs: 1093 of 1158 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1041 of 1158 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -11661,6 +11661,11 @@ class OriginMirrorAutomation(TypedDict):
     pending_checks: list[OriginMirrorPendingCheck]
     remote_moved: list[str]
     refused: list[str]
+RepoDestinationVisibility = Literal["public", "private", "unknown"]
+RepoDestinationRole = Literal["mirror", "original_source"]
+class RepoDestinationAudience(TypedDict):
+    visibility: RepoDestinationVisibility
+    role: RepoDestinationRole
 class OriginMirrorTarget(TypedDict):
     repo: str
     url: str
@@ -11673,6 +11678,7 @@ class OriginMirrorTarget(TypedDict):
     strategy_revision: NotRequired[int]
     target_generation: NotRequired[EntityId | None]
     automation: NotRequired[OriginMirrorAutomation | None]
+    audience: RepoDestinationAudience
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
@@ -11683,6 +11689,7 @@ class OriginMirrorSetRequest(TypedDict):
     user: NotRequired[str | None]
     every_secs: int
     sync_strategy: NotRequired[OriginMirrorSyncStrategy | None]
+    visibility: NotRequired[RepoDestinationVisibility | None]
 class OriginMirrorStrategyRequest(TypedDict):
     repo: str
     sync_strategy: OriginMirrorSyncStrategy
@@ -11703,6 +11710,7 @@ class OriginPublishDestination(TypedDict):
     user: str
     secret_ref: str
     target_generation: NotRequired[EntityId | None]
+    audience: RepoDestinationAudience
 class OriginPublishRemoteAbsent(TypedDict):
     state: Literal["absent"]
 class OriginPublishRemoteAt(TypedDict):
@@ -11727,7 +11735,7 @@ class OriginPublishAuthorityGrant(TypedDict):
     grant: EntityId
 OriginPublishAuthority = OriginPublishAuthorityOwner | OriginPublishAuthorityGrant
 OriginPublishAct = TypedDict("OriginPublishAct", {"actor": NotRequired[EntityId | None], "class": OriginPublishActorClass, "authority": OriginPublishAuthority, "at": int})
-OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing"]
+OriginPublishRefusalReason = Literal["destination_changed", "remote_moved", "rejected", "outcome_unknown", "authority_changed", "objects_missing", "marked_live_secret", "secret_history_unknown"]
 class OriginPublishRefusal(TypedDict):
     reason: OriginPublishRefusalReason
     observed: NotRequired[OriginPublishRemote | None]
