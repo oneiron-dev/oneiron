@@ -352,6 +352,9 @@ impl PartialServeConfig {
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);
         }
+        if let Some(value) = self.cloud_registration_pins {
+            resolved.cloud_registration_pins = Some(value);
+        }
         if let Some(value) = self.publisher_training_outbox_dir {
             resolved.publisher_training_outbox_dir = Some(value);
         }

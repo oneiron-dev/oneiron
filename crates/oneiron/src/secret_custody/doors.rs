@@ -459,7 +459,8 @@ pub(super) fn apply_custody_body_in_txn(
     // marks them, in the writer that made it known (FIX 2781). A run-bound
     // record's value is its run's alone and is never keyed (FIX 8028): a
     // short code one run's browser found masks nothing else in the vault.
-    if !super::run_bound::is_run_bound_name(&rec.name)
+    // Nor is a cloud registration slot's (`known_values::never_keyed`).
+    if !super::known_values::never_keyed(&rec.name)
         && super::known_values::remember_in_txn(write.store, wtxn, id, rec)?
     {
         crate::batch::secret_scan::enqueue_known_remark_in_txn(write.store, wtxn, occurred_at)?;

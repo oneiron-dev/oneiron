@@ -221,6 +221,13 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         |args| args.esign_delivery_outbox_dir.is_some(),
         ArgvUse::Read,
     ),
+    // The operator's outbound cloud registration pins (G7): read as on a
+    // plain serve, unlike the inbound OAuth relay flags refused below.
+    (
+        "cloud-registration-pins",
+        |args| args.cloud_registration_pins.is_some(),
+        ArgvUse::Read,
+    ),
     (
         "publisher-training-outbox-dir",
         |args| args.publisher_training_outbox_dir.is_some(),

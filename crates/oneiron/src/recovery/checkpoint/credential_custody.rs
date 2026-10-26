@@ -218,6 +218,23 @@ pub(super) fn require(
                     }
                 }
             }
+            // A copy served beside its source never holds a usable cloud
+            // registration slot (CALLS G7_COPY_RECOVERY): its row lands
+            // withheld and is never planned, so no fork copies its key; its
+            // owner signs in again there. A restore in the vault's own place
+            // keeps the slot as any credential.
+            ImageCredentialRow::Sealed(Some(credential))
+                if matches!(custody, Custody::Fork(_))
+                    && crate::secret_custody::is_cloud_registration_slot(&credential.name) =>
+            {
+                match crate::secret_custody::withheld_credential_row(raw) {
+                    Some(row) => *raw = row,
+                    None => {
+                        malformed.insert(key.clone());
+                    }
+                }
+                fenced.reenter(credential);
+            }
             ImageCredentialRow::Sealed(credential) => refs.extend(credential),
             ImageCredentialRow::Withheld(row, credential) => {
                 *raw = row;

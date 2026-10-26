@@ -88,6 +88,13 @@ impl Vault {
         plan: &CustodyPlan,
         at: u64,
     ) -> Result<SecretRotated> {
+        // A cloud registration slot rotates only with its successor tokens
+        // (G7), never from an owner's value.
+        if crate::secret_custody::is_cloud_registration_slot(secret_ref) {
+            return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
+                "a cloud registration slot's name is the engine's own",
+            )));
+        }
         self.load_install_signing_if_minted()?;
         let mut wtxn = self.store.env.write_txn()?;
         let actor = owner.revalidate_in_txn(self, &wtxn)?;

@@ -151,6 +151,11 @@ impl SyncServer {
             &config.limits,
             Arc::clone(wire_telemetry.limit_questions()),
         );
+        // The cloud registration client reads its pins once, here; no
+        // request is made until the owner asks.
+        let cloud_registration = crate::cloud_registration::CloudRegistration::new(
+            config.cloud_registration_pins.as_deref(),
+        );
         let decision_reads = crate::admission::Admission::new(
             crate::wire_telemetry::LimitRow::DecisionReads,
             Arc::clone(wire_telemetry.limit_questions()),
@@ -258,6 +263,7 @@ impl SyncServer {
             live_runs,
             secret_destinations: Default::default(),
             model_budgets,
+            cloud_registration,
             connector_elicitations: Arc::default(),
             browser_guest: None,
             browser_readiness: Default::default(),

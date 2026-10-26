@@ -126,6 +126,11 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
+    /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
+    /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
+    CLOUD_REGISTRATION: VaultMeta b"cloud_registration:v1:" Named
+        => crate::secret_custody::erase_cloud_registration_actor_in_txn;
     /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named

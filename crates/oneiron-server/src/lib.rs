@@ -32,6 +32,7 @@ mod byte_line;
 mod calendar_host;
 mod campaign_enrollment;
 pub mod cli;
+mod cloud_registration;
 mod code_consent_host;
 pub mod commands;
 pub mod config;

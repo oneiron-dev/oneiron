@@ -292,8 +292,8 @@ impl ManagedArgs {
     /// failure-signal export and training choices. Each of them, given,
     /// stands over the settings file's own value. The supervisor's own
     /// bindings read here too (browser origins, the host's public origin,
-    /// the kit fetch URLs and the trusted organ builds) are ones the settings
-    /// file never sets. Everything else on `ServeArgs` is refused before this
+    /// the kit fetch URLs, the trusted organ builds and the cloud
+    /// registration pins) are ones the settings file never sets. Everything else on `ServeArgs` is refused before this
     /// runs, so nothing reaches here to be quietly dropped.
     ///
     /// `auth_secret` stays `None`: bearer auth terminates at the supervisor,
@@ -324,6 +324,9 @@ impl ManagedArgs {
             // The organ builds the supervisor vouches for as first party
             // (FIX 7644); the settings file never names one.
             trusted_organ_builds: args.trusted_organ_builds.iter().cloned().collect(),
+            // The operator's cloud registration pins, read as on a plain
+            // serve (G7); the settings file never names them.
+            cloud_registration_pins: args.cloud_registration_pins.clone(),
             dimensions: args.dimensions.unwrap_or(defaults.dimensions),
             fast_dims: args.fast_dims,
             map_size: args.map_size.unwrap_or(defaults.map_size),

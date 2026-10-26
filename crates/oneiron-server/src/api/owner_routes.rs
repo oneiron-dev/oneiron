@@ -38,6 +38,7 @@ use crate::owner::{
     off_record, pack_drift, persona, runs,
 };
 use crate::server::SyncServer;
+mod account_routes;
 mod agent_grant_routes;
 mod backup_setting_routes;
 mod browser_takeover_routes;
@@ -145,6 +146,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/pack-drift", get(pack_drift_repairs))
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
+        .merge(account_routes::routes())
         .merge(budget_hold_routes::routes())
         .merge(checkpoint_policy_routes::routes())
         .merge(commitment_routes::routes())

@@ -280,6 +280,14 @@ pub struct ServeArgs {
     #[arg(long = "esign-delivery-outbox-dir")]
     pub esign_delivery_outbox_dir: Option<PathBuf>,
 
+    /// The operator's cloud registration pins (G7): a public JSON file, an
+    /// absolute path, naming the issuer, the audience and the issuer's RSA
+    /// signing keys the native client trusts and nothing else. Self-hosted
+    /// or managed alike; without it, or with one that does not validate,
+    /// cloud registration alone reports not configured.
+    #[arg(long = "cloud-registration-pins")]
+    pub cloud_registration_pins: Option<PathBuf>,
+
     /// The directory the vault hands conversation text toward training the
     /// models Oneiron ships through (OF-420, "Learn from my conversations"),
     /// an absolute path: released offers in `offers/`, id-only withdrawals
