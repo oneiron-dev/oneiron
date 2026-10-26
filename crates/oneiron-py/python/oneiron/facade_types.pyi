@@ -20924,7 +20924,7 @@ class SessionManifest(TypedDict):
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
 BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem[T]
+BrowserAnswer = BrowserAnswerItem
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -21103,7 +21103,7 @@ class VerbsObservation(TypedDict):
     dialogs: NotRequired[list[DialogAnswerFailure]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
-BrowserObservationPage = BrowserAnswer[ObservationPage]
+BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str
     seq: int
@@ -21120,7 +21120,7 @@ class FindOutput(TypedDict):
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
-BrowserFindOutput = BrowserAnswer[FindOutput]
+BrowserFindOutput = BrowserAnswer
 class ClickInput(TypedDict):
     ref: str
     base: NotRequired[ObservationBase | None]
@@ -21153,13 +21153,13 @@ class WaitForOutput(TypedDict):
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
+BrowserWaitForOutput = BrowserAnswer
 class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]
     partial: NotRequired[PartialTree | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserExpectOutput = BrowserAnswer[ExpectOutput]
+BrowserExpectOutput = BrowserAnswer
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
     since_capture: NotRequired[str | None]
@@ -21174,7 +21174,7 @@ class ScreenshotOutput(TypedDict):
     title: str
     capture_id: str
     unchanged_from: NotRequired[str | None]
-BrowserScreenshotOutput = BrowserAnswer[ScreenshotOutput]
+BrowserScreenshotOutput = BrowserAnswer
 class ViewInput(TypedDict):
     image: str
 class ImageOutput(TypedDict):
@@ -21184,7 +21184,7 @@ class ImageOutput(TypedDict):
     height: int
     bytes: int
     source: str
-BrowserImageOutput = BrowserAnswer[ImageOutput]
+BrowserImageOutput = BrowserAnswer
 class CropInput(TypedDict):
     image: str
     x: int
@@ -21233,7 +21233,7 @@ class BatchOutput(TypedDict):
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
     rebindings: NotRequired[list[StepRebound]]
-BrowserBatchOutput = BrowserAnswer[BatchOutput]
+BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
@@ -21241,14 +21241,14 @@ class LibraryFindInput(TypedDict):
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
-BrowserLibraryFindOutput = BrowserAnswer[LibraryFindOutput]
+BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str
     postcondition: NotRequired[list[ExpectInput]]
     after_seq: NotRequired[int | None]
     through_seq: NotRequired[int | None]
     past_press: NotRequired[bool]
-BrowserLibraryDraftOutput = BrowserAnswer[DraftOutput]
+BrowserLibraryDraftOutput = BrowserAnswer
 class DemonstrationStartInput(TypedDict):
     label: NotRequired[str | None]
 class DemonstrationStarted(TypedDict):
@@ -21259,12 +21259,12 @@ class DemonstrationStarted(TypedDict):
     origin: NotRequired[str | None]
     url: str
     already_running: NotRequired[bool]
-BrowserDemonstrationStartOutput = BrowserAnswer[DemonstrationStarted]
+BrowserDemonstrationStartOutput = BrowserAnswer
 class DemonstrationStopInput(TypedDict):
     id: DemonstrationId
     subgoal: NotRequired[str]
     postcondition: NotRequired[list[ExpectInput]]
-BrowserDemonstrationStopOutput = BrowserAnswer[DemonstrationOutput]
+BrowserDemonstrationStopOutput = BrowserAnswer
 WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):
@@ -21301,13 +21301,13 @@ class ProposeOutput(TypedDict):
     replay: NotRequired[BatchOutput | None]
     replay_guest: NotRequired[ReplayGuest | None]
     superseded: NotRequired[SupersedeOutcome | None]
-BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
+BrowserLibraryProposeOutput = BrowserAnswer
 class LibraryRetireInput(TypedDict):
     workflow: str
     reason: NotRequired[str | None]
 class LibraryRetireOutput(TypedDict):
     retired: LibraryCard
-BrowserLibraryRetireOutput = BrowserAnswer[LibraryRetireOutput]
+BrowserLibraryRetireOutput = BrowserAnswer
 class LibraryRetiredInput(TypedDict):
     site: NotRequired[str | None]
 class RetiredCard(TypedDict):
@@ -21317,7 +21317,7 @@ class RetiredCard(TypedDict):
 class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
-BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
+BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
 class SecretArgHandle(TypedDict):
     handle: str
@@ -21338,20 +21338,20 @@ class LibraryRunOutput(TypedDict):
     model_free_unproven: NotRequired[int | None]
     unmet: NotRequired[list[int]]
     batch: BatchOutput
-BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]
+BrowserLibraryRunOutput = BrowserAnswer
 class HandoverInput(TypedDict):
     reason: str
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
-BrowserHandoverOutput = BrowserAnswer[HandoverOutput]
+BrowserHandoverOutput = BrowserAnswer
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
 class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]
-BrowserSwitchEngineOutput = BrowserAnswer[SwitchEngineOutput]
+BrowserSwitchEngineOutput = BrowserAnswer
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str
