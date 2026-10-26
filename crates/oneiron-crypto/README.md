@@ -122,6 +122,12 @@ and `ciphertext = AEAD(K, nonce, plaintext, aad = H)`. Every metadata field is b
 twice: into the key and into the AAD. Any failure to open is the single
 `Error::OpenFailed`.
 
+`seal_with_aad` and `Envelope::open_with_aad` bind a caller's extra AAD `X` as well.
+`K` is still derived from `H` alone. For a non-empty `X` the AAD is
+`H || "oneiron-crypto/v1/extra-aad" || u64be(len(X)) || X`, so an envelope opens only
+with the same `X`. An empty `X` gives `aad = H`: the same inputs and randomness seal
+the same bytes as `seal`, and `open` is `open_with_aad` with empty `X`.
+
 ### Passphrase stretch outside envelopes
 
 `stretch_passphrase(passphrase, cost, salt)` returns the same Argon2id v0x13 output a

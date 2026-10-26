@@ -9,11 +9,16 @@
 //! verifies it again, every caveat included, and the program runs under
 //! that live, verified view: its scope, ceiling and verbs bind every read
 //! and effect the program makes, never the actor's broader native surface.
+//!
+//! A managed vault's attested owner seals his person alone (FIX 11090):
+//! each judgment asks the host whether the vault records him as its live
+//! owner then. One who no longer is refuses that wake, or ends that program
+//! Failed; it is never a lapse that waits for his standing to return.
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError, VerifiedSlip};
 use crate::dreamer_runner::{DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerMilestoneClaim};
 use crate::error::{ClaimError, Error, Result};
 use crate::write_envelope::WriteEnvelope;
@@ -60,6 +65,10 @@ enum Proof {
     /// The in-process host's own caller, which presents no credential: its
     /// live binding stands for it.
     Native,
+    /// The vault's owner `holder`, whom its supervisor attested with no slip
+    /// (FIX 11090): he stands only while the vault records him as its live
+    /// owner. Nothing of his is kept.
+    AttestedOwner { holder: EntityId },
 }
 
 impl TurnProgramAuthority {
@@ -132,6 +141,15 @@ impl TurnProgramAuthority {
         }
     }
 
+    /// A managed vault's attested owner `holder`, as a human (FIX 11090).
+    pub(crate) fn attested_owner(holder: EntityId) -> Self {
+        Self {
+            actor: holder,
+            actor_class: EdgeActorClass::Human as u8,
+            proof: Proof::AttestedOwner { holder },
+        }
+    }
+
     pub(crate) fn actor(&self) -> EntityId {
         self.actor
     }
@@ -148,7 +166,7 @@ impl TurnProgramAuthority {
     pub(super) fn grant(&self) -> Option<EntityId> {
         match &self.proof {
             Proof::Slip { grant, .. } => *grant,
-            Proof::HostAction { .. } | Proof::Native => None,
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
         }
     }
 
@@ -156,7 +174,7 @@ impl TurnProgramAuthority {
     pub(super) fn scope_digest(&self) -> Option<[u8; 32]> {
         match &self.proof {
             Proof::Slip { scope_digest, .. } => Some(*scope_digest),
-            Proof::HostAction { .. } | Proof::Native => None,
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
         }
     }
 
@@ -175,7 +193,12 @@ impl TurnProgramAuthority {
 
     /// [`Self::stands_in_txn`], with the slip's live, verified view when it
     /// stands on one: the scope, ceiling and verbs the program runs under.
-    fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
+    /// An attested owner stands on his live ownership alone, never on the
+    /// native writer checks.
+    pub(super) fn standing_in_txn(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Standing> {
+        if let Proof::AttestedOwner { holder } = self.proof {
+            return self.owner_standing_in_txn(vault, txn, holder);
+        }
         let writer = WriteActor::new(self.actor, self.class()?);
         if let Err(error) = vault.verify_native_write_actor_in_txn(txn, &writer) {
             return lapsed(error).map(Standing::of);
@@ -226,6 +249,27 @@ impl TurnProgramAuthority {
                 }
             }
             Proof::Native => Ok(Standing::Stands(None)),
+            Proof::AttestedOwner { holder } => self.owner_standing_in_txn(vault, txn, *holder),
+        }
+    }
+
+    /// The attested owner `holder`'s standing in `txn` (FIX 11090): he is the
+    /// sealed actor, as a human, and the vault records him as its live owner
+    /// at this revision. A host that cannot judge it is an error, never a
+    /// lapse and never his refusal.
+    fn owner_standing_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        holder: EntityId,
+    ) -> Result<Standing> {
+        if holder != self.actor || self.class()? != EdgeActorClass::Human {
+            return Err(invalid());
+        }
+        match crate::authority::require_live_managed_owner_in_txn(vault, txn, holder) {
+            Ok(()) => Ok(Standing::Stands(None)),
+            Err(ManagedOwnerCheckError::OwnerNotLive) => Ok(Standing::OwnerNotLive),
+            Err(unavailable) => Err(unavailable.into_error()),
         }
     }
 
@@ -260,9 +304,12 @@ impl TurnProgramAuthority {
 }
 
 /// What a sealed authority stands on at one revision.
-enum Standing {
+pub(super) enum Standing {
     /// It lapsed: the program takes the lapse's hold.
     Lapsed,
+    /// Its attested owner is not the vault's live owner (FIX 11090): the
+    /// item is refused or ends Failed, never held.
+    OwnerNotLive,
     /// It stands, with the slip's live, verified view when it is a slip's.
     Stands(Option<VerifiedSlip>),
 }
@@ -414,6 +461,7 @@ impl Vault {
             Standing::Lapsed => {
                 return Ok(TurnProgramBound::Lapsed(ProgramHold::AuthorityLapsed));
             }
+            Standing::OwnerNotLive => return Ok(TurnProgramBound::OwnerNotLive),
         };
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
@@ -456,12 +504,14 @@ pub(crate) fn require_program_authority_in_txn(
     if stamp.attempt_id != *attempt.as_bytes() || row.wake.authority.actor() != stamp.actor {
         return Err(invalid());
     }
-    if !row.wake.authority.stands_in_txn(vault, txn)? {
-        return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
+    match row.wake.authority.standing_in_txn(vault, txn)? {
+        Standing::Stands(_) => Ok(()),
+        Standing::Lapsed => Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
             reason: "a program's waking authority no longer stands",
-        }));
+        })),
+        // His own reason, never a generic lapse (FIX 11090).
+        Standing::OwnerNotLive => Err(ManagedOwnerCheckError::OwnerNotLive.into_error()),
     }
-    Ok(())
 }
 
 /// What binding one program attempt for an entry found.
@@ -470,6 +520,9 @@ pub(crate) enum TurnProgramBound {
     /// The waking actor's authority, or the pin, no longer stands: the hold
     /// it takes.
     Lapsed(ProgramHold),
+    /// Its attested owner is not the vault's live owner (FIX 11090): the
+    /// program ends Failed, held by nothing.
+    OwnerNotLive,
 }
 
 /// The actor `id`'s stamp names, in `txn`.
