@@ -1692,6 +1692,12 @@ pub struct HealthReviewReceipt {
     pub at: u64,
     #[serde(rename = "reviewer")]
     pub reviewer: String,
+    #[serde(
+        rename = "reviewer_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reviewer_revision: Option<String>,
     #[serde(rename = "dial")]
     pub dial: i64,
     #[serde(rename = "measured")]
@@ -1947,6 +1953,12 @@ pub struct AgentHealthCard {
     pub observed_brief: Option<HealthBriefPin>,
     #[serde(rename = "reviewer")]
     pub reviewer: String,
+    #[serde(
+        rename = "reviewer_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reviewer_revision: Option<String>,
     #[serde(rename = "review_outcomes")]
     pub review_outcomes: Vec<HealthReviewReceipt>,
     #[serde(rename = "causes")]

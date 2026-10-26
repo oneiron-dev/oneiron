@@ -21465,12 +21465,14 @@
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
-      "CoreBatchWriteReceipt"
+      "CoreBatchWriteReceipt",
+      "CoreWriteLane"
      ],
      "path": "src/core_write/batch.rs",
      "purpose": "`vault.batch` (OF-181): an atomic core entity batch, the write `POST /v1/core/batch` makes",
      "surface": {
-      "enum": 1,
+      "crate-vis": 2,
+      "enum": 2,
       "fn": 3,
       "struct": 4
      }
@@ -25442,7 +25444,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 13
      }
     },
@@ -25557,7 +25559,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/dials.rs",
      "purpose": "Dial resolution: each `HEALTH_*` dial read for a project and task type",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -25657,7 +25659,9 @@
      "path": "src/dreamer_runner/maintenance/agent_health/outcomes.rs",
      "purpose": "Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: \"Score the reviewer\"; \"Health flags never move…",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -25669,6 +25673,16 @@
      "purpose": "One review: detect, emit each finding as a DIAGNOSTIC, route and merge",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/policy.rs",
+     "purpose": "The reviewer's policy (FIX 8075, agent-mind §3.8: \"The recipe is a skill\"): the in-force…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -31074,7 +31088,7 @@
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -42627,7 +42641,7 @@
      "path": "src/memory/read_lane.rs",
      "purpose": "The bound actor's one read lane",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 4
      }
     },
@@ -47191,7 +47205,7 @@
      "path": "src/origin/secret_projection.rs",
      "purpose": "Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1)",
      "surface": {
-      "crate-vis": 25
+      "crate-vis": 26
      }
     },
     {
@@ -47236,6 +47250,16 @@
       "crate-vis": 8,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/origin/secret_projection/copy_id.rs",
+     "purpose": "The id a sync peer knows a marked snapshot ASSET's copy by (FIX 7608 slice 4), derived from the source id…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -53392,7 +53416,7 @@
      "path": "src/recovery/checkpoint/payload/sync.rs",
      "purpose": "KS7-3's port (FIX 5688 KS7-3a): each mixed sync carrier row split by the sync families' own codecs…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -58628,6 +58652,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/health_review.rs",
+     "purpose": "The reviewer-outcome bridge (FIX 8075, agent-mind §3.8: \"Card outcomes give it a reliability like any skill…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58702,7 +58736,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 17
      }
     },
@@ -61131,7 +61165,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 7
      }
     },
@@ -61208,6 +61242,16 @@
      "purpose": "Per-resident version bandit over independently attributed fork receipts",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/rule_outcome.rs",
+     "purpose": "Outcomes of a rule skill (FIX 8075): a closed-form recipe with no model and no pack receipt behind its work…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -65234,7 +65278,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 14,
       "re-export": 20,
       "struct": 2
@@ -65565,7 +65609,7 @@
      "path": "src/sync/residence/prune.rs",
      "purpose": "Last-touch accounting and pruning for opened-item read caches, and the demotion of a promoted canonical window",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -65901,8 +65945,8 @@
      "path": "src/sync/selector/secret_projection/documents.rs",
      "purpose": "A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes…",
      "surface": {
-      "crate-vis": 12,
-      "fn": 5,
+      "crate-vis": 11,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -65913,7 +65957,7 @@
      "path": "src/sync/selector/secret_projection/frames.rs",
      "purpose": "A window blob as a sync peer gets it, and a peer's blob as this window takes it (FIX 7608 slice 4, part 2)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -65929,6 +65973,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/secret_projection/reauthor.rs",
+     "purpose": "A marked snapshot ASSET's current copy, written again for a home that may hold an older one (FIX 10729…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "RepoSyncAdmission"
      ],
@@ -65937,7 +65991,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -76789,7 +76843,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77174,7 +77228,7 @@
      "purpose": "Live office body records and Vault doors"
     },
     "origin": {
-     "files": 136,
+     "files": 137,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77531,7 +77585,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77559,7 +77613,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77615,7 +77669,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 266,
+     "files": 267,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77820,7 +77874,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5114,
+   "source_files": 5119,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95193,7 +95247,7 @@
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {

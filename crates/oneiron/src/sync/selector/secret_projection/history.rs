@@ -129,7 +129,9 @@ impl SyncSecretProjection {
         if self.is_empty() {
             return Ok(out);
         }
+        let peers = json.peers.clone();
         for change in &mut json.changes {
+            let peer = real_peer(peers.as_deref(), change.id.peer);
             for op in &mut change.ops {
                 let Some(map) = root_map_name(&op.container) else {
                     continue;
@@ -145,7 +147,12 @@ impl SyncSecretProjection {
                             self.unalias_key(key, &mut out.sources);
                             continue;
                         };
-                        match self.source_row(&id, &bytes)? {
+                        // A re-authored copy carries no edit (FIX 10729).
+                        let inbound = match self.reauthored_row(peer, &id, &bytes) {
+                            Some(row) => row,
+                            None => self.source_row(&id, &bytes)?,
+                        };
+                        match inbound {
                             InboundRow::Source { id, row } => {
                                 out.sources.insert(id);
                                 *key = id.to_hex();

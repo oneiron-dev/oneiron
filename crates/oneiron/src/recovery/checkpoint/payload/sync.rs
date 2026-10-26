@@ -13,6 +13,7 @@ use heed::{RoTxn, RwTxn};
 
 use super::rows::{Class, Client, kind_class};
 use super::{Carrier, Getter, MixedCarrierProjection};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::store::ManifestDbs;
@@ -25,6 +26,7 @@ use crate::sync::checkpoint_payload::{
     SkeletonRow, SyncAtom, SyncCarrier, SyncPayloadOwners, SyncSkeleton, SyncUnclassified,
     project_checkpoint_sync, restore_checkpoint_sync,
 };
+use crate::sync::selector::RepoCopyAliases;
 
 /// A CLAIM's and a NOTE core's cached copy: their getter places them by
 /// more than their kind (a dreamer step's response, an origin claim's
@@ -38,11 +40,28 @@ const PENDING_LORO: &str = "a window's Loro history, which KS7-3b splits";
 /// families' codecs, and the manifest databases a restore writes through.
 pub(in crate::recovery::checkpoint) struct SyncCarriers<'d, D> {
     dbs: &'d D,
+    /// The capture's masked repo copy aliases: a copy's rows are placed
+    /// under its source (FIX 7608, FIX 10799). Empty unless the capture read
+    /// them; a read that fails leaves today's placement.
+    aliases: RepoCopyAliases,
 }
 
 impl<'d, D: ManifestDbs> SyncCarriers<'d, D> {
     pub(in crate::recovery::checkpoint) fn new(dbs: &'d D) -> Self {
-        Self { dbs }
+        Self {
+            dbs,
+            aliases: RepoCopyAliases::default(),
+        }
+    }
+
+    /// Place a masked copy's rows under its source: `aliases` as the
+    /// capture's transaction reads them (`RepoCopyAliases::read_in_txn`).
+    pub(in crate::recovery::checkpoint) fn with_copy_aliases(
+        mut self,
+        aliases: RepoCopyAliases,
+    ) -> Self {
+        self.aliases = aliases;
+        self
     }
 }
 
@@ -57,10 +76,17 @@ fn sync_carrier(carrier: Carrier) -> SyncCarrier {
     }
 }
 
-/// An entity kind placed as the registry places it ([`super::rows`]).
-struct RegistryOwners;
+/// An entity kind placed as the registry places it ([`super::rows`]); a
+/// masked copy's rows under its source.
+struct RegistryOwners<'a> {
+    aliases: &'a RepoCopyAliases,
+}
 
-impl SyncPayloadOwners for RegistryOwners {
+impl SyncPayloadOwners for RegistryOwners<'_> {
+    fn owner_entity(&self, id: EntityId) -> EntityId {
+        self.aliases.stored(&id)
+    }
+
     fn entity_kind(&self, entity_type: u8) -> KindPlacement {
         let Some(entry) = entity_type_registry_entry(entity_type) else {
             return KindPlacement::Unclassified(SyncUnclassified::UnknownKind);
@@ -119,7 +145,10 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
             }
             Ok(ordinal)
         };
-        let skeleton = project_checkpoint_sync(&rows, &RegistryOwners, &mut emit)?;
+        let owners = RegistryOwners {
+            aliases: &self.aliases,
+        };
+        let skeleton = project_checkpoint_sync(&rows, &owners, &mut emit)?;
         for row in skeleton.rows {
             match row {
                 SkeletonRow::Sealed { .. } => {}
