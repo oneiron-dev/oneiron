@@ -12,24 +12,10 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
 use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
-
-/// How many inbound claim rows a streaming lookup will walk before refusing.
-///
-/// A WORK bound, not a memory one, which is why it is its own number rather
-/// than `MAX_EDGE_QUERY_RESULTS`. That constant caps a `Vec` the caller is
-/// about to hold; nothing is held here, so the reason for its size does not
-/// apply and the two are free to differ. This one exists only so a subject's
-/// fan-in cannot make a lookup arbitrarily expensive.
-///
-/// Set an order of magnitude above the materialization cap on purpose. Past
-/// this the lookup REFUSES, and a refusal is an availability cliff for the
-/// subject it lands on — so it belongs far above any fan-in a long-lived vault
-/// reaches honestly, and close enough to reachable that the worst case stays a
-/// number someone can reason about.
-const DEDUPE_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
 
 impl Vault {
     /// Retrieves and decodes a CLAIM (type 0) entity body.
@@ -222,27 +208,16 @@ impl Vault {
     /// returns the first thing `found` makes of one.
     ///
     /// The same rows as [`Vault::claims_for_subject_in_txn`] under the same
-    /// filter, and under a ceiling of its own. That sibling MATERIALIZES peers
-    /// and errors past `MAX_EDGE_QUERY_RESULTS`; this one holds nothing but
-    /// the current row, so its bound is on WORK rather than on memory and sits
-    /// far higher — [`DEDUPE_SCAN_CEILING`].
+    /// filter. That sibling MATERIALIZES peers; this one holds nothing but the
+    /// current row.
     ///
-    /// # Which horn this takes
-    ///
-    /// Two bad things can happen to a caller looking for one row among a
-    /// subject's inbound claims, and inbound claims are attached BY OTHERS, so
-    /// a peer able to write rows about a subject controls how many there are.
-    ///
-    /// * With NO ceiling, that peer makes every lookup arbitrarily expensive.
-    /// * With a ceiling that returns "not found", the same peer switches the
-    ///   caller's dedupe off for good — and a dedupe that silently stops
-    ///   deduplicating is worse than one that stops working, because the
-    ///   duplicate it lets through looks like a legitimate second ask.
-    ///
-    /// So the ceiling is here and it is LOUD: past it the walk raises
-    /// [`Error::IndexOverflow`] and the caller refuses. Work is bounded, and
-    /// no caller is ever quietly told "nothing here" by a subject that is
-    /// merely too crowded to search.
+    /// Inbound claims are attached BY OTHERS, so a peer able to write rows
+    /// about a subject controls how many there are. A walk that answered "not
+    /// found" or refused past a count would let that peer switch the caller's
+    /// dedupe off, so the walk reads every row until `found` answers (FIX
+    /// 8660): a match is the only early end, and the count only feeds the
+    /// advisory [`EngineScan::EdgePeerRows`] check of the subject's inbound
+    /// `claim_of` edges.
     ///
     /// Reads through the caller's txn, so the whole walk sees one snapshot.
     ///
@@ -254,16 +229,50 @@ impl Vault {
         &self,
         rtxn: &heed::RoTxn<'_>,
         subject: &EntityId,
-        found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
+        mut found: impl FnMut(&EntityId, &ClaimBody) -> Option<T>,
     ) -> Result<Option<T>> {
-        self.find_claim_for_subject_within(rtxn, subject, DEDUPE_SCAN_CEILING, found)
+        self.walk_subject_claims_in_txn(rtxn, subject, |id, body| Ok(found(id, &body)))
     }
 
-    /// [`Vault::find_claim_for_subject_in_txn`] under an explicit ceiling.
-    ///
-    /// The bound is a parameter so the refusal is reachable in a test without
-    /// building the million rows the production ceiling asks for. Production
-    /// has exactly one caller and it passes [`DEDUPE_SCAN_CEILING`].
+    /// Hands each CLAIM attached to `subject` by an inbound `claim_of` edge to
+    /// `visit`, under the caller's snapshot, until `visit` answers `Some`.
+    /// Every row is read, however many a subject holds; the count only feeds
+    /// the advisory [`EngineScan::EdgePeerRows`] check, which never refuses,
+    /// caps or answers "not found".
+    fn walk_subject_claims_in_txn<T>(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        mut visit: impl FnMut(&EntityId, ClaimBody) -> Result<Option<T>>,
+    ) -> Result<Option<T>> {
+        let direction = EdgeDirection::In;
+        let kind = EdgeKind::ClaimOf;
+        let scope = [
+            &[direction as u8][..],
+            subject.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = ScanCount::start(&self.store, rtxn, EngineScan::EdgePeerRows, &scope)?;
+        let mut hit = None;
+        for entry in self.port_edges(rtxn, subject, direction, Some(kind), None)? {
+            count.row();
+            let claim_id = entry?.target;
+            let Some(body) = self.claim_body_if_claim_in_txn(rtxn, &claim_id)? else {
+                continue;
+            };
+            hit = visit(&claim_id, body)?;
+            if hit.is_some() {
+                break;
+            }
+        }
+        count.defer(&self.store);
+        Ok(hit)
+    }
+
+    /// A bounded twin of [`Vault::find_claim_for_subject_in_txn`] that refuses
+    /// past `ceiling` rows. No production path calls it.
+    #[cfg(test)]
     pub(super) fn find_claim_for_subject_within<T>(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -334,6 +343,10 @@ impl Vault {
         crate::ports::ClaimStore::port_claim_list_by_predicate(self, rtxn, predicate)
     }
 
+    /// Every readable CLAIM of each of `subjects` that `matches`, under one
+    /// snapshot. Each subject's whole inbound cohort is judged, however large
+    /// (FIX 8661); the count only feeds the advisory
+    /// [`EngineScan::EdgePeerRows`] check.
     pub(crate) fn claim_bodies_for_subjects_matching(
         &self,
         subjects: &[EntityId],
@@ -342,27 +355,12 @@ impl Vault {
         let rtxn = self.store.env.read_txn()?;
         let mut claims = Vec::new();
         for subject in subjects {
-            for (scanned, entry) in self
-                .port_edges(
-                    &rtxn,
-                    subject,
-                    EdgeDirection::In,
-                    Some(EdgeKind::ClaimOf),
-                    None,
-                )?
-                .enumerate()
-            {
-                if scanned >= MAX_EDGE_QUERY_RESULTS {
-                    return Err(Error::IndexOverflow("claim_bodies_for_subjects"));
-                }
-                let claim_id = entry?.target;
-                let Some(body) = self.claim_body_if_claim_in_txn(&rtxn, &claim_id)? else {
-                    continue;
-                };
+            self.walk_subject_claims_in_txn(&rtxn, subject, |_, body| {
                 if matches(&body, subject) {
                     claims.push(body);
                 }
-            }
+                Ok(None::<()>)
+            })?;
         }
         Ok(claims)
     }
