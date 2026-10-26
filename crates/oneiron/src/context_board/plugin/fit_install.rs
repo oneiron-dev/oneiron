@@ -71,6 +71,11 @@ pub enum PluginSectionFitOutcome {
 /// Why an offer whose content the owner blocked asks.
 const HASH_BLOCKED: &str = "the owner blocked this package's content hash; the owner decides";
 
+/// Why a ready install that could not land asks.
+fn could_not_land(error: &PluginSectionError) -> String {
+    format!("the install could not land ({error}); the owner decides")
+}
+
 /// The fit's verdict before anything lands.
 enum Fit {
     Installed(PluginSectionInstalled),
@@ -133,10 +138,7 @@ pub fn install_plugin_section_after_fit(
         }) => (analysis, permissions),
         // A ready install that could not land asks instead: the owner's
         // claim is today's path, never a new refusal.
-        Err(error) => (
-            format!("the install could not land ({error}); the owner decides"),
-            section,
-        ),
+        Err(error) => (could_not_land(&error), section),
     };
     // The owner's proposal carries what the caller is told: the bounded
     // analysis and every permission the fit evaluated.
@@ -463,7 +465,8 @@ impl Offer<'_> {
                 permissions,
             });
         }
-        self.vault
+        let landed = self
+            .vault
             .try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
                 if self
                     .vault
@@ -482,9 +485,12 @@ impl Offer<'_> {
                         &permissions,
                     ));
                 }
-                self.land_in_txn(txn, envelope, &record, permissions)
+                self.land_in_txn(txn, envelope, &record, permissions.clone())
                     .map(Fit::Installed)
-            })
+            });
+        // A failed writer rolls back first; the offer then asks with every
+        // permission the fit evaluated.
+        Ok(landed.unwrap_or_else(|error| Fit::ask(could_not_land(&error), &permissions)))
     }
 
     /// A hub package installs through the admitted publisher's fitted import
@@ -529,32 +535,39 @@ impl Offer<'_> {
                 permissions,
             });
         }
-        approved.check_package(fitted.package())?;
-        vault.try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
-            // Checked before the import writes anything: an Active holder of
-            // blocked content asks too, and the shared import is untouched.
-            if vault.skill_hash_blocked_in_txn(txn, approved.content_hash)? {
-                return Ok(Fit::ask(HASH_BLOCKED, &permissions));
-            }
-            let entity = vault.commit_fitted_skill_in_txn(txn, &fitted, Some(target_skill_ref))?;
-            // The section's ref is where every rebuild re-finds the skill:
-            // content held elsewhere aborts this writer, and the offer asks.
-            if entity != target_skill_ref {
-                return Err(PluginSectionError::ImportRefDrift {
-                    expected: target_skill_ref.to_hex(),
-                    found: entity.to_hex(),
-                });
-            }
-            let record = vault.read_skill_record_in_txn(txn, &entity)?;
-            approved.check_record(&record)?;
-            if !record.lifecycle_status.loads_as_canon() {
-                return Err(PluginSectionError::SkillNotActive {
-                    found: record.lifecycle_status,
-                });
-            }
-            self.land_in_txn(txn, envelope, &record, permissions)
-                .map(Fit::Installed)
-        })
+        let landed = approved.check_package(fitted.package()).and_then(|()| {
+            vault.try_with_write_txn_grouped(|txn| -> PluginResult<Fit> {
+                // Checked before the import writes anything: an Active holder
+                // of blocked content asks too, and the shared import is
+                // untouched.
+                if vault.skill_hash_blocked_in_txn(txn, approved.content_hash)? {
+                    return Ok(Fit::ask(HASH_BLOCKED, &permissions));
+                }
+                let entity =
+                    vault.commit_fitted_skill_in_txn(txn, &fitted, Some(target_skill_ref))?;
+                // The section's ref is where every rebuild re-finds the skill:
+                // content held elsewhere aborts this writer, and the offer
+                // asks.
+                if entity != target_skill_ref {
+                    return Err(PluginSectionError::ImportRefDrift {
+                        expected: target_skill_ref.to_hex(),
+                        found: entity.to_hex(),
+                    });
+                }
+                let record = vault.read_skill_record_in_txn(txn, &entity)?;
+                approved.check_record(&record)?;
+                if !record.lifecycle_status.loads_as_canon() {
+                    return Err(PluginSectionError::SkillNotActive {
+                        found: record.lifecycle_status,
+                    });
+                }
+                self.land_in_txn(txn, envelope, &record, permissions.clone())
+                    .map(Fit::Installed)
+            })
+        });
+        // A failed writer rolls back first; the offer then asks with every
+        // permission the fit evaluated.
+        Ok(landed.unwrap_or_else(|error| Fit::ask(could_not_land(&error), &permissions)))
     }
 
     /// Lands the Auto install claim and its `skill.section_fit` receipt
