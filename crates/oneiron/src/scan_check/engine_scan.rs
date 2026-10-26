@@ -318,11 +318,14 @@ pub enum EngineScan {
     ProjectAnchorDepth,
     /// One project fold's deepest lineage walk (once quarantined past 256).
     ProjectFoldDepth,
+    /// One receipt-family source ledger a receipt query reads, named by its
+    /// scope (once cut short or refused past 100,000; FIX 3582).
+    ReceiptSourceRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 118] = [
+    pub const ALL: [Self; 119] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -441,6 +444,7 @@ impl EngineScan {
         Self::AudienceCoverDepth,
         Self::ProjectAnchorDepth,
         Self::ProjectFoldDepth,
+        Self::ReceiptSourceRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -573,6 +577,7 @@ impl EngineScan {
             Self::AudienceCoverDepth => "audience_cover_depth",
             Self::ProjectAnchorDepth => "project_anchor_depth",
             Self::ProjectFoldDepth => "project_fold_depth",
+            Self::ReceiptSourceRows => "receipt_source_rows",
         }
     }
 
@@ -773,6 +778,7 @@ impl EngineScan {
             Self::AudienceCoverDepth => 150,
             Self::ProjectAnchorDepth => 151,
             Self::ProjectFoldDepth => 152,
+            Self::ReceiptSourceRows => 153,
         }]
     }
 }
