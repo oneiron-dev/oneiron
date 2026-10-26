@@ -35,8 +35,8 @@ pub use ask::HOOK_RESULT_NOT_RETAINED;
 pub(crate) use ask::VERB_HOOK_INTENT;
 pub use credential::{
     VerbAskCredential, VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
-    VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
-    VerbAskResumed, VerbAskSavedCall,
+    VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope,
+    VerbAskInstrument, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
 };
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
