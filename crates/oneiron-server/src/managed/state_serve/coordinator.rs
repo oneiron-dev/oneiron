@@ -2,6 +2,8 @@
 //! `serve_managed` keeps the existing boot and drain order in one coordinator.
 //! State, admission, and shutdown definitions remain in the parent module.
 
+use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
+
 use super::{
     Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, HostLimits, ManagedArgs,
     ManagedCtl, ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal,
@@ -377,7 +379,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             "initial wake ledger push failed"
         );
     }
-    let training_report = spawn_training_report(
+    let ledger_report = spawn_ledger_report(
         Arc::clone(&state),
         Arc::clone(&sync_server),
         training_changes,
@@ -673,10 +675,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
         }
 
-        // The report task stops before the final push, which reads the setting
+        // The report task stops before the final push, which reads the report
         // again itself.
-        training_report.abort();
-        let _ = training_report.await;
+        ledger_report.abort();
+        let _ = ledger_report.await;
         final_ledger_push(&state, &sync_server).await;
         result?;
         telemetry_drained?;
@@ -698,23 +700,30 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     outcome
 }
 
-/// Reports the vault's training setting to the supervisor as it changes
-/// (FIX 5575), so a status read there never wakes the vault.
+/// Reports the vault's training setting and its schedule to the supervisor
+/// as they change (FIX 5575, FIX 7746), so a status read there never wakes
+/// the vault and its next wake is the one the running vault would ask for.
 ///
-/// Each notification on `changes` only says "re-read committed state": the
-/// setting is read again and pushed with the current entries when it moved
-/// from the last report the supervisor took, or when it took none, so a
-/// refused push goes out again on the next change. Notifications that land
-/// during a push are read as one, since each report replaces the last whole.
-/// It takes no write admission, so the reap freeze never holds it back, and
-/// it ends with shutdown.
-fn spawn_training_report(
+/// Each notification on `changes` only says "re-read committed state", and
+/// so does each [`LEDGER_SCHEDULE_POLL`] tick, since a lease, the sync queue
+/// and a noted deadline move with no signal of their own: the report is read
+/// again and pushed when the setting or the schedule moved from the last
+/// report the supervisor took, or when it took none, so a refused push goes
+/// out again on the next read. Notifications that land during a push are
+/// read as one, since each report replaces the last whole. It takes no write
+/// admission, so the reap freeze never holds it back, and it ends with
+/// shutdown.
+fn spawn_ledger_report(
     state: Arc<ManagedState>,
     server: Arc<SyncServer>,
     mut changes: watch::Receiver<u64>,
     mut stop: ShutdownSignal,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut poll = tokio::time::interval(LEDGER_SCHEDULE_POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The opening push has just read the report.
+        poll.tick().await;
         loop {
             tokio::select! {
                 () = &mut stop => return,
@@ -723,11 +732,12 @@ fn spawn_training_report(
                         return;
                     }
                 }
+                _ = poll.tick() => {}
             }
-            if let Err(_error) = state.ledger().push_training_if_changed(&server).await {
+            if let Err(_error) = state.ledger().push_live_if_changed(&server).await {
                 tracing::warn!(
                     reason = "wake_ledger_export_failed",
-                    "training setting report failed"
+                    "wake ledger report failed"
                 );
             }
         }

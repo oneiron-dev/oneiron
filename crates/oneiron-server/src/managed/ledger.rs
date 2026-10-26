@@ -45,6 +45,12 @@ const LEDGER_PUSH_TIMEOUT: Duration = Duration::from_secs(2);
 /// it does the same work.
 const LEASE_WAKE_WINDOW_SECS: u64 = 60;
 
+/// How often the running vault reads its schedule again for a move to push
+/// (FIX 7746): a lease, the sync queue and a noted deadline move with no
+/// signal of their own. Half the lease wake window, so a move reaches the
+/// supervisor well inside the window it asks for.
+pub(super) const LEDGER_SCHEDULE_POLL: Duration = Duration::from_secs(30);
+
 /// How long a sync session that upgraded but has not spoken yet is assumed to
 /// still be there.
 ///
@@ -342,29 +348,23 @@ impl WakeLedger {
         self.push_report(&mut exported.taken, snapshot).await
     }
 
-    /// Push-on-change for the training setting while the vault runs: sends
-    /// the whole report, entries included, only when the setting moved from
-    /// the last report the supervisor took, or when it took none. Entries
-    /// that moved alone wait for the next push, pull or exit, as before.
+    /// Push-on-change while the vault runs (FIX 7746): sends the whole report
+    /// when the training setting or the schedule moved from the last report
+    /// the supervisor took, or when it took none. The job-ready head is due
+    /// now whenever it is there, so only its presence is a schedule move: its
+    /// time is the read's own clock.
     ///
     /// Returns whether a push was both needed and accepted.
-    pub async fn push_training_if_changed(
-        &self,
-        server: &SyncServer,
-    ) -> Result<bool, ManagedError> {
+    pub async fn push_live_if_changed(&self, server: &SyncServer) -> Result<bool, ManagedError> {
         let mut exported = self.exported.lock().await;
-        let training = self.training()?;
+        let snapshot = self.snapshot(server)?;
         if exported
             .taken
             .as_ref()
-            .is_some_and(|reported| reported.training == training)
+            .is_some_and(|reported| same_schedule(reported, &snapshot))
         {
             return Ok(false);
         }
-        let snapshot = LedgerSnapshot {
-            entries: self.export(server)?,
-            training,
-        };
         self.push_report(&mut exported.taken, snapshot).await
     }
 
@@ -485,6 +485,21 @@ fn read_persisted_rev(vault: &oneiron::Vault) -> Result<u64, ManagedError> {
         ManagedError::VaultMeta(format!("`{LEDGER_REV_KEY}` row is {len} bytes, expected 8"))
     })?;
     Ok(u64::from_le_bytes(bytes))
+}
+
+/// Whether `now` holds the training setting and the schedule `reported`
+/// held: the same entries, the job-ready head's time apart.
+fn same_schedule(reported: &LedgerSnapshot, now: &LedgerSnapshot) -> bool {
+    let schedule = |snapshot: &LedgerSnapshot| -> Vec<WakeEntry> {
+        let mut entries = snapshot.entries.clone();
+        for entry in &mut entries {
+            if entry.id == WAKE_ID_JOB_READY {
+                entry.at = Schedule::Exact { at: 0 };
+            }
+        }
+        entries
+    };
+    reported.training == now.training && schedule(reported) == schedule(now)
 }
 
 /// The frozen report `exported` holds when it is the one `rev` and
