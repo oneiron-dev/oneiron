@@ -186,7 +186,6 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::tagging::tear_in_txn(store, wtxn, id)?;
     crate::store::turn_missing::tear_in_txn(store, wtxn, id)?;
     crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
-    crate::embed::retire_repo_derived_index_copies_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()
