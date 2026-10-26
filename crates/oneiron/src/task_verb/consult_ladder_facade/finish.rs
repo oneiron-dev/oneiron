@@ -9,8 +9,9 @@
 //! on the case's settled ask when one was raised (`consent_ask`): a
 //! governing decision with a counted human word from someone other than the
 //! opener and outside the opener's credential lineage (FIX 10693). While
-//! that ask stands unsettled the ladder stays where it is. A case whose ask
-//! was never raised finishes as before and is recorded as unverified.
+//! that ask stands unsettled, or once it settled on a denial, the ladder
+//! stays where it is. A case whose ask was never raised, or closed with no
+//! such verdict, finishes as before and is recorded as unverified.
 //! Nothing here reads a caller's kind or approval: the case, the ask, its
 //! words and its settlement are the engine's rows.
 //!
@@ -185,8 +186,9 @@ pub(super) fn freeze_case_in(
 /// carries, read in `txn`, the Finish's own transaction. Its frozen case's
 /// ask, when one was raised, must have settled a decision that governs this
 /// consult with a counted human word from someone other than the case's
-/// opener and outside its credential lineage; an ask still open, or one
-/// that settled on none of that, leaves the ladder where it is.
+/// opener and outside its credential lineage. An ask still open, or one
+/// that settled on a denial, leaves the ladder where it is; one that closed
+/// on none of that (its deadline, a stale cut) leaves the Finish unverified.
 pub(super) fn verify_finish_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -212,6 +214,11 @@ pub(super) fn verify_finish_in(
                     .map(|class| format!("{}@{}", class.key, class.version)),
                 settled_at: result.settlement.at,
             }))
+        }
+        // Closed with no governing verdict: the Finish lands unverified. Only
+        // a governing denial, or an ask still open, holds the ladder.
+        Some(result) if !(governs && matches!(result.decision, TaskAskDecision::No)) => {
+            Ok(ConsultConsent::Unverified)
         }
         _ => Err(super::ladder_refusal(
             LadderTransitionError::ConsentRequired,
