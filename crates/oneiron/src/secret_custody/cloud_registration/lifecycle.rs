@@ -6,18 +6,19 @@
 //! An erase of an owner takes every slot that owner linked, current,
 //! replaced or logged out, as the owner's own erase of the registration
 //! does: each fenced, every key its id names staged to retire, and its
-//! record, name and row erased. Those slots bind on the erase's receipt as
-//! erased with it (`deletion::receipt`), so its final row waits on their
-//! keys too. An erase of a slot's own record, which that erase fences
-//! itself, takes the slot's row. A delete runs no scrub and keeps them all.
+//! record, name and row erased; a slot the owner's erase left `Erasing`
+//! loses its row. Those slots bind on the erase's receipt as erased with
+//! it (`deletion::receipt`), so its final row waits on their keys too. An
+//! erase of a slot's own record, which that erase fences itself, takes the
+//! slot's row. A delete runs no scrub and keeps them all.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
 
-use super::ROWS;
 use super::store::{erase_slot_in_txn, rows_in_txn};
+use super::{CloudRegistrationPhase, ROWS};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -46,7 +47,12 @@ pub(crate) fn erase_cloud_registration_actor_in_txn(
             // The erase of the record itself fenced it before this scrub.
             ROWS.delete(&vault.store, wtxn, &slot)?;
         } else if row.owner == *id {
-            erase_slot_in_txn(vault, wtxn, &slot)?;
+            // An owner's erase of the registration fenced an `Erasing`
+            // slot already; fencing it again would reopen its discovery.
+            if row.phase != CloudRegistrationPhase::Erasing {
+                erase_slot_in_txn(vault, wtxn, &slot)?;
+            }
+            ROWS.delete(&vault.store, wtxn, &slot)?;
             taken.insert(slot);
         }
     }

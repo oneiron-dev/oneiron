@@ -344,7 +344,8 @@ impl CloudRegistration {
     }
 
     /// Where the owner's registration stands: the durable link, and the
-    /// audience's answer for its access token while that token is usable.
+    /// audience's answer for its access token while that token is usable;
+    /// with no link, an erase whose slots are still kept `Erasing`.
     /// It reads: it never refreshes or rotates.
     ///
     /// # Errors
@@ -360,7 +361,19 @@ impl CloudRegistration {
         };
         let _family = self.family();
         let Some(binding) = vault.cloud_registration_as_owner(owner, &pins.issuer)? else {
-            return Ok(Status::SignedOut);
+            let Some(erasing) = vault.cloud_registration_erasing_as_owner(owner, &pins.issuer)?
+            else {
+                return Ok(Status::SignedOut);
+            };
+            let slots = erasing
+                .slots
+                .iter()
+                .map(oneiron::EntityId::to_hex)
+                .collect();
+            return Ok(Status::Erasing {
+                slots,
+                complete: erasing.complete,
+            });
         };
         let link = LinkView::from(&binding);
         match binding.phase {
@@ -466,7 +479,7 @@ impl CloudRegistration {
         let at = vault.now_recorded_at();
         let local = if erase {
             let issuer = pins.map(|pins| pins.issuer.as_str());
-            let erased = vault.erase_cloud_registration_as_owner(owner, issuer)?;
+            let erased = vault.erase_cloud_registration_as_owner(owner, issuer, at)?;
             Local::Erased {
                 slots: erased.slots.iter().map(oneiron::EntityId::to_hex).collect(),
                 complete: erased.complete,

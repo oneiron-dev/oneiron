@@ -117,9 +117,9 @@ fn retire_in_txn(
 }
 
 /// Hard-erases slot `slot` in `wtxn`, as a run-bound record's end does:
-/// fenced and every key its id names staged to retire before its record,
-/// its name and its row go (KS-6 part 2). The finisher retires the keys
-/// after the commit.
+/// fenced and every key its id names staged to retire before its record
+/// and its name go (KS-6 part 2). The finisher retires the keys after the
+/// commit; the caller settles the slot's row.
 pub(super) fn erase_slot_in_txn(
     vault: &Vault,
     wtxn: &mut RwTxn<'_>,
@@ -134,8 +134,25 @@ pub(super) fn erase_slot_in_txn(
     {
         NAME_INDEX.delete(&vault.store, wtxn, &name)?;
     }
-    ROWS.delete(&vault.store, wtxn, slot)?;
     Ok(())
+}
+
+/// `actor`'s `Erasing` slots for `issuer`.
+fn erasing_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    actor: &EntityId,
+    issuer: &str,
+) -> Result<Vec<EntityId>> {
+    Ok(rows_in_txn(store, txn)?
+        .into_iter()
+        .filter(|(_, row)| {
+            row.owner == *actor
+                && row.issuer == issuer
+                && row.phase == CloudRegistrationPhase::Erasing
+        })
+        .map(|(slot, _)| slot)
+        .collect())
 }
 
 /// The record a link stores. Its value is wiped on every path.
@@ -377,9 +394,12 @@ impl Vault {
     /// issuer with `None`: every slot the owner linked for it, current,
     /// replaced or logged out, is fenced,
     /// every generation's and carrier's key staged to retire, and its
-    /// record, name and row erased, in one commit (KS-6 part 2); then the
-    /// keys are retired. Completion is read from custody, never from the
-    /// commit: `complete` false is pending, and the finisher retries.
+    /// record and name erased, its row kept value-free as `Erasing`, in one
+    /// commit (KS-6 part 2); then the keys are retired. The slots an earlier
+    /// erase left `Erasing` are taken with them, never fenced again.
+    /// Completion is read from custody, never from the commit: a slot whose
+    /// keys are all retired loses its row, and `complete` false is pending,
+    /// the rest kept for the next erase to report.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`]; a legal hold on a slot
@@ -388,26 +408,59 @@ impl Vault {
         &self,
         owner: &AuthenticatedOwner,
         issuer: Option<&str>,
+        at: u64,
     ) -> Result<CloudRegistrationErased> {
         let slots = self.with_write_txn(|wtxn| {
             let actor = owner_actor_in_txn(self, &*wtxn, owner)?;
-            let slots: Vec<EntityId> = rows_in_txn(&self.store, &*wtxn)?
-                .into_iter()
-                .filter(|(_, row)| {
-                    row.owner == actor && issuer.is_none_or(|issuer| row.issuer == issuer)
-                })
-                .map(|(slot, _)| slot)
-                .collect();
-            for slot in &slots {
-                erase_slot_in_txn(self, wtxn, slot)?;
+            let mut slots = Vec::new();
+            for (slot, mut row) in rows_in_txn(&self.store, &*wtxn)? {
+                if row.owner != actor || issuer.is_some_and(|issuer| row.issuer != issuer) {
+                    continue;
+                }
+                if row.phase != CloudRegistrationPhase::Erasing {
+                    erase_slot_in_txn(self, wtxn, &slot)?;
+                    row.phase = CloudRegistrationPhase::Erasing;
+                    row.changed_at = at;
+                    ROWS.put(&self.store, wtxn, &slot, &row)?;
+                }
+                slots.push(slot);
             }
             Ok(slots)
         })?;
         if !slots.is_empty() {
             self.finish_credential_retirements_after_commit();
         }
-        let complete = self.cloud_registration_erase_finished(&slots)?;
+        let complete = self.settle_erased(owner, &slots).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a cloud registration erase's completion did not read; it reads pending"
+            );
+            false
+        });
         Ok(CloudRegistrationErased { slots, complete })
+    }
+
+    /// The owner's erase of the cloud registration for `issuer` as it
+    /// stands, value-free: the slots an erase left `Erasing`, and whether
+    /// every key of each is retired here now; `None` when there are none.
+    /// It writes nothing.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`]; storage and custody
+    /// faults.
+    pub fn cloud_registration_erasing_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        issuer: &str,
+    ) -> Result<Option<CloudRegistrationErased>> {
+        let txn = self.store.env.read_txn()?;
+        let actor = owner_actor_in_txn(self, &txn, owner)?;
+        let slots = erasing_in_txn(&self.store, &txn, &actor, issuer)?;
+        if slots.is_empty() {
+            return Ok(None);
+        }
+        let complete = finished_in_txn(&self.store, &txn, &slots)?.len() == slots.len();
+        Ok(Some(CloudRegistrationErased { slots, complete }))
     }
 
     /// Whether the erase of every one of `slots` has finished here: each
@@ -418,11 +471,41 @@ impl Vault {
     /// Storage and custody faults: the caller reads them pending.
     pub fn cloud_registration_erase_finished(&self, slots: &[EntityId]) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        for slot in slots {
-            if !self.store.credential_erase_finished_in_txn(&txn, slot)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        Ok(finished_in_txn(&self.store, &txn, slots)?.len() == slots.len())
     }
+
+    /// Drops the `Erasing` row of each of `slots` whose erase has finished
+    /// here, so only pending ones stay; whether every one has.
+    fn settle_erased(&self, owner: &AuthenticatedOwner, slots: &[EntityId]) -> Result<bool> {
+        let finished = {
+            let txn = self.store.env.read_txn()?;
+            finished_in_txn(&self.store, &txn, slots)?
+        };
+        if !finished.is_empty() {
+            self.with_write_txn(|wtxn| {
+                let actor = owner_actor_in_txn(self, &*wtxn, owner)?;
+                for slot in &finished {
+                    let erasing = ROWS.get(&self.store, &*wtxn, slot)?.is_some_and(|row| {
+                        row.owner == actor && row.phase == CloudRegistrationPhase::Erasing
+                    });
+                    if erasing {
+                        ROWS.delete(&self.store, wtxn, slot)?;
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        Ok(finished.len() == slots.len())
+    }
+}
+
+/// The slots among `slots` whose erase has finished here (KS-6 part 2).
+fn finished_in_txn(store: &Store, txn: &RoTxn<'_>, slots: &[EntityId]) -> Result<Vec<EntityId>> {
+    let mut finished = Vec::new();
+    for slot in slots {
+        if store.credential_erase_finished_in_txn(txn, slot)? {
+            finished.push(*slot);
+        }
+    }
+    Ok(finished)
 }

@@ -17,7 +17,8 @@
 //! linked it, the pinned issuer and audience, the verified cloud subject,
 //! its phase and the slot generation it is fenced at. A row outlives its
 //! slot's use: a replaced or logged-out slot keeps its row, so the owner's
-//! erase still reaches it. Nothing here makes a network call.
+//! erase still reaches it, and an erased slot keeps it, `Erasing`, until
+//! every key of it is retired. Nothing here makes a network call.
 //!
 //! Lifecycle (L04 08:3x): an erase of the owner, or of the registration,
 //! crypto-shreds every slot and generation it reached; a delete keeps them;
@@ -108,6 +109,10 @@ pub enum CloudRegistrationPhase {
     LoggedOut,
     /// A later login replaced it: kept for the owner's erase.
     Replaced,
+    /// The owner's erase took it: its record, name and value are gone, and
+    /// the row stays until every key of it is retired, so a later erase
+    /// still reports it.
+    Erasing,
 }
 
 impl CloudRegistrationPhase {
@@ -204,8 +209,9 @@ pub enum CloudRegistrationLinked {
     ReplaceRequired { current: CloudRegistrationBinding },
 }
 
-/// What an owner's erase of the registration took: every slot, and whether
-/// every key of each is already retired everywhere it must be.
+/// What an owner's erase of the registration took: every slot, those an
+/// earlier erase left pending with it, and whether every key of each is
+/// already retired everywhere it must be.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CloudRegistrationErased {
     pub slots: Vec<EntityId>,

@@ -129,6 +129,10 @@ pub(crate) enum Status {
     NotConfigured { reason: String },
     /// Nothing is linked under the pinned issuer.
     SignedOut,
+    /// Nothing is linked, and the owner's erase still keeps these slots'
+    /// value-free rows: `complete` true once every key of each is retired,
+    /// and the next erase drops them; false is pending, never failed.
+    Erasing { slots: Vec<String>, complete: bool },
     /// The audience answered for the verified token just now.
     Registered {
         link: LinkView,
@@ -246,8 +250,9 @@ pub(crate) enum Local {
     /// The binding is stopped and the slot's value emptied; its keys stay
     /// until an erase.
     LoggedOut { link: LinkView },
-    /// The owner's erase: every slot fenced and erased; `complete` false is
-    /// pending, never failed.
+    /// The owner's erase: every slot fenced and erased, with those an
+    /// earlier erase left pending; `complete` false is pending, never
+    /// failed.
     Erased { slots: Vec<String>, complete: bool },
 }
 
