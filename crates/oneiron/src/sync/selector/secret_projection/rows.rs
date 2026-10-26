@@ -1,10 +1,10 @@
 //! One entity row as a peer gets it, and one incoming copy row as the
 //! canonical store takes it.
 
-use super::{BlobCopy, SyncSecretProjection};
+use super::{BlobCopy, ItemCopy, SyncSecretProjection};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::origin::secret_projection::edit::{
     RepoProjectedFileCopy, RepoProjectionDiffResult, apply_repo_projection_diff,
 };
@@ -18,6 +18,21 @@ pub(crate) enum CopyRow {
     /// The copy: under `key` (the copy id for a marked snapshot ASSET, else
     /// the row's own id), with the copy's bytes behind the stored header.
     Copy { key: EntityId, row: Vec<u8> },
+    /// A row a marked blob whose copy is unread this pass could mark: the
+    /// sealed-file placeholder behind the stored header, under `key`. An
+    /// export carries it; a window frame carrying it is withheld and owed.
+    Sealed { key: EntityId, row: Vec<u8> },
+}
+
+impl CopyRow {
+    /// The bytes and id the row leaves under: `raw` under `id` when it is no
+    /// marked item.
+    pub(crate) fn released(self, id: EntityId, raw: Vec<u8>) -> (EntityId, Vec<u8>) {
+        match self {
+            Self::Keep => (id, raw),
+            Self::Copy { key, row } | Self::Sealed { key, row } => (key, row),
+        }
+    }
 }
 
 /// What an incoming row on a copy becomes canonically.
@@ -37,33 +52,27 @@ pub(crate) enum InboundRow {
 }
 
 impl SyncSecretProjection {
-    /// Row `raw`, stored under `id`, as a peer gets it. A marked snapshot
-    /// ASSET moves to its copy id; a mismatched body under that id (one the
-    /// marks do not prove) reads as the sealed-file placeholder. Any other
-    /// row whose body is a marked blob's whole bytes keeps its id.
+    /// Row `raw`, stored under `id`, as a peer gets it ([`Self::item`]): a
+    /// marked snapshot ASSET moves to its copy id, a mismatched body under
+    /// that id reads as the sealed-file placeholder, a known copy id carries
+    /// its source's current copy, and any other row whose body is a marked
+    /// blob's whole bytes keeps its id. A row an unread copy could mark is
+    /// [`CopyRow::Sealed`].
     pub(crate) fn project_row(&self, id: &EntityId, raw: &[u8]) -> CopyRow {
         if self.is_empty() || raw.len() < ENTITY_METADATA_HEADER_LEN {
             return CopyRow::Keep;
         }
         let (header, body) = raw.split_at(ENTITY_METADATA_HEADER_LEN);
-        let hash = *blake3::hash(body).as_bytes();
-        if let Some(blob) = self.blob_of_source(id) {
-            let copy: &[u8] = if self.sources.get(id) == Some(&hash) {
-                &blob.copy
-            } else {
-                REPO_OPAQUE_FILE_BYTES
-            };
-            return CopyRow::Copy {
-                key: blob.id.copy,
-                row: [header, copy].concat(),
-            };
-        }
-        match self.blobs.get(&hash) {
-            Some(blob) => CopyRow::Copy {
-                key: *id,
-                row: [header, blob.copy.as_slice()].concat(),
+        match self.item(id, body) {
+            ItemCopy::Unmarked => CopyRow::Keep,
+            ItemCopy::Copy { key, bytes } => CopyRow::Copy {
+                key,
+                row: [header, bytes].concat(),
             },
-            None => CopyRow::Keep,
+            ItemCopy::Unread { key } => CopyRow::Sealed {
+                key,
+                row: [header, REPO_OPAQUE_FILE_BYTES].concat(),
+            },
         }
     }
 
@@ -82,7 +91,13 @@ impl SyncSecretProjection {
         let (id, blob) = match self.source_of_copy(key) {
             Some(source) => match self.blob_of_source(&source) {
                 Some(blob) => (source, blob),
-                None => return Ok(InboundRow::Ordinary),
+                // Its copy is unread this pass: the edit cannot be translated,
+                // so it is not admitted and stays the peer's pending work.
+                None => {
+                    return Err(Error::InvariantViolation(
+                        "a copy edit whose copy is unread this pass is not admitted",
+                    ));
+                }
             },
             // A row kept under its own id is a copy only when its body is a
             // copy this pass makes.
