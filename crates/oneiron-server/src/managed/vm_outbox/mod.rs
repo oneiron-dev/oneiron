@@ -89,9 +89,10 @@ struct Carrier {
     backup_wait: Option<VmOutboxOutcome>,
     /// Why each kind waits on this end's carrier records, once one of them
     /// did not write as its sets were scanned or readied, as a set the other
-    /// end sent was applied, or as the other end's answer to a set this end
-    /// sent was taken. Kept across sessions until each kept record is
-    /// written again and a scan of the kind writes its own.
+    /// end sent was applied, as the other end's answer to a set this end
+    /// sent was taken, or as this end's copy was offered again. Kept across
+    /// sessions until each kept record is written again and a scan of the
+    /// kind writes its own.
     record_wait: HashMap<VmOutboxKind, RecordWait>,
 }
 
@@ -105,7 +106,9 @@ struct RecordWait {
     /// other end sent was applied, its file published, so only this record
     /// written whole proves it received (FIX 7891); or as the other end's
     /// durable or refused answer was taken, so only this record retires its
-    /// transfer (FIX 7624). Held in memory only.
+    /// transfer (FIX 7624); or as this end, the member's origin, cleared its
+    /// refusal to offer its copy again, so only this record lets a scan
+    /// offer it (FIX 6686). Held in memory only.
     retry: BTreeMap<String, MemberRecord>,
 }
 
@@ -214,8 +217,9 @@ impl Carrier {
 
     /// Makes `kind` wait on its carrier records, as [`Self::records_failed`],
     /// once `error` did not write `member`'s `record` as a set the other end
-    /// sent was applied or as its answer to one this end sent was taken, and
-    /// keeps `record` to write again before the wait can end.
+    /// sent was applied, as its answer to one this end sent was taken, or as
+    /// this end's copy was offered again, and keeps `record` to write again
+    /// before the wait can end.
     fn received_failed(
         &mut self,
         kind: VmOutboxKind,
@@ -281,18 +285,16 @@ impl Carrier {
     /// asked to retire a version of it this end does not hold. This end is
     /// its origin, so both ends converge on its copy, and a refusal of that
     /// copy the other end gave before no longer stands: the other end's
-    /// copy is gone (FIX 6686). A record that does not write keeps the
-    /// refusal until the next such transfer.
+    /// copy is gone (FIX 6686). A record that does not write is kept to
+    /// write again, as [`Self::received_failed`] keeps one, so the kind
+    /// waits on its records until it is written and the next scan offers
+    /// the copy.
     fn reoffer(&mut self, kind: VmOutboxKind, member: &str) {
         let mut record = self.store.get(kind, member);
         if record.refused.take().is_some()
-            && let Err(error) = self.store.put(kind, member, record)
+            && let Err(error) = self.store.put(kind, member, record.clone())
         {
-            self.say(
-                kind,
-                member,
-                &format!("its copy is not offered again: {error}"),
-            );
+            self.received_failed(kind, member, record, &error);
         }
     }
 }
