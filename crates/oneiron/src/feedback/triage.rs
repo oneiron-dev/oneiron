@@ -202,6 +202,10 @@ pub struct FeedbackTriageContinuation {
     /// Vault seconds the source named for a retry: the sweep leaves it
     /// until then.
     pub retry_after: Option<u64>,
+    /// The items of the last page written that did not parse and were
+    /// skipped, each by its number, id or place on the page; the walk went
+    /// on past them (FIX 7631).
+    pub skipped: Vec<String>,
 }
 
 /// One revision a sweep handed off.
@@ -323,6 +327,10 @@ pub enum FeedbackTriageJob {
     Acknowledged(FeedbackTriageResult),
     /// The owner erased the revision's evidence ASSET: nothing is triaged.
     Erased,
+    /// No skill is bound now: nothing is triaged, as a sweep does nothing,
+    /// and the revision stays unacknowledged for the next bound sweep to
+    /// queue again (FIX 7627).
+    Unbound,
     /// The revision waits on this job.
     Pending(Box<FeedbackTriageInput>),
 }

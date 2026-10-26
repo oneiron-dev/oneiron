@@ -70,18 +70,25 @@ pub struct FeedbackTriageStatus {
     /// its end, and what stopped it last, with any retry time it named.
     /// Empty before the first sweep.
     pub continuations: Vec<FeedbackTriageContinuation>,
+    /// Every GitHub repository `[feedback.triage]` binds now, as
+    /// `github:<owner>/<repo>`, in its configured order: one with no entry in
+    /// `continuations` was never swept (FIX 7632). Empty when the host does
+    /// not name its binding.
+    pub bound_sources: Vec<String>,
     /// Each revision the sweep handed off or queued again.
     pub children: Vec<FeedbackTriageChild>,
     /// What holds triage back now, across every sweep.
     pub holds: Vec<FeedbackTriageHold>,
     /// Each unacknowledged revision whose evidence the owner erased, across
-    /// every sweep, in erased form; none of them is a child or a hold.
+    /// every sweep, and each of this sweep's acknowledged ones, in erased
+    /// form; none of them is a child or a hold (FIX 8305).
     pub erased: Vec<FeedbackTriageErased>,
 }
 
 /// A revision whose evidence ASSET the owner erased, in erased form: its
-/// name, with no content, revision digest or evidence id. It is settled: no
-/// sweep queues it again, and its evidence is never retained again.
+/// name and any result committed before the erase, with no content,
+/// revision digest or evidence id. No sweep queues it again, and its
+/// evidence is never retained again.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FeedbackTriageErased {
@@ -91,6 +98,9 @@ pub struct FeedbackTriageErased {
     pub id: String,
     /// Vault seconds a sweep settled it erased; `None` until one does.
     pub erased_at: Option<u64>,
+    /// The result committed before the erase; `None` when it was erased
+    /// unacknowledged.
+    pub result: Option<FeedbackTriageResult>,
 }
 
 /// One revision a sweep handed off or queued again, and its triage job.
@@ -115,8 +125,8 @@ pub struct FeedbackTriageChild {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "hold", rename_all = "snake_case")]
 pub enum FeedbackTriageHold {
-    /// No skill is bound: every sweep completes doing nothing, and a triage
-    /// job already queued fails, until the owner binds one.
+    /// No skill is bound: every sweep and every triage job already queued
+    /// completes doing nothing, until the owner binds one.
     SkillUnbound,
     /// A revision handed off with no committed result. A job that failed
     /// is queued again by the next sweep, unless its evidence was erased.
@@ -289,16 +299,19 @@ impl Vault {
             if handoff_key(&handoff.source_ref) != key {
                 return Err(Error::CorruptedIndex("feedback triage handoff identity"));
             }
-            if handoff.result.is_none() && erased::evidence_erased_in_txn(self, &txn, &handoff)? {
+            let mine = handoff.sweep == input.attempt || handoff.queued_by == input.attempt;
+            if !mine && handoff.result.is_some() {
+                continue;
+            }
+            // A revision acknowledged before its evidence was erased keeps
+            // its result, never its digest or evidence id (FIX 8305).
+            if erased::evidence_erased_in_txn(self, &txn, &handoff)? {
                 erased.push(FeedbackTriageErased {
                     source: handoff.source_ref.source,
                     id: handoff.source_ref.id,
                     erased_at: handoff.erased_at,
+                    result: handoff.result,
                 });
-                continue;
-            }
-            let mine = handoff.sweep == input.attempt || handoff.queued_by == input.attempt;
-            if !mine && handoff.result.is_some() {
                 continue;
             }
             let record = queue.get_in_txn(&txn, attempt_id(&handoff.attempt)?)?;
@@ -330,6 +343,7 @@ impl Vault {
             last_error: sweep.attempt.last_error,
             binding,
             continuations,
+            bound_sources: Vec::new(),
             children,
             holds,
             erased,

@@ -1138,6 +1138,16 @@ impl<'a> DreamerRunnerStore<'a> {
         Ok(PARKED.get(&self.vault.store, txn, &attempt_id)?.is_some())
     }
 
+    /// Every attempt that holds a parked row: each keeps its lease until the
+    /// signal it waits on resumes it, so a lease reclaim holds them all.
+    pub(crate) fn parked_ids(&self) -> Result<std::collections::HashSet<AttemptId>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        Ok(PARKED
+            .scan_keys(&self.vault.store, &rtxn, &[])?
+            .into_iter()
+            .collect())
+    }
+
     /// Pure proposal step. This method performs no LMDB write and enqueues no
     /// attempt.
     ///

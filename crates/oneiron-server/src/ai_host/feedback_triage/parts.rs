@@ -5,6 +5,7 @@
 //! are. Each part goes to the model as the source's data, never as an
 //! instruction.
 use oneiron::EntityId;
+use oneiron::ModelId;
 use oneiron::feedback::{
     FeedbackTriageInput, FeedbackTriageNodeInput, FeedbackTriagePin, FeedbackTriageSourceRef,
     FeedbackTriageSpan, FeedbackTriageStep,
@@ -35,19 +36,61 @@ impl Window {
     }
 }
 
-/// The Coach seat's model's window less the output it reserves, as its
-/// catalog row gives them (an output at or past the window reserves
-/// nothing); `None` while the row or its window is unknown, and the item
-/// then goes whole, as it always has.
+/// What the provider's tokenizer may count above the engine's on a model
+/// whose ratio was never measured: up to twice as many, as compaction
+/// reserves for a summary (FIX 10305).
+const UNMEASURED_COUNT_FACTOR: u64 = 2;
+/// The reply frame that margin leaves, as compaction's.
+const REPLY_FRAME_TOKENS: u64 = 64;
+
+/// The smallest window any rung of the Coach seat may serve a call on
+/// (FIX 10303): each rung's catalog window less the output it reserves, in
+/// the engine's own count (FIX 10305), less the prompt the rung prepends;
+/// the seat model's own row when no rung's reads. `None` while no window is
+/// known, and the item then goes whole, as it always has.
 pub(super) fn window(server: &SyncServer, models: &HostModels<'_>) -> Option<Window> {
     let seat = server.ai.model_runtime().seat(models.coach())?;
-    let row = match server.vault().model_registry_row(&seat.model) {
+    let vault = server.vault();
+    let mut smallest: Option<Window> = None;
+    for (model, prompt) in seat.rung_models() {
+        let Some(input) = model_window(vault, &model) else {
+            continue;
+        };
+        let prompt_tokens = prompt.as_deref().map_or(0, |prompt| {
+            oneiron::count_context_pack_tokens(prompt) as u64
+        });
+        let input_tokens = input.saturating_sub(prompt_tokens);
+        if smallest
+            .as_ref()
+            .is_none_or(|window| input_tokens < window.input_tokens)
+        {
+            smallest = Some(Window {
+                model: model.as_str().to_owned(),
+                input_tokens,
+            });
+        }
+    }
+    smallest.or_else(|| {
+        model_window(vault, &seat.model).map(|input_tokens| Window {
+            model: seat.model.as_str().to_owned(),
+            input_tokens,
+        })
+    })
+}
+
+/// `model`'s window less the output its catalog row reserves (an output at
+/// or past the window reserves nothing), in the engine's count: divided by
+/// the tokens its tokenizer counts per o200k token where it counts more,
+/// and while that ratio is unmeasured, cut to what twice the engine's count
+/// and a reply frame fill. `None` while its row or window is unknown.
+fn model_window(vault: &oneiron::Vault, model: &ModelId) -> Option<u64> {
+    let row = match vault.model_registry_row(model) {
         Ok(row) => row?,
         Err(error) => {
             tracing::warn!(
-                model = %seat.model,
+                %model,
                 kind = ?error.kind(),
-                "the Coach seat's model row did not read; its window is unknown"
+                "a Coach seat model's row did not read; its window is unknown"
             );
             return None;
         }
@@ -61,9 +104,11 @@ pub(super) fn window(server: &SyncServer, models: &HostModels<'_>) -> Option<Win
         .max_output_tokens
         .filter(|output| *output < context)
         .unwrap_or(0);
-    Some(Window {
-        model: seat.model.as_str().to_owned(),
-        input_tokens: context - output,
+    let input = context - output;
+    Some(match row.tokens_per_o200k {
+        Some(ratio) if ratio > 1.0 => (input as f64 / ratio) as u64,
+        Some(_) => input,
+        None => (input / UNMEASURED_COUNT_FACTOR).saturating_sub(REPLY_FRAME_TOKENS),
     })
 }
 

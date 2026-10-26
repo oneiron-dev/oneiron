@@ -138,6 +138,15 @@ impl Seat {
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
     }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order: every model a call on the seat may be served on.
+    pub(crate) fn rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder
+            .rung_models()
+            .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned)))
+            .collect()
+    }
 }
 
 /// Every seat the config fills, plus a router over every configured model,

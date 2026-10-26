@@ -148,7 +148,10 @@ impl Vault {
             .is_some_and(ReportDeliveryOutcome::is_final)
             && signature.digest == authorization.digest
             && blake3::hash(signature.body.as_bytes()).to_hex().as_str() == signature.digest
-            && wire_signature(&signature.body).is_some()
+            && wire_signature(&signature.body, |model_id| {
+                self.signature_stacks_in_txn(txn, model_id)
+            })?
+            .is_some()
             && send.send_ref == authorization.send_ref
             && send.destination == destination
             && bound.as_ref() == Some(&destination)

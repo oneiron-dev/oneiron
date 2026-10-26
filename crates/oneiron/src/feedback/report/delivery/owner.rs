@@ -15,6 +15,9 @@ use crate::dreamer_runner::maintenance::coach::COACH_HOST_QUEUE_KIND;
 use crate::dreamer_runner::{
     DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::outbound::{OutboundDispatchError, outbound_dispatch_attempt_id};
+use crate::outbound_intent_ledger::{IntentLedgerError, read_intent_for_attempt_in_txn};
+use crate::side_table::SideKey;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The owner's run-now ask. It carries no plan, lease or stamp: the
@@ -148,8 +151,9 @@ impl Vault {
     }
 
     /// Binds `publisher_ref` to `endpoint`, the host's feedback destination,
-    /// or unbinds it with `None`. A lane that already froze another
-    /// destination holds as changed; nothing is redirected.
+    /// or unbinds it with `None`. A lane that froze another destination and
+    /// was never offered takes the new binding in the same write (FIX
+    /// 7688); one offered once holds as changed and is never redirected.
     ///
     /// # Errors
     ///
@@ -174,7 +178,10 @@ impl Vault {
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             match &endpoint {
-                Some(endpoint) => ENDPOINTS.put(&self.store, txn, &key, endpoint)?,
+                Some(endpoint) => {
+                    ENDPOINTS.put(&self.store, txn, &key, endpoint)?;
+                    refreeze_unsent_in_txn(self, txn, &key, endpoint)?;
+                }
                 None => {
                     ENDPOINTS.delete(&self.store, txn, &key)?;
                 }
@@ -186,4 +193,64 @@ impl Vault {
             endpoint,
         })
     }
+}
+
+/// Re-freezes to `endpoint` each lane of `publisher_ref` that froze another
+/// destination and never entered dispatch: no receipt, no outcome, and no
+/// intent under its send in the outbound ledger (FIX 7688). Its hold clears,
+/// and the next run reads it again. A lane that entered dispatch keeps its
+/// destination, even when a crash kept its receipt from its row.
+fn refreeze_unsent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    publisher_ref: &str,
+    endpoint: &ReportPublisherEndpoint,
+) -> Result<()> {
+    let now = vault.now_recorded_at();
+    let mut moved = Vec::new();
+    for row in DELIVERIES.iter_raw_from(&vault.store, &*txn, &[])? {
+        let (key, value) = row?;
+        // A row that does not decode is no lane to move; the bind stands.
+        let (Some(row), Ok(mut record)) = (
+            <(EntityId, [u8; 32]) as SideKey>::decode_key(&key),
+            DELIVERIES.decode_value(&value),
+        ) else {
+            continue;
+        };
+        if record.key.publisher_ref != publisher_ref
+            || record.receipt.is_some()
+            || record.outcome.is_some()
+        {
+            continue;
+        }
+        let Some(send) = record.send.as_mut() else {
+            continue;
+        };
+        if send.destination == *endpoint || entered_dispatch_in_txn(vault, txn, &send.send_ref)? {
+            continue;
+        }
+        send.destination = endpoint.clone();
+        record.hold = None;
+        record.updated_at = now;
+        moved.push((row, record));
+    }
+    for (row, record) in moved {
+        DELIVERIES.put(&vault.store, txn, &row, &record)?;
+    }
+    Ok(())
+}
+
+/// Whether the outbound ledger holds an intent under `send_ref`: the send
+/// entered dispatch, and may have left, whatever its lane recorded after.
+fn entered_dispatch_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, send_ref: &str) -> Result<bool> {
+    let attempt = outbound_dispatch_attempt_id(send_ref).map_err(|error| match error {
+        OutboundDispatchError::Engine(error) => error,
+        _ => Error::InvariantViolation("outbound dispatch attempt id"),
+    })?;
+    let intent =
+        read_intent_for_attempt_in_txn(vault, txn, attempt, 0).map_err(|error| match error {
+            IntentLedgerError::Engine(error) => error,
+            _ => Error::CorruptedIndex("outbound intent ledger row"),
+        })?;
+    Ok(intent.is_some())
 }

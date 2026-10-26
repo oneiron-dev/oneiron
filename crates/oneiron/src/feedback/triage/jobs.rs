@@ -31,10 +31,6 @@ pub(super) fn invalid_job() -> Error {
     Error::InvalidConfig("invalid feedback triage job".into())
 }
 
-fn skill_unbound() -> Error {
-    Error::InvalidConfig("no feedback triage skill is bound".into())
-}
-
 pub(super) fn attempt_ref(id: AttemptId) -> Result<EntityId> {
     EntityId::from_bytes(*id.as_bytes())
 }
@@ -181,13 +177,14 @@ impl Vault {
     /// item read back from its evidence, checked against that revision, with
     /// its evidence, the skill bound now and the part graph a long item's
     /// earlier runs left (FIX 7549); the result committed for it already;
-    /// or, once the owner erased its evidence, nothing to triage.
+    /// or, once the owner erased its evidence or while no skill is bound,
+    /// nothing to triage.
     ///
     /// # Errors
     ///
     /// An attempt that is not this facet's Coach attempt or not the
     /// revision's current job; a job naming no handoff, or an item that no
-    /// longer matches its revision; no bound skill; storage errors.
+    /// longer matches its revision; storage errors.
     pub fn feedback_triage_job(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -208,7 +205,9 @@ impl Vault {
         if erased {
             return Ok(FeedbackTriageJob::Erased);
         }
-        let skill = skill.ok_or_else(skill_unbound)?;
+        let Some(skill) = skill else {
+            return Ok(FeedbackTriageJob::Unbound);
+        };
         let item = job_item(self, &handoff)?;
         Ok(FeedbackTriageJob::Pending(Box::new(FeedbackTriageInput {
             source_ref: handoff.source_ref,

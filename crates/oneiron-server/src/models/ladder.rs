@@ -278,6 +278,14 @@ impl OfferLadder {
         self
     }
 
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order.
+    pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
+        self.rungs
+            .iter()
+            .map(|rung| (&rung.model, rung.prompt.as_deref()))
+    }
+
     /// The offers of the rungs that could serve `request` (FIX 3194): each
     /// rung whose row serves it that holds its banked voice, or for a stock
     /// or raw voice the first such rung alone, as the walk sends it.

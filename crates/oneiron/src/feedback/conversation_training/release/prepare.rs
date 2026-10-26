@@ -66,9 +66,17 @@ impl Vault {
                 && let Some(mut row) = custody::submission(self, txn, old)?
                 && row.state == SubmissionState::Held
             {
+                // A held row may have published before a crash kept it from
+                // its mark: a forget names it, as every other withdrawal of
+                // one that may be at the intake does (FIX 10834).
+                let forget = withdraw::may_reach_intake(&row);
                 row.state = SubmissionState::Withheld;
                 anonymous::withdraw(&mut row);
-                put_submission_in(self, txn, old, &row)?;
+                if forget {
+                    withdraw::forget_hosted_in(self, txn, vec![(old, row)], now)?;
+                } else {
+                    put_submission_in(self, txn, old, &row)?;
+                }
             }
             let (local_seq, placed, piece, (transport, standing)) = match reuse {
                 // A retry keeps its C as it was made, never made again, its

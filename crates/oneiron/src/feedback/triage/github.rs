@@ -99,6 +99,9 @@ pub struct GithubIssuePage {
     pub next: Option<String>,
     /// The ETag the page carried.
     pub etag: Option<String>,
+    /// Each item on the page that did not parse, by its number, id or place
+    /// on the page: skipped, so the walk goes on (FIX 7631).
+    pub skipped: Vec<String>,
 }
 
 fn not_github() -> Error {
@@ -258,6 +261,7 @@ impl Vault {
             row.moved_at = now;
             row.error = None;
             row.retry_after = None;
+            row.skipped.clone_from(&page.skipped);
             SOURCES.put(&self.store, txn, &row.source, &row)?;
             Ok(Some(row))
         })

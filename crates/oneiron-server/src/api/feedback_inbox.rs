@@ -2,13 +2,16 @@
 //! vault a note, with no key and no moderation. A GET link carries the text
 //! in its query (`/v1/feedback?text=…`); a POST carries it as a plain-text,
 //! form or JSON (`{"text": …}`) body, or carries the v1 bundle a vault's
-//! `collector` send delivers. Mounted only while `[feedback.inbox]` is on.
+//! `collector` send delivers, or the content-free issue signature a vault's
+//! Coach delivers (`oneiron.issue_signature.v1`, read back typed, FIX 7684).
+//! Mounted only while `[feedback.inbox]` is on.
 //!
 //! The flood cap is the one refusal, asked before anything of a request is
 //! read; besides it, only the machine's floors (the `[limits]` body row and
-//! the disk reserve) and an empty or unreadable note are refused. The reply says only that the note landed, so nothing of
-//! the vault is reachable from here; the notes are read back through the
-//! owner's routes.
+//! the disk reserve) and an empty or unreadable note are refused, or a body
+//! that declares the issue signature schema and does not read back as one.
+//! The reply says only that the note landed, so nothing of the vault is
+//! reachable from here; the notes are read back through the owner's routes.
 
 mod flood;
 
@@ -24,7 +27,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Form, Json, Router};
 use oneiron::feedback::{
-    FeedbackCategory, FeedbackEncoding, FeedbackInboxVia, decode_feedback_bundle_as,
+    FeedbackCategory, FeedbackEncoding, FeedbackInboxVia, declares_issue_signature,
+    decode_feedback_bundle_as, reads_as_issue_signature,
 };
 use serde::Deserialize;
 
@@ -57,6 +61,8 @@ enum Note {
         category: Option<FeedbackCategory>,
     },
     Bundle(FeedbackEncoding, Bytes),
+    /// A JSON body that declares the issue signature schema, as sent.
+    Signature(String),
 }
 
 /// A request that lands nothing before the flood cap is asked.
@@ -65,6 +71,9 @@ enum Unlanded {
     NoText,
     Unreadable,
     NotABundle,
+    /// A body that declares the issue signature schema and does not read
+    /// back as one: its sender never records it delivered.
+    NotASignature,
     /// Past the `[limits]` row.
     TooLarge,
 }
@@ -81,6 +90,11 @@ impl Unlanded {
             Self::NotABundle => {
                 ApiError::bad_request("the body is not a v1 feedback bundle", None).into_response()
             }
+            Self::NotASignature => ApiError::bad_request(
+                "the body is not an oneiron.issue_signature.v1 signature",
+                None,
+            )
+            .into_response(),
             Self::TooLarge => refusal(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "feedback_inbox_too_large",
@@ -156,10 +170,17 @@ async fn take_post(
                 .map_err(|rejection| Unlanded::rejected(rejection.status())),
             Err(unlanded) => Err(unlanded),
         },
-        "application/json" => Json::<NoteFields>::from_request(request, &server)
-            .await
-            .map_err(|rejection| Unlanded::rejected(rejection.status()))
-            .and_then(|Json(fields)| fields_note(FeedbackInboxVia::Post, fields)),
+        // A body that declares the issue signature schema lands only as one;
+        // every other JSON body is a note's fields, as it always was.
+        "application/json" => match Bytes::from_request(request, &server).await {
+            Ok(bytes) if declares_issue_signature(&bytes) => String::from_utf8(bytes.to_vec())
+                .map(Note::Signature)
+                .map_err(|_| Unlanded::NotASignature),
+            Ok(bytes) => serde_json::from_slice::<NoteFields>(&bytes)
+                .map_err(|_| Unlanded::Unreadable)
+                .and_then(|fields| fields_note(FeedbackInboxVia::Post, fields)),
+            Err(rejection) => Err(Unlanded::rejected(rejection.status())),
+        },
         "application/x-www-form-urlencoded" => Form::<NoteFields>::from_request(request, &server)
             .await
             .map_err(|rejection| Unlanded::rejected(rejection.status()))
@@ -224,6 +245,12 @@ async fn land(server: Arc<SyncServer>, note: Result<Note, Unlanded>) -> Response
             }
             bytes.len()
         }
+        Note::Signature(body) => {
+            if !reads_as_issue_signature(body) {
+                return Unlanded::NotASignature.response();
+            }
+            body.len()
+        }
     };
     // A POST body past the row was already refused by its extractor; a
     // link's query is bounded here.
@@ -253,6 +280,7 @@ async fn land(server: Arc<SyncServer>, note: Result<Note, Unlanded>) -> Response
             Note::Bundle(encoding, bytes) => {
                 server.vault().take_feedback_bundle_as(encoding, &bytes)
             }
+            Note::Signature(body) => server.vault().take_feedback_signature(&body),
         }
     })
     .await;

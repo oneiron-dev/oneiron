@@ -72,6 +72,7 @@ pub(super) fn source_row_in_txn(
             completed_by: None,
             error: None,
             retry_after: None,
+            skipped: Vec::new(),
         });
     };
     if row.source != source {

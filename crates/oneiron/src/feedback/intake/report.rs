@@ -11,7 +11,7 @@ pub(crate) use erase::{
 
 use super::{FeedbackDedup, normalized};
 use crate::feedback::{IssueCategory, ReportIssue, ReportKind, ReportRoute, ReportStatus};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 const CLUSTERS: SideTable<EntityId, ReportCluster, Named> =
@@ -49,7 +49,18 @@ impl Vault {
             return Ok(None);
         }
         let mut best: Option<(f32, EntityId, ReportCluster)> = None;
-        for (id, mut cluster) in CLUSTERS.scan(&self.store, txn)? {
+        // A row that does not decode (a retired opaque marker, a corrupt
+        // value) clusters nothing and fails no report; it stays stored
+        // (FIX 10836). A storage fault still fails the report.
+        let mut undecodable = 0_usize;
+        for row in CLUSTERS.iter_raw_from(&self.store, &*txn, &[])? {
+            let (key, value) = row?;
+            let (Some(id), Ok(mut cluster)) =
+                (EntityId::decode_key(&key), CLUSTERS.decode_value(&value))
+            else {
+                undecodable += 1;
+                continue;
+            };
             if cluster.category != issue.request.category
                 || cluster.kind != issue.request.kind
                 || cluster.route != issue.route
@@ -79,6 +90,12 @@ impl Vault {
             {
                 best = Some((similarity, id, cluster));
             }
+        }
+        if undecodable > 0 {
+            tracing::warn!(
+                undecodable,
+                "report intake skipped undecodable cluster rows"
+            );
         }
         let duplicate = best.as_ref().map(|(_, id, _)| *id);
         let id = duplicate.unwrap_or(incoming);

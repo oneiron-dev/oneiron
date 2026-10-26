@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use rmpv::Value;
 
 use super::super::MAINTENANCE_QUEUE_KIND;
+use super::admission::{Admit, admitted_in_txn, dreamer_reader};
 use super::{
     ASKS, Answer, CURSOR, EXCERPT_BYTES, IDENTITY_RECHECK_FACET, IdentityAsk, IdentityAskReason,
     MAX_OPEN_ASKS, MAX_TERMS, MIN_TERM_CHARS, SCAN_TURNS, STOP_WORDS, ask_key, dreamer_seal,
@@ -176,15 +177,16 @@ pub(super) fn ask_for_mention_in_txn(
     }))
 }
 
-/// Checks each mention of one turn again: a hint settles it, else it opens
-/// an ask unless one is open for it or for its question. A kept-separate
-/// ask whose candidates changed opens afresh, to be decided again. `false`
-/// when a mention would open an ask past [`MAX_OPEN_ASKS`]: the turn is not
+/// Checks each mention of one turn again: a hint settles it, as the
+/// Dreamer's lane (`admit`) reads the mention whole, else it opens an ask
+/// unless one is open for it or for its question. A kept-separate ask whose
+/// candidates changed opens afresh, to be decided again. `false` when a
+/// mention would open an ask past [`MAX_OPEN_ASKS`]: the turn is not
 /// handled, and a later pass checks it again whole.
 fn recheck_turn_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    turn: &EntityId,
+    (turn, admit): (&EntityId, Option<&Admit<'_, '_>>),
     open: &mut Vec<([u8; 32], IdentityAsk)>,
     now: u64,
 ) -> Result<bool> {
@@ -232,7 +234,19 @@ fn recheck_turn_in_txn(
         else {
             continue;
         };
-        if let Some(entity) = hinted_in_txn(vault, txn, &ask)? {
+        // The Dreamer settles a mention only as its lane (`admit`) reads it:
+        // the mention's turn and message, every candidate and the hints it
+        // sums, whole; with no lane resolved, as before it (FIX 10374).
+        let hinted = match admit {
+            Some(admit) => match admitted_in_txn(vault, admit, txn, ask.clone())? {
+                Some(seen) if seen.whole() => {
+                    super::hints::pick(&seen.hints, &seen.ask.candidates, &seen.ask.context)
+                }
+                _ => None,
+            },
+            None => hinted_in_txn(vault, txn, &ask)?,
+        };
+        if let Some(entity) = hinted {
             settle_undo::settle_in_txn(
                 vault,
                 txn,
@@ -305,14 +319,41 @@ pub(in crate::dreamer_runner::maintenance) fn run(
     _attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<()> {
+    // Mentions settle through the Dreamer's lane; a vault that cannot
+    // resolve it runs the pass as before the lane did, and says so (FIX
+    // 10374).
+    let read = match dreamer_reader(vault) {
+        Ok(read) => Some(read),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "identity recheck: the Dreamer's lane did not resolve; settling without it"
+            );
+            None
+        }
+    };
     vault.with_write_txn_grouped(|txn| {
+        let admit = match read
+            .as_ref()
+            .map(|read| Admit::in_txn(read, txn))
+            .transpose()
+        {
+            Ok(admit) => admit,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "identity recheck: the Dreamer's lane policy did not read; settling without it"
+                );
+                None
+            }
+        };
         let after = CURSOR.get(&vault.store, txn, &())?;
         let (page, last) =
             crate::tagging::readable_page_in_txn(&vault.store, txn, after.as_ref(), SCAN_TURNS)?;
         let mut open = ASKS.scan(&vault.store, txn)?;
         let mut handled = None;
         for tags in &page {
-            if !recheck_turn_in_txn(vault, txn, &tags.turn, &mut open, now)? {
+            if !recheck_turn_in_txn(vault, txn, (&tags.turn, admit.as_ref()), &mut open, now)? {
                 // The page reads after the cursor, so the next pass starts at
                 // the turn that waited; before the page's first turn the
                 // cursor stays where it was.

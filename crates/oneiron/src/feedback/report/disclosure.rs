@@ -27,6 +27,7 @@ use crate::consent::{
     load_active_standing_grants,
 };
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::GateError;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The data class a publisher's standing disclosure covers: the text a
@@ -193,25 +194,36 @@ impl Vault {
     }
 
     /// The owner's disclosure choice for one issue to `publisher_ref`, in the
-    /// writer that records it. Stop-asking mints the publisher's standing
-    /// grant here, through the consent registry's one minting door.
+    /// writer that records it. Approve-once appends its consent receipt for
+    /// the issue's exact text effect (FIX 9368); stop-asking mints the
+    /// publisher's standing grant. Both go through the consent registry's
+    /// own doors, here.
     pub(super) fn report_disclosure_choice_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
-        publisher_ref: &str,
+        (issue_ref, publisher_ref): (&str, &str),
         request: &ReportRequest,
         choice: ReportDisclosureChoice,
     ) -> Result<(ReportDisclosure, Option<ReportDisclosureBasis>)> {
         Ok(match choice {
-            ReportDisclosureChoice::ApproveOnce => (
-                ReportDisclosure::Approved,
-                Some(ReportDisclosureBasis::IssueOnce {
-                    publisher_ref: publisher_ref.to_owned(),
-                    request_digest: bytes_to_hex_lower(&request_digest(request)?),
-                    decided_at: self.now_recorded_at(),
-                }),
-            ),
+            ReportDisclosureChoice::ApproveOnce => {
+                let digest = request_digest(request)?;
+                let effect = text_effect(issue_ref, &digest, publisher_bound(publisher_ref)?)?;
+                // The same approval asked again keeps its first receipt.
+                match self.approve_once_in_txn(txn, owner, effect.digest()) {
+                    Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) | Ok(_) => {}
+                    Err(error) => return Err(error),
+                }
+                (
+                    ReportDisclosure::Approved,
+                    Some(ReportDisclosureBasis::IssueOnce {
+                        publisher_ref: publisher_ref.to_owned(),
+                        request_digest: bytes_to_hex_lower(&digest),
+                        decided_at: self.now_recorded_at(),
+                    }),
+                )
+            }
             ReportDisclosureChoice::StopAskingForPublisher => {
                 let receipt =
                     self.create_standing_grant_in_txn(txn, owner, publisher_bound(publisher_ref)?)?;

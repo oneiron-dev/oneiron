@@ -99,6 +99,22 @@ pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResu
     Ok(id)
 }
 
+/// [`emit_issue_signature`] in the caller's write: the signature lands with
+/// what else that write records, or not at all.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn emit_issue_signature_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sig: &IssueSignature,
+) -> PublisherResult<EntityId> {
+    let id = vault.store.clock.entity_id()?;
+    SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
+    Ok(id)
+}
+
 /// Reads back the signature stored under `id`.
 ///
 /// # Errors

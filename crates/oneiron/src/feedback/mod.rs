@@ -150,7 +150,9 @@ pub use self::dispatch::{
     export_feedback_bundle, feedback_dispatch_request, send_feedback,
 };
 pub use self::error::FeedbackError;
-pub use self::inbox::{FeedbackInboxNote, FeedbackInboxVia};
+pub use self::inbox::{
+    FeedbackInboxNote, FeedbackInboxVia, declares_issue_signature, reads_as_issue_signature,
+};
 pub use self::preview_store::RetainedFeedbackPreview;
 pub use self::redaction::{
     FilteredFeedback, FilteredText, TextFilter, TextFilterError, TextFilterIdentity,
