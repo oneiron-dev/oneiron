@@ -510,7 +510,9 @@ impl Vault {
         let mut pending: Vec<_> = listing
             .records
             .into_iter()
-            .filter(|record| record.state == IntentState::Pending)
+            // A Deferred send still waits on its provider's remote task (FIX
+            // 7960): it is an open step, as a Pending one is.
+            .filter(|record| matches!(record.state, IntentState::Pending | IntentState::Deferred))
             .map(|record| JournaledResumeStep::OutboundIntent {
                 intent_id: record.id,
                 attempt_id: record.attempt_id,

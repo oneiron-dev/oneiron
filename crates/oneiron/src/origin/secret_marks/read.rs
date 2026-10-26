@@ -110,6 +110,13 @@ impl RepoBlobMarks {
         self.marks.push(mark);
     }
 
+    /// Each readable mark of this blob, in walk order: what a current-code
+    /// remediation replaces, by place and custody record (FIX 7608 slice
+    /// 6). No value.
+    pub(crate) fn marks(&self) -> &[RepoSecretMark] {
+        &self.marks
+    }
+
     /// Each span mark's custody record, once each, in mark order: the keys
     /// a real-byte file reveal of this blob asks for (FIX 7608 2b-ii). A
     /// record id, never a value.
@@ -286,6 +293,20 @@ impl RepoMarkFacts {
     /// for.
     pub(crate) fn raw_hashes(&self) -> std::collections::BTreeSet<[u8; 32]> {
         self.marks.iter().map(|mark| mark.raw_blake3).collect()
+    }
+
+    /// The Git OID of every blob, in any store, one of whose marks `keep`
+    /// selects, sorted and once each (FIX 7608 slice 9): the objects a
+    /// public send's history is joined against.
+    pub(crate) fn blob_oids<F: Fn(&RepoSecretMark) -> bool>(
+        &self,
+        keep: F,
+    ) -> std::collections::BTreeSet<GitOid> {
+        self.marks
+            .iter()
+            .filter(|mark| keep(mark))
+            .map(|mark| mark.blob_oid.clone())
+            .collect()
     }
 
     /// The marks of `address`'s blob in its store.

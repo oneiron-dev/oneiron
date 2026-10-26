@@ -37,7 +37,7 @@ pub use browser::BrowserConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use device_sync::DeviceSyncConfig;
-pub(crate) use diagnostics::{locate_toml_failure, parse_toml};
+pub(crate) use diagnostics::{locate_toml_failure, locate_toml_section, parse_toml};
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
