@@ -613,12 +613,14 @@ impl<'a> AgentDispatcher<'a> {
         Ok(row.and_then(|record| record_dispatch_input(&record)))
     }
 
+    /// [`Self::parent_dispatch_input`] in the caller's transaction, a
+    /// writer's view or a snapshot it holds.
     pub(super) fn parent_dispatch_input_in_txn(
         &self,
-        wtxn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         parent_attempt: AttemptId,
     ) -> Result<Option<AgentDispatchInput>> {
-        let row = AttemptQueue::new(self.vault).get_in_write_txn(wtxn, parent_attempt)?;
+        let row = AttemptQueue::new(self.vault).get_in_txn(txn, parent_attempt)?;
         if let Some(row) = &row {
             super::workflow_record::reject_wrapper_parent(row)?;
         }
