@@ -2336,7 +2336,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/edit_settle/stranded.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | StrandedEditProposal | Stale retained outputs stay durable proposals against the observed new head |
 | `src/edit_settle/tests.rs` | test | L | — | — | ARTL-4 settle tests |
 | `src/edit_settle/undo.rs` | src | s | 2 struct · 3 fn | KeepUndo, KeepUndoOutcome | Undo after Keep (ARCH-0077 "Post-settle undo"): a new operation, never a reversal |
-| `src/embed.rs` | src | L | 4 struct · 3 enum · 2 trait · 8 fn · 6 const · 9 re-export · 11 crate-vis | EgressDecision, EgressPredicate, Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler +1 | — |
+| `src/embed.rs` | src | L | 4 struct · 3 enum · 2 trait · 8 fn · 6 const · 10 re-export · 11 crate-vis | EgressDecision, EgressPredicate, Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler +1 | — |
 | `src/embed/binding_move.rs` | src | m | 2 struct · 3 enum · 4 fn · 7 crate-vis | BindingMoveLink, BindingMoveState, BindingNotApplied, BindingSource, PendingEmbedderBinding | An owner-approved embedder binding, staged through a space move (OF-577, FIX 857 O3b PR B; ARCH-0053 R13: a… |
 | `src/embed/cold_attach.rs` | src | s | 1 fn · 2 crate-vis | — | First-provider backfill, distinct from embedding-space migration |
 | `src/embed/device.rs` | src | m | 2 struct · 1 enum · 8 fn · 7 crate-vis | EmbeddingDevice, EmbeddingProvenance, EmbeddingProvenanceCount | Which device and runtime computed a stored vector (ARCH-0036, owner 2026-10-11) |
@@ -2345,14 +2345,20 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/locality.rs` | src | s | 1 fn · 2 crate-vis | — | Provenance of a filled vector, written atomically with the fill |
 | `src/embed/media.rs` | src | m | 2 struct · 1 trait · 3 fn · 1 type · 20 crate-vis | MediaEmbedReport, MediaEmbedder, MediaEmbeddingInput | The media embedder adapter and the backfill that fills a declared media space from stored image and audio… |
 | `src/embed/release.rs` | src | s | 1 fn | — | Which pending rows may leave this device, judged row by row (FIX 9486): the release a host asks before it… |
-| `src/embed/repo_projection.rs` | src | s | 7 crate-vis | — | What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a… |
+| `src/embed/repo_projection.rs` | src | m | 1 re-export · 12 crate-vis | — | What an embedder receives for an ASSET holding repo bytes (FIX 7608 slice 3, ASK 1): the masked copy, for a… |
+| `src/embed/repo_projection/derived.rs` | src | m | 1 re-export · 10 crate-vis | — | What the index holds for a text a model derived from a marked repo blob (FIX 7608 S3F, FIX 10405; CALL… |
+| `src/embed/repo_projection/derived/storage.rs` | src | s | 12 crate-vis | — | The rows [`super`] keeps (FIX 7608 S3F): one per derived text or probe query a marked repo blob reaches… |
+| `src/embed/repo_projection/derived/worker.rs` | src | m | 1 struct · 1 trait · 1 fn | RepoDerivedIndexReport, RepoDerivedIndexTextAuthor | The pass that derives a pending text's safe copy (FIX 7608 S3F, CALL DERIVED-TEXT-COPY): each source is read… |
+| `src/embed/repo_projection/session.rs` | src | s | 2 crate-vis | — | A mask change's room-staged media vectors (FIX 7608 S3F, FIX 10407) |
 | `src/embed/session_media.rs` | src | m | 1 struct · 2 fn | SessionMediaRefusals | The session-aware media door (OF-370): a media vector written while a room is off record stays in the room |
-| `src/embed/space.rs` | src | L | 3 struct · 1 enum · 17 fn · 4 const · 44 crate-vis | EmbeddingSpace, InputKind, KindSlotBindings, MediaRefused | Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`) |
+| `src/embed/space.rs` | src | L | 3 struct · 1 enum · 17 fn · 4 const · 45 crate-vis | EmbeddingSpace, InputKind, KindSlotBindings, MediaRefused | Kind slots bound to declared embedding spaces (OF-370; ARCH-0019 `#kind-slots`, ARCH-0004 `#embedding-spaces`) |
 | `src/embed/space/bindings.rs` | src | s | 4 fn | — | The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`) |
+| `src/embed/space/repo_projection.rs` | src | s | 1 crate-vis | — | The vault-meta rows a declared space keeps for a record's media vector (FIX 7608 S3F, FIX 10407): their… |
 | `src/embed/space_card.rs` | src | s | 4 crate-vis | — | What a space move's check stands on beside its paired interval (FIX 1638; ARCH-0053 `#eval-sufficiency`… |
 | `src/embed/space_move.rs` | src | L | 5 struct · 4 enum · 1 trait · 11 fn · 5 const · 8 crate-vis | CohortProbe, KindProbeCheck, NotWorse, PairedInterval, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceMoveState +2 | A kind slot's version move, checked before it swaps in (OF-370; ARCH-0004 `#swap-check-ruling` SWAP-CHECK =… |
-| `src/embed/space_probe.rs` | src | m | 2 struct · 1 trait · 6 fn · 3 const · 3 crate-vis | SpaceProbe, SpaceProbeAuthor, SpaceProbeReport | The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate… |
+| `src/embed/space_probe.rs` | src | m | 2 struct · 1 trait · 6 fn · 3 const · 4 crate-vis | SpaceProbe, SpaceProbeAuthor, SpaceProbeReport | The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate… |
 | `src/embed/space_probe/ledger.rs` | src | m | 6 crate-vis | — | A space move check's probe cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`): the date-cut cohort each… |
+| `src/embed/space_probe/repo_projection.rs` | src | m | 6 crate-vis | — | The query a space move runs for a probe written from repo bytes (FIX 7608 S3F, FIX 10408; CALL… |
 | `src/embed/tests.rs` | test | m | — | — | — |
 | `src/embed/tests/device.rs` | test | m | — | — | Each stored vector names the device and runtime that computed it (ARCH-0036, owner 2026-10-11): one model is… |
 | `src/embed/tests/device_local.rs` | test | s | — | — | DEC-0005: a device-local world's rows never reach a model off this device, whatever the host's egress list… |
@@ -3551,7 +3557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/overlay_writes.rs` | src | m | 8 crate-vis | — | Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written… |
 | `src/off_record/lifecycle/participant.rs` | src | s | 6 crate-vis | — | A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01) |
 | `src/off_record/lifecycle/promotion.rs` | src | m | 1 fn · 3 crate-vis | — | Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base write, and the doors that save a… |
-| `src/off_record/lifecycle/registry.rs` | src | m | 24 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
+| `src/off_record/lifecycle/registry.rs` | src | m | 25 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
 | `src/off_record/lifecycle/retained.rs` | src | s | 1 trait · 1 fn | RetainedCharge | A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991) |
 | `src/off_record/lifecycle/room.rs` | src | m | 12 fn · 1 type · 12 crate-vis | — | Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/off_record/lifecycle/room/export_roots.rs` | src | s | 2 crate-vis | — | The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split… |
@@ -3567,6 +3573,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/mod.rs` | src | s | 1 mod · 2 re-export · 8 crate-vis | — | Off-record sessions — ARCH-0052 branch store, ONE-1725..ONE-1732 |
 | `src/off_record/promote.rs` | src | m | 2 struct · 2 fn · 3 const · 21 crate-vis | OffRecordPromoteReceipt, PromoteOutcome | Explicit promotion from an off-record session into the durable vault |
 | `src/off_record/promote/attribution.rs` | src | s | 1 crate-vis | — | FIX 3103 (OF-540): a promotion witnesses the edges it replays for the runs that journaled them, never for… |
+| `src/off_record/promote/repo_projection.rs` | src | s | 1 crate-vis | — | What a promotion replays of a room's cached media vectors (FIX 7608 S3F, FIX 10407) |
 | `src/off_record/promote/result_holds.rs` | src | s | 3 crate-vis | — | A saved result MESSAGE's hold on its body (FIX 365): the body comes out of the room it was said in, and the… |
 | `src/off_record/tests.rs` | test | XL | — | — | — |
 | `src/office_body/actor_erase.rs` | src | s | 4 crate-vis | — | An erased actor out of the office rows that name it (FIX 3520): the export records, the deck forks' records… |
@@ -3692,7 +3699,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/secret_projection/git.rs` | src | m | 26 crate-vis | — | The Git side of a marked repo's projection |
 | `src/origin/secret_projection/git/recipient.rs` | src | m | 11 crate-vis | — | A proven recipient's granted Git copy (FIX 7608 pre-flip, FIX 9328; CALLs GIT-REVEAL-OPT-IN… |
 | `src/origin/secret_projection/graph_objects.rs` | src | m | 7 crate-vis | — | The copy of a masked Git graph's object closure (FIX 7608 slice 2b-i): every object the roots reach, written… |
-| `src/origin/secret_projection/index.rs` | src | m | 30 crate-vis | — | The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and… |
+| `src/origin/secret_projection/index.rs` | src | m | 32 crate-vis | — | The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and… |
+| `src/origin/secret_projection/index/derived.rs` | src | s | 7 crate-vis | — | The sources a text a model derived from repo bytes stands on (FIX 7608 S3F, FIX 10405): a caption or… |
 | `src/origin/secret_projection/index/invalidate.rs` | src | s | 1 crate-vis | — | A mask change's index copies (FIX 7608 slice 3): when a writer adds marks or mask spans to blobs, every… |
 | `src/origin/secret_projection/recipient.rs` | src | s | 1 struct · 5 fn · 9 crate-vis | RepoRevealRecipient | Who actually receives a repo read's bytes, as its host proved it (FIX 7608 slice 2b-ii-A, ASK 1 addition) |
 | `src/origin/secret_projection/recipient/binding.rs` | src | s | 5 crate-vis | — | A proven recipient as a masked copy's records keep it (FIX 7608 pre-flip, FIX 9328 and 10271): the repo its… |
@@ -4562,6 +4570,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/mod.rs` | src | s | 6 crate-vis | — | In-memory session write-overlay substrate (ARCH-0052, D1) |
 | `src/session_overlay/overlay/lifecycle.rs` | src | m | 14 crate-vis | — | Overlay lifecycle state machine, leases, seal/rearm/close |
 | `src/session_overlay/overlay/mod.rs` | src | s | 6 crate-vis | — | Ephemeral in-memory write overlay for one live session (ARCH-0052, D1) |
+| `src/session_overlay/overlay/repo_projection.rs` | src | s | 1 crate-vis | — | Room-staged media vectors a later mark makes stale (FIX 7608 S3F, FIX 10407): the room's cached vectors of a… |
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 crate-vis | — | Promoted-closure retirement reusing Store key builders |
 | `src/session_overlay/overlay/rows.rs` | src | m | 12 crate-vis | — | Row staging, preflight, budget checks, read probes |
 | `src/session_overlay/overlay/segment.rs` | src | s | 6 crate-vis | — | Txn segment install, leases, commit/apply guards |
