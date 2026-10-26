@@ -845,7 +845,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/process_env_tests.rs` | test | s | — | — | — |
 | `src/config/recall.rs` | src | s | 1 struct · 4 crate-vis | RecallConfig | The `[recall]` section: how recall behaves at this server |
 | `src/config/recall_tests.rs` | test | s | — | — | Resolution rows for the `[recall]` section |
-| `src/config/remote_embedder.rs` | src | s | 2 struct · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig | Host-configured remote rung and cached per-entity egress decisions |
+| `src/config/remote_embedder.rs` | src | s | 2 struct · 1 enum · 2 crate-vis | EgressPolicy, RemoteEmbedderConfig, RemoteEvidenceRule | Host-configured remote rung and cached per-entity egress decisions |
 | `src/config/self_heal.rs` | src | s | 2 struct · 1 enum · 2 fn · 3 crate-vis | DetectorConfig, DetectorTier, SelfHealConfig | The `[self_heal]` section: the model-graded detectors this deployment runs over its retrieval telemetry… |
 | `src/config/serve_args.rs` | src | m | 1 struct · 1 crate-vis | ServeArgs | CLI surface: `ServeArgs`, its redacting `Debug`, and argv-derived overrides |
 | `src/config/serve_args/debug.rs` | src | s | — | — | `ServeArgs`'s redacting `Debug` |
@@ -927,7 +927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder/local/st_modules.rs` | src | m | 14 crate-vis | — | The sentence-transformers module chain that turns hidden states into one vector per input |
 | `src/embedder/local/tests.rs` | test | L | — | — | Local-provider rows |
 | `src/embedder/mod.rs` | src | m | 34 crate-vis | — | The embedder provider slot |
-| `src/embedder/remote.rs` | src | s | 5 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
+| `src/embedder/remote.rs` | src | s | 7 crate-vis | — | Builds a remote rung with a nonblocking host egress predicate |
 | `src/embedder/serve.rs` | src | m | 5 crate-vis | — | `oneiron-server embedder serve`: the local provider over an OpenAI-compatible `/v1/embeddings`, for several… |
 | `src/embedder/serve/batches.rs` | src | m | 2 crate-vis | — | A request's work, batch by batch (FIX 9487) |
 | `src/embedder/serve/budget.rs` | src | s | 3 crate-vis | — | How many bytes an answer may hold, and the buffer it is encoded into |
