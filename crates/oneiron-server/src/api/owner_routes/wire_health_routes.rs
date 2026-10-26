@@ -8,13 +8,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -71,10 +70,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn outcome(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RecordOutcome>, JsonRejection>,
+    payload: OwnerJsonBody<RecordOutcome>,
 ) -> OwnerReply<OutcomeRecorded> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let recorded = blocking(move || -> OwnerResult<OutcomeRecorded> {
         let unit = entity_id("unit", &request.unit)?;
         let fact = wire_health::record_outcome(server.vault(), unit, &request.outcome)

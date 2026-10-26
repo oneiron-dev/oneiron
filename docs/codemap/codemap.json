@@ -3685,6 +3685,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/authority/left_notices/delivery.rs",
+     "purpose": "The host's delivery of an export-first removal's archive to its removed holder (FIX 3215, 3396), beside the…",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "LocalHostRootContext",
       "LocalHostRootValidated",
@@ -30330,9 +30340,9 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 3,
-      "fn": 8,
+      "fn": 9,
       "re-export": 10,
       "struct": 4,
       "trait": 2
@@ -30504,6 +30514,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/routing.rs",
+     "purpose": "Which embedder a leased row goes to, by the verdict of the reconciler's rung on it (FIX 10009)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30543,6 +30563,16 @@
      "purpose": "The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`)",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space/capabilities.rs",
+     "purpose": "What a redeclared space keeps for the slots that use it (FIX 9832)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -30592,6 +30622,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_move/cutover.rs",
+     "purpose": "The backlog a move's swap reads again in its own writer (FIX 9833)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30603,10 +30643,30 @@
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
-      "fn": 6,
+      "crate-vis": 5,
+      "fn": 8,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_probe/dependencies.rs",
+     "purpose": "What a probe's query is written from, and what erasing it takes (FIX 9829)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_probe/family.rs",
+     "purpose": "A probe's source family: the `DerivedFrom` component its document is in (FIX 9831)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -65774,9 +65834,9 @@
      "path": "src/sync/client/types.rs",
      "purpose": "Sync client configuration, events, and sync_state key constants",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 6,
       "enum": 4,
-      "fn": 6,
+      "fn": 7,
       "struct": 4
      }
     },
@@ -78279,7 +78339,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 201,
+     "files": 202,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78769,7 +78829,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 29,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -79751,7 +79811,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5281,
+   "source_files": 5287,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95854,6 +95914,36 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool.rs",
+     "purpose": "An owner request's body, spooled (FIX 8195, FIX 7917, Rule 5)",
+     "surface": {
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool/json.rs",
+     "purpose": "One JSON object decoded as it is read, its bulk string members streamed (FIX 7917, Rule 5)",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/body_spool/owner_json.rs",
+     "purpose": "Every `/v1/owner` JSON route's body (FIX 8195, Rule 5)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -100246,9 +100336,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/secret_control_routes/sealed_spool.rs",
-     "purpose": "The sealed custody change's body, spooled (FIX 5674, Rule 5)",
+     "purpose": "The sealed custody change's body, spooled and decoded (FIX 5674, FIX 7917, Rule 5)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -101190,7 +101280,7 @@
      "path": "src/api/transfer.rs",
      "purpose": "Bounded transfers between an HTTP body and a blocking worker, shared by the git smart-HTTP and LFS bridges",
      "surface": {
-      "crate-vis": 31
+      "crate-vis": 32
      }
     },
     {
@@ -101285,6 +101375,16 @@
      "purpose": "`POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/auth/left_notices/delivery.rs",
+     "purpose": "`POST /v1/shared/removal-delivery` and `POST /v1/shared/removal-delivery/ack` (FIX 3215, 3396): the host…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -103152,12 +103252,14 @@
      "kind": "src",
      "notable": [
       "EgressPolicy",
-      "RemoteEmbedderConfig"
+      "RemoteEmbedderConfig",
+      "RemoteEvidenceRule"
      ],
      "path": "src/config/remote_embedder.rs",
      "purpose": "Host-configured remote rung and cached per-entity egress decisions",
      "surface": {
       "crate-vis": 2,
+      "enum": 1,
       "struct": 2
      }
     },
@@ -103690,6 +103792,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/device_sync/removal_delivery.rs",
+     "purpose": "The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -104031,7 +104143,7 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -108960,7 +109072,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 5
      }
     },
@@ -109112,6 +109224,16 @@
      "notable": [],
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/removal_delivery.rs",
+     "purpose": "The host's side of removal-archive delivery (FIX 3215, 3396): the wakes that end a removed holder's held…",
      "surface": {
       "crate-vis": 6
      }
@@ -110226,14 +110348,14 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 576,
+     "files": 579,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "HTTP query routes for web dashboard access"
     },
     "auth": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -110401,7 +110523,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -110639,7 +110761,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 69,
+     "files": 70,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -110711,7 +110833,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1308,
+   "source_files": 1314,
    "test_files": 182
   },
   "oneiron-spawn": {

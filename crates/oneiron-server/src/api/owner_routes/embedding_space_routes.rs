@@ -17,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -35,7 +35,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
 use crate::server::{MediaEmbedRefusal, SyncServer};
@@ -200,10 +201,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn declare(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceDeclareRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceDeclareRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -229,10 +230,10 @@ async fn declare(
 async fn bind(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceBindRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceBindRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -259,10 +260,10 @@ async fn bind(
 async fn one_space(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -288,10 +289,10 @@ async fn one_space(
 async fn retire(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -317,10 +318,10 @@ async fn retire(
 async fn begin_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceMoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceMoveRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -351,10 +352,10 @@ async fn begin_move(
 async fn check_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceCandidateRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let runtime = tokio::runtime::Handle::current();
     // Dropping the timed-out future detaches the blocking task; it runs on.
     let checked = tokio::time::timeout(
@@ -428,7 +429,7 @@ fn check_space_move(
 async fn approve_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceCandidateRequest>,
 ) -> OwnerReply<Value> {
     // FIX 6907: a third-party candidate's withheld documents do not keep it
     // filling.
@@ -457,7 +458,7 @@ async fn approve_move(
 async fn undo_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceCandidateRequest>,
 ) -> OwnerReply<Value> {
     move_step(
         auth,
@@ -474,7 +475,7 @@ async fn undo_move(
 async fn abandon_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceCandidateRequest>,
 ) -> OwnerReply<Value> {
     move_step(
         auth,
@@ -492,7 +493,7 @@ async fn abandon_move(
 async fn move_step<T, F>(
     auth: CoreAuth,
     server: Arc<SyncServer>,
-    payload: Result<Json<EmbeddingSpaceCandidateRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceCandidateRequest>,
     verb: &'static str,
     step: F,
 ) -> OwnerReply<Value>
@@ -500,7 +501,7 @@ where
     F: FnOnce(&oneiron::Vault, &AuthenticatedOwner, &str) -> oneiron::Result<T> + Send + 'static,
 {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -553,10 +554,10 @@ async fn probes(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerR
 async fn put_probe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceProbePutRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceProbePutRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -573,6 +574,8 @@ async fn put_probe(
                         query: request.query,
                         query_media: request.query_media,
                         family: request.family,
+                        written_from: None,
+                        source_refs: request.source_refs.into_iter().collect(),
                         targets,
                         author: request.author,
                         written_at: vault.now_recorded_at(),
@@ -596,10 +599,10 @@ async fn put_probe(
 async fn delete_probe(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EmbeddingSpaceProbeDeleteRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EmbeddingSpaceProbeDeleteRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let vault = server.vault();
@@ -645,10 +648,10 @@ async fn refused(
 async fn clear_refused(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ClearRefused>, JsonRejection>,
+    payload: OwnerJsonBody<ClearRefused>,
 ) -> OwnerReply<Spaces> {
     let proof = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     Ok(Json(
         blocking(move || {
             let id = entity_id("id", &request.id)?;
