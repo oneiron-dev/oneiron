@@ -226,6 +226,13 @@ impl GitPushStamp {
         &self.served
     }
 
+    /// The CODE anchor and PROJECT this push was admitted on, when its arm
+    /// named one (FIX 7608 pre-flip, FIX 10271): the repo a held file's
+    /// reveal target names.
+    pub(crate) const fn code_repo(&self) -> Option<&GitPushRepo> {
+        self.repo.as_ref()
+    }
+
     /// Whether this push was admitted on a checkout's run Grant: its ref
     /// moves and changed paths are judged again in the final writer.
     pub(crate) const fn is_checkout(&self) -> bool {

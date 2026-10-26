@@ -6,16 +6,19 @@
 use rmpv::Value;
 
 use super::{
-    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionClaim, RepoProjectionPlace,
-    RepoProjectionRecord, corrupt,
+    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionAudience, RepoProjectionClaim,
+    RepoProjectionPlace, RepoProjectionRecord, RepoProjectionRevealBinding, corrupt,
 };
 use crate::claim::{ClaimBody, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 
-/// The one audience a copy serves today: every masked reader.
+/// A copy every masked reader is served, as a record names it.
 const AUDIENCE_MASKED: &str = "masked";
+
+/// A copy one proven recipient is served (FIX 9328), as a record names it.
+const AUDIENCE_RECIPIENT: &str = "recipient";
 
 /// CALL P2, as a record names it.
 const POLICY_PRESERVE_PAYLOAD: &str = "preserve_payload";
@@ -31,11 +34,14 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             roots,
             private_root,
             marks,
+            audience,
         } => vec![
             ("kind", Value::from("graph")),
             ("store_identity", Value::from(store_identity.as_str())),
             ("store_id", Value::from(store_id.to_hex())),
-            ("audience", Value::from(AUDIENCE_MASKED)),
+            ("audience", audience_value(audience)),
+            ("recipient", audience_binding(audience)),
+            ("released", released_value(audience)),
             ("policy", Value::from(POLICY_PRESERVE_PAYLOAD)),
             ("lifetime", Value::from(LIFETIME_SOURCE_BOUND)),
             (
@@ -61,6 +67,7 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             kind,
             signature_not_preserved,
             marks,
+            occurrence,
         } => vec![
             ("kind", Value::from("object")),
             ("original", oid(original)),
@@ -71,6 +78,7 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
                 Value::from(*signature_not_preserved),
             ),
             ("marks", ids(marks)),
+            ("occurrence", occurrence_value(occurrence.as_deref())),
         ],
         RepoProjectionRecord::Ref {
             name,
@@ -89,12 +97,17 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
         ],
         RepoProjectionRecord::Link {
             parent,
+            parent_occurrence,
             place,
             child_original,
             child_copy,
         } => vec![
             ("kind", Value::from("link")),
             ("parent", oid(parent)),
+            (
+                "parent_occurrence",
+                occurrence_value(parent_occurrence.as_deref()),
+            ),
             ("place", place_value(place)),
             ("child_original", oid(child_original)),
             ("child_copy", oid(child_copy)),
@@ -108,6 +121,13 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             ),
             ("ingress_store", Value::from(ingress.ingress_store.as_str())),
             ("authority", digest_value(&ingress.authority)),
+            (
+                "reveal",
+                ingress
+                    .reveal
+                    .as_ref()
+                    .map_or(Value::Nil, RepoProjectionRevealBinding::value),
+            ),
         ],
         RepoProjectionRecord::Translation(translation) => vec![
             ("kind", Value::from("translation")),
@@ -174,6 +194,71 @@ pub(super) fn place_value(place: &RepoProjectionPlace) -> Value {
     }
 }
 
+fn audience_value(audience: &RepoProjectionAudience) -> Value {
+    Value::from(match audience {
+        RepoProjectionAudience::Masked => AUDIENCE_MASKED,
+        RepoProjectionAudience::Recipient { .. } => AUDIENCE_RECIPIENT,
+    })
+}
+
+fn audience_binding(audience: &RepoProjectionAudience) -> Value {
+    match audience {
+        RepoProjectionAudience::Masked => Value::Nil,
+        RepoProjectionAudience::Recipient { binding, .. } => binding.value(),
+    }
+}
+
+fn released_value(audience: &RepoProjectionAudience) -> Value {
+    let released = match audience {
+        RepoProjectionAudience::Masked => &[][..],
+        RepoProjectionAudience::Recipient { released, .. } => released.as_slice(),
+    };
+    Value::Array(
+        released
+            .iter()
+            .map(|(path, blob)| Value::Array(vec![Value::Binary(path.clone()), oid(blob)]))
+            .collect(),
+    )
+}
+
+/// The place `value` names, as [`place_value`] wrote it.
+pub(super) fn decode_place(value: &Value) -> Result<RepoProjectionPlace> {
+    let parts = value.as_array().ok_or_else(corrupt)?;
+    let number = |value: &Value| {
+        value
+            .as_u64()
+            .and_then(|number| u32::try_from(number).ok())
+            .ok_or_else(corrupt)
+    };
+    match (parts.first().and_then(Value::as_str), parts.as_slice()) {
+        (Some("tree_entry"), [_, mode, Value::Binary(name)]) => {
+            Ok(RepoProjectionPlace::TreeEntry {
+                mode: number(mode)?,
+                name: name.clone(),
+            })
+        }
+        (Some("commit_tree"), [_]) => Ok(RepoProjectionPlace::CommitTree),
+        (Some("commit_parent"), [_, index]) => Ok(RepoProjectionPlace::CommitParent {
+            index: number(index)?,
+        }),
+        (Some("tag_target"), [_]) => Ok(RepoProjectionPlace::TagTarget),
+        _ => Err(corrupt()),
+    }
+}
+
+/// An object's or a parent's occurrence: its byte path, or `nil`.
+pub(super) fn occurrence_value(occurrence: Option<&[u8]>) -> Value {
+    occurrence.map_or(Value::Nil, |path| Value::Binary(path.to_vec()))
+}
+
+/// An optional recipient binding, `nil` when none was proved.
+pub(super) fn optional_binding(value: &Value) -> Result<Option<RepoProjectionRevealBinding>> {
+    match value {
+        Value::Nil => Ok(None),
+        value => RepoProjectionRevealBinding::decode(value).map(Some),
+    }
+}
+
 pub(super) fn oid(oid: &GitOid) -> Value {
     Value::from(oid.as_str())
 }
@@ -230,12 +315,29 @@ pub(super) fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjec
         .iter()
         .map(entity)
         .collect::<Result<Vec<_>>>()?;
+    let audience = match text(field(map, "audience")?)? {
+        AUDIENCE_MASKED => RepoProjectionAudience::Masked,
+        AUDIENCE_RECIPIENT => RepoProjectionAudience::Recipient {
+            binding: RepoProjectionRevealBinding::decode(field(map, "recipient")?)?,
+            released: field(map, "released")?
+                .as_array()
+                .ok_or_else(corrupt)?
+                .iter()
+                .map(|file| match file.as_array().map(Vec::as_slice) {
+                    Some([Value::Binary(path), blob]) => Ok((path.clone(), git_oid(blob)?)),
+                    _ => Err(corrupt()),
+                })
+                .collect::<Result<Vec<_>>>()?,
+        },
+        _ => return Err(corrupt()),
+    };
     let record = RepoProjectionRecord::Graph {
         store_identity: text(field(map, "store_identity")?)?.to_owned(),
         store_id: entity(field(map, "store_id")?)?,
         roots,
         private_root,
         marks,
+        audience,
     };
     let claim = RepoProjectionClaim::graph(record)?;
     if claim.graph != *id || claim.value() != body.value || claim.claim()?.subject != body.subject {

@@ -33,9 +33,11 @@ mod lookup;
 use rmpv::Value;
 
 use self::codec::{
-    decode_graph, digest_of, digest_value, entity, field, fields, git_oid, oid, packed,
-    place_value, record_fields, text,
+    decode_graph, decode_place, digest_of, digest_value, entity, field, fields, git_oid,
+    occurrence_value, oid, optional_binding, packed, place_value, record_fields, text,
 };
+pub(crate) use self::lookup::RepoProjectionLinks;
+use super::recipient::RepoProjectionRevealBinding;
 
 use crate::Vault;
 use crate::claim::{
@@ -82,6 +84,8 @@ pub(crate) enum RepoProjectionRecord {
         private_root: Option<GitOid>,
         /// Every readable mark the copy was made under, sorted.
         marks: Vec<EntityId>,
+        /// Who the copy serves (FIX 9328).
+        audience: RepoProjectionAudience,
     },
     /// One object's copy, the original's own id when nothing it names
     /// changed.
@@ -92,6 +96,10 @@ pub(crate) enum RepoProjectionRecord {
         signature_not_preserved: bool,
         /// The marks its copy masks (a blob's), sorted.
         marks: Vec<EntityId>,
+        /// A recipient copy's tree or blob, by the byte path it occurs at
+        /// (FIX 9328): one copy per occurrence. `None` in a masked copy,
+        /// and for every commit and tag.
+        occurrence: Option<Vec<u8>>,
     },
     /// One root ref's copy, fenced by the original it was frozen at.
     Ref {
@@ -104,6 +112,8 @@ pub(crate) enum RepoProjectionRecord {
     /// One place a changed object occurs in a changed parent.
     Link {
         parent: GitOid,
+        /// The parent's occurrence, as its object record names it.
+        parent_occurrence: Option<Vec<u8>>,
         place: RepoProjectionPlace,
         child_original: GitOid,
         child_copy: GitOid,
@@ -122,6 +132,22 @@ pub(crate) enum RepoProjectionRecord {
     Checkout(RepoProjectionCheckout),
     /// The private ingress seeded from this copy (FIX 7608 2b-ii-B2).
     IngressStore(RepoProjectionIngressStore),
+}
+
+/// Who a masked copy serves (FIX 7608 pre-flip, FIX 9328, CALL
+/// GIT-REVEAL-OPT-IN).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RepoProjectionAudience {
+    /// Every masked reader: each marked blob masked.
+    Masked,
+    /// One proven recipient whose explicit reason a live grant answered:
+    /// each released file (its exact byte path and ORIGINAL blob, sorted)
+    /// at its stored bytes, every other marked blob masked. Never a why or
+    /// a receipt: the same recipient and release set is the same copy.
+    Recipient {
+        binding: RepoProjectionRevealBinding,
+        released: Vec<(Vec<u8>, GitOid)>,
+    },
 }
 
 /// A checkout lease bound to a copy: the lease's checkout and epoch, its
@@ -157,6 +183,10 @@ pub(crate) struct RepoProjectionIngress {
     pub(crate) canonical_store: EntityId,
     pub(crate) ingress_store: String,
     pub(crate) authority: [u8; 32],
+    /// The recipient its host proved for the push, when it proved one
+    /// (FIX 10271): what a live grant's clearance of its held files names.
+    /// Never authority.
+    pub(crate) reveal: Option<RepoProjectionRevealBinding>,
 }
 
 /// A received copy change's translation: its candidate and operation, the
@@ -386,6 +416,7 @@ impl RepoProjectionClaim {
             canonical_store: entity(field(map, "canonical_store")?)?,
             ingress_store: text(field(map, "ingress_store")?)?.to_owned(),
             authority: digest_of(field(map, "authority")?)?,
+            reveal: optional_binding(field(map, "reveal")?)?,
         };
         let claim = Self::of(*graph, RepoProjectionRecord::Ingress(ingress.clone()));
         if claim.value() != body.value || claim.claim()?.subject != body.subject {
@@ -416,21 +447,29 @@ fn derive_id(graph: Option<&EntityId>, identity: &Value) -> Result<EntityId> {
 fn identity_part(record: &RepoProjectionRecord) -> Value {
     match record {
         RepoProjectionRecord::Graph { .. } => fields(record_fields(record)),
-        RepoProjectionRecord::Object { original, .. } => {
-            Value::Array(vec![Value::from("object"), oid(original)])
-        }
+        RepoProjectionRecord::Object {
+            original,
+            occurrence,
+            ..
+        } => Value::Array(vec![
+            Value::from("object"),
+            oid(original),
+            occurrence_value(occurrence.as_deref()),
+        ]),
         RepoProjectionRecord::Ref { name, .. } => {
             Value::Array(vec![Value::from("ref"), Value::from(name.as_str())])
         }
         RepoProjectionRecord::PrivateRoot { .. } => Value::Array(vec![Value::from("private_root")]),
         RepoProjectionRecord::Link {
             parent,
+            parent_occurrence,
             place,
             child_original,
             ..
         } => Value::Array(vec![
             Value::from("link"),
             oid(parent),
+            occurrence_value(parent_occurrence.as_deref()),
             place_value(place),
             oid(child_original),
         ]),
