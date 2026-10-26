@@ -21,7 +21,7 @@ mod workers;
 pub(crate) use self::hooks::hook_sandbox;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::hooks::spawn_fact_hooks;
-use self::page_seal::open_served_vault_anchored;
+pub(crate) use self::page_seal::open_served_vault_anchored;
 pub use self::page_seal::{OpenedServedVault, open_served_vault};
 pub(crate) use self::workers::start_desktop_workers;
 
@@ -212,7 +212,8 @@ pub(super) async fn serve_anchored(
         return Err(error);
     }
     // Ready and bound: a client on this host can find it now. The file goes
-    // when this returns, a clean stop or a late startup error alike.
+    // when serving stops and this returns; a startup error returned above,
+    // before it was written.
     #[cfg(unix)]
     let _registered =
         super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());

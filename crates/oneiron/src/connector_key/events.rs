@@ -528,7 +528,7 @@ impl Vault {
                 Ok(ConnectorWakeStatus::Enqueued)
             }
             EffectorBudgetChargeOutcome::Exhausted {
-                row_index,
+                location,
                 on_exhaust,
                 ..
             } => {
@@ -538,7 +538,7 @@ impl Vault {
                         txn,
                         &row.connector_key,
                         &key,
-                        budget_exhausted_reason(row_index),
+                        budget_exhausted_reason(&location),
                         now,
                     )?;
                     let floor = crate::gate::resolve_policy_manifest(&self.store, &*txn)?
