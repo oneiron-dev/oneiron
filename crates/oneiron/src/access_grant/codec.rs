@@ -202,25 +202,9 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    let legacy = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() == Some(2);
-    if legacy {
-        // v2 legacy union: BASE 7-key bodies (no `expires_at`) and HEAD 8-key
-        // bodies (with `expires_at`) both decode; `authority_scope` was never
-        // present at v2 so any v2 body carrying it is malformed.
-        if entries
-            .iter()
-            .any(|(key, _)| key.as_str() == Some("authority_scope"))
-        {
-            return Err(invalid_grant());
-        }
-        validate_keys(entries, &ACCESS_GRANT_BODY_KEYS[..7])
-            .or_else(|_| validate_keys(entries, &ACCESS_GRANT_BODY_KEYS[..8]))?;
-    } else {
-        validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
-    }
-
-    let version = required_value(entries, KEY_SCHEMA_VERSION)?.as_u64();
-    if !legacy && version != Some(ACCESS_GRANT_SCHEMA_VERSION) {
+    // One body format: the current schema's every key, nothing older.
+    validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
+    if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(ACCESS_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
 
@@ -244,31 +228,17 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
         Some(revoked_value.as_u64().ok_or_else(invalid_grant)?)
     };
 
-    // `expires_at` is required at v3 but absent from BASE 7-key v2 bodies.
-    let expires_at = match entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some("expires_at")).then_some(value))
-    {
-        None if legacy => None,
-        None => return Err(invalid_grant()),
-        Some(Value::Nil) => None,
-        Some(value) => Some(value.as_u64().ok_or_else(invalid_grant)?),
+    let expires_at = match required_value(entries, "expires_at")? {
+        Value::Nil => None,
+        value => Some(value.as_u64().ok_or_else(invalid_grant)?),
     };
-    let companion_bounds = if legacy {
-        None
-    } else {
-        decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?
-    };
+    let companion_bounds = decode_companion_bounds(required_value(entries, KEY_COMPANION_BOUNDS)?)?;
     let terms = GrantTerms {
-        authority_scope: if legacy {
-            crate::federation::scope_codec::read_preset()
-        } else {
-            crate::federation::scope_codec::decode_scope_value(required_value(
-                entries,
-                "authority_scope",
-            )?)
-            .map_err(|_| invalid_grant())?
-        },
+        authority_scope: crate::federation::scope_codec::decode_scope_value(required_value(
+            entries,
+            "authority_scope",
+        )?)
+        .map_err(|_| invalid_grant())?,
         scope,
         capability,
         status,

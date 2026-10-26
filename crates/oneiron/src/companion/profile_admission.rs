@@ -30,16 +30,29 @@ pub enum CompanionProfileAdmission {
         grant: EntityId,
         state: PsychProfileState,
     },
-    /// `grant` admits the read, but the owner's recipient choice keeps the
-    /// world it names, or a world one of its sources lies in, from where the
-    /// read goes: nothing of the profile is returned.
+    /// `grant` names this profile, but nothing of it is returned: the
+    /// owner's recipient choice keeps the world the read names, or a world
+    /// one of its sources lies in, from where the read goes, or the grant's
+    /// own delegated bounds leave this read outside it.
     Withheld { grant: EntityId },
+}
+
+/// What the live grants say of one profile read.
+enum GrantMatch {
+    /// This grant admits it.
+    Admits(EntityId),
+    /// No grant admits it, but this one names the profile and its delegated
+    /// bounds leave the read outside it.
+    Bounded(EntityId),
+    /// No grant names it.
+    None,
 }
 
 impl Vault {
     /// `principal_ref`'s read of the profile at `key` toward `destination`,
     /// judged in one snapshot: every live grant is tried, and the first that
-    /// admits the read, its issuer bounds included, admits it. `selected`
+    /// admits the read, its delegated bounds included, admits it. A read
+    /// only a grant's bounds keep out is withheld, not refused. `selected`
     /// is the caller's source set for the freshness check.
     pub fn companion_profile_snapshot_admitted(
         &self,
@@ -50,8 +63,10 @@ impl Vault {
     ) -> Result<CompanionProfileAdmission> {
         let now = self.store.authorization_now()?;
         let txn = self.store.env.read_txn()?;
-        let Some(grant) = self.companion_profile_grant_in(&txn, principal_ref, key, now)? else {
-            return Ok(CompanionProfileAdmission::Denied);
+        let grant = match self.companion_profile_grant_in(&txn, principal_ref, key, now)? {
+            GrantMatch::Admits(grant) => grant,
+            GrantMatch::Bounded(grant) => return Ok(CompanionProfileAdmission::Withheld { grant }),
+            GrantMatch::None => return Ok(CompanionProfileAdmission::Denied),
         };
         let state =
             self.psych_profile_sealed_state_in_txn(&txn, &psych_profile_entity_id(key), selected)?;
@@ -61,15 +76,17 @@ impl Vault {
         Ok(CompanionProfileAdmission::Admitted { grant, state })
     }
 
-    /// The first live grant that admits `principal_ref`'s read at `key`.
-    /// A deleted grant admits nothing; a malformed live one fails closed.
+    /// The first live grant that admits `principal_ref`'s read at `key`,
+    /// else the first whose delegated bounds alone keep the read out. A
+    /// deleted grant admits nothing; a malformed live one fails closed.
     fn companion_profile_grant_in(
         &self,
         txn: &heed::RoTxn<'_>,
         principal_ref: &EntityId,
         key: &PsychProfileKey,
         now: u64,
-    ) -> Result<Option<EntityId>> {
+    ) -> Result<GrantMatch> {
+        let mut bounded = None;
         for entry in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_ACCESS_GRANT, None)?
@@ -90,20 +107,24 @@ impl Vault {
             else {
                 continue;
             };
-            if grant.allows_companion_profile_read(
+            if !grant.allows_companion_profile_read(
                 principal_ref,
                 &key.person,
                 key.facet.as_ref(),
                 now,
-            ) && grant
+            ) {
+                continue;
+            }
+            if grant
                 .companion_bounds
                 .as_ref()
                 .is_none_or(|bounds| bounds.admits_profile_key(key))
             {
-                return Ok(Some(id));
+                return Ok(GrantMatch::Admits(id));
             }
+            bounded.get_or_insert(id);
         }
-        Ok(None)
+        Ok(bounded.map_or(GrantMatch::None, GrantMatch::Bounded))
     }
 
     /// Whether the owner's recipient choice keeps the profile at `key` from

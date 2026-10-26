@@ -1,23 +1,26 @@
 //! The companion grant writer that carries its issuer's bounds (FIX 8140).
 //!
 //! A credential that may write companion grants grants no more than it
-//! reads: the PERSON-and-FACET reach of the grant must lie inside the
-//! issuing slip's own world and facet bounds, and a slip bound to named
-//! records or channels, spent on one act, or bound to a pact makes no
-//! reusable grant. A request inside that ceiling lands as an active grant
-//! that carries the issuer's bounds; one past it is kept whole, as a pending
-//! access request the owner answers, never trimmed to fit. The decision and
-//! the write share one write transaction. Every live owner of the vault,
-//! co-Owners included, is bound by no ceiling, and a check that cannot be
-//! read leaves the write as it was before this door.
+//! reads: the grant's whole reach (every world, its facet, the profile kind,
+//! audience and sensitivity) must lie inside the issuing slip's effective
+//! ceiling, and a slip bound to named records or channels, spent on one act,
+//! handed on or bound to a pact makes no reusable grant
+//! ([`super::delegation`]). A request inside that ceiling lands as an active
+//! grant that carries the issuer's ceiling; one past it is kept whole, as a
+//! pending access request the owner answers, never trimmed to fit. The
+//! issuing slip is judged again, and the decision and the write made, in one
+//! write transaction. Every live owner of the vault, co-Owners included, is
+//! bound by no ceiling, and a check that cannot be read leaves the write as
+//! it was before this door.
 
 use crate::authority::VerifiedSlip;
-use crate::error::{Error, RecordError, Result};
-use crate::federation::{Scope, ScopeAxis, ScopeId};
+use crate::error::{Error, GateError, RecordError, Result};
+use crate::federation::Scope;
 use crate::psych_profile::PsychProfileKey;
 use crate::{EntityId, Vault};
 
 use super::codec::{encode_access_grant_body, invalid_grant};
+use super::delegation::{companion_profile_position, whole_companion_bounds};
 use super::{AccessGrant, AccessRequest};
 
 /// Policy hook (CALLS "OF-8140 companion grant excess", open): a requested
@@ -25,35 +28,25 @@ use super::{AccessGrant, AccessRequest};
 /// access request for the owner. False would refuse it instead.
 pub const COMPANION_GRANT_EXCESS_PENDS: bool = true;
 
-/// Policy hook (CALLS "OF-8140 issuer lifetime", open): a grant a slip
-/// issues outlives that slip, as an owner-approved grant does; false keeps
-/// it to the slip's own expiry, filing a longer one as a pending request.
-pub const COMPANION_GRANT_OUTLIVES_ISSUER: bool = true;
-
-/// The bounds a slip-issued companion grant carries: the issuing slip, and
-/// the record ceiling its world and facet axes set, every other axis top.
+/// The bounds a delegated companion grant carries: the slip that issued or
+/// approved it, and that slip's whole effective record ceiling (worlds,
+/// facets, kind bands, audience, sensitivity; verbs are not compared).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CompanionGrantBounds {
-    /// The issuing slip's id, lower hex.
+    /// The delegating slip's id, lower hex.
     pub issuer_slip: String,
-    /// The issuer's world and facet axes; every other axis is top.
+    /// The delegating slip's effective record ceiling.
     pub ceiling: Scope,
 }
 
 impl CompanionGrantBounds {
-    /// Whether a profile read at `key` lies inside these bounds. A named
-    /// WORLD or FACET must be one the issuer reads; the world-free or
-    /// unfaceted profile spans them all, so only an unbounded axis reaches it.
+    /// Whether a profile read at `key` lies inside these bounds: its world
+    /// (every world for the world-free profile), its facet (every facet for
+    /// the unfaceted one), the profile kind, the default project and the
+    /// profile's sensitivity all inside the ceiling.
     #[must_use]
     pub fn admits_profile_key(&self, key: &PsychProfileKey) -> bool {
-        axis_admits(&self.ceiling.worlds, key.world) && axis_admits(&self.ceiling.facets, key.facet)
-    }
-}
-
-fn axis_admits(axis: &ScopeAxis<ScopeId>, value: Option<EntityId>) -> bool {
-    match value {
-        Some(value) => axis.contains(&ScopeId(value)),
-        None => matches!(axis, ScopeAxis::All),
+        companion_profile_position(key.world, key.facet).is_narrowing_of(&self.ceiling)
     }
 }
 
@@ -96,9 +89,25 @@ impl Vault {
         }
         grant.validate()?;
         let mut wtxn = self.store.env.write_txn()?;
+        // The issuing slip still holds in this writer: one revoked, expired
+        // or of another vault since it was verified grants and asks nothing.
+        if let CompanionGrantIssuer::Slip(slip) = issuer
+            && matches!(self.capability_slip_is_live_in_txn(&wtxn, slip), Ok(false))
+        {
+            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                "the issuing credential no longer holds",
+            )));
+        }
         self.check_companion_profile_target(&wtxn, grant)?;
-        if crate::ports::EntityStoreRead::port_entity_present(&self.store, &wtxn, id)?
-            || self.access_request_exists_in(&wtxn, id)?
+        // A request already filed at this id is a collision; the request
+        // keyspace failing to read keeps the create as it was before it.
+        let requested = self
+            .access_request_exists_in(&wtxn, id)
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error, id = %id.to_hex(), "access request collision lookup failed");
+                false
+            });
+        if crate::ports::EntityStoreRead::port_entity_present(&self.store, &wtxn, id)? || requested
         {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
@@ -153,32 +162,6 @@ impl Vault {
                 Ok(true) | Err(_) => return Some(None),
             }
         }
-        slip_ceiling(slip, grant).map(Some)
+        whole_companion_bounds(slip, grant).map(Some)
     }
-}
-
-/// The bounds `grant` carries when `slip`'s ceiling holds its whole reach.
-fn slip_ceiling(slip: &VerifiedSlip, grant: &AccessGrant) -> Option<CompanionGrantBounds> {
-    let (_, facet) = grant.scope.companion_profile_refs()?;
-    let claims = slip.claims();
-    let scope = slip.scope();
-    let ceiling = Scope {
-        worlds: scope.worlds.clone(),
-        facets: scope.facets.clone(),
-        ..Scope::top()
-    };
-    // The grant reads its PERSON's profile in every WORLD, and at its FACET
-    // or at all of them.
-    (claims.records.is_empty()
-        && claims.channels.is_empty()
-        && !claims.single_use
-        && slip.pact().is_none()
-        && (COMPANION_GRANT_OUTLIVES_ISSUER
-            || grant.expires_at.is_some_and(|end| end <= claims.expires_at))
-        && axis_admits(&ceiling.worlds, None)
-        && axis_admits(&ceiling.facets, facet))
-    .then(|| CompanionGrantBounds {
-        issuer_slip: crate::entity_id::bytes_to_hex_lower(&claims.slip_id),
-        ceiling,
-    })
 }

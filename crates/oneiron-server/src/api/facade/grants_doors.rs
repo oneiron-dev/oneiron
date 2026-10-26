@@ -18,9 +18,13 @@ use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// The proof an answer is made on.
+/// The proof an answer is made on, with the credential that carries what
+/// the answerer may delegate.
 enum ResponderProof {
-    Person(AuthenticatedOwner),
+    Person {
+        proof: AuthenticatedOwner,
+        credential: Option<VerifiedSlip>,
+    },
     Agent {
         actor: oneiron::EntityId,
         credential: VerifiedSlip,
@@ -30,7 +34,10 @@ enum ResponderProof {
 impl ResponderProof {
     fn responder(&self) -> AccessRequestResponder<'_> {
         match self {
-            Self::Person(proof) => AccessRequestResponder::Person(proof),
+            Self::Person { proof, credential } => AccessRequestResponder::Person {
+                proof,
+                credential: credential.as_ref(),
+            },
             Self::Agent { actor, credential } => AccessRequestResponder::Agent {
                 actor: *actor,
                 credential,
@@ -47,7 +54,11 @@ fn responder_proof(
     verb: &str,
 ) -> MemoryResult<ResponderProof> {
     if auth.actor_class() != Some("agent") {
-        return super::shared_act_doors::person(server, auth, verb).map(ResponderProof::Person);
+        let proof = super::shared_act_doors::person(server, auth, verb)?;
+        return Ok(ResponderProof::Person {
+            proof,
+            credential: auth.verified_slip().cloned(),
+        });
     }
     let refused = || {
         MemoryError::new(

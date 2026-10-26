@@ -19,8 +19,9 @@ use crate::server::SyncServer;
 const COMPANION_PROFILE_WITHHELD_STATE: &str = "missing";
 
 /// `principal_ref`'s read of the profile at `key`, as the engine admits it
-/// toward `auth`'s destination. No admitting grant is today's 403; a
-/// profile the owner's recipient choice keeps from that destination reads
+/// toward `auth`'s destination. No grant naming the profile is today's 403;
+/// a profile the owner's recipient choice keeps from that destination, or
+/// one a grant names but its delegated bounds keep this read out of, reads
 /// as missing and says nothing of itself.
 pub(super) fn admitted_companion_profile(
     server: &SyncServer,

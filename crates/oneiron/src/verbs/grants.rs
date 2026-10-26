@@ -54,8 +54,13 @@ pub struct GrantAnswered {
     pub status: AccessRequestStatus,
     /// The person or agent the request asks, when it asks one.
     pub addressed_to: Option<EntityId>,
-    /// Approval creates exactly this grant at the request's id; denial creates none.
+    /// Approval creates exactly this grant at the request's id; denial
+    /// creates none, and so does an approval that delegates none of it,
+    /// which leaves the request pending.
     pub grant_ref: Option<EntityId>,
+    /// The request that keeps the whole requested grant for the owner, when
+    /// the answerer's credential delegated only part of it.
+    pub excess_request: Option<EntityId>,
     pub decided_by: Option<EntityId>,
     pub decided_at: Option<u64>,
 }
@@ -67,7 +72,10 @@ pub fn answer_grant_request_as(
     responder: AccessRequestResponder<'_>,
     input: GrantAnswerRequest,
 ) -> MemoryResult<GrantAnswered> {
-    let answered = vault.respond_addressed_access_request(
+    let crate::access_grant::AddressedAnswer {
+        request: answered,
+        excess,
+    } = vault.respond_addressed_access_request(
         responder,
         input.request,
         matches!(input.answer, GrantAnswer::Approve),
@@ -96,6 +104,7 @@ pub fn answer_grant_request_as(
         status: answered.status,
         addressed_to: answered.addressed_to,
         grant_ref: (answered.status == AccessRequestStatus::Approved).then_some(answered.id),
+        excess_request: excess.map(|excess| excess.id),
         decided_by: answered.decided_by,
         decided_at: answered.decided_at,
     })
