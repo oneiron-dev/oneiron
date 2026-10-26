@@ -209,7 +209,7 @@ async fn probe(
             let gates = served.gate_receipts(deadline).await?;
             write_json(&dir.join(format!("{name}-gates.json")), &gates)?;
             let run_id = receipt["run_id"].as_str().ok_or("engine_run_id_missing")?;
-            let blocked = gates["output"]
+            let blocked = gates["output"]["receipts"]
                 .as_array()
                 .ok_or("gate_rows_missing")?
                 .iter()

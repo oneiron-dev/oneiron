@@ -216,6 +216,29 @@ A restore refuses, and changes nothing, when:
 
 The restore runs from the CLI only, because the server cannot swap out the vault it is serving.
 
+### Open the worlds a restore left Locked
+
+```sh
+# stop `oneiron serve` first
+# with the recovery kit
+oneiron restore FILE --open-pads --unlock kit --vault-id HEX --piece piece-1.txt --piece piece-2.txt
+# with one of your machines' keys
+oneiron restore FILE --open-pads --pad-machine MACHINE_ID
+```
+
+A restore whose custody head held a world's pads in a compartment it could not open reports
+that world `Locked`: its notes and claims are back, but their bodies stay unreadable until the
+pads come back. `--open-pads` restores nothing. On the configured vault, which must exist and
+be stopped, it opens those worlds from the custody head beside `FILE` with the kit or the named
+machine's key (one this install still holds), puts their pads into the vault's own key custody,
+reads them back, and rests each owed reference with its pad. It acts on the latest restore of
+`FILE`'s checkpoint. A world clears `Locked` only when every reference it owed is at rest or
+erased; a pad the head holds retired stays erased. The report lists `opened_worlds`,
+`installed`, `rested`, `owed_refs`, `remaining` notes and any stage that faulted. What committed
+before a fault stands, and the command may run again. Run it before the restored vault takes its
+next backup: that backup publishes a new custody head beside it, which holds only the pads this
+vault can open.
+
 ## Agents refused after the host clock ran ahead
 
 Each agent request carries a holder proof signed with the agent's clock time, and the vault
@@ -456,6 +479,7 @@ where it sat. Answer each key one of four ways:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw GET '/v1/owner/secrets/found?pending=true&after=<next_cursor>'    # the next page, until done
 oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
 oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
 oneiron api raw POST /v1/owner/secrets/found/grant \
@@ -1954,7 +1978,7 @@ The core conversation writes and the atomic batch are verbs too:
 - `vault.conversations.records.append` appends one TURN to a conversation's DAG, under your
   name. It takes the same fields as `POST /v1/core/conversations/{id}/records`, plus
   `conversation` and less `actor`.
-- `vault.batch` with `{"entities": [...]}` commits up to 256 puts at once. An owner-grade
+- `vault.batch` with `{"entities": [...]}` commits every put it names at once, or none. An owner-grade
   credential commits them at owner grade. Any other credential, and an embedded handle, commits
   them below it, which refuses a put that turns an agent definition back on.
 

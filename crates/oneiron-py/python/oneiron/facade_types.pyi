@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4157 declarations.
+Census: 1159 facade rows, 4159 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -429,6 +429,8 @@ class NotificationRow(TypedDict):
 class NotificationPage(TypedDict):
     rows: list[NotificationRow]
     next_after: NotRequired[str | None]
+    effective_limit: NotRequired[int]
+    limit_clamped: NotRequired[bool]
 NotificationMark = Literal["seen", "acked"]
 class InboxMarkRequest(TypedDict):
     notification_ref: str
@@ -3516,7 +3518,8 @@ class ScopedExport(TypedDict):
     records: list[ScopedExportRecord]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
-    kinds: NotRequired[list[str]]
+    kinds: NotRequired[list[str] | None]
+    after: NotRequired[str | None]
 class MemoryReceipt(TypedDict):
     receipt_ref: str
     kind: str
@@ -3529,6 +3532,11 @@ class MemoryReceipt(TypedDict):
     claim_ref: NotRequired[str | None]
     claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
+class VaultReceiptsPage(TypedDict):
+    receipts: list[MemoryReceipt]
+    next_after: NotRequired[str | None]
+    effective_limit: int
+    limit_clamped: NotRequired[bool]
 class AssetIngestRequest(TypedDict):
     asset_ref: NotRequired[str | None]
     embedding_kind: InputKind
@@ -10450,6 +10458,13 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class HooksReplayPage(TypedDict):
+    rows: list[HookReplayRow]
+    next_cursor: NotRequired[str | None]
+    done: bool
+    effective_limit: int
+    limit_clamped: NotRequired[bool]
 class HookRegenBindingRequest(TypedDict):
     binding: EntityId
 class HookContractStamp(TypedDict):
