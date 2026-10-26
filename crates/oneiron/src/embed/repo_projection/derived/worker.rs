@@ -13,7 +13,7 @@ use super::{
     republish_in_txn,
 };
 use crate::Vault;
-use crate::embed::media::{MediaEmbeddingInput, TEXT_MEDIA_TYPE, asset_media};
+use crate::embed::media::{MediaEmbeddingInput, TEXT_MEDIA_TYPE};
 use crate::embed::{EgressDecision, EgressPredicate, EmbedderLocality, InputKind};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -274,7 +274,11 @@ fn source_copies_in(
             });
             continue;
         }
-        let Some((media_type, bytes)) = asset_media(&row.body) else {
+        // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+        let Some((media_type, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
+            Ok(vault.store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+        })?
+        else {
             continue;
         };
         let input = marks.input_in_txn(vault, txn, bytes)?;
