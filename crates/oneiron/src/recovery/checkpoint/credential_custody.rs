@@ -13,14 +13,17 @@
 //! PendingCustody, never a refusal: a restore cannot tell a key lost since
 //! the image from a row its source already could not read. A head landed
 //! on a new host carries an eligible credential's keys only in its owner-only
-//! compartment: one it lacks is Withheld, any other's LocalOnlyReenter, and a
-//! restore with no custody and no head names every one LocalOnlyReenter
-//! (CALLS `KS-6 device-only recovery`, K29). A custody fault planning or
-//! reading back one value is that value's alone: its row rests sealed,
-//! PendingCustody, warned (CALLS `KS-6 credential fork fault`). A row an
-//! image carried in the clear never lands as a value: it lands withheld,
-//! PendingCustody; a credential row neither form validates never lands at
-//! all, PendingCustody; the rest restores (CALLS `KS-6 image value form`).
+//! compartment: one it lacks is Withheld while the restore left that
+//! compartment unopened, PendingCustody once it opened it or the head holds
+//! none (CALLS `CUSTODY_LANDED_MISSING_NOTE`); any other's LocalOnlyReenter,
+//! and a restore with no custody and no head names every one
+//! LocalOnlyReenter (CALLS `KS-6 device-only recovery`, K29). A custody
+//! fault planning or reading back one value is that value's alone: its row
+//! rests sealed, PendingCustody, warned (CALLS `KS-6 credential fork
+//! fault`). A row an image carried in the clear never lands as a value: it
+//! lands withheld, PendingCustody; a credential row neither form validates
+//! never lands at all, PendingCustody; the rest restores (CALLS `KS-6 image
+//! value form`).
 //! A landed value is read back by opening it under its exact leaf.
 //!
 //! A credential an erase fenced never comes back (KS-6 part 2, CALLS `KS-6
@@ -59,7 +62,8 @@ pub enum CredentialRestoreNote {
     LocalOnlyReenter { handle: String, generation: u32 },
     /// Its keys ride only the custody head's owner-only compartment, which
     /// this restore did not open: restore with the recovery root, or
-    /// re-enter it.
+    /// re-enter it. A restore that opened that compartment, or whose head
+    /// holds none, names a key still missing PendingCustody instead.
     Withheld { handle: String, generation: u32 },
     /// A carrier this host only relays: its key is with the request's
     /// executor or recipient. None is named while the carrier wire ships
@@ -140,6 +144,59 @@ impl std::fmt::Display for CredentialRestoreNote {
                 "the credential census stopped after {listed} row(s); any other credential rests \
                  as it was, its discovery pending"
             ),
+        }
+    }
+}
+
+/// What a landed head's opener reached of its owner-only compartment, the
+/// one compartment an eligible credential's keys ride (FIX-LIST 9246 item
+/// 4): diagnostic only, never a refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialRecoveryAccess {
+    /// The head holds an owner-only compartment this restore did not open:
+    /// a key missing from what it landed may ride there.
+    OwnerCompartmentUnopened,
+    /// This restore opened the head's owner-only compartment, or the head
+    /// holds none: a key still missing is in no compartment it could open.
+    OwnerCompartmentReached,
+}
+
+/// What a landed restore names a credential whose key its head did not
+/// land (CALLS `CUSTODY_LANDED_MISSING_NOTE`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CustodyLandedMissingNote {
+    /// By the access the restore actually had: Withheld only while it left
+    /// the head's owner-only compartment unopened, else PendingCustody.
+    ActualOwnerCompartmentAccess,
+}
+
+const CUSTODY_LANDED_MISSING_NOTE: CustodyLandedMissingNote =
+    CustodyLandedMissingNote::ActualOwnerCompartmentAccess;
+
+/// Names each credential of `notes` a landed head did not land by the
+/// access its restore had (CALLS `CUSTODY_LANDED_MISSING_NOTE`): Withheld
+/// stays Withheld only when `owner_unopened`, the restore having left the
+/// head's owner-only compartment unopened; else it reads PendingCustody.
+pub(super) fn note_landed_access(notes: &mut [CredentialRestoreNote], owner_unopened: bool) {
+    let access = if owner_unopened {
+        CredentialRecoveryAccess::OwnerCompartmentUnopened
+    } else {
+        CredentialRecoveryAccess::OwnerCompartmentReached
+    };
+    match (CUSTODY_LANDED_MISSING_NOTE, access) {
+        (_, CredentialRecoveryAccess::OwnerCompartmentUnopened) => {}
+        (
+            CustodyLandedMissingNote::ActualOwnerCompartmentAccess,
+            CredentialRecoveryAccess::OwnerCompartmentReached,
+        ) => {
+            for note in notes {
+                if let CredentialRestoreNote::Withheld { handle, generation } = note {
+                    *note = CredentialRestoreNote::PendingCustody {
+                        handle: std::mem::take(handle),
+                        generation: *generation,
+                    };
+                }
+            }
         }
     }
 }
