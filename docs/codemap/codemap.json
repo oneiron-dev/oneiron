@@ -868,7 +868,7 @@
      "path": "src/agent_dispatch/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: the one widen signal a running child sends when the comm dial refuses it, and the reach…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -1083,7 +1083,6 @@
       "PlannerThresholds",
       "ShapeQuote",
       "SkillRevisionRef",
-      "SpawnPlanReceipt",
       "TeamPlan"
      ],
      "path": "src/agent_dispatch/planner.rs",
@@ -1092,9 +1091,9 @@
       "const": 1,
       "crate-vis": 5,
       "enum": 1,
-      "fn": 13,
-      "re-export": 1,
-      "struct": 11
+      "fn": 11,
+      "re-export": 2,
+      "struct": 10
      }
     },
     {
@@ -1119,6 +1118,19 @@
      "surface": {
       "crate-vis": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SpawnPlanReceipt"
+     ],
+     "path": "src/agent_dispatch/planner/receipt.rs",
+     "purpose": "The spawn plan receipt: what a spawn asked, the plan it resolved to, and why",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -1160,13 +1172,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/planner_live/intent/erase.rs",
      "purpose": "A planned intent's erase (Engine 10-22)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -2542,6 +2554,16 @@
      "purpose": "An erased dispatch target's instructions and briefing, out of the attempt payloads that carry them (FIX 7076)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/payload_erase/asker.rs",
+     "purpose": "Which agent dispatch rows carry an erased asker's ask (FIX 9181)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -19358,7 +19380,7 @@
      "path": "src/consent/doors/lineage.rs",
      "purpose": "The opener's lineage and its forks never settle their own proposal (DEC-0006 \"Proposals, settlements and the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -28797,7 +28819,7 @@
      "path": "src/edit_distance/escalation/mod.rs",
      "purpose": "ED-06 (ONE-1762, ARCH-0056 §7): the schema behind an escalated ask — what the engine asked, what the human…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "re-export": 4
      }
     },
@@ -28808,7 +28830,7 @@
      "path": "src/edit_distance/escalation/policy.rs",
      "purpose": "Standing-policy proposal, read seam, and owner accept",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -36165,7 +36187,7 @@
      "purpose": "C9 wait binding, identity-checked response signalling and release",
      "surface": {
       "crate-vis": 1,
-      "fn": 6
+      "fn": 5
      }
     },
     {
@@ -55681,7 +55703,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows",
      "surface": {
       "crate-vis": 2,
-      "re-export": 7
+      "re-export": 8
      }
     },
     {
@@ -55750,13 +55772,27 @@
       "RunTreeNodeMarkerKind",
       "RunTreeRepair",
       "RunTreeStatus",
-      "RunTreeTimestamps"
+      "RunTreeTimestamps",
+      "RunTreeWire",
+      "RunTreeWireNode"
      ],
      "path": "src/run_tree/types.rs",
      "purpose": "Run-tree view types: nodes, status/event vocab, repairs, and markers",
      "surface": {
       "enum": 4,
-      "struct": 7
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunTreeWireError"
+     ],
+     "path": "src/run_tree/wire.rs",
+     "purpose": "The run tree's conversions to and from its flat wire table (FIX 10603)",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -68085,7 +68121,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -68199,7 +68235,7 @@
      "path": "src/task_verb/ask_record.rs",
      "purpose": "Protected replicated ask facts",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -68210,6 +68246,16 @@
      "purpose": "The protected first-entry fact of one attendee in one container (OF-365, ILDF2 P5)",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/ask_record/consult_answer.rs",
+     "purpose": "A consult answer's word on the ask its consult belongs to",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68434,7 +68480,7 @@
      "path": "src/task_verb/brief.rs",
      "purpose": "The queue task brief (OF-220): the typed why-carrier one TASK holds",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 5,
       "struct": 15
@@ -68473,6 +68519,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/cancel_settlement.rs",
+     "purpose": "An approved `tasks.cancel` proposal's settlement (FIX 8946): the cancel its proposer could not make lands…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/checkout_facts.rs",
      "purpose": "Checkout ACTs and their synced TASK FACTs share the credential's transaction",
      "surface": {
@@ -68496,7 +68552,21 @@
      "path": "src/task_verb/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: a comm refusal raises the one widen ask to the parent",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 11,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommWidenRevokeReceipt"
+     ],
+     "path": "src/task_verb/comm_widen/revoke.rs",
+     "purpose": "The owner's revocation of a recorded stop-asking choice (FIX 10695)",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -68583,7 +68653,7 @@
      "path": "src/task_verb/consult_ladder_facade.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -68593,10 +68663,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/consult_ladder_facade/consent_ask.rs",
+     "purpose": "The ask a consult interruption's frozen consent case raises (FIX 10692): the human verdict its Finish lands on",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/consult_ladder_facade/finish.rs",
      "purpose": "A consult ladder's Finish of a consent-required interruption, checked against the case that interruption…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -68689,7 +68769,7 @@
      "path": "src/task_verb/create_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 1
      }
     },
@@ -68844,7 +68924,7 @@
      "path": "src/task_verb/highway.rs",
      "purpose": "The one task-domain door (OF-220): post, accept, report and status for MCP tool-first, the HTTP facade and…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 7
      }
     },
@@ -68875,7 +68955,7 @@
      "path": "src/task_verb/highway_post.rs",
      "purpose": "The highway's Post arm, its brief revisions, and settlement: the one continuation that turns an approved…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -68886,6 +68966,16 @@
      "purpose": "Task brief revision reports and post landing",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/highway_post/key.rs",
+     "purpose": "A post's intent key (FIX 9002, Rule 5): the caller's key, qualified by the host's parent attempt as every…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69107,7 +69197,7 @@
       "crate-vis": 56,
       "fn": 1,
       "mod": 5,
-      "re-export": 29
+      "re-export": 30
      }
     },
     {
@@ -69226,6 +69316,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/query_facade/cancel_effect.rs",
+     "purpose": "The two cancel rungs' effects in the writer that applies them, once the gate allowed the cancel: the soft…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/query_facade/proposal.rs",
      "purpose": "Task proposal claim creation and landing",
      "surface": {
@@ -69239,7 +69339,7 @@
      "path": "src/task_verb/query_facade/read.rs",
      "purpose": "Task descriptions, updates and acknowledgement",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 4
      }
     },
@@ -77596,7 +77696,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77638,7 +77738,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78695,7 +78795,7 @@
      "purpose": "Retrieval quality report vocabulary"
     },
     "run_tree": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78940,7 +79040,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 148,
+     "files": 154,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79117,7 +79217,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5226,
+   "source_files": 5235,
    "test_files": 902
   },
   "oneiron-android": {
@@ -113240,14 +113340,14 @@
       "RunSettlementsView",
       "RunSignalKind",
       "RunSignalState",
-      "RunTree",
       "RunTreeEvent",
       "RunTreeEventKind",
       "RunTreeFailure",
-      "RunTreeNode",
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "RunTreeWire",
+      "RunTreeWireNode",
       "RunnerBudgetReservation",
       "RunnerBudgetReservationsRequest",
       "RunnerBudgetReservationsView",
