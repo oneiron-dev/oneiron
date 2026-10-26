@@ -12775,7 +12775,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "ResolvedMachineClaim"
@@ -12783,9 +12783,62 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 19,
-      "fn": 4,
+      "crate-vis": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_projection/adopt.rs",
+     "purpose": "Adopting an authenticated handoff closure as the trusted pin",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_projection/carry.rs",
+     "purpose": "The in-chain re-root carry-forward: an empty delta signed under the new authority head",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_projection/chain.rs",
+     "purpose": "Reading and verifying a pinned history: its rows, its handoff chain and its projection",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_projection/pin.rs",
+     "purpose": "The trusted pin: its key, and the door that pins a host packet before its claim bytes arrive",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_projection/resolve.rs",
+     "purpose": "The live CLAIM projected from its authenticated history",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -19357,7 +19410,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ContactClearanceAct",
@@ -19371,10 +19424,21 @@
      "purpose": "Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the…",
      "surface": {
       "const": 8,
-      "crate-vis": 6,
+      "crate-vis": 4,
       "enum": 3,
-      "fn": 16,
+      "fn": 12,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/consent/contact_clearance/standing.rs",
+     "purpose": "The owner's disclosure-mode knob, trusted-set pre-clearance and the bound-use receipts",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -32462,7 +32526,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "BirthPosition",
@@ -32472,9 +32536,8 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 16,
       "enum": 1,
-      "fn": 3,
       "struct": 2
      }
     },
@@ -32496,6 +32559,16 @@
      "purpose": "Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/delete.rs",
+     "purpose": "The scoped delete door: selection and delete in one write transaction",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -32524,10 +32597,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/federation/record_scope/read.rs",
+     "purpose": "The scoped read doors: a record's current stamp, and the records a slip may read",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/federation/record_scope/secret_projection.rs",
      "purpose": "The masked copy a scoped export carries of a marked repo row (FIX 7608 slice 4, LEAF 4.2; L02 ack 17:2x and…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/record_scope/stamping.rs",
+     "purpose": "The birth-position stamp doors: put, stage, settle and restamp a record's position",
+     "surface": {
+      "crate-vis": 11
      }
     },
     {
@@ -32609,6 +32702,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/execute.rs",
+     "purpose": "Executing a matured delete-the-vault, ownership-transfer or owner-removal act",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -32652,7 +32755,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeleteVaultPlan",
@@ -32673,11 +32776,22 @@
      "purpose": "Typed execution of the shared acts the vault preset lists, beside the ordinary membership changes that never…",
      "surface": {
       "const": 3,
-      "crate-vis": 6,
+      "crate-vis": 1,
       "enum": 2,
-      "fn": 11,
+      "fn": 6,
       "re-export": 2,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/removal.rs",
+     "purpose": "Removal archives, the held-erase completion, and the receipt, outcome and deletion reads",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 4
      }
     },
     {
@@ -78221,7 +78335,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 109,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78368,7 +78482,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78641,7 +78755,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 58,
+     "files": 63,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79558,9 +79672,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 123,
+   "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5264,
+   "source_files": 5275,
    "test_files": 902
   },
   "oneiron-android": {
