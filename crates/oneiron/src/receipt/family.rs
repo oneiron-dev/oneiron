@@ -333,12 +333,7 @@ pub(super) fn collect_receipt_records(
     if query.includes_kind(ReceiptKind::IdentityLifecycle)
         || query.includes_kind(ReceiptKind::ProposalOutcome)
     {
-        records.extend(identity_topology_receipts(
-            vault,
-            &rtxn,
-            query,
-            MAX_RECEIPT_QUERY_SCAN,
-        )?);
+        records.extend(identity_topology_receipts(vault, &rtxn, query)?);
     }
     if query.includes_kind(ReceiptKind::ScopedRead) {
         records.extend(access_grant_receipts(vault, &rtxn, query)?);
@@ -363,8 +358,8 @@ pub(super) fn collect_receipt_records(
         )?);
     }
     // CMT-4 (ONE-1541): terminal `commitment.record` rows ARE the lifecycle
-    // ledger. Shares the same read txn and the same MAX_RECEIPT_QUERY_SCAN
-    // bound as every other projector here.
+    // ledger. Shares the same read txn as every other projector here, and
+    // like them reads its source to the end.
     if query.includes_kind(ReceiptKind::CommitmentLifecycle) {
         records.extend(commitment_lifecycle_receipts(vault, &rtxn, query)?);
     }
@@ -396,12 +391,9 @@ pub(super) fn collect_receipt_records(
 /// `commitment.record` CLAIM in scan range (CMT-4, ONE-1541).
 ///
 /// Projection-first: there is no lifecycle store, so the terminal claim row is
-/// both the state and the receipt. The scan is bounded by
-/// [`MAX_RECEIPT_QUERY_SCAN`], and the invariant is bounded with it — within
-/// that many scanned CLAIM rows, a fulfilled/released/lapsed commitment cannot
-/// exist without its receipt. Vaults beyond the bound need the follow-up
-/// commitment-status receipt index; this projector does not imply whole-vault
-/// coverage.
+/// both the state and the receipt. The scan reads every CLAIM row (FIX 3582),
+/// so a fulfilled/released/lapsed commitment cannot exist without its
+/// receipt.
 ///
 /// `actor` is deliberately `None`. The status writer is not the moral author of
 /// a lapse (nothing happened — that IS the lapse), and the same-transaction

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4159 declarations.
-Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1160 facade rows, 4166 declarations.
+Inputs: 1095 of 1160 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1043 of 1160 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -1225,6 +1225,35 @@ class CompanionAccessRequestAnswered(TypedDict):
     scope: CompanionProfileRequestedScope
     status: AccessRequestStatus
     grant_ref: NotRequired[EntityId | None]
+    decided_by: NotRequired[EntityId | None]
+    decided_at: NotRequired[int | None]
+GrantAnswer = Literal["approve", "deny"]
+class GrantAnswerRequest(TypedDict):
+    request: EntityId
+    answer: GrantAnswer
+class GrantRequestedScopeMessages(TypedDict):
+    kind: Literal["messages"]
+    space_ref: EntityId
+class GrantRequestedScopeSummaries(TypedDict):
+    kind: Literal["summaries"]
+    space_ref: EntityId
+class GrantRequestedScopeRelationshipClaims(TypedDict):
+    kind: Literal["relationship_claims"]
+    space_ref: EntityId
+class GrantRequestedScopeCompanionProfile(TypedDict):
+    kind: Literal["companion_profile"]
+    person_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
+class GrantAnswered(TypedDict):
+    request: EntityId
+    principal_ref: EntityId
+    capability: str
+    scope: GrantRequestedScope
+    status: AccessRequestStatus
+    addressed_to: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    excess_request: NotRequired[EntityId | None]
     decided_by: NotRequired[EntityId | None]
     decided_at: NotRequired[int | None]
 class PersonaSnapshotPreviewRequest(TypedDict):
@@ -3393,13 +3422,21 @@ class RetrievalPolicyUpdateReceipt(TypedDict):
     reason: NotRequired[str | None]
     candidate: RetrievalPolicyCandidate
     view: RetrievalPolicyView
+ExportDelivery = Literal["inline", "transfer"]
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
+    delivery: NotRequired[ExportDelivery | None]
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+class ExportTransfer(TypedDict):
+    transfer_ref: str
+    format: str
+    bytes: int
+    digest: str
+ExportAnswer = MemoryExport | ExportTransfer
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
