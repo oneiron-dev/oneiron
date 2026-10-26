@@ -26485,7 +26485,7 @@
      "path": "src/dreamer_runner/maintenance/identity/admission.rs",
      "purpose": "Identity asks as one reader may read them (FIX 8711)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -27190,7 +27190,7 @@
      "path": "src/dreamer_runner/store.rs",
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 17,
       "struct": 1
      }
@@ -28828,7 +28828,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -28856,7 +28856,7 @@
      "path": "src/edit_distance/publisher/signature_store.rs",
      "purpose": "Stored signature rows: codec and vault_meta keys",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -32471,7 +32471,7 @@
      "purpose": "The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep",
      "surface": {
       "enum": 1,
-      "fn": 4,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -32588,7 +32588,7 @@
      "purpose": "OF-537: free, actor-bound reports about a durable subject, never a task kind",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 3,
       "re-export": 4,
@@ -32614,6 +32614,7 @@
      "purpose": "Publisher delivery of content-free issue signatures (OF-420, FIX 739), keyed by `issue_ref`",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 2,
       "fn": 3,
       "re-export": 2,
@@ -32630,6 +32631,7 @@
      "path": "src/feedback/report/delivery/metadata.rs",
      "purpose": "The historical ED-08 metadata a report's subject names (OF-420, FIX 739)",
      "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -32669,7 +32671,7 @@
      "path": "src/feedback/report/delivery/wire.rs",
      "purpose": "The wire side of an issue signature (OF-420, FIX 739): the canonical `oneiron.issue_signature.v1` body built…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -53692,7 +53694,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 7,
-      "fn": 13,
+      "fn": 14,
       "re-export": 1,
       "struct": 3,
       "type": 1
@@ -53705,7 +53707,7 @@
      "path": "src/recovery/checkpoint/watermark/marker.rs",
      "purpose": "The strict read of a label's backup marker (FIX 6777): what every public reader of the marker…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -61655,7 +61657,7 @@
      "path": "src/store/body_envelope/opaque_response.rs",
      "purpose": "Row-held responses that do not decode (FIX 6227)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -63066,7 +63068,7 @@
      "purpose": "The host's row-held responses in `sync_state` under body custody (KS-2B2, FIX 5683 part B2; owner KEY STORE…",
      "surface": {
       "crate-vis": 10,
-      "fn": 4,
+      "fn": 5,
       "re-export": 1,
       "struct": 2
      }
@@ -83846,7 +83848,7 @@
      "purpose": "Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed…",
      "surface": {
       "const": 6,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -100426,7 +100428,7 @@
      "path": "src/config/diagnostics.rs",
      "purpose": "Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -104584,7 +104586,7 @@
      "path": "src/models/ladder.rs",
      "purpose": "One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "fn": 12,
       "struct": 1
      }
@@ -104768,7 +104770,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 1,
       "re-export": 14,
       "struct": 2
@@ -105716,7 +105718,7 @@
      "path": "src/owner/backup/finalize.rs",
      "purpose": "A backup's making and its acceptance, apart (Engine 10-20 backup shipper row (a), agreed with L04)",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {

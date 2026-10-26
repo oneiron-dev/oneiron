@@ -74,9 +74,9 @@ pub struct CleanupReviewItem {
     pub entity: Option<EntityId>,
     /// The arm that proposed it; none for an erased slot.
     pub kind: Option<CleanupKind>,
-    /// 64-hex BLAKE3 of its stored bytes now: the encoded record, or the
-    /// attempt's queue row. None when erased or gone, or when a record does
-    /// not read.
+    /// 64-hex BLAKE3 of its stored bytes now: the encoded record, with a
+    /// NOTE's live document version after it, or the attempt's queue row.
+    /// None when erased or gone, or when a record does not read.
     pub revision: Option<String>,
     /// Why its arm proposes it, read now; none when erased, gone or
     /// unreadable.
@@ -85,6 +85,10 @@ pub struct CleanupReviewItem {
     pub content: Option<CleanupReviewContent>,
     /// What accepting this slot does.
     pub accept: CleanupAcceptEffect,
+    /// `Some(true)` when its stored bytes changed while the review read its
+    /// content, on every read the review took: that content may be newer
+    /// than the facts and `revision` beside it (FIX 10502). `None` otherwise.
+    pub changed_during_review: Option<bool>,
 }
 
 /// How one slot stands now.
