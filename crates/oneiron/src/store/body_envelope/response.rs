@@ -224,6 +224,10 @@ pub(crate) enum ResponseFamily {
     /// recorded render event or an owner index entry, carried whole and
     /// erased with the bank's subject or creator.
     VoiceBank,
+    /// A centroid verdict's evidence snapshot (FIX 10094): the candidate's
+    /// and labels' copied vectors and the retrieval run, carried whole and
+    /// owned by every source it copied; a retired snapshot leaves nothing.
+    CentroidEvidence,
 }
 
 impl ResponseFamily {
@@ -242,6 +246,10 @@ impl ResponseFamily {
                     Self::ModelStepSubmission,
                 ),
                 (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
+                (
+                    &side_table::SELF_HEAL_CENTROID_EVIDENCE,
+                    Self::CentroidEvidence,
+                ),
                 (
                     &side_table::MESSAGE_REPLY_ASSERTIONS,
                     Self::MessageReplyAssertions,
@@ -286,7 +294,8 @@ impl ResponseFamily {
             | Self::ModelStepSubmission
             | Self::SavedQueryMemo
             | Self::MessageReplyAssertions
-            | Self::VoiceBank => ResponseDb::VaultMeta,
+            | Self::VoiceBank
+            | Self::CentroidEvidence => ResponseDb::VaultMeta,
         }
     }
 
@@ -327,6 +336,7 @@ impl ResponseFamily {
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
+            Self::CentroidEvidence => crate::self_heal::centroid_evidence_carriage(value),
             Self::MessageReplyAssertions => ResponseScan::decoded(
                 crate::memory::reply_assertions_stub(value).map(ResponseCarriage::whole),
             ),
@@ -416,6 +426,7 @@ impl ResponseFamily {
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
+            Self::CentroidEvidence => Ok(crate::self_heal::centroid_evidence_owners(value)),
             Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
@@ -470,8 +481,10 @@ impl ResponseFamily {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
-            // A retired memo's row goes; the next evaluation derives anew.
-            Self::SavedQueryMemo => {
+            // A retired memo's row goes; the next evaluation derives anew. A
+            // retired centroid snapshot's row goes, as its source's erase
+            // deletes it live.
+            Self::SavedQueryMemo | Self::CentroidEvidence => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -523,7 +536,7 @@ impl ResponseFamily {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo => {
+            Self::SavedQueryMemo | Self::CentroidEvidence => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

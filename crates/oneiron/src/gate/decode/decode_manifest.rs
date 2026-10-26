@@ -154,7 +154,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
     pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
-    pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) diagnostic_bounds:
+        Option<crate::self_heal::tripwires::ManifestTripwireBounds>,
     pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:

@@ -453,9 +453,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => {
-            Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
-        }
+        MapValue::Present(value) => Some(
+            crate::self_heal::tripwires::ManifestTripwireBounds::decode(value)?,
+        ),
     };
 
     let (project_depth_default, project_depth_max) = parse_project_depth_rows(&entries)?;

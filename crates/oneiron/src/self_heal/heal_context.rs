@@ -8,7 +8,9 @@
 //! receipt and replay source; the gate decisions of every claim it reaches; and the
 //! conversation graph's `parent` and `spawned_by` links out of every message it reaches.
 //! Bodies and graph links are read through the reader's own scoped lane off this device,
-//! as session text is, and nothing reads around that lane's checks.
+//! as session text is, and nothing reads around that lane's checks. The lane opens before
+//! any recorded content is read, and every trace part is admitted against what it records
+//! in one snapshot of it (FIX 10093, [`admitted`]).
 //!
 //! Its selection is one policy, [`HealContextPolicy::RecordedClosure`]: everything those
 //! records link to, each read once, with no age, depth, count or byte bound. Its size is
@@ -19,29 +21,25 @@
 //! picks a target, a route or a permission, and a retrieval run is never taken for an
 //! attempt: a window has no recorded link to one.
 
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-use super::blocked_reports::{blocked_source_in, step_sources_in};
 use super::session_text::whole_result;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
-use crate::claim::{CallerLocality, ClaimReadStatus, PointRead, ScopedRead};
-use crate::code_run::blocked::read_blocked_receipt;
-use crate::dreamer_runner::DreamerRunnerStore;
+use crate::claim::{CallerLocality, ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt};
 use crate::edge::{EdgeActorClass, EdgeKind};
-use crate::entity_id::bytes_to_hex_lower;
 use crate::failure_ladder::{HealerCase, verified_blocked_reports};
 use crate::limit_ask::EngineLimit;
 use crate::memory::Memory;
-use crate::receipt::{attempt_pack_receipt, attempt_pack_receipt_id};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE};
 use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Error, Vault};
 
+mod admitted;
 mod records;
-use records::{body_value, code_run_value, source_order};
+use records::{body_value, source_order};
 
 /// The one selection hook a heal's context is read under (OF-418 L2, L10).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -77,9 +75,11 @@ pub enum HealContextSeed<'s> {
 pub struct HealUnavailable {
     /// The part, engine-authored: its kind and its 32-hex id, as `body:<id>`.
     pub source: String,
-    /// Why: `unrecorded`, `missing`, `missing_or_withheld`, `withheld:<count>`,
-    /// `host_ref`, `not_an_entity_ref`, `owner_door_only`, `unlinked`, a read's own code
-    /// or an error's kind.
+    /// Why: `unrecorded`, `missing`, `missing_or_withheld`, `withheld`,
+    /// `withheld:<count>`, `unprovable`, `host_ref`, `not_an_entity_ref`, `owner_door_only`,
+    /// `unlinked`, a read's own code or an error's kind. `withheld`: the reader may not read
+    /// a row or world the part records it was read from; `unprovable`: the part records no
+    /// complete set of the rows it was read from, so only the vault owner reads it.
     pub reason: String,
 }
 
@@ -110,6 +110,9 @@ pub struct HealEvidenceContext {
     pub cyclic: Vec<String>,
     /// Every part it could not read, and why.
     pub unavailable: Vec<HealUnavailable>,
+    /// What the reader's scope narrowed across the lane reads the context was admitted
+    /// under, conjoined; `None` when no lane read ran.
+    pub narrowing: Option<ScopedReadReceipt>,
     /// Everything read, whole: `runs`, `conversations`, `bodies`, `attempts`,
     /// `code_runs`, `reports` and `gate_decisions`. Foreign text rides only here, as
     /// data, never an instruction.
@@ -162,6 +165,8 @@ struct Gather<'v> {
     reader: EntityId,
     context: HealEvidenceContext,
     untrusted: Map<String, Value>,
+    /// A window seed's exact runs, admitted when the trace is read.
+    runs: Option<Vec<RetrievalRunRecord>>,
     /// Attempts the cause walk starts from.
     roots: Vec<AttemptId>,
     /// Each blocked report read, with its entry.
@@ -192,6 +197,7 @@ impl<'v> Gather<'v> {
                 ..HealEvidenceContext::default()
             },
             untrusted: Map::new(),
+            runs: None,
             roots: Vec::new(),
             reports: Vec::new(),
             attempts: Vec::new(),
@@ -226,11 +232,10 @@ impl<'v> Gather<'v> {
         }
     }
 
-    /// A window's exact runs, whole, each with the bodies its results, its trace's stage
-    /// candidates and its replay refs name, and the conversations the runs were retrieved
-    /// for, read by the session judge's own recipe.
+    /// A window's exact runs, each with the bodies its results, its trace's stage
+    /// candidates and its replay refs name; the runs and the conversations they were
+    /// retrieved for are read once the reader's lane opens.
     fn window(&mut self, runs: &[RetrievalRunRecord]) {
-        let mut shown = Vec::with_capacity(runs.len());
         for run in runs {
             let id = run.run_id.to_hex();
             match &run.trace {
@@ -273,30 +278,65 @@ impl<'v> Gather<'v> {
                 }
                 None => self.unavailable(format!("replay_inputs:{id}"), "unrecorded"),
             }
-            shown.push(json!({
-                "run": id,
-                "record": serde_json::to_value(run).unwrap_or_default(),
-            }));
         }
-        self.untrusted.insert("runs".into(), Value::Array(shown));
+        self.runs = Some(runs.to_vec());
+    }
+
+    /// The conversations a window's runs were retrieved for, read by the session judge's
+    /// own recipe as the reader reads them.
+    fn conversations(&mut self) {
+        let Some(runs) = self.runs.take() else {
+            return;
+        };
         if runs.iter().all(|run| run.turn.is_none()) {
             self.unavailable("conversations".into(), "unrecorded");
-            return;
-        }
-        match self.vault.session_judge_context(self.reader, runs) {
-            Ok(text) => {
-                for line in &text.lines {
-                    if let Some(message) = &line.message
-                        && let Ok(message) = EntityId::from_hex(message)
-                    {
-                        self.known.insert(message);
-                        self.messages.push(message);
+        } else {
+            match self.vault.session_judge_context(self.reader, &runs) {
+                Ok(text) => {
+                    for line in &text.lines {
+                        if let Some(message) = &line.message
+                            && let Ok(message) = EntityId::from_hex(message)
+                        {
+                            self.known.insert(message);
+                            self.messages.push(message);
+                        }
                     }
+                    let text = serde_json::to_value(&text).unwrap_or_default();
+                    self.untrusted.insert("conversations".into(), text);
                 }
-                let text = serde_json::to_value(&text).unwrap_or_default();
-                self.untrusted.insert("conversations".into(), text);
+                Err(error) => self.unavailable("conversations".into(), kind(&error)),
             }
-            Err(error) => self.unavailable("conversations".into(), kind(&error)),
+        }
+        self.runs = Some(runs);
+    }
+
+    /// Every part the seed named, unavailable with `code` when the reader's lane would
+    /// not open: nothing recorded is read.
+    fn lane_closed(&mut self, code: &str) {
+        let mut parts = Vec::new();
+        if let Some(runs) = self.runs.take() {
+            parts.extend(
+                runs.iter()
+                    .map(|run| format!("run:{}", run.run_id.to_hex())),
+            );
+            parts.push("conversations".to_owned());
+        }
+        parts.extend(
+            self.reports
+                .iter()
+                .map(|(receipt, _)| format!("report:{}", receipt.to_hex())),
+        );
+        if !self.roots.is_empty() {
+            parts.push("ancestry".to_owned());
+        }
+        parts.extend(
+            std::mem::take(&mut self.refs)
+                .iter()
+                .map(|id| format!("body:{}", id.to_hex())),
+        );
+        parts.push("message_graph".to_owned());
+        for part in parts {
+            self.unavailable(part, code);
         }
     }
 
@@ -346,202 +386,28 @@ impl<'v> Gather<'v> {
         }
     }
 
-    /// One blocked report's receipt, whole, and the attempt it was bound to.
+    /// Names one blocked report; its receipt is read, and the attempt it was bound to
+    /// followed, once the reader's lane admits it.
     fn report(&mut self, receipt: EntityId) {
         if self.reports.iter().any(|(read, _)| *read == receipt) {
             return;
         }
-        let id = receipt.to_hex();
         let mut entry = Map::new();
-        match read_blocked_receipt(self.vault, &receipt) {
-            Ok(Some(body)) => {
-                if let Some(attempt) = body
-                    .attempt
-                    .as_deref()
-                    .and_then(|hex| EntityId::from_hex(hex).ok())
-                    .and_then(|attempt| AttemptId::from_bytes(attempt.as_bytes()).ok())
-                {
-                    self.roots.push(attempt);
-                }
-                entry.insert(
-                    "report".into(),
-                    serde_json::to_value(&body).unwrap_or_default(),
-                );
-            }
-            Ok(None) => self.unavailable(format!("report:{id}"), "missing"),
-            Err(error) => self.unavailable(format!("report:{id}"), kind(&error)),
-        }
-        entry.insert("receipt".into(), Value::String(id));
+        entry.insert("receipt".into(), Value::String(receipt.to_hex()));
         self.reports.push((receipt, entry));
-    }
-
-    /// Reads, in one snapshot, each report's replay source, the cause walk with every
-    /// attempt's kept step requests, and every code run named.
-    fn recorded(&mut self) {
-        let vault = self.vault;
-        let txn = match vault.store.env.read_txn() {
-            Ok(txn) => txn,
-            Err(error) => {
-                self.unavailable("records".into(), kind(&Error::from(error)));
-                return;
-            }
-        };
-        for (receipt, entry) in &mut self.reports {
-            let id = receipt.to_hex();
-            match blocked_source_in(vault, &txn, receipt) {
-                Ok(Some(source)) => {
-                    self.code_runs.extend(source.code_run);
-                    let source = serde_json::to_value(&source).unwrap_or_default();
-                    entry.insert("source".into(), source);
-                }
-                Ok(None) => self.context.unavailable.push(HealUnavailable {
-                    source: format!("report_source:{id}"),
-                    reason: "unrecorded".into(),
-                }),
-                Err(error) => self.context.unavailable.push(HealUnavailable {
-                    source: format!("report_source:{id}"),
-                    reason: kind(&error),
-                }),
-            }
-        }
-        if self.roots.is_empty() {
-            self.unavailable("ancestry".into(), "unlinked");
-        } else {
-            self.ancestry(&txn);
-        }
-        let mut runs = BTreeSet::new();
-        let named = std::mem::take(&mut self.code_runs);
-        let mut shown = Vec::new();
-        for run in named.into_iter().filter(|run| runs.insert(*run)) {
-            let id = run.to_hex();
-            match vault.get_code_run_replay_record_in_txn(&txn, &run) {
-                Ok(Some(record)) => {
-                    for output in &record.outputs {
-                        self.unavailable(
-                            format!("output_body:{id}:{}", output.handle),
-                            "owner_door_only",
-                        );
-                    }
-                    shown.push(code_run_value(&record));
-                }
-                Ok(None) => self.unavailable(format!("code_run:{id}"), "unrecorded"),
-                Err(error) => self.unavailable(format!("code_run:{id}"), kind(&error)),
-            }
-        }
-        self.untrusted
-            .insert("code_runs".into(), Value::Array(shown));
-    }
-
-    /// The complete stored ancestry of the roots, in source order, each attempt whole
-    /// with the requests its steps kept.
-    fn ancestry(&mut self, txn: &heed::RoTxn<'_>) {
-        let vault = self.vault;
-        let walk = DreamerRunnerStore::new(vault).cause_ancestry_in_txn(txn, &self.roots);
-        self.walked += walk.reached.len() + walk.gaps.len();
-        for (id, why) in walk.gaps {
-            self.unavailable(
-                format!("attempt:{}", bytes_to_hex_lower(id.as_bytes())),
-                why,
-            );
-        }
-        let ids: Vec<AttemptId> = walk.reached.iter().map(|record| record.id).collect();
-        let (order, cyclic) = source_order(&ids, &walk.links);
-        let hex = |id: &AttemptId| bytes_to_hex_lower(id.as_bytes());
-        self.context.attempts = order.iter().map(hex).collect();
-        self.context.cyclic.extend(cyclic.iter().map(hex));
-        self.context
-            .links
-            .extend(walk.links.iter().map(|&(from, to, kind)| HealLink {
-                from: hex(&from),
-                to: hex(&to),
-                kind,
-            }));
-        let mut records: BTreeMap<AttemptId, AttemptRecord> = walk
-            .reached
-            .into_iter()
-            .map(|record| (record.id, record))
-            .collect();
-        for id in order {
-            let Some(record) = records.remove(&id) else {
-                continue;
-            };
-            let attempt = hex(&id);
-            if let Some(task) = &record.task_ref {
-                self.refer_hex(&format!("task:{attempt}"), task);
-            }
-            if let Ok(run) = EntityId::from_bytes(*id.as_bytes()) {
-                self.code_runs.push(run);
-            }
-            let mut entry = Map::new();
-            match step_sources_in(vault, txn, id) {
-                Ok(steps) => {
-                    let mut kept = Vec::with_capacity(steps.len());
-                    for (key, source) in steps {
-                        self.claims.extend(source.claim);
-                        kept.push(json!({
-                            "step": bytes_to_hex_lower(&key.step),
-                            "lease": key.lease,
-                            "call": key.call,
-                            "source": serde_json::to_value(&source).unwrap_or_default(),
-                        }));
-                    }
-                    entry.insert("kept_requests".into(), Value::Array(kept));
-                }
-                Err(error) => self.unavailable(format!("kept_requests:{attempt}"), kind(&error)),
-            }
-            entry.insert("attempt".into(), Value::String(attempt));
-            entry.insert(
-                "record".into(),
-                serde_json::to_value(&record).unwrap_or_default(),
-            );
-            self.attempts.push((id, entry));
-        }
-    }
-
-    /// Each reached attempt's terminal pack receipt, whole; a live one has none yet.
-    fn pack_receipts(&mut self) {
-        let mut missing = Vec::new();
-        for (id, entry) in &mut self.attempts {
-            let attempt = bytes_to_hex_lower(id.as_bytes());
-            match attempt_pack_receipt(self.vault, &attempt_pack_receipt_id(id)) {
-                Ok(Some(receipt)) => {
-                    let receipt = serde_json::to_value(&receipt).unwrap_or_default();
-                    entry.insert("pack_receipt".into(), receipt);
-                }
-                Ok(None) => missing.push((attempt, "unrecorded".to_owned())),
-                Err(error) => missing.push((attempt, kind(&error))),
-            }
-        }
-        for (attempt, why) in missing {
-            self.unavailable(format!("pack_receipt:{attempt}"), why);
-        }
     }
 
     /// Every body named, through the reader's scoped lane, then canon §6's walk to
     /// cause over the conversation graph: the `parent` and `spawned_by` links out of
     /// every message reached, through the lane's receipted edge read, each message once,
     /// to the end. No other edge kind is read.
-    fn bodies_and_graph(&mut self) {
+    fn bodies_and_graph(&mut self, memory: &Memory<'_>, lane: &ScopedRead<'_>) {
         if self.refs.is_empty() && self.messages.is_empty() {
             return;
         }
-        let vault = self.vault;
-        let memory = vault
-            .memory(self.reader, EdgeActorClass::Human)
-            .at(CallerLocality::OffDevice);
-        let lane = match memory.read_lane(ClaimReadStatus::Recorded) {
-            Ok(lane) => lane,
-            Err(error) => {
-                for id in std::mem::take(&mut self.refs) {
-                    self.unavailable(format!("body:{}", id.to_hex()), error.code.clone());
-                }
-                self.unavailable("message_graph".into(), error.code);
-                return;
-            }
-        };
         let mut walk: VecDeque<EntityId> = std::mem::take(&mut self.messages).into();
         let refs = std::mem::take(&mut self.refs);
-        self.read_bodies(&memory, &lane, &refs, &mut walk);
+        self.read_bodies(memory, lane, &refs, &mut walk);
         let mut walked = BTreeSet::new();
         let mut nodes = Vec::new();
         let mut links = Vec::new();
@@ -563,6 +429,7 @@ impl<'v> Gather<'v> {
                         continue;
                     }
                 };
+                self.narrow(&read.receipt);
                 if read.receipt.suppressed_count > 0 {
                     let withheld = format!("withheld:{}", read.receipt.suppressed_count);
                     self.unavailable(format!("{name}:{id}"), withheld);
@@ -583,7 +450,7 @@ impl<'v> Gather<'v> {
                     }
                 }
             }
-            self.read_bodies(&memory, &lane, &named, &mut walk);
+            self.read_bodies(memory, lane, &named, &mut walk);
         }
         self.walked += nodes.len();
         let (_, cyclic) = source_order(&nodes, &links);
@@ -607,7 +474,10 @@ impl<'v> Gather<'v> {
         }
         let reads: Vec<_> = ids.iter().copied().map(PointRead::id).collect();
         let rows = match lane.read(&reads, None) {
-            Ok(read) => read.value,
+            Ok(read) => {
+                self.narrow(&read.receipt);
+                read.value
+            }
             Err(error) => {
                 for id in ids {
                     self.unavailable(format!("body:{}", id.to_hex()), kind(&error));
@@ -649,50 +519,23 @@ impl<'v> Gather<'v> {
         }
     }
 
-    /// The exact gate decision rows of every claim reached, whole.
-    fn gate_decisions(&mut self) {
-        if self.claims.is_empty() {
-            return;
-        }
-        let vault = self.vault;
-        let txn = match vault.store.env.read_txn() {
-            Ok(txn) => txn,
-            Err(error) => {
-                self.unavailable("gate_decisions".into(), kind(&Error::from(error)));
-                return;
-            }
-        };
-        let mut seen = BTreeSet::new();
-        let mut shown = Vec::new();
-        for claim in std::mem::take(&mut self.claims) {
-            if !seen.insert(claim) {
-                continue;
-            }
-            match vault
-                .store
-                .gate_decisions_for_claim_in_txn(&txn, claim.as_bytes())
-            {
-                Ok(records) => shown.extend(records.iter().map(|record| {
-                    json!({
-                        "claim": claim.to_hex(),
-                        "decision": serde_json::to_value(record).unwrap_or_default(),
-                    })
-                })),
-                Err(error) => {
-                    self.unavailable(format!("gate_decisions:{}", claim.to_hex()), kind(&error));
-                }
-            }
-        }
-        self.untrusted
-            .insert("gate_decisions".into(), Value::Array(shown));
-    }
-
-    /// Reads what the seed named, in order, and measures the whole (Rule 5).
+    /// Reads what the seed named, in order, and measures the whole (Rule 5). The reader's
+    /// own lane opens before any recorded content is read (FIX 10093).
     fn finish(mut self) -> HealEvidenceContext {
-        self.recorded();
-        self.pack_receipts();
-        self.bodies_and_graph();
-        self.gate_decisions();
+        let memory = self
+            .vault
+            .memory(self.reader, EdgeActorClass::Human)
+            .at(CallerLocality::OffDevice);
+        match memory.read_lane(ClaimReadStatus::Recorded) {
+            Ok(lane) => {
+                self.report_bodies(&lane);
+                self.conversations();
+                self.recorded(&lane);
+                self.bodies_and_graph(&memory, &lane);
+                self.gate_decisions(&lane);
+            }
+            Err(error) => self.lane_closed(&error.code),
+        }
         let reports = std::mem::take(&mut self.reports);
         let attempts = std::mem::take(&mut self.attempts);
         self.untrusted.insert(

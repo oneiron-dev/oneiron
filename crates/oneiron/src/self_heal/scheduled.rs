@@ -1,4 +1,5 @@
 //! Signed host-scheduled T1 runs. Broken/unsigned output is silent, never authority.
+use super::tripwires::TripwirePolicyReceipt;
 use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticWorkingSet,
     decode_diagnostic_event_body, diagnostic_event_id, encode_diagnostic_event_body,
@@ -32,9 +33,12 @@ pub struct SignedDetectorRun {
     pub public_key: [u8; 32],
     pub event_bodies: Vec<Vec<u8>>,
     pub signature: Vec<u8>,
+    /// The tripwire policy the run's detectors read, as it was resolved
+    /// (FIX 10096); `None` for a run that read none. Signed with the run.
+    pub policy: Option<TripwirePolicyReceipt>,
 }
 impl SignedDetectorRun {
-    fn transcript(&self) -> Vec<u8> {
+    fn transcript(&self) -> Result<Vec<u8>> {
         let mut out = b"oneiron/self-heal/detector-run/v1".to_vec();
         for bytes in [
             self.instance.as_bytes(),
@@ -49,7 +53,14 @@ impl SignedDetectorRun {
             out.extend_from_slice(&(body.len() as u64).to_be_bytes());
             out.extend_from_slice(body);
         }
-        out
+        // A run with no policy signs exactly what it signed before.
+        if let Some(policy) = &self.policy {
+            let bytes = policy.transcript_bytes()?;
+            out.extend_from_slice(b"policy");
+            out.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
+            out.extend_from_slice(&bytes);
+        }
+        Ok(out)
     }
 }
 impl Vault {
@@ -61,6 +72,18 @@ impl Vault {
         instance: &str,
         input: &DiagnosticWorkingSet<'_>,
         detectors: &[&dyn DeterministicDetector],
+    ) -> Result<SignedDetectorRun> {
+        self.sign_detector_run_with_policy(instance, input, detectors, None)
+    }
+
+    /// [`Self::sign_detector_run`], signing with the run the tripwire
+    /// `policy` its detectors read.
+    pub(crate) fn sign_detector_run_with_policy(
+        &self,
+        instance: &str,
+        input: &DiagnosticWorkingSet<'_>,
+        detectors: &[&dyn DeterministicDetector],
+        policy: Option<&TripwirePolicyReceipt>,
     ) -> Result<SignedDetectorRun> {
         super::validate_token(instance, "invalid scheduled detector instance")?;
         super::validate_working_set(input)?;
@@ -83,10 +106,11 @@ impl Vault {
             public_key: identity.signing_key.verifying_key().to_bytes(),
             event_bodies,
             signature: vec![],
+            policy: policy.cloned(),
         };
         run.signature = identity
             .signing_key
-            .sign(&run.transcript())
+            .sign(&run.transcript()?)
             .to_bytes()
             .to_vec();
         Ok(run)
@@ -113,7 +137,10 @@ impl Vault {
         let Ok(signature) = Signature::from_slice(&run.signature) else {
             return Ok(None);
         };
-        if key.verify_strict(&run.transcript(), &signature).is_err() {
+        let Ok(transcript) = run.transcript() else {
+            return Ok(None);
+        };
+        if key.verify_strict(&transcript, &signature).is_err() {
             return Ok(None);
         }
         let mut events = Vec::new();
@@ -130,7 +157,9 @@ impl Vault {
     }
     /// Unsigned, foreign-device, malformed and tampered runs persist nothing.
     /// A verified run persists every event; past `limits.detector_events` it
-    /// asks first.
+    /// asks first. A verified run that carries its tripwire policy is kept
+    /// even when it found nothing, so an empty pass keeps its applied-policy
+    /// record (FIX 10096).
     pub fn accept_signed_detector_run(&self, run: &SignedDetectorRun) -> Result<Vec<EntityId>> {
         let Some(events) = self.verified_run(run)? else {
             return Ok(vec![]);
@@ -142,7 +171,7 @@ impl Vault {
             self.emit_diagnostic_event(&id, &event)?;
             ids.push(id);
         }
-        if ids.is_empty() {
+        if ids.is_empty() && run.policy.is_none() {
             return Ok(ids);
         }
         let digest = *blake3::hash(&SIGNED_RUN.encode_value(run)?).as_bytes();
