@@ -38,6 +38,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::lfs::find_custody_credential;
 use crate::ports::ShortIdStoreRead;
+use crate::repo_mutation::{
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
+};
 use crate::secret_custody::{
     CustodyWrite, KeySpan, KnownValues, MaskedFile, MemberStep, masked_file_in_txn,
 };
@@ -58,10 +61,12 @@ pub(crate) struct RetainedRepoBlobPlan {
     opaque: Option<&'static str>,
 }
 
-/// Plans the marks of `bytes`, one retained repository blob the receive
-/// door's scan named under `proved`. `known` is the index a pass read now;
-/// `origin` is the record a plan's stand-ins read for (the push's
-/// operation). A blob no rule places a key in, whose container no reader
+/// Plans the marks of `bytes`, one retained repository blob at `path` (the
+/// door's label) the receive door's scan named under `proved`. A dotenv
+/// blob's every value [`dotenv_value_lifts`] takes is a key too,
+/// token-shaped or not (FIX 7608 slice 6, CALL DOTENV-IMPORT). `known` is
+/// the index a pass read now; `origin` is the record a plan's stand-ins
+/// read for (the push's operation). A blob no rule places a key in, whose container no reader
 /// here reads, or whose rebuilt copy still reads as secret is opaque: the
 /// keys placed stay, and the residue's reason is kept beside them.
 ///
@@ -69,6 +74,7 @@ pub(crate) struct RetainedRepoBlobPlan {
 /// An engine failure while reading. A stop the blob's own bytes cause is
 /// opaque residue, never an error.
 pub(crate) fn plan_retained_repo_blob(
+    path: &str,
     bytes: &[u8],
     known: Option<&KnownValues>,
     proved: &'static str,
@@ -76,12 +82,13 @@ pub(crate) fn plan_retained_repo_blob(
 ) -> Result<RetainedRepoBlobPlan> {
     let mut keys = Vec::new();
     if holds_spans(bytes) {
-        place_leaf(&[], bytes, known, origin, &mut keys)?;
+        let env = dotenv_value_spans(path, bytes);
+        place_leaf(&[], bytes, &env, known, origin, &mut keys)?;
     }
     let walked = {
         let mut visit = |path: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
             if holds_spans(member) {
-                place_leaf(path, member, known, origin, &mut keys)?;
+                place_leaf(path, member, &[], known, origin, &mut keys)?;
             }
             Ok(())
         };
@@ -104,12 +111,31 @@ pub(crate) fn plan_retained_repo_blob(
     })
 }
 
-/// The keys the file mask's text and field rules, and the values custody
-/// knows, place in `leaf` (a blob's own bytes, or one member's), each at
-/// `path`, in byte order. No count bounds them (rule 5).
+/// Each value span of the dotenv blob at `path` that receive lifts, under
+/// the dotenv reason; none for any other blob.
+fn dotenv_value_spans(path: &str, bytes: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    if repo_env_file(path).is_none() {
+        return Vec::new();
+    }
+    repo_env_entries(bytes)
+        .into_iter()
+        .filter(|entry| {
+            bytes
+                .get(entry.value.clone())
+                .is_some_and(dotenv_value_lifts)
+        })
+        .map(|entry| (entry.value, REPO_ENV_VALUE_REASON))
+        .collect()
+}
+
+/// The keys the file mask's text and field rules, the values custody
+/// knows, and `extra` (a dotenv blob's values) place in `leaf` (a blob's
+/// own bytes, or one member's), each at `path`, in byte order. No count
+/// bounds them (rule 5).
 fn place_leaf(
     path: &[MemberStep],
     leaf: &[u8],
+    extra: &[(Range<usize>, &'static str)],
     known: Option<&KnownValues>,
     origin: EntityId,
     keys: &mut Vec<FileKey>,
@@ -119,6 +145,7 @@ fn place_leaf(
         None => Vec::new(),
     };
     let mut spans = file_spans(leaf);
+    spans.extend(extra.iter().cloned());
     // A value a structured reading places (a credential field), wherever
     // its bytes sit in the leaf.
     let mut fields = Masker {

@@ -44,7 +44,7 @@ pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
 pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
-use submit::ProposalBase;
+pub(super) use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =

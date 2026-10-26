@@ -4,6 +4,7 @@
 //! bundle (G4 PR2) and a native bundle share every step here; only the
 //! received one proves a source candidate, and only the native one is
 //! built from a caller's request and carries a provenance trailer.
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use super::git::validate_relative_repo_path;
@@ -125,14 +126,19 @@ pub(in crate::repo_mutation) fn bundle_request_operation(
 
 /// A native bundle's stored files: each request file with its exact state
 /// change against `pre_action`, in the request's order. A present file
-/// keeps its base mode unless it names one; a new one is a regular file.
+/// keeps its base mode unless it names one; a new one is a regular file. A
+/// file the snapshot withholds is changed only on a `proven` path (a secret
+/// remediation's, FIX 7608 slice 6): its state is its kept mode, and its
+/// old bytes stay out of the row.
 ///
 /// # Errors
-/// More bytes than the bound, a path the snapshot withholds, a removal of
-/// an absent path, or a file that changes nothing.
+/// More bytes than the bound, a path the snapshot withholds and no
+/// remediation proved, a removal of an absent path, or a file that changes
+/// nothing.
 pub(in crate::repo_mutation) fn reviewed_bundle_files(
     pre_action: &StoredRepoSnapshot,
     files: Vec<RepoBundleFile>,
+    proven: &BTreeSet<String>,
 ) -> Result<Vec<RepoProposedFile>> {
     let total = files
         .iter()
@@ -165,6 +171,14 @@ pub(in crate::repo_mutation) fn reviewed_bundle_files(
                     StoredRepoSnapshotEntryKind::Symlink => (
                         CodeFilePresence::file(0o120_000),
                         entry.symlink_target.clone().map(String::into_bytes),
+                    ),
+                    StoredRepoSnapshotEntryKind::Withheld if proven.contains(&file.path) => (
+                        CodeFilePresence::file(if entry.executable {
+                            0o100_755
+                        } else {
+                            DEFAULT_CODE_FILE_MODE
+                        }),
+                        None,
                     ),
                     StoredRepoSnapshotEntryKind::Withheld => {
                         return Err(crate::secret_snapshot::SnapshotWithhold::Excluded.refusal());
@@ -364,11 +378,14 @@ pub(in crate::repo_mutation) fn land_bundle_documents(
 
 /// The ONE queue proposal a stored file bundle is: its id, the green it
 /// is pinned at, and every file with the bytes its base fork holds there,
-/// its reviewed bytes and its reviewed state change. The caller supplies
-/// no file, mode or removal.
+/// its reviewed bytes and its reviewed state change. A native bundle's
+/// file the fork withholds (a secret remediation's, FIX 7608 slice 6) is
+/// checked by the exact bytes its pinned commit holds, read from the
+/// canonical object store. The caller supplies no file, mode or removal.
 ///
 /// # Errors
-/// A row that is no file bundle, or a base fork that cannot be read.
+/// A row that is no file bundle, or a base fork or commit that cannot be
+/// read.
 pub(crate) fn bundle_merge_proposal(
     vault: &Vault,
     row: &RepoProposal,
@@ -377,17 +394,36 @@ pub(crate) fn bundle_merge_proposal(
     if !row.is_file_bundle() {
         return Err(invalid("not a file bundle"));
     }
-    let base = vault.mount_repo_ref(
-        &RepoRef::parse(&row.repo)?,
-        RepoMountRef::Fork(row.pre_action_fork_hash),
-    )?;
+    let repo = RepoRef::parse(&row.repo)?;
+    let base = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
+    let mut withheld = BTreeSet::new();
+    if matches!(row.operation, RepoProposalOperation::CommitFiles) {
+        for file in &row.files {
+            let present = file
+                .metadata_edit
+                .as_ref()
+                .is_some_and(|state| state.expected.present);
+            if present && base.read_file(&file.path)?.is_none() {
+                withheld.insert(file.path.clone());
+            }
+        }
+    }
+    let exact = if withheld.is_empty() {
+        std::collections::BTreeMap::new()
+    } else {
+        super::secret_remediation::pinned_commit_files(vault, &repo, &withheld)?
+    };
     let files = row
         .files
         .iter()
         .map(|file| {
+            let expected = match base.read_file(&file.path)? {
+                Some(bytes) => Some(bytes.to_vec()),
+                None => exact.get(&file.path).cloned(),
+            };
             Ok(MergeFile {
                 path: file.path.clone(),
-                expected: base.read_file(&file.path)?.map(<[u8]>::to_vec),
+                expected,
                 content: file.content.clone(),
                 metadata_edit: file.metadata_edit.clone(),
             })
