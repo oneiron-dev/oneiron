@@ -184,7 +184,9 @@ pub fn replay_hooks_as_owner_listing(
     Ok((
         HooksReplayPage {
             rows: page.entries.into_iter().map(HookReplayRow::from).collect(),
-            next_cursor: page.next.map(crate::runtime_hooks::HookReplayCursor::to_text),
+            next_cursor: page
+                .next
+                .map(crate::runtime_hooks::HookReplayCursor::to_text),
             done: page.next.is_none(),
             effective_limit: limit,
             limit_clamped: asked > limit,
