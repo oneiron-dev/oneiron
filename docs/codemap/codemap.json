@@ -25442,7 +25442,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 13
      }
     },
@@ -25557,7 +25557,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/dials.rs",
      "purpose": "Dial resolution: each `HEALTH_*` dial read for a project and task type",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -25657,7 +25657,9 @@
      "path": "src/dreamer_runner/maintenance/agent_health/outcomes.rs",
      "purpose": "Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: \"Score the reviewer\"; \"Health flags never move…",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -25669,6 +25671,16 @@
      "purpose": "One review: detect, emit each finding as a DIAGNOSTIC, route and merge",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/policy.rs",
+     "purpose": "The reviewer's policy (FIX 8075, agent-mind §3.8: \"The recipe is a skill\"): the in-force…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -58628,6 +58640,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/health_review.rs",
+     "purpose": "The reviewer-outcome bridge (FIX 8075, agent-mind §3.8: \"Card outcomes give it a reliability like any skill…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58702,7 +58724,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 17
      }
     },
@@ -61131,7 +61153,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 7
      }
     },
@@ -61208,6 +61230,16 @@
      "purpose": "Per-resident version bandit over independently attributed fork receipts",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/rule_outcome.rs",
+     "purpose": "Outcomes of a rule skill (FIX 8075): a closed-form recipe with no model and no pack receipt behind its work…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -76789,7 +76821,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77531,7 +77563,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77559,7 +77591,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77820,7 +77852,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5114,
+   "source_files": 5117,
    "test_files": 902
   },
   "oneiron-android": {
