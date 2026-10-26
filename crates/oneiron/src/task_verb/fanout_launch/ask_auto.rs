@@ -6,9 +6,9 @@
 //! takes the shared learned fan-out ruling a wave launch takes, where the
 //! surface carries a host's decisions: taken before the writer opens, as
 //! decision IO never holds it, and rechecked in the writer before anything is
-//! minted. A ruling that surfaces the ask to a person, or a policy or
-//! recipient set that moved since it was taken, holds the ask through the
-//! existing launch hold; nothing refuses it. Asks whose every recipient
+//! minted. A ruling that surfaces the ask to a person, or a policy, standing
+//! policy row or recipient set that moved since it was taken (FIX 10696),
+//! holds the ask through the existing launch hold; nothing refuses it. Asks whose every recipient
 //! would answer the approval still go out, and the exceptional-width check
 //! stays the separate, non-blocking one it is.
 
@@ -26,9 +26,12 @@ would let it go out, deny when they show the owner would refuse it, and escalate
 they settle neither.";
 
 /// One ask's Auto ruling, as it was taken outside the writer: the fan-out
-/// policy and the recipients it was taken over, and the learned answer.
+/// policy, the standing policy row of its check scope and the recipients it
+/// was taken over, and the learned answer.
 pub(in crate::task_verb) struct AskAutoGate {
     governed: ResolvedFanoutPolicy,
+    scope: String,
+    standing: Option<StandingPolicy>,
     recipients: Vec<EntityId>,
     disposition: FanoutAutoDisposition,
 }
@@ -84,11 +87,12 @@ impl AskAutoGate {
             deadline: &deadline,
         };
         let (scope, _) = ask_check_keys(actor, launch_ref, &question);
+        let standing = standing_policy_for(vault, &scope, EscalationTrigger::Budget).ok()?;
         let disposition = LearningFanoutAutoDecider::new(
             vault,
             FanoutAskContext {
                 task_ref: input.task_ref.unwrap_or(launch_ref),
-                scope,
+                scope: scope.clone(),
                 trigger: FanoutAskTrigger::Budget {
                     magnitude: u64::from(estimate.total_count),
                 },
@@ -100,6 +104,8 @@ impl AskAutoGate {
         .unwrap_or(FanoutAutoDisposition::SurfaceHuman);
         Some(Self {
             governed,
+            scope,
+            standing,
             recipients,
             disposition,
         })
@@ -107,8 +113,10 @@ impl AskAutoGate {
 
     /// Whether the ask holds for its launch approval, judged in the writer
     /// over `recipients`, its census now: the ruling surfaced it to a person,
-    /// or the policy or recipients it was taken over moved since. An ask
-    /// whose every recipient would answer that approval is never held.
+    /// or the policy, standing policy row or recipients it was taken over
+    /// moved since. The standing row is read in `txn`, the writer's own (FIX
+    /// 10696); one that does not read counts as moved. An ask whose every
+    /// recipient would answer that approval is never held.
     pub(in crate::task_verb) fn holds_in(
         &self,
         vault: &Vault,
@@ -117,7 +125,9 @@ impl AskAutoGate {
         approval_project: Option<EntityId>,
     ) -> MemoryResult<bool> {
         let moved = policy_in(vault, txn, &ConsultFanOutScope::default())? != self.governed
-            || recipients != self.recipients.as_slice();
+            || recipients != self.recipients.as_slice()
+            || !standing_policy_for_in(vault, txn, &self.scope, EscalationTrigger::Budget)
+                .is_ok_and(|standing| standing == self.standing);
         if !moved && self.disposition == FanoutAutoDisposition::Allow {
             return Ok(false);
         }

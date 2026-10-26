@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::code_run::SelfSpawnAsk;
+use crate::entity_id::EntityId;
 
 /// A field of a spawn's ask that a direct spawn may leave unapplied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -52,17 +53,24 @@ pub struct SpawnUnapplied {
 pub struct DirectSpawnReceipt {
     pub ask: SelfSpawnAsk,
     pub unapplied: Vec<SpawnUnapplied>,
+    /// The spawner that asked, as the host authenticated it, never as the
+    /// call names it (FIX 9181): its erase takes this receipt's ask out of
+    /// every row that carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker_ref: Option<EntityId>,
 }
 
 /// The receipt of a direct spawn of `ask`. Its need goes unapplied without
 /// the agent's lease, since nothing places the spawn on it; each care,
 /// notes, model, width or pattern it sets goes unapplied, since nothing
 /// plans the spawn. Target, prompt and budget apply and are never listed.
+/// `asker` is the spawner the host authenticated.
 #[must_use]
 pub fn direct_spawn_receipt(
     ask: &SelfSpawnAsk,
     planner_bound: bool,
     leased: bool,
+    asker: EntityId,
 ) -> DirectSpawnReceipt {
     let mut unapplied = Vec::new();
     if !leased {
@@ -92,5 +100,6 @@ pub fn direct_spawn_receipt(
     DirectSpawnReceipt {
         ask: ask.clone(),
         unapplied,
+        asker_ref: Some(asker),
     }
 }
