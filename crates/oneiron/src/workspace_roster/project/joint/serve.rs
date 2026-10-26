@@ -1,12 +1,10 @@
 //! The served side of a component's decision: each member's frontier,
-//! checked under its parents' served views, and the bound's dark answer.
+//! checked under its parents' served views.
 use super::super::fold::{
     ProjectDisposition, ProjectEffective, ProjectFold, ProjectForkConflict, ProjectFrontier,
     ProjectRank, ProjectWitness, rank_at, reason,
 };
-use super::super::history_policy::{
-    ProjectDependencies, ProjectEvidenceSet, counted_set, frozen_frontier,
-};
+use super::super::history_policy::{ProjectDependencies, ProjectEvidenceSet, frozen_frontier};
 use super::super::read::{Decided, ProjectVerdict};
 use super::super::revision::anchor_of;
 use super::super::validity::{FoldCx, parent_view};
@@ -29,10 +27,7 @@ impl Solver<'_, '_, '_> {
                 let Some(effective) = served[index].0.effective.clone() else {
                     continue;
                 };
-                if !self.charge(1) {
-                    // `solve` answers dark.
-                    return Ok(BTreeMap::new());
-                }
+                self.charge(1);
                 if let Err(verdict) = self.parent_bounds(index, &effective, &served)? {
                     let frontier = &mut served[index].0;
                     match &mut frontier.disposition {
@@ -355,10 +350,7 @@ impl Solver<'_, '_, '_> {
             if at == index {
                 return Ok(Err(ProjectVerdict::Quarantined(reason::CYCLE)));
             }
-            if !self.charge(1) {
-                // `solve` answers dark.
-                return Ok(Ok(()));
-            }
+            self.charge(1);
             if seen.insert(at) {
                 todo.extend(self.inside_parents(&served[at].0.effective));
             }
@@ -423,42 +415,5 @@ impl Solver<'_, '_, '_> {
                 })
                 .collect()
         })
-    }
-
-    /// Past the world bound or the work budget: no member serves authority.
-    pub(super) fn dark(&self) -> Result<BTreeMap<EntityId, Rc<Decided>>> {
-        #[cfg(test)]
-        if self.spent() {
-            super::WORK_DARK.with(|dark| dark.set(dark.get() + 1));
-        }
-        let mut decided = BTreeMap::new();
-        for member in &self.members {
-            let frontier = ProjectFrontier {
-                id: member.id,
-                disposition: ProjectDisposition::unauthorized(reason::CYCLE_BOUND),
-                witness: None,
-                effective: None,
-            };
-            let cx = FoldCx::intrinsic(self.reader, member.id, &member.facts.held);
-            let fold = (!member.facts.over_budget).then(|| -> Result<ProjectFold> {
-                Ok(ProjectFold {
-                    frontier: frontier.clone(),
-                    verdicts: self.verdicts(member, reason::CYCLE_BOUND)?,
-                    dependencies: ProjectDependencies::default(),
-                    forks: Vec::new(),
-                    evidence: ProjectEvidenceSet::of(None, &counted_set(&cx)?),
-                })
-            });
-            decided.insert(
-                member.id,
-                Rc::new(Decided {
-                    frontier,
-                    fold: fold.transpose()?,
-                    labels: self.labels(member, reason::CYCLE_BOUND),
-                    rehomed: BTreeMap::new(),
-                }),
-            );
-        }
-        Ok(decided)
     }
 }

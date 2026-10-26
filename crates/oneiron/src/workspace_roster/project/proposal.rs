@@ -11,6 +11,7 @@ use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt,
 };
+use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
@@ -22,6 +23,7 @@ use crate::llm::decision::DecisionReceipt;
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::JobQueue;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::workspace_roster::join_receipt::names_no_actor;
 use crate::workspace_roster::rooms;
@@ -35,7 +37,7 @@ pub use self::history::{
     ACTOR_ERASE_PROJECT_VERDICT, ACTOR_ERASE_SETTLED_PROJECT_CARD, ProjectVerdictErase,
     SettledProjectCardErase,
 };
-use self::history::{card_mint, live_card, live_verdict, shown_card};
+use self::history::{card_mint, live_card, live_verdict, shown_card, source_turn};
 
 /// The attempt kind of one conversation's pending project question.
 pub(crate) const PROJECT_DETECTION_KIND: &str = "project.proposal.detect.v1";
@@ -196,14 +198,15 @@ fn canonical(reference: &str) -> Result<EntityId> {
     Ok(id)
 }
 
-/// Whether the conversation (in a room, the thread) already shows a card no
-/// tap has answered.
-fn live_card_in(
+/// How many cards no tap has answered the conversation (in a room, the
+/// thread) shows.
+fn live_cards_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     conversation: EntityId,
     thread: Option<EntityId>,
-) -> Result<bool> {
+) -> Result<usize> {
+    let mut live = 0;
     for row in CONVERSATION_CARDS.iter_from(&vault.store, txn, conversation.as_bytes())? {
         let ((_, key), _) = row?;
         let Some(record) = shown_card(&vault.store, txn, &key)? else {
@@ -214,10 +217,10 @@ fn live_card_in(
                 record.card.source_thread_ref.as_deref() == Some(thread.to_hex().as_str())
             })
         {
-            return Ok(true);
+            live += 1;
         }
     }
-    Ok(false)
+    Ok(live)
 }
 
 fn enqueue_detection_in_txn(
@@ -273,7 +276,7 @@ pub(crate) fn stage_project_detection_in_txn(
     } else {
         None
     };
-    if live_card_in(vault, txn, conversation, thread)? {
+    if live_cards_in(vault, txn, conversation, thread)? > 0 {
         return Ok(());
     }
     let source = ProjectDetectionSource {
@@ -609,9 +612,16 @@ impl Memory<'_> {
                     Err(refused("this card id names another card").into())
                 };
             }
-            if live_card_in(vault, txn, source.conversation, source.thread)? {
-                return Err(refused("the conversation already shows an unanswered card").into());
-            }
+            // Every distinct card is kept beside any the conversation already
+            // shows; past the threshold row its check is raised (rule 5).
+            let shown = live_cards_in(vault, txn, source.conversation, source.thread)?;
+            let mut scope = source.conversation.as_bytes().to_vec();
+            scope.extend(source.thread.iter().flat_map(|thread| *thread.as_bytes()));
+            let scan = EngineScan::ProjectOutstandingCards;
+            let mut outstanding = ScanCount::start(&vault.store, txn, scan, &scope)?;
+            outstanding.rows(shown + 1);
+            outstanding.defer(&vault.store);
+            card.observe_sizes(&vault.store, txn)?;
             CARDS.put(
                 &vault.store,
                 txn,
@@ -633,19 +643,22 @@ impl Memory<'_> {
 
     /// The cards shown in a conversation, each with its state: to the person
     /// each is for, the agent that drafted it, and the members of the room it
-    /// sits in. No client surface draws them yet; this is the read they use.
-    /// A card that named an erased actor is listed in erased form, marked
-    /// history (FIX 4229).
+    /// sits in, and only where the caller's scoped read admits the card's
+    /// source message and the turn it sits in. No client surface draws them
+    /// yet; this is the read they use. A card that named an erased actor is
+    /// listed in erased form, marked history (FIX 4229).
     pub fn projects_proposals(
         &self,
         conversation: EntityId,
     ) -> MemoryResult<Vec<ProjectCardRecord>> {
         let vault = self.vault();
         let actor = self.actor();
+        // The lane resolves its key in snapshots of its own, before this one.
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let mut cards = Vec::new();
         for row in CONVERSATION_CARDS.iter_from(&vault.store, &txn, conversation.as_bytes())? {
-            let ((_, key), _) = row?;
+            let ((_, key), message) = row?;
             let Some(record) = shown_card(&vault.store, &txn, &key)? else {
                 continue;
             };
@@ -653,7 +666,20 @@ impl Memory<'_> {
                 Some(room) => rooms::require_member(vault, &txn, canonical(room)?, actor).is_ok(),
                 None => false,
             };
-            if member || record.drafted_by.is(actor) || record.card.principal_ref == actor.to_hex()
+            if !member
+                && !record.drafted_by.is(actor)
+                && record.card.principal_ref != actor.to_hex()
+            {
+                continue;
+            }
+            // A private thread's card is read as its source is: the message
+            // and the turn it sits in, each through the caller's lane.
+            let mut sources = vec![message];
+            sources.extend(source_turn(&vault.store, &txn, &message)?);
+            if lane
+                .entities_readable_in_txn(&txn, &sources)?
+                .into_iter()
+                .all(|readable| readable)
             {
                 cards.push(record);
             }

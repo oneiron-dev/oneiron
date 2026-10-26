@@ -17,6 +17,8 @@ use crate::gate::ceiling::{
     PolicyOwnerPolicyRow, PolicySensitivity, SourceTrustCeiling, SourceTrustRow,
 };
 
+mod goal_limits;
+
 // One hash step per manifest row, in manifest order: splitting it would scatter one frontier.
 #[allow(clippy::too_many_lines)]
 pub(super) fn hash_policy_frontier_v0(
@@ -384,13 +386,7 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "consult_fanout_approval_threshold");
         hash_u64(hasher, u64::from(threshold));
     }
-    if let Some(limits) = resolution.goal_limits {
-        hash_str(hasher, "goal_limits");
-        hash_str(hasher, limits.precedence.as_str());
-        for field in limits.fields() {
-            hash_u64(hasher, field);
-        }
-    }
+    goal_limits::hash_goal_limits(hasher, resolution);
 
     // Attribution limits bound post-terminal receipt capture, not Gate authority.
     // Tuning them must not rebind existing consent/grant frontiers.

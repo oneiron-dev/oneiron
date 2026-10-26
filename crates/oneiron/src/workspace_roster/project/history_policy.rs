@@ -16,7 +16,8 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 
 pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
-/// How many worlds one member of a parent cycle may have (`joint.rs`).
+/// How many worlds one member of a parent cycle has before the solver raises
+/// its scan check (`joint`).
 pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,8 +25,8 @@ pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 pub struct ProjectHistoryPolicy {
     pub max_revisions: u64,
     /// Past this many distinct views of one cycle member (or this many per
-    /// undecided revision of assignments), the cycle serves no authority
-    /// until the owner seals.
+    /// undecided revision of assignments), the cycle's decision raises its
+    /// scan check and reads on: every world is still decided and served.
     #[serde(default = "default_cycle_worlds_max")]
     pub cycle_worlds_max: u64,
 }
