@@ -338,18 +338,23 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<(ShapePlan, ShapeApprovalDependencies)> {
         let stored = self.shape_seed()?;
-        let (seed, seed_id, stored_seed) = match (seed, stored) {
-            (Some(seed), stored) => {
-                let id = stored
-                    .filter(|stored| stored.seed == *seed)
-                    .map(|stored| stored.id);
-                (seed.clone(), id, false)
-            }
-            (None, Some(stored)) => (stored.seed, Some(stored.id), true),
-            (None, None) => (ShapeSeed::default(), None, false),
+        let (seed, stored_seed) = match (seed, stored.as_ref()) {
+            (Some(seed), _) => (seed.clone(), false),
+            (None, Some(stored)) => (stored.seed.clone(), true),
+            (None, None) => (ShapeSeed::default(), false),
         };
         seed.validate()?;
         let live = self.read_live_shape_into(visible, sources)?;
+        // The stored seed is named as the caller reads it (FIX 9960).
+        let seed_id = match &stored {
+            Some(stored) => self.visible_seed_id(
+                stored,
+                (!stored_seed).then_some(&seed),
+                &live.withheld,
+                visible,
+            )?,
+            None => None,
+        };
         // The stored seed reads as the caller's read admits it (FIX 10199).
         let seed = if stored_seed {
             self.visible_seed(&seed, &live.withheld, visible)?
