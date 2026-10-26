@@ -195,7 +195,9 @@ impl DeadlineSource for AttemptQueueDeadlines<'_> {
                 continue;
             }
             // FIX 5661 C2b (FIX 6212): a started free-time try the old home
-            // drains arms without the home gate, so it settles here.
+            // drains arms without the home gate, so it settles here; so does
+            // every bound one where that home's state is only a local opening
+            // no move exports (FIX 6575).
             if scope == DreamerConsolidationScope::Macro && !free_time.drain.contains(&attempt.id) {
                 let eligible = match macro_admissible {
                     Some(value) => value,
@@ -575,7 +577,9 @@ impl DeadlineSource for CommitmentDueDeadlines<'_> {
 /// FIX 5661 C2b (FIX 6212): the free-time tries this node's admission takes
 /// now, which the timer arms by the claim's own readiness, and the started
 /// ones the old home drains, which the host's own pass runs to their end
-/// without the home gate so the node can freeze its state for the move.
+/// without the home gate so the node can freeze its state for the move. An
+/// old home whose state is only a local opening no move exports drains every
+/// bound one so (FIX 6575).
 /// Read-only and best-effort: an unreadable set arms nothing for it.
 fn free_time_arming(vault: &Vault) -> FreeTimeArming {
     oneiron::sync::residence::free_time_arming(vault).unwrap_or_else(|error| {
