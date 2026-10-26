@@ -15,7 +15,6 @@ use crate::Vault;
 use crate::speculative::SpeculativeFireDecision;
 use crate::voice_cascade::{PartialEnricher, SpeculativeRetrievalBridge, UtteranceHandle};
 
-const MAX_ERRORS: usize = 8;
 const IO_TICK: Duration = Duration::from_millis(200);
 
 /// Shared stop signal. Each socket checks it at bounded read intervals.
@@ -49,8 +48,10 @@ impl Connection {
     }
 
     /// Requires actual host enrichment. No default or fake production enricher
-    /// exists. Returns on EOF, shutdown, framing failure or repeated errors;
-    /// valid requests are served for as long as the connection lasts.
+    /// exists. Returns on EOF, shutdown or a framing failure. Each request is
+    /// answered, an error alone for one that fails; no count of errors ends
+    /// the connection, so its open utterance and retries carry on for as
+    /// long as it lasts (FIX 10214).
     /// Dropping the local bridge releases every open utterance on every exit,
     /// including I/O errors and unwinding. This does not dispatch audio stops.
     pub fn serve(
@@ -67,7 +68,6 @@ impl Connection {
         let mut reader = BufReader::with_capacity(1024, &self.stream);
         let mut writer = &self.stream;
         let mut session = WireSession::new(vault, limits);
-        let mut errors = 0;
         loop {
             let bytes = match codec::read_frame(&mut reader, &self.shutdown)? {
                 Frame::Data(bytes) => bytes,
@@ -84,13 +84,7 @@ impl Connection {
                 Ok(request) => session.handle(request, enricher),
                 Err(_) => Response::error("invalid_request"),
             };
-            if matches!(&response, Response::Error { .. }) {
-                errors += 1;
-            }
             codec::write_response(&mut writer, &response)?;
-            if errors >= MAX_ERRORS {
-                break;
-            }
         }
         Ok(())
     }

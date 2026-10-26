@@ -198,9 +198,12 @@ impl MediaRuntime {
 
 impl crate::models::ModelRuntime {
     /// This runtime with its `ai.video` jobs kept in `vault`, so a restart
-    /// loses none and an ended job answers every poll (FIX-LIST 465).
+    /// loses none and an ended job answers every poll (FIX-LIST 465), and
+    /// its voice reference uploads checked against `vault`'s bank before
+    /// each one (FIX 9517).
     #[must_use]
     pub fn with_media_vault(mut self, vault: Arc<Vault>) -> Self {
+        self.media.voice_refs.bind(Arc::clone(&vault));
         self.media.store = Some(JobStore::new(vault));
         self
     }

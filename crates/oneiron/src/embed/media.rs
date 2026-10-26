@@ -14,8 +14,6 @@
 
 use std::collections::BTreeSet;
 
-use rmpv::Value;
-
 use super::space::{
     EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
     has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
@@ -34,10 +32,6 @@ use crate::registry::{
 };
 use crate::store::ManifestDbs;
 
-/// ASSET body field holding the bytes.
-const ASSET_BODY_BYTES: &str = "bytes";
-/// ASSET body field holding the bytes' media type.
-const ASSET_BODY_MEDIA_TYPE: &str = "mime_type";
 /// The media type a text document is handed over as.
 pub(super) const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
 /// The records the text index embeds ([`super::embeddable_payload_in_txn`]), and so the text
@@ -611,7 +605,11 @@ pub(super) fn asset_document_in(
     };
     let learned_at = row.learned_at;
     let raw = row.encode();
-    let Some((media_type, bytes)) = raw.get(ENTITY_METADATA_HEADER_LEN..).and_then(asset_media)
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
     else {
         report.no_media += 1;
         return Ok(None);
@@ -737,34 +735,20 @@ fn text_row_in(
     )))
 }
 
-/// The inline media an ASSET body holds: its media type and non-empty bytes.
-pub(super) fn asset_media(body: &[u8]) -> Option<(String, Vec<u8>)> {
-    let Value::Map(entries) = rmpv::decode::read_value(&mut &body[..]).ok()? else {
-        return None;
+/// The UTF-8 content of a text ASSET, shared by both embedding workers: the
+/// bytes of the blob its body names (FIX 9949), `read` reading one stored
+/// row's body by id in the caller's own snapshot.
+pub(super) fn asset_text(
+    body: &[u8],
+    read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
+) -> Result<Option<String>> {
+    let Some((mime, bytes)) = crate::memory::asset_media_in(body, read)? else {
+        return Ok(None);
     };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(ASSET_BODY_BYTES),
-        field(ASSET_BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return None;
-    };
-    (!bytes.is_empty()).then(|| (media_type.to_owned(), bytes.clone()))
-}
-
-/// The UTF-8 content of a text ASSET, shared by both embedding workers.
-pub(super) fn asset_text(body: &[u8]) -> Option<String> {
-    let (mime, bytes) = asset_media(body)?;
     if !mime.starts_with("text/") {
-        return None;
+        return Ok(None);
     }
-    let text = String::from_utf8(bytes).ok()?;
-    text.chars()
-        .any(|c| !c.is_whitespace() && !c.is_control())
-        .then_some(text)
+    Ok(String::from_utf8(bytes)
+        .ok()
+        .filter(|text| text.chars().any(|c| !c.is_whitespace() && !c.is_control())))
 }

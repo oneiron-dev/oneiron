@@ -14,19 +14,29 @@
 //! in order, and their PCM is handed back as one WAV. Each render is one
 //! physical request, with its own inference receipt naming the worker as
 //! far as `/ready` proves it (FIX 8314, [`WarmTarget::worker`]).
+//!
+//! Each render's upload of the clip is under the bank's current reference
+//! (FIX 9517): right before it, and again before a refused compressed
+//! body's plain resend, the runtime's [`VoiceReferenceUploadGuard`]
+//! re-reads the bank. A withdrawal or a replacement stops the renders still
+//! to come, and the call ends as interrupted, the renders that answered
+//! keeping their usage and receipts for the run to settle.
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use oneiron::llm::media::wav::pcm16_wav;
 use oneiron::llm::media::{
-    AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
-    MediaVoice,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaCallProgress, MediaFuture, MediaPart,
+    MediaProgressFuture, MediaRequest, MediaResponse, MediaUsage, MediaVoice,
 };
 use oneiron::voice_cascade::speakable_pieces;
 use oneiron::voice_cascade::voxcpm2::WarmTarget;
-use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
+use oneiron::llm::InferenceCallReceipt;
+use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, ModelLocality};
 use serde_json::{Value as JsonValue, json};
 
-use super::http::{BytesReply, MediaSend, ProviderHttp};
+use super::http::{BytesReply, MediaSend, ProviderHttp, UploadAdmission};
+use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
 use super::rerank::transport;
 
 /// One VoxCPM2 worker's media client, serving the models the speech seat
@@ -36,6 +46,27 @@ pub(super) struct VoxCpm2Speech {
     /// Engine model id -> the provider's model id. The worker serves one
     /// model, so the call names none on its wire.
     pub(super) models: BTreeMap<ModelId, String>,
+    /// The render target the bank knows this worker by: its provider's name.
+    pub(super) target: String,
+    /// Where the worker runs, as its provider says.
+    pub(super) locality: ModelLocality,
+    /// The runtime's guard, asked before every upload of a clip.
+    pub(super) voice_refs: VoiceReferenceUploadGuard,
+}
+
+/// What the renders that answered completed: their count, the characters
+/// they spoke and their receipts.
+fn progress(
+    completed: u64,
+    characters: u64,
+    receipts: &[InferenceCallReceipt],
+) -> MediaCallProgress {
+    let mut usage = MediaUsage {
+        characters,
+        ..MediaUsage::default()
+    };
+    usage.put_inference_calls(receipts);
+    MediaCallProgress { completed, usage }
 }
 
 /// A worker's refusal, read as any provider's status.
@@ -62,7 +93,10 @@ impl VoxCpm2Speech {
         Ok(warm)
     }
 
-    async fn speak(&self, mut request: MediaRequest) -> LlmResult<MediaResponse> {
+    async fn speak(
+        &self,
+        mut request: MediaRequest,
+    ) -> Result<MediaResponse, InterruptedMediaCall> {
         let text = request.text();
         if !self.models.contains_key(&request.model)
             || request.operation != AiOperation::Speech
@@ -106,14 +140,44 @@ impl VoxCpm2Speech {
             "warm": warm,
         });
         let max = usize::try_from(warm.limits.max_text_bytes).unwrap_or(usize::MAX);
+        // FIX 9517: every upload of the clip goes only under the bank's
+        // current reference; what answered before keeps its usage.
+        let admits: UploadAdmission = {
+            let (guard, render_target, locality) =
+                (self.voice_refs.clone(), self.target.clone(), self.locality);
+            Arc::new(move || {
+                let admitted = AdmittedReference {
+                    voice_id: &voice_id,
+                    owner: &owner,
+                    register: &register,
+                    revision: &revision,
+                };
+                guard.admits_upload(&render_target, locality, &admitted)
+            })
+        };
         let mut pcm = Vec::new();
         let mut receipts = Vec::new();
+        let mut spoken = 0u64;
         for piece in speakable_pieces(&text, max) {
-            pcm.extend(
-                self.render(&warm, &target, piece, &transcript, &audio)
-                    .await?,
-            );
-            receipts.push(warm.render_receipt(&request.model));
+            let rendered = if admits() {
+                self.render(&warm, &target, piece, &transcript, &audio, &admits)
+                    .await
+            } else {
+                Err(FatalLlmError::InvalidRequest.into())
+            };
+            let error = match rendered {
+                Ok(rendered) => {
+                    pcm.extend(rendered);
+                    receipts.push(warm.render_receipt(&request.model));
+                    spoken = spoken.saturating_add(piece.chars().count() as u64);
+                    continue;
+                }
+                Err(error) => error,
+            };
+            return Err(InterruptedMediaCall {
+                error,
+                progress: progress(receipts.len() as u64, spoken, &receipts),
+            });
         }
         // A WAV's 32-bit lengths are the one bound on the joined audio.
         let wav = pcm16_wav(warm.sample_rate, 1, &pcm).ok_or(FatalLlmError::EmptyResponse)?;
@@ -134,6 +198,7 @@ impl VoxCpm2Speech {
 
     /// One render of `text`, within the worker's per-render bound, from the
     /// whole reference clip: the mono PCM16 the worker answers for `target`.
+    /// `admits` is asked again before any resend of the clip.
     async fn render(
         &self,
         warm: &WarmTarget,
@@ -141,6 +206,7 @@ impl VoxCpm2Speech {
         text: &str,
         transcript: &str,
         audio: &[u8],
+        admits: &UploadAdmission,
     ) -> LlmResult<Vec<u8>> {
         let limits = warm.limits;
         let header = serde_json::to_vec(&json!({
@@ -160,7 +226,7 @@ impl VoxCpm2Speech {
         body.extend_from_slice(audio);
         let reply = self
             .http
-            .send_media("/render", MediaSend::Octets(body))
+            .send_media("/render", MediaSend::Octets(body, Arc::clone(admits)))
             .await
             .map_err(transport)?;
         if !(200..300).contains(&reply.status) {
@@ -194,6 +260,14 @@ impl MediaBackend for VoxCpm2Speech {
         request: MediaRequest,
         _lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse> {
+        Box::pin(async move { self.speak(request).await.map_err(LlmError::from) })
+    }
+
+    fn run_progress<'a>(
+        &'a self,
+        request: MediaRequest,
+        _lease: &'a BudgetLease,
+    ) -> MediaProgressFuture<'a> {
         Box::pin(self.speak(request))
     }
 }

@@ -111,8 +111,10 @@ pub enum MediaVoice {
         /// The identity's owner, as the bank records it (hex).
         owner: String,
         register: String,
-        /// The bank's revision of the identity's refs (hex): it changes
-        /// when the refs change or the identity is banked again.
+        /// The bank's revision of the identity's refs and of the render
+        /// consent the call was bound under (hex): it changes when the refs
+        /// change, the identity is banked again or a new render decision is
+        /// recorded.
         revision: String,
         media_type: String,
         audio: Vec<u8>,

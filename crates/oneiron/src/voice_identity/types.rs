@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 
+use super::enrollment_law::{VoiceEnrollmentLegalContext, VoicePrintLegalEvidence};
 use super::math_keys::{invalid_voice, require_non_empty};
 
 /// Ticket-owned default known-speaker acceptance threshold (cosine).
@@ -22,13 +23,6 @@ pub(super) const VOICE_IDENTITY_SCHEMA_VERSION: u64 = 1;
 
 /// Distinct language tags a centroid needs before it is `Calibrated`.
 pub(super) const VOICE_CALIBRATION_MIN_LANGUAGES: usize = 2;
-
-/// Upper bound on segments in one match request.
-///
-/// Residual clustering is quadratic in the residual count; this bound keeps a
-/// single request from turning into an unbounded local job. It is a
-/// ticket-owned dial, not a canon-frozen constant.
-pub(super) const VOICE_MAX_MATCH_SEGMENTS: usize = 1024;
 
 /// Purpose a voice print may be used for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,6 +373,9 @@ pub struct VoiceEnrollmentRequest {
     pub space: VoiceEmbeddingSpaceV1,
     pub samples: Vec<VoiceEnrollmentSampleV1>,
     pub requested_at: u64,
+    /// The law the enrollment is made under, as the trusted host's
+    /// legal-policy seam resolved it (FIX 10218).
+    pub legal: VoiceEnrollmentLegalContext,
 }
 
 /// Request to resolve one voice session's diarized segments.
@@ -391,6 +388,9 @@ pub struct VoiceMatchRequest {
     pub invite_attendee_refs: Vec<EntityId>,
     pub policy: VoiceMatchPolicy,
     pub created_at: u64,
+    /// The purpose the match serves: only prints enrolled for it, under a
+    /// consent still standing for it, take part (FIX 10217).
+    pub purpose: VoicePrintPurpose,
 }
 
 /// Request to withdraw consent and hard-delete a subject's biometric rows.
@@ -428,6 +428,14 @@ pub struct VoicePrintRecordV1 {
     pub contact_ref: Option<EntityId>,
     pub relationship_ref: Option<EntityId>,
     pub consent_event_ref: String,
+    /// The world the print sits in, resolved from where its sources sit,
+    /// never named by the caller; `None` is base reality (FIX 10215).
+    pub world_ref: Option<EntityId>,
+    /// The purposes its consent was enrolled for: the enrolled purpose
+    /// only, never every purpose the grant names (FIX 10217).
+    pub consented_purposes: Vec<VoicePrintPurpose>,
+    /// The law it was enrolled under (FIX 10218).
+    pub legal: VoicePrintLegalEvidence,
     pub space: VoiceEmbeddingSpaceV1,
     pub centroid: Vec<f32>,
     pub sample_ids: Vec<String>,

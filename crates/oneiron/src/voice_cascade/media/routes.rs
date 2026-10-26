@@ -126,6 +126,23 @@ impl BankVoiceBinding {
         }
     }
 
+    /// The revision a reference call names, in hex: the identity's
+    /// incarnation and its refs' digest, then the render consent it was
+    /// bound under. Any new render decision, a re-banked identity or
+    /// changed refs make it another, so a host that re-reads the bank before
+    /// each upload stops on any of them (FIX 9517).
+    #[must_use]
+    pub fn reference_revision(fence: &crate::voice_identity::ref_bank::VoiceRefFence) -> String {
+        fence
+            .incarnation
+            .iter()
+            .flatten()
+            .chain(&fence.ref_digest)
+            .chain(&fence.grant.revision)
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     /// The voice the call's wire carries: the target's id for the clone,
     /// or the fenced clip itself.
     #[must_use]
@@ -140,13 +157,7 @@ impl BankVoiceBinding {
                 voice_id: self.voice_id.clone(),
                 owner: fence.owner.to_hex(),
                 register: clip.register.clone(),
-                revision: fence
-                    .incarnation
-                    .iter()
-                    .flatten()
-                    .chain(&fence.ref_digest)
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
+                revision: Self::reference_revision(fence),
                 media_type: clip.media_type.clone(),
                 audio: clip.audio.clone(),
                 transcript: clip.transcript.clone(),

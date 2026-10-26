@@ -2,10 +2,19 @@
 //! Entry: MediaBackend.
 //! Definitions: this module; the parent re-exports the old paths.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use super::{
-    AiOperation, Arc, BrokerIsolation, BudgetLease, FatalLlmError, ImageBackend, LlmError,
-    LlmResult, MediaFuture, MediaJobState, MediaRequest, MediaResponse, ModelId,
+    AiOperation, Arc, BrokerIsolation, BudgetLease, FatalLlmError, ImageBackend,
+    InterruptedMediaCall, LlmError, LlmResult, MediaFuture, MediaJobState, MediaRequest,
+    MediaResponse, ModelId,
 };
+
+/// A media call's answer, or the stop that ended it part way with what it
+/// completed (FIX 9517).
+pub type MediaProgressFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<MediaResponse, InterruptedMediaCall>> + Send + 'a>>;
 
 /// Whether an offer's wire carries a call's whole reference set (FIX 8612,
 /// 8614, 8627). A call is never cut to fit: an offer that cannot take every
@@ -43,6 +52,23 @@ pub trait MediaBackend: Send + Sync {
         request: MediaRequest,
         lease: &'a BudgetLease,
     ) -> MediaFuture<'a, MediaResponse>;
+
+    /// [`Self::run`], keeping what a call stopped part way completed (FIX
+    /// 9517): a backend that sends one call as several physical requests
+    /// answers the usage of each that answered beside the error that
+    /// stopped the rest. The default is [`Self::run`], whose failure
+    /// completed nothing. A backend that wraps another forwards this too.
+    fn run_progress<'a>(
+        &'a self,
+        request: MediaRequest,
+        lease: &'a BudgetLease,
+    ) -> MediaProgressFuture<'a> {
+        Box::pin(async move {
+            self.run(request, lease)
+                .await
+                .map_err(InterruptedMediaCall::nothing)
+        })
+    }
 
     /// Starts one long call as a provider job; returns the provider's job id.
     fn submit<'a>(

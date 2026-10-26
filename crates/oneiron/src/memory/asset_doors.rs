@@ -113,7 +113,7 @@ impl Memory<'_> {
             .map(EntityId::from_hex)
             .transpose()?;
         let body = asset_body(input.embedding_kind, &mime, &bytes, "uploaded", None)?;
-        let (asset, text) = self.land_asset_body(id, &body, text, input.occurred_at)?;
+        let (asset, text) = self.land_asset_body(id, &body, &bytes, text, input.occurred_at)?;
         Ok(AssetIngestReceipt {
             asset_ref: asset.to_hex(),
             asset_text_ref: text.map(|id| id.to_hex()),

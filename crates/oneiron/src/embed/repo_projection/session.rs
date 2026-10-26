@@ -49,15 +49,22 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
         match overlay.snapshot() {
             Ok(snapshot) => {
                 for entry in snapshot.journal_entries() {
-                    if let BatchOp::Put {
+                    let BatchOp::Put {
                         id,
                         entity_type: ENTITY_TYPE_ASSET,
                         data,
                         ..
                     } = &entry.op
-                        && super::repo_media_bytes(data)
-                            .is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes()))
-                    {
+                    else {
+                        continue;
+                    };
+                    // FIX 9949: an ASSET's bytes are the blob it holds by
+                    // reference, read in the writer's snapshot.
+                    let hash = super::repo_media_bytes(data, |blob| {
+                        Ok(vault.store.port_entity_record(wtxn, blob)?.map(|blob| blob.body))
+                    })?
+                    .map(|bytes| blake3::hash(&bytes));
+                    if hash.is_some_and(|hash| sources.contains(hash.as_bytes())) {
                         ids.insert(*id);
                     }
                 }

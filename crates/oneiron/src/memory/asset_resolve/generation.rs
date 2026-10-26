@@ -3,7 +3,7 @@
 //! Definitions: types stay in the parent; this module owns the listed impls and body functions.
 
 use super::{
-    AiMediaDoor, AiOperation, AssetConsumer, BODY_BLAKE3, BODY_BYTES, BODY_MEDIA_TYPE, BudgetLease,
+    AiMediaDoor, AiOperation, AssetConsumer, BODY_BLAKE3, BODY_MEDIA_TYPE, BudgetLease,
     ENTITY_TYPE_ASSET, EdgeKind, EntityId, ImageBytes, ImageCatalog, ImageIntent, ImageResponse,
     LandedImage, LlmCapability, MEMORY_CODE_MODEL_UNAVAILABLE, MediaPart, MediaRequest, Memory,
     MemoryError, MemoryResult, ModelId, TimeRange, Value, encode_rmpv, no_form,
@@ -97,12 +97,12 @@ impl Memory<'_> {
         self.land_generated_image(&response, &description, occurred_at)
     }
 
-    /// Lands one generated image as the bound actor: the bytes as an ASSET,
-    /// and `description` as its ASSET_TEXT, derived from it and born under
-    /// the image's facet, in one write. A text-only consumer is served that
-    /// text, so an image with no description is refused rather than landed
-    /// without one. An edit's instruction does not describe its result; its
-    /// caller describes it.
+    /// Lands one generated image as the bound actor: the ASSET, its bytes
+    /// as the blob it holds, and `description` as its ASSET_TEXT, derived
+    /// from it and born under the image's facet, in one write. A text-only
+    /// consumer is served that text, so an image with no description is
+    /// refused rather than landed without one. An edit's instruction does
+    /// not describe its result; its caller describes it.
     pub fn land_generated_image(
         &self,
         response: &ImageResponse,
@@ -119,7 +119,13 @@ impl Memory<'_> {
             ));
         }
         let body = generated_asset_body(&response.image, &response.model)?;
-        let (asset, text) = self.land_asset_body(None, &body, Some(description), occurred_at)?;
+        let (asset, text) = self.land_asset_body(
+            None,
+            &body,
+            &response.image.bytes,
+            Some(description),
+            occurred_at,
+        )?;
         Ok(LandedImage {
             asset_ref: asset.to_hex(),
             asset_text_ref: text.expect("a generated image lands with text").to_hex(),
@@ -127,11 +133,15 @@ impl Memory<'_> {
     }
 
     /// The shared actor-bound landing for generated and uploaded ASSETs.
-    /// Create and erasure checks run in the same transaction as both rows.
+    /// Create and erasure checks run in the same transaction as both rows,
+    /// and `bytes`, whose hash `body` names, land in it after them as the
+    /// blob the ASSET holds by reference (FIX 9949): an actor whose write is
+    /// refused lands no bytes.
     pub(in crate::memory) fn land_asset_body(
         &self,
         asset: Option<EntityId>,
         body: &[u8],
+        bytes: &[u8],
         description: Option<&str>,
         occurred_at: u64,
     ) -> MemoryResult<(EntityId, Option<EntityId>)> {
@@ -141,48 +151,84 @@ impl Memory<'_> {
         };
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
-        self.with_actor_content_write_txn(|content| {
-            let asset = match asset {
-                Some(asset) => asset,
-                None => self.vault.store.clock.entity_id()?,
-            };
-            if self
-                .vault
-                .local_hard_delete_marker_exists_in_txn(content.read(), &asset)?
-            {
-                return Err(crate::memory::support::hard_deleted_refusal(&asset));
-            }
-            crate::memory::structural::ensure_structural_create_in_txn(
+        let writer = crate::WriteActor::new(self.actor, self.actor_class);
+        self.vault.try_with_write_txn_grouped(|wtxn| {
+            crate::memory::verify_actor_binding_in_txn(
                 self.vault,
-                content.read(),
-                &asset,
+                wtxn,
+                self.actor,
+                self.actor_class,
             )?;
-            let text = description
-                .map(|_| self.vault.store.clock.entity_id())
-                .transpose()?;
-            let mut batch =
-                self.vault
-                    .batch_in()
-                    .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
-            if let (Some(text), Some(description)) = (text, description) {
-                batch = batch
-                    .asset_text_birth(
-                        &text,
-                        occurred,
-                        occurred_at,
-                        description.as_bytes(),
-                        &[(asset, weight)],
-                    )
-                    .text(&text, &[("text", description)]);
-            }
-            content.apply_batch(batch)?;
-            Ok((asset, text))
+            let mut content = crate::federation::ActorContentTxn::new(self.vault, wtxn, writer)?;
+            let landed = self.land_asset_rows(
+                &mut content,
+                asset,
+                body,
+                description,
+                (occurred, occurred_at, weight),
+            )?;
+            content.finish()?;
+            super::blob::land_asset_blob_in_txn(
+                self.vault,
+                wtxn,
+                &landed.0,
+                bytes,
+                occurred,
+                occurred_at,
+            )?;
+            Ok(landed)
         })
+    }
+
+    /// The ASSET row and its ASSET_TEXT, as the actor `content` binds.
+    fn land_asset_rows(
+        &self,
+        content: &mut crate::federation::ActorContentTxn<'_, '_, '_>,
+        asset: Option<EntityId>,
+        body: &[u8],
+        description: Option<&str>,
+        (occurred, occurred_at, weight): (TimeRange, u64, f32),
+    ) -> MemoryResult<(EntityId, Option<EntityId>)> {
+        let asset = match asset {
+            Some(asset) => asset,
+            None => self.vault.store.clock.entity_id()?,
+        };
+        if self
+            .vault
+            .local_hard_delete_marker_exists_in_txn(content.read(), &asset)?
+        {
+            return Err(crate::memory::support::hard_deleted_refusal(&asset));
+        }
+        crate::memory::structural::ensure_structural_create_in_txn(
+            self.vault,
+            content.read(),
+            &asset,
+        )?;
+        let text = description
+            .map(|_| self.vault.store.clock.entity_id())
+            .transpose()?;
+        let mut batch =
+            self.vault
+                .batch_in()
+                .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
+        if let (Some(text), Some(description)) = (text, description) {
+            batch = batch
+                .asset_text_birth(
+                    &text,
+                    occurred,
+                    occurred_at,
+                    description.as_bytes(),
+                    &[(asset, weight)],
+                )
+                .text(&text, &[("text", description)]);
+        }
+        content.apply_batch(batch)?;
+        Ok((asset, text))
     }
 }
 
-/// The ASSET body for generated bytes: the canon asset fields beside the
-/// bytes themselves. A plain memory read serves the fields and nulls the bytes.
+/// The ASSET body for generated bytes: the canon asset fields and the hash
+/// that names the blob holding the bytes.
 pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> MemoryResult<Vec<u8>> {
     asset_body(
         crate::embed::InputKind::Image,
@@ -193,7 +239,10 @@ pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> Memor
     )
 }
 
-/// The one inline ASSET encoding read by the resolver and embedding backfill.
+/// The one ASSET metadata encoding (FIX 9949): kind, media type, the BLAKE3
+/// hash and size of the bytes, source and model. The bytes themselves are
+/// the blob the ASSET holds by that hash, never a field here; the resolver
+/// and the media backfill read them through it (`blob`).
 pub(in crate::memory) fn asset_body(
     kind: crate::embed::InputKind,
     mime_type: &str,
@@ -219,6 +268,5 @@ pub(in crate::memory) fn asset_body(
         fields.push((Value::from("model"), Value::from(model)));
     }
     fields.push((Value::from("source"), Value::from(source)));
-    fields.push((Value::from(BODY_BYTES), Value::Binary(bytes.to_vec())));
     encode_rmpv(&Value::Map(fields))
 }

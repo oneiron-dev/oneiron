@@ -12,13 +12,14 @@ use super::codec_core::{
     encode_vector, map_entries, read_body, require_schema_version, required_value, validate_keys,
     write_body,
 };
+use super::enrollment_law::{decode_legal_evidence, encode_legal_evidence};
 use super::math_keys::{corrupt_voice_row, require_session_key, validate_voice_vector};
 use super::types::{
-    VoiceAttributionEvidence, VoicePrintCalibration, VoicePrintRecordV1, VoiceResolvedSegment,
-    VoiceSessionRosterV1,
+    VoiceAttributionEvidence, VoicePrintCalibration, VoicePrintPurpose, VoicePrintRecordV1,
+    VoiceResolvedSegment, VoiceSessionRosterV1,
 };
 
-pub(super) const PRINT_KEYS: [&str; 14] = [
+pub(super) const PRINT_KEYS: [&str; 17] = [
     KEY_SCHEMA_VERSION,
     "subject_ref",
     "contact_ref",
@@ -33,6 +34,9 @@ pub(super) const PRINT_KEYS: [&str; 14] = [
     "updated_at",
     "delete_after",
     "print_generation",
+    "world_ref",
+    "consented_purposes",
+    "legal",
 ];
 
 const ROSTER_KEYS: [&str; 8] = [
@@ -153,6 +157,24 @@ pub(super) fn encode_print_record(record: &VoicePrintRecordV1) -> Result<Vec<u8>
             Value::from(PRINT_KEYS[13]),
             encode_entity_ref(&record.print_generation),
         ),
+        (
+            Value::from(PRINT_KEYS[14]),
+            encode_optional_entity_ref(record.world_ref.as_ref()),
+        ),
+        (
+            Value::from(PRINT_KEYS[15]),
+            Value::Array(
+                record
+                    .consented_purposes
+                    .iter()
+                    .map(|purpose| Value::from(purpose.as_str()))
+                    .collect(),
+            ),
+        ),
+        (
+            Value::from(PRINT_KEYS[16]),
+            encode_legal_evidence(&record.legal),
+        ),
     ]);
     write_body(&value)
 }
@@ -173,12 +195,25 @@ pub(super) fn decode_print_record(bytes: &[u8]) -> Result<VoicePrintRecordV1> {
     } else {
         Some(decode_u64(delete_after_value)?)
     };
+    let consented_purposes = required_value(entries, PRINT_KEYS[15])?
+        .as_array()
+        .ok_or_else(corrupt_voice_row)?
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .and_then(VoicePrintPurpose::parse)
+                .ok_or_else(corrupt_voice_row)
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(VoicePrintRecordV1 {
         subject_ref: decode_entity_ref(required_value(entries, PRINT_KEYS[1])?)?,
         contact_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[2])?)?,
         relationship_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[3])?)?,
         consent_event_ref: decode_str(required_value(entries, PRINT_KEYS[4])?)?,
+        world_ref: decode_optional_entity_ref(required_value(entries, PRINT_KEYS[14])?)?,
+        consented_purposes,
+        legal: decode_legal_evidence(required_value(entries, PRINT_KEYS[16])?)?,
         space,
         centroid,
         sample_ids: decode_string_list(required_value(entries, PRINT_KEYS[7])?)?,

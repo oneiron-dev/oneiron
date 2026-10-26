@@ -3,6 +3,7 @@
 use super::PendingEmbeddingPayload;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 
 /// The payload the embedding worker sends for a stored record, or `None` when
@@ -107,11 +108,12 @@ pub(crate) fn joined_turn_text(messages: &[(EntityId, String)]) -> Option<String
 /// - and of those, only a text with something in it. Whitespace and control
 ///   characters alone leave nothing to embed, and no provider can return a
 ///   truthful vector for them.
+///
+/// An ASSET's text is the blob its body names (FIX 9949), read in a snapshot:
+/// [`is_embeddable_in_txn`], and the worker's
+/// [`super::repo_projection::pending_payload_in_txn`].
 pub(crate) fn embeddable_payload(entity_type: u8, body: &[u8]) -> Option<PendingEmbeddingPayload> {
     match entity_type {
-        crate::registry::ENTITY_TYPE_ASSET => {
-            super::media::asset_text(body).map(PendingEmbeddingPayload::SummaryText)
-        }
         crate::registry::ENTITY_TYPE_CLAIM => {
             let claim = crate::claim::decode_claim_body(body, true).ok()?;
             (claim.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT
@@ -126,6 +128,25 @@ pub(crate) fn embeddable_payload(entity_type: u8, body: &[u8]) -> Option<Pending
         }
         _ => None,
     }
+}
+
+/// Whether a stored record of `entity_type` holding `body` is embedded, as
+/// `txn` reads it: an ASSET whose blob is UTF-8 text with something in it,
+/// its bytes read in `txn` (FIX 9949), and any other record by
+/// [`embeddable_payload`]. The doors that queue work ask this.
+pub(super) fn is_embeddable_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<bool> {
+    if entity_type != crate::registry::ENTITY_TYPE_ASSET {
+        return Ok(embeddable_payload(entity_type, body).is_some());
+    }
+    Ok(super::media::asset_text(body, |blob| {
+        Ok(vault.store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
+    .is_some())
 }
 
 /// What idle publication embeds for a text revision, or `None` when it has

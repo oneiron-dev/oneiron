@@ -4,8 +4,8 @@
 
 use super::{
     Arc, AtomicUsize, BankVoiceBinding, FatalLlmError, HostedCloner, LlmResult, MEDIA_RUN,
-    MediaRuntime, MediaVoice, ModelId, Ordering, PROVIDER_UNAVAILABLE_RETRY_SECS, PayerPerson,
-    RetryHint, RunAdmission, RungVoices, SonioxRung, Vault, undeclared_run,
+    MediaRuntime, MediaVoice, ModelId, OfferCooldowns, Ordering, PROVIDER_UNAVAILABLE_RETRY_SECS,
+    PayerPerson, RetryHint, RunAdmission, RungVoices, SonioxRung, Vault, undeclared_run,
 };
 
 impl RungVoices {
@@ -76,6 +76,12 @@ impl MediaRuntime {
     /// hears live.
     pub(in crate::models) fn live_rung(&self, model: &str) -> Option<Arc<SonioxRung>> {
         self.live_asr.get(model).cloned()
+    }
+
+    /// Where the media offers' rests are kept, when a vault keeps them: a
+    /// live hearing's limit rests its offer there too (FIX 9515).
+    pub(in crate::models) fn rests(&self) -> Option<Arc<OfferCooldowns>> {
+        self.rests.clone()
     }
 
     /// The clone wire of hosted render target `target`, when it is one.
