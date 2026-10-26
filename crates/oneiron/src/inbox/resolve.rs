@@ -538,7 +538,9 @@ fn accept_member_with_amendment_in_txn(
     // loop links of the decision this answers.
     let landed = amended.as_ref().unwrap_or(&reviewed);
     let context = crate::store::GateDecisionContext {
-        read: crate::store::GateDecisionReadContext::claim(id, landed).into_iter().collect(),
+        read: crate::store::GateDecisionReadContext::claim(id, landed)
+            .into_iter()
+            .collect(),
         ..crate::store::GateDecisionContext::answering(&original)
     };
     let record = GateDecisionRecord {

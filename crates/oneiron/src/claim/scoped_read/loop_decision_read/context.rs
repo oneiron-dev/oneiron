@@ -13,8 +13,8 @@ use super::{LoopDecisionFamily, LoopRead};
 use crate::EntityId;
 use crate::claim::scoped_read::ScopedRead;
 use crate::error::{Error, Result};
-use crate::gate::ClaimReadView;
 use crate::federation::{ScopeAxis, ScopeId};
+use crate::gate::ClaimReadView;
 use crate::store::{GateDecisionReadContext, GateDecisionRecord, GateLoopFamily, GateReadPosition};
 
 /// What a kept read context admitted: the rows the decision is about, for
@@ -128,16 +128,20 @@ impl ScopedRead<'_> {
         position: &GateReadPosition,
     ) -> Result<bool> {
         if self.loop_position_narrowed()
-            || !read.filter.read_scope().bands.contains(&position.entity_type)
+            || !read
+                .filter
+                .read_scope()
+                .bands
+                .contains(&position.entity_type)
             || !self.proof_live_in(txn)?
             || record.is_some_and(|record| !self.credential_allows_row_in(txn, record))
         {
             return Ok(false);
         }
         if let Some(proof) = self.actor_key.proof.as_ref()
-            && !self.vault.guest_row_admitted_in_txn(txn, proof.claims(), || {
-                Ok(Some(position.scope.clone()))
-            })
+            && !self
+                .vault
+                .guest_row_admitted_in_txn(txn, proof.claims(), || Ok(Some(position.scope.clone())))
         {
             return Ok(false);
         }
