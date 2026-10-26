@@ -40,7 +40,6 @@ use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks}
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::secret_custody::KeyPlaces;
-use crate::store::Store;
 use crate::sync::documents::storage;
 
 /// The text root of an entity document.
@@ -545,27 +544,6 @@ pub(crate) fn with_copy_generation_in_txn(
     hasher.update(&frontier);
     hasher.update(&generation);
     Ok(*hasher.finalize().as_bytes())
-}
-
-/// Erase reach (owner ruling KEY STORE = A): the copy lineage kept for
-/// `source`'s document goes with that document. Its rows and floors are
-/// deleted by key under the derived copy id; nothing is read or decoded, so
-/// an unreadable copy row never fails the erase.
-///
-/// # Errors
-/// A store failure deleting the rows.
-pub(crate) fn erase_copy_lineage_in_txn(
-    store: &Store,
-    txn: &mut RwTxn<'_>,
-    source: &EntityId,
-) -> Result<()> {
-    let copy = copy_id(source)?;
-    let slot = DocumentSlot::of(copy);
-    store.port_document_rows_delete(txn, slot, &DocumentRow::ALL)?;
-    store.port_document_updates_delete(txn, slot)?;
-    let floors = format!("{}:", copy.to_hex()).into_bytes();
-    crate::sync::documents::AD_E.delete_from(store, txn, &floors)?;
-    Ok(())
 }
 
 /// The stored item a residence request's `id` stands for: a copy id is

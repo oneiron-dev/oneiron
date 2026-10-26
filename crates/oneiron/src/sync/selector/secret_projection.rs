@@ -59,14 +59,17 @@ use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+// FIX 10798: the derivation is featureless, so a source erase reaches the
+// copy's rows in every build; this path keeps it for the copy leaves.
+use crate::origin::secret_projection::copy_id::{REPO_SYNC_PROJECTION_SCHEMA, copy_id};
 use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks};
 use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
 pub(crate) use documents::{
-    IndexCopies, document_copy_in_txn, erase_copy_lineage_in_txn, import_document_copy,
-    stored_item_in_txn, with_copy_generation_in_txn,
+    IndexCopies, document_copy_in_txn, import_document_copy, stored_item_in_txn,
+    with_copy_generation_in_txn,
 };
 pub use documents::{RepoCopyAliases, repo_document_copy_vector, repo_document_source};
 pub(crate) use history::ProjectedHistory;
@@ -76,8 +79,6 @@ pub use release::{
 pub(crate) use release::{released_item_blob, released_update};
 pub(crate) use rows::{CopyRow, InboundRow};
 
-/// The domain a copy id is derived in.
-const COPY_ID_CONTEXT: &str = "oneiron.repo-sync-projection.copy-id.v1";
 /// The domain a release's copy generation is fingerprinted in.
 const GENERATION_CONTEXT: &str = "oneiron.repo-sync-projection.generation.v1";
 
@@ -143,7 +144,7 @@ impl SyncSecretProjection {
     /// The rules a sync copy and its id are made by (CALL 4-I, ruling (e),
     /// Engine 10-22 07:20). Part of every copy id and generation, so a change
     /// to them is a new copy everywhere.
-    pub(crate) const SCHEMA: u16 = 1;
+    pub(crate) const SCHEMA: u16 = REPO_SYNC_PROJECTION_SCHEMA;
 
     /// The copies this vault releases now, read in a fresh read transaction.
     /// Never call it while this thread holds another read transaction.
@@ -368,16 +369,6 @@ fn blob_copy_in_txn(
         places,
         stamp: stamp.fingerprint(),
     }))
-}
-
-/// The copy id of the marked snapshot ASSET `source`: an ASSET id (the
-/// codebase derivation) over a digest of the rules and the source id. One
-/// source, one copy id, for every generation of its copy.
-fn copy_id(source: &EntityId) -> Result<EntityId> {
-    let mut material = Vec::with_capacity(2 + 16);
-    material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
-    material.extend_from_slice(source.as_bytes());
-    crate::codebase::snapshot_asset_entity_id(&blake3::derive_key(COPY_ID_CONTEXT, &material))
 }
 
 /// `key` with each 32-hex segment `alias` names replaced; `None` when none
