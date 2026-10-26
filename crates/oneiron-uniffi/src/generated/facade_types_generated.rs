@@ -18693,6 +18693,8 @@ pub enum SavedIntentState {
     Done,
     #[serde(rename = "abandoned")]
     Abandoned,
+    #[serde(rename = "deferred")]
+    Deferred,
 }
 
 /// `oneiron::slim::public::SavedResumeStep`.

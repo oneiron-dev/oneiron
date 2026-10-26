@@ -79,6 +79,10 @@ pub(super) fn connector_dispatch_request(
     if let Some(payload) = task.calendar_invite.clone() {
         request = request.calendar_invite(payload);
     }
+    // FIX 7962: the ambient send the schedule bound for this interrupt.
+    if let Some(alternative) = task.ambient_alternative.clone() {
+        request = request.ambient_alternative(alternative);
+    }
     request
 }
 
@@ -158,13 +162,27 @@ pub(super) fn settle_failed_connector_task(
             .fields
             .get("delivery_may_have_occurred")
             .is_some_and(|value| value == "true");
-    let retryable = matches!(
-        result.resolution,
-        Some(IntentResolution::Pending {
-            retry: RetryDisposition::Idempotent,
-            ..
-        })
-    );
+    // FIX 8818: a provider's rate or quota refusal of a send that certainly
+    // did not go keeps it queued, keyed or not. A send whose delivery is
+    // unresolved never joins on a later refusal.
+    let provider_wait = !ambiguous
+        && result.receipt.fields.contains_key(PROVIDER_WAIT_FIELD)
+        && matches!(
+            result.resolution,
+            Some(IntentResolution::Pending {
+                delivery: UnconfirmedDelivery::DefiniteNonDelivery,
+                retry: RetryDisposition::Idempotent | RetryDisposition::DefiniteOnly,
+            })
+        );
+    let retryable = provider_wait
+        || matches!(
+            result.resolution,
+            Some(IntentResolution::Pending {
+                retry: RetryDisposition::Idempotent,
+                ..
+            })
+        );
+    let past_deadline = |retry_at: u64| task.deadline_at.filter(|deadline| retry_at > *deadline);
     if retryable {
         // A provider that stated its own cool-down (a rate-limit
         // `retry_after`) is obeyed exactly; without one the
@@ -179,6 +197,11 @@ pub(super) fn settle_failed_connector_task(
             curve: ConnectorRetryCurve::Transport,
         };
         let retry_at = connector_task_retry_at(queue, attempt, now, &arm)?;
+        if let Some(deadline) = past_deadline(retry_at).filter(|_| provider_wait) {
+            // The caller's deadline ends the wait: the send stays recorded as
+            // not delivered, and the TASK stops here.
+            return stop_at_deadline(vault, attempt, task_ref, deadline, result.receipt, now);
+        }
         // A retried transport failure is still an auditable outcome.
         // Stored as the audit-only (non-idempotency) row a hold takes,
         // so the provider's stated cool-down, the failure evidence and
@@ -195,6 +218,8 @@ pub(super) fn settle_failed_connector_task(
             result.receipt,
             if ambiguous {
                 "transport_ambiguous_pending"
+            } else if provider_wait {
+                "provider_wait_pending"
             } else {
                 "transport_failed_pending"
             },
@@ -260,5 +285,53 @@ pub(super) fn settle_failed_connector_task(
             },
         )?;
     }
+    Ok(())
+}
+
+/// Whether the ambient alternative a degraded dispatch sent went (FIX
+/// 7962): delivered, or accepted as a remote task.
+pub(super) fn ambient_alternative_went(result: &OutboundDispatchResult) -> bool {
+    result
+        .receipt
+        .fields
+        .get(ALTERNATIVE_OUTCOME_FIELD)
+        .is_some_and(|outcome| {
+            outcome == OutboundDispatchOutcome::DeliveredToChannel.as_str()
+                || outcome == OutboundDispatchOutcome::Deferred.as_str()
+        })
+}
+
+/// Ends a provider wait at the caller's deadline (FIX 8818): the receipt
+/// keeps the failure and names the deadline, and the TASK fails as not
+/// delivered.
+fn stop_at_deadline(
+    vault: &Vault,
+    attempt: &crate::attempt_queue::AttemptRecord,
+    task_ref: EntityId,
+    deadline: u64,
+    mut receipt: crate::receipt::ReceiptRecord,
+    now: u64,
+) -> Result<(), ConnectorTaskExecutorError> {
+    receipt.fields.insert(
+        "dispatch_outcome".to_owned(),
+        OutboundDispatchOutcome::Failed.as_str().to_owned(),
+    );
+    receipt.fields.insert(
+        PROVIDER_WAIT_DEADLINE_FIELD.to_owned(),
+        deadline.to_string(),
+    );
+    super::super::retry_audit::persist_terminal_send_receipt_and_fail(
+        vault,
+        super::super::retry_audit::TerminalSendSettlement {
+            attempt,
+            task_ref,
+            receipt,
+            receipt_outcome: SendReceiptOutcome::Failed,
+            transport_dispatched: false,
+            task_outcome: ConnectorSendTaskOutcome::Failed,
+            reason: PROVIDER_WAIT_DEADLINE_REASON,
+            now,
+        },
+    )?;
     Ok(())
 }

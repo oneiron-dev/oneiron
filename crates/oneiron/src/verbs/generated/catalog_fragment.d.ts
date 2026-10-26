@@ -1229,7 +1229,7 @@ declare namespace Sdk {
   type SlimResumeStepRequest = { kind: "model"; attempt_id: string; step_hash: string } | { kind: "outbound_intent"; intent_id: string };
   type StepProgression = "started" | "response_received" | "logged" | "finished";
   type ModelStepCheckpoint = { progression: StepProgression; updated_ms?: number | null; claim_ref?: string | null };
-  type SavedIntentState = "pending" | "done" | "abandoned";
+  type SavedIntentState = "pending" | "done" | "abandoned" | "deferred";
   type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: ModelStepCheckpoint } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState };
   type ShedCause = "long_outbound_wait" | "memory_pressure";
   type SlimDropRequest = { cause: ShedCause; waited_secs: number };

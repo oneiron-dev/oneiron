@@ -6154,7 +6154,7 @@ class ModelStepCheckpoint(TypedDict):
     progression: StepProgression
     updated_ms: NotRequired[int | None]
     claim_ref: NotRequired[str | None]
-SavedIntentState = Literal["pending", "done", "abandoned"]
+SavedIntentState = Literal["pending", "done", "abandoned", "deferred"]
 class SavedResumeStepModel(TypedDict):
     kind: Literal["model"]
     attempt_id: str

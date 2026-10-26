@@ -2423,7 +2423,7 @@ export type StepProgression = "started" | "response_received" | "logged" | "fini
 /** `oneiron::llm::step::public::ModelStepCheckpoint` */
 export type ModelStepCheckpoint = { progression: StepProgression; updated_ms?: number | null; claim_ref?: string | null }
 /** `oneiron::slim::public::SavedIntentState` */
-export type SavedIntentState = "pending" | "done" | "abandoned"
+export type SavedIntentState = "pending" | "done" | "abandoned" | "deferred"
 /** `oneiron::slim::public::SavedResumeStep` */
 export type SavedResumeStep = { kind: "model"; attempt_id: string; step_hash: string; checkpoint: ModelStepCheckpoint } | { kind: "outbound_intent"; step: SlimResumeStep; state: SavedIntentState }
 /** `oneiron::slim::ShedCause` */
