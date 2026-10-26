@@ -54,7 +54,7 @@ fn evaluated_charge(
         matched_rows: states
             .iter()
             .filter(|state| state.matched)
-            .map(|state| state.row_index)
+            .map(|state| state.row)
             .collect(),
         ladder_events: Vec::new(),
         pool: None,
@@ -89,7 +89,7 @@ pub(crate) fn preflight_effector_budgets_pooled(
     send_like: bool,
     now: u64,
     pool: bool,
-) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
     if pool {
         preflight_effector_budgets(store, txn, key_id, record, effect_channel, send_like, now)
     } else {
@@ -129,7 +129,7 @@ pub(crate) fn preflight_effector_budgets(
     effect_channel: &str,
     send_like: bool,
     now: u64,
-) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
     if let Some(exhausted) =
         preflight_key_budgets(store, txn, key_id, record, effect_channel, send_like, now)?
     {
@@ -150,7 +150,7 @@ fn preflight_key_budgets(
     effect_channel: &str,
     send_like: bool,
     now: u64,
-) -> Result<Option<(u16, EffectorBudgetOnExhaust)>> {
+) -> Result<Option<(EffectorBudgetLocation, EffectorBudgetOnExhaust)>> {
     let states = load_budget_row_states(
         store,
         txn,
@@ -172,7 +172,13 @@ fn preflight_key_budgets(
                 _ => used.saturating_add(state.amount) > state.budget.limit,
             }
         })
-        .map(|state| (state.row_index, state.budget.on_exhaust)))
+        .map(|state| {
+            let location = EffectorBudgetLocation {
+                key_ref: *key_id,
+                row: state.row,
+            };
+            (location, state.budget.on_exhaust)
+        }))
 }
 
 /// Charges one admitted external effect to a key's budget rows and, for a
@@ -200,7 +206,7 @@ pub(crate) fn charge_effector_budgets(
         return charge_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now);
     };
     if preflight_key_budgets(store, wtxn, key_id, key, effect_channel, send_like, now)?.is_none()
-        && let Some((row_index, on_exhaust)) =
+        && let Some((location, on_exhaust)) =
             preflight_key_budgets(store, wtxn, &catalog_id, &catalog, &channel, send_like, now)?
     {
         let held = on_exhaust == EffectorBudgetOnExhaust::Suspend
@@ -211,7 +217,7 @@ pub(crate) fn charge_effector_budgets(
                 wtxn,
                 &catalog_id,
                 &catalog,
-                budget_exhausted_reason(row_index),
+                budget_exhausted_reason(&location),
                 now,
             )?;
         }
@@ -230,7 +236,7 @@ pub(crate) fn charge_effector_budgets(
             now,
         )?);
         return Ok(EffectorBudgetChargeOutcome::Exhausted {
-            row_index,
+            location,
             on_exhaust: EffectorBudgetOnExhaust::Refuse,
             charge,
         });
@@ -288,10 +294,10 @@ fn charge_key_budgets(
         send_like,
         now,
     )?;
-    let matched_rows: Vec<u16> = states
+    let matched_rows: Vec<EffectorBudgetRowId> = states
         .iter()
         .filter(|state| state.matched)
-        .map(|state| state.row_index)
+        .map(|state| state.row)
         .collect();
 
     if matched_rows.is_empty() {
@@ -308,7 +314,7 @@ fn charge_key_budgets(
     }
 
     // Evaluate ALL matched rows before applying ANY debit; report the first
-    // exceeding row in ascending row-index order (key rows before compiled).
+    // exceeding row in the meter's row order (key rows before compiled).
     let exhausted = states.iter().find(|state| {
         if !state.matched {
             return false;
@@ -321,14 +327,17 @@ fn charge_key_budgets(
         }
     });
     if let Some(state) = exhausted {
-        let row_index = state.row_index;
+        let location = EffectorBudgetLocation {
+            key_ref: *key_id,
+            row: state.row,
+        };
         let on_exhaust = state.budget.on_exhaust;
         // Carry-read-only (M5b resolution 2026-07-10): the exhaustion path
         // fires NO new ladder events and persists nothing — the signal
         // history rides the read's `fired_thresholds`.
         let read = budget_read_from_states(key_id, key, &states);
         return Ok(EffectorBudgetChargeOutcome::Exhausted {
-            row_index,
+            location,
             on_exhaust,
             charge: EffectorBudgetCharge {
                 key_ref: *key_id,
@@ -350,7 +359,7 @@ fn charge_key_budgets(
             state.usage.entries.push((now, state.amount));
             debits.push(EffectorBudgetDebit {
                 key_ref: *key_id,
-                row_index: state.row_index,
+                row: state.row,
                 amount: state.amount,
                 at: now,
             });
@@ -377,20 +386,15 @@ fn charge_key_budgets(
                     // matching several rows can cross the same threshold on
                     // more than one, and the consumer must be able to tell
                     // "sends at 80%" from "rate at 80%".
-                    ladder_events.push(BudgetLadderEvent {
+                    ladder_events.push(EffectorBudgetLadderEvent {
+                        row: state.row,
                         threshold,
                         steering: effector_steering_signal(threshold),
-                        row_index: Some(state.row_index),
                     });
                 }
             }
         }
-        USAGE.put(
-            store,
-            wtxn,
-            &(*key_id, state.row_index.to_be_bytes()),
-            &state.usage,
-        )?;
+        USAGE.put(store, wtxn, &(*key_id, state.row.usage_key()), &state.usage)?;
     }
 
     let read = budget_read_from_states(key_id, key, &states);
