@@ -4,7 +4,8 @@
 //! Only a disk that refuses a write for want of room stops it, and the answer
 //! says capacity (`disk_capacity`). The sealed custody change also judges its
 //! spool against the server's disk floor as it goes (`transfers.disk`, kept
-//! at `limits.disk_reserve_bytes`, FIX 5674); no other route does.
+//! at `limits.disk_reserve_bytes`, FIX 5674) and keeps the transfers' idle
+//! bound on its body; no other route does either.
 //!
 //! [`OwnerJsonBody`] is every owner JSON route's body. [`json`] decodes a
 //! spooled document whole while its bulk string members stream to sinks, so
@@ -16,6 +17,7 @@ mod owner_json;
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{HeaderMap, header};
@@ -24,7 +26,7 @@ use tokio::sync::mpsc;
 use crate::api::transfer::{self, BodyReader};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::machine::{DiskClaim, DiskFloor};
-use crate::owner::backup::write_budget::CAPACITY_STATE;
+use crate::owner::backup::write_budget::{CAPACITY_STATE, Capacity};
 use crate::server::SyncServer;
 
 pub(super) use self::json::{Base64FileSink, BulkMember, JsonInvalid, SinkRefusal, SpooledField};
@@ -105,8 +107,29 @@ pub(super) fn declared_length(headers: &HeaderMap) -> Option<u64> {
         .and_then(|value| value.parse::<u64>().ok())
 }
 
+/// How a spool reads its body: the disk floor it is judged against, and the
+/// longest the client may go quiet between frames. Every owner route reads
+/// with neither, so only the listener's own body policy ends a quiet body;
+/// the custody change keeps both ([`Self::custody`]).
+#[derive(Default)]
+pub(super) struct SpoolPolicy {
+    floor: Option<DiskFloor>,
+    idle: Option<Duration>,
+}
+
+impl SpoolPolicy {
+    /// The custody change's policy, as before this spool was shared: the
+    /// server's disk floor and the transfers' idle bound.
+    pub(super) fn custody(server: &SyncServer) -> Self {
+        Self {
+            floor: Some(server.transfers.disk.clone()),
+            idle: Some(server.transfers.idle),
+        }
+    }
+}
+
 /// Spools `body` whole on a transfer worker, then runs `then` over the spool
-/// on that worker. With a `floor`, a declared body claims its spool and its
+/// on that worker. With a floor, a declared body claims its spool and its
 /// stored copy on it before a byte of it is read, and a body of no declared
 /// length claims each next stretch as it goes; at its end the claim is the
 /// stored copy, held by the spool.
@@ -114,9 +137,10 @@ pub(super) async fn spool_then<R: Send + 'static>(
     server: &SyncServer,
     declared: Option<u64>,
     body: Body,
-    floor: Option<DiskFloor>,
+    policy: SpoolPolicy,
     then: impl FnOnce(BodySpool) -> R + Send + 'static,
 ) -> Result<R, Unspooled> {
+    let SpoolPolicy { floor, idle } = policy;
     let room = match &floor {
         Some(floor) => {
             let claim = floor.claim();
@@ -138,10 +162,16 @@ pub(super) async fn spool_then<R: Send + 'static>(
     });
     // The worker can end at the floor before the client sends its next
     // frame, so its answer is taken without waiting for the body to end.
+    let feed = async move {
+        match idle {
+            Some(idle) => transfer::feed_body(body, sender, idle, SPOOL_PIECE).await,
+            None => transfer::feed_body_untimed(body, sender, SPOOL_PIECE).await,
+        }
+    };
     let early = tokio::select! {
         biased;
         joined = &mut worker => Some(joined),
-        () = transfer::feed_body(body, sender, server.transfers.idle, SPOOL_PIECE) => None,
+        () = feed => None,
     };
     let joined = match early {
         Some(joined) => joined,
@@ -160,7 +190,7 @@ fn spool_to_end(
     floor: Option<(&DiskFloor, &DiskClaim)>,
     declared: Option<u64>,
 ) -> Result<File, Unspooled> {
-    let mut file = vault.archive_spool_file().map_err(|_| Unspooled::Failed)?;
+    let mut file = vault.archive_spool_file().map_err(create_failed)?;
     let mut piece = vec![0; SPOOL_PIECE];
     let mut read = 0u64;
     let mut looked_at: Option<u64> = None;
@@ -193,6 +223,16 @@ fn spool_to_end(
     file.seek(SeekFrom::Start(0))
         .map_err(|_| Unspooled::Failed)?;
     Ok(file)
+}
+
+/// A spool file the disk had no room to create says capacity, told by its
+/// type, as a write does; any other failure is the body's.
+pub(super) fn create_failed(error: oneiron::Error) -> Unspooled {
+    if Capacity::of(&error).is_some() {
+        Unspooled::NoRoom
+    } else {
+        Unspooled::Failed
+    }
 }
 
 /// A spool write the disk refused for want of room says capacity, told by

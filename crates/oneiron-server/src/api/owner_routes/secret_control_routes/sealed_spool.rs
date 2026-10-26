@@ -18,7 +18,7 @@ use axum::http::HeaderMap;
 use serde::de::DeserializeOwned;
 
 use crate::api::body_spool::{
-    self, Base64FileSink, BulkMember, SinkRefusal, SpooledField, Unspooled,
+    self, Base64FileSink, BulkMember, SinkRefusal, SpoolPolicy, SpooledField, Unspooled,
 };
 use crate::error::ApiError;
 use crate::machine::DiskClaim;
@@ -44,8 +44,8 @@ pub(super) struct SealedRequest<H> {
     _room: Option<Arc<DiskClaim>>,
 }
 
-/// Spools `body` whole under the disk floor on a transfer worker, then
-/// decodes it there. A declared body claims its spool and its stored copy on
+/// Spools `body` whole under the disk floor and the transfers' idle bound,
+/// as before, on a transfer worker, then decodes it there. A declared body claims its spool and its stored copy on
 /// the floor before a byte of it is read; a body of no declared length
 /// claims each next stretch as it goes. At its end the claim is the stored
 /// copy, held by the returned request.
@@ -59,9 +59,11 @@ pub(super) async fn read<H: DeserializeOwned + Send + 'static>(
         server,
         body_spool::declared_length(headers),
         body,
-        Some(server.transfers.disk.clone()),
+        SpoolPolicy::custody(server),
         move |mut spool| {
-            let file = vault.archive_spool_file().map_err(|_| Unspooled::Failed)?;
+            let file = vault
+                .archive_spool_file()
+                .map_err(body_spool::create_failed)?;
             let mut input = Base64FileSink::new(file);
             let head = spool.object::<H>(&mut [BulkMember::required(INPUT_MEMBER, &mut input)]);
             Ok::<_, Unspooled>((head, input.into_field(), spool.into_room()))

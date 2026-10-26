@@ -298,6 +298,9 @@ async fn sealed_change(
     let surface = act_surface(&server, &auth, &headers);
     let sealed = sealed_spool::read::<SealedHead>(&server, &headers, body).await?;
     let reply = blocking(move || -> OwnerResult<secrets::CustodyReply> {
+        // The whole request moves here, its floor claim with it, so the room
+        // stays held while the custody work runs, even past a cancel.
+        let sealed = sealed;
         let request = &sealed.head;
         let change = CustodyChange::from_name(&request.change)
             .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))

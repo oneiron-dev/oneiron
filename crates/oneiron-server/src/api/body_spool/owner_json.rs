@@ -1,26 +1,30 @@
 //! Every `/v1/owner` JSON route's body (FIX 8195, Rule 5). The extractor
 //! reads nothing: the route runs its own door first, then reads the body. A
-//! body whose declared length fits [`IN_MEMORY_BODY_BYTES`] is read in memory
-//! as before; any other spools whole on the vault's disk and decodes from
-//! there, so no length is refused as invalid JSON and none is held in memory
-//! twice (CALLS OWNER_JSON_IN_MEMORY_BYTES).
+//! body that fits [`IN_MEMORY_BODY_BYTES`] is read in memory as before,
+//! whether it declared its length or not; a longer one spools whole on the
+//! vault's disk and decodes from there, so no length is refused as invalid
+//! JSON and none is held in memory twice (CALLS OWNER_JSON_IN_MEMORY_BYTES).
+//! The spool sets no wait of its own on the client: the listener's body
+//! policy is the only one, as for a body read in memory.
 
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
+use axum::extract::rejection::JsonRejection;
 use axum::extract::{FromRequest, Request};
-use serde::de::DeserializeOwned;
+use axum::http::header;
+use futures_util::{StreamExt, stream};
+use serde::de::{DeserializeOwned, IgnoredAny};
 
-use super::{declared_length, invalid_json, spool_then};
-use crate::api::has_json_content_type;
+use super::{SpoolPolicy, Unspooled, declared_length, invalid_json, spool_then};
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
-/// The largest declared body read in memory; a longer one, or one of no
-/// declared length, is spooled. The extractor ceiling these routes had, kept
-/// as the line between the two reads, never as a refusal.
+/// The largest body read in memory; a longer one is spooled. The extractor
+/// ceiling these routes had, kept as the line between the two reads, never
+/// as a refusal.
 const IN_MEMORY_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// An owner route's JSON body as `T`, unread until the route's own door has
@@ -41,12 +45,50 @@ impl<T> FromRequest<Arc<SyncServer>> for OwnerJsonBody<T> {
     ) -> Result<Self, Self::Rejection> {
         let (parts, body) = request.into_parts();
         Ok(Self {
-            json: has_json_content_type(&parts.headers),
+            json: json_content_type(parts.headers.get(header::CONTENT_TYPE)).await,
             declared: declared_length(&parts.headers),
             body,
             decoded: PhantomData,
         })
     }
+}
+
+/// Whether the request names JSON exactly as Axum's `Json` judges it: a
+/// parsed `application/json` or `application/*+json`. Axum's own extractor
+/// is asked, over the header alone, so the two never drift.
+async fn json_content_type(content_type: Option<&header::HeaderValue>) -> bool {
+    let mut probe = Request::new(Body::empty());
+    if let Some(content_type) = content_type {
+        probe
+            .headers_mut()
+            .insert(header::CONTENT_TYPE, content_type.clone());
+    }
+    !matches!(
+        axum::Json::<IgnoredAny>::from_request(probe, &()).await,
+        Err(JsonRejection::MissingJsonContentType(_))
+    )
+}
+
+/// A body read in memory to its end, or the start of one past
+/// [`IN_MEMORY_BODY_BYTES`] and the body still to come.
+enum Held {
+    Whole(Vec<u8>),
+    Past(Body),
+}
+
+/// An undeclared body read in memory up to the line, as the extractor read
+/// it; one that passes the line is handed on whole, its start first.
+async fn hold(body: Body) -> Result<Held, ApiError> {
+    let mut frames = body.into_data_stream();
+    let mut held = Vec::new();
+    while let Some(frame) = frames.next().await {
+        held.extend_from_slice(&frame.map_err(|_| invalid_json())?);
+        if held.len() > IN_MEMORY_BODY_BYTES {
+            let start = stream::iter([Ok::<_, axum::Error>(Bytes::from(held))]);
+            return Ok(Held::Past(Body::from_stream(start.chain(frames))));
+        }
+    }
+    Ok(Held::Whole(held))
 }
 
 impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
@@ -61,19 +103,30 @@ impl<T: DeserializeOwned + Send + 'static> OwnerJsonBody<T> {
         if !self.json {
             return Err(invalid_json());
         }
-        if let Some(size) = self.declared
-            && size <= IN_MEMORY_BODY_BYTES as u64
-        {
-            let bytes = axum::body::to_bytes(self.body, IN_MEMORY_BODY_BYTES)
-                .await
-                .map_err(|_| invalid_json())?;
-            return serde_json::from_slice(&bytes).map_err(|_| invalid_json());
-        }
-        spool_then(server, self.declared, self.body, None, |mut spool| {
-            spool.json::<T>()
-        })
+        let body = match self.declared {
+            Some(size) if size <= IN_MEMORY_BODY_BYTES as u64 => {
+                let bytes = axum::body::to_bytes(self.body, IN_MEMORY_BODY_BYTES)
+                    .await
+                    .map_err(|_| invalid_json())?;
+                return serde_json::from_slice(&bytes).map_err(|_| invalid_json());
+            }
+            Some(_) => self.body,
+            None => match hold(self.body).await? {
+                Held::Whole(bytes) => {
+                    return serde_json::from_slice(&bytes).map_err(|_| invalid_json());
+                }
+                Held::Past(body) => body,
+            },
+        };
+        spool_then(
+            server,
+            self.declared,
+            body,
+            SpoolPolicy::default(),
+            |mut spool| spool.json::<T>(),
+        )
         .await
-        .map_err(super::Unspooled::refusal)?
+        .map_err(Unspooled::refusal)?
         .ok_or_else(invalid_json)
     }
 }
