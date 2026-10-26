@@ -2,10 +2,13 @@
 //! decode as stored is read once more under the installed model pack's
 //! currency contract, when it is a copy of that pack's row (FIX 9534).
 
+use std::collections::BTreeSet;
+
 use heed::{RoTxn, RwTxn};
 
 use super::ModelRegistryRow;
 use super::installed_pack::{installed_pack_source, stored_pack_row};
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, LegacyJson, SideTable, SideTableDbs};
 
@@ -74,6 +77,32 @@ impl StoredRows {
         key: &str,
     ) -> Result<bool> {
         ROWS.delete(dbs, txn, &key.to_owned())
+    }
+
+    /// Stores again, as it reads, each row that decodes only under the
+    /// currency contract of the pack installed from one of `packs`
+    /// ([`stored_pack_row`]): an install that replaces that pack's receipt
+    /// first writes the pack's currency into its rows, so they still read as
+    /// stored (FIX 9534). Every other row stays as it is.
+    pub(super) fn keep_pack_rows(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        packs: &BTreeSet<EntityId>,
+    ) -> Result<()> {
+        for key in ROWS.scan_keys(dbs, txn, &[])? {
+            let Some(bytes) = ROWS.get_bytes(dbs, txn, &key)? else {
+                continue;
+            };
+            if ROWS.decode_value(&bytes).is_ok() {
+                continue;
+            }
+            let copied = packs.iter().find_map(|pack| stored_pack_row(&bytes, *pack));
+            if let Some(row) = copied.and_then(|copied| ROWS.decode_value(&copied).ok()) {
+                ROWS.put(dbs, txn, &key, &row)?;
+            }
+        }
+        Ok(())
     }
 }
 

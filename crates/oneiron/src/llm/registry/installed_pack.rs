@@ -56,8 +56,9 @@ fn with_pack_currency(bytes: &[u8]) -> Result<Vec<u8>> {
 
 /// A stored registry row's bytes under the same contract, when the row is a
 /// copy of a row of the pack installed from `pack`: its source rows name
-/// that pack's source (Engine ruling on FIX 9534). `None` for any other row,
-/// which reads as it is stored.
+/// that pack's source (Engine ruling on FIX 9534), the installed one or the
+/// one an install is replacing. `None` for any other row, which reads as it
+/// is stored.
 pub(super) fn stored_pack_row(bytes: &[u8], pack: EntityId) -> Option<Vec<u8>> {
     let mut row: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let copied = row
@@ -172,6 +173,19 @@ impl Vault {
         prior: Option<&CatalogSeed>,
     ) -> Result<()> {
         let seed = CatalogSeed::from_installed_pack_in_txn(self, txn)?;
+        // The new receipt no longer names the prior pack's source, so a row
+        // copied from that pack is stored under its currency contract before
+        // the refresh reads it, and reads as stored after (FIX 9534).
+        if let Some(prior) = prior {
+            let packs: BTreeSet<EntityId> = prior
+                .rows
+                .iter()
+                .filter_map(|row| row.source_rows.as_deref())
+                .flatten()
+                .copied()
+                .collect();
+            super::REGISTRY_ROW.keep_pack_rows(&self.store, txn, &packs)?;
+        }
         self.refresh_model_catalog_in_txn(txn, &seed, prior)
     }
 }
