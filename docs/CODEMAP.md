@@ -37,19 +37,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-llm-gemini](codemap/oneiron-llm-gemini.md) | Gemini wire adapter | 6 | 1 | 0 |
 | [oneiron-llm-local](codemap/oneiron-llm-local.md) | Local in-process adapter for Oneiron's `LlmBackend` seam | 7 | 0 | 0 |
 | [oneiron-llm-openai](codemap/oneiron-llm-openai.md) | OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 14 | 1 | 0 |
-| [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 8 | 2 | 0 |
+| [oneiron-llm-own-server](codemap/oneiron-llm-own-server.md) | Own-server LlmBackend | 9 | 2 | 0 |
 | [oneiron-llm-systemone](codemap/oneiron-llm-systemone.md) | The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision` | 1 | 1 | 0 |
 | [oneiron-mesh-transport](codemap/oneiron-mesh-transport.md) | Vault-scoped mesh transport | 6 | 2 | 0 |
 | [oneiron-model](codemap/oneiron-model.md) | Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the… | 47 | 6 | 0 |
 | [oneiron-napi](codemap/oneiron-napi.md) | The raw N-API addon root: module registrations and the crate-level native exports | 25 | 1 | 2 |
-| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 36 | 4 | 1 |
+| [oneiron-organ-host](codemap/oneiron-organ-host.md) | The organ host: the engine side of the open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 38 | 4 | 1 |
 | [oneiron-organ-protocol](codemap/oneiron-organ-protocol.md) | The open organ protocol (ARCH-0075 section 9, `docengine:organ-host`) | 11 | 2 | 0 |
 | [oneiron-py](codemap/oneiron-py.md) | `oneiron._native` — the private PyO3 extension behind the `oneiron` PyPI package (ONE-1441 WIRE-P1) | 5 | 0 | 1 |
 | [oneiron-remote](codemap/oneiron-remote.md) | `oneiron-remote` — the shared Rust SDK backend behind the `oneiron` npm and PyPI packages (ONE-1441 WIRE-P1) | 18 | 8 | 1 |
 | [oneiron-retrieval](codemap/oneiron-retrieval.md) | Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion | 19 | 5 | 0 |
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 48 | 12 | 0 |
-| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1303 | 182 | 31 |
+| [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 1307 | 182 | 31 |
 | [oneiron-spawn](codemap/oneiron-spawn.md) | Starting a subprocess with only the descriptors it is meant to have | 1 | 2 | 0 |
 | [oneiron-uniffi](codemap/oneiron-uniffi.md) | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound | 12 | 0 | 4 |
 | [oneiron-vault-contract](codemap/oneiron-vault-contract.md) | Supervisor ⇄ vault child-process contract: wire types, credential framing, limits | 51 | 1 | 0 |
@@ -569,7 +569,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `emitted` | file | 1 | s | What a checked stream has already shown its caller (FIX 8617): each part in the order it started, its text… |
-| `mesh` | dir | 6 | m | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
+| `mesh` | dir | 7 | m | Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone uses the MacBook's model") |
 | `tests` | file | 1 | — | — |
 
 ## oneiron-llm-systemone
@@ -612,13 +612,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `error` | file | 1 | s | What can go wrong on the engine side of an organ call |
 | `fetch` | file | 1 | m | The granted fetch, `net.fetch`: the engine fetches for an organ that has no network of its own, inside the… |
 | `handlers` | file | 1 | s | The handlers a caller supplies for an organ's asks (protocol 1.1) |
-| `host` | file+dir | 3 | m | The organ host: install, call, unload, revoke |
+| `host` | file+dir | 4 | m | The organ host: install, call, unload, revoke |
 | `landing` | file | 1 | s | An organ's results onto the artifact family's one landing (ARCH-0078 "A proposal landing"): each export file… |
 | `measure` | file | 1 | s | The organ host's `[limits]` rows (OF-520, Rule 5): what a call counted and carried, measured where the host… |
 | `mesh` | dir | 3 | m | Organ calls between the owner's nodes (OF-575, owner ruling MESH) |
 | `outcome` | file | 1 | s | What an organ call proposed, checked by the host that ran it: on this machine, or on another of the owner's… |
 | `pin` | file | 1 | s | Organs installed from a pinned hub binary (OF-575): the pack names the binary by blake3, the bytes are… |
-| `process` | file+dir | 3 | L | One live organ process: spawn, handshake, a reader thread, calls |
+| `process` | file+dir | 4 | L | One live organ process: spawn, handshake, a reader thread, calls |
 | `receipt` | file | 1 | s | The engine's receipt for one organ call: facts the host computed, plus the organ's notes, every one of them… |
 | `regions` | file | 1 | s | Regions kept for reuse, keyed by content hash: a blob is copied out of the store once, then every later call… |
 | `resource_memory` | file | 1 | s | `memory.grow` (FIX 7654), the host's own handler: an organ reserves the memory its own buffers are about to… |
@@ -627,7 +627,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `seal` | file+dir | 6 | m | The seal port's host adapter (ARCH-0064 section 7): [`HostedSealer`] implements the engine's [`EsignSealer`]… |
 | `slot` | file | 1 | m | One installed organ: its process, its crash history, its condition |
 | `spec` | file | 1 | s | What the engine installs and what a caller asks |
-| `wait` | file | 1 | s | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
+| `wait` | file | 1 | m | Organ calls that wait for a node, held in the vault (OF-575, owner ruling MESH: "one node is too weak, means… |
 
 ## oneiron-organ-protocol
 
@@ -732,7 +732,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `feedback_delivery` | file+dir | 2 | m | Deployment-selected feedback transport |
 | `feedback_redaction` | file | 1 | s | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… |
 | `files_intake` | dir | 7 | m | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… |
-| `handler` | dir | 26 | m | WebSocket upgrade handler and connection lifecycle |
+| `handler` | dir | 29 | m | WebSocket upgrade handler and connection lifecycle |
 | `home_candidacy` | file | 1 | s | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… |
 | `hook_verdict` | file | 1 | s | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
 | `http_listener` | file+dir | 3 | m | The TCP accept loop the server and the embedder endpoint serve through |
@@ -758,7 +758,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `residence_machines` | file | 1 | s | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `runtime` | dir | 20 | m | Runtime configuration, host services, and shared time helpers |
 | `saved_query_sweep` | file | 1 | m | The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is… |
-| `server` | dir | 68 | m | Sync server state and maintenance jobs, split by concern |
+| `server` | dir | 69 | m | Sync server state and maintenance jobs, split by concern |
 | `skills_pack` | file | 1 | s | — |
 | `slide_render` | file | 1 | m | The host's review renderer (ARCH-0077 "Review images"): LibreOffice Impress headless exports the deck to… |
 | `test_credentials` | file | 1 | m | Request fixtures mint real logged slips before crossing the production router |
