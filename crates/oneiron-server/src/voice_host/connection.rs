@@ -476,14 +476,17 @@ impl VoiceHost {
             bytes.push(b'\n');
             // Right before the write: a chunk whose generation stopped while
             // it waited stays off the wire (FIX 9542).
-            if gated.as_ref().is_some_and(|chunk| !chunk.is_current()) {
-                continue;
-            }
+            let written = async {
+                match &gated {
+                    Some(chunk) => write_current(write, &bytes, || chunk.is_current()).await,
+                    None => write.write_all(&bytes).await,
+                }
+            };
             tokio::select! {
                 biased;
                 () = &mut shutdown => break,
                 () = &mut stop => break,
-                result = timeout(Duration::from_secs(1), write.write_all(&bytes)) => {
+                result = timeout(Duration::from_secs(1), written) => {
                     result.map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "voice write timeout"))??;
                 }
             }
@@ -513,6 +516,28 @@ fn media_input(request: Request) -> Option<VoiceMediaIn> {
         Request::RosterChanged => VoiceMediaIn::RosterChanged,
         _ => return None,
     })
+}
+
+/// Writes `frame`, one spoken chunk's, only while `current` holds: asked
+/// right before each try at the frame's first bytes, so again after every
+/// wait for the socket. A frame whose first bytes went is finished whole,
+/// never cut.
+async fn write_current(
+    write: &mut OwnedWriteHalf,
+    frame: &[u8],
+    current: impl Fn() -> bool,
+) -> io::Result<()> {
+    loop {
+        if !current() {
+            return Ok(());
+        }
+        match write.try_write(frame) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => return write.write_all(&frame[written..]).await,
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => write.writable().await?,
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 /// How long the wire's last frames may take: the sibling may be gone.
