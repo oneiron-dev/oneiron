@@ -48,13 +48,8 @@ pub enum BoardVerbOutput {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BoardVerbOutputWire {
-    Expanded {
-        key: String,
-        lines: Vec<String>,
-    },
-    Frame {
-        frame: BoardStreamFrame,
-    },
+    Expanded { key: String, lines: Vec<String> },
+    Frame { frame: BoardStreamFrame },
     Subscription {
         connection: StreamConnectionId,
         active: BTreeSet<SubscriptionScope>,
