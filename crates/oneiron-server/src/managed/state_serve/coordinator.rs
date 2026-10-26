@@ -652,6 +652,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             worker.abort();
             let _ = worker.await;
         }
+        // The scheduled backup pass in flight ends before exit; none starts
+        // after (FIX 6732).
+        if let Some(host) = &sync_server.owner_host {
+            host.resident_stopped().await;
+        }
         // A backup before an idle reap ends before exit; none starts after.
         state.idle_backup.stopped().await;
         // A relay delete in flight finishes its unlink and sync; none starts after.

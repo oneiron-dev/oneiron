@@ -40,6 +40,10 @@ pub(crate) struct DesktopWorkers {
         tokio::sync::watch::Sender<bool>,
     )>,
     workers: Vec<tokio::task::JoinHandle<()>>,
+    /// Plain serve's owner host, whose scheduled backup pass in flight ends
+    /// before the stop returns (FIX 6732). Embedded serve keeps none: its
+    /// vault and runtime stay up, so a pass in flight finishes there.
+    owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// The tagger slot's close, run once every worker has ended (FIX 7383).
     tagger: Option<crate::oneironer::SlotClose>,
 }
@@ -277,6 +281,7 @@ pub(crate) async fn start_desktop_workers(
         .tagger
         .as_ref()
         .map(crate::oneironer::TaggerSlot::closer);
+    let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
     Ok(StartedWorkers {
         server: sync_server,
         artifact_app,
@@ -294,6 +299,7 @@ pub(crate) async fn start_desktop_workers(
             linear_handle,
             tagging,
             workers,
+            owner_host,
             tagger,
         },
     })
@@ -339,6 +345,9 @@ impl DesktopWorkers {
         for handle in self.workers {
             handle.abort();
             let _ = handle.await;
+        }
+        if let Some(host) = self.owner_host {
+            host.resident_stopped().await;
         }
         // Tagging has ended on both paths (joined above, or aborted and
         // awaited in the loop): each platform child is shut down and reaped.

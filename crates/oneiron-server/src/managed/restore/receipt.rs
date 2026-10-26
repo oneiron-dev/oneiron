@@ -80,6 +80,12 @@ pub(super) struct ReceiptContext<'a> {
     pub(super) host_holds: RestoreHostHoldsStatus,
 }
 
+/// This engine build's own identity (FIX 6581), as `build.rs` compiled it
+/// in: the commit it was built from, `None` when its build knew none.
+fn engine_build() -> Option<&'static str> {
+    Some(env!("ONEIRON_ENGINE_BUILD")).filter(|build| *build != "unknown")
+}
+
 /// The receipt of a verified restore; refused when the report names no
 /// checkpoint sequence, which a restore of a signed artifact always has.
 pub(super) fn receipt(
@@ -109,8 +115,7 @@ pub(super) fn receipt(
         identity: context.identity.clone(),
         vault_name: context.plan.vault_name.clone(),
         derivation_owner: context.plan.derivation_owner,
-        // This build embeds no identity of its own.
-        engine_build: None,
+        engine_build: engine_build().map(str::to_owned),
         contract_version: oneiron_vault_contract::CONTRACT_VERSION,
         completed_at: context.completed_at,
         destination_state: ManagedRestoreDestination::CommittedNotServing,

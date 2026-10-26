@@ -104,8 +104,8 @@ impl SyncServer {
 
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
     /// expires sync leases, drains reassert markers, finishes the dependent
-    /// walks left past their first batch and starts a housekeeping pass
-    /// through `admit`, the host's write gate.
+    /// walks left past their first batch and starts a housekeeping pass,
+    /// each through `admit`, the host's write gate.
     pub(crate) fn spawn_lifecycle_scheduler(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -149,7 +149,7 @@ impl SyncServer {
                     server.start_mirror_pushes(&admit, true).await;
                     continue;
                 }
-                server.run_scheduled_lifecycle_tick().await;
+                server.run_scheduled_lifecycle_tick(&admit).await;
                 server.finish_dependent_walks_once(&admit).await;
                 // The pass and the maintenance run on tasks of their own, so
                 // neither holds back the next tick's lease expiry, nor one
@@ -222,13 +222,20 @@ impl SyncServer {
         let _ = done.await;
     }
 
-    async fn run_scheduled_lifecycle_tick(&self) {
+    /// Expires sync leases and drains reassert markers under `admit`, held
+    /// through both (FIX 6955): a managed vault's reap freeze counts them, or
+    /// refuses the tick, which leaves both for the next admitted one.
+    async fn run_scheduled_lifecycle_tick(&self, admit: &HousekeepingAdmission) {
         let now_ms = unix_seconds_now().saturating_mul(1_000);
         self.dreamer_progress
             .lock()
             .await
             .remove_outdated(&self.ephemeral_store, now_ms);
 
+        let Some(_admission) = admit() else {
+            tracing::debug!("lease expiry and ra drain skipped: the host's gate refused the tick");
+            return;
+        };
         match self.expire_leases_once().await {
             Ok(report) => {
                 if report.skipped {

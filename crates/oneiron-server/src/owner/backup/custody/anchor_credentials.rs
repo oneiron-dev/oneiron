@@ -105,6 +105,17 @@ impl CustodyAnchorCredentials {
         Self::decode(&held)
     }
 
+    /// The name an embedding app keeps the credential under in its
+    /// keychain (FIX 6516): the same one object the pipe carries.
+    pub(crate) const KEYCHAIN_NAME: &str = "custody_anchor_credentials";
+
+    /// The credentials an embedding app keeps under [`Self::KEYCHAIN_NAME`],
+    /// decoded from `held`, its keychain's wiped buffer, as the pipe's
+    /// object is.
+    pub(crate) fn from_keychain(held: &[u8]) -> Result<Self, String> {
+        Self::decode(held)
+    }
+
     /// The one credentials object in `bytes`, with nothing after it.
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         // The parser's own message can quote what it read: only its kind is

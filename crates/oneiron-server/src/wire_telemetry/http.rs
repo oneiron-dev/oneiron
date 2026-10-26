@@ -15,7 +15,8 @@ pub(crate) async fn observe_http(
     // An MCP envelope counts on its matched route alone, under no caller,
     // whether it came over HTTP or a held socket: the call it carries counts
     // once at the gateway, under the caller it resolves and the tool it
-    // names (FIX 1085).
+    // names (FIX 1085). A held socket's router serves these two routes
+    // alone, so every call on the owner's held socket ends here.
     let surfaces = [
         crate::cli::McpSurface::Primary.path(),
         crate::cli::McpSurface::ToolFirst.path(),
@@ -43,18 +44,9 @@ pub(crate) async fn observe_http(
         )
     })
     .ok();
-    // A call on the managed owner's held MCP socket that names no caller of
-    // its own counts under the owner whose socket it is (FIX 5539): a count,
-    // never his authentication, which the door judges again.
-    let socket_owner = request
-        .extensions()
-        .get::<crate::managed::ManagedOwnerSession>()
-        .filter(|_| server.managed_issuer.is_some())
-        .map(|session| session.holder().to_hex());
-    let unattributed = socket_owner.as_deref().unwrap_or("unauthenticated");
     let actor = auth
         .as_ref()
-        .map_or(unattributed, |a| match a.principal_ref() {
+        .map_or("unauthenticated", |a| match a.principal_ref() {
             Some(principal) => principal,
             // An owner-grade credential with no person behind it (the
             // shared secret) speaks for the vault's owner, so its traffic

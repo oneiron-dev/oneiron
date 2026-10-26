@@ -118,6 +118,7 @@ mod device;
 pub use device::device_enrol;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
+pub(crate) use self::serve::open_served_vault_anchored;
 use self::serve::serve_anchored;
 #[cfg(test)]
 use self::serve::serve_with_config;

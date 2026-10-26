@@ -53,7 +53,10 @@ and `oneiron restore` where no vault is yet. The pipe carries one JSON object, t
 as an array of 32 numbers in place of `null`. A descriptor that is not a pipe, or a pipe that
 carries anything else, is refused before the vault opens. Without the flag the door is never
 called: the anchor step stays `custody_anchor_pending`, and a restore checked against that door
-is refused. A server with `custody_anchor_root` set serves that root
+is refused. An app's embedded engine has no pipe: it reads the same object once at start from the
+app's keychain, under `custody_anchor_credentials`, and keeps it for every wake. A keychain that
+keeps none leaves the door uncalled, as above; one whose object does not decode is logged and the
+door is not called either. A server with `custody_anchor_root` set serves that root
 to other installs: `GET /v1/owner/custody-anchor?vault=<64 hex>&namespace=<32 hex>` answers
 `{"record": "<hex>" | null}`, and `POST /v1/owner/custody-anchor` with
 `{"expected": "<BLAKE3 hex of the record read>" | null, "record": "<hex>"}` answers

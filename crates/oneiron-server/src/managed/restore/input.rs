@@ -17,9 +17,15 @@ use crate::managed::ManagedArgs;
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
 
+/// The filesystem magic `fstatfs` reads for a pipe the kernel made, on
+/// pipefs; a named FIFO reads the magic of the filesystem its node is on.
+#[cfg(target_os = "linux")]
+const PIPEFS_MAGIC: u64 = 0x5049_5045;
+
 /// Whether `fd` is the read end (`write` false) or the write end of a pipe,
-/// told from its type and access mode before it is taken over; why not
-/// otherwise. A file, socket or tty never carries the restore.
+/// told from its type, on Linux its pipefs (FIX 6580), and its access mode
+/// before it is taken over; why not otherwise. A file, named FIFO, socket
+/// or tty never carries the restore.
 pub(in crate::managed) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
     use rustix::fs::{FileType, OFlags};
     if fd < 0 {
@@ -27,11 +33,15 @@ pub(in crate::managed) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'stati
     }
     // SAFETY: `fd` arrives on argv from the supervisor and is this process's
     // to own: nothing else in the process holds or closes it. It is borrowed
-    // for these two reads only, before it is taken over.
+    // for these reads only, before it is taken over.
     let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
     let stat = rustix::fs::fstat(borrowed).map_err(|_| "it is not an open descriptor")?;
     if FileType::from_raw_mode(stat.st_mode) != FileType::Fifo {
         return Err("it is not a pipe");
+    }
+    #[cfg(target_os = "linux")]
+    if !rustix::fs::fstatfs(borrowed).is_ok_and(|fs| u64::try_from(fs.f_type) == Ok(PIPEFS_MAGIC)) {
+        return Err("it is not an anonymous pipe");
     }
     let mode = rustix::fs::fcntl_getfl(borrowed).map_err(|_| "its access mode did not read")?
         & OFlags::ACCMODE;

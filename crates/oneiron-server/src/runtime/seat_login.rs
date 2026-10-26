@@ -25,9 +25,9 @@ use oneiron::dispatch_byoa::{
     ClaudeCodeRunner, CliSandboxSpec, CodexRunner, DispatchOfficialSeat, DreamerProviderAdapter,
     OfficialDreamerSeat, OfficialSeatAdapter, OfficialSeatDispatchOutcome, OfficialSeatRegistry,
     OfficialSeatRoute, OfficialSeatSpec, OnSeatSpent, OpenCodeRunner, ProviderAdapterRegistry,
-    RunnerSeat, RunnerSeatPolicy, RunnerWork, SeatAuth, SeatIdentity, SeatPlacementApproval,
-    SeatRoute, SeatSpent, check_seat_placement, hosted_seat_bound,
-    register_official_dreamer_providers, skipped_seats_note,
+    RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPlacementApproval, SeatRoute,
+    SeatSpent, check_seat_placement, hosted_seat_bound, register_official_dreamer_providers,
+    skipped_seats_note,
 };
 use oneiron::origin::smart_http::SpillFloor;
 use oneiron::{
@@ -39,6 +39,7 @@ use utoipa::ToSchema;
 
 use super::secret_destinations::RunSecretDestinations;
 
+mod runner_work;
 mod surface;
 pub use surface::{
     SeatLoginSurface, SeatRouteRow, SeatSettings, seat_login_surface, seat_route_catalog,
@@ -667,9 +668,10 @@ pub fn runner_policy_surface(
 }
 
 /// The Dreamer executor over the owner's runner-seat policy (OF-137 +
-/// OF-375): admitted work is dispatched to a seat through
-/// [`ByoaDispatcher::dispatch_runner`], and once the host has the runner's
-/// terminal exhaust, [`Self::route_terminal`] folds it through
+/// OF-375): admitted work is bound to a seat and dispatched there through
+/// [`ByoaDispatcher::bind_runner_work_in_txn`], and once the host has the
+/// runner's terminal exhaust, [`Self::route_terminal`] folds it, on the
+/// seat the work stands on, through
 /// [`ByoaDispatcher::route_runner_terminal`] and maps the [`SeatRoute`]
 /// onto the Dreamer outcome. The factory and egress port are cloned per
 /// call, so they should be cheap `Arc`-backed handles.
@@ -718,7 +720,7 @@ where
             dispatcher.route_runner_terminal(
                 &self.registry,
                 &self.policy,
-                self.seat,
+                runner_work::bound_seat(ctx.vault, attempt.status.attempt.id, self.seat),
                 capture,
                 spent,
             )
@@ -766,44 +768,18 @@ where
         attempt: &DreamerAdmittedAttempt,
         ctx: &mut WakeAttemptContext<'_>,
     ) -> oneiron::Result<DreamerAttemptExecution> {
-        let parent = attempt.status.attempt.id;
-        let dispatched = {
-            let mut dispatcher = ByoaDispatcher::new(
-                ctx.vault,
-                self.endpoint_factory.clone(),
-                self.egress.clone(),
-            );
-            dispatcher.dispatch_runner(
-                &self.registry,
-                &self.policy,
-                self.seat,
-                RunnerWork {
-                    task: self.task.clone(),
-                    checkout_id: self.checkout_id,
-                    task_ref: None,
-                    parent_attempt_id: Some(parent),
-                    run_id: None,
-                    dedupe_key: Some(format!(
-                        "byoa.runner.dreamer:{}",
-                        attempt_hex(parent.as_bytes())
-                    )),
-                    now: ctx.now_ms / 1000,
-                },
-            )
-        };
-        match dispatched {
-            Ok(outcome) => Ok(DreamerAttemptExecution::Park {
-                reason: format!(
-                    "runner seat attempt {} dispatched; awaiting foreign exhaust",
-                    attempt_hex(outcome.status().attempt.id.as_bytes())
-                ),
-                cause: DreamerParkCause::Signal,
-            }),
-            Err(ByoaError::Store(error)) => Err(error),
-            Err(other) => Ok(DreamerAttemptExecution::Park {
-                reason: format!("runner seat refused: {other}"),
-                cause: DreamerParkCause::Other,
-            }),
-        }
+        let step = runner_work::dreamer_step(
+            attempt.status.attempt.id,
+            self.seat,
+            self.task.clone(),
+            self.checkout_id,
+            ctx.now_ms / 1000,
+        );
+        let dispatcher = ByoaDispatcher::new(
+            ctx.vault,
+            self.endpoint_factory.clone(),
+            self.egress.clone(),
+        );
+        runner_work::bind_step(ctx.vault, &dispatcher, &self.registry, &self.policy, step)
     }
 }

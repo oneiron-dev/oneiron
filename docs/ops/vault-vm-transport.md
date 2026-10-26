@@ -27,6 +27,11 @@ credential.
   the merge floor.
 - No older image is booted, and no reader of an image without the field is
   kept. `CONTRACT_VERSION` stays 3, and `Ping` has no field for this.
+- A cold restore's receipt names the engine's own build in `engine_build`
+  (FIX 6581): the 40-hex commit the build exported as
+  `ONEIRON_ENGINE_REVISION`, else the commit its source checkout's `HEAD`
+  named, else `null`. A release build exports the same commit it records as
+  the manifest's `engine_revision`, so the host can compare the two.
 - The custody anchor channels (FIX 6517) add two required manifest fields,
   published together: `anchor_wire_revision: 1` and `anchor_proxy_revision: 1`.
   Every serving cold boot of an image at or after their floor dials the anchor
@@ -59,7 +64,11 @@ credential.
   only for an image at revision 1, each naming the descriptor's guest-local
   CLI, never a host path. The bootstrap prepares the runtime for the vault UID
   and passes the engine one `--guest-runtime-fact` on every serving boot; no
-  fact stops the vault.
+  fact stops the vault. Each serving boot that prepares the runtime empties
+  `/vault/storage/container/runtime`, the container CLI's `XDG_RUNTIME_DIR`,
+  and keeps the directory itself (FIX 8936): the CLI's pause process id,
+  locks and sockets are that boot's own, never an earlier boot's.
+  `/vault/storage/container/home` and the image store in it are kept.
 - The trusted organ builds file (FIX 7889) adds a required manifest field,
   `vm_trusted_organ_builds_revision: 1`, which the rootfs receipt carries into
   the manifest. Its floor is the engine commit that merged FIX 7889. An image
@@ -67,6 +76,30 @@ credential.
   in its vault runs as third party. The supervisor checks the revision, with
   the hashes and that floor, before it stages a list, and counts a list
   applied only on an image at or after the floor.
+
+## Start checks and the outbox carrier
+
+- The vault disk (FIX 6632): before each cold boot's VMM starts, the host
+  reads the vault disk's ext4 superblock. A disk that is not ext4, or whose
+  filesystem UUID is not the provision binding's `vault_disk_uuid`, refuses
+  the start with `disk_mismatch`, before the guest or the key frame sees it.
+  A disk the host cannot read is logged `vm_vault_disk_unread` and left to
+  the guest's own check, which refuses it before the key goes in.
+- The boot timeout (FIX 8934): the VM profile's `boot_timeout_secs` bounds
+  the start's handshake waits, in seconds: a cold boot's provision,
+  credential, ready and join, a snapshot's rejoin, and a cold restore's
+  handshake. Unset, each waits 10 s; `0` refuses the profile. The VMM API
+  calls, the wait for the VMM API socket, and the standalone marker
+  inspection keep their fixed 10 s. Size it from a measured
+  first boot of an image with guest runtime bindings, whose bootstrap imports
+  both guest images before the engine starts; later boots import nothing.
+  The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
+- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+  The engine looks at the outbox companion every 5 s, with at most one
+  status question in flight. A question that fails (the companion ended, or
+  its socket errs) clears the revision, as a VM without one reads; a
+  question still unanswered leaves the last answer standing. Restarting a
+  companion that ended is the bootstrap's part.
 
 ## The channel
 
@@ -122,6 +155,8 @@ The descriptors:
 - R is the read end of a pipe. It carries one `ManagedRestoreInput`, then EOF.
 - W is the write end of a pipe. It takes the native result frames, one JSON line
   each.
+- On Linux each of R, W, Q, S and the runner's A must be a pipe the kernel
+  made: a named FIFO is refused (FIX 6580).
 - Q is the read end of a pipe. It carries one `ManagedRestoreIdentity` JSON
   object (at most 256 KiB), then EOF.
 - S is the write end of a pipe. It takes one `VmRestoreMarkerObservation` JSON
@@ -135,9 +170,9 @@ the observation.
 
 Timeouts:
 
-- The boot timeout covers only the boot's own steps: the VMM API calls, the
-  hello, the provision, the credential connection's accept, the join, and the
-  inspection's reply.
+- The boot timeout (`boot_timeout_secs`, above) covers only the boot's own
+  handshake waits listed above. The VMM API calls and the inspection's reply
+  keep their fixed 10 s.
 - A restore has no deadline. A guest that ends closes the channel, and the
   runner sees that.
 

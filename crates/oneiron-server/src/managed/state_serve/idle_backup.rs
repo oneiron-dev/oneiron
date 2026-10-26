@@ -5,8 +5,9 @@
 //! `prepare_reap` runs, which reads the writes in flight by kind (FIX
 //! 6902). An owner write among them leaves the vault busy. Otherwise the
 //! background passes, which take no new unit once frozen, are waited for,
-//! by the attempt's deadline; then the drain and the export, and, when the
-//! vault was quiet, one backup job on a blocking thread of its own
+//! by the attempt's deadline; then the drain and the export (the export
+//! alone once that wait ran out, FIX 6955), and, when the vault was quiet,
+//! one backup job on a blocking thread of its own
 //! ([`OwnerHost::back_up_before_idle`]). Every later call joins it, and none
 //! starts a second drain or a second backup. A call answers once the attempt
 //! settles, or once its deadline passes, [`IDLE_REAP_PREPARATION_SECS`] after
@@ -374,7 +375,10 @@ impl ManagedState {
         // flight are waited for, so the export comes after their last write.
         let owner_idle = at_freeze.owner_write == 0;
         let background_drained = owner_idle && self.drain_background(id, host.clone()).await;
-        let prepared = match self.drain_export(at_freeze).await {
+        // A wait the deadline cut short leaves the vault busy: no lease drain
+        // starts past it, and the export answers at once (FIX 6955).
+        let waited_out = owner_idle && !background_drained;
+        let prepared = match self.drain_export(at_freeze, !waited_out).await {
             Ok(prepared) => prepared,
             Err(error) => {
                 idle.drop_failed(id);
