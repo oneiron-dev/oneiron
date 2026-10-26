@@ -14977,7 +14977,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "mod": 7,
       "re-export": 25
      }
@@ -15556,7 +15556,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 4
      }
     },
@@ -15701,7 +15701,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1
      }
     },
@@ -25712,6 +25712,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/rollups/spend.rs",
+     "purpose": "Each rollup member's launch spend scope, read for the trend pass",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/agent_health/run_loop.rs",
      "purpose": "`loop` over an agent run's own calls",
      "surface": {
@@ -25719,7 +25729,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HealthOtherSession",
@@ -25728,7 +25738,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/silence.rs",
      "purpose": "`silent` (OF-568 L5, agent-mind §3: \"A task is open, with no streamed receipt, no open wait, no running tool…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 2
      }
     },
@@ -26322,8 +26332,8 @@
      "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
      "surface": {
       "const": 3,
-      "crate-vis": 7,
-      "fn": 7,
+      "crate-vis": 8,
+      "fn": 8,
       "struct": 7
      }
     },
@@ -57095,7 +57105,7 @@
      "path": "src/self_heal/consent_depth.rs",
      "purpose": "Whole-tray consent queue depth (ARCH-0066 §4, \"consent-storm queue depth\"; OF-298)",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -77083,7 +77093,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 161,
+     "files": 162,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78114,7 +78124,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5141,
+   "source_files": 5142,
    "test_files": 902
   },
   "oneiron-android": {
@@ -94381,7 +94391,7 @@
      "path": "src/api/call_receipt.rs",
      "purpose": "OF-538: the lasting receipt every wire reply carries, reads included",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 34
      }
     },
     {
