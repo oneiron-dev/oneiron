@@ -357,6 +357,22 @@ impl ClaimCandidate {
         self
     }
 
+    /// Adds typed document citations beside the candidate's other evidence
+    /// (ARCH-0032, FIX 904). The write pins each one that verifies against
+    /// its document in the write's own snapshot.
+    pub fn with_evidence_refs(mut self, refs: &[crate::claim::EvidenceRef]) -> crate::Result<Self> {
+        let key = crate::claim::EVIDENCE_REFS_KEY;
+        let mut entries = match self.evidence.take() {
+            Some(Value::Map(entries)) => entries,
+            None => Vec::new(),
+            Some(_) => return Err(crate::Error::InvalidClaimBody("evidence must be a map")),
+        };
+        entries.retain(|(name, _)| name.as_str() != Some(key));
+        entries.push((Value::from(key), crate::claim::public_evidence_value(refs)?));
+        self.evidence = Some(Value::Map(entries));
+        Ok(self)
+    }
+
     /// Candidate-local evidence data, before the promotion writer replaces it
     /// with the sealed evidence envelope.
     pub(crate) fn evidence(&self) -> Option<&Value> {

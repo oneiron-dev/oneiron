@@ -21,9 +21,12 @@ use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
 
 mod codec;
+mod evidence_refs;
 
 pub use codec::decode_claim_body;
 pub(crate) use codec::encode_claim_body;
+pub use evidence_refs::{CursorSpan, EvidenceKind, EvidenceRef};
+pub(crate) use evidence_refs::{EVIDENCE_REFS_KEY, public_evidence_refs, public_evidence_value};
 
 /// Pinned ON-DISK MessagePack key set for type-0 (CLAIM) bodies (D11).
 ///
