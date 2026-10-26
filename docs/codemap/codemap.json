@@ -494,6 +494,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_def/byte_observation.rs",
+     "purpose": "The bytes one definition's put reads (FIX 10542)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -868,7 +878,7 @@
      "path": "src/agent_dispatch/context.rs",
      "purpose": "Spawn-context resolution, sibling-lineage admission, ancestor projection fold",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -1156,7 +1166,7 @@
      "path": "src/agent_dispatch/planner_live/intent/erase.rs",
      "purpose": "A planned intent's erase (Engine 10-22)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -1257,6 +1267,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/resident/validation.rs",
+     "purpose": "A resident binding's validation: the rows it names, its inbox's actor, its home message's conversation and…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/agent_dispatch/resident_tests.rs",
@@ -1345,6 +1365,16 @@
      "purpose": "Spend-tree ancestry (FIX 9563, 9564)",
      "surface": {
       "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/spend_lease/closed_scope.rs",
+     "purpose": "The closed hard scopes one booking passes through (FIX 10541)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -1479,7 +1509,7 @@
      "purpose": "Fail-closed propose-widen, and board approval or decline by a revalidated root Owner or by the board…",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 4
      }
     },
     {
@@ -1490,6 +1520,17 @@
      "purpose": "Who answers a widen proposal as the board above (FIX 9565): a revalidated root Owner of this vault, or the…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/widen/context.rs",
+     "purpose": "A widen's context reads (FIX 9438, 10543): an attempt's live recursive slice, a parent's effective slice and…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
      }
     },
     {
@@ -1542,7 +1583,7 @@
      "path": "src/agent_dispatch/workflow/member_context.rs",
      "purpose": "A member's bound run reads its context on that member's own lane (FIX 5416): the memory and chat a step…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -21025,6 +21066,7 @@
      "path": "src/context_projection/mod.rs",
      "purpose": "Typed context projection (`ContextSpec`) and the referenced panel-spec codec/planner a recursive task lead…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -21072,7 +21114,7 @@
      "purpose": "Dispatch-time resolution of a `ContextSpec` against live vault state",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 3,
       "struct": 3
      }
@@ -68534,7 +68576,7 @@
      "path": "src/task_verb/create_validation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -70637,7 +70679,7 @@
      "path": "src/vault/entities.rs",
      "purpose": "Vault entity, vector, short-id and type-index reads and writes",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "fn": 20,
       "struct": 1
      }
@@ -73028,7 +73070,7 @@
      "path": "src/verbs/self.rs",
      "purpose": "The doors of two verb-table rows an agent calls on itself and its own children: `self.memory.diary`, one…",
      "surface": {
-      "fn": 3,
+      "fn": 5,
       "struct": 4
      }
     },
@@ -77434,14 +77476,14 @@
      "purpose": "Affect facade: VAD annotations, claim VAD, triggers and coping outcomes"
     },
     "agent_def": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 66,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78962,7 +79004,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5213,
+   "source_files": 5217,
    "test_files": 902
   },
   "oneiron-android": {
