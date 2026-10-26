@@ -1377,7 +1377,7 @@ export type ScopedExportRecord = { record: RecordRef; position: RecordPosition; 
 /** `oneiron::memory::scoped_export::ScopedExport` */
 export type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] }
 /** `oneiron::verbs::receipts_page::VaultReceiptsRequest` */
-export type VaultReceiptsRequest = { limit?: number | null; kinds?: string[]; after?: string | null }
+export type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] | null; after?: string | null }
 /** `oneiron::memory::claims::MemoryReceipt` */
 export type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> }
 /** `oneiron::verbs::receipts_page::VaultReceiptsPage` */

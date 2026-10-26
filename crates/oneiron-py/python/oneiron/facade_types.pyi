@@ -3518,7 +3518,7 @@ class ScopedExport(TypedDict):
     records: list[ScopedExportRecord]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
-    kinds: NotRequired[list[str]]
+    kinds: NotRequired[list[str] | None]
     after: NotRequired[str | None]
 class MemoryReceipt(TypedDict):
     receipt_ref: str

@@ -174,7 +174,7 @@ async fn found(
 ) -> OwnerReply<FoundPage> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
-    let limit = query.limit.unwrap_or(50).clamp(1, MAX_FOUND_PAGE);
+    let limit = query.limit.unwrap_or(50).min(MAX_FOUND_PAGE);
     let after = query
         .after
         .as_deref()

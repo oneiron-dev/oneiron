@@ -17,24 +17,12 @@ pub struct VaultReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
     /// The kinds to list; absent, null or empty, the gate ledger.
-    #[serde(
-        default,
-        deserialize_with = "kinds_or_none",
-        skip_serializing_if = "Vec::is_empty"
-    )]
-    pub kinds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<String>>,
     /// The `next_after` of the page before, under the same kinds; from the
     /// newest receipt when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
-}
-
-/// `kinds` as sent: a null list, as a binding's unnamed argument sends it,
-/// reads as none.
-fn kinds_or_none<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Vec<String>, D::Error> {
-    Option::<Vec<String>>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 /// One page of `vault.receipts`, newest first.

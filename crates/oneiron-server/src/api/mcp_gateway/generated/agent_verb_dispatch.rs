@@ -5592,7 +5592,8 @@ async fn execute_agent_verb_row(
                 usize::from(output.next_after.is_some()),
                 true,
             )
-            .rows_at("rows");
+            .rows_at("rows")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "self.inbox.mark" => {
@@ -7192,7 +7193,8 @@ async fn execute_agent_verb_row(
                 usize::from(output.next_after.is_some()),
                 true,
             )
-            .rows_at("receipts");
+            .rows_at("receipts")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "vault.assets.ingest" => {
@@ -13563,7 +13565,8 @@ async fn execute_agent_verb_row(
                 usize::from(output.next_cursor.is_some()),
                 true,
             )
-            .rows_at("rows");
+            .rows_at("rows")
+            .resumed_within("next_cursor", "spec", "cursor");
             mcp_agent_verb_output(output, source)
         }
         "vault.hooks.regen.due" => {

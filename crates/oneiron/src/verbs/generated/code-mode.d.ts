@@ -706,7 +706,7 @@ declare namespace Sdk {
   type RowBirth = { made_by: MadeBy; content_hash: string; withheld?: WithheldRef[]; room_evidence?: RoomEvidence | null };
   type ScopedExportRecord = { record: RecordRef; position: RecordPosition; bytes: number[]; birth?: RowBirth | null };
   type ScopedExport = { selector: RecordSelector; credential: CredentialCeiling; channel: ExportChannel; applied: Scope; records: ScopedExportRecord[] };
-  type VaultReceiptsRequest = { limit?: number | null; kinds?: string[]; after?: string | null };
+  type VaultReceiptsRequest = { limit?: number | null; kinds?: string[] | null; after?: string | null };
   type MemoryReceipt = { receipt_ref: string; kind: string; outcome: string; created_at: number; reason_codes: string[]; actor_class: string; actor_ref?: string | null; content_kind: string; claim_ref?: string | null; claim?: RecordRef | null; fields?: Record<string, string> };
   type VaultReceiptsPage = { receipts: MemoryReceipt[]; next_after?: string | null; effective_limit: number; limit_clamped?: boolean };
   type AssetIngestRequest = { asset_ref?: string | null; embedding_kind: InputKind; mime_type: string; bytes_b64: string; text?: string | null; occurred_at: number };

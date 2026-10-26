@@ -58,7 +58,8 @@ impl Vault {
     /// [`Self::found_keys`] a page at a time: at most `limit` notices after
     /// `after` (from the newest when `None`), with the cursor of the next
     /// page. `open_only` keeps the records with a key the owner has not
-    /// acted on. No value is read.
+    /// acted on. A zero `limit` reads none, and its next page starts where
+    /// `after` did. No value is read.
     ///
     /// # Errors
     /// As [`Self::found_keys`].
@@ -89,10 +90,12 @@ impl Vault {
         let next_cursor = if done {
             None
         } else {
-            rows.last().map(|(latest, record, _)| FoundKeyCursor {
-                latest: *latest,
-                record: *record,
-            })
+            rows.last()
+                .map(|(latest, record, _)| FoundKeyCursor {
+                    latest: *latest,
+                    record: *record,
+                })
+                .or(after)
         };
         let notices = rows
             .into_iter()

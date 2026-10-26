@@ -5430,7 +5430,7 @@ impl OneironClient {
     ) -> Result<oneiron::task_verb::sdk::VaultReceiptsPage, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            kinds: kinds.to_vec(),
+            kinds: Some(kinds.to_vec()),
             after: after.map(str::to_owned),
         };
         oneiron::memory::caps::check_limit_nonzero(

@@ -473,7 +473,9 @@
       },
       "page": {
         "rows": "rows",
-        "cursor": "next_after"
+        "cursor": "next_after",
+        "resume": "spec",
+        "within": "after"
       },
       "mcp_scope": "filtered",
       "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
@@ -2338,7 +2340,7 @@
       "input": "crate::task_verb::sdk::VaultReceiptsRequest",
       "output": "crate::task_verb::sdk::VaultReceiptsPage",
       "mcp_served_output": "output.receipts.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "memory.receipts_page(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), &input.kinds, input.after.as_deref())?",
+      "call": "memory.receipts_page(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), input.kinds.as_deref().unwrap_or_default(), input.after.as_deref())?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -2346,7 +2348,9 @@
       },
       "page": {
         "rows": "receipts",
-        "cursor": "next_after"
+        "cursor": "next_after",
+        "resume": "spec",
+        "within": "after"
       },
       "section": false,
       "binding": {
@@ -8648,7 +8652,9 @@
       },
       "page": {
         "rows": "rows",
-        "cursor": "next_cursor"
+        "cursor": "next_cursor",
+        "resume": "spec",
+        "within": "cursor"
       },
       "section": false
     },

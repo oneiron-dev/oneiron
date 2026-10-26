@@ -12,7 +12,7 @@ use super::family_receipt;
 use crate::entity_id::EntityId;
 use crate::memory::support::hex_string;
 use crate::memory::{Memory, MemoryError, MemoryReceipt, MemoryResult};
-use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::verbs::{VAULT_RECEIPTS_PAGE_MAX, VaultReceiptsPage};
@@ -33,6 +33,14 @@ impl FamilyCursor {
         }
     }
 
+    fn walked(position: ReceiptScanPosition) -> Self {
+        Self {
+            occurred_at: position.occurred_at,
+            kind: position.receipt_kind,
+            receipt_id: position.receipt_id,
+        }
+    }
+
     fn to_text(&self) -> String {
         format!("{}:{}:{}", self.occurred_at, self.kind.as_str(), self.receipt_id)
     }
@@ -48,10 +56,15 @@ impl FamilyCursor {
 
     /// Whether `record` comes after this cursor.
     fn precedes(&self, record: &ReceiptRecord) -> bool {
-        record.occurred_at < self.occurred_at
-            || (record.occurred_at == self.occurred_at
-                && (record.receipt_kind, record.receipt_id.as_str())
-                    > (self.kind, self.receipt_id.as_str()))
+        self.precedes_at(record.occurred_at, record.receipt_kind, &record.receipt_id)
+    }
+
+    /// Whether the receipt at `occurred_at`, `kind`, `receipt_id` comes
+    /// after this cursor.
+    fn precedes_at(&self, occurred_at: u64, kind: ReceiptKind, receipt_id: &str) -> bool {
+        occurred_at < self.occurred_at
+            || (occurred_at == self.occurred_at
+                && (kind, receipt_id) > (self.kind, self.receipt_id.as_str()))
     }
 }
 
@@ -177,7 +190,9 @@ impl Memory<'_> {
 
     /// The family's receipts of `kinds` after `after`, and the next page's
     /// cursor. A pass reads only receipts no newer than the cursor, and
-    /// reads again past those at the cursor's own time it already served.
+    /// reads again past those at the cursor's own time it already served. A
+    /// read the work cap cut short ends its page at the last receipt it
+    /// walked, kept or withheld, so a page that kept none still moves on.
     fn family_page(
         &self,
         kinds: &[String],
@@ -192,20 +207,22 @@ impl Memory<'_> {
             query = query.with_time_bounds(None, Some(cursor.occurred_at));
         }
         let mut fetch = page.saturating_add(1);
-        let mut records = loop {
+        let (mut records, cut) = loop {
             let pass = ReceiptQuery {
                 limit: fetch,
                 ..query.clone()
             };
-            let read = self.vault.receipts_for_caller(pass, &self.destination)?;
+            let (read, cut) = self
+                .vault
+                .receipts_walk_for_caller(pass, &self.destination)?;
             let read_count = read.len();
             let after_cursor: Vec<ReceiptRecord> = read
                 .into_iter()
                 .filter(|record| cursor.as_ref().is_none_or(|cursor| cursor.precedes(record)))
                 .collect();
             let passed = read_count - after_cursor.len();
-            if after_cursor.len() > page || read_count < fetch || passed == 0 {
-                break after_cursor;
+            if after_cursor.len() > page || cut.is_some() || read_count < fetch || passed == 0 {
+                break (after_cursor, cut);
             }
             fetch = page.saturating_add(1).saturating_add(passed);
         };
@@ -214,7 +231,13 @@ impl Memory<'_> {
         let next_after = if more {
             records.last().map(|record| FamilyCursor::of(record).to_text())
         } else {
-            None
+            // A cut walk moves the next page on only past this cursor.
+            let walked = cut.map(FamilyCursor::walked).filter(|walked| {
+                cursor.as_ref().is_none_or(|cursor| {
+                    cursor.precedes_at(walked.occurred_at, walked.kind, &walked.receipt_id)
+                })
+            });
+            walked.as_ref().map(FamilyCursor::to_text)
         };
         // A world's name on the owner's own share receipt is his (FIX 5493).
         crate::share_travel::screen_owner_notice_fields(self, &mut records);

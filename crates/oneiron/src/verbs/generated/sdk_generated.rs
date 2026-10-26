@@ -25841,7 +25841,7 @@ pub fn vault_receipts(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
-        &input.kinds,
+        input.kinds.as_deref().unwrap_or_default(),
         input.after.as_deref(),
     )
 }
