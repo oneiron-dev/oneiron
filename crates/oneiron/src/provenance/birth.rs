@@ -29,6 +29,7 @@ use crate::store::{ManifestDbs, Store};
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
+pub(crate) mod prompted;
 pub(crate) mod room;
 
 /// Most hex characters a birth's input hash may carry.

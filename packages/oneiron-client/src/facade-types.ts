@@ -2273,7 +2273,7 @@ export type ChatMessage = { role: ChatRole; content: ChatContent; name?: string 
 /** `oneiron::verbs::proxy::ChatStop` */
 export type ChatStop = string | string[]
 /** `oneiron::verbs::proxy::ChatCompletionRequest` */
-export type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null }
+export type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null; deadline_ms?: number | null }
 /** `oneiron::verbs::proxy::ChatCompletionObject` */
 export type ChatCompletionObject = "chat.completion"
 /** `oneiron::verbs::proxy::ChatCompletionRole` */

@@ -11,7 +11,10 @@
 //! as himself (FIX 5255): no connector registration stands behind him, and
 //! the exchange he proposes is his own. Calls are buffered: `stream: true` is
 //! refused, and `/v1/responses` is not served.
+mod choices;
+mod exchange;
 mod receipt;
+mod release;
 mod timing;
 mod wire;
 
@@ -35,9 +38,9 @@ use oneiron::{
     CallClass, CallEnvelope, CallPurpose, ClaimInput, ContentPart, EntityId, LlmMessage,
     LlmMessageRole, LlmRequest, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
-use serde_json::json;
 
 pub(super) use self::receipt::PROXY_CALL_VERB;
+use self::exchange::Exchange;
 use self::receipt::{ProxyCaller, ProxyRequest};
 use self::wire::{error, invalid};
 use super::McpCallContext;
@@ -143,12 +146,8 @@ async fn complete_as(
             "this proxy answers buffered calls only; send stream: false",
         ));
     }
-    if chat.n.is_some_and(|n| n != 1) {
-        return Err(invalid(
-            "n_unsupported",
-            "this proxy answers one choice per call",
-        ));
-    }
+    let count = choices::choice_count(chat.n)?;
+    let clock = choices::CallerClock::starting_now(chat.deadline_ms);
     let Some(newest) = chat.messages.iter().rposition(ChatMessage::is_user) else {
         return Err(invalid(
             "user_message_required",
@@ -166,8 +165,21 @@ async fn complete_as(
     // they are read for both, on this device only when both are.
     let reads_for =
         crate::device_local::prompt_destination(actor.destination(), request.envelope.locality);
-    let recalled = recall(server, &actor, &reads_for, query.clone(), listed).await?;
+    let recall_deadline = clock.recall_deadline_ms(server.vault.call_mode_deadline());
+    let recalled = recall(
+        server,
+        &actor,
+        &reads_for,
+        query.clone(),
+        recall_deadline,
+        listed,
+    )
+    .await?;
     let injected = recalled.is_some();
+    // The rows the prompt carried, and its memory block as the model read it
+    // (FIX 8191, 8192): none when nothing went in.
+    let memory_text = recalled.as_ref().map(|memory| wire::answer_text(memory));
+    let producers: &[EntityId] = if injected { listed.as_slice() } else { &[] };
     if let Some(memory) = recalled {
         // Just before the message it was recalled for.
         request.messages.insert(newest, memory);
@@ -175,20 +187,28 @@ async fn complete_as(
 
     // The exchange names the model id the call resolved to, never an alias.
     let model = request.model.to_string();
-    let response = ladder
-        .generate(&run, request, None)
+    let (first, rest) = choices::answer_choices(&ladder, &run, request, count, clock)
         .await
         .map_err(wire::upstream_error)?;
     // A credential revoked while the model answered gets nothing back, and
     // proposes nothing.
     admit_connector(&actor, server)?;
-    let answer = wire::answer_text(&response.message);
-    let remembered = remember(server, &actor, landing, &query, &answer, &model);
-    Ok(wire::completion(
+    let answers = choices::answer_texts(&first, &rest);
+    release::completed_answers(server, &actor, producers, &answers)?;
+    let read = memory_text.as_deref().map(str::as_bytes);
+    let exchange = Exchange {
+        user: &query,
+        answers: &answers,
+        model: &model,
+        producers,
+        read: read.as_slice(),
+    };
+    let remembered = remember(server, &actor, landing, &exchange);
+    Ok(choices::completion(
         &completion_id,
         super::params::unix_seconds_now(),
         &chat.model,
-        &response,
+        (&first, rest.as_slice()),
         ChatCompletionMemory {
             injected,
             remembered,
@@ -343,6 +363,7 @@ async fn recall(
     actor: &McpCallContext,
     reads_for: &ReadDestination,
     query: String,
+    deadline_ms: Option<u64>,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
     let proof = actor
@@ -357,7 +378,7 @@ async fn recall(
         limit: Some(RECALL_LIMIT),
         format: Some("md".to_owned()),
         as_of: None,
-        deadline_ms: None,
+        deadline_ms,
         media: None,
         query_affect: None,
         telemetry: None,
@@ -412,16 +433,15 @@ async fn recall(
 /// ceiling. A credential narrowed to the connector's world and landing facet
 /// proposes under those bounds, which the writer judges again (FIX 1400);
 /// any other proposes as it always did. A managed vault's attested owner
-/// proposes it as his own claim, with no proxy key to check. The answer was
+/// proposes it as his own claim, with no proxy key to check. Either way its
+/// birth names the rows recall put in the prompt (FIX 8192). The answer was
 /// already paid for, so a refused proposal is reported in the reply, not
 /// raised.
 fn remember(
     server: &SyncServer,
     actor: &McpCallContext,
     landing: Option<EntityId>,
-    user: &str,
-    answer: &str,
-    model: &str,
+    exchange: &Exchange<'_>,
 ) -> ChatCompletionRemembered {
     let mut position = actor.scope.birth_position();
     if let Some(facet) = landing {
@@ -439,7 +459,7 @@ fn remember(
         id: None,
         predicate: EXCHANGE_PREDICATE.to_owned(),
         subject_ref: actor.actor_ref.to_hex(),
-        value: json!({"user": user, "assistant": answer, "model": model}),
+        value: exchange.value(),
         confidence: 1.0,
         source: "tool_output".to_owned(),
         world_ref: None,
@@ -455,10 +475,11 @@ fn remember(
     // The shared carried-proposal writer checks the credential, placement,
     // live proxy key and both slate legs in the transaction that writes.
     let proposed = oneiron::memory::caps::check_claim_input(&input).and_then(|()| {
+        let (producers, read) = (exchange.producers, exchange.read);
         if is_attested_owner(actor) {
-            memory.claim_propose(&input)
+            memory.claim_propose_prompted(&input, PROXY_CALL_VERB, producers, read)
         } else {
-            memory.claim_propose_for_proxy(&input)
+            memory.claim_propose_for_proxy(&input, PROXY_CALL_VERB, producers, read)
         }
     });
     match proposed {

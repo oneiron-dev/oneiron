@@ -1154,7 +1154,7 @@ declare namespace Sdk {
   type ChatContent = string | ChatPart[];
   type ChatMessage = { role: ChatRole; content: ChatContent; name?: string | null };
   type ChatStop = string | string[];
-  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null };
+  type ChatCompletionRequest = { model: string; messages: ChatMessage[]; stream?: boolean | null; n?: number | null; temperature?: number | null; top_p?: number | null; max_tokens?: number | null; max_completion_tokens?: number | null; stop?: ChatStop | null; presence_penalty?: number | null; frequency_penalty?: number | null; seed?: number | null; user?: string | null; deadline_ms?: number | null };
   type ChatCompletionObject = "chat.completion";
   type ChatCompletionRole = "assistant";
   type ChatCompletionMessage = { role: ChatCompletionRole; content: string };

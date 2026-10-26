@@ -17515,6 +17515,12 @@ pub struct ChatCompletionRequest {
     pub seed: Option<i64>,
     #[serde(rename = "user", default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
 }
 
 /// `oneiron::verbs::proxy::ChatCompletionObject`.

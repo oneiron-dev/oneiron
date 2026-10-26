@@ -58,7 +58,7 @@ pub(super) fn completion(
     }
 }
 
-fn finish_reason(reason: &FinishReason) -> &str {
+pub(super) fn finish_reason(reason: &FinishReason) -> &str {
     match reason {
         FinishReason::Stop => "stop",
         FinishReason::Length => "length",
