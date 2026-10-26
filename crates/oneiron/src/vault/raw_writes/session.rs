@@ -263,16 +263,21 @@ impl Memory<'_> {
     }
 
     /// The verified caller's envelope a raw CLAIM put is gated and applied
-    /// under (FIX 8118): the origin its host bound, else this surface's
-    /// actor over the body's own approval and source (`RAW_CLAIM_SOURCE`
-    /// when the body names none). `None` for a body that does not decode,
-    /// which the put's own check refuses.
+    /// under (FIX 8118): the origin its host bound, else, for a surface
+    /// bound to a session, its actor over the body's own approval and
+    /// source (`RAW_CLAIM_SOURCE` when the body names none). `None` for a
+    /// body that does not decode, which the put's own check refuses, and
+    /// for an actor no session binds: no verified caller, so the put keeps
+    /// the local write's gate, as an unbound host write does.
     fn raw_claim_envelope(&self, data: &[u8]) -> crate::Result<Option<WriteEnvelope>> {
         let Ok(body) = crate::claim::decode_claim_body(data, false) else {
             return Ok(None);
         };
         if let Some(envelope) = self.host_envelope(body.approval)? {
             return Ok(Some(envelope));
+        }
+        if self.off_record_binding().is_none() {
+            return Ok(None);
         }
         let provenance = rmpv::Value::Map(vec![
             (rmpv::Value::from("surface"), rmpv::Value::from("raw")),
