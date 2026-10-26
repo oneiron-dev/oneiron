@@ -13,7 +13,7 @@ use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::get;
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 

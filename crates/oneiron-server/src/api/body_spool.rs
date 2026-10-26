@@ -66,10 +66,7 @@ impl BodySpool {
         &mut self,
         bulk: &mut [BulkMember<'_>],
     ) -> Result<T, JsonInvalid> {
-        json::decode_object(
-            BufReader::with_capacity(SPOOL_PIECE, &mut self.file),
-            bulk,
-        )
+        json::decode_object(BufReader::with_capacity(SPOOL_PIECE, &mut self.file), bulk)
     }
 
     /// The room the spool holds on the disk floor, kept past the spool.
