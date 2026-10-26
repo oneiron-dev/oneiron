@@ -321,6 +321,20 @@ pub fn line_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Opti
     }
 }
 
+/// [`line_audience_key`] over a provider event's raw source ids, normalized
+/// as intake normalizes them, so an archived event and the reply target
+/// intake froze spell one audience alike. A chat id intake would not take
+/// falls back to the sender, as intake does; a sender intake would not take
+/// names nobody.
+#[must_use]
+pub fn line_source_audience_key(chat: Option<&LineChat>, user_id: Option<&str>) -> Option<String> {
+    let chat = chat.and_then(|chat| normalized_line_chat(chat).ok());
+    let user = user_id.and_then(|user| {
+        normalize_line_user_like_id(user, "LINE source user id", MAX_LINE_COMPONENT_BYTES).ok()
+    });
+    line_audience_key(chat.as_ref(), user.as_deref())
+}
+
 fn normalized_line_chat(chat: &LineChat) -> Result<LineChat> {
     Ok(LineChat::new(
         chat.kind,

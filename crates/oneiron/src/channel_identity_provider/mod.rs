@@ -32,7 +32,7 @@ pub use self::inbound_types::{
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
-    line_audience_key,
+    line_audience_key, line_source_audience_key,
 };
 pub use self::line_chat_binding::{
     LINE_CHAT_OBSERVATION_PREDICATE, LineChatBindingOffer, LineChatObservation,
