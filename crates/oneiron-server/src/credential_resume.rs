@@ -6,15 +6,19 @@
 //! in by, whose own admission runs again: the facade's generated dispatch, or
 //! the MCP registration it named. A task's answer is never the credential;
 //! any failure refuses the call, and the engine ends it with one receipt.
+//!
+//! A managed vault's attested owner kept no slip (FIX 11063): his caller is
+//! built again as the owner the vault records as live now, and his console
+//! MCP call runs again on his own owner stream (FIX 5204).
 
 use std::sync::{Arc, Weak};
 
-use oneiron::authority::InvocationSlipBinding;
 use oneiron::claim::CallerLocality;
 use oneiron::memory::MemoryResult;
 use oneiron::runtime_hooks::verb::{
-    VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor,
-    VerbAskDrainPermit, VerbAskRefusal, VerbAskResumed, VerbAskSavedCall,
+    VerbAskCredentialCheck, VerbAskCredentialRef, VerbAskCredentialSource,
+    VerbAskCredentialWitness, VerbAskDoor, VerbAskDrainPermit, VerbAskRefusal, VerbAskResumed,
+    VerbAskSavedCall,
 };
 use serde_json::Value;
 
@@ -88,6 +92,23 @@ impl ServerVerbAskCredentialCheck {
                     drain,
                 ))
             }
+            VerbAskDoor::McpOwner { connection } => {
+                // Only the attested owner comes back by his own stream.
+                if !matches!(
+                    call.reference.instrument.source,
+                    VerbAskCredentialSource::AttestedOwner { .. }
+                ) {
+                    return Err(VerbAskRefusal::CredentialChanged);
+                }
+                let auth = kept_auth(&server, &call, None)?;
+                self.runtime.block_on(McpCallContext::resume_owner_verb_ask(
+                    &server,
+                    auth,
+                    &connection,
+                    call,
+                    drain,
+                ))
+            }
         }
     }
 }
@@ -98,14 +119,19 @@ impl VerbAskCredentialCheck for ServerVerbAskCredentialCheck {
         vault: &oneiron::Vault,
         txn: &heed::RoTxn<'_>,
         reference: &VerbAskCredentialRef,
-        _witness: &InvocationSlipBinding,
+        witness: &VerbAskCredentialWitness,
     ) -> bool {
+        if !witness.backs(&reference.instrument.source) {
+            return false;
+        }
         // A slip live in the ask's own write; the drain verifies the whole
-        // instrument again before anything runs.
+        // instrument again before anything runs. The attested owner keeps
+        // only his person: settlement checks his standing then.
         match reference.instrument.source {
-            VerbAskCredentialSource::Slip => vault
-                .capability_slip_id_is_live_in_txn(txn, &reference.instrument.slip)
+            VerbAskCredentialSource::Slip { slip, .. } => vault
+                .capability_slip_id_is_live_in_txn(txn, &slip)
                 .unwrap_or(false),
+            VerbAskCredentialSource::AttestedOwner { .. } => true,
         }
     }
 
@@ -121,18 +147,30 @@ impl VerbAskCredentialCheck for ServerVerbAskCredentialCheck {
 /// request was admitted on and nothing else, where the caller sat: the
 /// witness verified again in a current snapshot, the same slip in the same
 /// vault, and the same authority projected from it. `door` is the facade verb
-/// an invitee's slip is admitted at.
+/// an invitee's slip is admitted at. The attested owner's witness is the
+/// person the call was saved for, a human, and he is rebuilt as the vault's
+/// live owner now, never from a header or the host.
 fn kept_auth(
     server: &SyncServer,
     call: &VerbAskSavedCall,
     door: Option<&str>,
 ) -> Result<CoreAuth, VerbAskRefusal> {
+    let source = &call.reference.instrument.source;
+    if !call.witness.backs(source) {
+        return Err(VerbAskRefusal::CredentialChanged);
+    }
+    if let VerbAskCredentialSource::AttestedOwner { holder } = source
+        && (*holder != call.actor || call.class != oneiron::EdgeActorClass::Human)
+    {
+        return Err(VerbAskRefusal::CredentialChanged);
+    }
     let locality = if call.reference.on_device {
         CallerLocality::OnDevice
     } else {
         CallerLocality::OffDevice
     };
-    Ok(kept_instrument_auth(server, &call.reference.instrument, &call.witness, door)?.at(locality))
+    let witness = call.witness.slip();
+    Ok(kept_instrument_auth(server, &call.reference.instrument, witness, door)?.at(locality))
 }
 
 /// Why a connector call's registration no longer stands (OF-580 defaults).
