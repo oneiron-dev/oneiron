@@ -4,6 +4,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::task::JoinSet;
+
 use super::{build_cors_layer, should_warn_public_bind_without_auth, weak_auth_secret_warning};
 use crate::build_app;
 use crate::build_artifact_app;
@@ -21,7 +23,7 @@ mod workers;
 pub(crate) use self::hooks::hook_sandbox;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::hooks::spawn_fact_hooks;
-use self::page_seal::open_served_vault_anchored;
+pub(crate) use self::page_seal::open_served_vault_anchored;
 pub use self::page_seal::{OpenedServedVault, open_served_vault};
 pub(crate) use self::workers::start_desktop_workers;
 
@@ -212,7 +214,8 @@ pub(super) async fn serve_anchored(
         return Err(error);
     }
     // Ready and bound: a client on this host can find it now. The file goes
-    // when this returns, a clean stop or a late startup error alike.
+    // when serving stops and this returns; a startup error returned above,
+    // before it was written.
     #[cfg(unix)]
     let _registered =
         super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());
@@ -235,12 +238,15 @@ pub(super) async fn serve_anchored(
     // its one shared ledger (FIX 7650).
     floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
     let owner_judge = Arc::clone(&mesh_server);
+    // Each listener's connections are tasks of its set here (FIX 9261).
+    let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = crate::http_listener::serve_api_with_pool(
         listener,
         app,
         &pool,
         limits,
         owner_judge,
+        &mut api_http,
         api_stop,
     );
     let artifacts = crate::http_listener::serve_with_pool(
@@ -248,6 +254,7 @@ pub(super) async fn serve_anchored(
         artifact_app,
         &pool,
         limits,
+        &mut artifact_http,
         artifact_stop,
     );
     let serving = async {
@@ -266,6 +273,12 @@ pub(super) async fn serve_anchored(
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
     }
+    // Every connection closed, or the grace ran out and the race dropped the
+    // listeners with some still open. Those are ended and reaped here, as
+    // embedded serve does, so an upgrade one never finished gives back its
+    // place before the drain waits for the upgrades (FIX 9261).
+    api_http.shutdown().await;
+    artifact_http.shutdown().await;
     // Outside the grace: every upgraded socket and the calls it admitted end
     // before the device-sync connection, the mesh and the workers stop.
     stop::stop_serving(&mesh_server, mesh, device_sync, upgrades).await;

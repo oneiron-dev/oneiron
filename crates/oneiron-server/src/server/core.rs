@@ -608,9 +608,10 @@ impl SyncServer {
     /// ([`oneiron::Vault::admit_task_work`]): at once while fewer than
     /// `limits.task_work` run, else in a fair line, one caller's work after
     /// another's, each caller's oldest first. Crossing the bound asks its
-    /// OF-520 question. Work is never refused: past `queue_wait_timeout_ms`
-    /// it runs without a turn. Hold the turn until the work ends; take it
-    /// before the engine opens a transaction.
+    /// OF-520 question. Work is never refused: it keeps its place until its
+    /// turn comes, however long, and never runs without one (FIX 10015).
+    /// Hold the turn until the work ends; take it before the engine opens a
+    /// transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
         self.vault
             .admit_task_work_observed(caller, crate::api::admission_observer())

@@ -375,6 +375,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&sync_server),
             shutdown.clone(),
         );
+        // Its carrier as it stands, and the recipients it delivers later.
+        super::carrier_watch::spawn(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+        );
     }
 
     // Subscribed before the opening push reads the training setting, so a
@@ -651,6 +658,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         for worker in ladder_workers {
             worker.abort();
             let _ = worker.await;
+        }
+        // The scheduled backup pass in flight ends before exit; none starts
+        // after (FIX 6732).
+        if let Some(host) = &sync_server.owner_host {
+            host.resident_stopped().await;
         }
         // A backup before an idle reap ends before exit; none starts after.
         state.idle_backup.stopped().await;

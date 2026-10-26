@@ -215,11 +215,55 @@ pub enum EngineScan {
     /// The ancestor attempts one comm widen reach walk reads (once refused
     /// past 256).
     CommWidenAncestorRows,
+    /// The axes one confirmed project goal intake names, against its
+    /// resolved goal limit (once refused past it; shipped 32).
+    ProjectGoalAxes,
+    /// The preferences one confirmed project goal intake names, against its
+    /// resolved goal limit (once refused past it; shipped 64).
+    ProjectGoalPreferences,
+    /// One goal intake's goal or why, in bytes, against its resolved goal
+    /// limit (once refused past it; shipped 4096).
+    ProjectGoalTextBytes,
+    /// One goal intake's axis name, in bytes, against its resolved goal
+    /// limit (once refused past it; shipped 128).
+    ProjectGoalAxisNameBytes,
+    /// One goal intake's axis measure or bound, or preference field, in
+    /// bytes, against its resolved goal limit (once refused past it;
+    /// shipped 1024).
+    ProjectGoalDetailBytes,
+    /// One project body's board, roster, session or branch list (once
+    /// refused past 4096).
+    ProjectSideListEntries,
+    /// One project body's goal record axes (once refused past 128).
+    ProjectBodyGoalAxes,
+    /// The projects one project ancestry walk reads, or one body's direct
+    /// parents (once refused past 256).
+    ProjectAncestryRows,
+    /// The unanswered project cards one conversation or thread shows once a
+    /// new card is kept (once refused past 1).
+    ProjectOutstandingCards,
+    /// One project card's goal axes, board humans or starting skills (once
+    /// refused past 128).
+    ProjectProposalEntries,
+    /// The distinct views one parent-cycle member's worlds fold to, against
+    /// the resolved `cycle_worlds_max` (once withheld past it; shipped 64).
+    ProjectCycleWorlds,
+    /// The assignments one parent-cycle member's open states enumerate,
+    /// against the resolved `cycle_worlds_max` times its open states plus
+    /// one (once withheld past it; shipped factor 64).
+    ProjectCycleAssignments,
+    /// The work one parent-cycle decision spends, against the resolved
+    /// `cycle_worlds_max` times 64 times its members and held rows (once
+    /// withheld past it; shipped factor 64 × 64).
+    ProjectJointWork,
+    /// One project card's text, list entry, joined list or fallback text,
+    /// in bytes (once refused past 16 KiB).
+    ProjectProposalTextBytes,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 83] = [
+    pub const ALL: [Self; 97] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -303,6 +347,20 @@ impl EngineScan {
         Self::AttendeeIdentityKeyBytes,
         Self::DeclaredSymbolBytes,
         Self::CommWidenAncestorRows,
+        Self::ProjectGoalAxes,
+        Self::ProjectGoalPreferences,
+        Self::ProjectGoalTextBytes,
+        Self::ProjectGoalAxisNameBytes,
+        Self::ProjectGoalDetailBytes,
+        Self::ProjectSideListEntries,
+        Self::ProjectBodyGoalAxes,
+        Self::ProjectAncestryRows,
+        Self::ProjectOutstandingCards,
+        Self::ProjectProposalEntries,
+        Self::ProjectCycleWorlds,
+        Self::ProjectCycleAssignments,
+        Self::ProjectJointWork,
+        Self::ProjectProposalTextBytes,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -400,6 +458,20 @@ impl EngineScan {
             Self::AttendeeIdentityKeyBytes => "attendee_identity_key_bytes",
             Self::DeclaredSymbolBytes => "declared_symbol_bytes",
             Self::CommWidenAncestorRows => "comm_widen_ancestor_rows",
+            Self::ProjectGoalAxes => "project_goal_axes",
+            Self::ProjectGoalPreferences => "project_goal_preferences",
+            Self::ProjectGoalTextBytes => "project_goal_text_bytes",
+            Self::ProjectGoalAxisNameBytes => "project_goal_axis_name_bytes",
+            Self::ProjectGoalDetailBytes => "project_goal_detail_bytes",
+            Self::ProjectSideListEntries => "project_side_list_entries",
+            Self::ProjectBodyGoalAxes => "project_body_goal_axes",
+            Self::ProjectAncestryRows => "project_ancestry_rows",
+            Self::ProjectOutstandingCards => "project_outstanding_cards",
+            Self::ProjectProposalEntries => "project_proposal_entries",
+            Self::ProjectCycleWorlds => "project_cycle_worlds",
+            Self::ProjectCycleAssignments => "project_cycle_assignments",
+            Self::ProjectJointWork => "project_joint_work",
+            Self::ProjectProposalTextBytes => "project_proposal_text_bytes",
         }
     }
 
@@ -444,6 +516,20 @@ impl EngineScan {
             Self::AttendeeIdentityKeyBytes => 128,
             Self::DeclaredSymbolBytes => 1024,
             Self::CommWidenAncestorRows => 256,
+            Self::ProjectGoalAxes => 32,
+            Self::ProjectGoalPreferences => 64,
+            Self::ProjectGoalTextBytes | Self::ProjectSideListEntries => 4096,
+            Self::ProjectGoalAxisNameBytes
+            | Self::ProjectBodyGoalAxes
+            | Self::ProjectProposalEntries => 128,
+            Self::ProjectGoalDetailBytes => 1024,
+            Self::ProjectAncestryRows => 256,
+            Self::ProjectOutstandingCards => 1,
+            // The cycle rows ask at their resolved formulas; these are the
+            // formulas' shipped factors.
+            Self::ProjectCycleWorlds | Self::ProjectCycleAssignments => 64,
+            Self::ProjectJointWork => 64 * 64,
+            Self::ProjectProposalTextBytes => 16 * 1024,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -533,6 +619,20 @@ impl EngineScan {
             Self::AttendeeIdentityKeyBytes => 108,
             Self::DeclaredSymbolBytes => 109,
             Self::CommWidenAncestorRows => 110,
+            Self::ProjectGoalAxes => 111,
+            Self::ProjectGoalPreferences => 112,
+            Self::ProjectGoalTextBytes => 113,
+            Self::ProjectGoalAxisNameBytes => 114,
+            Self::ProjectGoalDetailBytes => 115,
+            Self::ProjectSideListEntries => 116,
+            Self::ProjectBodyGoalAxes => 117,
+            Self::ProjectAncestryRows => 118,
+            Self::ProjectOutstandingCards => 119,
+            Self::ProjectProposalEntries => 120,
+            Self::ProjectCycleWorlds => 121,
+            Self::ProjectCycleAssignments => 122,
+            Self::ProjectJointWork => 123,
+            Self::ProjectProposalTextBytes => 124,
         }]
     }
 }
