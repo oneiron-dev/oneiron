@@ -2,6 +2,7 @@
 //! marker, state and outcome, payload hash and intent identity.
 
 use super::super::dispatch::derive_intent_id;
+use super::super::payload;
 use super::super::types::{
     IntentLedgerError, IntentLedgerRecord, IntentLedgerResult, IntentState,
     OUTBOUND_BINDING_VERSION, RecordedOutboundOutcome,
@@ -73,7 +74,17 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
             "capability-bound intent is missing authorization binding",
         ));
     }
-    approval::validate_admitted_approval(record)?;
+    // A sealed request is checked when it opens, an erased one never again
+    // (FIX 9283, 9372): the stored form keeps its digest, not its hash.
+    let readable = payload::readable_payload(record.payload())?;
+    if let Some(payload) = readable {
+        approval::validate_admitted_approval(record, payload)?;
+    }
+    if record.state == IntentState::Pending && payload::payload_erased(record.payload())? {
+        return Err(IntentLedgerError::InvalidRecord(
+            "an erased outbound intent cannot stay pending",
+        ));
+    }
     if record.budget_accounting.key_ref.is_none()
         && (!record.budget_accounting.matched_rows.is_empty()
             || record.budget_accounting.sends_debit != 0)
@@ -118,7 +129,7 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
             "outbound intent state and recorded_outcome disagree",
         ));
     }
-    if hash_frozen_payload(record.payload()) != record.payload_hash {
+    if readable.is_some_and(|payload| hash_frozen_payload(payload) != record.payload_hash) {
         return Err(IntentLedgerError::InvalidRecord(
             "outbound intent payload hash mismatch",
         ));

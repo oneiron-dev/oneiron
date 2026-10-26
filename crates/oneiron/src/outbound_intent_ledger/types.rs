@@ -11,10 +11,12 @@ use crate::error::Error;
 
 /// Current schema version for device-local outbound intent rows.
 ///
-/// v3 adds the required `capability_provenance` field (ONE-1885). These rows are
-/// device-local and pre-release, so v3 is read exclusively: there is no
+/// v4 keeps the payload in its stored form: bare, or an envelope that names
+/// the admitting actor and keeps the request clear, sealed under the row's
+/// own custody key, or erased (FIX 9283, 9372, 2328). These rows are
+/// device-local and pre-release, so v4 is read exclusively: there is no
 /// old-schema reader.
-pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 3;
+pub const INTENT_LEDGER_SCHEMA_VERSION: u64 = 4;
 
 /// Binding format emitted and accepted by this greenfield ledger.
 pub const OUTBOUND_BINDING_VERSION: u64 = 2;
@@ -186,6 +188,10 @@ pub enum IntentEscalationReason {
     /// The owner set the tool to `never allow` (DEC-0006) before this
     /// request was sent: it stops, keeping what it knew of its delivery.
     ConnectorSlateNeverAllow,
+    /// The actor that admitted this send was erased before it settled: its
+    /// request is gone and it is never sent again, keeping what it knew of
+    /// its delivery (FIX 9283).
+    ActorErased,
 }
 
 impl IntentEscalationReason {
@@ -201,6 +207,7 @@ impl IntentEscalationReason {
             Self::DedupeSuppressed => "dedupe_suppressed",
             Self::OwnerStopped => "owner_stopped",
             Self::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
+            Self::ActorErased => "actor_erased",
         }
     }
 
@@ -216,6 +223,7 @@ impl IntentEscalationReason {
             "dedupe_suppressed" => Some(Self::DedupeSuppressed),
             "owner_stopped" => Some(Self::OwnerStopped),
             "connector_key_slate_never_allow" => Some(Self::ConnectorSlateNeverAllow),
+            "actor_erased" => Some(Self::ActorErased),
             _ => None,
         }
     }
@@ -524,7 +532,8 @@ pub struct IntentLedgerRecord {
 }
 
 impl IntentLedgerRecord {
-    /// Exact persisted bytes used for recovery sends.
+    /// Exact frozen bytes used for recovery sends: the clear request of a row
+    /// a read door opened, else its stored form (FIX 9372).
     #[must_use]
     pub(crate) fn payload(&self) -> &[u8] {
         &self.payload

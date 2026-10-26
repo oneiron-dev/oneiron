@@ -1,6 +1,7 @@
 //! Storage-transaction reads, inserts, transitions, and the admission-gate validator.
 
 use super::codec::decode_record;
+use super::payload::open_payload_in_txn;
 use super::types::{
     IntentEscalationReason, IntentId, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult,
     IntentState, RecordedOutboundOutcome,
@@ -61,8 +62,9 @@ impl SideKey for AttemptCallKey {
 /// Reads and fully decodes one ledger row, checking that the row found under `id` actually
 /// carries that id (the typed table has no key to check against inside the value codec, so the
 /// check happens here). A decode failure surfaces as [`IntentLedgerError::InvalidRecord`], same
-/// as every other row-corruption path in this module.
-fn get_ledger_record(
+/// as every other row-corruption path in this module. The row comes back in its stored form;
+/// a door that hands it to a caller opens it ([`super::payload`]).
+pub(super) fn get_ledger_record(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &[u8; 32],
@@ -94,7 +96,22 @@ pub(crate) fn read_intent_record(
     read_intent_record_in_txn(vault, &rtxn, id)
 }
 
+/// One row by id, its attempt binding checked, opened for its caller.
 pub(crate) fn read_intent_record_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &[u8; 32],
+) -> IntentLedgerResult<Option<IntentLedgerRecord>> {
+    let Some(mut record) = read_stored_intent_record_in_txn(vault, txn, id)? else {
+        return Ok(None);
+    };
+    open_payload_in_txn(vault, txn, &mut record)?;
+    Ok(Some(record))
+}
+
+/// [`read_intent_record_in_txn`] in the row's stored form, for a reader of its state alone or
+/// a writer that puts it back.
+pub(super) fn read_stored_intent_record_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &[u8; 32],
@@ -181,7 +198,7 @@ pub(super) fn decode_record_in_txn(
     key: &[u8],
     raw: &[u8],
 ) -> IntentLedgerResult<IntentLedgerRecord> {
-    let record = decode_record(key, raw)?;
+    let mut record = decode_record(key, raw)?;
     check_intent_attempt_format(vault, txn)?;
     let indexed_id = INTENT_ATTEMPT_INDEX.get_bytes(
         &vault.store,
@@ -196,6 +213,7 @@ pub(super) fn decode_record_in_txn(
             "outbound intent is missing its unique attempt binding",
         ));
     }
+    open_payload_in_txn(vault, txn, &mut record)?;
     Ok(record)
 }
 
@@ -466,9 +484,13 @@ pub(crate) fn record_possible_delivery(
             "possible delivery requires outcome-free Pending",
         ));
     }
-    if !record.delivery_uncertain {
+    let marked = !record.delivery_uncertain;
+    if marked {
         record.delivery_uncertain = true;
         LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    }
+    open_payload_in_txn(vault, &wtxn, &mut record)?;
+    if marked {
         wtxn.commit().map_err(Error::from)?;
     } else {
         drop(wtxn);
@@ -501,7 +523,7 @@ pub(crate) fn reconcile_connector_intent_in_txn(
         record.state = IntentState::Abandoned;
         record.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(reason));
         record.updated_ms = now_ms.max(record.created_ms);
-        LEDGER.put(&vault.store, wtxn, &record.id, &record)?;
+        put_ledger_record(vault, wtxn, &record)?;
     }
     Ok(Some(super::resolution::IntentResolution::from_record(
         &record,
@@ -532,8 +554,7 @@ pub(crate) fn renew_admission_in_txn(
 ) -> IntentLedgerResult<()> {
     let mut renewed = record.clone();
     renewed.updated_ms = now_ms.max(record.updated_ms);
-    LEDGER.put(&vault.store, wtxn, &renewed.id, &renewed)?;
-    Ok(())
+    put_ledger_record(vault, wtxn, &renewed)
 }
 
 pub(crate) fn begin_definite_non_delivery_retry(
@@ -581,6 +602,7 @@ fn update_pending_recorded_outcome(
     }
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, &mut wtxn, &id, &record)?;
+    open_payload_in_txn(vault, &wtxn, &mut record)?;
     wtxn.commit().map_err(Error::from)?;
     let synced = force_sync(vault);
     // A takeover may have abandoned the row: the owner's waiting shed looks
@@ -609,14 +631,16 @@ fn transition_record_with_outcome_and(
     also: impl FnOnce(&mut heed::RwTxn<'_>, &IntentLedgerRecord),
 ) -> IntentLedgerResult<IntentLedgerRecord> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let record =
+    let mut record =
         match transition::transition_record_in_txn(vault, &mut wtxn, id, next, outcome, now_ms)? {
             transition::Transitioned::Moved(record) => record,
-            transition::Transitioned::Replayed(record) => {
+            transition::Transitioned::Replayed(mut record) => {
+                open_payload_in_txn(vault, &wtxn, &mut record)?;
                 drop(wtxn);
                 return Ok(record);
             }
         };
+    open_payload_in_txn(vault, &wtxn, &mut record)?;
     also(&mut wtxn, &record);
 
     wtxn.commit().map_err(Error::from)?;
@@ -625,6 +649,39 @@ fn transition_record_with_outcome_and(
     vault.wake_owner_shed();
     synced?;
     Ok(record)
+}
+
+/// Writes `record`, which a read door may have opened, back over its row in the stored form the
+/// row already keeps: a row's payload is written once, at admission, and only an erase
+/// rewrites it.
+fn put_ledger_record(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: &IntentLedgerRecord,
+) -> IntentLedgerResult<()> {
+    let stored = get_ledger_record(vault, &*wtxn, &record.id)?.ok_or(
+        IntentLedgerError::InvalidRecord("outbound intent update target is missing"),
+    )?;
+    let mut kept = record.clone();
+    kept.payload = stored.payload;
+    LEDGER.put(&vault.store, wtxn, &record.id, &kept)?;
+    Ok(())
+}
+
+/// Writes an actor's erase of `record` past the side-row wall (FIX 9283): what
+/// [`crate::side_table::ErasedForm`] leaves of it.
+pub(super) fn put_erased_record(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    record: IntentLedgerRecord,
+) -> crate::Result<()> {
+    let id = record.id;
+    LEDGER.put_erased(
+        &vault.store,
+        wtxn,
+        &id,
+        crate::side_table::Erased::of(record)?,
+    )
 }
 
 pub(crate) fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {
