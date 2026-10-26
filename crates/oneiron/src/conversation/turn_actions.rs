@@ -473,6 +473,7 @@ impl Memory<'_> {
             recipients: Vec::new(),
             advance: false,
             kind: crate::registry::ENTITY_TYPE_TURN,
+            containing_turn: None,
             occurred: crate::TimeRange { start: at, end: at },
             learned_at: at,
             body,

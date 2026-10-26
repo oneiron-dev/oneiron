@@ -69,8 +69,8 @@ pub(crate) use reply::{
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
-    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope,
-    ScopePath, ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan,
+    ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{append_at_in_txn, append_in_txn, put_thread_event_in_txn};
 

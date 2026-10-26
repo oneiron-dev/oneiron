@@ -47,11 +47,16 @@ impl Memory<'_> {
         threads: &BTreeSet<EntityId>,
         members: &BTreeSet<String>,
     ) -> MemoryResult<BTreeSet<EntityId>> {
-        let off_room = {
-            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
-            agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?
-        };
         let now = crate::unix_seconds_now();
+        // The caller's own thread settings, resolved before any reader is
+        // rebound to the room or a thread.
+        let (off_room, fold) = {
+            let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+            (
+                agent_off_room_in_txn(self.vault(), &txn, room, self.actor())?,
+                liveness::direct_thread_fold_in(self.vault(), &txn, self.actor(), now)?,
+            )
+        };
         if !off_room {
             // Task and wait reads run inside the room, as the room's own fold
             // reads them.
@@ -63,7 +68,7 @@ impl Memory<'_> {
                 room,
                 threads,
                 members,
-                now,
+                fold,
             );
         }
         let mut ended = BTreeSet::new();
@@ -72,7 +77,7 @@ impl Memory<'_> {
             let projection = self.for_thread_projection(room, *thread)?;
             let memory = projection.memory();
             let one = BTreeSet::from([*thread]);
-            ended.extend(ended_in(memory, turns.placed(), room, &one, members, now)?);
+            ended.extend(ended_in(memory, turns.placed(), room, &one, members, fold)?);
         }
         Ok(ended)
     }
@@ -127,7 +132,10 @@ impl Memory<'_> {
         let members: BTreeSet<String> = members.iter().map(EntityId::to_hex).collect();
         let turns = history::answer_closed(turns);
         let roots = liveness::thread_root_map(&turns)?;
-        let now = crate::unix_seconds_now();
+        let fold = {
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            liveness::direct_thread_fold_in(vault, &txn, self.actor(), crate::unix_seconds_now())?
+        };
         let mut ended = BTreeSet::new();
         for thread in readable {
             if roots.get(&thread) != Some(&thread) {
@@ -157,7 +165,7 @@ impl Memory<'_> {
                 room,
                 &one,
                 &members,
-                now,
+                fold,
             )?);
         }
         Ok(ended)
@@ -206,15 +214,15 @@ fn admitted_records(
 }
 
 /// The fold itself: of `threads`, those `turns` hold whose direct-by-handle
-/// projection lists them quiet, with the tasks bound to them read through
-/// `memory` for the room's `members` at `now`.
+/// projection under the caller's `fold` lists them quiet, with the tasks
+/// bound to them read through `memory` for the room's `members` at its time.
 fn ended_in(
     memory: &Memory<'_>,
     turns: &[RoomTurn],
     room: EntityId,
     threads: &BTreeSet<EntityId>,
     members: &BTreeSet<String>,
-    now: u64,
+    fold: liveness::ThreadFold,
 ) -> MemoryResult<BTreeSet<EntityId>> {
     let selected: BTreeMap<EntityId, EntityId> = liveness::thread_root_map(turns)?
         .into_iter()
@@ -224,7 +232,8 @@ fn ended_in(
         return Ok(BTreeSet::new());
     }
     let bindings = liveness::thread_task_bindings(turns, &selected)?;
-    let tasks = crate::task_verb::room_thread_tasks(memory, &selected, &bindings, members, now)?;
+    let tasks =
+        crate::task_verb::room_thread_tasks(memory, &selected, &bindings, members, fold.now)?;
     let edits = {
         let txn = memory.vault().store.env.read_txn().map_err(Error::from)?;
         super::audience_events::audience_edit_turns_in(memory.vault(), &txn, turns)?
@@ -236,7 +245,7 @@ fn ended_in(
             .filter(|task| task.thread == *thread)
             .cloned()
             .collect();
-        if liveness::thread_is_live(turns, &edits, &held, room, *thread, now)? == Some(false) {
+        if liveness::thread_is_live(turns, &edits, &held, room, *thread, fold)? == Some(false) {
             ended.insert(*thread);
         }
     }

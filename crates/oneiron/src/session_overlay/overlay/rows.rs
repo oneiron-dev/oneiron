@@ -11,6 +11,7 @@ use super::super::keyspace::{
 use super::super::snapshot::OverlaySnapshot;
 use super::ACTIVE_SEGMENT;
 use super::lifecycle::SessionOverlay;
+use super::retained::{mutation_heap, staged_entry_heap};
 use crate::error::OffRecordError;
 
 impl SessionOverlay {
@@ -114,6 +115,62 @@ impl SessionOverlay {
         self.stage_mutation(mutation)
     }
 
+    /// Stages `mutations` as one group: their net growth is preflighted once
+    /// against the room's budget, over the active segment's view with each
+    /// earlier mutation of the group applied, and only then does each
+    /// stage. A refused group stages none of them.
+    pub(in crate::session_overlay) fn stage_mutation_group(
+        self: &Arc<Self>,
+        mutations: Vec<OverlayMutation>,
+    ) -> Result<()> {
+        for mutation in &mutations {
+            if let OverlayMutation::Put {
+                keyspace,
+                key,
+                value,
+            } = mutation
+                && !unbudgeted_row(*keyspace, key)
+                && !self.holds_bookkeeping_row(*keyspace, key)
+            {
+                self.reject_unbudgetable_payload(key, value)?;
+            }
+        }
+        ACTIVE_SEGMENT.with(|slot| {
+            let slot = slot.borrow();
+            let Some(segment) = slot.as_ref() else {
+                return Err(Error::InvariantViolation(
+                    "session overlay write requires an active txn segment",
+                ));
+            };
+            if !Arc::ptr_eq(&segment.overlay, self) {
+                return Err(Error::InvariantViolation(
+                    "the active txn segment belongs to another session overlay",
+                ));
+            }
+            let current_bytes = segment
+                .preview
+                .bytes_used
+                .checked_add(segment.journal_bytes)
+                .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
+            let mut projected = segment.preview.as_ref().clone();
+            for mutation in &mutations {
+                projected = project_mutation(&projected, mutation)?;
+            }
+            self.ensure_mutation_budget(
+                current_bytes,
+                segment.preview.bytes_used,
+                projected.bytes_used,
+            )?;
+            let incoming = mutations.iter().map(mutation_heap).sum::<usize>();
+            self.charge_to(self.retained_with(Some(segment), incoming));
+            Ok(())
+        })?;
+        for mutation in mutations {
+            self.stage_mutation(mutation)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn clear(self: &Arc<Self>, keyspace: OverlayKeyspace) -> Result<()> {
         let mutation = OverlayMutation::Clear { keyspace };
         self.preflight_segment_mutation(&mutation)?;
@@ -162,6 +219,9 @@ impl SessionOverlay {
                 .checked_add(segment.journal_bytes)
                 .ok_or(Error::ArithmeticOverflow("overlay staged byte count"))?;
             self.ensure_budget(current_bytes, incoming_bytes)?;
+            // Charged at what the room retains before the entry is kept,
+            // never refused or waited on (FIX 5991, 10104).
+            self.charge_to(self.retained_with(Some(&*segment), staged_entry_heap(&entry)));
             segment.journal.push(entry);
             segment.journal_bytes = segment.journal_bytes.checked_add(incoming_bytes).ok_or(
                 Error::ArithmeticOverflow("overlay staged journal byte count"),
@@ -216,7 +276,12 @@ impl SessionOverlay {
                 current_bytes,
                 segment.preview.bytes_used,
                 projected.bytes_used,
-            )
+            )?;
+            // Charged at what the room retains before the copy is made, never
+            // refused or waited on; the publish settles it to what the
+            // overlay retains then (FIX 5991, 10104).
+            self.charge_to(self.retained_with(Some(segment), mutation_heap(mutation)));
+            Ok(())
         })
     }
 
@@ -265,9 +330,6 @@ impl SessionOverlay {
                 attempted_bytes,
             }));
         }
-        // Charged before the copy is made, never refused or waited on; the
-        // publish settles it to what the overlay holds (FIX 5991).
-        self.charge_to(attempted_bytes);
         Ok(())
     }
 

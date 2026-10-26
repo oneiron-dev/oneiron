@@ -89,12 +89,20 @@ impl RoomRegenerationPermit {
             crate::memory::sole_edge_target(&vault.store, txn, message, kind, "message")
                 .map_err(|_| invalid())
         };
+        // The whole lineage is read, however long (rule 5); a cycle refuses.
+        let mut count = crate::scan_check::ScanCount::start(
+            &vault.store,
+            txn,
+            crate::scan_check::EngineScan::RoomRetryLineageRows,
+            action.message.as_bytes(),
+        )?;
         let mut cursor = action.message;
         let mut seen = BTreeSet::new();
         loop {
-            if !seen.insert(cursor) || seen.len() > crate::limits::MAX_ANCESTOR_DEPTH {
+            if !seen.insert(cursor) {
                 return Err(invalid());
             }
+            count.row();
             if !live_entity_row_in_txn(&vault.store, txn, &cursor)?.is_live()
                 || edge(&cursor, EdgeKind::AuthoredBy)? != Some(actor)
                 || edge(&cursor, EdgeKind::BelongsTo)? != Some(action.conversation)
@@ -111,6 +119,7 @@ impl RoomRegenerationPermit {
                 return Err(invalid());
             }
             if turn == slot {
+                count.defer(&vault.store);
                 return Ok(Self { source: old, slot });
             }
             cursor = edge(&cursor, EdgeKind::Regenerates)?.ok_or_else(invalid)?;
@@ -197,7 +206,7 @@ pub(crate) fn admit_witness(
         // in. An ordinary room keeps no room row, so its turn's first body
         // keeps its messages' quotes by citing MESSAGE: they are born with
         // the TURN, which stays an opaque one answering its first quoted
-        // message's TURN, no thread, no `Parent`. A retried message carries
+        // message in that message's TURN, no thread, no `Parent`. A retried message carries
         // its own kept quote again; a stored TURN takes no new one.
         if quoting {
             let now = vault.store.clock.now_recorded_at();
@@ -237,13 +246,15 @@ pub(crate) fn admit_witness(
                 None if stored_body.is_some() => return Err(invalid()),
                 None => {
                     proven.pin_in_txn(vault, txn)?;
-                    target.get_or_insert(proven.target_turn());
+                    target.get_or_insert((proven.message(), proven.target_turn()));
                     quotes.insert(*id, proven.metadata());
                 }
             }
         }
         let quoted = match target {
-            Some(target) => Some(QuotedReply::ordinary_in_txn(vault, txn, target, quotes)?),
+            Some(target) => Some(QuotedReply::ordinary_in_txn(
+                vault, txn, room, target, quotes,
+            )?),
             None => None,
         };
         super::offer_activity::witness_in_txn(vault, txn, writer, room, input, messages)?;
@@ -284,9 +295,15 @@ pub(crate) fn admit_witness(
         }
         if let Some(value) = metadata.and_then(|m| m.get("room_mentions")) {
             let handles = value.as_array().ok_or_else(invalid)?;
-            if handles.len() > 256 {
-                return Err(invalid());
-            }
+            // Every mention is validated and kept, however many (rule 5).
+            let mut count = crate::scan_check::ScanCount::start(
+                &vault.store,
+                txn,
+                crate::scan_check::EngineScan::RoomMentions,
+                room.as_bytes(),
+            )?;
+            count.rows(handles.len());
+            count.defer(&vault.store);
             for handle in handles {
                 let handle = handle.as_str().ok_or_else(invalid)?;
                 // Unknown mentions fail closed rather than opening the turn
@@ -309,12 +326,19 @@ pub(crate) fn admit_witness(
     // the same thread_of fact the room index uses to keep HEAD on the trunk;
     // neither an omitted metadata field nor a nested reply may advance HEAD.
     if let Some(parent) = reply_to {
+        let mut count = crate::scan_check::ScanCount::start(
+            &vault.store,
+            txn,
+            crate::scan_check::EngineScan::RoomLinkWalkRows,
+            room.as_bytes(),
+        )?;
         let mut cursor = Some(parent);
         let mut seen = BTreeSet::new();
         while let Some(id) = cursor {
-            if !seen.insert(id) || seen.len() > 100_000 {
+            if !seen.insert(id) {
                 return Err(invalid());
             }
+            count.row();
             let ancestor = turn_in(vault, txn, id)?;
             if ancestor.room_id != room.to_hex() {
                 return Err(invalid());
@@ -333,6 +357,7 @@ pub(crate) fn admit_witness(
                 .map(EntityId::from_hex)
                 .transpose()?;
         }
+        count.defer(&vault.store);
     }
     // The participation gate (OF-529): the thread this turn lands in is its
     // root, and a person's turn is its join there.
@@ -490,7 +515,8 @@ pub(crate) fn admit_witness(
     // new message on a stored turn adds its own. A trunk turn's quotes read
     // from the trunk alone and its TURN stays opaque and unchained, so the
     // room's DAG keeps its one trunk root; a thread reply minted with quotes
-    // is a DAG thread record answering its first quoted message's TURN.
+    // is a DAG thread record answering its first quoted message in that
+    // message's TURN (FIX 9771).
     let parent = match thread_of {
         Some(anchor) if quoting => Some(dag_parent_in_txn(
             vault,
@@ -514,7 +540,7 @@ pub(crate) fn admit_witness(
             continue;
         };
         let proven = ProvenRoomQuote::prove_in_txn(vault, txn, room, parent, writer, quote, *id)?;
-        target.get_or_insert(proven.target_turn());
+        target.get_or_insert((proven.message(), proven.target_turn()));
         match kept {
             Some(stored_quote) => proven.require_stored_in_txn(vault, txn, &stored_quote)?,
             None if vault.get_entity_type_in_txn(txn, id)?.is_some() => return Err(invalid()),
@@ -633,19 +659,30 @@ fn dag_parent_in_txn(
     anchor: EntityId,
     reply_to: EntityId,
 ) -> Result<EntityId> {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::RoomLinkWalkRows,
+        anchor.as_bytes(),
+    )?;
     let mut cursor = reply_to;
     let mut seen = BTreeSet::new();
     while cursor != anchor
         && !crate::conversation_dag::is_thread_record(&vault.store, txn, &cursor)?
     {
-        if !seen.insert(cursor) || seen.len() > 100_000 {
+        if !seen.insert(cursor) {
             return Err(invalid());
         }
+        count.row();
         match turn_in(vault, txn, cursor)?.reply_to {
             Some(parent) => cursor = EntityId::from_hex(&parent)?,
-            None => return Ok(anchor),
+            None => {
+                count.defer(&vault.store);
+                return Ok(anchor);
+            }
         }
     }
+    count.defer(&vault.store);
     Ok(cursor)
 }
 

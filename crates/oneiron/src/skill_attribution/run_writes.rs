@@ -69,6 +69,17 @@ impl RunWriteToken {
         })
     }
 
+    /// The shared allocation this token names and the heap bytes it holds:
+    /// the lease's counts and fields, and its owner at capacity. Tokens that
+    /// share one lease name one allocation, so a holder that keeps many
+    /// counts it once.
+    pub(crate) fn heap_allocation(&self) -> (usize, usize) {
+        let bytes = (2 * std::mem::size_of::<usize>())
+            .saturating_add(std::mem::size_of::<RunLease>())
+            .saturating_add(self.0.owner.capacity());
+        (Arc::as_ptr(&self.0) as usize, bytes)
+    }
+
     pub(super) fn attempt(&self) -> AttemptId {
         self.0.attempt
     }

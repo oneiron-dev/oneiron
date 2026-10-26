@@ -12,6 +12,13 @@
 //! deletion mark, stale mark or withdrawn pin is written: each would drop
 //! the edit from the fold as a delete does.
 //!
+//! # Receipt
+//!
+//! A privacy erase of an edit writes, in its write, a content-free erase
+//! receipt naming the edit, and owes the erasure sweep the compaction of the
+//! window carrying its earlier revisions; the receipt completes once that
+//! settles (FIX 10234). No hard erase runs for the live edit.
+//!
 //! # Erased people
 //!
 //! An actor's erase and a room's erase of one of its people rewrite every
@@ -59,12 +66,20 @@ pub(crate) fn erase_audience_edit(
 /// [`erase_audience_edit`] with the actor a hold's refusal names read in
 /// the write itself, by `reverify` as it re-proves the erase there. `None`
 /// from it cancels the erase, the edit left as it is (FIX 6337); `None`
-/// from this, when `id` is no such edit, is never a cancelled one.
+/// from this, when `id` is no such edit, is never a cancelled one. The
+/// erase's receipt lands in the same write (FIX 10234), signed by this
+/// device's key, loaded first (P6c); with no key to sign, the edit is
+/// erased as before, with no receipt.
 fn erase_edit_as(
     vault: &Vault,
     id: &EntityId,
     reverify: impl Fn(&heed::RoTxn<'_>) -> Result<Option<HoldActor>>,
 ) -> Result<Option<ConfirmedEraseOutcome>> {
+    let edit = {
+        let txn = vault.store.env.read_txn()?;
+        kept_root_in(&vault.store, &txn, id)?.is_some()
+    };
+    let signs = edit && vault.prepare_install_signing_logged();
     vault.with_write_txn_grouped(|txn| {
         if kept_root_in(&vault.store, txn, id)?.is_none() {
             return Ok(None);
@@ -72,6 +87,10 @@ fn erase_edit_as(
         let Some(actor) = reverify(txn)? else {
             return Ok(Some(ConfirmedEraseOutcome::Cancelled));
         };
+        let principal = actor
+            .id
+            .as_deref()
+            .and_then(|id| EntityId::from_hex(id).ok());
         vault
             .store
             .reject_legal_holds_in_txn(txn, &[*id], &actor.privacy(true))?;
@@ -79,13 +98,23 @@ fn erase_edit_as(
             .ok_or(Error::CorruptedIndex("thread audience edit body"))?;
         let erased = erased_here_in(vault, txn, binding.room, held.erased())?;
         rewrite_audience_edit_in_txn(vault, txn, id, &erased)?;
-        Ok(Some(ConfirmedEraseOutcome::Completed(
+        let outcome = if signs {
+            let requested_at = vault.store.clock.now_recorded_at();
+            vault.record_audience_edit_erase_in_txn(
+                txn,
+                id,
+                principal,
+                crate::deletion::DeleteReason::GdprDelete,
+                requested_at,
+            )?
+        } else {
             DeleteEntityOutcome {
                 existed: true,
                 receipt_id: None,
                 sweep_key: None,
-            },
-        )))
+            }
+        };
+        Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))
     })
 }
 
@@ -230,7 +259,7 @@ impl Memory<'_> {
     /// The owner's confirmed erase of `record` (FIX 5906): an audience edit
     /// its live root keeps is erased as a privacy erase leaves it
     /// ([`erase_audience_edit`]), the owner's proof re-proved in its write
-    /// and a hold placed since refusing it, with no receipt; any other
+    /// and a hold placed since refusing it, with its erase receipt; any other
     /// record goes through the owner delete rail, the owner's proof
     /// re-proved in each of its writes before publication (FIX 9781). A
     /// shared vault with two or more Owners never reaches here: its erase
@@ -249,7 +278,9 @@ impl Memory<'_> {
             Some(outcome) => Ok(DeleteReceipt {
                 existed: outcome.existed,
                 reason: reason.as_str().to_owned(),
-                receipt_ref: None,
+                receipt_ref: outcome
+                    .receipt_id
+                    .map(|receipt| format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
             }),
             None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),

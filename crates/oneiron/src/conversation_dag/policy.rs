@@ -65,9 +65,9 @@ pub(super) fn open_append<'m>(
 }
 
 /// The typed refs an append names, each at its pointer: the conversation,
-/// the parent (a thread reply's is the door's, checked once chosen), the
-/// reply target, the quoted MESSAGE, the session, the thread's trunk and
-/// every recipient. Ids are typed; no body field or prose is read as a ref.
+/// the parent (a thread reply's is the door's, checked once chosen), a
+/// MESSAGE's containing TURN, the reply target, the quoted MESSAGE, the
+/// session, the thread's trunk and every recipient. Ids are typed; no body field or prose is read as a ref.
 pub(crate) fn append_references(
     input: &AppendRecord,
     trunk: Option<EntityId>,
@@ -77,6 +77,9 @@ pub(crate) fn append_references(
         && let Some(parent) = input.parent
     {
         refs.push(("/parent".to_owned(), parent));
+    }
+    if let Some(turn) = input.containing_turn {
+        refs.push(("/containing_turn".to_owned(), turn));
     }
     if let Some(reply_to) = input.reply_to {
         refs.push(("/reply_to".to_owned(), reply_to));

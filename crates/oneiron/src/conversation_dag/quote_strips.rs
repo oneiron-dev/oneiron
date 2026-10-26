@@ -44,7 +44,8 @@ pub struct ReplyStripsRequest {
     /// citing MESSAGE, or a native append's TURN.
     #[serde(default)]
     pub after: Option<String>,
-    /// Strips per page, 1..=256 (absent: 256).
+    /// Strips per page, positive (absent: 256). A page holds at most 256;
+    /// the rest follow through `next_after`.
     #[serde(default)]
     pub limit: Option<usize>,
 }
@@ -421,13 +422,29 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
-        let limit = request.limit.unwrap_or(PAGE_LIMIT);
-        if limit == 0 || limit > PAGE_LIMIT {
+        let requested = request.limit.unwrap_or(PAGE_LIMIT);
+        if requested == 0 {
             return Err(MemoryError::bad_request_with(
-                "reply strip limit must be 1..=256",
+                "reply strip limit must be positive",
                 &[],
             ));
         }
+        // A larger ask is served a page at a time through `next_after`; the
+        // ask itself is counted against its row (rule 5).
+        {
+            let store = &self.vault().store;
+            let txn = store.env.read_txn().map_err(Error::from)?;
+            let mut count = crate::scan_check::ScanCount::start(
+                store,
+                &txn,
+                crate::scan_check::EngineScan::ReplyStripRequestedRows,
+                room.as_bytes(),
+            )?;
+            drop(txn);
+            count.rows(requested);
+            count.defer(store);
+        }
+        let limit = requested.min(PAGE_LIMIT);
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(MemoryError::bad_request_with(
                 "room differs from the bound room turn",

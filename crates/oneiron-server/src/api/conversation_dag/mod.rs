@@ -4,29 +4,26 @@
 //! refuses a credential narrowed to some records: its records cannot bound
 //! the ids that come back.
 
+mod append;
 mod summary;
 mod types;
 use super::{
-    CoreEntityWriteResponse, core_body_for_write, core_engine_error, core_entity_timestamps,
-    core_text_fields, core_write_text, encode_core_body, json_payload, parse_entity_id_param,
-    project_core_entity, query_params,
+    core_engine_error, core_entity_timestamps, json_payload, parse_entity_id_param, query_params,
 };
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
-use crate::projection::View;
 use crate::server::SyncServer;
+use append::{append_input, append_row, appended_response, project_appended};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
-use oneiron::core_write::{
-    CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt,
-};
+use oneiron::conversation_dag::DagPageRequest;
+use oneiron::core_write::DagRecordAppendReceipt;
 use oneiron::memory::MemoryError;
 use oneiron::reaction::{MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron::registry::ENTITY_TYPE_MESSAGE;
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EdgeKind, EntityId};
@@ -37,36 +34,6 @@ pub(crate) use types::*;
 
 fn ids(records: Vec<EntityId>) -> Vec<String> {
     records.into_iter().map(|id| id.to_hex()).collect()
-}
-
-fn appended_response(
-    server: &SyncServer,
-    appended: oneiron::conversation_dag::AppendedRecord,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
-    server.ai.turn_landed(
-        server.vault(),
-        oneiron::dreamer_wake::WakeTurnSubject::Vault,
-    );
-    project_appended(server, appended.into())
-}
-
-/// An append's 200 body: the stored TURN, HEAD after it and its parent.
-/// It lands nothing; the write that made the record did.
-fn project_appended(
-    server: &SyncServer,
-    receipt: DagRecordAppendReceipt,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
-    let id = parse_entity_id_param(&receipt.id, "id")?;
-    let Json(item) = project_core_entity(&server.vault, &id, View::Full)?;
-    Ok(Json(DagAppendResponse {
-        entity: CoreEntityWriteResponse {
-            id: receipt.id,
-            entity_type: ENTITY_TYPE_TURN,
-            item,
-        },
-        head: receipt.head,
-        parent: receipt.parent,
-    }))
 }
 
 /// A DAG or core write's refusal: the adapter's own, or the engine door's,
@@ -108,62 +75,6 @@ impl IntoResponse for DagWriteError {
             Self::Memory(error) => error.into_response(),
         }
     }
-}
-
-fn append_input(
-    server: &SyncServer,
-    conversation: EntityId,
-    req: DagAppendRequest,
-    auth: &CoreAuth,
-) -> Result<AppendRecord, EnvelopedApiError> {
-    let times = core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
-    let body = core_body_for_write(
-        ENTITY_TYPE_TURN,
-        &req.body,
-        super::announcement_authority(server, auth),
-    );
-    Ok(AppendRecord {
-        conversation,
-        reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
-        quote: req
-            .quote
-            .as_ref()
-            .map(|quote| {
-                Ok::<_, ApiError>(QuoteSpan {
-                    message: parse_entity_id_param(&quote.message, "quote.message")?,
-                    start: quote.start,
-                    end: quote.end,
-                })
-            })
-            .transpose()?,
-        address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
-            DagAddressMode::Broadcast => AddressMode::Broadcast,
-            DagAddressMode::Direct => AddressMode::Direct,
-        },
-        recipients: req
-            .to
-            .unwrap_or_default()
-            .iter()
-            .map(|id| parse_entity_id_param(id, "to"))
-            .collect::<Result<Vec<_>, _>>()?,
-        parent: parse_optional(req.parent.as_deref(), "parent")?,
-        advance: req.advance,
-        kind: ENTITY_TYPE_TURN,
-        occurred: times.occurred,
-        learned_at: times.learned_at,
-        body: encode_core_body(&body)?,
-        text: core_text_fields(req.text.as_deref(), &body),
-        session: parse_optional(req.session.as_deref(), "session")?,
-        actor: req.actor.parse(server, auth)?,
-        thread_audience: req
-            .thread_audience
-            .map(|ids| {
-                ids.iter()
-                    .map(|id| parse_entity_id_param(id, "thread_audience"))
-                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
-            })
-            .transpose()?,
-    })
 }
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records",
@@ -208,34 +119,6 @@ pub(crate) async fn append_core_record(
             _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
         };
     Ok(project_appended(&server, receipt)?)
-}
-
-/// The append row's input: the request less its actor, which the route
-/// asserts and the writer bylines.
-fn append_row(conversation: EntityId, req: DagAppendRequest) -> DagRecordAppendInput {
-    DagRecordAppendInput {
-        conversation: conversation.to_hex(),
-        parent: req.parent,
-        reply_to: req.reply_to,
-        addr: req.addr.map(|addr| match addr {
-            DagAddressMode::Broadcast => CoreDagAddressMode::Broadcast,
-            DagAddressMode::Direct => CoreDagAddressMode::Direct,
-        }),
-        to: req.to,
-        advance: req.advance,
-        body: req.body,
-        text: core_write_text(req.text),
-        occurred_start: req.occurred_start,
-        occurred_end: req.occurred_end,
-        learned_at: req.learned_at,
-        session: req.session,
-        quote: req.quote.map(|quote| CoreDagQuoteInput {
-            message: quote.message,
-            start: quote.start,
-            end: quote.end,
-        }),
-        thread_audience: req.thread_audience,
-    }
 }
 
 /// `ids` less those `auth`'s own read withholds: the DAG ledger is read raw,

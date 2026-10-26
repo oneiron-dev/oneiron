@@ -66,15 +66,23 @@ impl TxnSegmentGuard {
 impl Drop for TxnSegmentGuard {
     fn drop(&mut self) {
         if !self.finished {
-            ACTIVE_SEGMENT.with(|slot| {
+            let aborted = ACTIVE_SEGMENT.with(|slot| {
                 let mut slot = slot.borrow_mut();
                 if slot
                     .as_ref()
                     .is_some_and(|segment| Arc::ptr_eq(&segment.overlay, &self.overlay))
                 {
-                    slot.take();
+                    slot.take()
+                } else {
+                    None
                 }
             });
+            // An aborted segment's copies are gone: the charge returns to
+            // what the overlay retains (FIX 10104).
+            if aborted.is_some() {
+                drop(aborted);
+                self.overlay.charge_to(self.overlay.retained_with(None, 0));
+            }
         }
         self.overlay.release_segment_writer();
     }
@@ -201,10 +209,10 @@ impl SessionOverlay {
         }
         let state = self.state.load_full();
         let next = Self::apply_preflighted_to_state(state, &segment.mutations, &segment.journal)?;
-        let bytes = next.bytes_used;
         self.state.store(next);
-        // A room stretch's charge follows what its overlay holds (FIX 5991).
-        self.charge_to(bytes);
+        // A room stretch's charge follows what its overlay retains (FIX
+        // 5991, 10104); the segment's own copies drop as the commit ends.
+        self.charge_to(self.retained_with(None, 0));
         Ok(())
     }
 
