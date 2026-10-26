@@ -24,23 +24,37 @@ pub(super) fn escrow_vault_key(
         };
         let bytes = std::fs::read(path)
             .map_err(|error| anyhow::anyhow!("{role} escrow recipient unreadable: {error}"))?;
-        let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(&bytes)
-            .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
-        let fingerprint = blake3::hash(&bytes);
-        let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
-        let sealed = present.iter().any(|wrap| {
-            matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
-        });
-        if !sealed {
-            // A key released and retired under another label still seals,
-            // with a warning (FIX 2857).
-            let added = vault.add_vault_key_escrow(&label, &recipient)?;
-            for warning in &added.warnings {
-                tracing::warn!(role, %label, ?warning, "an escrow recipient was retired before");
-            }
-        }
+        seal_escrow_recipient(vault, &present, role, &bytes)?;
     }
     Ok(())
+}
+
+/// Seals the vault's held data key to `role`'s escrow recipient, `bytes` of
+/// a hybrid public key, unless a wrap labelled by its fingerprint is in
+/// `present` already. Whether it sealed one now.
+pub(super) fn seal_escrow_recipient(
+    vault: &oneiron::Vault,
+    present: &[oneiron::world_keys::VaultKeyWrapInfo],
+    role: &str,
+    bytes: &[u8],
+) -> anyhow::Result<bool> {
+    let recipient = oneiron::world_keys::HybridPublicKey::from_bytes(bytes)
+        .map_err(|_| anyhow::anyhow!("{role} escrow recipient is not a hybrid public key"))?;
+    let fingerprint = blake3::hash(bytes);
+    let label = format!("{role}.{}", &fingerprint.to_hex()[..16]);
+    let sealed = present.iter().any(|wrap| {
+        matches!(&wrap.kind, oneiron::world_keys::VaultKeyWrapKind::Escrow { label: held } if *held == label)
+    });
+    if sealed {
+        return Ok(false);
+    }
+    // A key released and retired under another label still seals, with a
+    // warning (FIX 2857).
+    let added = vault.add_vault_key_escrow(&label, &recipient)?;
+    for warning in &added.warnings {
+        tracing::warn!(role, %label, ?warning, "an escrow recipient was retired before");
+    }
+    Ok(true)
 }
 
 /// The page seal a managed vault opens with (OF-570 maximum tier), from the
