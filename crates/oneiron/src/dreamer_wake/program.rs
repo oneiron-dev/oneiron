@@ -27,8 +27,8 @@
 //! and nothing reports it complete.
 //!
 //! A managed vault's attested owner's program runs only while the vault
-//! records him as its live owner (FIX 11090): one he no longer is ends that
-//! try Failed, before its entry or once a run of it stops short, never held
+//! records him as its live owner (FIX 11090): the owner refusal its entry's
+//! binding or a write's reservation raises ends that try Failed, never held
 //! for his standing to return.
 
 use std::future::Future;
@@ -37,14 +37,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::authority::ManagedOwnerCheckError;
 use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
 use crate::dreamer_runner::{
     DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause, ProgramHold,
     ProgramRecipePin, TurnProgramBinding, TurnProgramBound, TurnProgramEntered,
 };
 use crate::engine_executor::{
-    EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorResult, EngineExecutorStatus,
+    EngineNativeExecutor, JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -410,9 +411,9 @@ fn pinned_entry(
 
 /// What one entry's end means for the program's try. An entry that stops
 /// short is held by the program runtime, its spend settled on the pass's
-/// meter all the same; an attested owner's that stops short once he is no
-/// longer the vault's live owner ends Failed instead (FIX 11090), whatever
-/// stopped it, his authority's later re-check included.
+/// meter all the same. One that stopped on the owner refusal its attested
+/// owner's authority check raised ends Failed on that refusal, carried as it
+/// was raised (FIX 11090), never held.
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -421,22 +422,13 @@ fn settle(
     ran: Result<Ran>,
     used: u64,
 ) -> Result<DreamerAttemptExecution> {
-    let owner_lost = || vault.turn_program_owner_not_live(attempt.id);
-    let stopped = |reason: String| {
-        if owner_lost() {
-            return owner_not_live(used);
-        }
-        DreamerAttemptExecution::ParkWithSpend {
-            reason,
-            cause: DreamerParkCause::Checkpoint,
-            completed_units: used,
-            step_hashes: Vec::new(),
-        }
+    let stopped = |reason: String| DreamerAttemptExecution::ParkWithSpend {
+        reason,
+        cause: DreamerParkCause::Checkpoint,
+        completed_units: used,
+        step_hashes: Vec::new(),
     };
     let held = |kind: ProgramHold| -> Result<DreamerAttemptExecution> {
-        if owner_lost() {
-            return Ok(owner_not_live(used));
-        }
         vault.hold_turn_program(attempt.id, kind, ctx.now_ms / 1_000)?;
         Ok(DreamerAttemptExecution::ParkWithSpend {
             reason: kind.reason().to_owned(),
@@ -447,6 +439,9 @@ fn settle(
     };
     let ran = match ran {
         Ok(ran) => ran,
+        Err(error) if ManagedOwnerCheckError::is_owner_refusal(&error) => {
+            return Ok(owner_not_live(used));
+        }
         Err(error) => return Ok(stopped(format!("the turn program did not enter: {error}"))),
     };
     let outcome = match ran.outcome {
@@ -462,6 +457,14 @@ fn settle(
                     reason: TRAPPED_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                 },
+                // A write's reservation met the owner refusal (FIX 11090).
+                _ if matches!(
+                    &error,
+                    EngineExecutorError::Engine(error) if ManagedOwnerCheckError::is_owner_refusal(error)
+                ) =>
+                {
+                    owner_not_live(used)
+                }
                 Some(SeamStop::Deadline) => stopped(format!(
                     "the pass's deadline cut the turn program; {RESUMES}"
                 )),

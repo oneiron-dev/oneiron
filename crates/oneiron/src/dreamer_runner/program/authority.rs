@@ -525,30 +525,6 @@ pub(crate) enum TurnProgramBound {
     OwnerNotLive,
 }
 
-impl Vault {
-    /// Whether program `attempt`'s waking authority is an attested owner the
-    /// vault no longer records as its live owner (FIX 11090): a run of his
-    /// that stopped short ends Failed, since nothing would resume it. `false`
-    /// for every other authority, and while it cannot be judged.
-    pub(crate) fn turn_program_owner_not_live(&self, attempt: AttemptId) -> bool {
-        let judged = (|| -> Result<bool> {
-            let txn = self.store.env.read_txn()?;
-            let stamp = ATTEMPT.get(self, &txn, &attempt)?.ok_or_else(invalid)?;
-            let row = ADMISSION
-                .get(self, &txn, &stamp.admission)?
-                .ok_or_else(invalid)?;
-            if !matches!(row.wake.authority.proof, Proof::AttestedOwner { .. }) {
-                return Ok(false);
-            }
-            Ok(matches!(
-                row.wake.authority.standing_in_txn(self, &txn)?,
-                Standing::OwnerNotLive
-            ))
-        })();
-        judged.unwrap_or(false)
-    }
-}
-
 /// The actor `id`'s stamp names, in `txn`.
 fn stamped_actor_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: AttemptId) -> Result<WriteActor> {
     let stamp = ATTEMPT.get(vault, txn, &id)?.ok_or_else(invalid)?;

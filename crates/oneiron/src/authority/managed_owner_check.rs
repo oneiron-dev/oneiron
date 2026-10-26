@@ -76,6 +76,15 @@ impl ManagedOwnerCheckError {
         }
     }
 
+    /// Whether `error` is the owner refusal [`Self::into_error`] raised,
+    /// carried as it was raised: an item that met it ends on it.
+    pub(crate) fn is_owner_refusal(error: &Error) -> bool {
+        matches!(
+            error,
+            Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason)) if *reason == OWNER_NOT_LIVE
+        )
+    }
+
     /// The error a verb's caller or a queued item's record gets: an owner
     /// binding the vault no longer holds, or the unavailable check.
     pub(crate) fn into_memory_error(self) -> MemoryError {
@@ -96,6 +105,55 @@ impl Vault {
     /// nothing. Without one, every attested owner's item is unavailable.
     pub fn install_managed_owner_check(&self, check: Arc<dyn ManagedOwnerCheck>) {
         let _ = self.managed_owner_check.set(check);
+    }
+
+    /// `holder` as this vault's recorded, live owner now, read and typed
+    /// before any door maps it to an answer: his fresh owner proof. A host's
+    /// [`ManagedOwnerCheck`] answers with this verdict.
+    ///
+    /// # Errors
+    ///
+    /// [`ManagedOwnerCheckError::OwnerNotLive`] when the vault reads and
+    /// records someone else, or no one, as its live owner, or records him
+    /// while his PERSON is merged, split or deleted;
+    /// [`ManagedOwnerCheckError::Unavailable`] when nothing definite reads.
+    pub fn attested_owner_verdict(
+        &self,
+        holder: EntityId,
+    ) -> Result<AuthenticatedOwner, ManagedOwnerCheckError> {
+        let proof = match self.authenticate_recorded_owner(
+            holder,
+            &holder.to_hex(),
+            crate::store::GateDecisionId::now(),
+        ) {
+            Ok(Some(proof)) => proof,
+            Ok(None) => return Err(ManagedOwnerCheckError::OwnerNotLive),
+            Err(_) => return Err(self.recorded_owner_refusal(holder)),
+        };
+        match self.is_live_vault_owner(&proof) {
+            Ok(true) => Ok(proof),
+            Ok(false) => Err(ManagedOwnerCheckError::OwnerNotLive),
+            Err(_) => Err(self.recorded_owner_refusal(holder)),
+        }
+    }
+
+    /// Why the recorded owner `holder` did not authenticate: not live when
+    /// a read finds his PERSON merged, split or deleted, and unavailable
+    /// when no read says so.
+    fn recorded_owner_refusal(&self, holder: EntityId) -> ManagedOwnerCheckError {
+        let gone = || -> crate::Result<bool> {
+            if self.entity_lifecycle_state(&holder)?
+                != crate::identity_topology::EntityLifecycleState::Active
+            {
+                return Ok(true);
+            }
+            let txn = self.store.env.read_txn()?;
+            Ok(!crate::consent::person_is_live_in_txn(self, &txn, &holder)?)
+        };
+        match gone() {
+            Ok(true) => ManagedOwnerCheckError::OwnerNotLive,
+            Ok(false) | Err(_) => ManagedOwnerCheckError::Unavailable,
+        }
     }
 }
 

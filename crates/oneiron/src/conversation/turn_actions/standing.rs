@@ -89,19 +89,26 @@ impl TurnActionAttempt {
             .is_ok_and(|txn| self.requester_live_in(vault, &txn))
     }
 
-    /// Whether the action's attested owner is no longer the vault's live
-    /// owner, judged now (FIX 11090): the typed reason his action stopped,
-    /// never a revoked slip. `false` for every other requester, and while
-    /// his standing cannot be judged.
+    /// Why an attested owner's action does not stand, judged now (FIX
+    /// 11090), for a host that saw it lapse: his refusal while the vault
+    /// does not record him as its live owner, and otherwise
+    /// [`ManagedOwnerCheckError::Unavailable`], an operational failure that
+    /// is no refusal of his. Never a revoked slip. `None` for every other
+    /// requester.
     #[must_use]
-    pub fn owner_not_live(&self, vault: &Vault) -> bool {
+    pub fn owner_lapse(&self, vault: &Vault) -> Option<ManagedOwnerCheckError> {
         let TurnActionAuthority::AttestedOwner { holder } = &self.authority else {
-            return false;
+            return None;
         };
-        vault.store.env.read_txn().is_ok_and(|txn| {
-            crate::authority::require_live_managed_owner_in_txn(vault, &txn, *holder)
-                == Err(ManagedOwnerCheckError::OwnerNotLive)
-        })
+        let judged = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|_| ManagedOwnerCheckError::Unavailable)
+            .and_then(|txn| {
+                crate::authority::require_live_managed_owner_in_txn(vault, &txn, *holder)
+            });
+        Some(judged.err().unwrap_or(ManagedOwnerCheckError::Unavailable))
     }
 }
 
