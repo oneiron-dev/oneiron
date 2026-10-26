@@ -184,8 +184,7 @@ pub(super) fn read_source(
     }
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     let source = decode(body)?.ok_or(invalid())?;
-    if id_of_bytes(body)? != *id
-        || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id)
+    if id_of_bytes(body)? != *id || SLOT.get(store, txn, &slot_key(&source)?)?.as_ref() != Some(id)
     {
         return Err(invalid());
     }

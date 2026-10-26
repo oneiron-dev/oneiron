@@ -255,7 +255,9 @@ pub(crate) fn attempt_pack_receipt_page(
     limit: usize,
 ) -> Result<(Vec<ReceiptRecord>, bool)> {
     if limit == 0 {
-        return Err(Error::InvalidConfig("receipt page limit must be at least 1".to_owned()));
+        return Err(Error::InvalidConfig(
+            "receipt page limit must be at least 1".to_owned(),
+        ));
     }
     let limit = limit.min(ATTEMPT_PACK_RECEIPT_PAGE);
     if after.is_some_and(|id| !id.starts_with(ATTEMPT_PACK_RECEIPT_ID_PREFIX)) {
