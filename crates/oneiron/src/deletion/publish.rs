@@ -253,6 +253,7 @@ impl Vault {
                     id,
                     gate_decision.map(|decision| decision.decision_id),
                 );
+                super::tombstone_scope::capture_deleted_scope(self, id, value);
                 // Marked before the publish txn opens, which LMDB cannot nest:
                 // a failed publish keeps the mutated live doc, and a later
                 // persist would make its removal durable without the mark.
@@ -335,6 +336,7 @@ impl Vault {
             id,
             gate_decision.map(|decision| decision.decision_id),
         );
+        super::tombstone_scope::capture_deleted_scope(self, id, value);
         mark_removed_carriers_first(
             self,
             CarrierRemoval::LocalPublication,

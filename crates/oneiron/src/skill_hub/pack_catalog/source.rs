@@ -2,9 +2,7 @@
 use super::{PackAdapter, PackKind, PackManifest, invalid};
 use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
-use crate::skill_hub::{
-    HubFile, MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES,
-};
+use crate::skill_hub::{HubFile, MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSource {
@@ -17,9 +15,6 @@ pub struct PackSource {
 }
 impl PackSource {
     pub fn from_files(mut files: Vec<HubFile>) -> Result<Self> {
-        if files.len() > MAX_HUB_PACKAGE_FILES {
-            return Err(invalid("too many source files"));
-        }
         let mut total = 0usize;
         for file in &files {
             total = total
