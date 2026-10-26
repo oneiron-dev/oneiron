@@ -740,5 +740,6 @@ fn retained_snapshot_bytes(snapshot: &McpPageSnapshot) -> u64 {
     // A value that cannot encode was never sent; it counts as nothing.
     let _ = serde_json::to_writer(&mut count, &snapshot.output);
     let rows = snapshot.rows.as_ref().map_or(0, Vec::len) as u64;
-    count.0.saturating_add(rows.saturating_mul(std::mem::size_of::<oneiron::EntityId>() as u64))
+    let id_bytes = std::mem::size_of::<oneiron::EntityId>() as u64;
+    count.0.saturating_add(rows.saturating_mul(id_bytes))
 }

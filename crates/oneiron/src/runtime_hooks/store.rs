@@ -4,9 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
-};
+use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_hub::pack_catalog::PackHookBinding;
 use crate::{EntityId, Error, Result, Vault};
@@ -387,14 +385,20 @@ fn hook_run_read_rows_in(
     ))
 }
 
-/// The Hook receipt projector: runs, newest first within the query's bound.
+/// The Hook receipt projector: runs, newest first within the query's bound,
+/// from the whole ledger (FIX 3582); past its threshold row the read raises
+/// one check (rule 5).
 pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"hook",
+    )?;
     let mut out = Vec::new();
-    for row in RECEIPTS
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN)
-    {
+    for row in RECEIPTS.iter_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let (_, receipt) = row?;
         if !query.matches(&receipt) {
             continue;
@@ -405,5 +409,6 @@ pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
             retain_newest_receipt(&mut out, receipt, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
 }
