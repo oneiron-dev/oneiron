@@ -28,19 +28,19 @@ pub(super) fn named(hex: &str) -> Option<EntityId> {
 }
 
 /// The id `key` names after `prefix`, with nothing after it.
-fn id_after(key: &[u8], prefix: &[u8]) -> Option<EntityId> {
+pub(super) fn id_after(key: &[u8], prefix: &[u8]) -> Option<EntityId> {
     named(std::str::from_utf8(key.strip_prefix(prefix)?).ok()?)
 }
 
 /// The id `key` names after `prefix`, and what follows its `:`.
-fn pair_after<'k>(key: &'k [u8], prefix: &[u8]) -> Option<(EntityId, &'k str)> {
+pub(super) fn pair_after<'k>(key: &'k [u8], prefix: &[u8]) -> Option<(EntityId, &'k str)> {
     let rest = std::str::from_utf8(key.strip_prefix(prefix)?).ok()?;
     let (id, tail) = rest.split_once(':')?;
     Some((named(id)?, tail))
 }
 
 /// A stored document frame: its tag, then the frame.
-fn frame(value: &[u8]) -> Option<DocumentFrame<'_>> {
+pub(super) fn frame(value: &[u8]) -> Option<DocumentFrame<'_>> {
     match value.split_first() {
         Some((&TAG_DOCUMENT, frame)) => decode_document(frame).ok(),
         _ => None,
