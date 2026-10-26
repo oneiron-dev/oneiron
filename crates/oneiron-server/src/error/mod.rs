@@ -423,7 +423,7 @@ impl ApiError {
             "deep retrieval is not available on this server",
             ApiErrorDetails::DeepRetrievalUnavailable,
             [
-                "Retry with depth=minimal or depth=standard, which need no backend.",
+                "Retry with depth=light or depth=medium, which need no backend.",
                 "Deep retrieval requires a host-injected deep search backend.",
             ],
         )

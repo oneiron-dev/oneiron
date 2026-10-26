@@ -482,12 +482,15 @@ pub fn prune_branch(
     })
 }
 
+/// The first node, in pre-order, of `nodes` and their subtrees whose
+/// attempt is `attempt`, found on a heap stack (FIX 10603).
 pub(super) fn find_node<'a>(nodes: &'a [RunTreeNode], attempt: &str) -> Option<&'a RunTreeNode> {
-    nodes.iter().find_map(|node| {
+    let mut pending: Vec<&RunTreeNode> = nodes.iter().rev().collect();
+    while let Some(node) = pending.pop() {
         if node.attempt_id == attempt {
-            Some(node)
-        } else {
-            find_node(&node.children, attempt)
+            return Some(node);
         }
-    })
+        pending.extend(node.children.iter().rev());
+    }
+    None
 }

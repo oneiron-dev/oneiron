@@ -61,7 +61,7 @@ pub(super) fn disclosure_admits_candidate(
 /// target is neither admitted as a neighbor, traversed through, nor exposed
 /// in a serialized edge list — even the bare target id names the room.
 /// `None` clamp admits everything (legacy behavior).
-pub(super) fn disclosure_admits_target(
+pub(crate) fn disclosure_admits_target(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     clamp: Option<&DisclosureContext>,

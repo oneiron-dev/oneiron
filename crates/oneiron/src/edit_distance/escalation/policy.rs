@@ -145,13 +145,29 @@ pub fn standing_policy_for(
     scope: &str,
     trigger: EscalationTrigger,
 ) -> Result<Option<StandingPolicy>> {
-    let scope = normalized_scope(scope)?;
     let rtxn = vault.store.env.read_txn()?;
+    standing_policy_for_in(vault, &rtxn, scope, trigger)
+}
+
+/// [`standing_policy_for`] read in the caller's transaction, a writer's
+/// included, so a check inside a writer opens no read of its own (FIX
+/// 10696; LMDB refuses a nested reader, FIX 6992).
+///
+/// # Errors
+///
+/// As [`standing_policy_for`].
+pub(crate) fn standing_policy_for_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &str,
+    trigger: EscalationTrigger,
+) -> Result<Option<StandingPolicy>> {
+    let scope = normalized_scope(scope)?;
     let key = ScopeTriggerKey {
         scope_digest: scope_key(scope),
         trigger,
     };
-    let Some(row) = STANDING_POLICY.get(&vault.store, &rtxn, &key)? else {
+    let Some(row) = STANDING_POLICY.get(&vault.store, txn, &key)? else {
         return Ok(None);
     };
     standing_policy_parts(&row).map(Some)

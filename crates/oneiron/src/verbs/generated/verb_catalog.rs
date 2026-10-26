@@ -6056,6 +6056,7 @@ impl AgentVerb {
                 | Self::VaultRoomsUpkeepPending
                 | Self::SelfSkillsCallables
                 | Self::VaultVoicesLineage
+                | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
                 | Self::SelfDecisionsAsks
                 | Self::ConnectorList
@@ -6233,7 +6234,6 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
-                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7256,7 +7256,7 @@ impl AgentVerb {
         )
     }
     pub const fn born_in_scope(self) -> bool {
-        matches!(self, Self::TasksCreate)
+        matches!(self, Self::TasksCreate | Self::TasksRedo)
     }
     pub const fn writes(self) -> bool {
         matches!(
@@ -12639,13 +12639,13 @@ impl AgentVerb {
                 "Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members, an audience later edited through vault.rooms.thread_audience.add and vault.rooms.thread_audience.remove."
             }
             Self::VaultRoomsThreadAudienceAdd => {
-                "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."
+                "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record."
             }
             Self::VaultRoomsThreadAudienceOpenFullHistory => {
                 "Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."
             }
             Self::VaultRoomsThreadAudienceRemove => {
-                "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."
+                "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record."
             }
             Self::VaultRoomsPrivateThreads => {
                 "That a room's private threads exist: id, creator, created and last-active times, member count; never a name, members or words. The vault's Owner or an Admin, seated or not, or the companion agent of either may call it."
