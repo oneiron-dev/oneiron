@@ -54688,7 +54688,7 @@
      "path": "src/recovery/checkpoint/mod.rs",
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 19,
       "re-export": 13,
@@ -63834,7 +63834,7 @@
      "path": "src/store/key_custody/head/pad_scope.rs",
      "purpose": "World pad compartments (KS-5, FIX 6706, L04 half): one world's pads, live and retired, sealed apart from…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
