@@ -106,33 +106,35 @@ pub(crate) fn verify_promotion_evidence_in_txn(
 }
 
 /// Pins, in a local claim write, each typed citation `body` adds over the
-/// row it replaces at `citer` (FIX 904). A citation its own writer gives is
-/// checked against its document in this snapshot, refuses the write if it
-/// does not hold, and records its citation floor and derived edge. One the
-/// body carries from a raw predecessor is that predecessor's history: it
-/// keeps its source dependency, and a floor where it still holds here, but
-/// it is never refused or rebound to today's head. A citation the stored row
-/// already holds (a lifecycle close keeps its own) is not a new one, and a
-/// replicated row is never pinned here.
+/// row it replaces at `citer` (FIX 904). Each is checked against its
+/// document in this snapshot. One that holds records its citation floor and
+/// derived edge. One that does not (a moved frontier, a source not yet
+/// arrived, a citation no producer checked) is kept as written and never
+/// refused or rebound to today's head: it keeps its source dependency where
+/// the source is present, earns no floor, and is recorded not verified. The
+/// writers that cite fresh refuse a citation that does not hold themselves,
+/// as before. A citation the stored row already holds (a lifecycle close
+/// keeps its own) is not a new one, and a replicated row is never pinned
+/// here.
 pub(crate) fn retain_fresh_claim_citations_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     citer: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    let (written, carried) = body.evidence_ref_slots()?;
-    if written.is_empty() && carried.is_empty() {
+    let refs = body.evidence_refs()?;
+    if refs.is_empty() {
         return Ok(());
     }
     let stored = stored_claim_citations(store, txn, citer)?;
-    for reference in written.iter().filter(|reference| !stored.contains(reference)) {
-        citation_source_in_txn(store, txn, reference)?;
-        pin_citation_in_txn(store, txn, citer, reference)?;
-    }
-    for reference in carried.iter().filter(|reference| !stored.contains(reference)) {
+    for reference in refs.iter().filter(|reference| !stored.contains(reference)) {
         if citation_source_in_txn(store, txn, reference).is_ok() {
             pin_citation_in_txn(store, txn, citer, reference)?;
-        } else if let Ok(entity) = EntityId::from_hex(&reference.entity)
+            continue;
+        }
+        let citer_hex = citer.to_hex();
+        tracing::warn!(citer = %citer_hex, "a typed citation is not verified; kept unpinned");
+        if let Ok(entity) = EntityId::from_hex(&reference.entity)
             && store.port_entity_present(txn, &entity)?
         {
             crate::ports::record_derived_edge_in_txn(store, txn, citer, &entity)?;

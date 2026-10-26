@@ -80,8 +80,8 @@ impl ClaimBody {
     ///
     /// # Errors
     ///
-    /// [`Error::InvalidClaimBody`] when a slot names the field twice or holds
-    /// citations of the wrong shape.
+    /// [`Error::InvalidClaimBody`] when a slot, or a stamp's slot name, is
+    /// named twice.
     pub fn evidence_refs(&self) -> Result<Vec<EvidenceRef>> {
         let (mut written, carried) = self.evidence_ref_slots()?;
         written.extend(carried);
@@ -121,12 +121,14 @@ impl ClaimBody {
 }
 
 /// The citations one evidence slot holds; a slot that names the field twice
-/// is malformed, never read as either copy.
+/// is malformed, never read as either copy. A value under the field that is
+/// not in the citation shape holds no typed citation: it stays the opaque
+/// evidence it always was, and nothing refuses it.
 fn slot_refs(slot: &Value) -> Result<Vec<EvidenceRef>> {
     if named(slot, EVIDENCE_REFS_KEY) > 1 {
         return Err(Error::InvalidClaimBody("evidence names evidence_refs twice"));
     }
-    public_evidence_refs(Some(slot))
+    Ok(public_evidence_refs(Some(slot)).unwrap_or_default())
 }
 
 /// How many times the map `value` names `key`.
