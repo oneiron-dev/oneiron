@@ -444,6 +444,13 @@ side_tables! {
     /// supplied idempotency key. Key: hex ":" hex ":" hex (owner, vault, idempotency-key).
     USAGE_EVENT: SyncState b"usage:event:" Named
         => crate::store::erase_usage_source_in_txn;
+    /// One owner/vault/metric/day operational meter rollup, moved in each meter row's own write
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" 20-digit period start.
+    USAGE_METER_ROLLUP: SyncState b"usage:meter-rollup:" Named;
+    /// One operational meter row for an owner/vault, kept once under its idempotency key
+    /// (ARCH-0011 `#meters`, FIX 7764). Key: hex ":" hex ":" metric ":" hex (owner, vault,
+    /// metric, idempotency key).
+    USAGE_METER: SyncState b"usage:meter:" Named;
     /// The receipt of one owner repair that removed a stored usage event that no longer decoded
     /// (FIX 6476): the scope, the row's ref, hash and length, and who removed it, when and where.
     /// Key: hex32 (receipt id).

@@ -792,6 +792,7 @@ impl Vault {
 
 #[cfg(feature = "sync")]
 mod sync_state_delete;
+mod sync_state_page;
 #[cfg(feature = "sync")]
 mod sync_state_reclaim;
 #[cfg(feature = "sync")]

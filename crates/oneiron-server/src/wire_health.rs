@@ -39,6 +39,8 @@ use evidence::{fold, unread};
 
 /// One check per crossing subject.
 const CHECK: &str = "wire:health:v1:check:";
+/// How many checks one page of a read takes.
+const CHECK_PAGE: usize = 256;
 /// How often the worker reads new crossings and asks the held checks.
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// The clock one check's ladder call runs under.
@@ -105,6 +107,16 @@ pub enum CheckState {
         question: String,
         unit: String,
     },
+    /// A later revision of the same crossed set was held while this one was
+    /// still held or asked (FIX 10868): `by` is its subject, which is asked in
+    /// this one's place. This one is never asked or polled again; the
+    /// question and unit it was asked on, if it was, stay named, and an ask
+    /// it raised stays in its queue.
+    Superseded {
+        by: String,
+        question: Option<String>,
+        unit: Option<String>,
+    },
 }
 
 /// One subject's health check, kept on this server's vault.
@@ -161,15 +173,23 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T> {
     rmp_serde::from_slice(bytes).map_err(|_| Error::CorruptedIndex("wire health check"))
 }
 
-/// Every health check this server keeps, by subject.
+/// Every health check this server keeps, by subject. Each page is one read
+/// transaction, starting after the last key the one before it read, so no
+/// count bounds the family and the writer is never taken (FIX 10866).
 pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
     let mut checks = Vec::new();
-    for key in vault.sync_state_keys_with_prefix(CHECK)? {
-        if let Some(bytes) = vault.sync_state_get(&key)? {
-            checks.push(decode(&bytes)?);
+    let mut after: Option<String> = None;
+    loop {
+        let next =
+            vault.sync_state_prefix_page(CHECK, after.as_deref(), CHECK_PAGE, |_, bytes| {
+                checks.push(decode(bytes)?);
+                Ok(())
+            })?;
+        match next {
+            Some(next) => after = Some(next),
+            None => return Ok(checks),
         }
     }
-    Ok(checks)
 }
 
 fn put_check(vault: &Vault, check: &HealthCheck) -> Result<()> {
@@ -435,7 +455,7 @@ fn sweep(server: &SyncServer) -> Result<()> {
         let asked = match check.state {
             CheckState::Held => ask(server, owner, check),
             CheckState::Asked { .. } => poll(server, owner, check),
-            CheckState::Answered { .. } => Ok(()),
+            CheckState::Answered { .. } | CheckState::Superseded { .. } => Ok(()),
         };
         if let Err(error) = asked {
             tracing::warn!(%error, %subject, "wire health check stays held for the next pass");

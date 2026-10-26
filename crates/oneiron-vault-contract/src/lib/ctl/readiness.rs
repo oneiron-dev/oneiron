@@ -28,6 +28,17 @@ impl ManagedReadiness {
             Self::Degraded { missing }
         }
     }
+
+    /// This readiness with `notice` named missing too.
+    #[must_use]
+    pub fn and_missing(self, notice: FacilityNotice) -> Self {
+        let mut missing = match self {
+            Self::Ready => Vec::new(),
+            Self::Degraded { missing } => missing,
+        };
+        missing.push(notice);
+        Self::Degraded { missing }
+    }
 }
 
 /// One facility a managed vault serves without, and why, in closed names:
@@ -50,6 +61,11 @@ pub enum ManagedFacility {
     InstallSigningKeys,
     /// The host's own node in the vault's roster, written with those keys.
     HostNodeProfile,
+    /// The backup handoff policy that lets retention prune a backup once
+    /// the node supervisor's stage ack names it (FIX 6705). Without it,
+    /// pruning past `keep` is held and every backup is kept; backups are
+    /// still taken.
+    BackupHandoff,
 }
 
 impl ManagedFacility {
@@ -61,6 +77,7 @@ impl ManagedFacility {
             Self::DeviceKeystore => "device_keystore",
             Self::InstallSigningKeys => "install_signing_keys",
             Self::HostNodeProfile => "host_node_profile",
+            Self::BackupHandoff => "backup_handoff",
         }
     }
 }
@@ -78,6 +95,8 @@ pub enum FacilityReason {
     PrepareFailed,
     /// Writing the profile failed.
     ProfileFailed,
+    /// It could not be installed.
+    InstallFailed,
 }
 
 impl FacilityReason {
@@ -89,6 +108,7 @@ impl FacilityReason {
             Self::OpenFailed => "open_failed",
             Self::PrepareFailed => "prepare_failed",
             Self::ProfileFailed => "profile_failed",
+            Self::InstallFailed => "install_failed",
         }
     }
 }

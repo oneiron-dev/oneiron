@@ -227,8 +227,9 @@ pub(crate) fn settle_embedder_section(
 /// settled as [`settle_embedder_section`] settles one, and the result
 /// refused as serve refuses a config that cannot serve. No other layer is
 /// read: no environment, no default config path. A table that does not read
-/// names only the place in `raw` where it fails, never the value refused
-/// (FIX 9477, 10687); the caller names the file.
+/// names only the place in `raw` where it fails, and a `[models]` or
+/// `[embedder]` that does not settle only where its table starts, never the
+/// value refused (FIX 9477, 10687, 10925); the caller names the file.
 pub(crate) fn settle_managed_settings(
     config: &mut ServeConfig,
     table: toml::Table,
@@ -241,18 +242,23 @@ pub(crate) fn settle_managed_settings(
     let mut file: FileServeConfig = toml::Value::Table(table)
         .try_into()
         .map_err(|_| super::locate_toml_failure::<FileServeConfig>(raw))?;
+    // A section that does not settle names only where its table starts in
+    // `raw`: its own error may name the value it refused (FIX 10925).
     let models = file
         .models
         .take()
         .map(|models| models.resolve(path.parent()))
         .transpose()
+        .map_err(|_| super::locate_toml_section(raw, "models"))
         .context("the settings file's [models]")?;
     let embedder = file.embedder.take();
     let mut values = PartialServeConfig::from(file);
     values.models = models;
     values.apply_to(config, ConfigLayer::Vault)?;
     if let Some(section) = embedder {
-        settle_embedder_section(config, section).context("the settings file's [embedder]")?;
+        settle_embedder_section(config, section)
+            .map_err(|_| super::locate_toml_section(raw, "embedder"))
+            .context("the settings file's [embedder]")?;
     }
     validate_serve_config(config)
 }

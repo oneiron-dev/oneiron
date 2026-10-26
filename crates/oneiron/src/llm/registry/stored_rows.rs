@@ -32,13 +32,22 @@ impl StoredRows {
             .transpose()
     }
 
-    /// Every row, in key order.
-    pub(super) fn scan(
+    /// Every row's key, in key order, beside its row as [`Self::get`] reads
+    /// it or why it does not read: a row that does not decode is that row's
+    /// alone (FIX 10862). A storage failure reading a key fails the scan.
+    pub(super) fn scan_each(
         &self,
         dbs: &impl SideTableDbs,
         txn: &RoTxn<'_>,
-    ) -> Result<Vec<(String, ModelRegistryRow)>> {
-        self.iter_from(dbs, txn, &[])?.collect()
+    ) -> Result<Vec<(String, Result<ModelRegistryRow>)>> {
+        let mut rows = Vec::new();
+        for key in ROWS.scan_keys(dbs, txn, &[])? {
+            if let Some(bytes) = ROWS.get_bytes(dbs, txn, &key)? {
+                let row = decoded(dbs, txn, &bytes);
+                rows.push((key, row));
+            }
+        }
+        Ok(rows)
     }
 
     /// The rows under `key_prefix`, in key order.

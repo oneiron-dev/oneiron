@@ -5,9 +5,11 @@
 //! verb for, lists the metering scope's rows that do not decode and removes
 //! one he reviewed, by the hash of its bytes; every other such row is still
 //! counted as before, and nothing is removed on its own. A removal deletes
-//! that one row, marks the derived rollup stale and keeps its receipt, all
-//! in one write. No raw key, prefix or replacement bytes reach it: the scope
-//! is the one the trusted host bound to this server's meter.
+//! that one row, marks its billing owner's derived rollup stale and keeps its
+//! receipt, all in one write. No raw key, prefix or replacement bytes reach
+//! it: the scope is the vault the trusted host bound this server's meter to,
+//! every billing owner's rows in it, the vault owner's and each room-paid
+//! payer account's alike (FIX 7035).
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -23,7 +25,10 @@ use oneiron::memory::{
 use oneiron::store::GateDecisionId;
 
 use super::codec::{UsageError, decode_entry};
-use super::keys::{usage_event_prefix, usage_repair_receipt_key, validate_key, vault_rollup_key};
+use super::keys::{
+    USAGE_EVENT_ROOT, decoded_key_part, usage_event_parts, usage_repair_receipt_key, validate_key,
+    vault_key_part, vault_rollup_key_of_parts,
+};
 use super::ledger::UsageLedger;
 use super::rollup::mark_rollup_stale_in_txn;
 
@@ -35,11 +40,11 @@ const USAGE_EVENT_DECODABLE: &str = "usage_event_decodable";
 /// A server whose meter is bound to no scope.
 const USAGE_METERING_UNBOUND: &str = "usage_metering_unbound";
 
-/// The metering scope a repair reads: the billing owner and vault the
-/// trusted host bound this server's meter to, never a caller's.
+/// The metering scope a repair reads: the vault the trusted host bound this
+/// server's meter to, never a caller's, with every billing owner's rows in
+/// it (FIX 7035).
 #[derive(Clone, Debug)]
 pub(crate) struct UsageScope {
-    owner: String,
     vault_id: String,
 }
 
@@ -47,16 +52,34 @@ impl UsageScope {
     /// The scope `server`'s meter is bound to; `None` while it meters none.
     pub(crate) fn of(server: &crate::server::SyncServer) -> Option<Self> {
         server.vault_usage().map(|usage| Self {
-            owner: usage.owner().to_owned(),
             vault_id: usage.vault_id().to_owned(),
         })
     }
 }
 
+/// Why a reviewed row was not removed, as the remove's refusal names it at
+/// the head of its message: `usage_event_changed` or `usage_event_decodable`
+/// (FIX 7038). `None` for every other refusal.
+pub(crate) fn removal_conflict_reason(error: &MemoryError) -> Option<&'static str> {
+    if error.code != MEMORY_CODE_INVALID_STATE {
+        return None;
+    }
+    [USAGE_EVENT_CHANGED, USAGE_EVENT_DECODABLE]
+        .into_iter()
+        .find(|reason| {
+            error
+                .message
+                .strip_prefix(*reason)
+                .is_some_and(|rest| rest.starts_with(':'))
+        })
+}
+
 impl UsageLedger {
     /// Every stored event of `scope` that does not decode by the decoder
-    /// every seat read uses, in key order, read in the writer that admits
-    /// the caller ([`Memory::with_usage_repair_txn`]). No row changes; a
+    /// every seat read uses, in key order, whichever billing owner it lands
+    /// on, read in the writer that admits the caller
+    /// ([`Memory::with_usage_repair_txn`]). Each row ref names its owner's
+    /// part of the key and the rest after the vault's. No row changes; a
     /// storage failure fails the list and never reads as a row.
     pub(crate) fn list_undecodable_events(
         &self,
@@ -66,20 +89,22 @@ impl UsageLedger {
     ) -> MemoryResult<UndecodableUsageList> {
         memory.with_usage_repair_txn(owner, UsageRepairVerb::List, |txn, _| {
             let scope = bound(scope)?;
-            let prefix = usage_event_prefix(&scope.owner, &scope.vault_id);
+            let vault = vault_key_part(&scope.vault_id);
             let mut events = Vec::new();
             self.vault.sync_state_visit_prefix_in_write_txn(
                 txn,
-                &prefix,
+                USAGE_EVENT_ROOT,
                 |key, raw| -> MemoryResult<()> {
+                    let Some((billed, _, id)) =
+                        usage_event_parts(key).filter(|(_, part, _)| *part == vault)
+                    else {
+                        return Ok(());
+                    };
                     if decode_entry(raw).is_ok() {
                         return Ok(());
                     }
-                    let suffix = key.strip_prefix(prefix.as_str()).ok_or_else(|| {
-                        MemoryError::from(oneiron::Error::CorruptedIndex("usage event key"))
-                    })?;
                     events.push(UndecodableUsageRow {
-                        row_ref: URL_SAFE_NO_PAD.encode(suffix),
+                        row_ref: URL_SAFE_NO_PAD.encode(format!("{billed}:{id}")),
                         byte_length: raw.len() as u64,
                         hash: hash(raw),
                         decode_reason: UndecodableUsageReason::StoredEventDecodeFailed,
@@ -94,10 +119,10 @@ impl UsageLedger {
     /// Removes the one stored event of `scope` that `request` names, in the
     /// writer that admits the caller, while its bytes still hash to the
     /// reviewed hash and still do not decode: deletes that row alone, marks
-    /// the scope's rollup stale so the next read rebuilds it without the
-    /// row, and keeps the receipt it answers, all in that write. A row that
-    /// is gone is not found; one that changed or decodes now is a conflict,
-    /// and nothing changes.
+    /// its billing owner's rollup stale so the next read rebuilds it without
+    /// the row, and keeps the receipt it answers, naming that owner, all in
+    /// that write. A row that is gone is not found; one that changed or
+    /// decodes now is a conflict, and nothing changes.
     pub(crate) fn remove_undecodable_event(
         &self,
         memory: &Memory<'_>,
@@ -108,7 +133,9 @@ impl UsageLedger {
     ) -> MemoryResult<UsageRepairReceipt> {
         memory.with_usage_repair_txn(owner, UsageRepairVerb::Remove, |txn, caller| {
             let scope = bound(scope)?;
-            let key = usage_event_prefix(&scope.owner, &scope.vault_id) + &suffix(request)?;
+            let (billed, id) = suffix(request)?;
+            let vault = vault_key_part(&scope.vault_id);
+            let key = format!("{USAGE_EVENT_ROOT}{billed}:{vault}:{id}");
             validate_key(&key).map_err(|_| {
                 MemoryError::bad_request("rowRef names a key no stored usage event can have")
             })?;
@@ -119,7 +146,7 @@ impl UsageLedger {
             }
             let Some(raw) = self.vault.sync_state_get_in_write_txn(txn, &key)? else {
                 return Err(MemoryError::not_found(format!(
-                    "no stored usage event {} in this server's metering scope",
+                    "no stored usage event {} in this vault's metering scope",
                     request.row_ref
                 )));
             };
@@ -143,12 +170,12 @@ impl UsageLedger {
             mark_rollup_stale_in_txn(
                 &self.vault,
                 txn,
-                &vault_rollup_key(&scope.owner, &scope.vault_id),
+                &vault_rollup_key_of_parts(&billed, &vault),
             )
             .map_err(failed)?;
             let receipt = UsageRepairReceipt {
                 receipt_id: GateDecisionId::now().to_hex(),
-                owner: scope.owner.clone(),
+                owner: decoded_key_part(&billed).unwrap_or(billed),
                 vault_id: scope.vault_id.clone(),
                 row_ref: request.row_ref.clone(),
                 hash: request.expected_hash.clone(),
@@ -185,13 +212,17 @@ fn bound(scope: Option<&UsageScope>) -> MemoryResult<&UsageScope> {
     })
 }
 
-/// The key suffix `request`'s row ref names, as the list encoded it.
-fn suffix(request: &UsageRepairRemoveRequest) -> MemoryResult<String> {
+/// The billing owner's key part and the rest of the key after the vault's
+/// that `request`'s row ref names, as the list encoded them.
+fn suffix(request: &UsageRepairRemoveRequest) -> MemoryResult<(String, String)> {
     URL_SAFE_NO_PAD
         .decode(&request.row_ref)
         .ok()
         .and_then(|bytes| String::from_utf8(bytes).ok())
-        .filter(|suffix| !suffix.is_empty())
+        .and_then(|suffix| {
+            let (owner, id) = suffix.split_once(':')?;
+            (!owner.is_empty() && !id.is_empty()).then(|| (owner.to_owned(), id.to_owned()))
+        })
         .ok_or_else(|| MemoryError::bad_request("rowRef must be a row ref the list gave"))
 }
 

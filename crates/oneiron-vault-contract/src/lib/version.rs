@@ -422,6 +422,34 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// floor, at the engine revision it merged in, with no `Ping` field: a reader
 /// of the checks runs against an engine at or after the floor, and no reader
 /// of a check without it is kept. This version stays 3.
+///
+/// Custom endpoint usage (FIX 7765): an unpriced call gains the reason
+/// `custom_endpoint`, on usage events posted and stored: a call on the
+/// owner's own key whose route goes to no provider API origin a catalog price
+/// is quoted for, with a token count and no `costRates`. Such a call logs
+/// token counts only, whatever price its model id has. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of usage events runs at or after the floor, and no reader of an event
+/// without it is kept. This version stays 3.
+///
+/// Backup handoff readiness (FIX 6705): a managed vault's readiness on
+/// `Ping` gains the facility `backup_handoff` and the reason
+/// `install_failed`: its backup handoff policy could not be installed, so
+/// its pruning past `keep` is held and every backup is kept; backups are
+/// still taken and the vault serves. It carries a build floor, at the engine
+/// revision it merged in, with no `Ping` field: a supervisor that reads the
+/// readiness runs at or after the floor, and no reader of a readiness
+/// without them is kept. This version stays 3.
+///
+/// Superseded wire health checks (FIX 10868): a check on the owner's
+/// `/v1/owner/wire-health` read gains the state `superseded`, with `by`, the
+/// subject of the later revision of the same crossed set that was held while
+/// it was still held or asked, and `question` and `unit`, the ones it was
+/// asked on or `null`. A superseded check is never asked or polled again;
+/// the later revision is asked in its place. It carries a build floor, at the
+/// engine revision it merged in, with no `Ping` field: a reader of the checks
+/// runs against an engine at or after the floor, and no reader of a check
+/// without it is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
