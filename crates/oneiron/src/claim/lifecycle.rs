@@ -557,8 +557,15 @@ impl Vault {
                 provenance: None,
             },
         ];
+        // The close names its door's actor and time (FIX 8655, 10044, 10045).
         let (binding, transition) =
-            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
+            crate::batch::ClaimMaterialization::verified_lifecycle_closed_by(
+                &self.store,
+                &*wtxn,
+                &ops[0],
+                close.actor(),
+                now,
+            )?;
         let decision = match (close, binding) {
             (SupersedeClose::Granted(Some(checker)), Some(binding)) => self
                 .apply_checked_deferred_closure_in_txn(
@@ -752,8 +759,15 @@ impl Vault {
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         }];
+        // The close names its door's actor and time (FIX 8655, 10044, 10045).
         let (binding, transition) =
-            crate::batch::ClaimMaterialization::verified_lifecycle(&self.store, &*wtxn, &ops[0])?;
+            crate::batch::ClaimMaterialization::verified_lifecycle_closed_by(
+                &self.store,
+                &*wtxn,
+                &ops[0],
+                actor,
+                now,
+            )?;
 
         let mut write_receipt = None;
         if consent_receipt.is_none() {

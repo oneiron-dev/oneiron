@@ -716,6 +716,7 @@ pub(in crate::batch) fn apply_put(
             learned_at,
             data,
             envelope: write_envelope,
+            transition,
         },
     )?;
     crate::gate::manifest_authenticity::update_manifest_origin(
