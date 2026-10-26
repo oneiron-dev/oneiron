@@ -108,6 +108,12 @@ pub enum UnpricedReason {
     /// price that converts for its model (a paid connector call has none).
     /// The event's `model` names the model.
     UnpricedModel,
+    /// The call measured tokens and went out on the owner's own key to a
+    /// custom endpoint, one whose route goes to no provider API a catalog
+    /// price is quoted for: it logs token counts only, and no rates were
+    /// frozen on it, whatever price its model id has (FIX 7765). The
+    /// provider's own usage page stays the truth.
+    CustomEndpoint,
     /// The rates frozen on the call name no currency, its provider named
     /// none, and are not zero throughout (FIX 9534). The event keeps its
     /// counts and those rates, their snapshot included; no amount is quoted
@@ -454,15 +460,18 @@ impl UsageEvent {
                 message: "unknown_currency names an event whose costRates name no currency",
             });
         }
-        if let Some(reason @ (UnpricedReason::NoUsage | UnpricedReason::UnpricedModel)) =
-            &self.unpriced
+        if let Some(
+            reason @ (UnpricedReason::NoUsage
+            | UnpricedReason::UnpricedModel
+            | UnpricedReason::CustomEndpoint),
+        ) = &self.unpriced
             && (self.cost_rates.is_some()
-                || has_tokens != matches!(reason, UnpricedReason::UnpricedModel))
+                || has_tokens == matches!(reason, UnpricedReason::NoUsage))
         {
             return Err(UsageError::InvalidField {
                 field: "unpriced",
-                message: "no_usage names an event with every count zero, unpriced_model one \
-                          with a token count, each with no costRates",
+                message: "no_usage names an event with every count zero, unpriced_model and \
+                          custom_endpoint one with a token count, each with no costRates",
             });
         }
         validate_dimension("owner", &self.owner, MAX_DIMENSION_LEN)?;

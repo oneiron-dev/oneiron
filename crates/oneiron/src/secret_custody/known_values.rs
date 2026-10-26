@@ -105,11 +105,14 @@ fn tag_of(hash: &blake3::Hash) -> [u8; TAG_BYTES] {
 }
 
 /// Whether the index never keys the value of the record named `name`: a
-/// run-bound record's, its run's alone (FIX 8028), and a cloud registration
+/// run-bound record's, its run's alone (FIX 8028), a cloud registration
 /// slot's, whose tokens leave no known-value history for its erase to carry
-/// (G7).
+/// (G7), and a short or bare dotenv value's, masked in its own file only
+/// (FIX 7608 slice 6, CALL DOTENV-IMPORT).
 pub(super) fn never_keyed(name: &str) -> bool {
-    super::run_bound::is_run_bound_name(name) || super::is_cloud_registration_slot(name)
+    super::run_bound::is_run_bound_name(name)
+        || super::is_cloud_registration_slot(name)
+        || crate::repo_mutation::is_unindexed_dotenv_name(name)
 }
 
 /// Records `rec`'s value under `id`, in the custody write's transaction: its

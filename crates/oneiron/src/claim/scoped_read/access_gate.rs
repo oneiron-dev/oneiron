@@ -151,6 +151,30 @@ impl<'v> ScopedRead<'v> {
         Ok(read.allowed_by(&context))
     }
 
+    /// [`Self::relationship_claim_allowed_in`] for a claim that may never
+    /// have landed, from the relationship axes and record Scope its Gate
+    /// decision kept (FIX 7499). No stored row names it, so no support slip
+    /// can name it either: only the reader's memberships and grants decide.
+    pub(super) fn relationship_axes_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        space: Option<EntityId>,
+        private: bool,
+        record: &Scope,
+    ) -> Result<bool> {
+        if !self.relationship_gated_in(txn)? {
+            return Ok(true);
+        }
+        let read = RelationshipRead::Gated {
+            kind: ENTITY_TYPE_CLAIM,
+            space,
+            private,
+            record: record.clone(),
+        };
+        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
+        Ok(read.allowed_by(&context))
+    }
+
     /// The support-disclosure projection at the relationship gate (OF-606):
     /// a live support slip reads a relationship-gated row it names exactly
     /// in its records, inside its own read Scope, and never a private one.

@@ -11,7 +11,10 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
+    GateDecisionRecord, GateLoopLink, GateLoopSource,
+};
 use crate::{EntityId, Vault};
 
 use super::types::{
@@ -171,6 +174,17 @@ fn gate_decision_in_txn(
         diff_handle: admission.to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        // FIX 7500, 7499: its own admission, about the turn that woke it. A
+        // refused wake runs nothing, so it names no run; neither names an
+        // attempt, which is queued after this decision.
+        context: GateDecisionContext::linked(
+            GateLoopLink::admission(
+                GateLoopSource::TurnProgram,
+                refused.is_none().then(|| run_id(admission)),
+                None,
+            ),
+            GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+        ),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &decision)?;

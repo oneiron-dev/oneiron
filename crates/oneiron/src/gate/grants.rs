@@ -58,9 +58,50 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
     claim_facets: &[EntityId],
     explicit_scope: Option<&crate::federation::Scope>,
 ) -> bool {
+    scoped_read_claim_view_allowed(
+        policy,
+        actor_key,
+        &ClaimReadView::of(body, claim_facets),
+        explicit_scope,
+    )
+}
+
+/// What the claim read selectors judge of one claim: its record Scope and
+/// what they read beside its position. A stored claim's view is its body's;
+/// a candidate that never landed has the one its Gate decision kept (FIX
+/// 7499).
+pub(crate) struct ClaimReadView<'a> {
+    pub(crate) record: crate::federation::Scope,
+    pub(crate) scope: Option<&'a Value>,
+    pub(crate) stale: bool,
+    pub(crate) confidence: f32,
+    pub(crate) salience: Option<f32>,
+    pub(crate) facets: &'a [EntityId],
+}
+
+impl<'a> ClaimReadView<'a> {
+    fn of(body: &'a ClaimBody, facets: &'a [EntityId]) -> Self {
+        Self {
+            record: body.record_scope("read"),
+            scope: body.scope.as_ref(),
+            stale: body.stale,
+            confidence: body.confidence,
+            salience: body.salience,
+            facets,
+        }
+    }
+}
+
+/// [`scoped_read_claim_allowed_with_scope`] over one claim's read view.
+pub(crate) fn scoped_read_claim_view_allowed(
+    policy: &PolicyManifestResolution,
+    actor_key: &ScopedReadActorKey,
+    claim: &ClaimReadView<'_>,
+    explicit_scope: Option<&crate::federation::Scope>,
+) -> bool {
     // This derived-data restriction narrows even a default-open vault. The
     // question's principal is a reader boundary, never a grant by itself.
-    if let Some(Value::Map(scope)) = &body.scope {
+    if let Some(Value::Map(scope)) = claim.scope {
         let mut readers = scope
             .iter()
             .filter(|(key, _)| key.as_str() == Some("typed_question_principal"));
@@ -84,11 +125,7 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
     }
 
     if explicit_scope.is_some_and(|scope| {
-        !scope.admits(
-            "read",
-            &body.record_scope("read"),
-            &crate::federation::Scope::top(),
-        )
+        !scope.admits("read", &claim.record, &crate::federation::Scope::top())
     }) {
         return false;
     }
@@ -111,11 +148,10 @@ pub(crate) fn scoped_read_claim_allowed_with_scope(
         if !scoped_read_actor_matches(grant, actor_key) {
             continue;
         }
-        if grant.authority_scope.admits(
-            "read",
-            &body.record_scope("read"),
-            &crate::federation::Scope::top(),
-        ) && scoped_read_scope_matches_claim(grant.scope.as_ref(), body, claim_facets)
+        if grant
+            .authority_scope
+            .admits("read", &claim.record, &crate::federation::Scope::top())
+            && scoped_read_scope_matches_claim(grant.scope.as_ref(), claim)
         {
             return true;
         }
@@ -267,19 +303,11 @@ pub(super) fn scoped_read_actor_matches(
 /// confidence, salience). An unknown or malformed selector admits nothing.
 ///
 /// [`legacy_read_scope`]: crate::federation::scope_codec::legacy_read_scope
-fn scoped_read_scope_matches_claim(
-    scope: Option<&Value>,
-    body: &ClaimBody,
-    claim_facets: &[EntityId],
-) -> bool {
+fn scoped_read_scope_matches_claim(scope: Option<&Value>, claim: &ClaimReadView<'_>) -> bool {
     let Some(selectors) = scoped_read_position_selectors(scope) else {
         return false;
     };
-    if !selectors.admits(
-        "read",
-        &body.record_scope("read"),
-        &crate::federation::Scope::top(),
-    ) {
+    if !selectors.admits("read", &claim.record, &crate::federation::Scope::top()) {
         return false;
     }
     let Some(Value::Map(entries)) = scope else {
@@ -302,19 +330,19 @@ fn scoped_read_scope_matches_claim(
     if floor_keys
         && !super::retrieval_filter::RetrievalPolicyFloor::from_scope(scope).is_some_and(|floor| {
             !floor.deny_all
-                && (floor.include_stale || !body.stale)
-                && body.confidence >= floor.min_confidence
-                && body.salience.unwrap_or(0.0) >= floor.min_salience
+                && (floor.include_stale || !claim.stale)
+                && claim.confidence >= floor.min_confidence
+                && claim.salience.unwrap_or(0.0) >= floor.min_salience
         })
     {
         return false;
     }
     entries.iter().all(|(key, value)| match key.as_str() {
         Some("claim_scope" | "claimScope" | "scope") => {
-            scoped_read_claim_scope_matches(value, body.scope.as_ref())
+            scoped_read_claim_scope_matches(value, claim.scope)
         }
         Some("facet" | "facet_ref" | "facetRef") => {
-            scoped_read_claim_facet_matches(value, body.scope.as_ref(), claim_facets)
+            scoped_read_claim_facet_matches(value, claim.scope, claim.facets)
         }
         // Position axes were judged by the Scope above; quality by its floor.
         _ => true,
