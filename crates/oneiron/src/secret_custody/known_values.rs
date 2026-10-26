@@ -104,6 +104,14 @@ fn tag_of(hash: &blake3::Hash) -> [u8; TAG_BYTES] {
     tag
 }
 
+/// Whether the index never keys the value of the record named `name`: a
+/// run-bound record's, its run's alone (FIX 8028), and a cloud registration
+/// slot's, whose tokens leave no known-value history for its erase to carry
+/// (G7).
+pub(super) fn never_keyed(name: &str) -> bool {
+    super::run_bound::is_run_bound_name(name) || super::is_cloud_registration_slot(name)
+}
+
 /// Records `rec`'s value under `id`, in the custody write's transaction: its
 /// entry, under the master key custody holds (minted with the first value),
 /// is published to custody and referenced in `wtxn` (KS-3). Returns whether

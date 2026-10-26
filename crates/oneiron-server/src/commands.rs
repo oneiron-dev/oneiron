@@ -112,6 +112,8 @@ mod init;
 pub use init::init;
 mod reembed;
 pub use reembed::reembed;
+mod account;
+pub use account::account;
 mod device;
 pub use device::device_enrol;
 mod serve;
