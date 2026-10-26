@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1159 facade rows, 4134 generated types.
+// UniFFI census: 1159 facade rows, 4137 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1111.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -36346,6 +36346,35 @@ pub struct OriginMirrorAutomation {
     pub refused: Vec<String>,
 }
 
+/// `oneiron::origin::secret_publication::RepoDestinationVisibility`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoDestinationVisibility {
+    #[serde(rename = "public")]
+    Public,
+    #[serde(rename = "private")]
+    Private,
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::origin::secret_publication::RepoDestinationRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RepoDestinationRole {
+    #[serde(rename = "mirror")]
+    Mirror,
+    #[serde(rename = "original_source")]
+    OriginalSource,
+}
+
+/// `oneiron::origin::secret_publication::RepoDestinationAudience`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RepoDestinationAudience {
+    #[serde(rename = "visibility")]
+    pub visibility: RepoDestinationVisibility,
+    #[serde(rename = "role")]
+    pub role: RepoDestinationRole,
+}
+
 /// `oneiron::origin::mirror::OriginMirrorTarget`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OriginMirrorTarget {
@@ -36387,6 +36416,8 @@ pub struct OriginMirrorTarget {
         skip_serializing_if = "Option::is_none"
     )]
     pub automation: Option<OriginMirrorAutomation>,
+    #[serde(rename = "audience")]
+    pub audience: RepoDestinationAudience,
 }
 
 /// `oneiron::memory::origin_doors::types::OriginMirrorView`.
@@ -36418,6 +36449,12 @@ pub struct OriginMirrorSetRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub sync_strategy: Option<OriginMirrorSyncStrategy>,
+    #[serde(
+        rename = "visibility",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub visibility: Option<RepoDestinationVisibility>,
 }
 
 /// `oneiron::memory::origin_doors::types::OriginMirrorStrategyRequest`.
@@ -36491,6 +36528,8 @@ pub struct OriginPublishDestination {
         skip_serializing_if = "Option::is_none"
     )]
     pub target_generation: Option<String>,
+    #[serde(rename = "audience")]
+    pub audience: RepoDestinationAudience,
 }
 
 /// `oneiron::origin::publish::types::OriginPublishRemote`.
@@ -36609,6 +36648,10 @@ pub enum OriginPublishRefusalReason {
     AuthorityChanged,
     #[serde(rename = "objects_missing")]
     ObjectsMissing,
+    #[serde(rename = "marked_live_secret")]
+    MarkedLiveSecret,
+    #[serde(rename = "secret_history_unknown")]
+    SecretHistoryUnknown,
 }
 
 /// `oneiron::origin::publish::types::OriginPublishRefusal`.

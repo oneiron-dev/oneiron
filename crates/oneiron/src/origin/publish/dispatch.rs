@@ -10,8 +10,10 @@
 //! the vault's time, the mirror unchanged, this host still the origin and
 //! the approval's owner or Grant still standing, and claims the request
 //! `dispatching`. Only then does its one push run, and its outcome settles
-//! the request (`reconcile`). The strategy is never read: an approved
-//! request executes once on a mirror of either.
+//! the request (`reconcile`), unless the publication gate holds the commit's
+//! history first: a public or unstated mirror never takes a marked live key,
+//! and the request settles refused, typed (`secret_hold`). The strategy is
+//! never read: an approved request executes once on a mirror of either.
 
 use super::authority::{OriginPublishCaller, PublishAnswer, PublishTarget};
 use super::inputs::OriginPublishIdRequest;
@@ -166,6 +168,9 @@ impl Vault {
         if claimed.state.is_terminal() {
             self.release_publish_pin(&claimed);
             return Ok(Ok(claimed));
+        }
+        if let Some(hold) = self.hold_publish_commit(&scope, &handle, &commit) {
+            return Ok(Ok(self.settle_publish_hold(&claimed, hold)?));
         }
         let outcome = self.push_publish_once(
             &scope.wire,

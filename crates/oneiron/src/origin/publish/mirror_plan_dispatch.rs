@@ -12,7 +12,8 @@
 //! never killed, and settles first. The child inherits the per-mirror hold,
 //! so a batch a crash left claimed is read before anything is sent again. A
 //! batch whose refs did not all land stops the plan there until its
-//! reconcile settles them.
+//! reconcile settles them; a ref the publication gate held (`secret_hold`)
+//! does not stop it.
 
 use std::collections::BTreeSet;
 
@@ -21,9 +22,10 @@ use super::mirror_plan_remote::bounded;
 use super::mirror_plan_types::{
     MirrorBatchClaim, MirrorBatchProgress, MirrorPushPlan, MirrorRefOutcome,
 };
+use super::secret_hold::MirrorPlanSend;
 use crate::Vault;
 use crate::error::Result;
-use crate::git_wire::{GitPlanPushReport, GitPlanRefOutcome};
+use crate::git_wire::GitPlanRefOutcome;
 use crate::origin::mirror::TARGETS;
 
 impl Vault {
@@ -90,7 +92,10 @@ impl Vault {
             match progress.claim {
                 MirrorBatchClaim::Paused => continue,
                 MirrorBatchClaim::Sent { .. }
-                    if progress.outcomes.iter().all(|outcome| outcome.settled()) =>
+                    if progress
+                        .outcomes
+                        .iter()
+                        .all(|outcome| outcome.lets_plan_go_on()) =>
                 {
                     continue;
                 }
@@ -181,16 +186,19 @@ impl Vault {
         Ok(fenced)
     }
 
-    /// Records what one child reported for `members`. A same-plan resend's
-    /// refusal ends its ref. Whether every member landed.
+    /// Records what one batch's send did for `members`: each ref the
+    /// publication gate held is `held`, and each one its child pushed takes
+    /// what the child reported. A same-plan resend's refusal ends its ref.
+    /// Whether the plan goes on: every member landed, or the gate holds it.
     pub(super) fn record_mirror_push(
         &self,
         plan: &MirrorPushPlan,
         members: &[u32],
-        report: Result<GitPlanPushReport>,
+        send: MirrorPlanSend,
         resend: bool,
     ) -> Result<bool> {
-        let (outcomes, detail) = match report {
+        let hold = send.hold_notice();
+        let (outcomes, detail) = match send.report {
             Ok(report) => (
                 report
                     .outcomes
@@ -205,17 +213,26 @@ impl Vault {
                 report.failure,
             ),
             Err(error) => (
-                vec![MirrorRefOutcome::Unknown; members.len()],
+                vec![MirrorRefOutcome::Unknown; send.sent.len()],
                 Some(bounded(error.to_string())),
             ),
         };
-        let landed =
-            outcomes.len() == members.len() && outcomes.iter().all(|outcome| outcome.landed());
-        let changes: Vec<(u32, MirrorRefOutcome)> = members.iter().copied().zip(outcomes).collect();
+        let mut changes: Vec<(u32, MirrorRefOutcome)> =
+            send.sent.iter().copied().zip(outcomes).collect();
+        changes.extend(
+            send.held
+                .iter()
+                .map(|(index, _)| (*index, MirrorRefOutcome::Held)),
+        );
+        let goes_on = changes.len() == members.len()
+            && changes
+                .iter()
+                .all(|(_, outcome)| outcome.landed() || *outcome == MirrorRefOutcome::Held);
+        let detail = hold.map(bounded).or(detail);
         let mut txn = self.store.env.write_txn()?;
         self.write_mirror_outcomes_in_txn(&mut txn, plan, &changes, detail, !resend)?;
         txn.commit()?;
-        Ok(landed)
+        Ok(goes_on)
     }
 
     /// Writes ref outcomes into their batch rows; `sent` also marks each

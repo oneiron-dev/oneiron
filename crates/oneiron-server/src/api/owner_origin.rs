@@ -31,6 +31,7 @@ use axum::routing::{get, post};
 use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
 use oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy;
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
+use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
 use super::owner_routes::{blocking, owner};
@@ -182,6 +183,10 @@ struct SetOriginMirror {
     /// strategy and a new one asks first.
     #[serde(default)]
     sync_strategy: Option<OriginMirrorSyncStrategy>,
+    /// `public`, `private` or `unknown`; absent, the same URL keeps its own
+    /// and a new one is `unknown`, held as public.
+    #[serde(default)]
+    visibility: Option<RepoDestinationVisibility>,
 }
 
 async fn set_origin_mirror(
@@ -200,6 +205,7 @@ async fn set_origin_mirror(
                 user: request.user,
                 every_secs: request.every_secs,
                 sync_strategy: request.sync_strategy,
+                visibility: request.visibility,
             },
         )?)
     })

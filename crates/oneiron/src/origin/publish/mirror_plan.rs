@@ -79,6 +79,7 @@ impl MirrorRunScope<'_, '_> {
             user: self.target.user.clone(),
             secret_ref: self.target.secret_ref.clone(),
             target_generation: self.target.target_generation,
+            audience: self.target.audience,
         }
     }
 }
@@ -227,8 +228,8 @@ fn cut_batches(
     Ok(batches)
 }
 
-/// One digest over a plan's destination, strategy, refs, observations,
-/// batches, sections and held heads.
+/// One digest over a plan's destination (its audience included), strategy,
+/// refs, observations, batches, sections and held heads.
 fn plan_digest(plan: &MirrorPushPlan) -> String {
     let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_MIRROR_PLAN_DIGEST_CONTEXT);
     hasher.update(plan.repo_id.as_bytes());
@@ -238,6 +239,11 @@ fn plan_digest(plan: &MirrorPushPlan) -> String {
     field(&mut hasher, destination.secret_ref.as_bytes());
     let generation = destination.target_generation.map(|id| id.to_hex());
     field(&mut hasher, generation.unwrap_or_default().as_bytes());
+    field(
+        &mut hasher,
+        destination.audience.visibility.as_str().as_bytes(),
+    );
+    field(&mut hasher, destination.audience.role.as_str().as_bytes());
     field(&mut hasher, plan.strategy.as_str().as_bytes());
     hasher.update(&plan.strategy_revision.to_le_bytes());
     for plan_ref in &plan.refs {

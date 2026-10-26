@@ -202,6 +202,12 @@ pub struct OriginMirrorSetRequest {
     /// strategy, and a new mirror or URL asks first (`ask_me`).
     #[serde(default)]
     pub sync_strategy: Option<crate::origin::mirror_strategy::OriginMirrorSyncStrategy>,
+    /// `public`, `private` or `unknown`: who can read the mirror, as the
+    /// owner states it. Absent: the same URL keeps its own, and a new mirror
+    /// or URL is `unknown`, held as public. A public or unknown mirror never
+    /// takes history that holds a marked live key.
+    #[serde(default)]
+    pub visibility: Option<crate::origin::secret_publication::RepoDestinationVisibility>,
 }
 
 /// The owner's change of one mirror's sync strategy. It changes nothing
