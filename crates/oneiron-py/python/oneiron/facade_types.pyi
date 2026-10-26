@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4156 declarations.
+Census: 1159 facade rows, 4157 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -611,7 +611,7 @@ class RunTreeEvent(TypedDict):
     actor: str
     kind: RunTreeEventKind
     note: NotRequired[str | None]
-class RunTreeNode(TypedDict):
+class RunTreeWireNode(TypedDict):
     job_id: str
     run_id: NotRequired[str | None]
     parent_id: NotRequired[str | None]
@@ -623,7 +623,7 @@ class RunTreeNode(TypedDict):
     timestamps: RunTreeTimestamps
     failure: NotRequired[RunTreeFailure | None]
     events: list[RunTreeEvent]
-    children: list[RunTreeNode]
+    children: list[int]
 class RunTreeRepairMissingParent(TypedDict):
     kind: Literal["missing_parent"]
     job_id: str
@@ -633,9 +633,11 @@ class RunTreeRepairParentCycle(TypedDict):
     job_id: str
     parent_id: str
 RunTreeRepair = RunTreeRepairMissingParent | RunTreeRepairParentCycle
-class RunTree(TypedDict):
-    roots: list[RunTreeNode]
+class RunTreeWire(TypedDict):
+    nodes: list[RunTreeWireNode]
+    roots: list[int]
     repairs: list[RunTreeRepair]
+RunTree = RunTreeWire
 class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree

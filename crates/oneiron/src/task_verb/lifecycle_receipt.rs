@@ -10,7 +10,11 @@
 //! it journaled, `receipt_ref` and all. A fence refusal, a take another holds
 //! and a status read keep none. A call in an anonymous off-record session
 //! keeps none either (Engine ruling, #1968), as every receipt writer there:
-//! such a session keeps nothing.
+//! such a session keeps nothing. One record is exempt (Engine 10-26,
+//! ARCH-0052, FIX 10694): a consult interruption's frozen consent case is an
+//! authority record, kept in such a session too, with its authority fields
+//! only and no conversation content, as is the ConsentRequired fact beside
+//! it.
 //!
 //! Each receipt is indexed in the transaction that keeps it: by its TASK and
 //! time, which a status read names the newest of (FIX 3270) and whose row of

@@ -405,41 +405,68 @@ impl McpPageBudget {
     }
 }
 
+/// One step of [`canonical_json`]'s walk.
+enum CanonicalStep<'a> {
+    /// A value still to write.
+    Value(&'a Value),
+    /// An object key, written with its colon.
+    Key(&'a str),
+    /// A separator or a closing bracket.
+    Text(&'static str),
+}
+
 /// Serializes JSON into a deterministic RFC-8785-shaped form for the values
 /// used by MCP argument binding. In particular, every object is sorted
 /// recursively; relying on `Value::to_string()` would preserve the workspace's
 /// insertion order and make two equivalent nested objects hash differently.
+/// The walk keeps what it has left to write on a heap stack, so a value of
+/// any depth writes the same bytes without deepening the call stack (FIX
+/// 10603).
 fn canonical_json(value: &Value, out: &mut String) {
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
-        Value::Number(value) => out.push_str(&value.to_string()),
-        Value::String(value) => {
-            out.push_str(&serde_json::to_string(value).expect("JSON strings are serializable"));
-        }
-        Value::Array(values) => {
-            out.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
-                canonical_json(value, out);
-            }
-            out.push(']');
-        }
-        Value::Object(values) => {
-            let mut keys = values.keys().collect::<Vec<_>>();
-            keys.sort_unstable();
-            out.push('{');
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    out.push(',');
-                }
+    let mut pending = vec![CanonicalStep::Value(value)];
+    while let Some(step) = pending.pop() {
+        let value = match step {
+            CanonicalStep::Value(value) => value,
+            CanonicalStep::Key(key) => {
                 out.push_str(&serde_json::to_string(key).expect("JSON keys are serializable"));
                 out.push(':');
-                canonical_json(&values[key], out);
+                continue;
             }
-            out.push('}');
+            CanonicalStep::Text(text) => {
+                out.push_str(text);
+                continue;
+            }
+        };
+        match value {
+            Value::Null => out.push_str("null"),
+            Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+            Value::Number(value) => out.push_str(&value.to_string()),
+            Value::String(value) => {
+                out.push_str(&serde_json::to_string(value).expect("JSON strings are serializable"));
+            }
+            Value::Array(values) => {
+                out.push('[');
+                pending.push(CanonicalStep::Text("]"));
+                for (index, value) in values.iter().enumerate().rev() {
+                    pending.push(CanonicalStep::Value(value));
+                    if index > 0 {
+                        pending.push(CanonicalStep::Text(","));
+                    }
+                }
+            }
+            Value::Object(values) => {
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort_unstable();
+                out.push('{');
+                pending.push(CanonicalStep::Text("}"));
+                for (index, key) in keys.into_iter().enumerate().rev() {
+                    pending.push(CanonicalStep::Value(&values[key]));
+                    pending.push(CanonicalStep::Key(key));
+                    if index > 0 {
+                        pending.push(CanonicalStep::Text(","));
+                    }
+                }
+            }
         }
     }
 }

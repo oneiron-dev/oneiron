@@ -125,9 +125,8 @@ impl<'a> AttemptQueue<'a> {
         task_ref: Option<String>,
     ) -> Result<EnqueueOutcome> {
         // This public door is actorless, and stays that way: every caller
-        // reaching it keeps the exact v1 key family, its pre-v1 raw fallback,
-        // and that fallback's self-heal — byte-identical to before the actor
-        // axis existed.
+        // reaching it keeps the actorless v1 key family, whose primary key
+        // alone its dedupe reads (FIX 6008).
         let actor_ref: Option<&str> = None;
         validate_kind(&input.kind)?;
         validate_optional_dedupe(input.dedupe_key.as_deref())?;
