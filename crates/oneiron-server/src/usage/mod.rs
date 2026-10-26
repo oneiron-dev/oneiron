@@ -16,6 +16,6 @@ pub use model::{
     UsageRollupStatus, UsageRun, UsageTokenCounts,
 };
 pub use pricing::catalog_cost_rates;
-pub(crate) use repair::UsageScope;
+pub(crate) use repair::{UsageScope, removal_conflict_reason};
 #[cfg(test)]
 mod tests;
