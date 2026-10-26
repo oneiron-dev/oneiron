@@ -56,6 +56,8 @@ mod dial;
 mod enrolment;
 #[cfg(feature = "mesh")]
 mod renewal;
+#[cfg(feature = "mesh")]
+mod route;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
@@ -216,13 +218,23 @@ async fn open(
     }
     let credential =
         crate::commands::credential_file::PairedCredentialFile::read(&credential_file)?;
+    // Each mesh dial targets the home the last committed election routes to
+    // (FIX 3131); a move of it rebuilds the link, as a renewal does.
+    let topology = home_node.map(|node| home_topology(node, &url));
+    let routes = || {
+        topology
+            .as_ref()
+            .map(oneiron::sync::HomeNodeTopology::home_route)
+    };
+    let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
+    let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
     let link = Link {
         windows: Arc::clone(&server.reassert_manager),
-        topology: home_node.map(|node| home_topology(node, &url)),
+        topology,
         url,
         worlds,
         mesh_dialer: mesh.map(|mesh| {
-            Arc::new(MeshSyncDialer::new(mesh.transport(), home)) as Arc<dyn SyncDialer>
+            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>
         }),
         pin,
         machine,
@@ -236,6 +248,7 @@ async fn open(
         credential_file,
         Arc::clone(&server.vault),
         link.mesh_dialer.clone(),
+        moves,
     );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();

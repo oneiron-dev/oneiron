@@ -3913,7 +3913,7 @@
      "path": "src/authority/mesh_machine/doors.rs",
      "purpose": "Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal…",
      "surface": {
-      "fn": 7,
+      "fn": 8,
       "struct": 3
      }
     },
@@ -65706,14 +65706,15 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "HomeNodeTopology"
+      "HomeNodeTopology",
+      "HomeRoute"
      ],
      "path": "src/sync/connection/topology.rs",
      "purpose": "Host-authorized home-node candidate updates, independent of socket liveness",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
-      "struct": 1
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -90321,7 +90322,18 @@
      "purpose": "Private iroh data plane",
      "surface": {
       "fn": 6,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/iroh_transport/admission.rs",
+     "purpose": "Fair dispatch of authenticated inbound admissions (FIX 8620), and the one receipt each leaves however it…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -90332,7 +90344,8 @@
      "purpose": "The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 3,
+      "type": 1
      }
     },
     {
@@ -90376,8 +90389,9 @@
      "path": "src/sync_dialer.rs",
      "purpose": "The sync client's carrier to its home machine over the mesh (OF-535)",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "fn": 3,
+      "struct": 1,
+      "type": 1
      }
     },
     {
@@ -90413,7 +90427,7 @@
    ],
    "modules": {
     "iroh_transport": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -90436,7 +90450,7 @@
    },
    "over_bar": 0,
    "purpose": "Vault-scoped mesh transport",
-   "source_files": 5,
+   "source_files": 6,
    "test_files": 2
   },
   "oneiron-model": {
@@ -103403,6 +103417,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/device_sync/route.rs",
+     "purpose": "FIX 3131: the home device sync dials over the mesh",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/document_memory.rs",
      "purpose": "The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617)",
      "surface": {
@@ -110051,7 +110075,7 @@
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…"
     },
     "device_sync": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -110361,7 +110385,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1302,
+   "source_files": 1303,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -71,6 +71,24 @@ impl Vault {
         })
     }
 
+    /// The MACHINE whose address names endpoint `key`, read for the owner
+    /// (FIX 8622): every MACHINE row, however many the owner keeps, counted
+    /// as the owner's bind counts them, where the lookup any key may make
+    /// stops at its bound. Two MACHINEs naming the key refuse, as there.
+    pub fn mesh_machine_by_endpoint_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        key: [u8; 32],
+    ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
+        let found = self.mesh_machine_by_endpoint_in_txn(&txn, key, Some(&mut count))?;
+        drop(txn);
+        count.finish(self);
+        Ok(found)
+    }
+
     /// Host binding: both pairing and transport keys prove the same binding.
     /// Address and authority commit atomically, initially with no ALPN grants.
     pub fn bind_mesh_machine(
