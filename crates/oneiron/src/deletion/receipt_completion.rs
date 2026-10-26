@@ -21,6 +21,7 @@ use super::receipt::{
     RedactionAuditReceipt, decode_redaction_audit_receipt, sign_redaction_audit_receipt,
 };
 use super::receipt_grammar::validate_redaction_receipt_body;
+use super::receipt_origin::receipt_attested_by_this_device_in_txn;
 
 /// Domain separator of the completion row id derived from its receipt's id.
 const REDACTION_SWEEP_COMPLETION_DOMAIN: &[u8] = b"oneiron:redaction-sweep-completion:v1\0";
@@ -92,8 +93,9 @@ pub(crate) fn redaction_sweep_completion_in_txn(
 /// fact alone. The erase's overall "erase completed" is logged with its final
 /// row, once its custody retirements have finished too (FIX 5844).
 /// Idempotent: when a valid completion row already exists this writes
-/// nothing and returns `false`. The device key must already be on the handle
-/// (P6c): the signer never opens the keystore.
+/// nothing and returns `false`, as it does for a receipt another device
+/// attested, which is that device's to complete (FIX 2596). The device key
+/// must already be on the handle (P6c): the signer never opens the keystore.
 pub(crate) fn append_redaction_sweep_completion_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -106,7 +108,9 @@ pub(crate) fn append_redaction_sweep_completion_in_txn(
             "a sweep completion row is not completed again",
         ));
     }
-    if redaction_sweep_completion_in_txn(&vault.store, wtxn, receipt_id, receipt)?.is_some() {
+    if redaction_sweep_completion_in_txn(&vault.store, wtxn, receipt_id, receipt)?.is_some()
+        || !receipt_attested_by_this_device_in_txn(vault, wtxn, receipt_id, receipt)?
+    {
         return Ok(false);
     }
     let completion_id = redaction_sweep_completion_id(receipt_id)?;
