@@ -89,7 +89,7 @@
      "path": "src/access_grant/context.rs",
      "purpose": "Relationship read authority built from live grants and stored membership evidence",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "struct": 3
      }
@@ -119,7 +119,7 @@
      "purpose": "AccessGrant record and scope, capability, and status enums",
      "surface": {
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -28778,6 +28778,7 @@
      "path": "src/edit_distance/proposal_text.rs",
      "purpose": "ED-00: a proposal artifact's body lives in a `LoroText` container for its proposal→outcome window, and every…",
      "surface": {
+      "crate-vis": 1,
       "fn": 8,
       "struct": 1
      }
@@ -28789,7 +28790,7 @@
      "path": "src/edit_distance/proposal_text/receipts.rs",
      "purpose": "Commit-envelope writer and read-time provenance fold for authored text",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2
      }
     },
@@ -30643,7 +30644,7 @@
      "path": "src/entity_doc/checkpoint.rs",
      "purpose": "The checkpoint getter of entity documents (KS7-2): each entity's head, citation floors, forks, pins, purge…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -30663,7 +30664,17 @@
      "path": "src/entity_doc/checkpoint/loro.rs",
      "purpose": "The entity document's actor carriers in its Loro history (FIX 6072): its birth's actor and every engine…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/checkpoint/message_receipts.rs",
+     "purpose": "Receipted commit messages in an entity document's history (FIX 6479): a generic commit's stamp with its…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -30684,6 +30695,17 @@
      "purpose": "Citation floors: a derived record that quotes an entity document keeps the history it quoted",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/commit_receipts.rs",
+     "purpose": "Every generic entity-document commit carries its made_by receipt (FIX 7790, ARCH-0035): the engine stamp…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2
      }
     },
     {
@@ -30711,7 +30733,7 @@
      "path": "src/entity_doc/document.rs",
      "purpose": "The common actor-stamped Loro document primitive",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 22,
       "fn": 9,
       "struct": 3
      }
@@ -30843,13 +30865,33 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/prose_admission.rs",
+     "purpose": "OF-063 prose links for entity text (FIX 1227, 1351, 1672): the prose an AI writer lands in an entity…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/recovery.rs",
      "purpose": "Canonical recovery for generic EntityDoc owners: the current value, and the causal state its forks, pins…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/entity_doc/recovery/canonical_order.rs",
+     "purpose": "The canonical index of each captured version",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -30987,7 +31029,7 @@
      "path": "src/entity_doc/verbs.rs",
      "purpose": "Stable-cursor edit verbs and the lossless whole-text timeout path",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -36266,11 +36308,24 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "ConnectorWitness"
+     ],
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
-      "fn": 3
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/connector_witness_grant.rs",
+     "purpose": "The witness-read grant (FIX 10895, owner ruling WITNESS-READ)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -36837,9 +36892,9 @@
      "path": "src/ingest/mod.rs",
      "purpose": "Ingest source registry and source-local normalization",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "mod": 4,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -71185,6 +71240,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorWitnessReadGrantRevokeRequest",
+      "ConnectorWitnessReadGrantRevoked"
+     ],
+     "path": "src/verbs/connector_witness_read_grant.rs",
+     "purpose": "`vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CoreferenceLinkReceipt",
       "CoreferenceLinkRequest",
       "CoreferencePairRequest",
@@ -71488,7 +71557,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1189
+      "fn": 1190
      }
     },
     {
@@ -71885,7 +71954,7 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 10,
-      "re-export": 79,
+      "re-export": 80,
       "struct": 39
      }
     },
@@ -77198,9 +77267,9 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 28,
+     "files": 32,
      "impl_vault": true,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge"
     },
@@ -77366,7 +77435,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 58,
+     "files": 59,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78094,7 +78163,7 @@
      "purpose": "Vault shape as code (ARCH-0070): the setup plane held in one hand"
     },
     "verbs": {
-     "files": 84,
+     "files": 85,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78164,9 +78233,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 125,
+   "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5145,
+   "source_files": 5151,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90017,7 +90086,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1157
+      "fn": 1158
      }
     },
     {
@@ -91389,7 +91458,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1158
+      "fn": 1159
      }
     },
     {
@@ -95506,6 +95575,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/connector_witness_read_doors.rs",
+     "purpose": "The host door of an agent's witness-read grant over a connector conversation (FIX 10895)…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
@@ -95919,7 +95998,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 150
+      "crate-vis": 151
      }
     },
     {
@@ -108238,7 +108317,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 565,
+     "files": 566,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -108716,7 +108795,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1281,
+   "source_files": 1282,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -109813,6 +109892,8 @@
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConnectorWitnessReadGrantRevokeRequest",
+      "ConnectorWitnessReadGrantRevoked",
       "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
@@ -113049,7 +113130,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3117
+      "struct": 3119
      }
     },
     {
