@@ -2508,7 +2508,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/stale.rs` | src | m | 1 struct · 1 enum · 9 fn · 3 const · 9 crate-vis | FederationStaleReason, WorldStaleStamp | Terminal-pact per-world stale stamping (FED-04) |
 | `src/federation/tests.rs` | test | XL | — | — | — |
 | `src/federation/vault_id_decimal.rs` | src | s | 2 crate-vis | — | A shared vault's id on the wire (OF-158): a decimal string, since a `u64` past 2^53 does not survive a… |
-| `src/feedback/bundle.rs` | src | m | 7 struct · 3 enum · 21 fn · 13 const · 2 crate-vis | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform +2 | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
+| `src/feedback/bundle.rs` | src | m | 7 struct · 3 enum · 22 fn · 11 const · 2 crate-vis | FeedbackBundle, FeedbackCategory, FeedbackConfigSnapshot, FeedbackDagHop, FeedbackEncoding, FeedbackHealerDiagnosis, FeedbackHnswSnapshot, FeedbackPlatform +2 | Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest |
 | `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 20 fn · 3 const · 4 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
 | `src/feedback/conversation_training.rs` | src | s | 2 struct · 2 enum · 1 trait · 1 fn · 6 re-export | ConversationSource, ConversationTrainingChoice, Eligibility, NoChoicesYet, Withheld | "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation… |
 | `src/feedback/conversation_training/anonymous.rs` | src | s | 2 enum · 1 fn · 3 re-export · 6 crate-vis | TrainingPieceState, TrainingTransport | The anonymous training window's side of local custody (TL-6, FIX 5813): where each anonymous piece stands at… |
@@ -2526,12 +2526,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/conversation_training/release.rs` | src | m | 1 struct · 2 fn | TrainingOfferPass | The offer pass and its release gate (OF-420 A2, A3; D1; FIX 5502; TRAINING-LINK = C) |
 | `src/feedback/conversation_training/release/prepare.rs` | src | s | 2 crate-vis | — | An offer's preparation: its hold in local custody, then its seal and its signed manifest (OF-420 A2… |
 | `src/feedback/conversation_training/source.rs` | src | m | 9 crate-vis | — | The source selector (OF-420 A3; FIX 5502 owner rulings): what counts of one of this vault's conversations… |
+| `src/feedback/conversation_training/withdraw.rs` | src | s | 3 crate-vis | — | A hosted submission's withdrawal at the intake (FIX 9855): one helper for a person's erase, a source's… |
 | `src/feedback/dispatch.rs` | src | m | 4 struct · 1 trait · 7 fn · 4 const | FeedbackExportOutcome, FeedbackSendContext, FeedbackSendOutcome, FeedbackTransport, FeedbackTransportRequest | Feedback dispatch and export: send context, transport adapter, dispatch request building, send, and… |
-| `src/feedback/error.rs` | src | s | 1 enum · 9 crate-vis | FeedbackError | Feedback error type plus shared validation and framing helpers |
+| `src/feedback/error.rs` | src | s | 1 enum · 8 crate-vis | FeedbackError | Feedback error type plus shared validation and framing helpers |
 | `src/feedback/inbox.rs` | src | s | 1 struct · 1 enum · 4 fn | FeedbackInboxNote, FeedbackInboxVia | The open inbox's notes (ARCH-0056 #open-inbox): what anyone sent us, kept for the triage sweep |
-| `src/feedback/intake.rs` | src | s | 2 struct · 5 fn | FeedbackDedup, FeedbackReviewItem | Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input |
+| `src/feedback/intake.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | FeedbackDedup, FeedbackReviewItem | Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input |
 | `src/feedback/intake/refs.rs` | src | s | 6 crate-vis | — | Strict hexadecimal entity references for the intake row codec |
-| `src/feedback/intake/report.rs` | src | s | 1 crate-vis | — | T2 for universal reports, sharing the bundle intake's cosine normalization |
+| `src/feedback/intake/report.rs` | src | s | 2 crate-vis | — | T2 for universal reports, sharing the bundle intake's cosine normalization |
+| `src/feedback/intake/report/erase.rs` | src | s | 6 crate-vis | — | A report cluster's members and their erase (FIX 9856) |
 | `src/feedback/intake/tests.rs` | test | s | — | — | — |
 | `src/feedback/mod.rs` | src | s | 1 mod · 10 re-export · 1 crate-vis | — | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `src/feedback/preview_store.rs` | src | s | 1 struct · 2 fn | RetainedFeedbackPreview | The feedback previews an owner was shown, kept until they expire (FIX 5212): a send reads back the exact… |
@@ -3656,7 +3658,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 17 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/secret_marks.rs` | src | m | 9 crate-vis | — | A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an… |
-| `src/origin/secret_marks/read.rs` | src | m | 21 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
+| `src/origin/secret_marks/read.rs` | src | m | 22 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
 | `src/origin/secret_projection.rs` | src | s | 25 crate-vis | — | Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1) |
 | `src/origin/secret_projection/checkout.rs` | src | s | 3 crate-vis | — | A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2) |
 | `src/origin/secret_projection/claims.rs` | src | m | 18 crate-vis | — | A masked Git copy's record (FIX 7608 slice 2b-i, CALL M): value-free `repo.secret_projection` claims at… |
@@ -3666,7 +3668,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/secret_projection/edit.rs` | src | m | 3 crate-vis | — | An agent's edit of a masked repo copy, mapped onto the ORIGINAL (FIX 7608 slice 2b-ii-A, ASK E VisibleDiff) |
 | `src/origin/secret_projection/git.rs` | src | m | 24 crate-vis | — | The Git side of a marked repo's projection |
 | `src/origin/secret_projection/graph_objects.rs` | src | s | 6 crate-vis | — | The copy of a masked Git graph's object closure (FIX 7608 slice 2b-i): every object the roots reach, written… |
-| `src/origin/secret_projection/index.rs` | src | m | 28 crate-vis | — | The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and… |
+| `src/origin/secret_projection/index.rs` | src | m | 30 crate-vis | — | The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and… |
 | `src/origin/secret_projection/index/invalidate.rs` | src | s | 1 crate-vis | — | A mask change's index copies (FIX 7608 slice 3): when a writer adds marks or mask spans to blobs, every… |
 | `src/origin/secret_projection/recipient.rs` | src | s | 1 struct · 5 fn · 7 crate-vis | RepoRevealRecipient | Who actually receives a repo read's bytes, as its host proved it (FIX 7608 slice 2b-ii-A, ASK 1 addition) |
 | `src/origin/secret_projection/reveal.rs` | src | s | 6 crate-vis | — | A real-byte read of one marked repo file through the shipped file reveal (FIX 7608 slice 2b-ii-A, GAP-B /… |
@@ -3976,7 +3978,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/document_rows.rs` | src | s | 11 crate-vis | — | The document-row port: the ARCH-0023b entity-document families of one document slot |
 | `src/ports/integrity.rs` | src | m | 25 crate-vis | — | Source-prefix dependency index and deletion invalidation in the caller's transaction |
 | `src/ports/lmdb_aux.rs` | src | m | 2 crate-vis | — | LMDB audit, dependency, content-addressed blob and queue adapters |
-| `src/ports/lmdb_claim.rs` | src | s | 5 crate-vis | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
+| `src/ports/lmdb_claim.rs` | src | s | 6 crate-vis | — | Claim adapter preserves the history door; current-state queries exclude stale claims |
 | `src/ports/lmdb_document_rows.rs` | src | s | — | — | LMDB/session adapter of the document-row port, over the declared `sync_state` families |
 | `src/ports/lmdb_entity.rs` | src | m | 4 crate-vis | — | LMDB entity, edge and place adapters |
 | `src/ports/lmdb_index.rs` | src | m | 2 crate-vis | — | Search, short-id and deletion-ledger adapters |
@@ -5206,12 +5208,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/note_admission.rs` | src | s | 1 crate-vis | — | Transaction-bound NOTE selector admission |
 | `src/sync/selector/peer_confidence.rs` | src | s | 1 struct · 3 fn · 1 const · 1 crate-vis | PeerConfidence | Per-peer confidence for federated claims (OF-149, ARCH-0043): how far this vault believes what one… |
 | `src/sync/selector/scope.rs` | src | m | 11 crate-vis | — | Export scope tables: coreference consent context, per-source facet scope mirror, and per-entity decisions |
-| `src/sync/selector/secret_projection.rs` | src | s | 2 re-export · 16 crate-vis | — | The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries… |
+| `src/sync/selector/secret_projection.rs` | src | m | 2 re-export · 18 crate-vis | — | The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries… |
 | `src/sync/selector/secret_projection/documents.rs` | src | m | 1 struct · 5 fn · 12 crate-vis | RepoCopyAliases | A marked repo item's entity document as a sync peer gets it, a peer's edit of it as the source text takes… |
 | `src/sync/selector/secret_projection/frames.rs` | src | m | 4 crate-vis | — | A window blob as a sync peer gets it, and a peer's blob as this window takes it (FIX 7608 slice 4, part 2) |
 | `src/sync/selector/secret_projection/history.rs` | src | s | 4 crate-vis | — | A window's history as a peer gets it, and a peer's history as the canonical window takes it (CHANGED… |
 | `src/sync/selector/secret_projection/release.rs` | src | s | 1 enum · 3 fn · 2 crate-vis | RepoSyncAdmission | The host adapters every window release and admission goes through (FIX 7608 slice 4, part 3) |
-| `src/sync/selector/secret_projection/rows.rs` | src | s | 4 crate-vis | — | One entity row as a peer gets it, and one incoming copy row as the canonical store takes it |
+| `src/sync/selector/secret_projection/rows.rs` | src | s | 5 crate-vis | — | One entity row as a peer gets it, and one incoming copy row as the canonical store takes it |
 | `src/sync/selector/tests.rs` | test | XL | — | — | — |
 | `src/sync/selector/text_egress.rs` | src | s | 3 crate-vis | — | The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source… |
 | `src/sync/server_state.rs` | src | m | 8 fn | — | Server-side `sync_state` persistence per the ARCH-0023b key layout |

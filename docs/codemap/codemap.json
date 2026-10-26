@@ -31979,10 +31979,10 @@
      "path": "src/feedback/bundle.rs",
      "purpose": "Feedback bundle wire contract: bundle, config, and diagnosis types plus the MessagePack codec and digest",
      "surface": {
-      "const": 13,
+      "const": 11,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 21,
+      "fn": 22,
       "struct": 7
      }
     },
@@ -32242,6 +32242,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/conversation_training/withdraw.rs",
+     "purpose": "A hosted submission's withdrawal at the intake (FIX 9855): one helper for a person's erase, a source's…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -32269,7 +32279,7 @@
      "path": "src/feedback/error.rs",
      "purpose": "Feedback error type plus shared validation and framing helpers",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 8,
       "enum": 1
      }
     },
@@ -32298,6 +32308,7 @@
      "path": "src/feedback/intake.rs",
      "purpose": "Receiving-vault feedback archive, T2 vector dedup, and propose-only digest input",
      "surface": {
+      "crate-vis": 1,
       "fn": 5,
       "struct": 2
      }
@@ -32319,7 +32330,17 @@
      "path": "src/feedback/intake/report.rs",
      "purpose": "T2 for universal reports, sharing the bundle intake's cosine normalization",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/feedback/intake/report/erase.rs",
+     "purpose": "A report cluster's members and their erase (FIX 9856)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -46999,7 +47020,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -47103,7 +47124,7 @@
      "path": "src/origin/secret_projection/index.rs",
      "purpose": "The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -50705,7 +50726,7 @@
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -65700,13 +65721,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 2
      }
     },
@@ -65765,7 +65786,7 @@
      "path": "src/sync/selector/secret_projection/rows.rs",
      "purpose": "One entity row as a peer gets it, and one incoming copy row as the canonical store takes it",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -76726,7 +76747,7 @@
      "purpose": "Federation grant record substrate"
     },
     "feedback": {
-     "files": 46,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77638,7 +77659,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5097,
+   "source_files": 5099,
    "test_files": 902
   },
   "oneiron-android": {
