@@ -7,15 +7,18 @@ use super::*;
 /// The settlement continuation of the two approval doors (OF-220).
 ///
 /// Called in the transaction that set a claim's approval, after it did. A
-/// claim that is not an approved `tasks.create` post or `tasks.brief`
-/// revision is left alone. An approved post lands its TASK under the id the
-/// claim derives, so a second settlement finds it and changes nothing; an
-/// approved revision lands as the TASK's next brief revision. Approval is
-/// the door's, never the body's: the body's own approval decides nothing,
-/// and the opener never settles its own proposal (DEC-0006).
+/// claim that is not an approved `tasks.create` post, `tasks.brief`
+/// revision or `tasks.cancel` proposal is left alone. An approved post
+/// lands its TASK under the id the claim derives, so a second settlement
+/// finds it and changes nothing; an approved revision lands as the TASK's
+/// next brief revision; an approved cancel stops its target (FIX 8946).
+/// Approval is the door's, never the body's: the body's own approval
+/// decides nothing, and the opener never settles its own proposal
+/// (DEC-0006).
 ///
-/// A refusal fails the approving transaction, so the proposal stays pending
-/// and the approver is told why.
+/// A post or revision refusal fails the approving transaction, so the
+/// proposal stays pending and the approver is told why. A cancel that does
+/// not land is logged and fails nothing.
 pub(crate) fn settle_task_proposal_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -35,6 +38,11 @@ pub(crate) fn settle_task_proposal_in_txn(
         settle_post(vault, wtxn, claim_id, &claim, approver, now)
     } else if claim.predicate == TASK_BRIEF_PROPOSAL_PREDICATE {
         settle_brief(vault, wtxn, &claim, approver, now)
+    } else if claim.predicate == TASK_CANCEL_PROPOSAL_PREDICATE {
+        crate::task_verb::cancel_settlement::settle_cancel_in_txn(
+            vault, wtxn, &claim, approver, now,
+        );
+        Ok(())
     } else {
         Ok(())
     }
@@ -134,6 +142,7 @@ pub(super) fn settle_post(
         .map(|value| decode_entity_ref(value, "tasks.proposal.parent_ref"))
         .transpose()?;
     let spec = task_body_field(entries, "spec")?.clone();
+    let copied = stamp.redo_of.is_some();
     let post = TaskPost {
         intent_key: stamp.intent_key.clone(),
         brief: stamp.brief,
@@ -160,6 +169,7 @@ pub(super) fn settle_post(
             &post_provenance(&stamp.intent_key, &stamp.request_digest, Some(claim_id)),
             origin.as_ref(),
             now,
+            copied,
         )
         .map_err(settle_refusal)?;
     Ok(())
