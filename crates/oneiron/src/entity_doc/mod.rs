@@ -34,6 +34,8 @@ pub(crate) use summary::{
 pub mod review_explainer;
 mod side_keys;
 mod storage;
+#[cfg(feature = "sync")]
+mod sweep;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
@@ -73,6 +75,8 @@ pub(crate) use storage::{
     record_bodies_at_in_txn, record_body_at, record_body_history_in_txn, record_document,
     record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use sweep::{compact_entity_doc_for_sweep, entity_doc_slots_in};
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 
 /// Resolve an active document's identity and live frontier in a caller-owned
