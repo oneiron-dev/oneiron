@@ -135,9 +135,12 @@ impl Vault {
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
-                apply(&mut doc, *entity, edit, &text, at, &[], &lifted)?;
-                let slot = format!("/edits/{index}/text");
-                landed.push(LandedProse::new(actor, slot, text));
+                let place = apply(&mut doc, *entity, edit, &text.stored, at, &[], &lifted)?;
+                if let Some(place) = place {
+                    let slot = format!("/edits/{index}/text");
+                    let said = LandedProse::anchored(actor, slot, &doc, place, &text, &lifted);
+                    landed.push(said);
+                }
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
             Ok((doc.frontier(), landed))
@@ -175,7 +178,7 @@ impl Vault {
             // handle of a key the live text's lift marked writes its value
             // again (OF-067; FIX 2371).
             let lifted = LiftedKeys::of_in_txn(&self.store, txn, [live.text()])?;
-            let text = &admitted_text_in_txn(
+            let admitted = admitted_text_in_txn(
                 self,
                 txn,
                 request.entity,
@@ -183,13 +186,14 @@ impl Vault {
                 &lifted,
                 &mut Lifted::default(),
             )?;
+            let text = &admitted.stored;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
             // The complete text is the writer's prose, wherever it lands; text
             // equal to its base says nothing new (FIX 1227).
             let landed = if *text == base_text {
                 None
             } else {
-                Some(LandedProse::new(request.actor, "/text".to_owned(), text.clone()))
+                Some(LandedProse::whole(request.actor, "/text".to_owned(), &admitted.said))
             };
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
@@ -441,7 +445,7 @@ pub(super) fn admitted_prose_in_txn(
     edit: &AnchoredEdit,
     lifted: &LiftedKeys,
     plan: &mut Lifted,
-) -> Result<String> {
+) -> Result<Admitted> {
     admitted_text_in_txn(vault, txn, entity, verb_parts(edit).1, lifted, plan)
 }
 
@@ -459,7 +463,7 @@ pub(super) fn admitted_text_in_txn(
     text: &str,
     lifted: &LiftedKeys,
     plan: &mut Lifted,
-) -> Result<String> {
+) -> Result<Admitted> {
     let mut admitted = text.to_owned();
     admit_parts_in_txn(
         vault,
@@ -468,13 +472,31 @@ pub(super) fn admitted_text_in_txn(
         &mut [("text:body", Part::Text(&mut admitted))],
         plan,
     )?;
-    Ok(lifted.resolved(&admitted).unwrap_or(admitted))
+    let stored = lifted
+        .resolved(&admitted)
+        .unwrap_or_else(|| admitted.clone());
+    Ok(Admitted {
+        stored,
+        said: admitted,
+    })
+}
+
+/// A writer's new text as admitted ([`admitted_text_in_txn`]).
+pub(super) struct Admitted {
+    /// As the document stores it: each handle of a key the live text's lift
+    /// marked is the value it stands for again.
+    pub(super) stored: String,
+    /// As its writer said it, every handle still a handle: the text its
+    /// prose links are read in (FIX 1227).
+    pub(super) said: String,
 }
 
 /// `replacement` is the text `edit` writes as admitted
 /// ([`admitted_prose_in_txn`]); `sources` are the rows its writer read for
 /// it, which its commit's receipt names (FIX 7790); `lifted` are the keys the
 /// live text's lift marked, for a quote a masked reader was issued (FIX 2936).
+/// Returns the Unicode position `replacement` landed at, or `None` when it
+/// replaced a span with the same text, which says nothing new (FIX 1227).
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
@@ -483,27 +505,31 @@ pub(super) fn apply(
     at: u64,
     sources: &[EntityId],
     lifted: &LiftedKeys,
-) -> Result<()> {
+) -> Result<Option<usize>> {
     let actor = edit
         .actor
         .ok_or(invalid("text operation requires an actor"))?;
     let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
+    let mut same = false;
     if replacing {
         let current: String = doc.text().chars().skip(start).take(end - start).collect();
         if !quotes(anchor, &current, lifted) {
             return Err(invalid("quoted span changed concurrently"));
         }
+        same = current == replacement;
     }
+    let place = if replacing { start } else { end };
     doc.edit_with(actor, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;
         }
-        body.insert(if replacing { start } else { end }, replacement)
+        body.insert(place, replacement)
             .map_err(|_| invalid("anchored insert"))
-    })
+    })?;
+    Ok((!same).then_some(place))
 }
 
 /// Whether `current`, the span `anchor` resolves to, is still the quote it

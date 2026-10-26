@@ -4,7 +4,7 @@ use super::doc_actor::{DocActor, names_no_actor};
 use super::document::decode_frontier;
 use super::prose_admission::{LandedProse, PROPOSAL_ROW, admit_landed};
 use super::side_keys::HexPair;
-use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn};
+use super::verbs::{admitted_prose_in_txn, admitted_text_in_txn, apply};
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{ArtifactError, Error, Result};
@@ -477,20 +477,28 @@ pub(super) fn open_proposal_in_txn(
             crate::batch::secret_scan::LiftedKeys::of_in_txn(&vault.store, txn, [live.text()])?;
         if let Some(text) = &req.rewrite {
             let text = admitted_text_in_txn(vault, txn, req.entity, text, &lifted, &mut plan)?;
+            let base = fork.text();
             fork.edit_with(req.actor, at, sources, |body| {
                 body.delete(0, body.len_unicode())
                     .map_err(|_| invalid("fork rewrite delete"))?;
-                body.insert(0, &text)
+                body.insert(0, &text.stored)
                     .map_err(|_| invalid("fork rewrite insert"))
             })?;
-            let slot = format!("/requests/{index}/rewrite");
-            landed.push(LandedProse::new(req.actor, slot, text));
+            // A rewrite equal to its base says nothing new (FIX 1227).
+            if text.stored != base {
+                let slot = format!("/requests/{index}/rewrite");
+                landed.push(LandedProse::whole(req.actor, slot, &text.said));
+            }
         } else {
             for (edit, op) in req.edits.iter().enumerate() {
                 let text = admitted_prose_in_txn(vault, txn, req.entity, op, &lifted, &mut plan)?;
-                super::verbs::apply(&mut fork, req.entity, op, &text, at, sources, &lifted)?;
-                let slot = format!("/requests/{index}/edits/{edit}/text");
-                landed.push(LandedProse::new(req.actor, slot, text));
+                let stored = &text.stored;
+                let place = apply(&mut fork, req.entity, op, stored, at, sources, &lifted)?;
+                if let Some(place) = place {
+                    let slot = format!("/requests/{index}/edits/{edit}/text");
+                    let said = LandedProse::anchored(req.actor, slot, &fork, place, &text, &lifted);
+                    landed.push(said);
+                }
             }
         }
         let id = EntityId::now();
