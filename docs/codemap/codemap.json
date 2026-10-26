@@ -25847,6 +25847,31 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CoachBrowserProgramsReport",
+      "CoachBrowserRepairPending"
+     ],
+     "path": "src/dreamer_runner/maintenance/browser_programs.rs",
+     "purpose": "The Coach's browser programs (CUA E8, FIX 7605): each night, fixed code reads the solved-run evidence that…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/browser_programs/induction.rs",
+     "purpose": "Deterministic induction for the Coach's browser programs (CUA E8): one candidate program from two solved…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -25866,7 +25891,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 32,
+      "const": 33,
       "crate-vis": 10,
       "fn": 11,
       "trait": 1
@@ -26555,7 +26580,7 @@
       "const": 3,
       "crate-vis": 13,
       "fn": 1,
-      "mod": 19,
+      "mod": 20,
       "re-export": 10
      }
     },
@@ -76743,7 +76768,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 158,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77774,7 +77799,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5110,
+   "source_files": 5112,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92481,6 +92506,16 @@
      "notable": [],
      "path": "src/ai_host/browser_program_admission.rs",
      "purpose": "The browser program admission worker (CUA E8b; DESIGN-2 \"The Coach\", row E8): it runs each program the Coach…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_browser_programs.rs",
+     "purpose": "The Coach's browser programs on the host (CUA E8, FIX 7605): the engine's fixed-code pass under the leased…",
      "surface": {
       "crate-vis": 1
      }
@@ -107627,7 +107662,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 96,
+     "files": 97,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -108105,7 +108140,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1261,
+   "source_files": 1262,
    "test_files": 182
   },
   "oneiron-spawn": {
