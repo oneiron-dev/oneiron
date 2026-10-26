@@ -178,6 +178,11 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
                     IntentState::Done => {
                         report.skipped_done = report.skipped_done.saturating_add(1);
                     }
+                    // A remote task's call is unsettled and never sent again
+                    // (FIX 7960).
+                    IntentState::Deferred => {
+                        report.pending = report.pending.saturating_add(1);
+                    }
                     IntentState::Abandoned => {
                         report.skipped_abandoned = report.skipped_abandoned.saturating_add(1);
                         if let Some(escalation) = result.dispatch.escalation {
@@ -191,6 +196,9 @@ pub fn recover_authorized_outbound_intents<S: OutboundResultSender>(
                         match result.dispatch.state {
                             Some(IntentState::Done) => {
                                 report.completed = report.completed.saturating_add(1);
+                            }
+                            Some(IntentState::Deferred) => {
+                                report.pending = report.pending.saturating_add(1);
                             }
                             Some(IntentState::Pending) => {
                                 report.pending = report.pending.saturating_add(1);

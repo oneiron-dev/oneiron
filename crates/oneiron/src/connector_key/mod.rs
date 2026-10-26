@@ -55,7 +55,8 @@ pub use self::meter::{
     CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
     EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE, EFFECTOR_BUDGET_LAND_PROMPT_TEMPLATE_ID,
     EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE, EFFECTOR_BUDGET_PLAN_PROMPT_TEMPLATE_ID,
-    EffectorBudgetCharge, EffectorBudgetRead, EffectorBudgetRowRead, EffectorPoolCharge,
+    EffectorBudgetCharge, EffectorBudgetDebit, EffectorBudgetRead, EffectorBudgetRowRead,
+    EffectorPoolCharge,
 };
 pub use self::record::{
     CONNECTOR_KEY_MAX_BUDGET_ROWS, CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass,
@@ -81,7 +82,7 @@ pub(crate) use self::lifecycle::{catalog_charter_in_txn, scoped_server_debits_se
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, budget_block_pooled, budget_exhausted_reason,
     charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
-    shares_budget_pool,
+    release_effector_debits_in_txn, shares_budget_pool,
 };
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
