@@ -20093,7 +20093,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 25
      }
     },
@@ -20195,7 +20195,7 @@
      "purpose": "Install claim payload and the pre-consent proposal path",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 4,
       "struct": 2
      }
@@ -20239,6 +20239,34 @@
      "surface": {
       "enum": 1,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PluginSectionFitEvidence",
+      "PluginSectionFitOutcome",
+      "PluginSectionInstalled"
+     ],
+     "path": "src/context_board/plugin/fit_install.rs",
+     "purpose": "The fitted section install (FIX 9752; owner law ARCH-0053 \"Everything installs; permissions ask\")",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_board/plugin/fit_install/receipt_erase.rs",
+     "purpose": "The erase of a fitted install's `skill.section_fit` receipt (FIX 9752)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -20291,7 +20319,8 @@
      "path": "src/context_board/plugin/mod.rs",
      "purpose": "Plugin-section seam — the typed section manifest, its gated admission, the live registry projection, and the…",
      "surface": {
-      "re-export": 11
+      "crate-vis": 1,
+      "re-export": 12
      }
     },
     {
@@ -43152,7 +43181,6 @@
       "PluginSectionListRequest",
       "PluginSectionPackRow",
       "PluginSectionPendingRow",
-      "PluginSectionProposal",
       "PluginSectionProposeRequest",
       "PluginSectionRevokeRequest",
       "PluginSectionRevoked",
@@ -43168,8 +43196,22 @@
      "purpose": "Plugin Context Board sections (DOOR-112, e2e BOARD-07): the typed `vault.packs.sections.*` doors over the…",
      "surface": {
       "enum": 3,
-      "fn": 6,
-      "struct": 15
+      "fn": 5,
+      "re-export": 1,
+      "struct": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PluginSectionInstallOutcome"
+     ],
+     "path": "src/memory/plugin_sections/install.rs",
+     "purpose": "`vault.packs.sections.propose` (FIX 9752): one typed section offer on the caller's own credential, decided…",
+     "surface": {
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -60244,7 +60286,7 @@
      "path": "src/skill_hub/hub_owner.rs",
      "purpose": "Served hub skill doors (OF-213): the owner imports a skill from a configured hub ref, refetches one at its…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -60263,6 +60305,36 @@
       "crate-vis": 6,
       "enum": 1,
       "fn": 7,
+      "re-export": 1,
+      "struct": 2,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/import_receipt/fitted.rs",
+     "purpose": "The marketplace import in two halves (FIX 9752)",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallerPermissions",
+      "HoldsNothing",
+      "RuleSkillFit",
+      "SkillFitSetting"
+     ],
+     "path": "src/skill_hub/import_receipt/rule_fit.rs",
+     "purpose": "The deterministic skill fit and the owner's setting that picks it (FIX 9752, owner law ARCH-0053 \"Everything…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 3,
       "struct": 2,
       "trait": 1
      }
@@ -77833,7 +77905,7 @@
      "purpose": "Pure cross-actor consult ladder: state machine, typed verdicts, the OF-399 novelty guard, the Dreamer…"
     },
     "context_board": {
-     "files": 67,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78316,7 +78388,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 280,
+     "files": 281,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78729,7 +78801,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 85,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79004,7 +79076,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5217,
+   "source_files": 5222,
    "test_files": 902
   },
   "oneiron-android": {
@@ -112514,10 +112586,10 @@
       "PluginSectionGrant",
       "PluginSectionGrantRequest",
       "PluginSectionGrantState",
+      "PluginSectionInstallOutcome",
       "PluginSectionListRequest",
       "PluginSectionPackRow",
       "PluginSectionPendingRow",
-      "PluginSectionProposal",
       "PluginSectionProposeRequest",
       "PluginSectionRevokeRequest",
       "PluginSectionRevoked",
@@ -114070,8 +114142,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1019,
-      "struct": 3125
+      "enum": 1020,
+      "struct": 3124
      }
     },
     {
