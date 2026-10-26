@@ -21,7 +21,7 @@ mod workers;
 pub(crate) use self::hooks::hook_sandbox;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::hooks::spawn_fact_hooks;
-use self::page_seal::open_served_vault_anchored;
+pub(crate) use self::page_seal::open_served_vault_anchored;
 pub use self::page_seal::{OpenedServedVault, open_served_vault};
 pub(crate) use self::workers::start_desktop_workers;
 
