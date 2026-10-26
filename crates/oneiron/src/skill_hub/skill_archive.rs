@@ -1,13 +1,17 @@
 //! A skill archive from an agentskills.io discovery index (`type:
 //! "archive"`): a `.tar.gz` or `.zip` of the skill folder, `SKILL.md` at its
-//! root. Read in memory under the package bounds. As the discovery spec
+//! root. Read under the package bounds, a tar as it streams out of its gzip.
+//! No count of files refuses an archive (FIX 10100): every file is read, in
+//! 1,000-file steps under its host's deadline. As the discovery spec
 //! requires, an absolute path, a `..` segment or a link that leaves the
 //! folder refuses; a link inside it reads as a copy of the file it names.
 use super::HubFile;
-use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
-use super::package_codec::invalid;
+use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
+use super::package_codec::{MAX_ENCODED, encoded_file_bytes, invalid};
+use super::package_work::PackageFileProgress;
 use crate::error::Result;
 use std::io::{Cursor, Read};
+use std::time::Instant;
 
 /// A tar block.
 const BLOCK: usize = 512;
@@ -15,11 +19,12 @@ const BLOCK: usize = 512;
 const SYMLINK_MODE: u32 = 0o120_000;
 
 /// The files of a skill archive, told apart by its leading bytes: gzip (with
-/// a tar inside) or zip.
-pub(super) fn skill_archive(bytes: &[u8]) -> Result<Vec<HubFile>> {
+/// a tar inside) or zip, read before `deadline`, the host's own.
+pub(super) fn skill_archive(bytes: &[u8], deadline: Instant) -> Result<Vec<HubFile>> {
+    let mut progress = PackageFileProgress::new(deadline);
     let files = match bytes {
-        [0x1f, 0x8b, ..] => tar_gz(bytes)?,
-        [b'P', b'K', 3, 4, ..] => zip(bytes)?,
+        [0x1f, 0x8b, ..] => tar_gz(bytes, &mut progress)?,
+        [b'P', b'K', 3, 4, ..] => zip(bytes, &mut progress)?,
         _ => return Err(invalid("a skill archive is neither .tar.gz nor .zip")),
     };
     if !files.iter().any(|file| file.path == "SKILL.md") {
@@ -28,35 +33,36 @@ pub(super) fn skill_archive(bytes: &[u8]) -> Result<Vec<HubFile>> {
     Ok(files)
 }
 
-fn tar_gz(bytes: &[u8]) -> Result<Vec<HubFile>> {
-    // Each file's header and padding beside its bytes.
-    let bound = MAX_HUB_PACKAGE_TOTAL_BYTES + (MAX_HUB_PACKAGE_FILES + 2) * 3 * BLOCK;
-    let mut tar = Vec::new();
-    flate2::read::GzDecoder::new(bytes)
-        .take(bound as u64 + 1)
-        .read_to_end(&mut tar)
-        .map_err(|_| invalid("a skill archive is not readable gzip"))?;
-    if tar.len() > bound {
-        return Err(invalid("a skill archive exceeds the package bounds"));
-    }
+/// A tar read block by block as its gzip yields it, never held whole: only
+/// the files it keeps are, under the package bounds.
+fn tar_gz(bytes: &[u8], progress: &mut PackageFileProgress) -> Result<Vec<HubFile>> {
+    let mut tar = flate2::read::GzDecoder::new(bytes);
     let mut files = Files::default();
     // A pax record or GNU long name names the entry after it.
     let mut long_name: Option<String> = None;
-    let mut at = 0;
-    while at + BLOCK <= tar.len() {
-        let header = &tar[at..at + BLOCK];
+    // Every entry's own bytes, read or passed over: no more than an encoded
+    // package holds.
+    let mut bodies = 0_usize;
+    let mut header = [0_u8; BLOCK];
+    while read_block(&mut tar, &mut header)? {
         if header.iter().all(|byte| *byte == 0) {
             break;
         }
+        progress.file()?;
         let size =
             octal(&header[124..136]).ok_or_else(|| invalid("a skill archive entry has no size"))?;
-        let start = at + BLOCK;
-        let end = start
+        bodies = bodies
             .checked_add(size)
-            .filter(|end| *end <= tar.len())
-            .ok_or_else(|| invalid("a skill archive is cut short"))?;
-        let body = &tar[start..end];
-        at = start + size.div_ceil(BLOCK) * BLOCK;
+            .filter(|bodies| *bodies <= MAX_ENCODED)
+            .ok_or_else(|| invalid("a skill archive exceeds the package bounds"))?;
+        let body = match header[156] {
+            0 | b'0' | b'7' | b'x' | b'L' => read_body(&mut tar, size)?,
+            _ => {
+                pass_over(&mut tar, size)?;
+                Vec::new()
+            }
+        };
+        pass_padding(&mut tar, size)?;
         let name = long_name.take().unwrap_or_else(|| {
             let name = text(&header[..100]);
             let prefix = if header[257..262] == *b"ustar" {
@@ -71,23 +77,74 @@ fn tar_gz(bytes: &[u8]) -> Result<Vec<HubFile>> {
             }
         });
         match header[156] {
-            0 | b'0' | b'7' => files.push(&name, body.to_vec())?,
+            0 | b'0' | b'7' => files.push(&name, body)?,
             b'1' => files.link(&name, &text(&header[157..257]), true)?,
             b'2' => files.link(&name, &text(&header[157..257]), false)?,
             b'5' | b'g' => {}
-            b'x' => long_name = pax_path(body),
-            b'L' => long_name = Some(text(body)),
+            b'x' => long_name = pax_path(&body),
+            b'L' => long_name = Some(text(&body)),
             _ => return Err(invalid("a skill archive holds a device or pipe")),
         }
     }
     files.finish()
 }
 
-fn zip(bytes: &[u8]) -> Result<Vec<HubFile>> {
+fn unreadable_gzip() -> crate::error::Error {
+    invalid("a skill archive is not readable gzip")
+}
+
+/// The next whole block; `false` once fewer than a block's bytes are left.
+fn read_block(tar: &mut impl Read, block: &mut [u8; BLOCK]) -> Result<bool> {
+    let mut filled = 0;
+    while filled < BLOCK {
+        match tar.read(&mut block[filled..]) {
+            Ok(0) => return Ok(false),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return Err(unreadable_gzip()),
+        }
+    }
+    Ok(true)
+}
+
+/// An entry's `size` bytes.
+fn read_body(tar: &mut impl Read, size: usize) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    tar.by_ref()
+        .take(size as u64)
+        .read_to_end(&mut body)
+        .map_err(|_| unreadable_gzip())?;
+    if body.len() != size {
+        return Err(invalid("a skill archive is cut short"));
+    }
+    Ok(body)
+}
+
+/// An entry's `size` bytes, read and dropped.
+fn pass_over(tar: &mut impl Read, size: usize) -> Result<()> {
+    let passed = std::io::copy(&mut tar.by_ref().take(size as u64), &mut std::io::sink())
+        .map_err(|_| unreadable_gzip())?;
+    if passed != size as u64 {
+        return Err(invalid("a skill archive is cut short"));
+    }
+    Ok(())
+}
+
+/// The padding to the next block after an entry of `size` bytes; a tar that
+/// ends inside it ends there.
+fn pass_padding(tar: &mut impl Read, size: usize) -> Result<()> {
+    let padding = size.div_ceil(BLOCK) * BLOCK - size;
+    std::io::copy(&mut tar.by_ref().take(padding as u64), &mut std::io::sink())
+        .map_err(|_| unreadable_gzip())?;
+    Ok(())
+}
+
+fn zip(bytes: &[u8], progress: &mut PackageFileProgress) -> Result<Vec<HubFile>> {
     let unreadable = |_| invalid("a skill archive is not readable zip");
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(unreadable)?;
     let mut files = Files::default();
     for index in 0..archive.len() {
+        progress.file()?;
         let mut entry = archive.by_index(index).map_err(unreadable)?;
         if entry.is_dir() {
             continue;
@@ -118,6 +175,9 @@ fn zip(bytes: &[u8]) -> Result<Vec<HubFile>> {
 struct Files {
     files: Vec<HubFile>,
     total: usize,
+    /// The bytes these files take in an encoded package: a package past the
+    /// codec's bound is never stored.
+    encoded: usize,
     /// Each link's path and the archive path of the file it names.
     links: Vec<(String, String)>,
 }
@@ -127,9 +187,12 @@ impl Files {
         let path = resolve("", path)
             .ok_or_else(|| invalid("a skill archive path leaves the skill folder"))?;
         self.total += content.len();
-        if self.files.len() >= MAX_HUB_PACKAGE_FILES
-            || content.len() > MAX_HUB_FILE_BYTES
+        self.encoded = self
+            .encoded
+            .saturating_add(encoded_file_bytes(path.len(), content.len()));
+        if content.len() > MAX_HUB_FILE_BYTES
             || self.total > MAX_HUB_PACKAGE_TOTAL_BYTES
+            || self.encoded > MAX_ENCODED
         {
             return Err(invalid("a skill archive exceeds the package bounds"));
         }

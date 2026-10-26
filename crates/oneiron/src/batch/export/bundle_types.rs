@@ -2,14 +2,32 @@
 use super::ExportEntity;
 use serde::{Deserialize, Serialize};
 
-/// UTF-8 source stays exact. Opaque or credential-bearing files are nulled,
-/// never base64-encoded around the mandatory serializer inspection.
+/// Source files stay exact. A credential-bearing file is redacted, never
+/// base64-encoded around the mandatory serializer inspection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExportSourceFile {
     pub path: String,
-    pub content: Option<String>,
+    pub content: ExportSourceContent,
     pub sha256: Option<String>,
+}
+
+/// A source file's bytes as the archive carries them (FIX 10101): UTF-8 text
+/// inline; any other bytes as the archive file `files/<blake3>`, by its
+/// BLAKE3 and length, read by the credential scan before it is attached and
+/// again as it is imported; nothing when the scan redacts the file. Binary
+/// bytes are never a reason to redact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum ExportSourceContent {
+    Text(String),
+    File(crate::serialize::ExportBodyFile),
+    Redacted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

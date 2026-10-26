@@ -38,11 +38,25 @@ use crate::error::{Error, Result};
 /// file's digest, by member kind: field names from the row's root, `*` for
 /// each item of an array, `**` for any depth below. An entity body that is a
 /// stored file (`ExportBody::File`, `{blake3, bytes}` under `body.value`); a
-/// source tree's file moved to `files/`, under `file`; a run output's and a
-/// result body's `blake3`; a side row's value, or a leaf of its tree, stored
-/// as a file (`ExportBodyFile` again).
+/// source tree's member stored as a file (`ExportBodyFile` under
+/// `content.value`, FIX 10101), a hub source body's members too; a run
+/// output's and a result body's `blake3`; a side row's value, or a leaf of
+/// its tree, stored as a file (`ExportBodyFile` again).
 const FILE_DESCRIPTOR_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     (ArchiveRecordKind::Entity, &["body", "value", "blake3"]),
+    (
+        ArchiveRecordKind::Entity,
+        &[
+            "body",
+            "value",
+            "source_tree",
+            "files",
+            "*",
+            "content",
+            "value",
+            "blake3",
+        ],
+    ),
     (ArchiveRecordKind::Claim, &["body", "value", "blake3"]),
     (
         ArchiveRecordKind::Skill,
@@ -50,15 +64,23 @@ const FILE_DESCRIPTOR_FIELDS: &[(ArchiveRecordKind, &[&str])] = &[
     ),
     (
         ArchiveRecordKind::Skill,
-        &["source_tree", "files", "*", "file"],
+        &["source_tree", "files", "*", "content", "value", "blake3"],
     ),
     (
         ArchiveRecordKind::Pack,
-        &["value", "source_tree", "files", "*", "file"],
+        &[
+            "value",
+            "source_tree",
+            "files",
+            "*",
+            "content",
+            "value",
+            "blake3",
+        ],
     ),
     (
         ArchiveRecordKind::AgentPack,
-        &["source_tree", "files", "*", "file"],
+        &["source_tree", "files", "*", "content", "value", "blake3"],
     ),
     (ArchiveRecordKind::Run, &["outputs", "*", "blake3"]),
     (ArchiveRecordKind::ResultBody, &["blake3"]),
