@@ -105,6 +105,9 @@ pub enum GateLoopSource {
     Resident,
     /// A turn-woken program.
     TurnProgram,
+    /// A Dreamer-runner run whose agent the writer did not resolve: a claim
+    /// a run wrote names only its run.
+    Runner,
 }
 
 /// The decision that admitted a loop.
@@ -239,6 +242,42 @@ impl GateDecisionReadContext {
             record,
             about,
             position: None,
+        })
+    }
+
+    /// The read context of the claim `id` written as `body`, landed or not:
+    /// its subject (both ends of an edge), its record Scope and its own read
+    /// selectors, bit for bit. `None` when its scope selector does not
+    /// encode, so no part of its position is guessed.
+    pub(crate) fn claim(id: &EntityId, body: &crate::claim::ClaimBody) -> Option<Self> {
+        let scope = match &body.scope {
+            None => None,
+            Some(value) => {
+                let mut bytes = Vec::new();
+                rmpv::encode::write_value(&mut bytes, value).ok()?;
+                Some(bytes)
+            }
+        };
+        let about = match &body.subject {
+            crate::claim::ClaimSubject::Entity(subject) => vec![*subject],
+            crate::claim::ClaimSubject::Edge { source, target, .. } => vec![*source, *target],
+        };
+        let (relationship, private) = crate::claim::claim_access_axes(body);
+        Some(Self {
+            record: Some(*id),
+            about,
+            position: Some(GateReadPosition {
+                entity_type: crate::registry::ENTITY_TYPE_CLAIM,
+                scope: body.record_scope("read"),
+                claim: Some(GateClaimReadSelectors {
+                    relationship,
+                    private,
+                    scope,
+                    confidence_bits: body.confidence.to_bits(),
+                    salience_bits: body.salience.map(f32::to_bits),
+                    stale: body.stale,
+                }),
+            }),
         })
     }
 

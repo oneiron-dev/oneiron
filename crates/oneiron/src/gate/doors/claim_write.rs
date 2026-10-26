@@ -1,5 +1,6 @@
 //! Claim write entry seams plus the phase-ordered inner executor.
 
+mod decision_context;
 mod reference_read;
 
 use super::burst_inputs::claim_burst_inputs;
@@ -617,7 +618,11 @@ fn check_claim_policy_for_write_with_record_inner(
             grant_ref: None,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
-            context: Default::default(),
+            context: decision_context::claim_decision_context(
+                id,
+                body,
+                input.provenance.dreamer_run_id.as_deref(),
+            ),
             redacted_at: None,
         };
 
