@@ -30340,9 +30340,9 @@
      "purpose": "—",
      "surface": {
       "const": 6,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 3,
-      "fn": 8,
+      "fn": 9,
       "re-export": 10,
       "struct": 4,
       "trait": 2
@@ -30514,6 +30514,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/routing.rs",
+     "purpose": "Which embedder a leased row goes to, by the verdict of the reconciler's rung on it (FIX 10009)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30553,6 +30563,16 @@
      "purpose": "The kind slot binding doors (OF-370; ARCH-0019 `#kind-slots`, `#default-bindings`)",
      "surface": {
       "fn": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space/capabilities.rs",
+     "purpose": "What a redeclared space keeps for the slots that use it (FIX 9832)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -30602,6 +30622,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_move/cutover.rs",
+     "purpose": "The backlog a move's swap reads again in its own writer (FIX 9833)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -30613,10 +30643,30 @@
      "purpose": "The vault's own retrieval probes, which a space version move runs paired on its incumbent and its candidate…",
      "surface": {
       "const": 3,
-      "crate-vis": 4,
-      "fn": 6,
+      "crate-vis": 5,
+      "fn": 8,
       "struct": 2,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_probe/dependencies.rs",
+     "purpose": "What a probe's query is written from, and what erasing it takes (FIX 9829)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/embed/space_probe/family.rs",
+     "purpose": "A probe's source family: the `DerivedFrom` component its document is in (FIX 9831)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -78779,7 +78829,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 29,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -79761,7 +79811,7 @@
    },
    "over_bar": 119,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5282,
+   "source_files": 5287,
    "test_files": 902
   },
   "oneiron-android": {
@@ -103172,12 +103222,14 @@
      "kind": "src",
      "notable": [
       "EgressPolicy",
-      "RemoteEmbedderConfig"
+      "RemoteEmbedderConfig",
+      "RemoteEvidenceRule"
      ],
      "path": "src/config/remote_embedder.rs",
      "purpose": "Host-configured remote rung and cached per-entity egress decisions",
      "surface": {
       "crate-vis": 2,
+      "enum": 1,
       "struct": 2
      }
     },
@@ -104061,7 +104113,7 @@
      "path": "src/embedder/remote.rs",
      "purpose": "Builds a remote rung with a nonblocking host egress predicate",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
