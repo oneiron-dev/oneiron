@@ -207,6 +207,7 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: digest.to_vec(),
                 read_frontier_hash: [0; 32],
+                context: Default::default(),
                 redacted_at: None,
             },
         )?;

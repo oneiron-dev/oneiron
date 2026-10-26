@@ -488,6 +488,7 @@ impl Vault {
                 diff_handle: identity.as_bytes().to_vec(),
                 read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
                     .read_frontier_hash()?,
+                context: Default::default(),
                 redacted_at: None,
             };
             self.store.append_gate_decision_in_txn(txn, &receipt)?;

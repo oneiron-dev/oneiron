@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::context::GateDecisionContext;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::side_table::SideKey;
 
@@ -125,6 +126,10 @@ pub struct GateDecisionRecord {
     pub grant_ref: Option<String>,
     pub diff_handle: Vec<u8>,
     pub read_frontier_hash: [u8; 32],
+    /// What the decision was made about, the loop it came from and the
+    /// ruled analysis of its input, captured by its original writer before
+    /// its append (FIX 7499, 7500, 7801). Never consulted to decide a write.
+    pub context: GateDecisionContext,
     /// Set when this row was redacted in place to its retention skeleton
     /// (version 1). Never set at append time; the erase coupling (ONE-1638)
     /// is the only writer.
