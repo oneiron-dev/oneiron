@@ -110,10 +110,14 @@ impl LaunchUsdPrices for LaunchUsdQuote {
 }
 
 /// The highest of a catalog cost's per-million rates (input, output, cache
-/// read, cache write), rounded up. `None` when the cost is not quoted in USD
-/// or any rate does not parse.
+/// read, cache write), rounded up. `None` when the cost is neither quoted in
+/// USD nor free in any currency, or any rate does not parse.
 fn max_rate(cost: &LlmCatalogCost) -> Option<UsdUnitPrice> {
-    if cost.currency.as_deref() != Some(QUOTE_CURRENCY) {
+    // Rates that are all zero cost nothing in any currency, so they quote
+    // zero whatever currency they name, none included (FIX 9534).
+    let free = crate::usage::catalog_cost_rates(cost, String::new())
+        .is_some_and(|rates| rates.free_in_any_currency());
+    if !free && cost.currency.as_deref() != Some(QUOTE_CURRENCY) {
         return None;
     }
     let mut max_rate = 0.0_f64;
