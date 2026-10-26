@@ -499,13 +499,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
 | `src/batch/export/archive_index.rs` | src | m | 56 crate-vis | — | FIX 3678 (rule 5): the whole-vault import's disk-backed row index |
 | `src/batch/export/archive_project.rs` | src | m | 1 crate-vis | — | Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224… |
-| `src/batch/export/archive_read.rs` | src | m | 5 crate-vis | — | Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the… |
+| `src/batch/export/archive_read.rs` | src | m | 4 crate-vis | — | Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the… |
 | `src/batch/export/archive_side_tables.rs` | src | L | 3 struct · 5 enum · 12 crate-vis | ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree, ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason | OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the… |
 | `src/batch/export/archive_spool.rs` | src | m | 1 fn · 26 crate-vis | — | FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no… |
 | `src/batch/export/archive_types.rs` | src | s | 4 struct · 2 enum · 3 const · 8 crate-vis | ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ExportDiaryHold, ExportDiaryHoldReason, ExportDiaryRead | The whole-vault archive (OF-222): one ZIP holding `manifest.json`, one JSONL file per record kind under… |
 | `src/batch/export/asset_reserve.rs` | src | s | 2 crate-vis | — | The body instances an archive import's File ASSETs may spill into (FIX 3677, KS-2A): minted before the… |
 | `src/batch/export/bundle_tests.rs` | test | L | — | — | Source-folder exports and ordinary admission, with no replay/activation bypass |
-| `src/batch/export/bundle_types.rs` | src | s | 6 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportAgentBundle, ExportBundleOmission, ExportFileTree, ExportImportOmission, ExportImportRefusal, ExportSkillBundle +4 | Portable source files and typed bundle facets |
+| `src/batch/export/bundle_types.rs` | src | s | 6 struct · 7 enum | AgentBundleOmission, BundleOmissionReason, ExportAgentBundle, ExportBundleOmission, ExportFileTree, ExportImportOmission, ExportImportRefusal, ExportSkillBundle +5 | Portable source files and typed bundle facets |
 | `src/batch/export/bundle_validation.rs` | src | m | 14 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | m | 9 fn · 2 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/document_import.rs` | src | L | 6 fn · 4 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
@@ -4626,10 +4626,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/export_actor_references.rs` | src | s | 1 crate-vis | — | Preserve only the actor ledger's validated binary reference positions |
 | `src/serialize/export_value.rs` | src | m | 1 struct · 2 enum · 14 crate-vis | ExportBody, ExportBodyFile, ExportValue | Credential-safe, type-preserving MessagePack values for whole-vault JSON |
 | `src/serialize/export_value/file_stream.rs` | src | m | 1 crate-vis | — | FIX 3677: [`super::attaches_as_file`] read as a body streams, so an archive file is classified with no… |
+| `src/serialize/export_value/tree.rs` | src | m | 2 crate-vis | — | FIX 10097: an exported MessagePack value is kept whole at any depth |
 | `src/serialize/field_profile_table.rs` | src | s | 1 crate-vis | — | Static entity-type x [`FieldProfile`] to allowed-field-slice table |
 | `src/serialize/group_labels.rs` | src | s | 7 crate-vis | — | Static entity-type to section-label lookup used by every writer |
 | `src/serialize/handles.rs` | src | s | 5 crate-vis | — | Pack-local first-mention rendering |
-| `src/serialize/hub_source_archive.rs` | src | s | 1 struct · 4 crate-vis | ExportHubSource | Credential-safe view of exact replicated skill source carriers |
+| `src/serialize/hub_source_archive.rs` | src | s | 1 struct · 8 crate-vis | ExportHubSource | Credential-safe view of exact replicated skill source carriers |
 | `src/serialize/item_budget.rs` | src | s | 2 crate-vis | — | Per-item token-budget enforcement and value truncation |
 | `src/serialize/json_format.rs` | src | s | 2 crate-vis | — | JSON row and section shaping |
 | `src/serialize/l2_prefix.rs` | src | s | 1 crate-vis | — | Stable L2 prefix framing shared by every context-pack format |
@@ -4640,7 +4641,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/pack_entry.rs` | src | m | 1 struct · 4 fn · 4 const · 7 crate-vis | SerializeConfig | Entry points and per-format dispatch for context-pack serialization |
 | `src/serialize/pack_preparation.rs` | src | m | 5 crate-vis | — | Pack preparation: entity selection, field projection, value normalization, and the per-format split of a… |
 | `src/serialize/provider_codecs.rs` | src | s | 3 crate-vis | — | Provider read formats share prepared rows and always null credential-bearing fields |
-| `src/serialize/source_tree.rs` | src | s | 3 crate-vis | — | Credential-nulled, exact source files |
+| `src/serialize/source_tree.rs` | src | m | 9 crate-vis | — | Credential-nulled, exact source files |
 | `src/serialize/tests.rs` | test | L | — | — | — |
 | `src/serialize/token_budget.rs` | src | m | 13 crate-vis | — | Grouping, section/type token-budget enforcement, size estimation, and pack token-stats collection |
 | `src/serialize/toon_format.rs` | src | m | 1 crate-vis | — | Native TOON encoder for prepared pack sections |
@@ -4826,8 +4827,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_hub/pack_catalog/tests.rs` | test | m | 1 crate-vis | — | Source custody tests: exact bytes, inert imports, generic/replay parity and rollback |
 | `src/skill_hub/pack_catalog/tool_schema.rs` | src | m | 6 crate-vis | — | Closed Draft 2020-12 tool-schema profile: resource-aware nodes, not a JSON rewrite |
 | `src/skill_hub/pack_catalog/transport.rs` | src | s | 1 trait · 2 fn · 3 crate-vis | PackSourceAdapter | Generic Git/HTTP source fetch composes with the post-fit pack install door |
-| `src/skill_hub/package.rs` | src | s | 4 struct · 1 enum · 8 fn · 6 crate-vis | HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat | Hub package and capability surface shapes |
-| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 14 crate-vis | — | Bounded, typed package persistence |
+| `src/skill_hub/package.rs` | src | s | 4 struct · 1 enum · 8 fn · 5 crate-vis | HubFile, HubIndexEntry, HubPackage, SkillCapabilitySurface, SkillPackageFormat | Hub package and capability surface shapes |
+| `src/skill_hub/package_codec.rs` | src | m | 2 fn · 16 crate-vis | — | Bounded, typed package persistence |
+| `src/skill_hub/package_work.rs` | src | s | 3 crate-vis | — | FIX 10100: a package's files are read to the last one, however many it holds |
 | `src/skill_hub/publisher.rs` | src | s | 1 struct · 5 fn · 3 crate-vis | ForeignSkillPublisher | A publisher is a foreign actor with an owner-minted, revocable offer-only grant |
 | `src/skill_hub/record.rs` | src | m | 3 struct · 4 enum · 14 fn · 3 const · 2 crate-vis | HubPin, HubRef, HubSyncPolicy, SkillHubKind, SkillHubRecord, SkillHubTrustTier, TrackedHubRef | Hub and pinned skill reference vocabulary |
 | `src/skill_hub/ref_sync.rs` | src | s | 2 fn · 6 crate-vis | — | Per-ref sync policy (ARCH-0053 §7: sync_policy per ref, not per hub) |
