@@ -42,11 +42,11 @@ use crate::git_wire::{
     GitOid, GitRefExpectation, GitRefName, GitRefPublication, GitWire, GitWireRepo,
 };
 
-mod recipient;
+pub(crate) mod recipient;
 
 pub(crate) use self::recipient::{
-    RepoGitReleasePlan, RepoGitReleasedFile, materialize_recipient_git_graph,
-    plan_repo_git_release, recipient_repo_anchor,
+    RepoGitReleasePlan, materialize_recipient_git_graph, plan_repo_git_release,
+    recipient_repo_anchor,
 };
 
 /// One canonical export OID proved to return to the source it came from.
