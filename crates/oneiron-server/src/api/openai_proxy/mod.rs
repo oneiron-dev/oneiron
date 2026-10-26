@@ -444,6 +444,7 @@ fn remember(
         occurred_at: None,
         learned_at: None,
         salience: None,
+        confidence_details: None,
     };
     // The shared carried-proposal writer checks the credential, placement,
     // live proxy key and both slate legs in the transaction that writes.

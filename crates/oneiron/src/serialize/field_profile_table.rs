@@ -15,12 +15,13 @@ pub(super) fn fields_for_profile(
     profile: FieldProfile,
 ) -> &'static [&'static str] {
     match (entity_type, profile) {
-        // CLAIM profiles are prefixes of the pinned on-disk key set (D11) —
+        // CLAIM profiles are drawn from the pinned on-disk key set (D11) —
         // sourced from `claim::CLAIM_BODY_KEYS` so the read projection can
         // never drift from the storage ABI:
         //   Minimal  = pred val
-        //   Standard = pred val conf sal evid
+        //   Standard = pred val conf sal evid confBand confBasis
         //   Full     = pred val conf sal evid from to src world rel subj scope
+        //              confBand confBasis
         (ENTITY_TYPE_CLAIM, FieldProfile::Minimal) => crate::claim::CLAIM_FIELDS_MINIMAL,
         (ENTITY_TYPE_CLAIM, FieldProfile::Standard) => crate::claim::CLAIM_FIELDS_STANDARD,
         (ENTITY_TYPE_CLAIM, FieldProfile::Full) => crate::claim::CLAIM_FIELDS_FULL,

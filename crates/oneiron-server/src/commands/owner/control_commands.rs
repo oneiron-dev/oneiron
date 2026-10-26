@@ -508,7 +508,7 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
             let config = resolve_serve_config(&args.serve)?;
             let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
             let owner = local_owner(&vault)?;
-            let secret = config
+            config
                 .sync_server_config()
                 .auth_secret
                 .filter(|secret| !secret.is_empty())
@@ -517,7 +517,8 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                         "the config names no auth secret, so this host has no key to sign the guest's pact disconnects"
                     )
                 })?;
-            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            // This install's own issuer seed signs them (FIX-LIST 3018).
+            let issuer = super::host_issuer(&config, &vault, false)?;
             // The row's verb hooks run once around the engine door, as the
             // route's do (FIX 1752).
             let answer = hooked_row(

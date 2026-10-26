@@ -3644,6 +3644,7 @@
      "path": "src/authority/local_open.rs",
      "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6
      }
@@ -3844,7 +3845,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 35,
+      "crate-vis": 36,
       "re-export": 61
      }
     },
@@ -4112,7 +4113,7 @@
      "path": "src/authority/slip.rs",
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 15,
       "struct": 4
      }
@@ -4251,16 +4252,13 @@
     {
      "bucket": "L",
      "kind": "src",
-     "notable": [
-      "HostSlipIssuer"
-     ],
+     "notable": [],
      "path": "src/authority/slip_vault.rs",
      "purpose": "Host-root bootstrap and atomic authority-log capability issuance",
      "surface": {
       "crate-vis": 24,
-      "fn": 24,
-      "re-export": 2,
-      "struct": 1
+      "fn": 23,
+      "re-export": 3
      }
     },
     {
@@ -4299,6 +4297,32 @@
      "surface": {
       "crate-vis": 2,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/slip_vault/issuer_custody.rs",
+     "purpose": "Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostSlipIssuer"
+     ],
+     "path": "src/authority/slip_vault/issuer_seed.rs",
+     "purpose": "The host issuer's own independent seed (FIX-LIST 3018): per-vault host issuer isolation, so one vault's host…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -4911,6 +4935,16 @@
       "crate-vis": 7,
       "fn": 2,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/withdrawn_grant.rs",
+     "purpose": "A positively withdrawn Grant stays withdrawn (FIX-LIST 5107)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -5675,7 +5709,7 @@
      "path": "src/batch/claim_materialization.rs",
      "purpose": "Exact-operation envelope handoff",
      "surface": {
-      "crate-vis": 20
+      "crate-vis": 18
      }
     },
     {
@@ -5686,6 +5720,16 @@
      "purpose": "The permitted body delta of a demotion materialization",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/claim_materialization/lifecycle.rs",
+     "purpose": "The lifecycle close materialization: the exact close of the current active row, its proof, and the closer a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -5766,6 +5810,16 @@
      "purpose": "FIX 3678 (rule 5): the whole-vault import's disk-backed row index",
      "surface": {
       "crate-vis": 56
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_project.rs",
+     "purpose": "Projects a stored records archive onto a subset of the records it was cut from (FIX-LIST 8224…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -6126,7 +6180,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 13
      }
     },
@@ -7007,7 +7061,7 @@
      "path": "src/batch/verified_claim_transition.rs",
      "purpose": "Sealed operation proof: minted only after the owning consent, curation or lifecycle validator checks the…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -12495,13 +12549,42 @@
       "SessionClaimBundleClaim"
      ],
      "path": "src/claim/core_types.rs",
-     "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, its hand-rolled…",
+     "purpose": "The CLAIM body itself: [`ClaimBody`], [`ClaimSubject`], the pinned MessagePack key set, and the…",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
+      "re-export": 2,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/core_types/codec.rs",
+     "purpose": "The pinned MessagePack codec for type-0 (CLAIM) bodies: the canonical encoder and the single fail-closed…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CursorSpan",
+      "EvidenceKind",
+      "EvidenceRef"
+     ],
+     "path": "src/claim/core_types/evidence_refs.rs",
+     "purpose": "Typed document citations a claim's evidence carries (ARCH-0032, FIX 904): the [`EvidenceRef`] vocabulary…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -12726,13 +12809,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/projection_index.rs",
      "purpose": "Rebuildable claim projections maintained at the shared put chokepoint",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -13627,7 +13710,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/claim/supersession_provenance.rs",
@@ -25149,17 +25232,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "CursorSpan",
-      "EvidenceKind",
-      "EvidenceRef",
       "PromotionEvidenceReason"
      ],
      "path": "src/dreamer_promotion/admission.rs",
      "purpose": "The promotion writer's evidence decision, also exposed by the typed evidence read",
      "surface": {
-      "crate-vis": 3,
-      "enum": 2,
-      "struct": 2
+      "crate-vis": 2,
+      "enum": 1,
+      "re-export": 1
      }
     },
     {
@@ -31047,9 +31127,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/entity_doc/promotion_evidence.rs",
-     "purpose": "Canonical citation checks on the same document snapshot a promotion commits",
+     "purpose": "Canonical citation checks on the same document snapshot a promotion commits, and the citation pins every…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -32370,6 +32450,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/federation/shared_act/removal_archive.rs",
+     "purpose": "An export-first removal's archive as it is kept (FIX-LIST 8224): the delivered copy, and beside it the…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "InitialSharedMember",
       "SharedVaultCreation",
@@ -33536,6 +33626,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/doors/claim_write/closer.rs",
+     "purpose": "The verified closer of an exact lifecycle close (FIX 8655)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/doors/claim_write/decision_context.rs",
      "purpose": "A claim decision's context, computed once from the full candidate before its record is built (FIX 7499…",
      "surface": {
@@ -33744,7 +33844,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -39808,13 +39908,11 @@
      "kind": "src",
      "notable": [
       "CalibratedVerdict",
-      "ConfidenceBand",
       "ModelBinding",
       "ModelDisposition",
       "ModelManifest",
       "ModelRole",
       "ModelSlot",
-      "VerdictBasis",
       "VerdictBinding",
       "VerdictMode"
      ],
@@ -39823,10 +39921,10 @@
      "surface": {
       "const": 1,
       "crate-vis": 5,
-      "enum": 6,
+      "enum": 4,
       "fn": 17,
       "mod": 1,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 4
      }
     },
@@ -42425,13 +42523,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/key_value/mod.rs",
      "purpose": "Exact actor-owned keyed facts over canonical CLAIMs",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 3,
       "re-export": 1
      }
@@ -43192,7 +43290,7 @@
      "path": "src/memory/recall/presentation.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -43717,7 +43815,7 @@
      "path": "src/memory/structural/affiliated.rs",
      "purpose": "Attributed takes and imported-claim admission verbs",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -43794,6 +43892,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/structural/raw_prose.rs",
+     "purpose": "Prose admission for a bound raw write's NOTE and keyed-value bodies (OF-063, FIX 3734): the one link read…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AdmitImportedClaimInput",
       "BlobArtifactInput",
@@ -43836,7 +43944,7 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 3,
       "re-export": 1,
       "struct": 2,
@@ -44315,6 +44423,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/witness/assertions.rs",
+     "purpose": "The records a witnessed reply asserts (OF-063), judged in the writer's one snapshot: every cited and created…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -44373,7 +44491,7 @@
      "path": "src/memory/witness/program/planning.rs",
      "purpose": "Witness planning and the in-transaction admission both landings share",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 2
      }
     },
     {
@@ -51565,17 +51683,17 @@
      "path": "src/ports/lmdb_aux.rs",
      "purpose": "LMDB audit, dependency, content-addressed blob and queue adapters",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 5
      }
     },
     {
@@ -51772,7 +51890,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 7
      }
     },
@@ -53301,13 +53419,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -76379,7 +76497,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
       "crate-vis": 27,
-      "fn": 24,
+      "fn": 26,
       "mod": 1,
       "re-export": 1,
       "struct": 5
@@ -77307,7 +77425,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 197,
+     "files": 200,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77321,7 +77439,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 145,
+     "files": 147,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77440,7 +77558,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 106,
+     "files": 108,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77860,7 +77978,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77881,7 +77999,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78091,7 +78209,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 278,
+     "files": 280,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78779,7 +78897,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5196,
+   "source_files": 5207,
    "test_files": 902
   },
   "oneiron-android": {
@@ -83580,7 +83698,23 @@
      "purpose": "Claim status axes and the scoped-read receipt",
      "surface": {
       "fn": 1,
-      "re-export": 2
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConfidenceBand",
+      "ConfidenceDetails",
+      "VerdictBasis"
+     ],
+     "path": "src/claim/confidence.rs",
+     "purpose": "What a claim's confidence means beyond its number (ARCH-0003, FIX 7761): the hedge band it is read in and…",
+     "surface": {
+      "enum": 2,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -84398,7 +84532,7 @@
      "purpose": "Authority-log hash vocabulary the write path shares"
     },
     "claim": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file+dir",
@@ -84547,7 +84681,7 @@
    },
    "over_bar": 1,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 59,
+   "source_files": 60,
    "test_files": 1
   },
   "oneiron-crypto": {
@@ -100885,7 +101019,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/commands/host_re_root.rs",
-     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new host secret, in-chain (OF-455)",
+     "purpose": "`oneiron host re-root`: moves a stopped self-host vault's root to a new issuer seed, in-chain (OF-455), and…",
      "surface": {
       "fn": 1
      }
@@ -101012,7 +101146,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2,
       "re-export": 6
      }
@@ -107447,7 +107581,7 @@
      "path": "src/server/core.rs",
      "purpose": "Core server state: the `SyncServer` struct, construction, and shared helpers",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 24,
       "fn": 15,
       "re-export": 1,
       "struct": 1
@@ -107672,7 +107806,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "re-export": 5
      }
     },
@@ -110436,6 +110570,7 @@
       "ConcernOutcomeRequest",
       "ConditionalExemptionEvidence",
       "ConfidenceBand",
+      "ConfidenceDetails",
       "ConfidenceInterval",
       "ConfirmationReceipt",
       "Conflict",
@@ -113582,6 +113717,7 @@
       "VectorSearchResult",
       "VerbHookStop",
       "VerbsObservation",
+      "VerdictBasis",
       "VerdictBinding",
       "VerdictMode",
       "VersionReconciliation",
@@ -113759,8 +113895,8 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1017,
-      "struct": 3124
+      "enum": 1018,
+      "struct": 3125
      }
     },
     {

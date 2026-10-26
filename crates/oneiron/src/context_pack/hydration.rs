@@ -459,6 +459,15 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     );
     out.insert("val".to_owned(), project(&body.value));
     out.insert("conf".to_owned(), serde_json::json!(body.confidence));
+    // What `conf` means travels with it (FIX 7761).
+    out.insert(
+        "confBand".to_owned(),
+        serde_json::Value::String(body.confidence_band.as_str().to_owned()),
+    );
+    out.insert(
+        "confBasis".to_owned(),
+        serde_json::Value::String(body.confidence_basis.as_str().to_owned()),
+    );
     if let Some(salience) = body.salience {
         out.insert("sal".to_owned(), serde_json::json!(salience));
     }
