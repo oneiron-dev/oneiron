@@ -67,7 +67,7 @@ pub fn connector_reply_request(
         reply.agent.to_hex(),
         reply.verb.clone(),
         origin.channel.clone(),
-        origin.source.user_ref.clone(),
+        origin.reply_target().to_owned(),
     )
     .content_ref(reply.content_ref.clone())
     .idempotency_key(logical.clone())
