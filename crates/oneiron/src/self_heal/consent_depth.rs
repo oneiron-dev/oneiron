@@ -5,6 +5,7 @@
 //! Coach and the owner: it never answers a consent, never limits a proposal
 //! and files no repair.
 
+use super::tier1_source::VerifiedSourceSet;
 use super::tripwires::{ResolvedTripwireBounds, TripwireBounds, draft, observation};
 use super::{
     DeterministicDetector, DiagnosticEvent, DiagnosticEventClass, DiagnosticObservation,
@@ -30,17 +31,16 @@ pub(crate) struct ConsentQueueSnapshot {
 }
 
 impl ConsentQueueSnapshot {
-    /// Reads every current tray row in one read transaction, page by page
-    /// to the tray's high-water mark at that read.
-    pub(crate) fn read(vault: &Vault, snapshot_at: u64) -> Result<Self> {
-        let txn = vault.store.env.read_txn()?;
-        let fence = vault.store.pending_gate_consents_high_water_in_txn(&txn)?;
+    /// Reads every current tray row in `txn`, page by page to the tray's
+    /// high-water mark there.
+    fn read_in(vault: &Vault, txn: &heed::RoTxn<'_>, snapshot_at: u64) -> Result<Self> {
+        let fence = vault.store.pending_gate_consents_high_water_in_txn(txn)?;
         let mut cursor = None;
         let mut rows = Vec::new();
         loop {
             let page = vault
                 .store
-                .pending_gate_consents_page_in_txn(&txn, cursor, fence, TRAY_PAGE)?;
+                .pending_gate_consents_page_in_txn(txn, cursor, fence, TRAY_PAGE)?;
             let Some((last, _)) = page.last() else {
                 break;
             };
@@ -65,6 +65,34 @@ impl ConsentQueueSnapshot {
         observations.sort_by_key(DiagnosticObservation::order_key);
         observations.dedup();
         observations
+    }
+
+    /// The event the depth detector draws from this snapshot over `scope`,
+    /// and the source proofs that witness it, read in `txn`, the snapshot's
+    /// own (FIX 7436): a consent that resolves after the read leaves the
+    /// finding its witness. `None` when the detector fires nothing or the
+    /// rows prove nothing.
+    fn witness_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        scope: &str,
+        bounds: TripwireBounds,
+    ) -> Option<(DiagnosticEvent, VerifiedSourceSet)> {
+        let observations = self.observations();
+        let input = DiagnosticWorkingSet {
+            scope_ref: scope,
+            observations: &observations,
+        };
+        let detector = ConsentQueueDepthDetector {
+            bounds,
+            snapshot_at: self.snapshot_at,
+        };
+        let [event]: [DiagnosticEvent; 1] = detector.detect(&input).try_into().ok()?;
+        let sources =
+            VerifiedSourceSet::consent_queue(&vault.store, txn, &event, scope, self, bounds)
+                .ok()?;
+        Some((event, sources))
     }
 }
 
@@ -127,9 +155,9 @@ impl Vault {
     /// consent depth: every pending consent, however long ago it was
     /// proposed, read page by page to the last row, as the signed tier-1
     /// instance. A manifest that forces tripwires closed silences it. Each
-    /// finding stored becomes a failure-signal witness once its rows read
-    /// again from base; one that does not stays a diagnostic only. Returns
-    /// the diagnostics stored.
+    /// finding stored becomes a failure-signal witness when its rows read
+    /// from base in the tray's own snapshot; one that does not stays a
+    /// diagnostic only. Returns the diagnostics stored.
     pub fn run_pending_consent_depth(&self, scope: &str, now: u64) -> Result<Vec<EntityId>> {
         let Some(policy) = self.resolved_tripwire_bounds()? else {
             return Ok(vec![]);
@@ -146,7 +174,17 @@ impl Vault {
         policy: &ResolvedTripwireBounds,
     ) -> Result<Vec<EntityId>> {
         let bounds = policy.bounds;
-        let snapshot = ConsentQueueSnapshot::read(self, now)?;
+        // The tray and the witness of what it fires on, from one snapshot.
+        let (snapshot, witness) = {
+            let txn = self.store.env.read_txn()?;
+            let snapshot = ConsentQueueSnapshot::read_in(self, &txn, now)?;
+            let witness = if self.config.failure_signals.exports() {
+                snapshot.witness_in(self, &txn, scope, bounds)
+            } else {
+                None
+            };
+            (snapshot, witness)
+        };
         let observations = snapshot.observations();
         let _ = self.measure_limit(EngineLimit::DetectorObservations, observations.len() as u64);
         let ids = super::tripwires::run(
@@ -159,7 +197,7 @@ impl Vault {
             }],
             Some(&policy.receipt),
         )?;
-        self.capture_tier1_consent_queue(&ids, scope, &snapshot, bounds)?;
+        self.capture_tier1_consent_queue(&ids, witness)?;
         Ok(ids)
     }
 }

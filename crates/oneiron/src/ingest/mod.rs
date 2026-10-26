@@ -99,9 +99,14 @@ use serde_json::Value;
 
 mod audience;
 mod connector_conversation;
+pub use connector_conversation::ConnectorWitness;
+mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
     ImportAudienceOption, ImportAudienceState, MAX_IMPORT_AUDIENCE_PROJECTS, import_audience_topic,
+};
+pub(crate) use connector_witness_grant::{
+    CONNECTOR_WITNESS_READ_REASON, connector_witness_read_reason,
 };
 pub mod exports;
 pub mod history;

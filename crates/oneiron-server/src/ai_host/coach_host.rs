@@ -58,6 +58,7 @@ use oneiron::feedback::{
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{HumanAskReason, PersonChangedAnswer, PersonThreshold};
 use oneiron::session_lifecycle::SessionSpeakers;
+use oneiron::skill_optimize::union_source_rows;
 use oneiron::{EntityId, Error, LlmMessageRole, Vault};
 use serde::Deserialize;
 
@@ -408,14 +409,22 @@ impl SessionActorDistiller for HostDistiller<'_> {
             "speakers": actors.keys().collect::<Vec<_>>(),
             "turns": turns,
         });
+        // The call names the rows it was assembled from (FIX 9072): the
+        // brief's, the sitting whose bound speakers resolved its labels, and
+        // each actor a label resolved to. An unknown brief stays unknown.
+        let speaker_rows: Vec<EntityId> = std::iter::once(brief.session)
+            .chain(actors.values().copied())
+            .collect();
+        let rows = union_source_rows([brief.source_rows.as_deref(), Some(speaker_rows.as_slice())]);
         let text = self
             .models
-            .generate(
+            .generate_sourced(
                 self.models.coach(),
                 vec![
                     message(LlmMessageRole::System, DISTILL_SYSTEM.to_owned()),
                     message(LlmMessageRole::User, data.to_string()),
                 ],
+                rows,
             )?
             .ok_or_else(|| Error::InvalidConfig("no seat took the Coach's distill".into()))?;
         let wire = parse_notes(&text).ok_or_else(|| {

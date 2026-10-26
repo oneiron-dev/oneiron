@@ -432,6 +432,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
+            cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: None,
             publisher_training_intake_origin: None,
@@ -521,6 +522,9 @@ struct PartialServeConfig {
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
+    /// no env, no owner setting (G7).
+    cloud_registration_pins: Option<PathBuf>,
     /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
     publisher_training_outbox_dir: Option<PathBuf>,
     /// `--publisher-training-self-host-shipper` is argv-only, as the outbox.
@@ -610,6 +614,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
@@ -706,6 +711,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
+            cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
             publisher_training_self_host_shipper: value
                 .publisher_training_self_host_shipper

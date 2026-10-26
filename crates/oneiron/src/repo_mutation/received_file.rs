@@ -12,19 +12,17 @@
 //! enqueue, like any other proposal.
 use heed::{RoTxn, RwTxn};
 
-use super::mount::RepoMountRef;
 use super::proposal::persist::PreparedRepoProposal;
 use super::proposal::{
     PROPOSAL, RepoProposal, RepoProposalOperation, RepoProposalStatus, RepoProposedFile, invalid,
 };
 use super::types::{RepoMutationOperation, RepoMutationRequest};
-use crate::code_document::{CodeFileEdit, CodeFileIngress, CodeOpProvenance};
+use crate::code_document::CodeOpProvenance;
 use crate::codebase::{RepoRef, entity_id_from_hash_material};
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWireRepo};
-use crate::merge_queue::{MergeFile, MergeProposal};
-use crate::write_envelope::WriteActor;
+use crate::merge_queue::MergeProposal;
 use crate::{EntityId, Vault};
 
 pub(crate) mod tree;
@@ -278,86 +276,9 @@ pub(in crate::repo_mutation) fn require_received_files_execution(
     }
 }
 
-/// Lowers every file of the received bundle `row` into its document, in
-/// ONE grouped ingress under each file's deterministic operation: text
-/// and metadata together, a removal keeping its text and freeing its path,
-/// and a removed untouched blob lowering to no document at all. A replay
-/// with the same operations appends nothing.
-///
-/// # Errors
-/// A document that moved since the bundle's base, bytes that are not
-/// UTF-8, or a store failure.
-pub(in crate::repo_mutation) fn land_received_files_documents(
-    vault: &Vault,
-    row: &RepoProposal,
-) -> Result<()> {
-    // A masked copy's bundle lands only once its typed cause is cleared
-    // (FIX 7608 2b-ii-B2); an ordinary one is judged as before.
-    if let Some(cause) = {
-        let txn = vault.store.env.read_txn()?;
-        projected_hold_in_txn(vault, &txn, row)?
-    } {
-        return Err(invalid(cause));
-    }
-    let repo = RepoRef::parse(&row.repo)?;
-    let before = vault.mount_repo_ref(&repo, RepoMountRef::Fork(row.pre_action_fork_hash))?;
-    let scope = super::oplog::repo_mutation_repo_key(&repo);
-    let actor = WriteActor::new(row.actor.live()?, row.document_class()?);
-    let utf8 = |bytes: &[u8]| -> Result<String> {
-        String::from_utf8(bytes.to_vec())
-            .map_err(|_| Error::InvalidClaimBody("code document requires UTF-8"))
-    };
-    let mut items = Vec::new();
-    for file in &row.files {
-        let state = file
-            .metadata_edit
-            .as_ref()
-            .ok_or(invalid("a received file carries its reviewed state change"))?;
-        let source = file
-            .source_operation
-            .ok_or(invalid("a received file names its source operation"))?;
-        let old = utf8(before.read_file(&file.path)?.unwrap_or(b""))?;
-        let changed_state = state.expected != state.replacement;
-        let (edit, metadata_edit) = match &file.content {
-            None => {
-                // An untouched blob has no document to retire.
-                if vault.code_document_frontier(&scope, &file.path)?.is_none() {
-                    continue;
-                }
-                (
-                    CodeFileEdit::between(&file.path, &old, &old),
-                    Some(state.clone()),
-                )
-            }
-            Some(new) => {
-                let new = utf8(new)?;
-                if new == old && !changed_state {
-                    continue;
-                }
-                (
-                    CodeFileEdit::between(&file.path, &old, &new),
-                    changed_state.then(|| state.clone()),
-                )
-            }
-        };
-        let session = vault.open_code_document(&scope, &file.path, &old, row.session)?;
-        items.push(CodeFileIngress {
-            operation: received_file_operation(row.id, source)?,
-            session,
-            edit,
-            metadata_edit,
-            actor,
-            expected_text: old,
-        });
-    }
-    vault.apply_code_file_ingress_exact(&mut items)?;
-    Ok(())
-}
-
-/// The ONE queue proposal a stored received bundle is: its id, the green
-/// it is pinned at, and every file with the bytes its base fork holds
-/// there, its reviewed bytes and its reviewed state change. The caller
-/// supplies no file, mode or removal.
+/// The ONE queue proposal a stored received bundle is (see
+/// [`super::bundle::bundle_merge_proposal`]). The caller supplies no file,
+/// mode or removal.
 ///
 /// # Errors
 /// A row that is no received bundle, or a base fork that cannot be read.
@@ -369,25 +290,5 @@ pub(crate) fn received_merge_proposal(
     if row.received_candidate().is_none() {
         return Err(invalid("not a received push bundle"));
     }
-    let base = vault.mount_repo_ref(
-        &RepoRef::parse(&row.repo)?,
-        RepoMountRef::Fork(row.pre_action_fork_hash),
-    )?;
-    let files = row
-        .files
-        .iter()
-        .map(|file| {
-            Ok(MergeFile {
-                path: file.path.clone(),
-                expected: base.read_file(&file.path)?.map(<[u8]>::to_vec),
-                content: file.content.clone(),
-                metadata_edit: file.metadata_edit.clone(),
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(MergeProposal {
-        id: row.id.to_hex(),
-        base_green: base_green.to_owned(),
-        files,
-    })
+    super::bundle::bundle_merge_proposal(vault, row, base_green)
 }

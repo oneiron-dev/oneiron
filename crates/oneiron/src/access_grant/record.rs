@@ -15,6 +15,10 @@ use crate::error::RecordError;
 pub enum AccessGrantScope {
     /// Messages in exactly one relationship space.
     Messages { space_ref: EntityId },
+    /// The MESSAGEs of exactly one conversation that name no relationship
+    /// (FIX 10895): the read an agent's witness of a connector conversation
+    /// grants it over that conversation.
+    ConversationMessages { conversation_ref: EntityId },
     /// Summaries in exactly one relationship space.
     Summaries { space_ref: EntityId },
     /// Relationship claims in exactly one relationship space.
@@ -104,6 +108,7 @@ impl AccessGrantScope {
                     })
             }
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -122,6 +127,7 @@ impl AccessGrantScope {
                 facet_ref,
             } => Some((*person_ref, *facet_ref)),
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -141,7 +147,9 @@ impl AccessGrantScope {
     #[must_use]
     pub const fn required_capability(&self) -> AccessGrantCapability {
         match self {
-            Self::Messages { .. } => AccessGrantCapability::MessagesRead,
+            Self::Messages { .. } | Self::ConversationMessages { .. } => {
+                AccessGrantCapability::MessagesRead
+            }
             Self::Summaries { .. } => AccessGrantCapability::SummariesRead,
             Self::RelationshipClaims { .. } => AccessGrantCapability::RelationshipClaimsRead,
             Self::CompanionProfile { .. } => AccessGrantCapability::CompanionProfileRead,
@@ -161,6 +169,7 @@ impl AccessGrantScope {
                 rung,
             } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(*rung),
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -363,6 +372,30 @@ impl AccessGrant {
             && self.principal_ref == principal
             && self.capability == capability
             && scoped
+    }
+
+    /// Authorizes only this principal to read a MESSAGE of exactly this
+    /// conversation that names no relationship (FIX 10895).
+    pub fn allows_conversation_message_read(
+        &self,
+        principal: EntityId,
+        conversation: EntityId,
+        record: &crate::federation::Scope,
+        now: u64,
+    ) -> bool {
+        let scoped = matches!(
+            self.scope,
+            AccessGrantScope::ConversationMessages { conversation_ref }
+                if conversation_ref == conversation
+        );
+        scoped
+            && self
+                .authority_scope
+                .admits("read", record, &crate::federation::Scope::top())
+            && self.validate().is_ok()
+            && self.effective_status_at(now) == AccessGrantStatus::Active
+            && self.principal_ref == principal
+            && self.capability == AccessGrantCapability::MessagesRead
     }
 
     /// Returns a revoked version of this grant.

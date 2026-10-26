@@ -141,8 +141,13 @@ pub struct OutboundDispatchRequest {
     pub delivery_window_apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
     /// Non-APNs resolved delivery level for compatibility verbs. The only
     /// carrier that can promote a `telegram|line|imessage_mfb|imessage_bridge`
-    /// `send` to ambient; absent, the manifest's interrupt class stands.
+    /// `send` (and a `line|imessage_bridge` `send_media`, FIX 7961) to
+    /// ambient; absent, the manifest's interrupt class stands.
     pub delivery_window_resolved_level: Option<DeliveryWindowResolvedLevel>,
+    /// FIX 8817: the frozen host offset a drain derives this send's local
+    /// minute from, with the vault clock reading taken alongside
+    /// `occurred_at`. The window door reads the clock again for this send.
+    pub(crate) delivery_window_clock: Option<DeliveryWindowClock>,
     /// A human selected this exact instant; policy is observed but cannot park it.
     pub delivery_window_human_explicit_instant: bool,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
@@ -189,6 +194,14 @@ pub struct OutboundDispatchRequest {
     pub publisher_signature: Option<super::PublisherSignatureAuthorization>,
 }
 
+/// A drain's clock for one send's delivery window (FIX 8817): the frozen host
+/// UTC offset, and the vault clock reading taken when the drain's `now` was.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeliveryWindowClock {
+    pub(crate) utc_offset_minutes: i16,
+    pub(crate) anchor_recorded_at: u64,
+}
+
 impl OutboundDispatchRequest {
     #[must_use]
     pub fn new(
@@ -222,6 +235,7 @@ impl OutboundDispatchRequest {
             delivery_window_degrade_to: None,
             delivery_window_apns_interruption_level: None,
             delivery_window_resolved_level: None,
+            delivery_window_clock: None,
             delivery_window_human_explicit_instant: false,
             context_receipt: None,
             linkedin_sandbox_policy: None,
@@ -328,6 +342,22 @@ impl OutboundDispatchRequest {
         self
     }
 
+    /// FIX 8817: the drain's frozen offset and the vault clock reading taken
+    /// with `occurred_at`; the window door moves this send's local minute on
+    /// by the time the drain has spent since.
+    #[must_use]
+    pub(crate) fn delivery_window_clock(
+        mut self,
+        utc_offset_minutes: i16,
+        anchor_recorded_at: u64,
+    ) -> Self {
+        self.delivery_window_clock = Some(DeliveryWindowClock {
+            utc_offset_minutes,
+            anchor_recorded_at,
+        });
+        self
+    }
+
     #[must_use]
     pub fn delivery_window_channel(mut self, channel: impl Into<String>) -> Self {
         self.delivery_window_channel = Some(channel.into());
@@ -431,6 +461,10 @@ pub struct OutboundExecutionOutcome {
     pub provider_ref: Option<String>,
     pub retry_state: Option<String>,
     pub receipt_fields: BTreeMap<String, String>,
+    /// What the caller may do next after a send that did not certainly
+    /// deliver, as the sink names it (FIX 7965). Empty, the receipt files
+    /// the engine's typed fallback.
+    pub recovery_suggestions: Vec<super::OutboundRecoverySuggestion>,
 }
 
 /// Typed adapter execution result. Unknown adapter outcomes must be modeled
@@ -450,6 +484,7 @@ impl OutboundExecutionOutcome {
             provider_ref: Some(provider_ref.into()),
             retry_state: None,
             receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
         }
     }
 
@@ -461,6 +496,7 @@ impl OutboundExecutionOutcome {
             provider_ref: None,
             retry_state: Some(reason.into()),
             receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
         }
     }
 
@@ -479,6 +515,19 @@ impl OutboundExecutionOutcome {
     #[must_use]
     pub const fn with_possible_delivery(mut self) -> Self {
         self.delivery_may_have_occurred = true;
+        self
+    }
+
+    /// Names one typed next step for the receipt of this failed send (FIX
+    /// 7965).
+    #[must_use]
+    pub fn with_recovery_suggestion(
+        mut self,
+        suggestion: super::OutboundRecoverySuggestion,
+    ) -> Self {
+        if !self.recovery_suggestions.contains(&suggestion) {
+            self.recovery_suggestions.push(suggestion);
+        }
         self
     }
 }

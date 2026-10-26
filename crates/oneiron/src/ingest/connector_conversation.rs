@@ -7,7 +7,10 @@
 //! ids derive from the exchange, so a rerun lands the same rows at the same
 //! ids and stages nothing new. The reply worker reads the conversation back
 //! through the agent's own read lane, every page of it, as the history its
-//! next reply answers in.
+//! next reply answers in. The lane admits the conversation's MESSAGEs by the
+//! read grant the agent's first witness of it issues (FIX 10895,
+//! [`super::connector_witness_grant`]); a grant that fails to issue is owed
+//! a repair and never holds the turn back.
 
 use rmpv::Value as Msgpack;
 use serde_json::json;
@@ -40,8 +43,9 @@ const REPLY_SIDE: &str = "reply";
 
 impl Vault {
     /// Witnesses `text`, the message `origin` brought `agent`, as the
-    /// sender's turn of their conversation. Returns the conversation, turn
-    /// and message ids it landed at.
+    /// sender's turn of their conversation, and issues `agent` its read
+    /// grant over the conversation once. Returns the conversation, turn and
+    /// message ids it landed at.
     ///
     /// # Errors
     /// The witness program refuses the turn, or the vault write fails.
@@ -51,7 +55,7 @@ impl Vault {
         origin: &SurfaceConnectorPayload,
         text: &str,
         now: u64,
-    ) -> MemoryResult<Vec<String>> {
+    ) -> MemoryResult<ConnectorWitness> {
         let message = WitnessMessage {
             id: None,
             author: WitnessAuthor::User,
@@ -81,7 +85,8 @@ impl Vault {
     }
 
     /// Witnesses `text`, the reply `agent` kept as `reply_ref` to the
-    /// message `origin` brought, as the agent's turn of their conversation.
+    /// message `origin` brought, as the agent's turn of their conversation,
+    /// and issues `agent` its read grant over the conversation once.
     /// Returns the conversation, turn and message ids it landed at.
     ///
     /// # Errors
@@ -94,7 +99,7 @@ impl Vault {
         text: &str,
         occurred_at: u64,
         now: u64,
-    ) -> MemoryResult<Vec<String>> {
+    ) -> MemoryResult<ConnectorWitness> {
         let side = reply_side(origin, agent, reply_ref);
         let message = WitnessMessage {
             id: None,
@@ -182,8 +187,9 @@ impl Vault {
         mut message: WitnessMessage,
         occurred_at: u64,
         now: u64,
-    ) -> MemoryResult<Vec<String>> {
-        let conversation_hex = connector_conversation_id(origin)?.to_hex();
+    ) -> MemoryResult<ConnectorWitness> {
+        let conversation = connector_conversation_id(origin)?;
+        let conversation_hex = conversation.to_hex();
         let turn_id = derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, side)?;
         message.id = Some(derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, side)?.to_hex());
         let turn = WitnessTurn {
@@ -205,11 +211,28 @@ impl Vault {
             &stamp,
             |_| Ok(()),
         )?;
+        let read_grant_repair = self
+            .issue_connector_witness_read_grant(agent, conversation, now)
+            .err()
+            .map(MemoryError::from);
         let mut refs = vec![conversation_hex];
         refs.extend(receipt.turn.map(|turn| turn.id));
         refs.extend(receipt.messages.into_iter().map(|message| message.id));
-        Ok(refs)
+        Ok(ConnectorWitness {
+            refs,
+            read_grant_repair,
+        })
     }
+}
+
+/// One side of a connector exchange as it landed in its conversation.
+#[derive(Debug)]
+pub struct ConnectorWitness {
+    /// The conversation, turn and message ids the turn landed at.
+    pub refs: Vec<String>,
+    /// Why the agent's read grant over the conversation was not issued
+    /// (FIX 10895), owed a repair; the turn stands either way.
+    pub read_grant_repair: Option<MemoryError>,
 }
 
 /// The conversation an event belongs to: one per channel, receiving
