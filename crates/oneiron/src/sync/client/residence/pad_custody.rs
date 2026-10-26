@@ -156,7 +156,11 @@ fn install_capsule(
             opened.retired(),
         )
     }) {
-        tracing::warn!(%error, %world, "restore pad references not reconciled after a pad fetch");
+        tracing::warn!(
+            %error,
+            world = %world.to_hex(),
+            "restore pad references not reconciled after a pad fetch"
+        );
     }
     hydrated.skipped += installed.skipped;
     Ok(position)
