@@ -2376,7 +2376,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 27,
       "fn": 4
      }
     },
@@ -10492,7 +10492,7 @@
      "path": "src/campaign/claims/codec.rs",
      "purpose": "MessagePack codecs, write-door validator, and map/key/token toolkit",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "fn": 7
      }
     },
@@ -10765,7 +10765,7 @@
      "path": "src/campaign/enrollment/detection.rs",
      "purpose": "Persisted membership-transition events, detection pass, cause routing, and per-query baseline",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 4,
       "struct": 2
@@ -10796,7 +10796,7 @@
      "path": "src/campaign/enrollment/manual.rs",
      "purpose": "Manual enrollment beside the saved-query MACRO ingress",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -10806,7 +10806,7 @@
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "re-export": 9
      }
     },
@@ -10846,6 +10846,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/campaign/enrollment/reconcile.rs",
+     "purpose": "One effective `campaign.member` head per person and campaign (FIX 9663, 9664, 10221)",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "CampaignEnrollmentAttemptPayload",
       "CampaignEnrollmentClaim",
@@ -10855,7 +10865,7 @@
      "path": "src/campaign/enrollment/runner.rs",
      "purpose": "Refs-only attempt payload, advisory dedupe key, leader-gated claim, and membership-leg execution",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 8,
       "struct": 2
@@ -11076,7 +11086,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "LaneClockPolicy",
@@ -12861,6 +12871,16 @@
      "purpose": "FIX 7462: an agent's ordinary read also admits what one of its own live owner-minted Grants covers (owner…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/authority_fingerprint.rs",
+     "purpose": "A canonical fingerprint of the live read authority behind one actor key (FIX 9661), the second half of a…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -77254,7 +77274,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 57,
+     "files": 58,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -77310,7 +77330,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 105,
+     "files": 106,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78649,7 +78669,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5184,
+   "source_files": 5186,
    "test_files": 902
   },
   "oneiron-android": {
