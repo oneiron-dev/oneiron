@@ -19,7 +19,8 @@ use crate::outbound_intent_ledger::{
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallOutcome,
-    ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall, UntrustedToolResult, now_ms,
+    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCall, SettledConnectorCall,
+    UntrustedToolResult, now_ms,
 };
 use super::connector_call_dispatch::{escalation_code, step_from_host};
 use super::connector_call_erase::put_pending_call_in_txn;
@@ -40,6 +41,7 @@ pub(super) enum Step {
     Delivered {
         intent: Option<[u8; 32]>,
         result: Option<UntrustedToolResult>,
+        result_absence: Option<ConnectorResultAbsence>,
     },
     Held {
         decision_ref: Option<String>,
@@ -208,11 +210,26 @@ impl Vault {
         }
         let rows = pending.source_rows.clone();
         let step = self.connector_reply_cleared(host.clears_at_door(), &pending, step);
+        // A row that stops waiting on its owner (it settles, or meets its
+        // connector's questions) withdraws the owner questions it named in
+        // the same write, and their waiters wake once it committed (FIX 2551).
+        let put_row = |call_ref: &EntityId, row: &PendingConnectorCall| {
+            let mut row = row.clone();
+            let withdrawn = self.with_write_txn(|txn| {
+                let withdrawn = if row.settled.is_some() || row.input.is_some() {
+                    self.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row)
+                } else {
+                    Vec::new()
+                };
+                put_pending_call_in_txn(&self.store, txn, call_ref, &row)?;
+                Ok(withdrawn)
+            })?;
+            self.signal_withdrawn_call_asks(&withdrawn);
+            Ok::<_, IntentLedgerError>(())
+        };
         let keep = |call_ref: Option<EntityId>, pending: &PendingConnectorCall| {
             let call_ref = call_ref.or(new_ref).unwrap_or_else(EntityId::now);
-            self.with_write_txn(|txn| {
-                put_pending_call_in_txn(&self.store, txn, &call_ref, pending)
-            })?;
+            put_row(&call_ref, pending)?;
             Ok::<_, IntentLedgerError>(call_ref)
         };
         let settle = |call_ref: Option<EntityId>, settled: SettledConnectorCall| {
@@ -221,16 +238,22 @@ impl Vault {
                     settled: Some(settled),
                     ..pending.clone()
                 };
-                self.with_write_txn(|txn| {
-                    put_pending_call_in_txn(&self.store, txn, &call_ref, &row)
-                })?;
+                put_row(&call_ref, &row)?;
             }
             Ok::<_, IntentLedgerError>(())
         };
         let outcome = match step {
-            Step::Delivered { intent, result } => {
+            Step::Delivered {
+                intent,
+                result,
+                result_absence,
+            } => {
                 settle(call_ref, SettledConnectorCall::Delivered { intent })?;
-                ConnectorCallOutcome::Delivered { intent, result }
+                ConnectorCallOutcome::Delivered {
+                    intent,
+                    result,
+                    result_absence,
+                }
             }
             // The call reached the connector, which asked for input: the
             // call's row, kept for a first call too, holds the round for its

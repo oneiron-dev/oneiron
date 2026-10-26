@@ -29,6 +29,7 @@ mod slate_holder;
 mod slate_revision;
 mod slate_scope_signal;
 mod slate_setting;
+mod tool_effect;
 mod txn;
 
 #[cfg(test)]
@@ -78,7 +79,7 @@ pub(crate) use self::charter::{
     charter_never_list_matches_scoped_channel,
 };
 pub(crate) use self::credential_binding::connector_issuer_hold_in_txn;
-pub(crate) use self::lifecycle::{catalog_charter_in_txn, scoped_server_debits_sends_in_txn};
+pub(crate) use self::lifecycle::catalog_charter_in_txn;
 pub(crate) use self::meter::{
     BudgetBlock, EffectorBudgetChargeOutcome, budget_block_pooled, budget_exhausted_reason,
     charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
@@ -88,6 +89,7 @@ pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
 pub(crate) use self::slate::{read_connector_slate_in_txn, stop_asking_tool_in_txn};
+pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
 // Crate-visible paths whose only live consumers are the test modules of sibling

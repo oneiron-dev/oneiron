@@ -55,10 +55,10 @@ impl ConnectorKeyStatus {
 /// communications only, and scoped-MCP tool calls are unbudgeted by
 /// default"*).
 ///
-/// The classification is ENTRY-WIDE by construction: there is deliberately no
-/// per-verb parameter, so a mixed-verb connector registered as
-/// `CounterpartyComm` budgets its read-only calls as sends too. Over-budgeting
-/// is the safe direction — under-budgeting a counterparty send is not.
+/// The class describes the catalog as a whole; one dispatched call's budget
+/// class also reads its tool's approved declaration (FIX 8688): on a
+/// `CounterpartyComm` catalog a tool declared read-only is retrieval and
+/// never debits `Sends`, and every other tool does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ConnectorCallClass {
     /// Communication with a counterparty: the only class that debits `Sends`.
@@ -113,8 +113,8 @@ pub struct ConnectorCatalogEntry {
     pub connector: String,
     /// One-line human summary; searched case-insensitively.
     pub summary: String,
-    /// Verbs the connector advertises. Descriptive only: budget
-    /// classification is entry-wide, never per-verb.
+    /// Verbs the connector advertises. Descriptive only: a call's budget
+    /// class reads its tool's approved declaration, never this list.
     pub verbs: Vec<String>,
     pub call_class: ConnectorCallClass,
     /// Stamped by the registration door from its `registered_at` parameter,
