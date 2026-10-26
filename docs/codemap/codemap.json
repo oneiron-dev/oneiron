@@ -22803,7 +22803,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 33,
+      "crate-vis": 34,
       "re-export": 12
      }
     },
@@ -22866,6 +22866,16 @@
      "purpose": "The pinned REDACTION_AUDIT body grammar (ONE-1134, ONE-1140, FIX 5844): the one structural validator every…",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/receipt_origin.rs",
+     "purpose": "Whether this device attested an erase receipt (FIX 2596, OF-470)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -36126,6 +36136,16 @@
      "purpose": "Each engine sweep, called through its own door, within its own bound",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/housekeeping/sync_work.rs",
+     "purpose": "The sync lane's work a housekeeping pass carries: a left shared env's owed body collection (FIX 2413)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -64587,7 +64607,7 @@
      "path": "src/sweep/finalize.rs",
      "purpose": "Job finalize, retry rewrite, and dropped-obligation audit",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -64611,13 +64631,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sweep/owed.rs",
      "purpose": "Window compactions an erase owes (FIX 6387)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -67313,9 +67333,20 @@
      "path": "src/sync/shared_leave.rs",
      "purpose": "Leaving a shared vault, the device side (OF-158)",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/shared_leave/collect.rs",
+     "purpose": "A left shared vault's orphan body files (FIX 2413)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -78233,7 +78264,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 46,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78471,7 +78502,7 @@
      "purpose": "HNSW graph index over the persisted neighbor graph"
     },
     "housekeeping": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79122,7 +79153,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 271,
+     "files": 272,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79327,7 +79358,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5245,
+   "source_files": 5248,
    "test_files": 902
   },
   "oneiron-android": {
