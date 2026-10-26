@@ -19,7 +19,7 @@ use crate::gate::{self, GateOutcome};
 use crate::outbound::validate_publisher_signature_in_txn;
 use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
-    BudgetChargeMarker, BudgetClass, IntentEscalationReason, IntentLedgerError, IntentState,
+    BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
     insert_pending_in_txn, insert_suppressed_in_txn, read_intent_for_attempt_in_txn,
     read_intent_record_in_txn, stored_admission_in_txn,
