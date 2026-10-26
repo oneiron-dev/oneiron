@@ -217,7 +217,12 @@ impl ClaimStore for Vault {
         }
         Ok(current_claim_head(heads))
     }
+    /// Every claim of `id`'s supersede chain, however long (FIX 10042): a
+    /// cycle or a fork is a typed error, and each link only feeds the
+    /// advisory [`EngineScan::TimelineRecords`] check of `id`'s chain.
     fn port_claim_supersede_chain(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+        let scope = id.as_bytes();
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::TimelineRecords, scope)?;
         let mut result = Vec::new();
         let mut current = *id;
         let mut seen = std::collections::BTreeSet::new();
@@ -225,9 +230,7 @@ impl ClaimStore for Vault {
             if !seen.insert(current) {
                 return Err(Error::CorruptedIndex("claim supersede cycle"));
             }
-            if result.len() >= 10_000 {
-                return Err(Error::IndexOverflow("claim supersede chain"));
-            }
+            count.row();
             result.push(current);
             let next =
                 self.port_edge_list_by_dst(txn, &current, Some(EdgeKind::Supersedes), None, 2)?;
@@ -237,6 +240,7 @@ impl ClaimStore for Vault {
                 _ => return Err(Error::CorruptedIndex("forked supersede chain")),
             }
         }
+        count.defer(&self.store);
         Ok(result)
     }
     fn port_claim_predicate_history(
