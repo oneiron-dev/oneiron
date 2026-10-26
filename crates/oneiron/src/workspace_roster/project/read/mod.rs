@@ -78,7 +78,7 @@ pub(super) fn stored_verdict(
             "a parentless project is not this vault's root",
         ));
     }
-    reader.authorize(id, authority, None, 0)
+    reader.authorize(id, authority, None)
 }
 
 /// The signer a verified proof names and the audience its slip reaches.
@@ -489,7 +489,7 @@ impl<'a, 't> ProjectReader<'a, 't> {
                 "a parentless project is not this vault's root",
             ));
         }
-        let verdict = self.authorize(id, &authority, record.write_proof.as_ref(), 0)?;
+        let verdict = self.authorize(id, &authority, record.write_proof.as_ref())?;
         if verdict != ProjectVerdict::Visible || Some(id) == self.root {
             return Ok(verdict);
         }

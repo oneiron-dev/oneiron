@@ -1,86 +1,127 @@
 //! Who authorized a stored project row's authority fields: its proof and
 //! the anchor lineage it builds on.
 use super::*;
+use crate::scan_check::{EngineScan, ScanCount};
 
 impl ProjectReader<'_, '_> {
-    /// Who authorized these authority fields, following the anchor lineage.
+    /// Who authorized these authority fields, following the anchor lineage
+    /// however long it is (rule 5, FIX 9436). Each state's proof is
+    /// verified from the newest down, in the order the lineage nests, then
+    /// each prior state admits the change over it, from the oldest up: the
+    /// verdict the nested walk gave. The lineage's depth is counted against
+    /// [`EngineScan::ProjectAnchorDepth`] for the project; a crossing raises
+    /// a check and the row is judged in full.
     pub(super) fn authorize(
         &self,
         id: EntityId,
         authority: &ProjectAuthority,
         proof: Option<&ProjectWriteProof>,
-        depth: usize,
     ) -> Result<ProjectVerdict> {
-        if depth > MAX_PROJECT_ANCHORS {
-            return Ok(ProjectVerdict::Quarantined(
-                "project authority chain too long",
-            ));
+        let mut depth = 0;
+        let verdict = self.authorize_lineage(id, authority, proof, &mut depth);
+        if depth > 0 {
+            match ScanCount::start(
+                self.store,
+                self.txn,
+                EngineScan::ProjectAnchorDepth,
+                id.as_bytes(),
+            ) {
+                Ok(mut count) => {
+                    count.rows(depth);
+                    count.defer(self.store);
+                }
+                Err(error) => {
+                    tracing::warn!(kind = ?error.kind(), "project anchor depth was not counted");
+                }
+            }
         }
-        let Some(proof) = proof else {
-            // Only a v3 proof signs a roster; an unsigned state vouches for none.
-            if authority.roster.is_some() {
+        verdict
+    }
+
+    /// [`Self::authorize`]'s walk; `depth` ends as the anchors it followed.
+    fn authorize_lineage(
+        &self,
+        id: EntityId,
+        authority: &ProjectAuthority,
+        proof: Option<&ProjectWriteProof>,
+        depth: &mut usize,
+    ) -> Result<ProjectVerdict> {
+        // Each signed state that builds on an earlier one, newest first: its
+        // fields, its verified holder and the state it builds on.
+        let mut changes: Vec<(&ProjectAuthority, Holder, &ProjectAuthority)> = Vec::new();
+        let (mut authority, mut proof) = (authority, proof);
+        let base = loop {
+            let Some(signed) = proof else {
+                // Only a v3 proof signs a roster; an unsigned state vouches for none.
+                if authority.roster.is_some() {
+                    break ProjectVerdict::Quarantined(
+                        "an unsigned project state carries a roster",
+                    );
+                }
+                break self.unsigned(id, authority)?;
+            };
+            let holder = match self.verify(id, authority, signed)? {
+                Ok(holder) => holder,
+                Err(verdict) => return Ok(verdict),
+            };
+            // The host signs for the owner, who sits on every board through the root.
+            let host = holder.actor == "host";
+            let Some(anchor) = signed.anchor.as_deref() else {
+                if authority.parents.is_empty() {
+                    break if host && Some(id) == self.root {
+                        ProjectVerdict::Visible
+                    } else {
+                        ProjectVerdict::Quarantined("a parentless project is not this vault's root")
+                    };
+                }
+                let parent = EntityId::from_hex(&authority.parents[0])
+                    .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
+                break match super::super::validity::parent_view(self, parent)? {
+                    Err(verdict) => verdict,
+                    Ok(view)
+                        if view.leader == holder.actor
+                            && holder.attenuated
+                            && holder.audience.contains(&ScopeId(parent)) =>
+                    {
+                        ProjectVerdict::Visible
+                    }
+                    Ok(_) => ProjectVerdict::Quarantined("project spawn needs parent leader slip"),
+                };
+            };
+            // An unsigned earlier state is an owner-door row, whose fields no
+            // signature binds. Only the host, acting for the owner, builds on it.
+            if anchor.proof.is_none() && Some(id) != self.root && !host {
                 return Ok(ProjectVerdict::Quarantined(
-                    "an unsigned project state carries a roster",
+                    "only the owner may sign over an unsigned project",
                 ));
             }
-            return self.unsigned(id, authority);
+            changes.push((authority, holder, &anchor.authority));
+            *depth += 1;
+            (authority, proof) = (&anchor.authority, anchor.proof.as_ref());
         };
-        let holder = match self.verify(id, authority, proof)? {
-            Ok(holder) => holder,
-            Err(verdict) => return Ok(verdict),
-        };
-        // The host signs for the owner, who sits on every board through the root.
-        let host = holder.actor == "host";
-        let Some(anchor) = proof.anchor.as_deref() else {
-            if authority.parents.is_empty() {
-                return Ok(if host && Some(id) == self.root {
+        if base != ProjectVerdict::Visible {
+            return Ok(base);
+        }
+        for (authority, holder, prior) in changes.into_iter().rev() {
+            let host = holder.actor == "host";
+            let verdict = if !holder.audience.contains(&ScopeId(id)) {
+                ProjectVerdict::Quarantined("project write outside slip audience")
+            } else if prior.board_action(authority) {
+                if prior.board.contains(&holder.actor) || host {
                     ProjectVerdict::Visible
                 } else {
-                    ProjectVerdict::Quarantined("a parentless project is not this vault's root")
-                });
-            }
-            let parent = EntityId::from_hex(&authority.parents[0])
-                .map_err(|_| RecordError::InvalidProjectBody("invalid parent id"))?;
-            return Ok(match super::super::validity::parent_view(self, parent)? {
-                Err(verdict) => verdict,
-                Ok(view)
-                    if view.leader == holder.actor
-                        && holder.attenuated
-                        && holder.audience.contains(&ScopeId(parent)) =>
-                {
-                    ProjectVerdict::Visible
+                    ProjectVerdict::Quarantined("project widening needs board holder proof")
                 }
-                Ok(_) => ProjectVerdict::Quarantined("project spawn needs parent leader slip"),
-            });
-        };
-        // An unsigned earlier state is an owner-door row, whose fields no
-        // signature binds. Only the host, acting for the owner, builds on it.
-        if anchor.proof.is_none() && Some(id) != self.root && !host {
-            return Ok(ProjectVerdict::Quarantined(
-                "only the owner may sign over an unsigned project",
-            ));
-        }
-        let prior = self.authorize(id, &anchor.authority, anchor.proof.as_ref(), depth + 1)?;
-        if prior != ProjectVerdict::Visible {
-            return Ok(prior);
-        }
-        if !holder.audience.contains(&ScopeId(id)) {
-            return Ok(ProjectVerdict::Quarantined(
-                "project write outside slip audience",
-            ));
-        }
-        let prior = &anchor.authority;
-        Ok(if prior.board_action(authority) {
-            if prior.board.contains(&holder.actor) || host {
+            } else if prior.leader == holder.actor || prior.board.contains(&holder.actor) || host {
                 ProjectVerdict::Visible
             } else {
-                ProjectVerdict::Quarantined("project widening needs board holder proof")
+                ProjectVerdict::Quarantined("only the leader or board may change project authority")
+            };
+            if verdict != ProjectVerdict::Visible {
+                return Ok(verdict);
             }
-        } else if prior.leader == holder.actor || prior.board.contains(&holder.actor) || host {
-            ProjectVerdict::Visible
-        } else {
-            ProjectVerdict::Quarantined("only the leader or board may change project authority")
-        })
+        }
+        Ok(ProjectVerdict::Visible)
     }
 
     /// Owner-door rows (card mint, thread conversion, owner creation) carry

@@ -15,7 +15,7 @@
 //! Nothing here wakes a host, schedules a post or approves a finding. The
 //! voice's TURN and MESSAGE ids come from the finding, so a nudge is voiced
 //! once: a retry returns the turn already recorded.
-use super::upkeep::{room_upkeep_fold_in_txn, room_upkeep_host_in_txn};
+use super::upkeep::{room_upkeep_fold_in_txn, room_upkeep_hosts_in_txn, room_upkeep_reach_now};
 use super::upkeep_voice_guard::{VoiceLanes, VoicePlan, VoiceRefusal};
 use super::*;
 use crate::claim::ClaimReadStatus;
@@ -121,8 +121,10 @@ impl Memory<'_> {
             (Some(bound), Some(room)) if bound != room => return Ok(Vec::new()),
             (bound, room) => room.or(bound),
         };
-        // Lane, grant clock and TASK index before the snapshot, never in it.
+        // Lanes, grant clocks and TASK index before the snapshot, never in
+        // it. The Coach's reach selects the host too (FIX 7399).
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let upkeep = room_upkeep_reach_now(vault);
         vault.store.authorization_now()?;
         vault.backfill_tasks_by_owner()?;
         let now = crate::unix_seconds_now();
@@ -150,8 +152,15 @@ impl Memory<'_> {
                     let hosts = match room_upkeep_fold_in_txn(&lane, &txn, nudge.room, now) {
                         Ok(fold) => {
                             let (input, _) = fold.finish(vault);
-                            let last = input.source_refs.last().copied();
-                            room_upkeep_host_in_txn(vault, &txn, nudge.room, last)? == Some(caller)
+                            let last = (nudge.room, input.source_refs.last().copied());
+                            room_upkeep_hosts_in_txn(
+                                vault,
+                                &txn,
+                                upkeep.as_ref(),
+                                last,
+                                caller,
+                                now,
+                            )?
                         }
                         // A room the caller does not read.
                         Err(Error::EntityNotFound) => false,
@@ -187,6 +196,7 @@ impl Memory<'_> {
         let lanes = VoiceLanes {
             recorded: self.read_lane(ClaimReadStatus::Recorded)?,
             surfaceable: self.read_lane(ClaimReadStatus::Surfaceable)?,
+            upkeep: room_upkeep_reach_now(vault),
         };
         vault.store.authorization_now()?;
         vault.backfill_tasks_by_owner()?;
@@ -194,7 +204,7 @@ impl Memory<'_> {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             let now = crate::unix_seconds_now();
             if let Some(receipt) =
-                self.voice_replay_in_txn(&txn, &lanes.recorded, request.finding, ids, now)?
+                self.voice_replay_in_txn(&txn, &lanes, request.finding, ids, now)?
             {
                 return Ok(receipt);
             }
