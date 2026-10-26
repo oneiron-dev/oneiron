@@ -7,7 +7,8 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::claims::{
     CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
-    decode_campaign_member_value, encode_campaign_member_value,
+    decode_campaign_member_value, decode_member_recorded_exit, encode_campaign_member_value,
+    encode_member_recorded_exit,
 };
 use crate::campaign::enrollment::{
     IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
@@ -244,6 +245,12 @@ pub fn commit_membership_plan(
         if let Some(effective) = &effective {
             keep_isolation_stamps(&mut claim_body, &effective.body);
         }
+        // A foreign exit recorded on another source's membership rides as
+        // the head's evidence, so its spent epoch still replicates.
+        claim_body.evidence = reconciled
+            .recorded_exit
+            .as_ref()
+            .map(encode_member_recorded_exit);
         WATERMARK.put(
             &vault.store,
             wtxn,
@@ -461,8 +468,8 @@ fn current_watermark(
 }
 
 /// Highest epoch any replicated `campaign.member` claim on `entity_ref` carries
-/// for `query_ref` in `campaign_ref`. Every lifecycle counts: a superseded
-/// head still proves its epoch was spent.
+/// for `query_ref` in `campaign_ref`, in its derivation or its recorded exit.
+/// Every lifecycle counts: a superseded head still proves its epoch was spent.
 fn replicated_epoch_floor(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -472,14 +479,17 @@ fn replicated_epoch_floor(
 ) -> Result<Option<u64>> {
     let mut floor = None;
     for claim_id in vault.claims_for_subject_in_txn(txn, &entity_ref)? {
-        let Some((_, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
+        let Some((body, value)) = member_claim_in_txn(vault, txn, &claim_id)? else {
             continue;
         };
-        if let Some(derivation) = value.derivation
-            && derivation.source_query == query_ref
-            && value.campaign == campaign_ref
-        {
-            floor = floor.max(Some(derivation.epoch));
+        if value.campaign != campaign_ref {
+            continue;
+        }
+        let recorded_exit = decode_member_recorded_exit(body.evidence.as_ref())?;
+        for derivation in value.derivation.iter().chain(recorded_exit.iter()) {
+            if derivation.source_query == query_ref {
+                floor = floor.max(Some(derivation.epoch));
+            }
         }
     }
     Ok(floor)

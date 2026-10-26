@@ -116,7 +116,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     // The send waits on the member's own state, read now (FIX 9662): an
     // applied or replayed consequence never reaches a paused, suppressed or
     // exited member.
-    if !membership_sends(vault, &event)? {
+    if !membership_sends(vault, &event) {
         return Ok(EnrollmentOutboundLeg::MembershipNotReady);
     }
     let consequence_id = enrollment_consequence_id(&event, &step)?;

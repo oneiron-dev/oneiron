@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::detection::{
-    CampaignEnrollmentEvent, campaign_enrollment_event, cause_holds_for_review, put_event_in_txn,
-    reentry_event,
+    CampaignEnrollmentEvent, campaign_enrollment_event, campaign_enrollment_event_and_hold,
+    put_event_in_txn, reentry_event,
 };
 use super::home_node::{
     CampaignHomeNodeAdmission, CampaignHomeNodeDesignation, require_campaign_home_node,
@@ -30,7 +30,7 @@ use crate::outbound_intent_ledger::{IntentId, OutboundCallRequest, derive_intent
 use crate::saved_query::{
     EvaluationRequest, MatchVerdict, MembershipCause, MembershipCommitOutcome,
     MembershipTransition, MembershipWritePlan, SavedQueryEvaluator, commit_membership_plan,
-    derived_member_value, read_saved_query,
+    derived_member_value, next_membership_epoch, read_saved_query,
 };
 
 // ---------------------------------------------------------------------------
@@ -348,26 +348,33 @@ impl<'a> CampaignEnrollmentRunner<'a> {
             return Ok(refused);
         }
         let payload = decode_enrollment_attempt_payload(&record.payload)?;
-        let event = campaign_enrollment_event(self.vault, payload.membership_event_ref)?
-            .ok_or(Error::EntityNotFound)?;
+        let (event, review_hold) =
+            campaign_enrollment_event_and_hold(self.vault, payload.membership_event_ref)?
+                .ok_or(Error::EntityNotFound)?;
         let step = resolve_program_step(self.vault, &payload, &event)?;
 
         // Staleness outranks cause. A transition that no longer describes
         // reality has nothing for the owner to rule on, so asking would park
-        // dead work in the review queue instead of dropping it.
+        // dead work in the review queue instead of dropping it. A spent
+        // entry's due pause wake is the one exception to the evidence check:
+        // it re-enters through a fresh evaluation in `spent_entry`, so
+        // evidence that moved during the pause is read there (FIX 9662).
         if event.transition != MembershipTransition::Entered {
             return Ok(EnrollmentExecution::SkippedStale);
         }
-        if !self.evidence_still_holds(evaluator, &event, now).await? {
+        if !self.spent_entry_wakes(&event, now)
+            && !self.evidence_still_holds(evaluator, &event, now).await?
+        {
             return Ok(EnrollmentExecution::SkippedStale);
         }
 
         // The ratified routing dial: only ordinary data movement auto-applies.
         // A bulk scope or definition move is the owner's call, and no payload
-        // field can reach this decision. A scope move of the owner's live read
-        // authority alone is labelled as one and applies as it did before
-        // (FIX 9661): its hold ships off.
-        if cause_holds_for_review(self.vault, &event) {
+        // field can reach this decision. Detection decided the hold and
+        // persisted it on the event; a scope move of the owner's live read
+        // authority alone carries none and applies as it did before
+        // (FIX 9661).
+        if review_hold {
             return Ok(EnrollmentExecution::ReviewRequired { cause: event.cause });
         }
 
@@ -449,6 +456,21 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         )
     }
 
+    /// Whether `event` is a spent entry whose member's dated pause is due now
+    /// (FIX 9662). Its epoch is at or behind the watermark, so the commit
+    /// writes nothing and [`Self::spent_entry`] re-enters the member under a
+    /// fresh evaluation. A lookup that cannot be read answers `false`, with a
+    /// warning: the old event's evidence check runs as before.
+    fn spent_entry_wakes(&self, event: &CampaignEnrollmentEvent, now: u64) -> bool {
+        spent_entry_pause_due(self.vault, event, now).unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a spent campaign entry's pause did not read; its evidence check runs as before (FIX 9662)"
+            );
+            false
+        })
+    }
+
     /// Derives a fresh entry for `spent`'s member at its due wake and queues
     /// it, both in one transaction. A member the query no longer matches
     /// gets none.
@@ -499,6 +521,17 @@ impl<'a> CampaignEnrollmentRunner<'a> {
         Ok(outcome.decision.verdict == MatchVerdict::Match
             && outcome.evidence_hash == event.evidence_hash)
     }
+}
+
+/// The lookup behind [`CampaignEnrollmentRunner::spent_entry_wakes`]: the
+/// event's epoch is spent and the member's dated pause is due at `now`.
+fn spent_entry_pause_due(vault: &Vault, event: &CampaignEnrollmentEvent, now: u64) -> Result<bool> {
+    let next = next_membership_epoch(vault, event.query_ref, event.campaign_ref, event.entity_ref)?;
+    Ok(event.epoch < next
+        && matches!(
+            effective_member_state(vault, event.entity_ref, event.campaign_ref)?,
+            Some(CampaignMemberState::Paused { until: Some(until), .. }) if until <= now
+        ))
 }
 
 fn home_node_refusal(vault: &Vault, local_node_id: u64) -> Result<Option<EnrollmentExecution>> {
@@ -586,12 +619,19 @@ pub(super) fn enrollment_intent_id(
 /// Whether the member's effective state lets an outward call go now
 /// (FIX 9662): an enrolled member, or one with no admitted live head (as
 /// before); never one paused, suppressed or exited. Read in one snapshot of
-/// its own.
-pub(super) fn membership_sends(vault: &Vault, event: &CampaignEnrollmentEvent) -> Result<bool> {
-    Ok(matches!(
-        effective_member_state(vault, event.entity_ref, event.campaign_ref)?,
-        None | Some(CampaignMemberState::Enrolled)
-    ))
+/// its own. A lookup that cannot be read or decoded holds nothing: the call
+/// goes as it did before this check, with a warning.
+pub(super) fn membership_sends(vault: &Vault, event: &CampaignEnrollmentEvent) -> bool {
+    match effective_member_state(vault, event.entity_ref, event.campaign_ref) {
+        Ok(state) => matches!(state, None | Some(CampaignMemberState::Enrolled)),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a campaign member's send state did not read; the outward call goes as before (FIX 9662)"
+            );
+            true
+        }
+    }
 }
 
 /// Derives the outward call from PERSISTED program state plus the durable
@@ -612,7 +652,7 @@ pub fn derive_enrollment_outbound_request(
     now_ms: u64,
 ) -> Result<Option<OutboundCallRequest>> {
     let step = resolve_program_step(vault, payload, event)?;
-    if !membership_sends(vault, event)? {
+    if !membership_sends(vault, event) {
         return Ok(None);
     }
     let consequence_id = enrollment_consequence_id(event, &step)?;

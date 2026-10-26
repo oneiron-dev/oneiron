@@ -14,7 +14,7 @@
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::claims::{
-    CampaignMemberChannel, CampaignMemberState, CampaignMemberValue,
+    CampaignMemberChannel, CampaignMemberDerivation, CampaignMemberState, CampaignMemberValue,
     live_campaign_member_heads_in_txn, normalize_campaign_pack_token,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimBody, decode_claim_body};
@@ -143,6 +143,9 @@ pub(crate) struct Reconciliation {
     /// When a kept state began; `None` when the intake's own state landed and
     /// its own instant applies.
     pub(crate) kept_since: Option<u64>,
+    /// A foreign query's exit that landed only as a record: its derivation,
+    /// which the replacement keeps beside the state-owning one (FIX 9664).
+    pub(crate) recorded_exit: Option<CampaignMemberDerivation>,
 }
 
 /// Reconciles one intake against the effective membership.
@@ -150,7 +153,9 @@ pub(crate) struct Reconciliation {
 /// With no membership the intake lands as it is. Otherwise the membership's
 /// value is the base: the intake's new channels append, a query intake's
 /// derivation replaces the head's (so every spent epoch rides a replicated
-/// claim), and the state follows these rules:
+/// claim), except a foreign exit's that lands only as a record: the head
+/// keeps the state-owning derivation and carries that exit's as
+/// [`Reconciliation::recorded_exit`]. The state follows these rules:
 ///
 /// * a suppression holds against every intake;
 /// * a manual intake keeps any state but `enrolled`;
@@ -174,13 +179,11 @@ pub(crate) fn reconcile(
             value: incoming.clone(),
             outcome: Reconciled::Applied,
             kept_since: None,
+            recorded_exit: None,
         };
     };
     let mut value = effective.value.clone();
     merge_channels(&mut value.channels, &incoming.channels);
-    if matches!(source, IntakeSource::Query { .. }) {
-        value.derivation.clone_from(&incoming.derivation);
-    }
     let held = effective.value.state;
     let outcome = match (source, held) {
         (_, CampaignMemberState::Suppressed) => Reconciled::RecordedOnly,
@@ -193,14 +196,7 @@ pub(crate) fn reconcile(
                 ..
             },
             CampaignMemberState::Enrolled | CampaignMemberState::Exited,
-        ) if effective
-            .value
-            .derivation
-            .as_ref()
-            .is_some_and(|derivation| derivation.source_query == *query_ref) =>
-        {
-            Reconciled::Applied
-        }
+        ) if derived_by(effective, *query_ref) => Reconciled::Applied,
         (
             IntakeSource::Query {
                 transition: MembershipTransition::Exited,
@@ -224,20 +220,50 @@ pub(crate) fn reconcile(
         }
         (IntakeSource::Query { .. }, _) => Reconciled::Applied,
     };
+    // A foreign exit that only records never takes the derivation: the
+    // owning query's later exit must still close the membership, and the
+    // exiting query's next exit must not.
+    let mut recorded_exit = None;
+    if let IntakeSource::Query {
+        query_ref,
+        transition,
+        ..
+    } = source
+    {
+        if *transition == MembershipTransition::Exited
+            && outcome == Reconciled::RecordedOnly
+            && !derived_by(effective, *query_ref)
+        {
+            recorded_exit.clone_from(&incoming.derivation);
+        } else {
+            value.derivation.clone_from(&incoming.derivation);
+        }
+    }
     if outcome == Reconciled::Applied {
         value.state = incoming.state;
         Reconciliation {
             value,
             outcome,
             kept_since: None,
+            recorded_exit,
         }
     } else {
         Reconciliation {
             value,
             outcome,
             kept_since: Some(effective.since),
+            recorded_exit,
         }
     }
+}
+
+/// Whether `query_ref` derived the state-owning head of `effective`.
+fn derived_by(effective: &EffectiveMember, query_ref: EntityId) -> bool {
+    effective
+        .value
+        .derivation
+        .as_ref()
+        .is_some_and(|derivation| derivation.source_query == query_ref)
 }
 
 /// Copies `from`'s isolation stamps (world, relationship, scope, facet and

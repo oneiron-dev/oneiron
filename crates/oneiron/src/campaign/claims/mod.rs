@@ -46,7 +46,10 @@ pub use self::types::{
 };
 
 pub(in crate::campaign) use self::codec::decode_comm_jurisdiction_value;
-pub(crate) use self::codec::validate_campaign_pack_claim_structure;
+pub(crate) use self::codec::{
+    decode_member_recorded_exit, encode_member_recorded_exit,
+    validate_campaign_pack_claim_structure,
+};
 
 // These three decoders are named only by the sibling test module; the
 // re-export exists in test builds so those paths keep resolving, and is

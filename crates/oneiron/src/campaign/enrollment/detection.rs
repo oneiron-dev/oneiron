@@ -97,10 +97,26 @@ pub fn campaign_enrollment_event(
     vault: &Vault,
     event_ref: EntityId,
 ) -> Result<Option<CampaignEnrollmentEvent>> {
+    Ok(campaign_enrollment_event_and_hold(vault, event_ref)?.map(|(event, _)| event))
+}
+
+/// [`campaign_enrollment_event`] with the review hold its detection decided
+/// and persisted on it (FIX 9661).
+///
+/// # Errors
+///
+/// Storage errors propagate; a malformed row is [`Error::CorruptedIndex`].
+pub(super) fn campaign_enrollment_event_and_hold(
+    vault: &Vault,
+    event_ref: EntityId,
+) -> Result<Option<(CampaignEnrollmentEvent, bool)>> {
     let rtxn = vault.store.env.read_txn()?;
     EVENT
         .get(&vault.store, &rtxn, &event_ref)?
-        .map(|row| decode_event(event_ref, row))
+        .map(|row| {
+            let review_hold = row.review_hold;
+            decode_event(event_ref, row).map(|event| (event, review_hold))
+        })
         .transpose()
 }
 
@@ -334,23 +350,27 @@ fn derive_cause(
     })
 }
 
-/// Whether `event`'s cause holds its write for the owner's review: a
+/// Whether `event`'s cause holds its write for the owner's review, decided
+/// once, at detection, in the writer that persists the event (FIX 9661): a
 /// definition move does, and a scope move does when its declared ∩ granted
 /// QueryScope half differs from the accepted baseline's, as every scope move
-/// did before (FIX 9661). A move of the live read-authority half alone is an
-/// explanation, not a new hold: it applies as data movement did. An
-/// unreadable or absent baseline holds a scope move, as before.
-pub(super) fn cause_holds_for_review(vault: &Vault, event: &CampaignEnrollmentEvent) -> bool {
-    match event.cause {
+/// did before. A move of the live read-authority half alone is an
+/// explanation, not a new hold: it applies as data movement did. With no
+/// accepted baseline nothing could have moved, as in [`derive_cause`]. The
+/// runner reads the persisted decision and never re-derives it.
+fn review_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event: &CampaignEnrollmentEvent,
+) -> Result<bool> {
+    Ok(match event.cause {
         MembershipCause::DataChange => false,
         MembershipCause::DefinitionChange => true,
-        MembershipCause::ScopeChange => match read_baseline(vault, event.query_ref) {
-            Ok(Some(baseline)) => {
+        MembershipCause::ScopeChange => read_baseline_in_txn(vault, txn, event.query_ref)?
+            .is_some_and(|baseline| {
                 baseline.scope_digest[..SCOPE_HALF] != event.scope_digest[..SCOPE_HALF]
-            }
-            Ok(None) | Err(_) => true,
-        },
-    }
+            }),
+    })
 }
 
 /// Records the owner's ruling on a reviewed bulk move: the derivation state
@@ -456,6 +476,8 @@ struct EventRow {
     evidence_hash: String,
     definition_version: u64,
     scope_digest: String,
+    /// The review hold detection decided (FIX 9661).
+    review_hold: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -475,7 +497,7 @@ pub(super) fn put_event(vault: &Vault, event: &CampaignEnrollmentEvent) -> Resul
     vault.with_write_txn_grouped(|wtxn| put_event_in_txn(vault, wtxn, event))
 }
 
-fn event_row(event: &CampaignEnrollmentEvent) -> EventRow {
+fn event_row(event: &CampaignEnrollmentEvent, review_hold: bool) -> EventRow {
     EventRow {
         schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
         query_ref: event.query_ref.to_hex(),
@@ -490,16 +512,24 @@ fn event_row(event: &CampaignEnrollmentEvent) -> EventRow {
         evidence_hash: bytes_to_hex_lower(&event.evidence_hash),
         definition_version: event.definition_version,
         scope_digest: bytes_to_hex_lower(&event.scope_digest),
+        review_hold,
     }
 }
 
-/// [`put_event`] inside the caller's writer.
+/// [`put_event`] inside the caller's writer, with the review hold decided
+/// there.
 pub(super) fn put_event_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     event: &CampaignEnrollmentEvent,
 ) -> Result<()> {
-    EVENT.put(&vault.store, wtxn, &event.event_ref, &event_row(event))?;
+    let review_hold = review_hold_in_txn(vault, wtxn, event)?;
+    EVENT.put(
+        &vault.store,
+        wtxn,
+        &event.event_ref,
+        &event_row(event, review_hold),
+    )?;
     Ok(())
 }
 
@@ -525,9 +555,18 @@ fn decode_event(event_ref: EntityId, row: EventRow) -> Result<CampaignEnrollment
 }
 
 fn read_baseline(vault: &Vault, query_ref: EntityId) -> Result<Option<EnrollmentBaseline>> {
-    const CONTEXT: &str = "campaign enrollment baseline";
     let rtxn = vault.store.env.read_txn()?;
-    let Some(row) = BASELINE.get(&vault.store, &rtxn, &query_ref)? else {
+    read_baseline_in_txn(vault, &rtxn, query_ref)
+}
+
+/// [`read_baseline`] in the caller's transaction.
+fn read_baseline_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    query_ref: EntityId,
+) -> Result<Option<EnrollmentBaseline>> {
+    const CONTEXT: &str = "campaign enrollment baseline";
+    let Some(row) = BASELINE.get(&vault.store, txn, &query_ref)? else {
         return Ok(None);
     };
     pin_schema(row.schema_version, CONTEXT)?;
