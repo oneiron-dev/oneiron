@@ -54,6 +54,10 @@ const CONNECTOR_REPLY_LEASE_RECLAIM_SECS: u64 = 1;
 /// worker's own backoff.
 const CONNECTOR_REPLY_RETRY_FIRST_SECS: u64 = 1;
 const CONNECTOR_REPLY_RETRY_MAX_SECS: u64 = 60;
+/// The longest reason an attempt row's record holds (the queue's own
+/// format bound); the whole reason stays in the job's result and the
+/// worker's log.
+const CONNECTOR_REPLY_QUEUE_REASON_BYTES: usize = 2048;
 
 /// One agent's reply to one connector event, handed off by the Dreamer
 /// pass that woke the agent.
@@ -258,10 +262,13 @@ impl Vault {
     ) -> Result<Option<String>> {
         let queue = AttemptQueue::new(self);
         let reason = || {
-            result
+            let mut reason = result
                 .reason
                 .clone()
-                .unwrap_or_else(|| format!("connector reply {:?}", result.stage))
+                .filter(|reason| !reason.is_empty())
+                .unwrap_or_else(|| format!("connector reply {:?}", result.stage));
+            reason.truncate(reason.floor_char_boundary(CONNECTOR_REPLY_QUEUE_REASON_BYTES));
+            reason
         };
         if result.runs_again() {
             let shift = claimed.attempt_count.saturating_sub(1).min(6);
