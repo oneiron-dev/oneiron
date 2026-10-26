@@ -15,6 +15,7 @@ use super::keys::{
     ERR_ENTRY_POINT_BYTES, ERR_NEIGHBOR_KEY_BYTES, ERR_NEIGHBOR_VALUE_BYTES, ERR_VECTOR_BYTES,
     ERR_VECTOR_VERSION_BYTES,
 };
+use super::one_way::reconcile_removed_one_way_links;
 use super::search::score_prefix;
 use super::types::HeapEntry;
 
@@ -173,12 +174,19 @@ pub(super) fn load_neighbors_lenient(
     decode_neighbors(&raw, true)
 }
 
+/// Replaces `id`'s neighbor list. Each target the old list named and
+/// `neighbors` does not first loses `id` from its one-way exception record,
+/// in the same transaction.
 pub(super) fn write_neighbors(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     id: &EntityId,
     neighbors: &[EntityId],
 ) -> Result<()> {
+    let old = load_neighbors_lenient(store, &*wtxn, id)?;
+    // The record upkeep is part of this write, which callers count as one op.
+    let mut reconcile_ops = 0;
+    reconcile_removed_one_way_links(store, wtxn, id, &old, neighbors, &mut reconcile_ops)?;
     let mut bytes = Vec::with_capacity(neighbors.len() * ENTITY_ID_LEN);
     for neighbor in neighbors {
         bytes.extend_from_slice(neighbor.as_bytes());
@@ -338,6 +346,8 @@ pub(super) fn scrub_backlinks_in_place(
         let Some(scrubbed) = scrub_neighbor_bytes(&raw, id)? else {
             continue;
         };
+        // `node_id` no longer links to `id`: it leaves `id`'s exception record.
+        reconcile_removed_one_way_links(store, wtxn, node_id, std::slice::from_ref(id), &[], ops)?;
         store
             .hnsw_neighbors()
             .put(wtxn, node_id.as_bytes(), &scrubbed)?;
