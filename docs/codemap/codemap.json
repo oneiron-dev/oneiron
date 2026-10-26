@@ -47020,7 +47020,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -47124,7 +47124,7 @@
      "path": "src/origin/secret_projection/index.rs",
      "purpose": "The copy a repo-derived index or embedding input is made from (FIX 7608 slice 3, ASK 1: search and…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 30
      }
     },
     {
@@ -50726,7 +50726,7 @@
      "path": "src/ports/lmdb_claim.rs",
      "purpose": "Claim adapter preserves the history door; current-state queries exclude stale claims",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -65721,13 +65721,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/secret_projection.rs",
      "purpose": "The masked copy every sync peer gets of a marked repo item (FIX 7608 slice 4; ruling A3: sync always carries…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 18,
       "re-export": 2
      }
     },
@@ -65786,7 +65786,7 @@
      "path": "src/sync/selector/secret_projection/rows.rs",
      "purpose": "One entity row as a peer gets it, and one incoming copy row as the canonical store takes it",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
