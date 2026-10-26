@@ -440,17 +440,21 @@ fn agent_omissions(
         }
     }
     if let Some(omission) = omission {
-        reasons.push(match omission {
-            AgentBundleOmission::ForkBindingUnavailable => {
-                BundleOmissionReason::AgentForkBindingUnavailable
-            }
-            AgentBundleOmission::UnresolvedSkill => BundleOmissionReason::AgentUnresolvedSkill,
-            AgentBundleOmission::CredentialRedaction => {
-                BundleOmissionReason::AgentCredentialRedaction
-            }
-        });
+        reasons.push(agent_omission_reason(omission));
     }
     reasons
+}
+
+/// The manifest's reason for an agent bundle's own `omission`, declared after
+/// its birth source's.
+pub(super) fn agent_omission_reason(omission: AgentBundleOmission) -> BundleOmissionReason {
+    match omission {
+        AgentBundleOmission::ForkBindingUnavailable => {
+            BundleOmissionReason::AgentForkBindingUnavailable
+        }
+        AgentBundleOmission::UnresolvedSkill => BundleOmissionReason::AgentUnresolvedSkill,
+        AgentBundleOmission::CredentialRedaction => BundleOmissionReason::AgentCredentialRedaction,
+    }
 }
 
 /// The manifest's import refusals, import omissions and bundle omissions,

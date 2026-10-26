@@ -192,9 +192,10 @@ fn confirm_walk_began(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_be_bytes(bytes.try_into().ok()?))
 }
 
-/// Finishes staged key retirements, then ages out decisions past the owner's
-/// horizon a pass at a time until a pass removes nothing or the deadline
-/// passes. A vault with no horizon prunes nothing.
+/// Finishes staged key retirements and a left env's owed body collection,
+/// then ages out decisions past the owner's horizon a pass at a time until a
+/// pass removes nothing or the deadline passes. A vault with no horizon
+/// prunes nothing.
 fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_gate_decision_retirements()?;
     // An erased holder's known-value history (KS-3), retried here.
@@ -208,6 +209,8 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // Body instances nothing needs any longer, by the one policy (FIX 6022).
     #[cfg(unix)]
     vault.sweep_body_retention_after_commit();
+    // A left shared env's body files its purge left unnamed (FIX 2413).
+    super::sync_work::collect_left_env_bodies(vault);
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {
@@ -316,11 +319,13 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
     Ok(HardEraseWork {
         jobs_processed: run.jobs_processed,
         jobs_deferred: run.jobs_deferred,
+        jobs_deferred_signer_unavailable: run.jobs_deferred_signer_unavailable,
         windows_unloaded,
         jobs_failed: run.jobs_failed,
         windows_compacted: run.windows_compacted,
         windows_deferred_live: run.windows_deferred_live,
         windows_deferred_raced: run.windows_deferred_raced,
+        windows_deferred_unproved: run.windows_deferred_unproved,
         windows_deferred_held: run.windows_deferred_held,
         receipts_finalized: run.receipts_finalized,
         deadline_breaches: run.deadline_breaches,
