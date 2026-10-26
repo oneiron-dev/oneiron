@@ -259,6 +259,12 @@ pub(crate) struct OpenedWorldPads {
     pub(in crate::store) retired: BTreeSet<[u8; 40]>,
 }
 
+impl OpenedWorldPads {
+    pub(crate) fn retired(&self) -> &BTreeSet<[u8; 40]> {
+        &self.retired
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CapsuleWire {
