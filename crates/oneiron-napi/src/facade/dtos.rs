@@ -3,7 +3,7 @@
 use napi_derive::napi;
 
 mod read_scope;
-pub use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
+pub(super) use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
 
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 

@@ -293,7 +293,11 @@ impl NativeEngineConnection {
 /// words the engine's own.
 fn engine_closed() -> MemoryError {
     let kind = EngineErrorKind::Closed;
-    MemoryError::new(kind.code(), "the embedded engine is closed", &[kind.suggestion()])
+    MemoryError::new(
+        kind.code(),
+        "the embedded engine is closed",
+        &[kind.suggestion()],
+    )
 }
 
 /// An engine call's result, its failure as the facade's typed error
