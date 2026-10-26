@@ -338,8 +338,12 @@ impl Vault {
         sources: &mut ShapeSources,
     ) -> Result<(ShapePlan, ShapeApprovalDependencies)> {
         let stored = self.shape_seed()?;
+        let explicit = seed;
+        // A seed the caller names that is the stored one plans as the
+        // stored one does.
         let (seed, stored_seed) = match (seed, stored.as_ref()) {
-            (Some(seed), _) => (seed.clone(), false),
+            (Some(seed), Some(stored)) => (seed.clone(), stored.seed == *seed),
+            (Some(seed), None) => (seed.clone(), false),
             (None, Some(stored)) => (stored.seed.clone(), true),
             (None, None) => (ShapeSeed::default(), false),
         };
@@ -347,19 +351,17 @@ impl Vault {
         let live = self.read_live_shape_into(visible, sources)?;
         // The stored seed is named as the caller reads it (FIX 9960).
         let seed_id = match &stored {
-            Some(stored) => self.visible_seed_id(
-                stored,
-                (!stored_seed).then_some(&seed),
-                &live.withheld,
-                visible,
-            )?,
+            Some(stored) => self.visible_seed_id(stored, explicit, &live.withheld, visible)?,
             None => None,
         };
-        // The stored seed reads as the caller's read admits it (FIX 10199).
-        let seed = if stored_seed {
-            self.visible_seed(&seed, &live.withheld, visible)?
-        } else {
-            seed
+        // The stored seed, reused, is planned and returned as the caller's
+        // read admits it: no seed when its carrier is withheld, else its
+        // visible rows (FIX 10199, 9960). The frontier is the projected one.
+        let seed = match stored.as_ref().filter(|_| stored_seed) {
+            Some(stored) => self
+                .projected_stored_seed(stored, &live.withheld, visible)?
+                .unwrap_or_default(),
+            None => seed,
         };
         let frontier = frontier(&seed, &live)?;
         let by_target: BTreeMap<ShapeTarget, &ShapeRow> = live

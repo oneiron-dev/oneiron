@@ -18,7 +18,7 @@
 //! cannot be read leaves the projection as it was before it.
 use std::collections::BTreeSet;
 
-use super::apply::ShapeApplyReceipt;
+use super::apply::{ShapeApplyItem, ShapeApplyReceipt, ShapeItemState, open};
 use super::seed::StoredShapeSeed;
 use super::{ShapeRow, ShapeSeed, ShapeTarget};
 use crate::error::Result;
@@ -65,11 +65,44 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::with_capacity(seed.rows.len());
         for row in &seed.rows {
-            if !self.shape_target_withheld(&txn, &row.target(), withheld, visible)? {
+            if !self.shape_row_withheld(&txn, row, withheld, visible)? {
                 rows.push(row.clone());
             }
         }
         Ok(ShapeSeed { rows })
+    }
+
+    /// Whether the seed row `row` is withheld from the caller: its target
+    /// is (as [`Self::shape_target_withheld`] judges it), or it names a
+    /// live entity `visible` hides, a source among them (FIX 9960).
+    pub(super) fn shape_row_withheld(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        row: &ShapeRow,
+        withheld: &BTreeSet<ShapeTarget>,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<bool> {
+        Ok(
+            self.shape_target_withheld(txn, &row.target(), withheld, visible)?
+                || serde_json::to_value(row)
+                    .is_ok_and(|value| self.names_hidden(txn, &value, visible)),
+        )
+    }
+
+    /// The stored seed as the caller plans from it (FIX 9960): none when its
+    /// carrier is withheld, else its rows the caller may see.
+    pub(super) fn projected_stored_seed(
+        &self,
+        stored: &StoredShapeSeed,
+        withheld: &BTreeSet<ShapeTarget>,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<Option<ShapeSeed>> {
+        let txn = self.store.env.read_txn()?;
+        if self.seed_carrier_withheld(&txn, stored, visible) {
+            return Ok(None);
+        }
+        drop(txn);
+        self.visible_seed(&stored.seed, withheld, visible).map(Some)
     }
 
     /// The stored seed and the open applies as `visible` admits them: each
@@ -110,8 +143,10 @@ impl Vault {
 
     /// `journal` as `visible` admits it: none when its author or the seed
     /// revision it stored is hidden from the caller, else its items withheld
-    /// from the caller left out, with their run rows, and none when nothing
-    /// is left.
+    /// from the caller left out (a hidden target, or a declaration or
+    /// receipt naming an entity the caller cannot see), with their run rows
+    /// and approvals, its done read off the items left, and none when
+    /// nothing is left. Item ids stay the durable ones.
     fn visible_journal(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -127,7 +162,9 @@ impl Vault {
         let mut items = Vec::with_capacity(journal.items.len());
         let mut runs = Vec::with_capacity(journal.run.items.len());
         for (at, entry) in journal.items.into_iter().enumerate() {
-            if self.shape_target_withheld(txn, &entry.item.target, withheld, visible)? {
+            if self.shape_target_withheld(txn, &entry.item.target, withheld, visible)?
+                || self.item_names_hidden(txn, &entry, visible)
+            {
                 continue;
             }
             runs.extend(journal.run.items.get(at).cloned());
@@ -136,9 +173,44 @@ impl Vault {
         if items.is_empty() {
             return Ok(None);
         }
+        journal.done = !items.iter().any(|entry| open(&entry.state));
         journal.items = items;
         journal.run.items = runs;
         Ok(Some(journal))
+    }
+
+    /// Whether a journal item's declaration or receipt names a live entity
+    /// `visible` hides. A body that cannot be read names none.
+    fn item_names_hidden(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entry: &ShapeApplyItem,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> bool {
+        let receipt = match &entry.state {
+            ShapeItemState::Landed { receipt, .. } => Some(receipt),
+            ShapeItemState::Refused { reason } => Some(reason),
+            _ => None,
+        };
+        serde_json::to_value(&entry.item.after)
+            .is_ok_and(|value| self.names_hidden(txn, &value, visible))
+            || receipt.is_some_and(|text| {
+                self.names_hidden(txn, &serde_json::Value::String(text.clone()), visible)
+            })
+    }
+
+    /// Whether any entity id `value` carries in its text is a live entity
+    /// `visible` hides.
+    fn names_hidden(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        value: &serde_json::Value,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> bool {
+        let mut ids = Vec::new();
+        named_ids(value, &mut ids);
+        ids.iter()
+            .any(|id| self.positively_hidden(txn, id, visible))
     }
 
     /// The open apply at `frontier` as `visible` admits it, as
@@ -227,15 +299,39 @@ impl Vault {
         let withheld = self.read_live_shape(visible)?.withheld;
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
         let txn = self.store.env.read_txn()?;
+        // A seed whose carrier the caller cannot see keeps every row it
+        // did not name (FIX 9960).
+        let carrier_hidden = self.seed_carrier_withheld(&txn, &stored, visible);
         let mut rows = seed.rows.clone();
         for row in stored.seed.rows {
-            let target = row.target();
-            if !named.contains(&target)
-                && self.shape_target_withheld(&txn, &target, &withheld, visible)?
+            if !named.contains(&row.target())
+                && (carrier_hidden || self.shape_row_withheld(&txn, &row, &withheld, visible)?)
             {
                 rows.push(row);
             }
         }
         Ok(ShapeSeed { rows })
+    }
+}
+
+/// Every 32-hex token `value`'s text carries: the entity ids a declaration
+/// or a receipt names.
+fn named_ids<'v>(value: &'v serde_json::Value, out: &mut Vec<&'v str>) {
+    match value {
+        serde_json::Value::String(text) => out.extend(
+            text.split(|c: char| !c.is_ascii_hexdigit())
+                .filter(|token| token.len() == 32),
+        ),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                named_ids(item, out);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for item in map.values() {
+                named_ids(item, out);
+            }
+        }
+        _ => {}
     }
 }
