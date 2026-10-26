@@ -188,19 +188,19 @@ export type NotificationPage = { rows: NotificationRow[]; next_after?: string | 
 export type NotificationMark = "seen" | "acked"
 /** `oneiron::verbs::InboxMarkRequest` */
 export type InboxMarkRequest = { notification_ref: string; mark: NotificationMark }
-/** `oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernCardRequest` */
 export type ConcernCardRequest = { card: string }
 /** `oneiron::self_heal::event::AgentHealthSignal` */
 export type AgentHealthSignal = "loop" | "failed_check_repeat" | "cost_spike" | "long_wait" | "silent" | "duplicate_work" | "unsupported_done" | "misalignment"
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthTone` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthTone` */
 export type AgentHealthTone = "struggling" | "off_course" | "concern"
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthConfidence` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthConfidence` */
 export type AgentHealthConfidence = "high" | "low"
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCounter` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthCounter` */
 export type AgentHealthCounter = "results_changed" | "refused_calls" | "queue_wait" | "few_runs" | "environment_cause" | "other_session_active"
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthMove` */
 export type AgentHealthMove = "note" | "steer" | "budget" | "reassign" | "ask_coach" | "hold"
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthOutcome` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthOutcome` */
 export type AgentHealthOutcome = "open" | "confirmed" | "dismissed" | "unresolved"
 /** `oneiron::dreamer_runner::maintenance::agent_health::brief::HealthBriefPin` */
 export type HealthBriefPin = { task: EntityId; rev: number; digest: string; observed_at: number }
@@ -221,7 +221,7 @@ export type AgentHealthCoachApplication = { by: EntityId; at: number; skill: Ent
 /** `oneiron::dreamer_runner::maintenance::agent_health::ask::AgentHealthCoachAsk` */
 export type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; observed_brief?: HealthBriefPin | null; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::outcomes::HealthReviewReceipt` */
-export type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean }
+export type HealthReviewReceipt = { receipt: string; outcome: AgentHealthOutcome; by: EntityId; by_owner: boolean; at: number; reviewer: string; reviewer_revision?: EntityId | null; dial: number; measured: number; diagnostics: EntityId[]; evidence: EntityId[]; observed_brief?: HealthBriefPin | null; label?: boolean | null; projected: boolean }
 /** `oneiron::dreamer_runner::maintenance::agent_health::environment::HealthCauseSource` */
 export type HealthCauseSource = { source: EntityId; receipt: string; skill?: EntityId | null; label: string; share: number; judge_revision?: string | null; displaced_by?: string | null }
 /** `oneiron::dreamer_runner::maintenance::agent_health::silence::HealthOtherSession` */
@@ -236,8 +236,8 @@ export type RunSignalState = "Pending" | "Settled" | "RefusedCancelUnavailable"
 export type ConcernMoveLink = { kind: "note"; room: string; turn?: string | null; messages: string[] } | { kind: "steer"; task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState; run_differs_from_card_attempt: boolean }
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMoveReceipt` */
 export type ConcernMoveReceipt = { actor: EntityId; actor_class: string; at: number; key: string; payload: string; observed?: ConcernMoveBasis | null; current: ConcernMoveBasis; evidence_changed: boolean; task?: EntityId | null; subject: EntityId; attempt?: EntityId | null; link: ConcernMoveLink }
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard` */
-export type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; witnessed_attempts: EntityId[]; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] }
+/** `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthCard` */
+export type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; witnessed_attempts: EntityId[]; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null; observed_brief?: HealthBriefPin | null; reviewer: string; reviewer_revision?: EntityId | null; review_outcomes: HealthReviewReceipt[]; causes: HealthCauseSource[]; silence?: HealthSilenceActivity | null; moves_taken: ConcernMoveReceipt[] }
 /** `oneiron::run_tree::types::RunTreeStatus` */
 export type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned"
 /** `oneiron::run_tree::types::RunTreeTimestamps` */
@@ -254,19 +254,19 @@ export type RunTreeNode = { job_id: string; run_id?: string | null; parent_id?: 
 export type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string }
 /** `oneiron::run_tree::types::RunTree` */
 export type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] }
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthRunTree` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthRunTree` */
 export type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string }
 /** `oneiron::dreamer_runner::maintenance::agent_health::loaded::AgentHealthLoadedSkill` */
 export type AgentHealthLoadedSkill = { skill: string; name: string; version: string; active: boolean; instructions: string }
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthPromptInject` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthPromptInject` */
 export type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean }
-/** `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthCardView` */
 export type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; skills?: AgentHealthLoadedSkill[]; prompt_inject?: AgentHealthPromptInject | null; basis: ConcernMoveBasis }
-/** `oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcome` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernOutcome` */
 export type ConcernOutcome = "confirmed" | "dismissed" | "unresolved"
-/** `oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernOutcomeRequest` */
 export type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome }
-/** `oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary` */
+/** `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernCardSummary` */
 export type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number }
 /** `oneiron::dreamer_runner::maintenance::agent_health::moves::ConcernMove` */
 export type ConcernMove = "ask_coach" | { note: { key: string; text: string; from_project?: string | null; to_project?: string | null } } | { steer: { key: string; instruction: string } }

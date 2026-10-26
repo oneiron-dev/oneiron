@@ -1396,7 +1396,7 @@ pub struct InboxMarkRequest {
     pub mark: NotificationMark,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::ConcernCardRequest`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernCardRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernCardRequest {
@@ -1425,7 +1425,7 @@ pub enum AgentHealthSignal {
     Misalignment,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthTone`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthTone`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentHealthTone {
     #[serde(rename = "struggling")]
@@ -1436,7 +1436,7 @@ pub enum AgentHealthTone {
     Concern,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthConfidence`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthConfidence`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentHealthConfidence {
     #[serde(rename = "high")]
@@ -1445,7 +1445,7 @@ pub enum AgentHealthConfidence {
     Low,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCounter`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthCounter`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentHealthCounter {
     #[serde(rename = "results_changed")]
@@ -1462,7 +1462,7 @@ pub enum AgentHealthCounter {
     OtherSessionActive,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthMove`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthMove`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentHealthMove {
     #[serde(rename = "note")]
@@ -1479,7 +1479,7 @@ pub enum AgentHealthMove {
     Hold,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthOutcome`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum AgentHealthOutcome {
     #[serde(rename = "open")]
@@ -1692,6 +1692,12 @@ pub struct HealthReviewReceipt {
     pub at: u64,
     #[serde(rename = "reviewer")]
     pub reviewer: String,
+    #[serde(
+        rename = "reviewer_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reviewer_revision: Option<String>,
     #[serde(rename = "dial")]
     pub dial: i64,
     #[serde(rename = "measured")]
@@ -1869,7 +1875,7 @@ pub struct ConcernMoveReceipt {
     pub link: ConcernMoveLink,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCard`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::vocabulary::AgentHealthCard`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCard {
@@ -1947,6 +1953,12 @@ pub struct AgentHealthCard {
     pub observed_brief: Option<HealthBriefPin>,
     #[serde(rename = "reviewer")]
     pub reviewer: String,
+    #[serde(
+        rename = "reviewer_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reviewer_revision: Option<String>,
     #[serde(rename = "review_outcomes")]
     pub review_outcomes: Vec<HealthReviewReceipt>,
     #[serde(rename = "causes")]
@@ -2096,7 +2108,7 @@ pub struct RunTree {
     pub repairs: Vec<RunTreeRepair>,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthRunTree`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthRunTree`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentHealthRunTree {
     #[serde(rename = "run_id")]
@@ -2122,7 +2134,7 @@ pub struct AgentHealthLoadedSkill {
     pub instructions: String,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthPromptInject`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthPromptInject`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentHealthPromptInject {
     #[serde(rename = "approval")]
@@ -2139,7 +2151,7 @@ pub struct AgentHealthPromptInject {
     pub edited: bool,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::AgentHealthCardView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentHealthCardView {
     #[serde(rename = "card")]
@@ -2160,7 +2172,7 @@ pub struct AgentHealthCardView {
     pub basis: ConcernMoveBasis,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcome`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ConcernOutcome {
     #[serde(rename = "confirmed")]
@@ -2171,7 +2183,7 @@ pub enum ConcernOutcome {
     Unresolved,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernOutcomeRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct ConcernOutcomeRequest {
@@ -2181,7 +2193,7 @@ pub struct ConcernOutcomeRequest {
     pub outcome: ConcernOutcome,
 }
 
-/// `oneiron::dreamer_runner::maintenance::agent_health::ConcernCardSummary`.
+/// `oneiron::dreamer_runner::maintenance::agent_health::doors::ConcernCardSummary`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct ConcernCardSummary {
     #[serde(rename = "card")]

@@ -16,8 +16,10 @@
 //! The learning row is written in a savepoint of the settlement's write: a
 //! failed write rolls back alone, is logged and leaves its receipt
 //! unprojected, and the settlement stands. The nightly review re-applies
-//! every unprojected receipt. Nothing revises the evaluator from this record
-//! yet.
+//! every unprojected receipt. In the same savepoint, an owner's verdict is
+//! one outcome of the `agent-health-review` skill revision whose policy
+//! seeded the card (`policy`, `skill_attribution::health_review`): the
+//! record skill optimization reads to revise the reviewer.
 
 use std::collections::BTreeSet;
 
@@ -31,8 +33,9 @@ use crate::{EntityId, Result, Vault};
 
 /// The reviewer cell's axis: a card outcome scores the evaluator's diagnosis.
 const HEALTH_REVIEW_AXIS: &str = "health_review";
-/// A receipt id's prefix: `health_review:` and 64 hex.
-const RECEIPT_PREFIX: &str = "health_review:";
+/// A reviewer receipt id's prefix: `health_review:` and 64 hex. The replay
+/// judge reads such a receipt through [`Vault::health_review_receipt`].
+pub const HEALTH_REVIEW_RECEIPT_PREFIX: &str = "health_review:";
 const REVIEW_STATE_DOMAIN: &[u8] = b"oneiron.coach.agent_health.review_state.v1";
 
 /// One outcome set on a card, with what it judged frozen as it stood then.
@@ -52,6 +55,10 @@ pub struct HealthReviewReceipt {
     pub at: u64,
     /// The evaluator it judged, as the card named it.
     pub reviewer: String,
+    /// The reviewer skill revision whose policy seeded the card's dials, as
+    /// the card named it: the revision the outcome scores. `None` when the
+    /// compiled seeds alone decided them.
+    pub reviewer_revision: Option<EntityId>,
     /// The dial the number was held against.
     pub dial: i64,
     /// The number the card showed.
@@ -128,7 +135,10 @@ fn review_state_id(card: &AgentHealthCard) -> String {
             hasher.update(&[0_u8]);
         }
     }
-    format!("{RECEIPT_PREFIX}{}", hasher.finalize().to_hex())
+    format!(
+        "{HEALTH_REVIEW_RECEIPT_PREFIX}{}",
+        hasher.finalize().to_hex()
+    )
 }
 
 /// Settles `card` and appends the outcome's receipt: the one settlement both
@@ -162,6 +172,7 @@ pub(super) fn settle_with_review_receipt_in_txn(
             by_owner,
             at,
             reviewer: card.reviewer.clone(),
+            reviewer_revision: card.reviewer_revision,
             dial: card.dial,
             measured: card.measured,
             diagnostics: card.diagnostics.clone(),
@@ -206,7 +217,7 @@ fn project_state(
         .nested_write_txn(txn)
         .map_err(crate::Error::from)
         .and_then(|mut savepoint| {
-            project_receipt(vault, &mut savepoint, held, now)?;
+            project_receipt(vault, &mut savepoint, &handle, held, now)?;
             savepoint.commit().map_err(crate::Error::from)
         });
     match applied {
@@ -226,10 +237,12 @@ fn project_state(
     }
 }
 
-/// One owner receipt's effect on its evaluator's cell, in `txn`.
+/// One owner receipt's effect on its evaluator's cell and on its reviewer
+/// revision's outcome, in `txn`. `card` is its card's handle.
 fn project_receipt(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    card: &str,
     held: &HealthReviewReceipt,
     now: u64,
 ) -> Result<()> {
@@ -258,7 +271,9 @@ fn project_receipt(
         }
         Effect::Unscored => {}
     }
-    Ok(())
+    crate::skill_attribution::health_review::project_health_review_outcome_in_txn(
+        vault, txn, card, held,
+    )
 }
 
 /// The evaluator's `learning.reliability` cell, one per evaluator string:
@@ -308,4 +323,36 @@ pub(super) fn reproject_pending(vault: &Vault, now: u64) -> Result<u64> {
         }
         Ok(applied)
     })
+}
+
+impl Vault {
+    /// The card that holds reviewer receipt `receipt` (`health_review:` and
+    /// 64 hex), and its newest copy of that receipt: what the replay judge
+    /// replays a reviewer revision on. Every card is read. `None` when no card
+    /// holds it, or the id has another prefix.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading the cards.
+    pub fn health_review_receipt(
+        &self,
+        receipt: &str,
+    ) -> Result<Option<(AgentHealthCard, HealthReviewReceipt)>> {
+        if !receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+            return Ok(None);
+        }
+        let rtxn = self.store.env.read_txn()?;
+        for (_, card) in CARDS.scan(&self.store, &rtxn)? {
+            let held = card
+                .review_outcomes
+                .iter()
+                .rev()
+                .find(|held| held.receipt == receipt)
+                .cloned();
+            if let Some(held) = held {
+                return Ok(Some((card, held)));
+            }
+        }
+        Ok(None)
+    }
 }
