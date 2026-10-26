@@ -20,10 +20,14 @@
 //! key of unknown liveness block; only the owner's not-a-secret or the
 //! provider's revocation clears one, and a local rotation proves nothing).
 //! Until those dispositions land (slice 8), nothing proves a key dead, so
-//! every mark blocks. A history or mark read that fails holds the tip
-//! `secret_history_unknown`. Clean tips, private destinations and a vault
-//! with no marks send exactly as before, and the gate never rewrites
-//! history (slice 10).
+//! every mark blocks. Marks are read per blob (CALL S4FIX-UNKNOWN-MARK): a
+//! mark that does not decode but names its blob holds, as marked, only the
+//! tips whose history carries a blob of those bytes; one that names no
+//! blob, or a store failure in the mark walk, holds every tip
+//! `secret_history_unknown` under the same policy hook the sync release
+//! reads. A history read that fails holds its tip `secret_history_unknown`.
+//! Clean tips, private destinations and a vault with no marks send exactly
+//! as before, and the gate never rewrites history (slice 10).
 //!
 //! The hold is value-free: it names its reason and its ways out, never a
 //! key, a mark, a path, an object or a count.
@@ -34,6 +38,7 @@ use serde::{Deserialize, Serialize};
 
 use super::mirror::{OriginMirrorTarget, TARGETS};
 use super::secret_marks::{RepoMarkFacts, RepoSecretMark};
+use super::secret_projection::index::UNATTRIBUTABLE_MARK_FAILS_CLOSED;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -202,12 +207,14 @@ pub(crate) fn configured_audience(
     )
 }
 
-/// What a public send's history is joined against.
-enum MarkedObjects {
-    /// The destination does not hold, or the vault holds no mark.
-    None,
-    /// Every object a blocking mark marks, in any store.
-    Blocking(BTreeSet<GitOid>),
+/// What a public send's history is joined against: every object a blocking
+/// mark marks, in any store, and the whole-blob BLAKE3 of each blob whose
+/// marks do not decode (CALL S4FIX-UNKNOWN-MARK), with the blobs already
+/// hashed clean against those in this call.
+struct MarkJoin {
+    blocking: BTreeSet<GitOid>,
+    unread: BTreeSet<[u8; 32]>,
+    hashed: BTreeSet<GitOid>,
 }
 
 impl Vault {
@@ -225,9 +232,9 @@ impl Vault {
         if tips.is_empty() {
             return Vec::new();
         }
-        let blocking = match self.public_marked_objects(repo_id) {
-            Ok(MarkedObjects::None) => return vec![None; tips.len()],
-            Ok(MarkedObjects::Blocking(objects)) => objects,
+        let mut join = match self.public_mark_join(repo_id) {
+            Ok(None) => return vec![None; tips.len()],
+            Ok(Some(join)) => join,
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
@@ -239,7 +246,7 @@ impl Vault {
         let mut clean: Vec<GitOid> = Vec::new();
         tips.iter()
             .map(|tip| {
-                let (hold, commit) = tip_hold(wire, handle, tip, &clean, &blocking);
+                let (hold, commit) = tip_hold(wire, handle, tip, &clean, &mut join);
                 if hold.is_none()
                     && let Some(commit) = commit
                 {
@@ -250,34 +257,41 @@ impl Vault {
             .collect()
     }
 
-    /// The objects a public send's history is joined against, read once:
-    /// none for a destination that does not hold or a vault with no mark.
-    /// A mark that does not decode fails the read (A1: unknown is live).
-    fn public_marked_objects(&self, repo_id: EntityId) -> Result<MarkedObjects> {
+    /// What a public send's history is joined against, read once through
+    /// the per-blob mark reader; `None` for a destination that does not
+    /// hold, or a vault with no mark. A mark that does not decode and names
+    /// no blob, or a store failure in the walk, fails the read under
+    /// [`UNATTRIBUTABLE_MARK_FAILS_CLOSED`] (A1: unknown is live); one tied
+    /// to its blob holds only the refs whose history carries that blob.
+    fn public_mark_join(&self, repo_id: EntityId) -> Result<Option<MarkJoin>> {
         let txn = self.store.env.read_txn()?;
         let audience = TARGETS.get(&self.store, &txn, &repo_id)?.map_or(
             RepoDestinationAudience::mirror(RepoDestinationVisibility::Unknown),
             |row| row.audience,
         );
         if !audience.holds_marked_history() {
-            return Ok(MarkedObjects::None);
+            return Ok(None);
         }
-        let (facts, unreadable) = RepoMarkFacts::read_scoped_in_txn(self, &txn, true)?;
-        if !unreadable.is_empty() {
-            return Err(Error::CorruptedIndex("repo secret mark"));
-        }
+        let (facts, unread) =
+            RepoMarkFacts::read_scoped_in_txn(self, &txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
         let blocking =
             facts.blob_oids(|mark: &RepoSecretMark| repo_secret_liveness(mark).blocks_public());
-        Ok(if blocking.is_empty() {
-            MarkedObjects::None
-        } else {
-            MarkedObjects::Blocking(blocking)
-        })
+        Ok(
+            (!blocking.is_empty() || !unread.is_empty()).then(|| MarkJoin {
+                blocking,
+                unread,
+                hashed: BTreeSet::new(),
+            }),
+        )
     }
 }
 
 /// Ends a walk at its first marked object.
 const MARKED_OBJECT_MET: &str = "secret publication walk met a marked object";
+
+/// A submodule entry's mode: a commit of another repository, never a blob
+/// of this one.
+const GITLINK_MODE: &str = "160000";
 
 /// One tip's hold, and the commit it ends at. `clean` are commits already
 /// proven clean, whose history is not walked again: a marked object a tip
@@ -287,12 +301,13 @@ fn tip_hold(
     handle: &GitWireRepo,
     tip: &GitOid,
     clean: &[GitOid],
-    blocking: &BTreeSet<GitOid>,
+    join: &mut MarkJoin,
 ) -> (Option<SecretPublicationHold>, Option<GitOid>) {
     let peeled = match wire.peel_ref_tip_retained(handle, tip) {
         Ok(peeled) => peeled,
         Err(error) => return (Some(unknown(&error)), None),
     };
+    let blocking = &join.blocking;
     let tagged =
         blocking.contains(tip) || peeled.tags.iter().any(|tag| blocking.contains(&tag.tag));
     let end = match &peeled.end {
@@ -301,15 +316,23 @@ fn tip_hold(
     if tagged || blocking.contains(end) {
         return (Some(SecretPublicationHold::MarkedLiveSecret), None);
     }
+    let hashing = !join.unread.is_empty();
+    let mut blobs = BTreeSet::new();
     let mut met = false;
     let mut visit = |item: GitReviewItem| {
-        let object = match &item {
-            GitReviewItem::Commit { commit, .. } => Some(commit),
-            GitReviewItem::Path { object, .. } => object.as_ref(),
+        let (object, blob) = match item {
+            GitReviewItem::Commit { commit, .. } => (Some(commit), false),
+            GitReviewItem::Path { mode, object, .. } => (object, mode != GITLINK_MODE),
         };
-        if object.is_some_and(|object| blocking.contains(object)) {
+        let Some(object) = object else {
+            return Ok(());
+        };
+        if blocking.contains(&object) {
             met = true;
             return Err(Error::InvariantViolation(MARKED_OBJECT_MET));
+        }
+        if hashing && blob {
+            blobs.insert(object);
         }
         Ok(())
     };
@@ -325,10 +348,40 @@ fn tip_hold(
         GitRefEnd::Blob(_) => (Ok(()), None),
     };
     match walked {
-        Ok(()) => (None, commit),
-        Err(_) if met => (Some(SecretPublicationHold::MarkedLiveSecret), None),
+        Ok(()) => {}
+        Err(_) if met => return (Some(SecretPublicationHold::MarkedLiveSecret), None),
+        Err(error) => return (Some(unknown(&error)), None),
+    }
+    if hashing && let GitRefEnd::Blob(blob) = &peeled.end {
+        blobs.insert(blob.clone());
+    }
+    match unread_blob_met(wire, handle, blobs, join) {
+        Ok(false) => (None, commit),
+        Ok(true) => (Some(SecretPublicationHold::MarkedLiveSecret), None),
         Err(error) => (Some(unknown(&error)), None),
     }
+}
+
+/// Whether one of `blobs` hashes to a blob whose marks do not decode: it
+/// holds as marked (CALL S4FIX-UNKNOWN-MARK). Each blob is read whole once a
+/// call, and only while such a mark exists.
+fn unread_blob_met(
+    wire: &GitWire<'_>,
+    handle: &GitWireRepo,
+    blobs: BTreeSet<GitOid>,
+    join: &mut MarkJoin,
+) -> Result<bool> {
+    for blob in blobs {
+        if join.hashed.contains(&blob) {
+            continue;
+        }
+        let object = wire.read_object_to_spool(handle, &blob)?;
+        if join.unread.contains(&object.content_blake3()) {
+            return Ok(true);
+        }
+        join.hashed.insert(blob);
+    }
+    Ok(false)
 }
 
 /// A read that failed: the tip is held as live.
