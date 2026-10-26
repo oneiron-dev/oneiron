@@ -259,9 +259,9 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
 ///
 /// `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
 /// are optional: pass a null pointer with length 0 to omit. If
-/// `limit_is_set == 0`, the default limit of 10 is used; otherwise `limit`
-/// must be at most 1000. The returned buffer must be released with
-/// `oneiron_buffer_free`.
+/// `limit_is_set == 0`, the default limit of 10 is used; otherwise the pack
+/// holds up to `limit` items, however many. The returned buffer must be
+/// released with `oneiron_buffer_free`.
 ///
 /// `media_json_ptr` is UTF-8 JSON of the served context pack's media query
 /// (OF-370): `{"space": "<ai.embed rung id>@<provider>", "mime": "image/png",
