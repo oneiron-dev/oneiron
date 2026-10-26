@@ -89,6 +89,7 @@ pub use policy::{
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
