@@ -468,11 +468,9 @@ impl OneironClient {
                 "vault.export.scoped" => {
                     remote_agent_verb_output::<oneiron::memory::ScopedExport>(client, verb, &input)
                 }
-                "vault.receipts" => {
-                    remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
-                        client, verb, &input,
-                    )
-                }
+                "vault.receipts" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::VaultReceiptsPage,
+                >(client, verb, &input),
                 "vault.assets.ingest" => remote_agent_verb_output::<
                     oneiron::memory::AssetIngestReceipt,
                 >(client, verb, &input),
@@ -1766,7 +1764,7 @@ impl OneironClient {
                     oneiron::runtime_hooks::host_doors::HostBudgetHitResult,
                 >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
-                    Vec<oneiron::task_verb::sdk::HookReplayRow>,
+                    oneiron::task_verb::sdk::HooksReplayPage,
                 >(client, verb, &input),
                 "vault.hooks.regen.due" => {
                     remote_agent_verb_output::<Vec<oneiron::EntityId>>(client, verb, &input)
@@ -5436,18 +5434,21 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export.scoped", value)
     }
-    /// Lists governance receipts, newest first: the gate decision ledger, or
-    /// the receipts of the named kinds.
+    /// Lists governance receipts, newest first, a page at a time: the gate
+    /// decision ledger, or the receipts of the named kinds. `after` takes the
+    /// page before's `next_after`.
     pub fn vault_receipts(
         &self,
         limit: usize,
         kinds: &[String],
-    ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
+        after: Option<&str>,
+    ) -> Result<oneiron::task_verb::sdk::VaultReceiptsPage, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
-            kinds: kinds.to_vec(),
+            kinds: Some(kinds.to_vec()),
+            after: after.map(str::to_owned),
         };
-        oneiron::memory::caps::check_limit(
+        oneiron::memory::caps::check_limit_nonzero(
             input
                 .limit
                 .unwrap_or(oneiron::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
@@ -10555,7 +10556,7 @@ impl OneironClient {
     pub fn vault_hooks_replay(
         &self,
         input: &oneiron::task_verb::sdk::HooksReplayRequest,
-    ) -> Result<Vec<oneiron::task_verb::sdk::HookReplayRow>, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::HooksReplayPage, MemoryError> {
         input.limit()?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -14407,7 +14408,6 @@ impl OneironClient {
         &self,
         input: &oneiron::task_verb::sdk::AiVerdictRequest,
     ) -> Result<oneiron::task_verb::sdk::AiVerdict, MemoryError> {
-        oneiron::memory::caps::check_batch_len("evidence", input.evidence.len())?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -14702,7 +14702,6 @@ impl OneironClient {
         &self,
         input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
-        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -15327,7 +15326,6 @@ impl OneironClient {
         input: &oneiron::task_verb::sdk::HydrateRequest,
     ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EntityView>>, MemoryError>
     {
-        oneiron::memory::caps::check_batch_len("refs", input.refs.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16516,7 +16514,6 @@ impl OneironClient {
         &self,
         input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
-        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

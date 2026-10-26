@@ -706,9 +706,9 @@ export_facade! {
     let output = client.vault_export_scoped(&input)?;
     crate::codec::lift_record("vault.export.scoped", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>, after: Option<String>) -> FacadeReceiptPage = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default(), after.as_deref())?;
     Lift::lift(output)
 };
 "vault.assets.ingest" => fn vault_assets_ingest(&self, input: AssetIngestRequest) -> AssetIngestReceipt = |client| {
@@ -2821,7 +2821,7 @@ export_facade! {
     let output = client.host_budget_hit(&input)?;
     crate::codec::lift_record("host.budget.hit", &output)
 };
-"vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> Vec<HookReplayRow> = |client| {
+"vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> HooksReplayPage = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
     crate::codec::lift_record("vault.hooks.replay", &output)

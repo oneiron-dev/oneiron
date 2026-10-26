@@ -1311,7 +1311,7 @@ export interface FacadeResults {
   "vault.scope.position": Facade.ScopedReadResult<Facade.RecordPosition | null>;
   "vault.scope.ceiling": Facade.CredentialCeiling;
   "vault.export.scoped": Facade.ScopedExport;
-  "vault.receipts": Facade.MemoryReceipt[];
+  "vault.receipts": Facade.VaultReceiptsPage;
   "vault.assets.ingest": Facade.AssetIngestReceipt;
   "vault.assets.resolve": Facade.ScopedReadResult<Facade.AssetResolved>;
   "vault.search.vector": Facade.ScopedReadResult<Facade.VectorSearchResult>;
@@ -1734,7 +1734,7 @@ export interface FacadeResults {
   "host.compact": Facade.HostCompactResult;
   "host.wake": Facade.HostWakeResult;
   "host.budget.hit": Facade.HostBudgetHitResult;
-  "vault.hooks.replay": Facade.HookReplayRow[];
+  "vault.hooks.replay": Facade.HooksReplayPage;
   "vault.hooks.regen.due": Facade.EntityId[];
   "vault.hooks.regen.get": Facade.HookRegenView | null;
   "vault.hooks.regen.adopt": Facade.PackPutReceipt;
@@ -2490,7 +2490,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.scope.position": { description: "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.scope.ceiling": { description: "Reads the caller credential ceiling as a typed ceiling, never as a record position.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.export.scoped": { description: "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.receipts": { description: "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.receipts": { description: "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.assets.ingest": { description: "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.assets.resolve": { description: "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.search.vector": { description: "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -2913,7 +2913,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "host.compact": { description: "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "host.wake": { description: "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "host.budget.hit": { description: "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.hooks.replay": { description: "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.hooks.replay": { description: "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.due": { description: "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.get": { description: "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.adopt": { description: "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3332,7 +3332,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.conversations.create": { description: "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.conversations.turns.create": { description: "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.conversations.records.append": { description: "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.batch": { description: "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.batch": { description: "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.put": { description: "Registers one blob artifact; its bytes ride vault.artifacts.append.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.import": { description: "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.head": { description: "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -3940,7 +3940,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
         ceiling: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.scope.ceiling">[K] => invoke("vault.scope.ceiling", input, options, newInvocation()),
       },
-      /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
+      /** Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest. */
       receipts: Object.assign((input: Facade.VaultReceiptsRequest, options?: O): FacadeReturns<"vault.receipts">[K] => invoke("vault.receipts", input, options, newInvocation()), {
         /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
         get: (input: Facade.CallReceiptRequest, options?: O): FacadeReturns<"vault.receipts.get">[K] => invoke("vault.receipts.get", input, options, newInvocation()),
@@ -5026,7 +5026,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         view: (input: Facade.ShareViewRequest, options?: O): FacadeReturns<"vault.shares.view">[K] => invoke("vault.shares.view", input, options, newInvocation()),
       },
       hooks: {
-        /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
+        /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
         replay: (input: Facade.HooksReplayRequest, options?: O): FacadeReturns<"vault.hooks.replay">[K] => invoke("vault.hooks.replay", input, options, newInvocation()),
         regen: {
           /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
@@ -5920,7 +5920,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           get: (input: Facade.EsignSealGetRequest, options?: O): FacadeReturns<"vault.esign.seal.get">[K] => invoke("vault.esign.seal.get", input, options, newInvocation()),
         },
       },
-      /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+      /** Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
       batch: (input: Facade.CoreBatchWriteInput, options?: O): FacadeReturns<"vault.batch">[K] => invoke("vault.batch", input, options, newInvocation()),
       consolidation: {
         /** Enqueues one consolidation attempt and returns its durable job reference. */

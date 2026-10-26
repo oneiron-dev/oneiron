@@ -11,7 +11,7 @@ use oneiron::{EdgeKind, EntityId, PackFormat};
 
 use super::guard::{with_optional_slice, with_required_slice};
 use super::types::{
-    ENTITY_ID_LEN, MAX_FFI_DIMENSIONS, MAX_FFI_QUERY_BYTES, MAX_FFI_SEARCH_LIMIT, OneironStatus,
+    ENTITY_ID_LEN, MAX_FFI_DIMENSIONS, MAX_FFI_QUERY_BYTES, OneironStatus,
 };
 
 pub(super) fn string_from_required(ptr: *const u8, len: usize) -> Result<String, OneironStatus> {
@@ -57,11 +57,10 @@ pub(super) fn parse_edge_kind(kind: u32) -> Result<EdgeKind, OneironStatus> {
     EdgeKind::from_wire(kind).ok_or(OneironStatus::InvalidArg)
 }
 
+/// `limit` as the engine's row count: every row the caller asks for, refused
+/// only where this target's `usize` cannot hold it.
 pub(super) fn parse_search_limit(limit: u32) -> Result<usize, OneironStatus> {
-    if limit > MAX_FFI_SEARCH_LIMIT {
-        return Err(OneironStatus::InvalidArg);
-    }
-    Ok(limit as usize)
+    usize::try_from(limit).map_err(|_| OneironStatus::InvalidArg)
 }
 
 pub(super) fn validate_query_len(query: &str) -> Result<(), OneironStatus> {

@@ -49,6 +49,7 @@ mod off_record_rooms;
 mod pack_preview;
 mod persona;
 mod proxy;
+mod receipts_page;
 mod record_erase;
 mod reply;
 mod research;
@@ -607,6 +608,7 @@ pub use self::off_record_rooms::*;
 pub use self::pack_preview::*;
 pub use self::persona::*;
 pub use self::proxy::*;
+pub use self::receipts_page::*;
 pub use self::record_erase::*;
 pub use self::reply::*;
 pub use self::research::*;
@@ -646,17 +648,6 @@ pub use crate::task_verb::recall_door::{
 pub struct ReceiptsRequest {
     #[serde(default)]
     pub limit: Option<usize>,
-}
-/// `vault.receipts`'s input: a page size, and the receipt kinds to list as
-/// `ReceiptKind` names them (`gate`, `hook`, `outbound`, ...). With no kinds
-/// it lists the gate decision ledger; an unknown kind is refused.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VaultReceiptsRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub kinds: Vec<String>,
 }
 /// `inbox.list`'s one input (OF-221): the exclusive entity-ID cursor a
 /// previous page returned as `next_after`, and a page size

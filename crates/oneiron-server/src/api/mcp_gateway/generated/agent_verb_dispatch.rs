@@ -5596,7 +5596,8 @@ async fn execute_agent_verb_row(
                 usize::from(output.next_after.is_some()),
                 true,
             )
-            .rows_at("rows");
+            .rows_at("rows")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "self.inbox.mark" => {
@@ -7199,11 +7200,19 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             served.extend(
                 output
+                    .receipts
                     .iter()
                     .filter_map(|receipt| receipt.claim_ref.as_deref())
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.receipts.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("receipts")
+            .resumed_within("next_after", "spec", "after");
             mcp_agent_verb_output(output, source)
         }
         "vault.assets.ingest" => {
@@ -13568,7 +13577,14 @@ async fn execute_agent_verb_row(
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));
             let output = output.map_err(mcp_facade_error)?;
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.rows.len(),
+                0,
+                usize::from(output.next_cursor.is_some()),
+                true,
+            )
+            .rows_at("rows")
+            .resumed_within("next_cursor", "spec", "cursor");
             mcp_agent_verb_output(output, source)
         }
         "vault.hooks.regen.due" => {
