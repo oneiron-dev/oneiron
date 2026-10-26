@@ -342,7 +342,90 @@ fn plain_body(body: &Value) -> Value {
         Some("message_pack") => body.get("value").map(plain).unwrap_or(Value::Null),
         Some("utf8") => body.get("value").cloned().unwrap_or(Value::Null),
         Some("nulled") | None => Value::Null,
-        Some(_) => body.get("value").cloned().unwrap_or(Value::Null),
+        Some(_) => body.get("value").map(as_okf_shows).unwrap_or(Value::Null),
+    }
+}
+
+/// A pack or hub-source body as OKF has always shown it (FIX 10097, 10101):
+/// each embedded MessagePack body back in its nested tagged value form, and
+/// each source file's content back to its text, or null when redacted. A
+/// binary file member, which no earlier archive carried, keeps its file
+/// reference.
+fn as_okf_shows(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            if fields.get("codec").and_then(Value::as_str) == Some("message_pack")
+                && let Some(nested) = fields.get("value").and_then(nested_value)
+            {
+                let mut shown = fields.clone();
+                shown.insert("value".to_owned(), nested);
+                return Value::Object(shown);
+            }
+            let source_file = ["path", "content", "sha256"]
+                .iter()
+                .all(|key| fields.contains_key(*key));
+            Value::Object(
+                fields
+                    .iter()
+                    .map(|(key, field)| {
+                        let shown = match (source_file && key == "content", field) {
+                            (true, Value::Object(content)) => {
+                                match content.get("kind").and_then(Value::as_str) {
+                                    Some("text") => {
+                                        content.get("value").cloned().unwrap_or(Value::Null)
+                                    }
+                                    Some("redacted") => Value::Null,
+                                    _ => field.clone(),
+                                }
+                            }
+                            _ => as_okf_shows(field),
+                        };
+                        (key.clone(), shown)
+                    })
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(as_okf_shows).collect()),
+        value => value.clone(),
+    }
+}
+
+/// One exported value's postorder nodes (FIX 10097) rebuilt as the nested
+/// tagged form `{"type", "value"}` it had before: an array holds its items,
+/// a map its `[key, value]` pairs, and nil is null. Nodes that form no one
+/// value give `None`.
+fn nested_value(nodes: &Value) -> Option<Value> {
+    let mut built: Vec<Value> = Vec::new();
+    for node in nodes.as_array()? {
+        let kind = node.get("type").and_then(Value::as_str);
+        let len = || {
+            node.get("value")
+                .and_then(Value::as_u64)
+                .and_then(|len| usize::try_from(len).ok())
+        };
+        let nested = match kind {
+            Some("array") => {
+                let at = built.len().checked_sub(len()?)?;
+                serde_json::json!({ "type": "array", "value": built.split_off(at) })
+            }
+            Some("map") => {
+                let at = built.len().checked_sub(len()?.checked_mul(2)?)?;
+                let mut items = built.split_off(at).into_iter();
+                let mut pairs = Vec::new();
+                while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                    pairs.push(Value::Array(vec![key, value]));
+                }
+                serde_json::json!({ "type": "map", "value": pairs })
+            }
+            Some(_) => node.clone(),
+            None if node.is_null() => Value::Null,
+            None => return None,
+        };
+        built.push(nested);
+    }
+    match (built.pop(), built.is_empty()) {
+        (Some(value), true) => Some(value),
+        _ => None,
     }
 }
 

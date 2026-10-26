@@ -86,6 +86,18 @@ fn tar_gz(bytes: &[u8], progress: &mut PackageFileProgress) -> Result<Vec<HubFil
             _ => return Err(invalid("a skill archive holds a device or pipe")),
         }
     }
+    // The rest of the gzip, the tar's closing blocks and record padding
+    // included, is read to its end so the gzip trailer's CRC and length are
+    // checked; it counts against the same bound as the entry bodies.
+    let room = MAX_ENCODED.saturating_sub(bodies) as u64;
+    let rest = std::io::copy(
+        &mut tar.by_ref().take(room.saturating_add(1)),
+        &mut std::io::sink(),
+    )
+    .map_err(|_| unreadable_gzip())?;
+    if rest > room {
+        return Err(invalid("a skill archive exceeds the package bounds"));
+    }
     files.finish()
 }
 
