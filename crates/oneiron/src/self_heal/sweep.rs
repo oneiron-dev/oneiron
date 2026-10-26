@@ -35,10 +35,12 @@ impl Vault {
     /// receipt it holds, never a newest top-N. A manifest that forces
     /// tripwires closed silences the sweep.
     pub fn run_tier1_sweep(&self, now: u64) -> Result<Tier1Sweep> {
-        let Some(bounds) = self.tripwire_bounds()? else {
+        // Resolved once: every window, leg and signed run of the pass reads
+        // this one policy (FIX 10096).
+        let Some(policy) = self.resolved_tripwire_bounds()? else {
             return Ok(Tier1Sweep::default());
         };
-        let window = bounds.window_secs.max(1);
+        let window = policy.bounds.window_secs.max(1);
         let start = now.saturating_sub(SWEEP_SPAN_SECS);
         let mut diagnostics = Vec::new();
         let mut end = now;
@@ -50,15 +52,16 @@ impl Vault {
                 limit: usize::MAX,
                 ..ReceiptQuery::default()
             };
-            diagnostics.extend(self.run_receipt_tripwires(
+            diagnostics.extend(self.run_receipt_tripwires_under(
                 TIER1_SWEEP_SCOPE,
                 query.clone(),
                 end,
+                &policy,
             )?);
             diagnostics.extend(self.run_consent_denied_detector(TIER1_SWEEP_SCOPE, query)?);
             end = end.saturating_sub(window);
         }
-        diagnostics.extend(self.run_served_signal_detectors(now)?);
+        diagnostics.extend(self.run_served_signal_detectors_under(now, Some(&policy))?);
         diagnostics.sort();
         diagnostics.dedup();
         let repairs = self.propose_tier1_repairs(&diagnostics, now)?;
@@ -143,7 +146,8 @@ impl Vault {
             if self.healer_proposal(&proposal_id)?.is_some() {
                 continue;
             }
-            healer.submit(
+            // Counted under the diagnostic's id in the write that files it.
+            healer.submit_counted(
                 &run,
                 "coach.tripwires",
                 RepairProposal {
@@ -155,10 +159,9 @@ impl Vault {
                     operation,
                     session_tag: String::new(),
                 },
+                &id.to_hex(),
+                now,
             )?;
-            self.with_write_txn_grouped(|txn| {
-                crate::failure_ladder::oversight::proposed_in_txn(self, txn, &id.to_hex(), now)
-            })?;
             filed.push(proposal_id);
         }
         Ok(filed)
