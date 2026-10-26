@@ -214,13 +214,13 @@ pub(crate) struct ReceiveScanHit {
 /// caller or a request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum ReceiveScanDisposition {
-    /// Today's refusal with lift advice.
-    Refuse,
-    /// Admit the push with each hit marked in its intent's transaction.
+    /// The refusal with lift advice (the default before the FIX 7608 flip).
     #[allow(
         dead_code,
-        reason = "FIX 7608 A4 order: only the later one-line flip chooses it"
+        reason = "FIX 7608 flip: the one statement chooses AdmitMarked; this arm stays its alternative"
     )]
+    Refuse,
+    /// Admit the push with each hit marked in its intent's transaction.
     AdmitMarked,
 }
 
