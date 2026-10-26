@@ -3,14 +3,16 @@
 //! connect 10 s, whole request 30 s), a device poll's bound capped by its
 //! code's remaining lifetime, and no retry. A form POST carries no
 //! `Authorization` header; a bearer goes on a GET alone, and only where the
-//! caller names it (the pinned audience). Every answer body is read into one
-//! buffer that is wiped on drop.
+//! caller names it (the pinned audience). Every form is encoded into one
+//! buffer and every answer body read into one, each sized before it is
+//! written and wiped on drop. The HTTP stack's own buffers (reqwest's body
+//! chunks, hyper's, TLS's) still hold copies, which nothing here wipes.
 
-use std::io::Read as _;
+use std::io::{Cursor, Read as _};
 use std::time::Duration;
 
 use reqwest::Url;
-use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::blocking::{Body, Client, RequestBuilder};
 use zeroize::Zeroizing;
 
 use super::wire::{ErrorReply, Failure};
@@ -21,7 +23,7 @@ const CLIENT_REQUEST_BOUND: Duration = Duration::from_secs(30);
 
 /// The most answer bytes read (CALLS G7_ANSWER_BYTES): far above every LC
 /// reply, so one past it is off the wire.
-const ANSWER_MAX_BYTES: u64 = 64 * 1024;
+const ANSWER_MAX_BYTES: usize = 64 * 1024;
 
 /// One answer: its status, its media type and its body.
 pub(crate) struct Reply {
@@ -75,19 +77,26 @@ impl Http {
     }
 
     /// `POST url` with `form`, UTF-8 form-urlencoded, each field once, no
-    /// `Authorization`. `within` caps the request's bound by what is left of
-    /// a code's lifetime.
+    /// `Authorization`. The body owns its encoded buffer until reqwest drops
+    /// it. `within` caps the request's bound by what is left of a code's
+    /// lifetime.
     pub(crate) fn post_form(
         &self,
         url: &Url,
         form: &[(&str, &str)],
         within: Option<Duration>,
     ) -> Result<Reply, Failure> {
+        let body = form_body(form);
+        let len = body.len() as u64;
         let request = self
             .client
             .post(url.clone())
             .header(reqwest::header::ACCEPT, "application/json")
-            .form(form);
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            )
+            .body(Body::sized(Cursor::new(body), len));
         let request = match within {
             Some(left) if left < CLIENT_REQUEST_BOUND => request.timeout(left),
             _ => request,
@@ -96,8 +105,61 @@ impl Http {
     }
 }
 
-/// Sends `request` and reads its answer whole, bounded. A send or read that
-/// fails is `Lost`: the issuer may have acted.
+/// Whether a form serializer keeps `byte` as it is.
+const fn form_kept(byte: u8) -> bool {
+    matches!(byte, b'*' | b'-' | b'.' | b'0'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z')
+}
+
+/// How many bytes `text` takes form-encoded: three for each it escapes.
+fn form_len(text: &str) -> usize {
+    let escaped = text
+        .bytes()
+        .filter(|&byte| !form_kept(byte) && byte != b' ')
+        .count();
+    text.len() + 2 * escaped
+}
+
+/// Appends `text` form-encoded to `body`.
+fn form_encode(body: &mut Vec<u8>, text: &str) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for byte in text.bytes() {
+        if form_kept(byte) {
+            body.push(byte);
+        } else if byte == b' ' {
+            body.push(b'+');
+        } else {
+            body.push(b'%');
+            body.push(HEX[usize::from(byte >> 4)]);
+            body.push(HEX[usize::from(byte & 0xf)]);
+        }
+    }
+}
+
+/// `form` as `application/x-www-form-urlencoded`, byte for byte as a form
+/// serializer writes it (`name=value` pairs joined by `&`; `*-._`, digits
+/// and letters kept, a space as `+`, every other byte `%XX`), in one buffer
+/// sized first, so it never grows and leaves no partial copy behind.
+fn form_body(form: &[(&str, &str)]) -> Zeroizing<Vec<u8>> {
+    let len = form
+        .iter()
+        .map(|(name, value)| form_len(name) + 1 + form_len(value))
+        .sum::<usize>()
+        + form.len().saturating_sub(1);
+    let mut body = Zeroizing::new(Vec::with_capacity(len));
+    for (index, (name, value)) in form.iter().enumerate() {
+        if index > 0 {
+            body.push(b'&');
+        }
+        form_encode(&mut body, name);
+        body.push(b'=');
+        form_encode(&mut body, value);
+    }
+    body
+}
+
+/// Sends `request` and reads its answer whole, bounded, into a buffer
+/// sized for the bound first, so the read never moves it. A send or read
+/// that fails is `Lost`: the issuer may have acted.
 fn send(request: RequestBuilder) -> Result<Reply, Failure> {
     let response = request.send().map_err(|_| Failure::Lost)?;
     let status = response.status().as_u16();
@@ -108,12 +170,12 @@ fn send(request: RequestBuilder) -> Result<Reply, Failure> {
         .and_then(|value| value.split(';').next())
         .map(|value| value.trim().to_ascii_lowercase())
         .unwrap_or_default();
-    let mut body = Zeroizing::new(Vec::new());
+    let mut body = Zeroizing::new(Vec::with_capacity(ANSWER_MAX_BYTES + 1));
     response
-        .take(ANSWER_MAX_BYTES + 1)
+        .take(ANSWER_MAX_BYTES as u64 + 1)
         .read_to_end(&mut body)
         .map_err(|_| Failure::Lost)?;
-    if body.len() as u64 > ANSWER_MAX_BYTES {
+    if body.len() > ANSWER_MAX_BYTES {
         return Err(Failure::OffWire(
             "an answer is larger than any on the wire".to_owned(),
         ));
