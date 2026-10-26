@@ -29,6 +29,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SECRET_CUSTODY_OUTPUT, LIVE),
     (&t::SECRET_CUSTODY_PENDING_REVOKE, LIVE),
     (&t::SECRET_CUSTODY_REBIND, LIVE),
+    // A restore's pending credentials stand with the custody they wait on (FIX-LIST 10671).
+    (&t::SECRET_CUSTODY_RESTORE_PENDING, LIVE),
+    (&t::SECRET_CUSTODY_RESTORE_RELEASE, LIVE),
     (&t::SECRET_CUSTODY_TRANSITION, SECRET_CUSTODY),
     (&t::SECRET_CUSTODY_WITNESS, LIVE),
     (&t::SECRET_EXHAUST_TAINT, CONTENT),
