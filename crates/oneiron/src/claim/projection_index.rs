@@ -269,8 +269,11 @@ pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
     limit: usize,
 ) -> Result<Vec<EntityId>> {
     let threshold = u64::try_from(limit).unwrap_or(u64::MAX);
-    let count =
-        ScanCount::start_at(EngineScan::PredicateClaimRows, predicate.as_bytes(), threshold);
+    let count = ScanCount::start_at(
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+        threshold,
+    );
     let mut ids = Vec::new();
     walk_predicate_ids_in_txn(store, txn, predicate, count, |id| {
         ids.push(id);
