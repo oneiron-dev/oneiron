@@ -1375,6 +1375,18 @@ pub struct NotificationPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+    #[serde(
+        rename = "effective_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub effective_limit: Option<u64>,
+    #[serde(
+        rename = "limit_clamped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub limit_clamped: Option<bool>,
 }
 
 /// `oneiron::inbox::list::NotificationMark`.

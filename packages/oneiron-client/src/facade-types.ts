@@ -183,7 +183,7 @@ export type NotificationAction = { verb: string; args: unknown }
 /** `oneiron::inbox::list::NotificationRow` */
 export type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean; actions?: NotificationAction[] }
 /** `oneiron::inbox::list::NotificationPage` */
-export type NotificationPage = { rows: NotificationRow[]; next_after?: string | null }
+export type NotificationPage = { rows: NotificationRow[]; next_after?: string | null; effective_limit?: number; limit_clamped?: boolean }
 /** `oneiron::inbox::list::NotificationMark` */
 export type NotificationMark = "seen" | "acked"
 /** `oneiron::verbs::InboxMarkRequest` */

@@ -106,7 +106,7 @@ declare namespace Sdk {
   type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationAction = { verb: string; args: unknown };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean; actions?: NotificationAction[] };
-  type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
+  type NotificationPage = { rows: NotificationRow[]; next_after?: string | null; effective_limit?: number; limit_clamped?: boolean };
   type NotificationMark = "seen" | "acked";
   type InboxMarkRequest = { notification_ref: string; mark: NotificationMark };
   type ConcernCardRequest = { card: string };

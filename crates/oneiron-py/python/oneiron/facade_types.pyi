@@ -429,6 +429,8 @@ class NotificationRow(TypedDict):
 class NotificationPage(TypedDict):
     rows: list[NotificationRow]
     next_after: NotRequired[str | None]
+    effective_limit: NotRequired[int]
+    limit_clamped: NotRequired[bool]
 NotificationMark = Literal["seen", "acked"]
 class InboxMarkRequest(TypedDict):
     notification_ref: str
