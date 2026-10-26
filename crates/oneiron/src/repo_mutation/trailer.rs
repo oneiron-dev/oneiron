@@ -57,7 +57,8 @@ pub(super) fn validate_repo_provenance_request(
     };
     match &request.operation {
         RepoMutationOperation::CommitFile { .. }
-        | RepoMutationOperation::ResolveConflictFile { .. } => {
+        | RepoMutationOperation::ResolveConflictFile { .. }
+        | RepoMutationOperation::CommitFiles { .. } => {
             require_repo_provenance_claim(vault, &claim_id)
         }
         _ => Err(Error::Code(CodeError::InvalidRepoMutationRecord(
@@ -84,6 +85,7 @@ pub(super) fn validate_repo_provenance_request_in_txn(
         request.operation,
         RepoMutationOperation::CommitFile { .. }
             | RepoMutationOperation::ResolveConflictFile { .. }
+            | RepoMutationOperation::CommitFiles { .. }
     ) {
         return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
             "provenance claim id only applies to commit-producing repo mutations",

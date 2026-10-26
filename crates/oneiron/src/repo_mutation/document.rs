@@ -9,9 +9,9 @@ pub(super) fn land_reviewed_document(vault: &Vault, proposal_id: EntityId) -> Re
     let proposal = vault
         .repo_proposal(proposal_id)?
         .ok_or(Error::EntityNotFound)?;
-    // A received bundle lowers every file in one grouped ingress (G4 PR2).
-    if proposal.received_candidate().is_some() {
-        return super::received_file::land_received_files_documents(vault, &proposal);
+    // A file bundle lowers every file in one grouped ingress (G4 PR2).
+    if proposal.is_file_bundle() {
+        return super::bundle::land_bundle_documents(vault, &proposal);
     }
     let (path, content) = proposal.ordinary_file()?;
     let repo = RepoRef::parse(&proposal.repo)?;
@@ -59,8 +59,8 @@ pub(super) fn resume_reviewed_document(
     let Some(row) = super::proposal::for_operation(vault, repo, stale.seq)? else {
         return Ok(None);
     };
-    // A received bundle is stack-bound and keeps its queue recovery path.
-    if row.merge_stack.is_some() || row.received_candidate().is_some() {
+    // A file bundle is stack-bound and keeps its queue recovery path.
+    if row.merge_stack.is_some() || row.is_file_bundle() {
         return Ok(None);
     }
     // An erased actor's write is never resumed: the generic path rolls it back.
@@ -107,7 +107,8 @@ pub(super) fn resume_reviewed_document(
             }
             PreparedRepoMutationExecution::CommitFile(prepared)
         }
-        super::proposal::RepoProposalOperation::ReceivedFiles { .. } => return Ok(None),
+        super::proposal::RepoProposalOperation::ReceivedFiles { .. }
+        | super::proposal::RepoProposalOperation::CommitFiles => return Ok(None),
         super::proposal::RepoProposalOperation::ResolveConflictFile {
             branch_subject,
             open_conflict_claim_id,

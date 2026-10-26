@@ -137,3 +137,118 @@ impl Vault {
         Ok(Ok(prepared.row))
     }
 }
+
+impl Vault {
+    /// Stages ONE Proposed native file bundle (FIX 7608 slice 5) and its
+    /// pre-action snapshot: every file of the request's `CommitFiles`, each
+    /// with its exact state change against that snapshot. It lands through
+    /// its repository's merge queue. Catalogs are supplied by host policy.
+    pub fn propose_repo_bundle(
+        &self,
+        request: RepoMutationRequest,
+        catalog: LensCatalog,
+    ) -> Result<RepoProposal> {
+        let proposed = self.propose_repo_bundle_checked::<std::convert::Infallible>(
+            request,
+            RepoProposalReview::Explicit(catalog),
+            ProposalBase::CurrentCheckout,
+            None,
+            |_| Ok(Ok(())),
+        )?;
+        Ok(proposed.unwrap_or_else(|never| match never {}))
+    }
+
+    /// The checked bundle proposer: the one-file proposer's validation,
+    /// base, custody and single writer, over every file of a native
+    /// bundle. A refusal in `check` writes nothing.
+    pub(in crate::repo_mutation) fn propose_repo_bundle_checked<R>(
+        &self,
+        request: RepoMutationRequest,
+        review: RepoProposalReview,
+        base: ProposalBase,
+        run: Option<RepoRunStamp>,
+        check: impl FnOnce(&heed::RoTxn<'_>) -> Result<std::result::Result<(), R>>,
+    ) -> Result<std::result::Result<RepoProposal, R>> {
+        validate_operation(&request.operation)?;
+        crate::repo_mutation::trailer::validate_repo_provenance_request(self, &request)?;
+        let (Some(actor), Some(session), Some(provenance_claim)) = (
+            request.actor_id,
+            request.session_id,
+            request.provenance_claim_id,
+        ) else {
+            return Err(invalid(
+                "code proposal requires actor, session and provenance",
+            ));
+        };
+        request.op_provenance.validate()?;
+        let op_provenance = request.op_provenance.clone();
+        let request_class = request.actor_class;
+        let RepoMutationOperation::CommitFiles { files, message } = request.operation else {
+            return Err(invalid("a bundle proposal carries a native file bundle"));
+        };
+        if review
+            .catalog()
+            .is_some_and(|catalog| catalog.lenses.is_empty())
+        {
+            return Err(invalid(
+                "proposal requires bounded content and review lenses",
+            ));
+        }
+        if let Some(catalog) = review.catalog() {
+            triage_critiques(catalog, &[], &[])?;
+        }
+        let repo_root = resolve_mutable_repo_root(&request.repo_ref)?;
+        let repo = admitted_repo_ref(&request.repo_ref, &repo_root)?;
+        let _guard = lock_repository(&git_common_dir(&repo_root)?)?;
+        self.recover_prepared_repo_mutations_locked(&repo, &repo_root)?;
+        let (fork, snapshot) = match base {
+            ProposalBase::CurrentCheckout => capture_repo_snapshot(self, &repo_root)?,
+            ProposalBase::Pinned(pinned) => (pinned.fork_hash, pinned.encoded),
+        };
+        let pre_action = crate::repo_mutation::snapshot::decode_snapshot(&snapshot)?;
+        require_pinned_head(&repo, pre_action.head.as_deref())?;
+        // Each written file is kept under custody exactly as one ordinary
+        // write is; a removal writes no bytes, and the message is scanned.
+        let custody = SnapshotCustody::of(self, &repo_root)?;
+        for file in &files {
+            if let Some(content) = &file.content {
+                admit_custody(&custody, &pre_action, &file.path, content, &message)?;
+            }
+        }
+        if let Some(reason) = crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
+            return Err(SnapshotWithhold::Quarantined(reason).refusal());
+        }
+        let files = crate::repo_mutation::bundle::reviewed_bundle_files(&pre_action, files)?;
+        let row = RepoProposal {
+            id: EntityId::now(),
+            repo: repo.canonical(),
+            actor: actor_erase::ProposalActor::Actor(actor),
+            session,
+            provenance_claim,
+            op_provenance,
+            files,
+            message,
+            operation: RepoProposalOperation::CommitFiles,
+            merge_stack: None,
+            pre_action_fork_hash: fork,
+            review,
+            critiques: Vec::new(),
+            policy_critiques: Vec::new(),
+            queue_review: None,
+            status: RepoProposalStatus::Proposed,
+            settlement: None,
+            operation_seq: None,
+            created_at: now_millis() / 1000,
+            run,
+            actor_class: request_class.map(|class| class as u8),
+        };
+        let prepared = super::persist::PreparedRepoProposal::new(row, snapshot)?;
+        let mut txn = self.store.env.write_txn()?;
+        if let Err(refused) = check(&txn)? {
+            return Ok(Err(refused));
+        }
+        prepared.persist_in_txn(self, &mut txn)?;
+        txn.commit()?;
+        Ok(Ok(prepared.row))
+    }
+}

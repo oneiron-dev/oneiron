@@ -199,8 +199,9 @@ impl MergeQueue<'_> {
         .with_provenance_claim_id(queue_provenance_id(intent.revision)?);
         revision.file_frontiers = inventory.documents;
         revision.blob_frontiers = inventory.blobs;
-        // A received bundle's removals and complete-push links (G4 PR2).
-        match self.received_seal_evidence(&wire, &intent.tree, &sources, parent.as_ref())? {
+        // A file bundle's removals, and a received one's complete-push
+        // links (G4 PR2).
+        match self.bundle_seal_evidence(&wire, &intent.tree, &sources, parent.as_ref())? {
             Ok((retired, pushes)) => {
                 revision.retired_paths = retired;
                 tested.received_pushes = pushes;
@@ -512,10 +513,10 @@ impl MergeQueue<'_> {
             let mut edited = BTreeMap::new();
             let mut removed = std::collections::BTreeSet::new();
             for source in sources {
-                // A received bundle lands every file under its own child
+                // A file bundle lands every file under its own child
                 // receipt, and may remove paths (G4 PR2).
-                if source.received_candidate().is_some() {
-                    let tree = match self.received_bundle_tree(source)? {
+                if source.is_file_bundle() {
+                    let tree = match self.file_bundle_tree(source)? {
                         Ok(tree) => tree,
                         Err(hold) => return Ok(Err(hold)),
                     };

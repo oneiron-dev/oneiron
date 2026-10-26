@@ -2,6 +2,7 @@
 //! The mutation request type is `RepoMutationRequest`.
 //! Child modules own the types, proposal actors and provenance helpers re-exported here.
 
+mod bundle;
 mod conflict;
 mod conflict_doors;
 pub(crate) use conflict_doors::conflict_proposals;
@@ -41,12 +42,13 @@ pub use self::trailer::{
     repo_commit_provenance_from_git_note, repo_provenance_git_note,
 };
 pub use self::types::{
-    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS,
+    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, RepoBundleFile,
     RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoForkHash,
     RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest,
     RepoMutationStatus,
 };
 
+pub(crate) use self::bundle::bundle_merge_proposal;
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
 pub(crate) use self::git::canonical_mutation_scope;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
