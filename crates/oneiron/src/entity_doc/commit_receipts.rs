@@ -24,7 +24,9 @@ use super::{EntityDoc, invalid};
 use crate::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess};
+use crate::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
+};
 use crate::provenance::text_commit::{RowProvenance, TextCommitReceipt};
 use crate::write_envelope::WriteActor;
 
@@ -165,12 +167,8 @@ fn receipt_of(
             return Ok(None);
         }
     }
-    let vouched = crate::edit_distance::peer_actor_stamp_is_honored(
-        vault,
-        meta.id.peer,
-        made_by.at,
-        &actor,
-    )?;
+    let vouched =
+        crate::edit_distance::peer_actor_stamp_is_honored(vault, meta.id.peer, made_by.at, &actor)?;
     Ok(vouched.then_some(TextCommitReceipt {
         document,
         peer: meta.id.peer,

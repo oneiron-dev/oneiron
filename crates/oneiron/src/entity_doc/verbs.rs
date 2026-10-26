@@ -193,7 +193,11 @@ impl Vault {
             let landed = if *text == base_text {
                 None
             } else {
-                Some(LandedProse::whole(request.actor, "/text".to_owned(), &admitted.said))
+                Some(LandedProse::whole(
+                    request.actor,
+                    "/text".to_owned(),
+                    &admitted.said,
+                ))
             };
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0

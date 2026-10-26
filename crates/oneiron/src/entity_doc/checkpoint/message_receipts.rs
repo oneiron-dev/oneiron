@@ -67,7 +67,10 @@ impl Cut<'_> {
     /// The message spelled back with `id` in its stamp.
     fn spell(&self, id: &str) -> Option<String> {
         let receipt = serde_json::to_string(&self.receipt).ok()?;
-        Some(format!("{}{id}{}{RECEIPT_PREFIX}{receipt}", self.head, self.tail))
+        Some(format!(
+            "{}{id}{}{RECEIPT_PREFIX}{receipt}",
+            self.head, self.tail
+        ))
     }
 }
 
