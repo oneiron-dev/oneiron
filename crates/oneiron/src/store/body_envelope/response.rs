@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
-use super::opaque_response::{OPAQUE_ERASED, ResponseOwners, ResponseScan};
+use super::opaque_response::{ResponseOwners, ResponseScan, is_opaque_erased, stamp_opaque_erased};
 use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
@@ -322,7 +322,7 @@ impl ResponseFamily {
     /// 9390). A clip's raw bytes always carry: it bears no marker.
     pub(crate) fn scan(self, key: &[u8], value: &[u8]) -> ResponseScan {
         // An opaque response's erased form holds nothing.
-        if self != Self::MediaPart && value == OPAQUE_ERASED {
+        if self != Self::MediaPart && is_opaque_erased(value) {
             return ResponseScan::NotResponse;
         }
         match self {
@@ -357,7 +357,7 @@ impl ResponseFamily {
     /// one leaves (the explicit marker, a wait's erased reply). Any other
     /// row of a mixed family stays where its family is classed.
     pub(crate) fn placed_as_response(self, key: &[u8], value: &[u8]) -> bool {
-        value == OPAQUE_ERASED
+        is_opaque_erased(value)
             || self.scan(key, value) != ResponseScan::NotResponse
             || (matches!(self, Self::WaitDelivery | Self::WaitSettled)
                 && crate::code_run::wait_reply_erased(value))
@@ -515,8 +515,9 @@ impl ResponseFamily {
     /// Leaves the live row `key` its erased disposition in `wtxn`, as
     /// `carriage` names it: an activation's prune of a row whose instance
     /// its source retired. A `vault_meta` row takes its stub as far as the
-    /// disposition keeps it (an opaque one's, its erased marker); a claim,
-    /// the erase's shell beside its markers.
+    /// disposition keeps it (an opaque one's, its erased marker, stamped
+    /// with the time it retired, FIX 10710); a claim, the erase's shell
+    /// beside its markers.
     ///
     /// # Errors
     ///
@@ -532,6 +533,7 @@ impl ResponseFamily {
             carriage
                 .stub
                 .get(..carriage.retired)
+                .map(stamp_opaque_erased)
                 .ok_or(Error::InvariantViolation(
                     "a response stub shorter than it keeps",
                 ))
@@ -544,7 +546,7 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission
-            | Self::CentroidEvidence => store.side_vault_meta().put(wtxn, key, kept()?),
+            | Self::CentroidEvidence => store.side_vault_meta().put(wtxn, key, &kept()?),
             Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
@@ -554,12 +556,12 @@ impl ResponseFamily {
                 Ok(())
             }
             Self::AttemptPayload => {
-                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, kept()?)
+                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
             }
             Self::Http | Self::MediaJob => {
                 store
                     .side_sync_state()?
-                    .put(wtxn, sync_state_key(key)?, kept()?)
+                    .put(wtxn, sync_state_key(key)?, &kept()?)
             }
             Self::MediaPart => {
                 store

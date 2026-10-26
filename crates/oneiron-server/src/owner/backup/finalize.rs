@@ -17,7 +17,9 @@
 
 use std::path::PathBuf;
 
-use oneiron::recovery::checkpoint::{BackupMarker, BackupSnapshotReceipt, backup_marker};
+use oneiron::recovery::checkpoint::{
+    BackupMarker, BackupSnapshotReceipt, CheckpointSigner, backup_marker_with_pins,
+};
 use oneiron_vault_contract::backup_handoff::write_private_file;
 
 use super::{
@@ -227,12 +229,22 @@ pub(crate) fn lift_guard(plan: &BackupPlan) {
 }
 
 /// The label's last accepted backup, from its marker
-/// ([`backup_marker`]): `None`, read as changed, while a failed attempt's
-/// guard stands or cannot be told absent, and as the marker read has it.
+/// ([`backup_marker_with_pins`], unpinned): `None`, read as changed, while a
+/// failed attempt's guard stands or cannot be told absent, and as the marker
+/// read has it.
 pub(crate) fn accepted_marker(plan: &BackupPlan) -> Option<BackupMarker> {
+    accepted_marker_with_pins(plan, None)
+}
+
+/// [`accepted_marker`], and when `pins` are given, `None` too for a backup
+/// whose commitment none of them signed (FIX 10712).
+pub(crate) fn accepted_marker_with_pins(
+    plan: &BackupPlan,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<BackupMarker> {
     match std::fs::symlink_metadata(plan.dir.join(guard_name(&plan.label))) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            backup_marker(&plan.dir, &plan.label)
+            backup_marker_with_pins(&plan.dir, &plan.label, pins)
         }
         _ => None,
     }

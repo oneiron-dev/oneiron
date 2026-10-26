@@ -10,7 +10,8 @@
 //! ([`ResponseScan::Opaque`]), never in the clear, never cleared, dropped or
 //! refused (FIX 6227, 9390). A restore under a live instance lands its exact
 //! bytes. Under a retired one its row keeps the explicit erased marker
-//! [`OPAQUE_ERASED`], which no row's encoding begins with, a claim the
+//! [`OPAQUE_ERASED`], which no row's encoding begins with, followed by the
+//! time it retired ([`stamp_opaque_erased`], FIX 10710), a claim the
 //! erase's shell, as a decoded one does, and a family whose erase deletes
 //! its row (a captured request, a voice bank row) loses it.
 //!
@@ -22,6 +23,9 @@
 //! Its owners are what its key proves ([`ResponseOwners`]); what its row
 //! stamps beside that is not known, and is reported, never invented.
 
+use std::borrow::Cow;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use super::response::{ResponseCarriage, ResponseDb, ResponseFamily};
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -31,6 +35,10 @@ use crate::error::{Error, Result};
 /// `0xc1`, a byte MessagePack never uses, so no row's encoding starts with
 /// it, then its name.
 pub(crate) const OPAQUE_ERASED: &[u8] = b"\xc1oneiron/response-erased-opaque/v1";
+
+/// The bytes of the time a stamped marker keeps after [`OPAQUE_ERASED`]:
+/// wall seconds since the Unix epoch, big-endian.
+const RETIRED_AT_LEN: usize = 8;
 
 /// What a family finds in one row before anything is carried.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,9 +92,40 @@ impl ResponseScan {
 }
 
 /// Whether `value` is the erased marker a retired opaque response's row
-/// keeps (FIX 9390): its readers answer it erased before any decode.
+/// keeps (FIX 9390), bare or stamped with the time it retired (FIX 10710),
+/// and nothing else: its readers answer it erased before any decode.
 pub(crate) fn is_opaque_erased(value: &[u8]) -> bool {
-    value == OPAQUE_ERASED
+    value
+        .strip_prefix(OPAQUE_ERASED)
+        .is_some_and(|rest| rest.is_empty() || rest.len() == RETIRED_AT_LEN)
+}
+
+/// When the erased marker `value` holds was stamped retired, in wall seconds
+/// since the Unix epoch (FIX 10710). `None` for any other row and for a bare
+/// marker, which kept no time. Nothing the response held is read.
+pub(crate) fn opaque_retired_at(value: &[u8]) -> Option<u64> {
+    let retired_at = value.strip_prefix(OPAQUE_ERASED)?;
+    Some(u64::from_be_bytes(retired_at.try_into().ok()?))
+}
+
+/// What a retire leaves in a row whose erased disposition is `kept`: the
+/// bare erased marker is stamped with the time it retired, now by the wall
+/// clock (FIX 10710), so a row's reader that expires its rows can judge it.
+/// Anything else stays as it is, and so does the marker when the clock reads
+/// before the epoch: no time is guessed, and that marker never expires.
+pub(crate) fn stamp_opaque_erased(kept: &[u8]) -> Cow<'_, [u8]> {
+    if !kept
+        .strip_prefix(OPAQUE_ERASED)
+        .is_some_and(<[u8]>::is_empty)
+    {
+        return Cow::Borrowed(kept);
+    }
+    let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH) else {
+        return Cow::Borrowed(kept);
+    };
+    let mut stamped = OPAQUE_ERASED.to_vec();
+    stamped.extend_from_slice(&now.as_secs().to_be_bytes());
+    Cow::Owned(stamped)
 }
 
 /// Who owns a response, as far as its row proves it.
@@ -169,7 +208,7 @@ pub(crate) enum ResponseRead<'a> {
 impl<'a> ResponseRead<'a> {
     /// The row `key` of `family`, holding `value`.
     pub(crate) fn of(family: ResponseFamily, key: &[u8], value: &'a [u8]) -> Self {
-        if value == OPAQUE_ERASED {
+        if is_opaque_erased(value) {
             Self::ErasedOpaque(ErasedResponseDisposition::Opaque {
                 family,
                 database: family.database(),

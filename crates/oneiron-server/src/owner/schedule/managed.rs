@@ -299,7 +299,11 @@ fn hourly(
 ) -> Decision {
     let every_ms = u64::try_from(every.as_millis()).unwrap_or(u64::MAX);
     let within = |landed_ms: u64| now_unix_ms().saturating_sub(landed_ms) < every_ms;
-    let last = finalize::accepted_marker(plan);
+    // The marker counts only for a backup this install signed, so one another
+    // signer signed reads as due; a signer that does not read leaves the read
+    // unpinned (FIX 10712).
+    let signer = vault.checkpoint_signer().ok();
+    let last = finalize::accepted_marker_with_pins(plan, signer.as_ref().map(std::slice::from_ref));
     if let Some(last) = &last {
         if vault
             .backup_watermark()

@@ -23,6 +23,7 @@
 //! lands its exact bytes, and a retired one leaves the explicit erased
 //! marker (a claim, its shell).
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
@@ -35,7 +36,7 @@ use crate::attempt_queue::AttemptId;
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
     bind_response_in_txn, carrier_row, release_response_in_txn, response_binding_in_txn,
-    response_carrier, response_owed_to_all_in_txn,
+    response_carrier, response_owed_to_all_in_txn, stamp_opaque_erased,
 };
 use crate::vault_cleanup::refresh_archived_attempt_in_rows;
 use crate::{Error, Result};
@@ -333,6 +334,12 @@ pub(super) fn retire_carried(
         let caller = (family == ResponseFamily::Http)
             .then(|| crate::store::http_erase_drop_caller(value))
             .flatten();
+        // An opaque one's erased marker takes the time it retired, as a live
+        // prune stamps it, so a restored vault's marker expires as a live
+        // one's does (FIX 10710); a row its family drops goes all the same.
+        if let Cow::Owned(stamped) = stamp_opaque_erased(value) {
+            *value = stamped;
+        }
         // An attempt's archive mark bound its carried bytes: it follows the
         // row to its text-free form (FIX 7115).
         if family == ResponseFamily::AttemptPayload {

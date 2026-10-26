@@ -40,7 +40,9 @@ pub(crate) use self::media::{media_job_owners, media_job_scan};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDbs};
-use crate::store::{ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan};
+use crate::store::{
+    ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, opaque_retired_at,
+};
 
 /// Who owns a host row's response, as the host stamps it in the write that
 /// keeps the row: the actor that asked, the subject the response is about,
@@ -198,6 +200,16 @@ pub(crate) fn http_scan(value: &[u8]) -> ResponseScan {
 #[doc(hidden)]
 pub fn http_response_read<'a>(key: &[u8], value: &'a [u8]) -> Result<&'a [u8]> {
     ResponseRead::of(ResponseFamily::Http, key, value).present()
+}
+
+/// When the erased marker the cache row `value` holds was stamped retired,
+/// in wall seconds since the Unix epoch (FIX 10710): the host expires that
+/// entry from then as it expires any other from its creation. `None` for
+/// any other row, and for a marker that kept no time, which never expires.
+/// Only the time is read, never the response.
+#[doc(hidden)]
+pub fn http_opaque_retired_at(value: &[u8]) -> Option<u64> {
+    opaque_retired_at(value)
 }
 
 /// The media job row `key` holds as `value`, read before the host decodes
