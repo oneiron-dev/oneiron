@@ -28,8 +28,8 @@ use crate::error::{Error, Result, StoreError, VaultRootProblem};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodySubject, LocalCustody, RetireCause, retirement_prefix,
-    retirements_in_rows,
+    CustodyBinding, CustodyKind, CustodySubject, LocalCustody, RetireCause, custody_present,
+    retirement_prefix, retirements_in_rows,
 };
 
 /// The `vault_meta` prefixes a source's erase evidence is read from: its
@@ -129,8 +129,29 @@ impl CredentialFences {
     }
 
     /// Takes `binding`'s retired credential value keys as evidence too,
-    /// each looked up by its own handle.
+    /// each looked up by its own handle, and every erased credential's fact
+    /// its custody keeps (FIX 10584 item 3): a head's facts a disaster
+    /// recovery landed there, or this vault's own. Facts that do not read
+    /// are warned, and read unread.
     pub(crate) fn with_custody(&mut self, binding: &CustodyBinding) {
+        let facts = custody_present(binding.root()).and_then(|present| {
+            if present {
+                LocalCustody::at(binding).erase_evidence()
+            } else {
+                Ok(std::collections::BTreeMap::new())
+            }
+        });
+        match facts {
+            Ok(facts) => self.fenced.extend(facts.into_keys()),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a custody's credential erase evidence did not read; each credential it \
+                     would re-admit and nothing fences is withheld, pending"
+                );
+                self.unread = true;
+            }
+        }
         self.custody = Some(binding.clone());
     }
 

@@ -206,6 +206,8 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_connector_resume_retirements_after_commit();
     // An erased credential's discovery and keys (KS-6 part 2), retried here.
     vault.finish_credential_retirements_after_commit();
+    // An erased actor's erasable keys (FIX 8875), retried here.
+    vault.finish_erasable_retirements_after_commit();
     // Body instances nothing needs any longer, by the one policy (FIX 6022).
     #[cfg(unix)]
     vault.sweep_body_retention_after_commit();

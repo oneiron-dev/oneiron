@@ -6,17 +6,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use zeroize::Zeroizing;
 
+use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R, because};
 
 use super::super::anchor::verified_position;
 use super::super::body_history::HistoryRows;
+use super::super::erase_evidence::{FenceFact, fold_fact};
 use super::super::head::{CustodyOpener, OpenedHead, open_head};
 use super::super::identity::{CustodyId, CustodySecret, CustodySubject};
 use super::super::log::{Control, CustodyPosition, FrameHeader, LogEntry, frame_hash, open_frame};
 use super::super::protocol::{AnchorStore, CustodySource, Lineage};
 use super::super::recipients::RecipientRetirement;
-use super::{CUSTODY_ANCHOR_UNSET_RESTORE, CustodyRequirement, ROLLBACK_NOT_PROVEN, refused, unopened};
+use super::{
+    CUSTODY_ANCHOR_UNSET_RESTORE, CustodyRequirement, ROLLBACK_NOT_PROVEN, refused, unopened,
+};
 
 /// A lineage's custody as admitted for a restore.
 pub(crate) struct AdmittedCustody {
@@ -38,6 +42,9 @@ pub(crate) struct AdmittedCustody {
     pub(super) recipients: BTreeMap<[u8; 32], RecipientRetirement>,
     /// The lineage's body history: the head's, and the log's after it.
     pub(super) history: HistoryRows,
+    /// Each erased credential's fact (FIX 10584 item 3): the head's, and
+    /// the log's after it.
+    pub(super) evidence: BTreeMap<EntityId, FenceFact>,
 }
 
 impl AdmittedCustody {
@@ -179,6 +186,7 @@ pub(crate) fn admit_recovery(
             .map(|fact| (fact.fingerprint, fact))
             .collect(),
         history: opened.history,
+        evidence: opened.evidence,
     };
     if let Some(record) = record {
         let anchored =
@@ -216,6 +224,7 @@ pub(crate) fn admit_recovery(
                         admitted.recipients.insert(fact.fingerprint, fact);
                     }
                     LogEntry::BodyHistory(rows) => admitted.history.extend(rows),
+                    LogEntry::EraseEvidence(fact) => fold_fact(&mut admitted.evidence, fact),
                     LogEntry::PublicationPolicy(_) => {}
                 }
             }

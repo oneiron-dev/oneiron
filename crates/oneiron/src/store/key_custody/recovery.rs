@@ -23,6 +23,7 @@
 //! is kept.
 
 mod admission;
+mod credentials;
 mod pads;
 mod unopened;
 
@@ -36,6 +37,7 @@ use crate::store::Store;
 use self::admission::{AdmittedCustody, admit_recovery};
 use super::anchor::{anchor_record, anchored_position};
 use super::body_history::merge_history_into_rows;
+use super::erase_evidence::CredentialFenceFact;
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
 use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
@@ -124,7 +126,8 @@ impl Store {
     /// Nor is a credential's value or carrier key (KS-6): each is planned by
     /// the row or carrier that names it, never by the whole census. Nor is
     /// a connector call's resume key (FIX 9157): each is required by its
-    /// call row when one names it, never by the whole census.
+    /// call row when one names it, never by the whole census. Nor is an
+    /// erasable key (FIX 8875): each is planned by the ref its row names.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -150,6 +153,7 @@ impl Store {
                                 | CustodyKind::CustodyTransition
                                 | CustodyKind::CustodyRequestInput
                                 | CustodyKind::ConnectorResume
+                                | CustodyKind::ErasableKey
                         )
                 })
                 .map(|(id, _)| RequiredId {
@@ -164,10 +168,11 @@ impl Store {
 
 /// Lands `admitted` beside the restore's destination under `binding`, the
 /// image's own rebound there (the same namespace): a new container, every
-/// retirement fact first, then every live entry, then the journal at the
-/// next writer epoch, all synced. The admitted retirements stay owed as one
-/// takeover obligation at the admitted position: the new writer's targets
-/// and anchor must reach it at its epoch before they count complete
+/// retirement fact first, then every live entry but an erased credential's,
+/// which lands retired, then the journal at the next writer epoch and every
+/// erased credential's fact, all synced. The admitted retirements stay owed
+/// as one takeover obligation at the admitted position: the new writer's
+/// targets and anchor must reach it at its epoch before they count complete
 /// (KS-4A2). The directory it made is removed when the restore fails.
 pub(crate) fn land_recovery(
     admitted: &AdmittedCustody,
@@ -187,7 +192,15 @@ pub(crate) fn land_recovery(
                 custody.retire_local(&subject.at(generation))?;
             }
         }
+        // A key of a credential the head's evidence fences lands retired,
+        // never live (FIX 10584 item 4).
+        let mut suppressed = false;
         for (id, secret) in &admitted.live {
+            if credentials::fenced(&admitted.evidence, id) {
+                custody.retire_local(id)?;
+                suppressed = true;
+                continue;
+            }
             custody.publish(id, secret)?;
         }
         let control = Control::taken_over(admitted.control.clone(), &admitted.position)?;
@@ -198,9 +211,15 @@ pub(crate) fn land_recovery(
         for fact in admitted.recipients.values() {
             journal.put_recipient_fact(fact)?;
         }
+        // So does every erased credential's fact (FIX 10584 item 3): the
+        // restore's fences read it, and the next head carries it.
+        for (&credential, &fact) in &admitted.evidence {
+            custody.put_erase_evidence(&CredentialFenceFact { credential, fact })?;
+        }
         if !admitted.retired.is_empty()
             || !admitted.retired_through.is_empty()
             || !admitted.recipients.is_empty()
+            || suppressed
         {
             journal.record_takeover(&CustodyPosition {
                 epoch: control.epoch,
