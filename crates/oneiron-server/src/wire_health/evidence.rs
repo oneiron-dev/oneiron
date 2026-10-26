@@ -8,7 +8,7 @@ use oneiron::scan_check::ScanCheck;
 use oneiron::{EntityId, Error, Result, Vault};
 use serde_json::{Value, json};
 
-use super::{CHECK, CheckState, CrossingSource, HealthCheck, decode, encode};
+use super::{AnsweredBy, CHECK, CheckState, CrossingSource, HealthCheck, decode, encode};
 use crate::server::SyncServer;
 use crate::wire_telemetry::{WireLimitQuestion, WireQuestion, WireThresholds, WireWindowReceipt};
 
@@ -30,6 +30,10 @@ pub(super) struct Crossing {
     summary: Value,
     /// The cursor to move once it is folded in.
     read: Option<(String, String)>,
+    /// The subject prefix every revision of the same crossing shares, for a
+    /// crossing that is one revision of it: a wire question's crossed set
+    /// (FIX 9531). `None` for one whose subject is all its identity.
+    revises: Option<String>,
 }
 
 fn cursor(vault: &Vault, key: &str) -> Result<Option<String>> {
@@ -62,11 +66,11 @@ fn named_of(counts: &BTreeMap<String, u64>, names: &BTreeSet<String>) -> Vec<(St
     named(&counts, 0)
 }
 
-/// The wire subject: everyone and everything past its row in the question,
-/// every one of them. A later actor or verb makes a new subject, so a check
-/// of its own, and an asked check never takes in facts it was not asked
-/// about (FIX 9531). Each name is length-prefixed under its kind.
-fn wire_subject(question: &WireQuestion) -> String {
+/// The wire crossed set: everyone and everything past its row in the
+/// question, every one of them. A later actor or verb makes a new set (FIX
+/// 9531). Each name is length-prefixed under its kind. The subject prefix of
+/// each revision of the set.
+fn wire_set(question: &WireQuestion) -> String {
     let mut hasher = blake3::Hasher::new();
     for (kind, names) in [
         (b'a', &question.crossed.actors),
@@ -78,15 +82,20 @@ fn wire_subject(question: &WireQuestion) -> String {
             hasher.update(name.as_bytes());
         }
     }
-    format!("wire:{}", &hasher.finalize().to_hex()[..32])
+    format!("wire:{}:", &hasher.finalize().to_hex()[..32])
 }
 
+/// One wire question's crossing: its subject is its crossed set and its
+/// sequence, so each kept question is a check of its own, with its own
+/// question and unit, and an asked check never takes in a later revision's
+/// facts (FIX 9531).
 fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThresholds) -> Crossing {
     let window = &question.evidence;
     let actors = named_of(&window.by_actor, &question.crossed.actors);
     let verbs = named_of(&window.by_verb, &question.crossed.verbs);
+    let set = wire_set(question);
     Crossing {
-        subject: wire_subject(question),
+        subject: format!("{set}{:020}", question.seq),
         source: CrossingSource::Wire,
         raised_at: window.started_at,
         summary: json!({
@@ -112,6 +121,7 @@ fn wire_crossing(key: String, question: &WireQuestion, thresholds: &WireThreshol
             "mcp_errors": window.mcp_errors,
         }),
         read: Some((CURSOR_WIRE.to_owned(), key)),
+        revises: Some(set),
     }
 }
 
@@ -161,6 +171,7 @@ fn limit_crossing(key: String, question: &WireLimitQuestion) -> Crossing {
             "crossings": question.crossings,
         }),
         read: Some((format!("{CURSOR_LIMIT}{}", question.row), key)),
+        revises: None,
     }
 }
 
@@ -177,6 +188,7 @@ fn scan_crossing(check: &ScanCheck) -> Crossing {
             "rows": check.rows,
         }),
         read: None,
+        revises: None,
     }
 }
 
@@ -199,6 +211,7 @@ fn esign_crossing(key: String, check: &EsignRateCheck) -> Crossing {
             "threshold": check.threshold,
         }),
         read: Some((CURSOR_ESIGN.to_owned(), key)),
+        revises: None,
     }
 }
 
@@ -223,6 +236,7 @@ fn esign_limit_crossing(key: String, check: &EsignRateCheck, row: &str) -> Cross
             "observed": receipt.count,
         }),
         read: Some((CURSOR_ESIGN.to_owned(), key)),
+        revises: None,
     }
 }
 
@@ -253,6 +267,7 @@ pub(crate) fn raise_verdict_spend(
                 "window_started_at": window_started_at,
             }),
             read: None,
+            revises: None,
         },
     )
 }
@@ -297,10 +312,57 @@ pub(super) fn unread(server: &SyncServer) -> Result<Vec<Crossing>> {
     Ok(unread)
 }
 
+/// The answer a new revision of `set` takes from the set's newest earlier
+/// revision, when that one is answered and still covers `raised_at`: its
+/// answer, at the cover rung, citing that answer's question and unit. The
+/// revision keeps its own evidence and is not asked (FIX 9531). `None` when
+/// it is to be asked.
+fn covered(
+    vault: &Vault,
+    txn: &heed::RwTxn<'_>,
+    set: &str,
+    raised_at: u64,
+) -> Result<Option<CheckState>> {
+    let mut newest = None;
+    vault.sync_state_visit_prefix_in_write_txn(txn, &format!("{CHECK}{set}"), |_, bytes| {
+        newest = Some(bytes.to_vec());
+        Ok::<(), Error>(())
+    })?;
+    let Some(earlier) = newest
+        .map(|bytes| decode::<HealthCheck>(&bytes))
+        .transpose()?
+    else {
+        return Ok(None);
+    };
+    if !earlier.covers(raised_at) {
+        return Ok(None);
+    }
+    Ok(match earlier.state {
+        CheckState::Answered {
+            answer,
+            probability,
+            at,
+            question,
+            unit,
+            ..
+        } => Some(CheckState::Answered {
+            answer,
+            probability,
+            by: AnsweredBy::Cover,
+            at,
+            question,
+            unit,
+        }),
+        _ => None,
+    })
+}
+
 /// Folds one crossing into its subject's check: an open check, or an answered
-/// one that still covers it, counts it; otherwise it is a new held check. The
-/// check and the cursor past the crossing are kept in one write, so a crossing
-/// is never counted twice nor skipped.
+/// one that still covers it, counts it; otherwise it is a new held check. A
+/// revision of a crossing is a new check of its own, which the newest earlier
+/// revision's answer answers while it covers it ([`covered`]). The check and
+/// the cursor past the crossing are kept in one write, so a crossing is never
+/// counted twice nor skipped.
 pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
     let key = format!("{CHECK}{}", crossing.subject);
     vault.with_write_txn_grouped(|txn| {
@@ -315,13 +377,17 @@ pub(super) fn fold(vault: &Vault, crossing: Crossing) -> Result<()> {
                 check
             }
             _ => HealthCheck {
+                state: match &crossing.revises {
+                    Some(set) => covered(vault, txn, set, crossing.raised_at)?,
+                    None => None,
+                }
+                .unwrap_or(CheckState::Held),
                 subject: crossing.subject,
                 source: crossing.source,
                 crossing: crossing.summary,
                 first_raised: crossing.raised_at,
                 last_raised: crossing.raised_at,
                 crossings: 1,
-                state: CheckState::Held,
                 asked_in: None,
             },
         };

@@ -43,8 +43,8 @@ const CHECK: &str = "wire:health:v1:check:";
 const SWEEP_EVERY: Duration = Duration::from_secs(15);
 /// The clock one check's ladder call runs under.
 const ASK_BUDGET: Duration = Duration::from_secs(30);
-/// An answered check covers its subject's later crossings this long; past it
-/// a crossing asks again.
+/// An answered check covers its subject's later crossings, and a later
+/// revision of its crossing, this long; past it a crossing asks again.
 const COVER_SECS: u64 = 3_600;
 /// How long after a decision an outcome still labels it.
 const OUTCOME_HORIZON_SECS: u64 = 30 * 86_400;
@@ -83,6 +83,10 @@ pub enum AnsweredBy {
     Ladder(DecisionRung),
     /// The vault owner role, from its ask queue.
     Owner,
+    /// The answer to an earlier revision of the same crossing that still
+    /// covers this one: the check cites that answer's question and unit and
+    /// was not asked itself (FIX 9531).
+    Cover,
 }
 
 /// Where a check stands.
