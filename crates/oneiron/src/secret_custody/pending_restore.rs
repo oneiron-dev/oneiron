@@ -21,7 +21,11 @@
 //! judged again in a writer: a fence here, an admitted revoke, or any write
 //! to the row since it landed withheld (a revoke, an erase, a rotation, a
 //! newer body) cancels it, its saved row dropped. The owner may keep a whole
-//! batch without its source with one typed confirm instead ([`owner`]).
+//! batch without its source with one typed confirm instead ([`owner`]); his
+//! election stands for the batch's rows a fault left waiting, which the
+//! custody passes then land behind the same checks. The passes run on
+//! upkeep, on the served tick and at a live vault's open; an archived vault
+//! runs none.
 
 mod owner;
 
@@ -345,15 +349,19 @@ impl Vault {
     /// read once, outside any writer, then each row judged again in one
     /// writer ([`settle_in_txn`]). An erase the source names leaves it
     /// withheld, its fence owed here, and the finisher runs; evidence that
-    /// reads clear lands its row once its value opens under its exact key.
-    /// Returns how many it settled.
+    /// reads clear lands its row once its value opens under its exact key;
+    /// a batch whose owner's confirm stands here lands without its source,
+    /// its receipt told. Returns how many it settled.
     fn resolve_pending_credential_restores(&self) -> Result<usize> {
         match CUSTODY_PENDING_SOURCE_POLICY {
             CustodyPendingSourcePolicy::ReReadPerHandleOrTypedOwnerBatchKeep => {}
         }
-        let held = {
+        let (held, elected) = {
             let txn = self.store.env.read_txn()?;
-            PENDING.scan(&self.store, &txn)?
+            (
+                PENDING.scan(&self.store, &txn)?,
+                owner::elected_in_txn(&self.store, &txn)?,
+            )
         };
         let mut sources: BTreeMap<Vec<u8>, Option<CredentialFences>> = BTreeMap::new();
         let mut due = Vec::new();
@@ -361,10 +369,14 @@ impl Vault {
             let evidence = sources
                 .entry(saved.source.clone())
                 .or_insert_with(|| source_evidence(&saved.source));
-            let settle = match evidence.as_mut().map(|fences| fences.lookup(&id)) {
-                Some(FenceLookup::Fenced) => Settle::Erased,
-                Some(FenceLookup::Clear) => Settle::InstallIfOpens,
-                Some(FenceLookup::Faulted) | None => continue,
+            let lookup = evidence.as_mut().map(|fences| fences.lookup(&id));
+            // A standing election asks nothing of the source, but an erase
+            // the source names still lands.
+            let settle = match (lookup, elected.contains(&batch)) {
+                (Some(FenceLookup::Fenced), _) => Settle::Erased,
+                (_, true) => Settle::Install,
+                (Some(FenceLookup::Clear), false) => Settle::InstallIfOpens,
+                (Some(FenceLookup::Faulted) | None, false) => continue,
             };
             due.push((batch, id, saved, settle));
         }
@@ -374,14 +386,23 @@ impl Vault {
         let (settled, erased) = self.with_write_txn(|wtxn| {
             let mut settled = 0;
             let mut erased = false;
+            let mut told: BTreeMap<EntityId, Vec<_>> = BTreeMap::new();
             for (batch, id, saved, settle) in &due {
                 match settle_in_txn(self, wtxn, (batch, id), saved, *settle)? {
                     None | Some(PendingCredentialResult::Pending) => {}
                     Some(result) => {
                         settled += 1;
                         erased |= result == PendingCredentialResult::Erased;
+                        if elected.contains(batch) {
+                            told.entry(*batch)
+                                .or_default()
+                                .push((*id, saved.generation, result));
+                        }
                     }
                 }
+            }
+            for (batch, results) in &told {
+                owner::record_elected_in_txn(&self.store, wtxn, batch, results)?;
             }
             Ok((settled, erased))
         })?;
@@ -392,9 +413,14 @@ impl Vault {
     }
 
     /// [`Self::resolve_pending_credential_restores`] for a custody pass that
-    /// goes on without it (upkeep, the served tick): a failure is logged by
-    /// kind and the next pass retries.
+    /// goes on without it (upkeep, the served tick, a live vault's open),
+    /// after the release receipts' owed scrub: a failure is logged by kind
+    /// and the next pass retries. An archived vault runs neither.
     pub(crate) fn resolve_pending_credential_restores_logged(&self) {
+        if self.store.refuse_archived().is_err() {
+            return;
+        }
+        self.scrub_erased_release_owners();
         match self.resolve_pending_credential_restores() {
             Ok(0) => {}
             Ok(settled) => tracing::info!(

@@ -75,6 +75,11 @@ side_tables! {
     /// pending. Canonical (FIX 5337): a checkpoint carries it with the record it was taken into,
     /// and a restore over a live vault keeps the live vault's. Key: hex32(entity id).
     SECRET_CUSTODY_REBIND: VaultMeta b"secret_custody:rebind:v1:" Raw Engine;
+    /// A restore batch whose owner's confirm stands on this vault while any of its credentials
+    /// still waits (FIX-LIST 10671 (b)): the custody passes land those under it. Runtime tier, so
+    /// no image carries one and an image's receipt is never an election here. Holds nothing but
+    /// its key. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_ELECTION: VaultMeta b"secret_custody:restore_election:v1:" Named Engine;
     /// One credential a restore keeping this host's custody landed withheld, pending, because
     /// its source vault did not read (FIX-LIST 10671 (a)): its row as the image carried it, the
     /// value sealed under its generation's key, the digest of the withheld row that took its
