@@ -11836,7 +11836,7 @@
      "purpose": "LINE Official Account adapter: plan tier, config, and trait impl",
      "surface": {
       "enum": 1,
-      "fn": 13,
+      "fn": 15,
       "struct": 2
      }
     },
@@ -11851,8 +11851,19 @@
      "purpose": "LINE chats the bot was seen in, and the owner's optional offers to bind one to an agent (FIX 3115)",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "crate-vis": 2,
+      "fn": 4,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/channel_identity_provider/line_chat_erase.rs",
+     "purpose": "A LINE chat's observations go with the ChannelIdentity that routes the chat (FIX 10807)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -11917,7 +11928,7 @@
      "path": "src/channel_identity_provider/mod.rs",
      "purpose": "Provider-adapter seam for ChannelIdentity fulfillment (OF-347 CID-3)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "mod": 6,
       "re-export": 6
      }
@@ -63170,7 +63181,7 @@
      "purpose": "Surface events as standing-connector wake sources (OF-218)",
      "surface": {
       "const": 1,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -76439,7 +76450,7 @@
      "purpose": "Channel identity capability manifests (OF-347 CID-4)"
     },
     "channel_identity_provider": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77799,7 +77810,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5112,
+   "source_files": 5113,
    "test_files": 902
   },
   "oneiron-android": {
