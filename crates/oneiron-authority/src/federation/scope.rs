@@ -180,21 +180,55 @@ impl Sensitivity {
 }
 
 /// A channel's maximum sensitivity; bottom permits no content, even public.
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
-)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "SensitivityCeilingWire", into = "SensitivityCeilingWire")]
+pub enum SensitivityCeiling {
+    #[default]
+    Bottom,
+    AtMost(Sensitivity),
+}
+/// The ceiling as JSON spells it. `all` reads as the top ceiling, as it does on
+/// every other scope axis, and is written back as `at_most` the highest band.
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "value",
     rename_all = "snake_case",
     deny_unknown_fields
 )]
-pub enum SensitivityCeiling {
-    #[default]
+enum SensitivityCeilingWire {
     Bottom,
+    All,
     AtMost(Sensitivity),
 }
+impl From<SensitivityCeilingWire> for SensitivityCeiling {
+    fn from(wire: SensitivityCeilingWire) -> Self {
+        match wire {
+            SensitivityCeilingWire::Bottom => Self::Bottom,
+            SensitivityCeilingWire::All => Self::TOP,
+            SensitivityCeilingWire::AtMost(band) => Self::AtMost(band),
+        }
+    }
+}
+impl From<SensitivityCeiling> for SensitivityCeilingWire {
+    fn from(ceiling: SensitivityCeiling) -> Self {
+        match ceiling {
+            SensitivityCeiling::Bottom => Self::Bottom,
+            SensitivityCeiling::AtMost(band) => Self::AtMost(band),
+        }
+    }
+}
+impl schemars::JsonSchema for SensitivityCeiling {
+    fn schema_name() -> String {
+        "SensitivityCeiling".to_owned()
+    }
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <SensitivityCeilingWire as schemars::JsonSchema>::json_schema(generator)
+    }
+}
 impl SensitivityCeiling {
+    /// The top ceiling: every band is permitted.
+    pub const TOP: Self = Self::AtMost(Sensitivity::Restricted);
     #[must_use]
     pub fn permits(self, band: Sensitivity) -> bool {
         matches!(self, Self::AtMost(max) if band <= max)
@@ -240,7 +274,7 @@ impl Scope {
             bands: ScopeAxis::All,
             audience: ScopeAxis::All,
             verbs: ScopeAxis::All,
-            sensitivity: SensitivityCeiling::AtMost(Sensitivity::Restricted),
+            sensitivity: SensitivityCeiling::TOP,
         }
     }
     #[must_use]

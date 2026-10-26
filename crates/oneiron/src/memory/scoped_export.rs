@@ -85,6 +85,8 @@ pub enum ScopeSensitivityBand {
 pub enum ScopeSensitivityInput {
     #[default]
     Bottom,
+    /// The top ceiling, as `all` reads on every other channel axis.
+    All,
     AtMost(ScopeSensitivityBand),
 }
 
@@ -230,6 +232,7 @@ impl Memory<'_> {
             verbs: input.verbs.axis(),
             sensitivity: match input.sensitivity {
                 ScopeSensitivityInput::Bottom => SensitivityCeiling::Bottom,
+                ScopeSensitivityInput::All => SensitivityCeiling::TOP,
                 ScopeSensitivityInput::AtMost(band) => SensitivityCeiling::AtMost(match band {
                     ScopeSensitivityBand::Public => Sensitivity::Public,
                     ScopeSensitivityBand::Private => Sensitivity::Private,
