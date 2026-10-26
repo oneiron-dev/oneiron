@@ -52,7 +52,7 @@ use oneiron_vault_contract::host::{Host as _, HostLimits};
 use oneiron_vault_contract::host_adapters::{AppHost, EmbeddedHost};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream, ReadHalf, WriteHalf};
 use tokio::runtime::Handle;
-use tokio::sync::{Mutex, Notify, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use zeroize::Zeroizing;
 
 use super::failure::{EngineErrorKind, cause, failure};
@@ -60,6 +60,10 @@ use crate::commands::{OpenedServedVault, open_served_vault_anchored};
 use crate::config::{ServeArgs, ServeConfig};
 use crate::owner::backup::CustodyAnchorCredentials;
 use crate::owner::schedule::OwnerHost;
+
+mod run;
+
+use self::run::{State, spawn_run};
 
 /// Connections an app may queue before the engine takes them.
 const ENGINE_CONNECTION_BACKLOG: usize = 16;
@@ -212,89 +216,6 @@ fn embedded_host<A: AppHost>(
     )
 }
 
-/// One run of the serve body, from ready until it returns.
-struct Serving {
-    connector: mpsc::Sender<DuplexStream>,
-    /// The artifact app's own channel (`/a/`), apart from the API's.
-    artifacts: mpsc::Sender<DuplexStream>,
-    wake: Arc<Notify>,
-    stop: Arc<Notify>,
-    done: oneshot::Receiver<anyhow::Result<()>>,
-}
-
-impl Serving {
-    /// Stops serving and waits out the ordered drain and worker shutdown.
-    async fn finish(self) -> anyhow::Result<()> {
-        self.stop.notify_one();
-        super::runtime::served(self.done).await
-    }
-
-    /// The serve body returned, or is returning: it takes no connection.
-    fn ended(&self) -> bool {
-        self.connector.is_closed()
-    }
-}
-
-/// Starts the serve body over `vault` on a thread of its own and waits for
-/// the app's `ready`, or for the body's startup error. With `serve_workers`
-/// the run serves on a runtime of its own capped at that many workers, else
-/// on the caller's ([`super::runtime::spawn_serving`]).
-async fn serve_on<A: AppHost + 'static>(
-    host: EmbeddedHost<Readied<A>, DuplexStream>,
-    mut readied: oneshot::Receiver<()>,
-    vault: Arc<oneiron::Vault>,
-    config: ServeConfig,
-    owner_host: OwnerHost,
-    serve_workers: Option<usize>,
-) -> anyhow::Result<Serving> {
-    let connector = host.connector();
-    // The artifact origin's channel, served beside the API's for this run.
-    let (artifacts, artifact_streams) = mpsc::channel(ENGINE_CONNECTION_BACKLOG);
-    let (wake, stop) = (host.wake_handle(), host.stop_handle());
-    let mut done = super::runtime::spawn_serving(serve_workers, move || {
-        super::serve_prepared(host, vault, config, Some(artifact_streams), owner_host)
-    })?;
-    let ready = tokio::select! {
-        biased;
-        ready = &mut readied => ready.is_ok(),
-        served = &mut done => return Err(startup_failure(served)),
-    };
-    if !ready {
-        return Err(startup_failure(done.await));
-    }
-    Ok(Serving {
-        connector,
-        artifacts,
-        wake,
-        stop,
-        done,
-    })
-}
-
-/// Why serving ended before the app's `ready` ran.
-fn startup_failure(served: Result<anyhow::Result<()>, oneshot::error::RecvError>) -> anyhow::Error {
-    match served {
-        Ok(Err(error)) => error.context(cause(
-            EngineErrorKind::StartFailed,
-            "the embedded engine did not start",
-        )),
-        Ok(Ok(())) => failure(
-            EngineErrorKind::StartFailed,
-            "the embedded engine stopped before it was ready",
-        ),
-        Err(_) => failure(
-            EngineErrorKind::StartFailed,
-            "the embedded engine's serve thread panicked before it was ready",
-        ),
-    }
-}
-
-/// What serving holds between a stop and a wake.
-struct State<A> {
-    app: A,
-    serving: Option<Serving>,
-}
-
 /// The engine inside an app's process, over the one vault it opened.
 ///
 /// Its methods are async; run them on a multi-thread Tokio runtime outside
@@ -349,15 +270,15 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
                 "the embedded engine's vault did not open",
             ))?;
         let rehearsal = owner_host.vault_config.clone();
-        let serving = serve_on(
+        let serving = spawn_run(
             host,
-            readied,
             Arc::clone(&vault),
             config.clone(),
             owner_host,
             serve_workers,
-        )
-        .await?;
+        )?;
+        let mut state = State { app, serving: None };
+        state.start_run(serving, readied).await?;
         Ok(Self {
             config,
             limits,
@@ -365,10 +286,7 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             vault,
             rehearsal,
             anchor,
-            state: Mutex::new(State {
-                app,
-                serving: Some(serving),
-            }),
+            state: Mutex::new(state),
         })
     }
 
@@ -447,6 +365,7 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
             .await
             .serving
             .as_ref()
+            .filter(|serving| !serving.stopping)
             .map(|serving| match origin {
                 Origin::Api => serving.connector.clone(),
                 Origin::Artifacts => serving.artifacts.clone(),
@@ -466,29 +385,32 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
         let mut state = self.state.lock().await;
         if let Some(serving) = &state.serving
             && !serving.ended()
+            && !serving.stopping
         {
             serving.wake.notify_one();
             return Ok(());
         }
-        if let Some(ended) = state.serving.take()
-            && let Err(error) = ended.finish().await
+        // An ended run, or one a dropped stop left draining, is joined
+        // before the next one starts (FIX 9484).
+        if state.serving.is_some()
+            && let Err(error) = state.join_serving().await
         {
             tracing::warn!(%error, "the embedded engine had stopped serving on its own");
         }
         let (host, readied) = embedded_host(state.app.clone(), self.limits);
         let owner_host = OwnerHost::from_config(&self.config, self.rehearsal.clone())
             .anchored_at(&self.config.backup, self.anchor.clone());
-        let serving = serve_on(
+        let serving = spawn_run(
             host,
-            readied,
             Arc::clone(&self.vault),
             self.config.clone(),
             owner_host,
             self.serve_workers,
-        )
-        .await?;
-        serving.wake.notify_one();
-        state.serving = Some(serving);
+        )?;
+        state.start_run(serving, readied).await?;
+        if let Some(serving) = &state.serving {
+            serving.wake.notify_one();
+        }
         Ok(())
     }
 
@@ -496,10 +418,16 @@ impl<A: AppHost + Clone + 'static> EmbeddedEngine<A> {
     /// ones, stop every worker, and return once they have. The vault stays
     /// open for the next [`Self::wake`].
     pub async fn stop(&self) -> anyhow::Result<()> {
-        let mut state = self.state.lock().await;
-        match state.serving.take() {
-            Some(serving) => serving.finish().await,
-            None => Ok(()),
+        self.state.lock().await.join_serving().await
+    }
+
+    /// Asks serving to stop without waiting for its drain (FIX 9485): a
+    /// [`super::BlockingEngine`]'s close signals first, so the drain ends the
+    /// calls that hold its engine before it waits to take the engine for
+    /// the ordered stop, which joins this same run.
+    pub(super) async fn signal_stop(&self) {
+        if let Some(serving) = self.state.lock().await.serving.as_mut() {
+            serving.signal_stop();
         }
     }
 

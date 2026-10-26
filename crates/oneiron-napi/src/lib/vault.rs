@@ -28,6 +28,8 @@ use super::types::{
 use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 use crate::host_root::HostRootOpenOptions;
 
+mod reads;
+
 /// What this embedded vault says to a context pack naming `media` (OF-370):
 /// it serves no `ai.embed` rung, so it cannot embed the bytes into their
 /// space, and it never packs the rest of the request without them.
@@ -60,7 +62,8 @@ const BOUND_WRITE_UNSERVED: &str =
 ///
 /// A vault from `new` writes as the host. One from [`NapiVault::bound`]
 /// writes as the caller its app host named (OF-063): its puts, batch puts,
-/// edges, vectors and deletes run as that caller, inside its session.
+/// edges, vectors and deletes run as that caller, inside its session, whose
+/// room its content reads compose over base (FIX 8119; `reads`).
 #[napi]
 pub struct NapiVault {
     vault: Arc<Vault>,
@@ -196,7 +199,9 @@ impl NapiVault {
     /// owner grade, once their transaction proves the actor; its delete runs
     /// the `vault.delete` door (owner-only; an id naming no record is refused
     /// `INVENTED_REFERENCE`). A codebase snapshot or inbound route, which has
-    /// no caller-bound door, is refused there.
+    /// no caller-bound door, is refused there. Inside a session that is off
+    /// record, its puts, edges and vectors stage in the room, and its entity,
+    /// type and edge reads read the room over base (FIX 8119).
     #[napi]
     pub fn bound(
         &self,
@@ -272,10 +277,7 @@ impl NapiVault {
     #[napi]
     pub fn get_entity(&self, id: Buffer) -> napi::Result<Option<Buffer>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get(&eid)
-            .map(|opt| opt.map(std::convert::Into::into))
-            .map_err(to_napi_err)
+        Ok(self.entity_body(&eid)?.map(std::convert::Into::into))
     }
 
     /// Delete an entity by ID. Returns true if the entity existed.
@@ -292,7 +294,7 @@ impl NapiVault {
     #[napi]
     pub fn entity_exists(&self, id: Buffer) -> napi::Result<bool> {
         let eid = parse_entity_id(&id)?;
-        self.vault.entity_exists(&eid).map_err(to_napi_err)
+        self.entity_stored(&eid)
     }
 
     // ─── Edges ─────────────────────────────────────────────────
@@ -318,7 +320,7 @@ impl NapiVault {
     #[napi]
     pub fn edges_out(&self, src: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let src_id = parse_entity_id(&src)?;
-        let edges = self.vault.edges_out(&src_id).map_err(to_napi_err)?;
+        let edges = self.edges_of(&src_id, true)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
             let vad = e.vad;
@@ -340,7 +342,7 @@ impl NapiVault {
     #[napi]
     pub fn edges_in(&self, tgt: Buffer) -> napi::Result<Vec<NapiEdgeInfo>> {
         let tgt_id = parse_entity_id(&tgt)?;
-        let edges = self.vault.edges_in(&tgt_id).map_err(to_napi_err)?;
+        let edges = self.edges_of(&tgt_id, false)?;
         let mut out = Vec::with_capacity(edges.len());
         for e in edges {
             let vad = e.vad;
@@ -681,10 +683,7 @@ impl NapiVault {
     #[napi]
     pub fn get_entity_type(&self, id: Buffer) -> napi::Result<Option<u32>> {
         let eid = parse_entity_id(&id)?;
-        self.vault
-            .get_entity_type(&eid)
-            .map(|opt| opt.map(u32::from))
-            .map_err(to_napi_err)
+        Ok(self.entity_type_of(&eid)?.map(u32::from))
     }
 
     /// Return all entity IDs of a given type.
@@ -708,10 +707,7 @@ impl NapiVault {
         let tgt_type = target_type
             .map(|t| parse_u8(t, "target_type"))
             .transpose()?;
-        let ids = self
-            .vault
-            .targets(&src_id, edge_kind, tgt_type)
-            .map_err(to_napi_err)?;
+        let ids = self.peers_of(&src_id, edge_kind, tgt_type, true)?;
         Ok(entity_ids_to_buffers(ids))
     }
 
@@ -728,10 +724,7 @@ impl NapiVault {
         let src_type = source_type
             .map(|t| parse_u8(t, "source_type"))
             .transpose()?;
-        let ids = self
-            .vault
-            .sources(&tgt_id, edge_kind, src_type)
-            .map_err(to_napi_err)?;
+        let ids = self.peers_of(&tgt_id, edge_kind, src_type, false)?;
         Ok(entity_ids_to_buffers(ids))
     }
 

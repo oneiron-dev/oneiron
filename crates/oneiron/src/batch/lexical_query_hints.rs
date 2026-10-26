@@ -53,6 +53,13 @@ pub(super) enum RawPutDoor {
     WitnessMessage,
 }
 
+/// [`validate_public_raw_put`] through the public door, for a bound raw
+/// put its off-record session stages in the room (FIX 8119): the refusals
+/// the same put meets on base.
+pub(crate) fn validate_staged_raw_put(entity_type: u8, data: &[u8], learned_at: u64) -> Result<()> {
+    validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Public)
+}
+
 pub(super) fn validate_public_raw_put(
     entity_type: u8,
     data: &[u8],

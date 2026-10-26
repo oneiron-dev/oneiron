@@ -77,6 +77,7 @@ mod guard;
 mod host_root;
 mod parse;
 mod query;
+mod session_reads;
 mod types;
 
 #[cfg(test)]

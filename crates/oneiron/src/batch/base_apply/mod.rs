@@ -391,7 +391,8 @@ pub(super) fn apply_ops_with_origin(
                             write_policy: write_policy.as_ref(),
                             write_envelope: materialization
                                 .as_ref()
-                                .and_then(ClaimMaterialization::gate_envelope),
+                                .and_then(ClaimMaterialization::gate_envelope)
+                                .or_else(|| gate_mode.caller_envelopes.get(&id)),
                             hub_admission: hub_admission.as_ref(),
                             refinement_admission: refinement_admission.as_ref(),
                             transition: transition.as_ref(),

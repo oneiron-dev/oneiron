@@ -74,6 +74,7 @@ pub(crate) use self::facet_validation::{validate_facet_of_edge, validate_replaye
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::legacy_lexical_query_hint_claim_ids_for_target;
 pub(crate) use self::lexical_query_hints::reject_family_owned_candidate;
+pub(crate) use self::lexical_query_hints::validate_staged_raw_put;
 #[cfg(test)]
 pub(crate) use self::put_apply::wiped_rows;
 // Reached only from sync-gated modules (`sync::selector`); the re-exports keep

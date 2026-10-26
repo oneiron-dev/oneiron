@@ -17,7 +17,7 @@
  */
 
 import { OneironError, translateNativeError } from "./error.js"
-import { NativeClient, NativeEngine } from "./native.js"
+import { NativeClient, NativeEngine, type NativeEngineConnection } from "./native.js"
 import type * as Facade from "./facade-types.js"
 import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, TaskAskPersonEvidence, TaskAskPreflight, TaskAskQuestion, TaskAskReceipt, TaskAskShort, TaskAskSpec, TaskAskWait, TaskAskWho, TaskAskWord, TaskCancelReceipt, TaskCanAskRequest, TaskDescription } from "./agent-verbs.js"
 
@@ -35,6 +35,8 @@ import type {
   ClaimInput,
   CommitReceipt,
   EngineOptions,
+  EngineReply,
+  EngineRequest,
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
@@ -116,11 +118,48 @@ export interface EmbeddedEngine {
    * request and keeps the engine alive.
    */
   client(key: string): Oneiron
+  /**
+   * A NEW handle on the engine's own vault, bound to the embedded owner as `open` binds one
+   * (FIX 4895): its verbs answer through the vault itself, not the server, so host doors only a
+   * server answers refuse on it (use `client` for those). It keeps the engine alive; each call
+   * attaches anew and none reopens the path.
+   */
+  localClient(): Oneiron
+  /**
+   * Sends one request on the API's origin and returns the whole reply. `/ws` is not served
+   * through it, and a reply past the buffered ceiling throws `ENGINE_REPLY_TOO_LARGE`; open a
+   * connection for those. Throws `ENGINE_STOPPED` while stopped.
+   */
+  request(request: EngineRequest): EngineReply
+  /** {@link EmbeddedEngine.request} on the artifact app's own origin (`/a/`). */
+  requestArtifact(request: EngineRequest): EngineReply
+  /**
+   * Opens a connection the app holds to the engine's server, served as a socket's connection,
+   * HTTP/1.1 with upgrades: a `GET /ws` with its upgrade headers holds `/ws` on it, and a
+   * streamed reply arrives as it is written. A stop drains it; after `wake` open another.
+   */
+  connect(): EngineConnection
+  /** {@link EmbeddedEngine.connect} on the artifact app's own origin (`/a/`). */
+  connectArtifact(): EngineConnection
   /** Runs what is due; a stopped engine serves again first. */
   wake(): void
   /** Drains, stops every worker, and keeps the vault open for `wake`. */
   stop(): void
   /** Stops the engine in order; every handle it served throws `ENGINE_CLOSED` after. */
+  close(): void
+}
+
+/**
+ * A connection the app holds to its embedded engine's server (FIX 4895): bytes both ways. The
+ * app writes the HTTP/1.1 request and, after a `101`, the upgraded protocol's frames; it reads
+ * what the server writes. Every call blocks. Once the engine stops or closes, `receive` returns
+ * empty and `send` throws.
+ */
+export interface EngineConnection {
+  send(bytes: Uint8Array): void
+  /** The next bytes the server wrote; empty once the connection ended. */
+  receive(): Uint8Array
+  /** Ends the connection; a blocked `receive` returns empty. */
   close(): void
 }
 
@@ -264,8 +303,18 @@ export class Oneiron {
         throw translateNativeError(error)
       }
     }
+    const held = (connection: NativeEngineConnection): EngineConnection => ({
+      send: (bytes) => call(() => connection.send(bytes)),
+      receive: () => call(() => connection.receive()),
+      close: () => call(() => connection.close()),
+    })
     return {
       client: (key) => new Oneiron(call(() => native.client(key))),
+      localClient: () => new Oneiron(call(() => native.localClient())),
+      request: (request) => call(() => native.request(request)),
+      requestArtifact: (request) => call(() => native.requestArtifact(request)),
+      connect: () => held(call(() => native.connect())),
+      connectArtifact: () => held(call(() => native.connectArtifact())),
       wake: () => call(() => native.wake()),
       stop: () => call(() => native.stop()),
       close: () => call(() => native.close()),

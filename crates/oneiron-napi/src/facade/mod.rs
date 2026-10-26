@@ -17,6 +17,7 @@ mod client;
 mod convert;
 mod dtos;
 mod input_error;
+mod js_json;
 mod numeric;
 mod pairing;
 #[cfg(test)]

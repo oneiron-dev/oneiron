@@ -27,6 +27,7 @@ pub(super) fn preflight_gate_decisions_in_txn(
     >,
     checker: Option<&BoundedAutoChecker>,
     origin: BaseWriteOrigin<'_>,
+    caller_envelopes: &HashMap<EntityId, crate::WriteEnvelope>,
 ) -> Result<()> {
     if !contains_local_claim_put(ops) {
         return Ok(());
@@ -136,9 +137,10 @@ pub(super) fn preflight_gate_decisions_in_txn(
                                 id,
                                 crate::gate::ClaimGateWrite {
                                     body: &body,
-                                    envelope: None,
-                                    // Envelope-less local claim put: no Dreamer
-                                    // authorship to consult about.
+                                    // A bound caller's verified envelope
+                                    // (FIX 8118), else the unbound host's; no
+                                    // Dreamer authorship to consult about.
+                                    envelope: caller_envelopes.get(id),
                                     auto_checker: None,
                                     defer_metrics_until_commit: true,
                                     transition: None,

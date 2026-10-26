@@ -337,6 +337,12 @@ fn divergent_options_error(
     )
 }
 
+/// A host's word on whether it is still open, asked before each call of a
+/// handle attached to the vault it opened, and of every handle rebound from
+/// it: its refusal is the call's, so none starts once the host has closed,
+/// while a call already running finishes (FIX 4895).
+pub type HostOpenCheck = Arc<dyn Fn() -> Result<(), MemoryError> + Send + Sync>;
+
 /// The embedded half of [`crate::OneironClient`].
 ///
 /// Cloning is cheap and shares the native vault: `as_actor` produces a new
@@ -353,6 +359,9 @@ pub(crate) struct EmbeddedClient {
     /// one, bound to this handle's actor: the app host's principal (OF-063,
     /// FIX 1668).
     off_record_session: Option<String>,
+    /// The attaching host's [`HostOpenCheck`]; `None` for a handle whose
+    /// vault no closable host lends it.
+    host_open: Option<HostOpenCheck>,
 }
 
 impl EmbeddedClient {
@@ -372,16 +381,22 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open: None,
         })
     }
 
     /// [`Self::open`] over a vault the host already opened at `path`
-    /// ([`attach_shared`]), bound to the same generic embedded owner actor.
+    /// ([`attach_shared`]), bound to the same generic embedded owner actor;
+    /// with `host_open`, each call first asks it.
     pub(crate) fn attach(
         path: &Path,
         vault: Arc<Vault>,
         options: &OpenOptions,
+        host_open: Option<HostOpenCheck>,
     ) -> Result<Self, MemoryError> {
+        if let Some(host_open) = &host_open {
+            host_open()?;
+        }
         let shared = attach_shared(path, vault, options)?;
         let actor = shared.vault().ensure_embedded_owner_actor()?;
         Ok(Self {
@@ -390,6 +405,7 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open,
         })
     }
 
@@ -414,6 +430,7 @@ impl EmbeddedClient {
             actor_class,
             room_turn: None,
             off_record_session: None,
+            host_open: self.host_open.clone(),
         })
     }
 
@@ -426,7 +443,12 @@ impl EmbeddedClient {
     /// exists to prevent. Comparing the acquiring PID against the current one
     /// is the only check that can tell those two cases apart, and it runs
     /// before facade entry so the child fails typed rather than partially.
+    /// A handle attached to a host's vault asks that host first
+    /// ([`HostOpenCheck`]).
     pub(crate) fn ensure_dispatch_pid(&self) -> Result<(), MemoryError> {
+        if let Some(host_open) = &self.host_open {
+            host_open()?;
+        }
         if self.shared.held_by_current_process() {
             return Ok(());
         }

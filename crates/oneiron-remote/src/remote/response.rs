@@ -9,10 +9,15 @@ use super::*;
 /// buffer a response it will refuse anyway.
 const MAX_ERROR_BODY_BYTES: usize = 64 * 1024;
 
-/// The server's error envelope, exactly as `api/facade.rs` serializes it.
+/// The server's error envelope, exactly as `api/facade.rs` serializes it:
+/// the error, and beside it the read receipt a refused read carries
+/// (FIX 8631).
 #[derive(serde::Deserialize)]
 struct ApiErrorEnvelope {
     error: ApiErrorBody,
+    /// The refused read's narrowing receipt; absent on every other refusal.
+    #[serde(default)]
+    narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
 /// `{code, message, requestId, suggestions}`.
@@ -160,7 +165,7 @@ pub(super) fn parse_error_envelope(bytes: &[u8]) -> Option<MemoryError> {
         suggestions,
         successor_short_id: None,
         gate_denial: None,
-        read_receipt: None,
+        read_receipt: envelope.narrowing,
         policy_denial: None,
         wrong_root: envelope.error.wrong_root.map(Box::new),
         hook: envelope.error.hook.map(Box::new),

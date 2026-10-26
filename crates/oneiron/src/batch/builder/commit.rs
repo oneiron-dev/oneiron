@@ -201,6 +201,7 @@ impl BatchBuilder<'_> {
         let births = std::mem::take(&mut self.births);
         let asset_files = std::mem::take(&mut self.asset_files);
         let replicated_puts = std::mem::take(&mut self.replicated_puts);
+        let caller_envelopes = std::mem::take(&mut self.caller_envelopes);
         #[cfg(feature = "sync")]
         let federated_puts = std::mem::take(&mut self.federated_puts);
         #[cfg(feature = "sync")]
@@ -239,6 +240,7 @@ impl BatchBuilder<'_> {
                 &mut preflight_gate_decision_ids,
                 checker,
                 origin,
+                &caller_envelopes,
             ) {
                 // A gate rejection is itself an intentional ledger event. Keep
                 // that denial receipt, matching the historical gate semantics;
@@ -261,6 +263,7 @@ impl BatchBuilder<'_> {
                     .with_births(births)
                     .with_asset_files(asset_files)
                     .with_replicated_puts(replicated_puts)
+                    .with_caller_envelopes(caller_envelopes)
                     .with_prepared(prepared),
                 origin,
             };

@@ -57,6 +57,26 @@ export type EngineOptions = {
   cpuMillisPerSecond?: number
 }
 
+/** One header of a request to the embedded engine or of its reply (FIX 4895). */
+export type EngineHeader = { name: string; value: Uint8Array }
+
+/** One request the app sends its embedded engine: the request a socket's client sends, bringing its own auth. */
+export type EngineRequest = {
+  method: string
+  /** The path and query, e.g. `/v1/core/health`. */
+  path: string
+  headers?: EngineHeader[]
+  body?: Uint8Array
+}
+
+/** The engine's whole reply to one request. A 4xx or 5xx status is a reply, not an error. */
+export type EngineReply = {
+  status: number
+  /** Every header the reply carried, repeats included. */
+  headers: EngineHeader[]
+  body: Uint8Array
+}
+
 /** An authority key's signature suite. */
 export type CheckpointPinSuite = "ed25519" | "p256"
 
@@ -234,6 +254,8 @@ export type RecallScope = {
   facet?: string
   /** Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset returns every kind but conversations, sessions, facets and worlds. */
   kinds?: string[]
+  /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
+  projectRefs?: string[]
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */
@@ -387,8 +409,8 @@ export type MemoryExport = { format: string; archive: string; digest: string }
 
 /** One read scope: which entity types, sensitivity, staleness, confidence and salience it admits. */
 export type ReadScope = {
-  /** Admitted entity type bytes; absent means every registered type. */
-  entityTypes?: number[]
+  /** Admitted entity types as registry kinds (`CLAIM`, `MESSAGE`, ...); absent means every registered type. */
+  entityTypes?: string[]
   maxSensitivityBand: number
   includeStale: boolean
   minConfidence: number
