@@ -104242,6 +104242,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/managed/relay/locker_pool.rs",
+     "purpose": "The relay locker's connections in a pressure check (FIX 7739), the one a vault server's public listener…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/managed/relay/overwrite.rs",
      "purpose": "A guarded room's upload over an object it holds (FIX 1283, FIX 9499)",
      "surface": {
@@ -104384,7 +104394,17 @@
      "path": "src/managed/state_serve/boot_keys.rs",
      "purpose": "The vault data key's boot steps (moved out of `state_serve`): the page seal a managed vault opens with, its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/managed/state_serve/carrier_watch.rs",
+     "purpose": "A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -104394,7 +104414,7 @@
      "path": "src/managed/state_serve/control.rs",
      "purpose": "The ctl dispatcher: every parsed ctl request a managed vault answers",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -104514,7 +104534,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "re-export": 5,
       "struct": 2
      }
@@ -104594,7 +104614,7 @@
      "path": "src/managed/vm_host/provision.rs",
      "purpose": "The host's half of a vault VM's provision connection (FIX 6308): on a cold boot, before the credential…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -108563,7 +108583,7 @@
      "path": "src/wire_telemetry/connection_pressure.rs",
      "purpose": "The shared connection pool's live pressure check (FIX 7656, OF-520)",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -109233,7 +109253,7 @@
      "purpose": "What this machine has: cores, memory, descriptors, free disk"
     },
     "managed": {
-     "files": 88,
+     "files": 90,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -109396,7 +109416,7 @@
    },
    "over_bar": 33,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1287,
+   "source_files": 1289,
    "test_files": 182
   },
   "oneiron-spawn": {
