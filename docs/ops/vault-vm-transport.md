@@ -77,6 +77,26 @@ credential.
   the hashes and that floor, before it stages a list, and counts a list
   applied only on an image at or after the floor.
 
+## Start checks and the outbox carrier
+
+- The vault disk (FIX 6632): before each cold boot's VMM starts, the host
+  reads the vault disk's ext4 superblock. A disk that is not ext4, or whose
+  filesystem UUID is not the provision binding's `vault_disk_uuid`, refuses
+  the start with `disk_mismatch`, before the guest or the key frame sees it.
+  A disk the host cannot read is logged `vm_vault_disk_unread` and left to
+  the guest's own check, which refuses it before the key goes in.
+- The boot timeout (FIX 8934): the VM profile's `boot_timeout_secs` bounds
+  each wait of a start, in seconds: a cold boot's provision, credential,
+  ready and join, a snapshot's rejoin, and a cold restore's boot steps.
+  Unset, each waits 10 s; `0` refuses the profile. Size it from a measured
+  first boot of an image with guest runtime bindings, whose bootstrap imports
+  both guest images before the engine starts; later boots import nothing.
+  The supervisor's twin is LC's `[vault_vm] boot_timeout_secs`.
+- The outbox carrier (FIX 6683): `Ping`'s `vm_outbox_revision` is read live.
+  The engine asks the outbox companion again at each look, every 5 s, so a
+  companion that stops answering reads as no revision, as a VM without one
+  does. Restarting a companion that ended is the bootstrap's part.
+
 ## The channel
 
 The guest's root bootstrap dials 1032 and sends a hello (`revision`, `vault`).
@@ -131,6 +151,8 @@ The descriptors:
 - R is the read end of a pipe. It carries one `ManagedRestoreInput`, then EOF.
 - W is the write end of a pipe. It takes the native result frames, one JSON line
   each.
+- On Linux each of R, W, Q, S and the runner's A must be a pipe the kernel
+  made: a named FIFO is refused (FIX 6580).
 - Q is the read end of a pipe. It carries one `ManagedRestoreIdentity` JSON
   object (at most 256 KiB), then EOF.
 - S is the write end of a pipe. It takes one `VmRestoreMarkerObservation` JSON
@@ -144,9 +166,9 @@ the observation.
 
 Timeouts:
 
-- The boot timeout covers only the boot's own steps: the VMM API calls, the
-  hello, the provision, the credential connection's accept, the join, and the
-  inspection's reply.
+- The boot timeout (`boot_timeout_secs`, above) covers only the boot's own
+  steps: the VMM API calls, the hello, the provision, the credential
+  connection's accept, the join, and the inspection's reply.
 - A restore has no deadline. A guest that ends closes the channel, and the
   runner sees that.
 
