@@ -565,6 +565,7 @@ fn accept_member_with_amendment_in_txn(
         grant_ref: bundle_ref.map(str::to_owned),
         diff_handle: pending.diff_handle,
         read_frontier_hash: pending.read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
@@ -684,6 +685,7 @@ fn append_bundle_decision_in_txn(
         read_frontier_hash: basis
             .first()
             .map_or([0; 32], |record| record.read_frontier_hash),
+        context: Default::default(),
         redacted_at: None,
     };
     let claim_refs = basis

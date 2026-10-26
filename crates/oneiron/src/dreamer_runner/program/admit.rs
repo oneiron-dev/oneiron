@@ -171,6 +171,7 @@ fn gate_decision_in_txn(
         diff_handle: admission.to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &decision)?;

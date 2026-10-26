@@ -383,6 +383,7 @@ pub(crate) fn stamp_attempt(
         diff_handle: record.id.as_bytes().to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &receipt)?;
@@ -452,6 +453,7 @@ fn stamp_resident_attempt(
         diff_handle: record.id.as_bytes().to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &receipt)?;

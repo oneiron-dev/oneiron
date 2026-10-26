@@ -617,6 +617,7 @@ fn check_claim_policy_for_write_with_record_inner(
             grant_ref: None,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
+            context: Default::default(),
             redacted_at: None,
         };
 

@@ -586,6 +586,7 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: bundle_id.to_vec(),
                 read_frontier_hash: frontier.finalize().into(),
+                context: Default::default(),
                 redacted_at: None,
             };
             self.store.append_gate_decision_in_txn(wtxn, &record)?;

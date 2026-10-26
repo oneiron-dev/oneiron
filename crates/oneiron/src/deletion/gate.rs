@@ -390,6 +390,7 @@ impl DeletionGateContext {
                 .map(|grant| grant.to_hex()),
             diff_handle: diff.finalize().to_vec(),
             read_frontier_hash: self.read_frontier_hash,
+            context: Default::default(),
             redacted_at: None,
         }
     }

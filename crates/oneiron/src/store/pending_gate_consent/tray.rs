@@ -238,6 +238,7 @@ impl Store {
             read_frontier_hash: pending.read_frontier_hash,
             // A resolution is a NEW decision, born unredacted: never propagate
             // `original.redacted_at`.
+            context: Default::default(),
             redacted_at: None,
         };
         self.append_gate_decision_in_txn(wtxn, &record)?;

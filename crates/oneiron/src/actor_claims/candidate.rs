@@ -441,6 +441,7 @@ fn answer_in_txn(
         grant_ref: None,
         diff_handle: hash.as_bytes().to_vec(),
         read_frontier_hash: [0; 32],
+        context: Default::default(),
         redacted_at: None,
     };
     let receipt_ref = crate::receipt::gate_decision_receipt(&record).receipt_id;
