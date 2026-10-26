@@ -12036,7 +12036,7 @@ impl AgentVerb {
                 "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
             }
             Self::VaultHooksReplay => {
-                "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
+                "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."
             }
             Self::VaultHooksRegenDue => {
                 "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."

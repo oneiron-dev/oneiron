@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1210 code-mode rows (1170 host rows, 40 run rows), 4218 declarations.
+// Census: 1210 code-mode rows (1170 host rows, 40 run rows), 4219 declarations.
 // Replies: 1090 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: none.
@@ -2139,7 +2139,8 @@ declare namespace Sdk {
   type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
   type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
   type HostBudgetHitResult = { seat: string; policy: BudgetExhaustionPolicy; accounting: HostBudgetAccounting };
-  type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
+  type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null; cursor?: string | null };
+  type HooksReplayPage = { rows: HookReplayRow[]; next_cursor?: string | null; done: boolean; effective_limit: number; limit_clamped?: boolean };
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
   type HookGoldenDiff = { cases: number; changed: string[] };
@@ -5930,8 +5931,8 @@ declare const vault: Sdk.VaultHost & {
       /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
       get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
     };
-    /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
-    replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HookReplayRow[] | StoredResult>;
+    /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
+    replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HooksReplayPage | StoredResult>;
   };
   /** Hydrates short refs or hex ids to full entity views, with the read's receipt. */
   hydrate(input: Sdk.HydrateRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView[]> | StoredResult>;

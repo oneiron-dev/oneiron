@@ -29326,7 +29326,7 @@ pub fn host_budget_hit(
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
-) -> MemoryResult<Vec<crate::task_verb::sdk::HookReplayRow>> {
+) -> MemoryResult<crate::task_verb::sdk::HooksReplayPage> {
     input.limit()?;
     crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
 }

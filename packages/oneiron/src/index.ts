@@ -1886,8 +1886,8 @@ export class Oneiron {
       view: (input: Facade.ShareViewRequest): Facade.ScopedReadResult<Facade.SharedBriefView | null> => this.#call(() => this.#client.vaultSharesView(input) as Facade.ScopedReadResult<Facade.SharedBriefView | null>),
     },
     hooks: {
-      /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
-      replay: (input: Facade.HooksReplayRequest): Facade.HookReplayRow[] => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HookReplayRow[]),
+      /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
+      replay: (input: Facade.HooksReplayRequest): Facade.HooksReplayPage => this.#call(() => this.#client.vaultHooksReplay(input) as Facade.HooksReplayPage),
       regen: {
         /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
         due: (input: Facade.EmptyRequest = {}): Facade.EntityId[] => this.#call(() => this.#client.vaultHooksRegenDue(input) as Facade.EntityId[]),

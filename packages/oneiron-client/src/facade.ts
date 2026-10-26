@@ -1732,7 +1732,7 @@ export interface FacadeResults {
   "host.compact": Facade.HostCompactResult;
   "host.wake": Facade.HostWakeResult;
   "host.budget.hit": Facade.HostBudgetHitResult;
-  "vault.hooks.replay": Facade.HookReplayRow[];
+  "vault.hooks.replay": Facade.HooksReplayPage;
   "vault.hooks.regen.due": Facade.EntityId[];
   "vault.hooks.regen.get": Facade.HookRegenView | null;
   "vault.hooks.regen.adopt": Facade.PackPutReceipt;
@@ -2910,7 +2910,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "host.compact": { description: "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "host.wake": { description: "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "host.budget.hit": { description: "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.hooks.replay": { description: "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.", scope: "Read", proposes: false, hostDoor: true, section: false },
+  "vault.hooks.replay": { description: "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.due": { description: "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.get": { description: "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.hooks.regen.adopt": { description: "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5023,7 +5023,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         view: (input: Facade.ShareViewRequest, options?: O): FacadeReturns<"vault.shares.view">[K] => invoke("vault.shares.view", input, options, newInvocation()),
       },
       hooks: {
-        /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
+        /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest. */
         replay: (input: Facade.HooksReplayRequest, options?: O): FacadeReturns<"vault.hooks.replay">[K] => invoke("vault.hooks.replay", input, options, newInvocation()),
         regen: {
           /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */

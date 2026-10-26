@@ -3337,7 +3337,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def replay(self, spec):
-            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
+            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
         @property
         def regen(self) -> "Oneiron._VaultHooksRegenVerbs":

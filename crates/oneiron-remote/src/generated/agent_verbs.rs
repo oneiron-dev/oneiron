@@ -1761,7 +1761,7 @@ impl OneironClient {
                     oneiron::runtime_hooks::host_doors::HostBudgetHitResult,
                 >(client, verb, &input),
                 "vault.hooks.replay" => remote_agent_verb_output::<
-                    Vec<oneiron::task_verb::sdk::HookReplayRow>,
+                    oneiron::task_verb::sdk::HooksReplayPage,
                 >(client, verb, &input),
                 "vault.hooks.regen.due" => {
                     remote_agent_verb_output::<Vec<oneiron::EntityId>>(client, verb, &input)
@@ -10541,7 +10541,7 @@ impl OneironClient {
     pub fn vault_hooks_replay(
         &self,
         input: &oneiron::task_verb::sdk::HooksReplayRequest,
-    ) -> Result<Vec<oneiron::task_verb::sdk::HookReplayRow>, MemoryError> {
+    ) -> Result<oneiron::task_verb::sdk::HooksReplayPage, MemoryError> {
         input.limit()?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(

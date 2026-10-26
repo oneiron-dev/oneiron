@@ -2195,8 +2195,8 @@ class Oneiron:
         def revoke(self, spec: Facade.ShareRevokeRequest) -> Facade.ShareRevokeReceipt: ...
         def view(self, spec: Facade.ShareViewRequest) -> Facade.ScopedReadResult[Facade.SharedBriefView | None]: ...
     class _VaultHooksVerbs:
-        def replay(self, spec: Facade.HooksReplayRequest) -> list[Facade.HookReplayRow]:
-            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
+        def replay(self, spec: Facade.HooksReplayRequest) -> Facade.HooksReplayPage:
+            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
         @property
         def regen(self) -> "Oneiron._VaultHooksRegenVerbs": ...
     class _VaultHooksRegenVerbs:
