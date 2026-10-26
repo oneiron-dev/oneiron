@@ -10,6 +10,10 @@ use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
+mod retained;
+pub(super) use retained::{
+    retained_rows_in_txn, row_aliases_in_txn, row_revisions_starting_with_in_txn,
+};
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);
@@ -93,7 +97,6 @@ pub(super) fn revision_text_fields(
     revision: RevisionRef,
     body: &[u8],
 ) -> Result<Vec<(String, String)>> {
-    #[cfg(feature = "sync")]
     if let Some(field) = crate::entity_doc::pointer_field_in(store, txn, id)? {
         let frontier = FRONTIER
             .get(store, txn, &(*id, revision.0))?
@@ -102,7 +105,6 @@ pub(super) fn revision_text_fields(
             .ok_or(Error::EntityNotFound)?;
         return crate::entity_doc::document_text_fields(&doc, &field);
     }
-    let _ = (store, txn, id, revision);
     Ok(text_fields(body))
 }
 
@@ -176,7 +178,6 @@ pub(super) fn load_doc(
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<LoroDoc> {
-    #[cfg(feature = "sync")]
     if let Some(doc) = crate::entity_doc::record_document(store, txn, id, None)? {
         return Ok(doc.doc);
     }
@@ -195,7 +196,6 @@ pub(crate) fn fork_revision(
     let raw = FRONTIER
         .get(store, txn, &(*id, revision.0))?
         .ok_or(Error::EntityNotFound)?;
-    #[cfg(feature = "sync")]
     if let Some(doc) = crate::entity_doc::record_document(store, txn, id, Some(&raw))? {
         return Ok(doc.doc);
     }
@@ -224,7 +224,6 @@ pub(crate) fn capture_entity_revision(
     id: &EntityId,
     new_raw: &[u8],
 ) -> Result<()> {
-    #[cfg(feature = "sync")]
     if crate::entity_doc::has_record_head(store, txn, id)? {
         return Ok(());
     }
@@ -390,7 +389,6 @@ fn raw_for_revision(
     raw: &[u8],
     revision: Option<RevisionRef>,
 ) -> Result<Vec<u8>> {
-    #[cfg(feature = "sync")]
     if crate::entity_doc::has_record_head(store, txn, id)? {
         let body = match revision {
             Some(revision) => {
@@ -530,64 +528,6 @@ pub(crate) fn entity_owns_revision_in_txn(
         return Ok(false);
     };
     Ok(reference(id, &raw) == revision || FRONTIER.contains(store, txn, &(*id, revision.0))?)
-}
-
-/// Every revision `id`'s row can be read at whose first byte is `first`: of
-/// its current row, its live and indexed frontiers, and each retained one.
-/// The retained ones are read from that byte's key range alone.
-pub(super) fn row_revisions_starting_with_in_txn(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-    first: u8,
-) -> Result<Vec<RevisionRef>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
-        return Ok(Vec::new());
-    };
-    let mut revisions = vec![reference(id, &raw)];
-    if let Some(current) = state(store, txn, id)? {
-        revisions.extend([current.live, current.indexed]);
-    }
-    let mut prefix = id.as_bytes().to_vec();
-    prefix.push(first);
-    revisions.extend(
-        FRONTIER
-            .scan_keys(store, txn, &prefix)?
-            .into_iter()
-            .map(|(_, revision)| RevisionRef(revision)),
-    );
-    revisions.retain(|revision| revision.0[0] == first);
-    revisions.sort_unstable();
-    revisions.dedup();
-    Ok(revisions)
-}
-
-/// `id`'s row as stored, then as it stood at each revision its document
-/// retains, at most `limit` of those, read from one load of the document.
-pub(super) fn retained_rows_in_txn(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-    limit: usize,
-) -> Result<Vec<Vec<u8>>> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
-        return Ok(Vec::new());
-    };
-    let mut rows = vec![raw_for_revision(store, txn, id, &raw, None)?];
-    if !state(store, txn, id)?.is_some_and(|current| current.has_doc) {
-        return Ok(rows);
-    }
-    for row in FRONTIER.iter_from(store, txn, id.as_bytes())?.take(limit) {
-        let ((_, revision), _) = row?;
-        rows.push(raw_for_revision(
-            store,
-            txn,
-            id,
-            &raw,
-            Some(RevisionRef(revision)),
-        )?);
-    }
-    Ok(rows)
 }
 
 pub(crate) fn read_entity_revision_in_txn(
