@@ -119,8 +119,9 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<Vec<u8>> {
-        if edits.is_empty() || edits.len() > 50 {
-            return Err(invalid("metadata edit requires 1 to 50 operations"));
+        // No count bounds the edit: every operation lands as one (FIX 9845).
+        if edits.is_empty() {
+            return Err(invalid("metadata edit requires an operation"));
         }
         let mut registry = self
             .entity_docs

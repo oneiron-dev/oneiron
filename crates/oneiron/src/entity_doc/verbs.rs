@@ -100,8 +100,9 @@ impl Vault {
         self.read_entity_doc(entity, |doc| make_anchor(doc, *entity, start, end))?
     }
 
-    /// Applies at most 50 operations atomically. Every actor is checked in the
-    /// same write transaction; a rejected later operation rolls back the set.
+    /// Applies every operation atomically, however many (FIX 9848). Every
+    /// actor is checked in the same write transaction; a rejected later
+    /// operation rolls back the set.
     pub fn edit_entity_text(
         &self,
         entity: &EntityId,
@@ -306,9 +307,6 @@ impl Vault {
 }
 
 pub(super) fn validate_edits(edits: &[AnchoredEdit]) -> Result<()> {
-    if edits.len() > 50 {
-        return Err(invalid("at most 50 text operations are allowed"));
-    }
     if edits.iter().any(|edit| edit.actor.is_none()) {
         return Err(invalid("text operation requires an actor"));
     }

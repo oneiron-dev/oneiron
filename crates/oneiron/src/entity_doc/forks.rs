@@ -437,11 +437,10 @@ pub(super) fn open_proposal_in_txn(
     authorization: &DocAuthorization<'_>,
     at: u64,
 ) -> Result<ProposalBundle> {
-    if requests.is_empty() || requests.len() > 50 {
-        return Err(invalid("proposal requires 1 to 50 forks"));
-    }
-    if requests.iter().map(|req| req.edits.len()).sum::<usize>() > 50 {
-        return Err(invalid("at most 50 text operations are allowed"));
+    // No count bounds a proposal or its operations (FIX 9844): the whole
+    // ordered set lands or retains in this one transaction.
+    if requests.is_empty() {
+        return Err(invalid("proposal requires a fork"));
     }
     for req in requests {
         super::verbs::validate_edits(&req.edits)?;
