@@ -14,14 +14,21 @@
 #   build.sh --archive FILE   loads a built checker.oci.tar whose sha256 is
 #                             release.toml's checker oci_archive_sha256;
 #   build.sh --dockerfile     the Dockerfile route: builds oneiron-fence and
-#                             oneiron-guest from this checkout, then builds
-#                             the Dockerfile here from a context of
-#                             checker.py, those binaries and a `git archive`
-#                             of HEAD; the image installs Rust 1.96 and
-#                             fetches the lockfile's dependency store.
+#                             oneiron-guest from a `git archive` of HEAD
+#                             inside the Dockerfile's own base stage, then
+#                             builds the Dockerfile here from a context of
+#                             checker.py, those binaries and that archive;
+#                             the image installs Rust 1.96 and fetches the
+#                             lockfile's dependency store.
 # --store-id, with any route, prints the id this docker store answers the
 # image as (`docker image inspect` .Id) instead: the manifest digest under
 # the containerd image store, the config digest under the classic one.
+# --when-lock-changed, with any route, builds only when the lockfile the
+# route builds from (HEAD's for --dockerfile, release.toml's engine input
+# otherwise) is not the one the kept receipt names, or the tagged image is
+# gone; otherwise it prints the kept image's id and builds nothing. Run on
+# every Cargo.lock change, it keeps the store holding every crate a check
+# needs (FIX 7317).
 # The config digest (image-id) and the receipt (image.json) land in
 # ONEIRON_CHECKER_OUT on every route. Every other line of output goes to
 # stderr, so stdout holds the image id alone.
@@ -35,16 +42,18 @@ repo=$(git -C "$here" rev-parse --show-toplevel)
 images=$repo/crates/oneiron-container/images
 
 usage() {
-  echo "usage: build.sh [--store-id] [--archive <checker.oci.tar> | --dockerfile]" >&2
+  echo "usage: build.sh [--store-id] [--when-lock-changed] [--archive <checker.oci.tar> | --dockerfile]" >&2
   exit 2
 }
 
 route=family
 archive=
 print=config
+when=always
 while [ $# -gt 0 ]; do
   case "$1" in
     --store-id) print=store; shift ;;
+    --when-lock-changed) when=lock; shift ;;
     --archive)
       [ "$route" = family ] && [ $# -ge 2 ] || usage
       route=archive archive=$2
@@ -63,7 +72,6 @@ done
 export CARGO_TARGET_DIR
 : "${ONEIRON_CHECKER_OUT:=$CARGO_TARGET_DIR/checker-image}"
 mkdir -p "$ONEIRON_CHECKER_OUT"
-rm -f "$ONEIRON_CHECKER_OUT/image-id" "$ONEIRON_CHECKER_OUT/image.json"
 
 # The archive's ids, as its own manifest.json and index.json name them:
 # `<config digest> <manifest digest or -> <tag>`. The config digest is
@@ -162,6 +170,39 @@ print(table.get(sys.argv[3], ""))
 PY
 }
 
+# --when-lock-changed: the kept image's id, and exit, when its receipt names
+# the lockfile this route builds from and the tag still names an image.
+if [ "$when" = lock ]; then
+  if [ "$route" = dockerfile ]; then
+    want_lock=$(git -C "$repo" show HEAD:Cargo.lock | sha256sum | cut -d' ' -f1)
+  else
+    want_lock=$(release_value input cargo_lock_sha256)
+  fi
+  # The receipt's lock, when the receipt is of the image image-id names.
+  kept_lock=$(python3 - "$ONEIRON_CHECKER_OUT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+try:
+    receipt = json.loads((out / "image.json").read_text())
+    kept = (out / "image-id").read_text().strip()
+    print(receipt["cargo_lock_sha256"] if receipt.get("image") == kept else "")
+except (OSError, KeyError, TypeError, ValueError):
+    print("")
+PY
+)
+  if [ -n "$want_lock" ] && [ "$kept_lock" = "$want_lock" ] \
+    && store=$("$ONEIRON_CHECKER_DOCKER" image inspect --format '{{.Id}}' "$ONEIRON_CHECKER_TAG" 2>/dev/null); then
+    echo "the kept image's store is of lockfile $want_lock already; nothing is built" >&2
+    if [ "$print" = store ]; then echo "$store"; else cat "$ONEIRON_CHECKER_OUT/image-id"; fi
+    exit 0
+  fi
+  echo "the lockfile is ${want_lock:-unknown}, the kept image's store of ${kept_lock:-none}; building" >&2
+fi
+rm -f "$ONEIRON_CHECKER_OUT/image-id" "$ONEIRON_CHECKER_OUT/image.json"
+
 # Loads an OCI archive built from source commit $2, checks the store answers
 # it with one of the archive's own ids, tags it ONEIRON_CHECKER_TAG, writes
 # the receipt and emits its ids.
@@ -235,16 +276,28 @@ if [ -n "$(git -C "$repo" status --porcelain --untracked-files=no)" ]; then
 fi
 commit=$(git -C "$repo" rev-parse HEAD)
 
-(cd "$repo" && cargo build --release --locked -p oneiron-container --bin oneiron-fence) >&2
-(cd "$repo" && cargo build --release --locked -p oneiron-guest) >&2
-
 context=$(mktemp -d)
-trap 'rm -rf "$context"' EXIT
+builder=
+trap 'rm -rf "$context"; [ -z "$builder" ] || "$ONEIRON_CHECKER_DOCKER" rm -f "$builder" >/dev/null 2>&1' EXIT
 cp "$here/Dockerfile" "$here/checker.py" "$context/"
-cp "$CARGO_TARGET_DIR/release/oneiron-fence" "$CARGO_TARGET_DIR/release/oneiron-guest" "$context/"
 mkdir "$context/tree"
 git -C "$repo" archive --format=tar "$commit" | tar -x -C "$context/tree"
 lock_sha256=$(sha256sum "$context/tree/Cargo.lock" | cut -d' ' -f1)
+
+# The fence and the guest are built from that archive inside the
+# Dockerfile's own base stage, so they link against the image's glibc, not
+# this host's (FIX 7320). The builder container's tree, crates and target
+# stay in it; only the two binaries are copied out, owned by this user.
+"$ONEIRON_CHECKER_DOCKER" build --target base --iidfile "$context/base-id" "$context" >&2
+builder=$("$ONEIRON_CHECKER_DOCKER" create --workdir /src \
+  --env RUSTUP_TOOLCHAIN=1.96 --env CARGO_TARGET_DIR=/build/target \
+  "$(cat "$context/base-id")" sh -c \
+  'cargo build --release --locked -p oneiron-container --bin oneiron-fence && cargo build --release --locked -p oneiron-guest')
+"$ONEIRON_CHECKER_DOCKER" cp "$context/tree/." "$builder:/src" >&2
+"$ONEIRON_CHECKER_DOCKER" start --attach "$builder" >&2
+for binary in oneiron-fence oneiron-guest; do
+  "$ONEIRON_CHECKER_DOCKER" cp "$builder:/build/target/release/$binary" "$context/$binary" >&2
+done
 
 "$ONEIRON_CHECKER_DOCKER" build \
   --iidfile "$context/image-id" \
@@ -252,14 +305,14 @@ lock_sha256=$(sha256sum "$context/tree/Cargo.lock" | cut -d' ' -f1)
   "$context" >&2
 image=$(cat "$context/image-id")
 
-# The binaries link against this host's libraries; one built against a newer
-# glibc than the image's would fail only when a check starts its guest.
+# The binaries were built in the image's base stage; they still have to load
+# in the image, or a check would fail only when it starts its guest.
 missing=$("$ONEIRON_CHECKER_DOCKER" run --rm --network none --entrypoint ldd "$image" \
   /usr/local/bin/oneiron-fence /usr/local/bin/oneiron-guest 2>&1 \
   | grep 'not found' || true)
 if [ -n "$missing" ]; then
   echo "$missing" >&2
-  echo "a binary does not load in $image; build on a host whose glibc is no newer than the image's" >&2
+  echo "a binary does not load in $image" >&2
   exit 1
 fi
 

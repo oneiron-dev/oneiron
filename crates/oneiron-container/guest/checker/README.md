@@ -71,17 +71,19 @@ crates/oneiron-container/guest/checker/build.sh --dockerfile
 - **`--dockerfile`.** This is the route as it was before the image family:
   1. it refuses a checkout with local changes to tracked files, since the
      receipt names the commit;
-  2. it builds `oneiron-fence` and `oneiron-guest` from this checkout with
-     host Cargo;
+  2. it builds `oneiron-fence` and `oneiron-guest` from a `git archive` of
+     HEAD inside the Dockerfile's own `base` stage, in a container of its
+     own, so they link against the image's glibc and not the host's, and
+     copies only the two binaries out (FIX 7320);
   3. it builds this directory's Dockerfile from a context of `checker.py`,
-     those binaries and a `git archive` of HEAD. The image gets its packages
+     those binaries and that archive. The image gets its packages
      from the pinned Debian base, and Rust `1.96` from rustup-init 1.29.1,
      kept only when its SHA-256 is the one the Dockerfile names for the
      architecture. A stage of its own fetches the dependency store from the
      archived manifests and lockfile; the image keeps the store, not the
      tree;
-  4. it checks that both binaries load inside the image. A host glibc newer
-     than the image's fails here, not when a check starts its guest.
+  4. it checks that both binaries load inside the image, so a binary that
+     does not fails here, not when a check starts its guest.
 
 Every route writes the receipt and prints one line on stdout, the image's
 **config digest** (`sha256:<64 hex>`); everything else goes to stderr. For
@@ -120,7 +122,13 @@ without a proxy, `+1.96` is not a toolchain selector (FIX 8977).
 The store holds what the lockfile named at the built commit. When
 Cargo.lock gains a crate or a version, rebuild the image: a check that
 needs a crate the store lacks cannot fetch it and is held
-(`Held(MissingOfflineInput)`).
+(`Held(MissingOfflineInput)`). `--when-lock-changed`, with any route,
+builds only when the lockfile the route builds from is not the one the
+kept receipt (`image.json`) names, or the tagged image is gone; otherwise
+it prints the kept image's id and builds nothing. Run it on every
+Cargo.lock change (FIX 7317). The Dockerfile route builds from HEAD's
+lockfile; the image-family and `--archive` routes from release.toml's
+`inputs.engine`, which a lock change moves only with a new release.
 
 ## Pin
 
