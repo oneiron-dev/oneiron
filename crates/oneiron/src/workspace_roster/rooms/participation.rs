@@ -358,18 +358,28 @@ pub(super) fn thread_root_in_txn(
     mut reply_to: Option<EntityId>,
     mut thread_of: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
+    // The whole chain is read, however long (rule 5); a cycle refuses.
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::RoomLinkWalkRows,
+        turn.as_bytes(),
+    )?;
     let mut id = turn;
     let mut seen = BTreeSet::new();
     loop {
         let Some(anchor) = thread_of else {
+            count.defer(&vault.store);
             return Ok(None);
         };
         let Some(parent) = reply_to.filter(|parent| *parent != anchor) else {
+            count.defer(&vault.store);
             return Ok(Some(id));
         };
-        if !seen.insert(id) || seen.len() > 100_000 {
+        if !seen.insert(id) {
             return Err(invalid());
         }
+        count.row();
         let row = turn_in(vault, txn, parent)?;
         id = parent;
         reply_to = row
@@ -477,7 +487,7 @@ pub(in crate::workspace_roster) fn require_reader(
 /// Owner or an Admin in a private thread's audience reads that thread with
 /// no standing in the room (FIX 5638). Returns the room as its project
 /// vouches for it.
-pub(super) fn require_thread_reader(
+pub(in crate::workspace_roster) fn require_thread_reader(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
@@ -673,13 +683,20 @@ fn thread_tasks_in_txn(
     txn: &heed::RoTxn<'_>,
     turn: &RoomTurn,
 ) -> Result<Vec<EntityId>> {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::RoomLinkWalkRows,
+        EntityId::from_hex(&turn.turn_id)?.as_bytes(),
+    )?;
     let mut tasks = Vec::new();
     let mut current = Some(turn.clone());
     let mut seen = BTreeSet::new();
     while let Some(row) = current.take() {
-        if !seen.insert(row.turn_id.clone()) || seen.len() > 100_000 {
+        if !seen.insert(row.turn_id.clone()) {
             return Err(invalid());
         }
+        count.row();
         for task in &row.task_ids {
             tasks.push(EntityId::from_hex(task)?);
         }
@@ -691,6 +708,7 @@ fn thread_tasks_in_txn(
             None => None,
         };
     }
+    count.defer(&vault.store);
     Ok(tasks)
 }
 

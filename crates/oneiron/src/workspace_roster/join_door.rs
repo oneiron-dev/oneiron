@@ -35,7 +35,12 @@ use crate::memory::{
 };
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
+mod authority;
 mod publish;
+
+pub(in crate::workspace_roster) use authority::{
+    answering_party_in_txn, require_admission_party_in_txn,
+};
 
 /// One party's answer to a join that waits on it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -155,6 +160,7 @@ impl Memory<'_> {
         }
         let vault = self.vault();
         let caller = WriteActor::new(self.actor(), self.actor_class());
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             if !JOINS.contains(&vault.store, txn, &answer.join_ref)? {
@@ -164,7 +170,8 @@ impl Memory<'_> {
                     &["File the join with rooms.join first."],
                 ));
             }
-            Ok(rooms_consent_in_txn(vault, txn, answer, caller, now)?)
+            let outcome = consent_in_txn(vault, txn, answer, caller, now, Some(&lane))?;
+            Ok(outcome)
         })?;
         // FIX 1794: the answer reaches the live window of the join's room or
         // thread.
@@ -496,10 +503,23 @@ pub fn rooms_consent_in_txn(
     caller: WriteActor,
     now: u64,
 ) -> Result<JoinOutcome> {
+    consent_in_txn(vault, txn, answer, caller, now, None)
+}
+
+/// [`rooms_consent_in_txn`] under a door's read `lane` (FIX 10223).
+fn consent_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    answer: &ConsentAnswer,
+    caller: WriteActor,
+    now: u64,
+    lane: Option<&crate::claim::ScopedRead<'_>>,
+) -> Result<JoinOutcome> {
     vault.verify_write_actor_in_txn(txn, &caller)?;
     let receipt = super::join_history::live_join(&vault.store, txn, &answer.join_ref)?
         .ok_or(Error::EntityNotFound)?;
     if receipt.is_settled() {
+        authority::require_outcome_reader_in_txn(vault, txn, &receipt, caller, now, lane)?;
         return Ok(JoinOutcome::of(&receipt));
     }
     let (by, spend_scope) = match answer.part {
@@ -764,24 +784,6 @@ pub(super) fn caller_stands_for_in_txn(
     Err(refused(
         "a join is filed by its subject or the subject's principal",
     ))
-}
-
-/// Refuses `caller` unless it answers `room`'s admission: a human who owns
-/// the room or holds its delegated host role, read live.
-pub(super) fn require_admission_party_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    room: EntityId,
-    caller: WriteActor,
-) -> Result<()> {
-    if caller.actor_class() != EdgeActorClass::Human
-        || room_host_in_txn(vault, txn, room, caller)?.is_none()
-    {
-        return Err(refused(
-            "only the room's owner or a delegated host answers its admission",
-        ));
-    }
-    Ok(())
 }
 
 fn answer_ref(vault: &Vault) -> Result<String> {

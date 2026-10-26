@@ -200,6 +200,18 @@ impl<A: AppHost + Clone + 'static> BlockingEngine<A> {
     /// nothing.
     pub fn close(&self) -> anyhow::Result<()> {
         ensure_app_thread()?;
+        // Shutdown is signalled first, under a shared hold (FIX 9485): a
+        // call that holds the engine (a buffered read of a live stream, a
+        // request in flight) ends with the drain, so the exclusive hold
+        // below waits only for it, and the ordered stop then joins the run.
+        if let Some(running) = self
+            .running
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+        {
+            running.runtime.block_on(running.engine.signal_stop());
+        }
         let running = self
             .running
             .write()

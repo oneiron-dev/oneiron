@@ -79,11 +79,11 @@ impl SessionOverlay {
         }
         let mut next = self.state.load_full().as_ref().clone();
         drop_rows(&mut next, keys, &stale);
-        let bytes = next.bytes_used;
         self.state.store(Arc::new(next));
         drop(lifecycle);
-        // A room stretch's charge follows what its overlay holds (FIX 5991).
-        self.charge_to(bytes);
+        // A room stretch's charge follows what its overlay retains, this
+        // thread's segment included (FIX 5991, 10104).
+        self.charge_now();
         Ok(())
     }
 }

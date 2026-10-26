@@ -17,7 +17,9 @@ use zeroize::Zeroizing;
 use crate::Vault;
 use crate::error::Result;
 
-use super::machine_identity::{SERVING_INSTALL_ROLE, SERVING_NO_ISSUER, SERVING_ROOT_NOT_ISSUER};
+use super::machine_identity::{
+    SERVING_INSTALL_ROLE, SERVING_NO_ISSUER, SERVING_ROOT_NOT_ISSUER, serving_profile_stands,
+};
 use super::*;
 
 /// Hook (CALLS "rootdoor open gates", open): an explicit `initialize_root`
@@ -57,6 +59,14 @@ pub enum LocalOpenProfile {
     /// settled root, as before: the mismatch is a fact for the host to show
     /// or re-key on, never a refusal (`WRONG_ROOT_OPEN_REFUSES`).
     AlreadyCarrying { wrong_root: bool },
+    /// No profile of this install stood, and the secret's issuer is not this
+    /// vault's settled live root (FIX 8120): nothing was enrolled under it,
+    /// nothing was re-rooted, and the vault stays open under its settled
+    /// root with this install unprofiled, so the owner's acts refuse "no
+    /// carrier" here as on a plain open. The mismatch is reported, never
+    /// refused (`WRONG_ROOT_OPEN_REFUSES`); possession of the open grants no
+    /// owner rights.
+    UnprofiledWrongRoot,
 }
 
 impl LocalOpenProfile {
@@ -64,7 +74,10 @@ impl LocalOpenProfile {
     /// root, which it did not use: only an `AlreadyCarrying` open says so.
     #[must_use]
     pub const fn wrong_root(self) -> bool {
-        matches!(self, Self::AlreadyCarrying { wrong_root: true })
+        matches!(
+            self,
+            Self::AlreadyCarrying { wrong_root: true } | Self::UnprofiledWrongRoot
+        )
     }
 }
 
@@ -89,16 +102,21 @@ impl Vault {
             && (!RAW_OPEN_ROOTS_ONLY_A_STORE_IT_CREATES || Self::is_unstarted_vault_dir(path))
     }
 
-    /// Profiles this install from the vault's host root `secret`, for an
-    /// open that serves nothing (FIX 4730). No secret is a skip. With
-    /// `initialize_root`, a vault whose authority is unstarted (no log row,
-    /// no pin, no adopted checkpoint) is rooted first through
-    /// [`Self::ensure_host_root_slip`], once this install's keys load; the
-    /// caller sets it only for a store its own open created as a new
-    /// local-origin vault. Then [`Self::ensure_serving_install_profile`] as
-    /// `Unanswered`, whose refusals come back with their reason. Over a
-    /// profile that already stands, a secret that is not the vault's settled
-    /// root is reported in `AlreadyCarrying`, not refused.
+    /// Profiles this install under the vault's host root, for an open that
+    /// serves nothing (FIX 4730), given the host root `secret` that admits
+    /// it. No secret is a skip. The root signs with this install's own
+    /// issuer seed for the vault (FIX-LIST 3018), never one the secret
+    /// derives. With `initialize_root`, a vault whose authority is unstarted
+    /// (no log row, no pin, no adopted checkpoint) is rooted first through
+    /// [`Self::ensure_host_root_slip`], once this install's keys load and
+    /// its seed is drawn ([`Self::bootstrap_host_slip_issuer`]); the caller
+    /// sets it only for a store its own open created as a new local-origin
+    /// vault. Any other open loads the seed it holds
+    /// ([`Self::load_host_slip_issuer`]). Then
+    /// [`Self::ensure_serving_install_profile`] as `Unanswered`, whose
+    /// refusals come back with their reason. Over a profile that already
+    /// stands, an issuer that is not the vault's settled root is reported in
+    /// `AlreadyCarrying`, not refused.
     /// A root committed before a refused profile stays, and is never minted
     /// again.
     pub fn profile_local_open(
@@ -109,14 +127,45 @@ impl Vault {
         let Some(secret) = secret else {
             return Ok(LocalOpenProfile::Skipped);
         };
-        let issuer = HostSlipIssuer::from_secret(secret)?;
+        // An empty secret admits nothing, as before the seed moved out of it.
+        if secret.is_empty() {
+            return Err(invalid_authority());
+        }
         let rooted = initialize_root && self.authority_is_unstarted()?;
-        if rooted {
+        let issuer = if rooted {
             // A root this install could not carry is never minted.
             self.prepare_install_signing()?;
+            let issuer = self.bootstrap_host_slip_issuer()?;
             self.ensure_host_root_slip(&issuer)?;
-        }
-        let (_, stood) = self.ensure_install_profile_reporting(&issuer, SERVING_INSTALL_ROLE)?;
+            issuer
+        } else {
+            match self.load_host_slip_issuer() {
+                Ok(issuer) => issuer,
+                // No issuer of this vault on this install: over a profile
+                // that already stands, the open carries on under the settled
+                // root and says so, as a wrong root does; with none, the
+                // missing key comes back as the reason.
+                Err(error) => {
+                    if !self.install_profile_stands().unwrap_or(false) {
+                        return Err(error);
+                    }
+                    if WRONG_ROOT_OPEN_REFUSES {
+                        return Err(authority_refused(SERVING_ROOT_NOT_ISSUER));
+                    }
+                    return Ok(LocalOpenProfile::AlreadyCarrying { wrong_root: true });
+                }
+            }
+        };
+        let stood = match self.ensure_install_profile_reporting(&issuer, SERVING_INSTALL_ROLE) {
+            Ok((_, stood)) => stood,
+            Err(error) if !rooted && unprofiled_wrong_root(&error) => {
+                if WRONG_ROOT_OPEN_REFUSES {
+                    return Err(error);
+                }
+                return Ok(LocalOpenProfile::UnprofiledWrongRoot);
+            }
+            Err(error) => return Err(error),
+        };
         Ok(match (rooted, stood) {
             (true, _) => LocalOpenProfile::RootedAndProfiled,
             (false, None) => LocalOpenProfile::Profiled,
@@ -149,6 +198,12 @@ impl Vault {
                     "no machine profile ensured"
                 );
             }
+            Ok(LocalOpenProfile::UnprofiledWrongRoot) => tracing::warn!(
+                open,
+                reason = SERVING_ROOT_NOT_ISSUER,
+                "this open's host root is not the vault's settled root, so it went unused; \
+                 this install stays unprofiled under the settled root"
+            ),
             Ok(profile) if profile.wrong_root() => tracing::warn!(
                 open,
                 reason = SERVING_ROOT_NOT_ISSUER,
@@ -188,10 +243,25 @@ impl Vault {
             .map_err(crate::world_keys::keystore_error)
     }
 
+    /// Whether this install's own live carrier profile, naming both its
+    /// keys, stands here, as the profile door reads it. Writes nothing.
+    fn install_profile_stands(&self) -> Result<bool> {
+        let Some(vault_id) = self.authority_fold()?.vault_id else {
+            return Ok(false);
+        };
+        let encryption_key = self.machine_encryption_key(vault_id)?;
+        let request = self.machine_enrolment_request(vault_id, encryption_key)?;
+        let txn = self.store.env.read_txn()?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        Ok(fold
+            .machine(request.machine)
+            .is_some_and(|folded| serving_profile_stands(&fold, folded, &request)))
+    }
+
     /// No authority log row, no pin and no adopted checkpoint: a vault no
     /// root, replica or restore has reached. Never `vault_id == None`, which
     /// a conflicted or invalid history has too.
-    fn authority_is_unstarted(&self) -> Result<bool> {
+    pub(super) fn authority_is_unstarted(&self) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         if !authority_log_rows_in_txn(&self.store, &txn)?.is_empty() {
             return Ok(false);
@@ -202,4 +272,16 @@ impl Vault {
         }
         Ok(adopted_authority_checkpoint_in_txn(&self.store, &txn)?.is_none())
     }
+}
+
+/// Whether `error` is the profile door's refusal of an issuer that is not
+/// the vault's settled live root over an install no profile of stands: the
+/// one refusal a host-root open reports as [`LocalOpenProfile::UnprofiledWrongRoot`]
+/// (FIX 8120). Every other refusal, storage fault included, stays itself.
+fn unprofiled_wrong_root(error: &crate::error::Error) -> bool {
+    matches!(
+        error,
+        crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(reason))
+            if *reason == SERVING_ROOT_NOT_ISSUER
+    )
 }
