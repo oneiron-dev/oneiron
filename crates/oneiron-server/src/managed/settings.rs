@@ -46,6 +46,8 @@ const BUNDLE_STACK_MISMATCH: &str = "bundle_stack_mismatch";
 /// the leaves argv stands over removed and the supervisor's own leaves set.
 pub(super) struct PreparedSettings {
     path: PathBuf,
+    /// The file's text, where a table that does not settle is placed.
+    raw: String,
     table: toml::Table,
     names_runtime: bool,
     /// The owner's `[models.voice]` is there and the supervisor named no
@@ -150,8 +152,7 @@ pub(super) fn prepare(
     };
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read settings file {}", path.display()))?;
-    let mut table: toml::Table =
-        toml::from_str(&raw).with_context(|| format!("parse settings file {}", path.display()))?;
+    let mut table: toml::Table = crate::config::parse_toml(path, &raw)?;
     // The supervisor's leaves are refused first: an argv-only binding the
     // schema has no key for (the training outbox, OF-420; a guest's
     // container CLI, the organ directory and the mesh) reads as the
@@ -265,6 +266,7 @@ pub(super) fn prepare(
         == Some("off");
     Ok(Some(PreparedSettings {
         path: path.clone(),
+        raw,
         table,
         names_runtime,
         voice_socket_missing,
@@ -284,6 +286,7 @@ pub(super) fn settle(
 ) -> anyhow::Result<Settled> {
     let Some(PreparedSettings {
         path,
+        raw,
         table,
         names_runtime,
         voice_socket_missing,
@@ -292,7 +295,7 @@ pub(super) fn settle(
     else {
         return Ok(settle_keystore(config, false));
     };
-    settle_managed_settings(config, table, path.parent())
+    settle_managed_settings(config, table, &path, &raw)
         .with_context(|| format!("settings file {}", path.display()))?;
     if voice_socket_missing {
         tracing::warn!(
