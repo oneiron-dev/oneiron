@@ -3116,7 +3116,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/model_trials/evidence.rs` | src | m | 6 crate-vis | — | Freeze the question's own labels, check backend reads and bind the sufficiency card |
 | `src/llm/model_trials/progress.rs` | src | s | 1 struct · 1 fn · 3 crate-vis | TrialProgressCounts | A trial's paid arms, kept one by one inside its own row (FIX 9920) |
 | `src/llm/model_trials/types.rs` | src | s | 16 struct · 7 enum | BackendQualityPin, FrozenTrialCase, HeldOutSelection, ModelTrial, ModelTrialAction, ModelTrialExecutionState, ModelTrialPolicy, ModelTrialReceipt +15 | The held-out selection and sufficiency card are supplied by eval authoring |
-| `src/llm/registry.rs` | src | m | 5 struct · 1 enum · 16 fn · 2 re-export · 7 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot | Vault-persisted, priced model catalogs |
+| `src/llm/registry.rs` | src | m | 6 struct · 1 enum · 17 fn · 2 re-export · 7 crate-vis | CatalogSeed, ModelRegistryRow, ModelScoreDiff, ModelWireFormat, ScoreObservation, ScoreSnapshot, SkippedRegistryRow | Vault-persisted, priced model catalogs |
 | `src/llm/registry/backend.rs` | src | s | 3 struct · 5 fn | ModelBackendPin, ModelCostReceipt, PricedModelBackend | Backend-specific serving identities and prices |
 | `src/llm/registry/description.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 crate-vis | DescriptionClass, DescriptionContribution, ModelDescription | Ranked, source-attributed model descriptions; absent evidence stays absent |
 | `src/llm/registry/installed_pack.rs` | src | s | 2 fn · 4 crate-vis | — | The shipped catalog is read from an installed first-party hub pack |
@@ -3697,7 +3697,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 17 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/secret_marks.rs` | src | m | 9 crate-vis | — | A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an… |
-| `src/origin/secret_marks/read.rs` | src | m | 22 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
+| `src/origin/secret_marks/read.rs` | src | m | 23 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
 | `src/origin/secret_projection.rs` | src | s | 27 crate-vis | — | Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1) |
 | `src/origin/secret_projection/checkout.rs` | src | s | 3 crate-vis | — | A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2) |
 | `src/origin/secret_projection/checkout_recipient.rs` | src | s | 3 crate-vis | — | The recipient a run's checkout of a masked copy was bound for (FIX 7608 pre-flip, FIX 10271 and 9328) |
@@ -4297,10 +4297,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/external_import/types.rs` | src | s | 5 struct · 2 enum · 4 crate-vis | ExternalImportDoor, ExternalImportLookup, ExternalImportPhase, ExternalImportReceipt, ExternalImportRequest, ExternalImportSource, ExternalImportStatus | The outside import's wire types (FIX 6871, G7 PR1) and the one normalization every request passes before… |
 | `src/repo_mutation/git.rs` | src | m | 19 crate-vis | — | Repository identity, Git argument validation and bridged commands |
 | `src/repo_mutation/lift.rs` | src | s | 3 crate-vis | — | Repo snapshots the historical lift sweep reads again (OF-067, Engine ruling D = a) |
-| `src/repo_mutation/mod.rs` | src | s | 3 mod · 5 re-export · 9 crate-vis | — | Queued repository mutations, recovery snapshots and reviewed proposals |
+| `src/repo_mutation/mod.rs` | src | s | 3 mod · 6 re-export · 10 crate-vis | — | Queued repository mutations, recovery snapshots and reviewed proposals |
 | `src/repo_mutation/mount.rs` | src | s | 1 struct · 1 enum · 4 fn | RepoMount, RepoMountRef | One immutable read path for committed head, recovery forks and codebase snapshots |
 | `src/repo_mutation/oplog.rs` | src | m | 3 fn · 1 const · 15 crate-vis | — | Repository mutation intent rows, recovery and actor erasure |
-| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 mod · 2 re-export · 20 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
+| `src/repo_mutation/proposal.rs` | src | m | 1 struct · 2 enum · 5 fn · 1 mod · 2 re-export · 21 crate-vis | RepoProposal, RepoProposalOperation, RepoProposalStatus | Durable per-operation code proposals |
 | `src/repo_mutation/proposal/actor_erase.rs` | src | s | 2 enum · 3 fn · 1 const · 4 crate-vis | PendingRepoProposalErase, ProposalActor | Whose act a repo proposal records, and the erase that forgets it (FIX 3520): its proposer, the critics whose… |
 | `src/repo_mutation/proposal/files.rs` | src | s | 1 struct · 5 fn · 5 crate-vis | RepoProposedFile | A proposal's reviewed files (G4 PR2): an ordinary operation's one file, or every file of a received push… |
 | `src/repo_mutation/proposal/guards.rs` | src | s | 3 crate-vis | — | Transaction-local guards for repository proposals |
@@ -4316,6 +4316,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/repo_mutation/received_file/tree.rs` | src | s | 6 crate-vis | — | A received bundle's exact tree change (G4 PR2): every entry it removes, adds or changes, with its exact… |
 | `src/repo_mutation/reviewed_file.rs` | src | s | 4 crate-vis | — | The tested stack's per-member checks (moved from `reviewed_stack.rs`, G4 PR2): the tested change is exactly… |
 | `src/repo_mutation/reviewed_stack.rs` | src | m | 9 crate-vis | — | Atomic critic admission and exact-prefix replay for a tested proposal stack |
+| `src/repo_mutation/secret_remediation.rs` | src | m | 3 struct · 3 enum · 2 fn · 1 re-export · 3 crate-vis | RepoSecretRemediation, RepoSecretRemediationAction, RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved, RepoSecretUnresolvedReason | Current-code remediation of marked secrets (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: "Proposal… |
+| `src/repo_mutation/secret_remediation/env.rs` | src | s | 9 crate-vis | — | The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: ".env: values -> secret store… |
+| `src/repo_mutation/secret_remediation/link.rs` | src | s | 3 crate-vis | — | The `repo.secret_remediation` links (FIX 7608 slice 6): value-free facts tying the marked keys in a… |
+| `src/repo_mutation/secret_remediation/plan.rs` | src | m | 3 crate-vis | — | One remediation's plan (FIX 7608 slice 6), built in one read of the marks: the files its bundle writes or… |
+| `src/repo_mutation/secret_remediation/render.rs` | src | s | 1 struct · 1 fn | RepoSecretReferenceRenderer | The reference a remediation writes where a marked literal stood (FIX 7608 slice 6): an expression in the… |
+| `src/repo_mutation/secret_remediation/text.rs` | src | s | 5 crate-vis | — | The text a remediation reads and writes around a marked literal (FIX 7608 slice 6): the literal's quoted… |
 | `src/repo_mutation/snapshot.rs` | src | m | 14 crate-vis | — | Capture, validation and restore of repository working-tree snapshots |
 | `src/repo_mutation/snapshot/pinned.rs` | src | s | 2 crate-vis | — | The pinned base a run's work opens from (FIX 6867, G1 PR2a): the tree of one immutable commit, read from the… |
 | `src/repo_mutation/support.rs` | src | s | 8 crate-vis | — | Path, digest, time and actor-name helpers for repository mutations |
@@ -4499,7 +4505,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_lease/tests.rs` | test | XL | — | — | SECRET-02 (ONE-1920) unit tests: the tier-admission truth table (cap-only; SOL-1920-01), the T0 door (value… |
 | `src/secret_lease/types.rs` | src | s | 6 struct · 4 const · 1 re-export · 8 crate-vis | DoorInjectionReceipt, LocalRegistration, SecretLease, SecretLeaseMaterialization, SecretMaterializationReceipt, SecretTaintRef | Lease/registration/receipt row types, VaultInstant clock, key prefixes |
 | `src/secret_lease/verification.rs` | src | s | 1 fn | — | The signature-verification door (FIX 2095): a T0 door on a read snapshot, so checking an unauthenticated… |
-| `src/secret_manifest.rs` | src | m | 2 struct · 2 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
+| `src/secret_manifest.rs` | src | m | 2 struct · 3 fn · 1 const | SecretManifest, SecretManifestEntry | SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2) |
 | `src/secret_manifest/tests.rs` | test | s | — | — | SECRET-01 (ONE-1919) manifest tests: parse, narrow-only validation, the widening-reject fixture |
 | `src/secret_rotation.rs` | src | m | 1 struct · 2 enum · 8 fn · 4 const · 11 crate-vis | ArtifactTaintState, RotationKind, RotationReceipt | SECRET-04 (ONE-1922): rotation as a first-class vault op, and READ-TIME invalidation of secret-tainted build… |
 | `src/secret_rotation/owner_door.rs` | src | m | 3 fn · 4 crate-vis | — | The owner's rotation door and the one transaction body every rotation shares |
@@ -5607,6 +5613,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/transactions.rs` | src | L | 28 fn · 3 crate-vis | — | Vault maintenance, learned-at range scans, transaction helpers and sync state |
 | `src/vault/transactions/sync_scan_tests.rs` | test | s | — | — | Host sync-state doors: scans refuse undeclared rows even under a broad prefix, and writes refuse the… |
 | `src/vault/transactions/sync_state_delete.rs` | src | s | 1 fn | — | One host row's delete in its caller's writer (FIX 6476): a host that reads a row, decides on its bytes and… |
+| `src/vault/transactions/sync_state_page.rs` | src | s | 1 fn | — | One page of a host table's rows, read in key order through the generic host door (FIX 10863, FIX 10866): the… |
 | `src/vault/transactions/sync_state_reclaim.rs` | src | s | 1 fn | — | One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no… |
 | `src/vault/transactions/telemetry_if_absent.rs` | src | s | 1 fn | — | A host's telemetry rows put only where none rests (FIX 10300, 9392): a wire window's first call-volume… |
 | `src/vault/vector_evidence.rs` | src | s | 3 fn · 6 crate-vis | — | Where a vector hit counts as evidence in the vault's embedding space, as the host's embedder states it |
