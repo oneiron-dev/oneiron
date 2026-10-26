@@ -15,7 +15,7 @@ mod quote_binding;
 mod wire;
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 pub(in crate::dreamer_consolidation) use wire::{
-    CallPins, ExtractedPerson, ExtractionReply, ReplyContext, check_extraction_reply, decode_ref,
+    CallPins, ExtractedPerson, ReplyContext, check_extraction_reply, decode_ref,
     disagreeing_child_hashes, extraction_reply, resolve_subject,
 };
 use wire::{entity_id_from_hex, parse_candidate};
