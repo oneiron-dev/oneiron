@@ -29,7 +29,9 @@ use oneiron::browser_library::{
 };
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::HostSelfDispatcher;
-use oneiron::runtime_hooks::verb::{VerbAskCredentialRef, VerbAskDoor, VerbAskRefusal};
+use oneiron::runtime_hooks::verb::{
+    VerbAskCredentialRef, VerbAskCredentialSource, VerbAskDoor, VerbAskRefusal,
+};
 use oneiron_browser::{BatchInput, ProposeOutput, SubgoalStatus};
 
 /// The caller one admission job acts as, established at its start.
@@ -323,6 +325,17 @@ fn established(
             reference,
             witness,
         } => {
+            // A managed vault's attested owner kept no binding (FIX 11063):
+            // he is acted for as the person he is, as a person with no
+            // credential is, only while this vault records him as its live
+            // owner.
+            if let VerbAskCredentialSource::AttestedOwner { holder } = reference.instrument.source {
+                attested_owner_source(server, reference, holder, actor, witness.as_ref())?;
+                return match owner_proof(server, *actor) {
+                    Some(_) => Ok(JobCaller::Owner(*actor)),
+                    None => Err(CallerUnavailable::ContextUnavailable),
+                };
+            }
             let witness = witness
                 .as_ref()
                 .ok_or(CallerUnavailable::InstrumentNotHeld)?;
@@ -340,6 +353,8 @@ fn established(
                     }
                     Ok(JobCaller::Mcp(context))
                 }
+                // Only the attested owner comes by his own stream.
+                VerbAskDoor::McpOwner { .. } => Err(CallerUnavailable::CredentialChanged),
                 // A room turn's door is not rebuilt for a job.
                 VerbAskDoor::Facade { room: Some(_) } => Err(CallerUnavailable::ContextUnavailable),
                 VerbAskDoor::Facade { room: None } => {
@@ -365,6 +380,29 @@ fn established(
             None => Err(CallerUnavailable::ContextUnavailable),
         },
         AdmissionCaller::Unsupported => Err(CallerUnavailable::ContextUnavailable),
+    }
+}
+
+/// Whether an attested owner's kept `reference` is his own source's: it
+/// names `actor`, a human, in this vault, and no slip binding stands beside
+/// it. His standing is judged at use, as a person's is.
+fn attested_owner_source(
+    server: &SyncServer,
+    reference: &VerbAskCredentialRef,
+    holder: oneiron::EntityId,
+    actor: &WriteActor,
+    witness: Option<&InvocationSlipBinding>,
+) -> Result<(), CallerUnavailable> {
+    if holder != actor.entity_ref()
+        || actor.actor_class() != oneiron::EdgeActorClass::Human
+        || witness.is_some()
+    {
+        return Err(CallerUnavailable::CredentialChanged);
+    }
+    match server.vault.authority_vault_id() {
+        Ok(Some(vault)) if vault == reference.instrument.vault => Ok(()),
+        Ok(_) => Err(CallerUnavailable::CredentialChanged),
+        Err(_) => Err(CallerUnavailable::CredentialUnavailable),
     }
 }
 
@@ -396,9 +434,14 @@ fn kept_auth(
     } else {
         CallerLocality::OffDevice
     };
-    crate::code_consent_host::kept_instrument_auth(server, &reference.instrument, witness, door)
-        .map(|auth| auth.at(locality))
-        .map_err(unavailable)
+    crate::code_consent_host::kept_instrument_auth(
+        server,
+        &reference.instrument,
+        Some(witness),
+        door,
+    )
+    .map(|auth| auth.at(locality))
+    .map_err(unavailable)
 }
 
 /// A connector's registration whose STREAM connection is `connection`, as
@@ -463,6 +506,9 @@ const fn unavailable(refusal: VerbAskRefusal) -> CallerUnavailable {
         VerbAskRefusal::CredentialUnavailable => CallerUnavailable::CredentialUnavailable,
         VerbAskRefusal::ScopeRefused => CallerUnavailable::ScopeRefused,
         VerbAskRefusal::ContextUnavailable => CallerUnavailable::ContextUnavailable,
+        // A person no longer this vault's live owner is acted for not at
+        // all, as a person with no credential is.
+        VerbAskRefusal::OwnerNotLive => CallerUnavailable::ContextUnavailable,
     }
 }
 

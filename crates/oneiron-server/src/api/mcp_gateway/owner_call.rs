@@ -142,6 +142,45 @@ pub(crate) fn attested_owner_call(
     ))
 }
 
+/// The console owner's own tool-first call a verb hook's ask stopped, built
+/// again at settlement (FIX 5204) under `auth`, the owner as
+/// [`CoreAuth::for_attested_owner`] rebuilt him now: only while
+/// `connection`, the STREAM the call saved, is still his own
+/// ([`owner_stream_connection`]). Neither his held socket nor a registration
+/// is needed; it sits in no session or room turn, as its call named none, and
+/// carries the call's `invocation` and the drain's permit. `None` for a
+/// stream that is not his.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(super) fn owner_resume_context(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    connection: &str,
+    invocation: oneiron::runtime_hooks::InvocationId,
+    drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
+) -> Option<Result<McpCallContext, McpGatewayError>> {
+    let owner = auth.managed_owner()?;
+    if owner_stream_connection(owner).0 != connection {
+        return None;
+    }
+    let request_id = format!("verb-ask-{}", invocation.to_hex());
+    Some(
+        owner_context_at(
+            McpSurfaceMode::ToolFirst,
+            &request_id,
+            owner,
+            Some(auth),
+            None,
+            None,
+            server,
+        )
+        .map(|mut context| {
+            context.invocation = Some(invocation);
+            context.drain = Some(drain);
+            context
+        }),
+    )
+}
+
 /// [`managed_owner_context`] once the call's placement is known.
 fn owner_context_at(
     mode: McpSurfaceMode,

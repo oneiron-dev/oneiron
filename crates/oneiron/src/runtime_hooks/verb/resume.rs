@@ -54,10 +54,13 @@ pub(crate) enum VerbResume {
 impl VerbResume {
     /// Whether a call presenting `call` is the call this target was saved
     /// for: the same plain caller, whatever authority its ask read, or the
-    /// same credential reference.
+    /// same credential caller (`VerbAskCredentialRef::same_caller`).
     pub(super) fn same_target(&self, call: &Self) -> bool {
         match (self, call) {
             (Self::Row(saved), Self::Row(call)) => saved.same_caller(call),
+            (Self::Credential { reference: saved }, Self::Credential { reference: call }) => {
+                saved.same_caller(call)
+            }
             (saved, call) => saved == call,
         }
     }

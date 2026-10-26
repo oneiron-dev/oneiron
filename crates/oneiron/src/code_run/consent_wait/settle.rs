@@ -352,7 +352,7 @@ pub(crate) fn original_authority_holds_in_txn(
         .opener_slip
         .is_none_or(|slip| slip == claims.slip_id)
         && credential.instrument.as_ref().is_none_or(|instrument| {
-            instrument.slip == claims.slip_id && instrument.vault == claims.vault_id
+            instrument.slip() == Some(claims.slip_id) && instrument.vault == claims.vault_id
         })
 }
 
