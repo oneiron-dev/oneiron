@@ -63,6 +63,8 @@ enum Gap {
     NoUsage,
     /// No list price was frozen on it at admission.
     UnpricedModel,
+    /// Its frozen list price names no currency (FIX 9534).
+    UnknownCurrency,
     /// The list price frozen on it quotes no rate for cached tokens it
     /// measured.
     UnpricedCache,
@@ -77,9 +79,10 @@ enum Gap {
 impl Gap {
     /// Every kind, in the fixed order a note names them, after the codes
     /// that stand alone ([`Alone`]) and [`MIXED_MODEL`].
-    const ORDER: [Self; 6] = [
+    const ORDER: [Self; 7] = [
         Self::NoUsage,
         Self::UnpricedModel,
+        Self::UnknownCurrency,
         Self::UnpricedCache,
         Self::MixedCurrency,
         Self::SumOverflow,
@@ -91,6 +94,7 @@ impl Gap {
         match self {
             Self::NoUsage => "unverifiable_no_usage",
             Self::UnpricedModel => "unverifiable_unpriced_model",
+            Self::UnknownCurrency => "unverifiable_unknown_currency",
             Self::UnpricedCache => "unverifiable_unpriced_cache",
             Self::MixedCurrency => "unverifiable_mixed_currency",
             Self::SumOverflow => "unverifiable_sum_overflow",
@@ -116,6 +120,7 @@ pub(super) struct Unverifiable {
     /// The calls of each kind, as [`SeatUsage`] counted them.
     no_usage: u64,
     unpriced_model: u64,
+    unknown_currency: u64,
     /// In all and per unquoted dimension.
     unpriced_cache: UnpricedCache,
     mixed_currency: u64,
@@ -143,6 +148,7 @@ impl Unverifiable {
             currency: usage.currency.clone(),
             no_usage: usage.no_usage,
             unpriced_model: usage.unpriced_model,
+            unknown_currency: usage.unknown_currency,
             unpriced_cache: usage.unpriced_cache.clone(),
             mixed_currency: usage.mixed_currency,
             sum_overflow: usage.sum_overflow,
@@ -176,6 +182,7 @@ impl Unverifiable {
         match gap {
             Gap::NoUsage => self.no_usage,
             Gap::UnpricedModel => self.unpriced_model,
+            Gap::UnknownCurrency => self.unknown_currency,
             Gap::UnpricedCache => self.unpriced_cache.calls,
             Gap::MixedCurrency => self.mixed_currency,
             Gap::SumOverflow => self.sum_overflow,
@@ -207,6 +214,10 @@ impl Unverifiable {
             Gap::UnpricedModel => format!(
                 "{calls} had no list price frozen on them at admission (no catalog row or \
                  convertible price for the model)"
+            ),
+            Gap::UnknownCurrency => format!(
+                "{calls} carry a frozen list price whose provider named no currency, so no amount \
+                 is quoted"
             ),
             Gap::UnpricedCache => {
                 format!("{calls} measured cached tokens their frozen list price quotes no rate for")
