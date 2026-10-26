@@ -174,6 +174,9 @@ pub(super) fn handle_document(
                 source.unwrap_or(entity),
                 &request.selector.member_ref,
             )?;
+            // FIX 10829: one under a whole-text copy's or a re-released copy
+            // id's own row id that builds on its copy lineage edits it too.
+            let source = source.or_else(|| lineage_edit(server, &document, entity, payload));
             match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
@@ -575,6 +578,28 @@ fn copy_source(server: &SyncServer, entity: EntityId) -> Result<Option<EntityId>
     })
     .map_err(storage_error)?;
     Ok((source != entity).then_some(source))
+}
+
+/// `entity` itself when `payload` edits the copy lineage kept for the
+/// document held under `entity` (FIX 10829); `None` (today's path) otherwise,
+/// and whenever the document's version does not read.
+fn lineage_edit(
+    server: &SyncServer,
+    document: &oneiron::sync::documents::EntityDocument,
+    entity: EntityId,
+    payload: &[u8],
+) -> Option<EntityId> {
+    let edits = crate::server::blocking(|| {
+        document.version_vector().is_ok_and(|resident| {
+            oneiron::sync::selector::repo_document_lineage_edit(
+                server.vault.as_ref(),
+                entity,
+                &resident,
+                payload,
+            )
+        })
+    });
+    edits.then_some(entity)
 }
 
 /// What an update is acknowledged with: the copy lineage's vector for a copy
