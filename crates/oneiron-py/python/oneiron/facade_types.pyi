@@ -506,6 +506,7 @@ class HealthReviewReceipt(TypedDict):
     by_owner: bool
     at: int
     reviewer: str
+    reviewer_revision: NotRequired[EntityId | None]
     dial: int
     measured: int
     diagnostics: list[EntityId]
@@ -592,6 +593,7 @@ class AgentHealthCard(TypedDict):
     coach: NotRequired[AgentHealthCoachAsk | None]
     observed_brief: NotRequired[HealthBriefPin | None]
     reviewer: str
+    reviewer_revision: NotRequired[EntityId | None]
     review_outcomes: list[HealthReviewReceipt]
     causes: list[HealthCauseSource]
     silence: NotRequired[HealthSilenceActivity | None]
@@ -15599,6 +15601,7 @@ class LlmCatalogCost(TypedDict):
     output_per_million: str
     cache_read_per_million: NotRequired[str | None]
     cache_write_per_million: NotRequired[str | None]
+    currency: str | None
 class LlmCatalogEntry(TypedDict):
     model: ModelId
     display_name: str
