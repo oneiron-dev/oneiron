@@ -3,8 +3,10 @@
 //! skill and the version that load stamped, the skill entity the issue's own
 //! publisher shipped under that skill id, and the executor the pack
 //! attribution pinned, mapped to the one registered model stack that serves
-//! it. Anything else is a named reason, never a guess: no subject string is
-//! parsed, the current model is never used, and no version is invented.
+//! it: a compiled default stack, else the one-model stack of the host
+//! registry's row for exactly that model (FIX 7686). Anything else is a named
+//! reason, never a guess: no subject string is parsed, the current model is
+//! never used, and no version is invented.
 
 use std::collections::BTreeSet;
 
@@ -12,8 +14,15 @@ use super::super::routing::IMPORTS;
 use super::super::{ReportIssue, ReportRoute};
 use crate::attempt_queue::ManifestKind;
 use crate::edit_distance::publisher::{CountKey, tally_judged_outcomes};
-use crate::settings::default_model_stack_registry;
-use crate::{EntityId, Result, Vault};
+use crate::settings::{
+    ModelStack, ModelStackId, ModelStackModel, ModelStackRegistry, default_model_stack_registry,
+};
+use crate::{EntityId, ModelId, Result, Vault};
+
+/// The role a host model's one-model stack names it under.
+const HOST_STACK_ROLE: &str = "executor";
+/// The generation of every host model's one-model stack.
+const HOST_STACK_GENERATION: u32 = 1;
 
 /// What an issue signature says about the work its report is about.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -65,7 +74,7 @@ impl Vault {
         let Ok(attribution) = receipt.pack_attribution_fields() else {
             return Ok(Err("attribution_unreadable"));
         };
-        let Some(model_id) = registered_stack(&attribution.executor) else {
+        let Some(model_id) = self.registered_stack(&attribution.executor)? else {
             return Ok(Err("model_not_registered"));
         };
         Ok(Ok(ReportPublisherMetadata {
@@ -119,9 +128,9 @@ fn exact_u32(text: &str) -> Option<u32> {
     (value.to_string() == text).then_some(value)
 }
 
-/// The one registered model stack whose models include `executor`, pinned
+/// The one compiled model stack whose models include `executor`, pinned
 /// as `id@revision`.
-fn registered_stack(executor: &str) -> Option<String> {
+fn compiled_stack(executor: &str) -> Option<String> {
     let registry = default_model_stack_registry();
     let mut serving = registry.stacks.values().filter(|stack| {
         stack
@@ -134,4 +143,105 @@ fn registered_stack(executor: &str) -> Option<String> {
         .next()
         .is_none()
         .then(|| stack.id.as_str().to_owned())
+}
+
+/// `model` as the id of its one-model stack: the model id itself, spelled in
+/// a stack id's alphabet (`_` as `__`, `/` as `_.`, `@` as `_-`), so it reads
+/// back to exactly that model and to nothing else.
+fn host_stack_id(model: &ModelId) -> String {
+    let mut id = String::with_capacity(model.as_str().len() + 4);
+    for character in model.as_str().chars() {
+        match character {
+            '_' => id.push_str("__"),
+            '/' => id.push_str("_."),
+            '@' => id.push_str("_-"),
+            other => id.push(other),
+        }
+    }
+    id
+}
+
+/// The model a stack id spells in [`host_stack_id`]'s form; `None` for any
+/// other id.
+fn host_stack_model(stack: &str) -> Option<ModelId> {
+    let mut model = String::with_capacity(stack.len());
+    let mut characters = stack.chars();
+    while let Some(character) = characters.next() {
+        if character != '_' {
+            model.push(character);
+            continue;
+        }
+        model.push(match characters.next()? {
+            '_' => '_',
+            '.' => '/',
+            '-' => '@',
+            _ => return None,
+        });
+    }
+    let model = ModelId::new(model).ok()?;
+    (host_stack_id(&model) == stack).then_some(model)
+}
+
+/// The compiled stacks, and `model`'s one-model stack beside them.
+fn with_host_stack(model: ModelId) -> Option<ModelStackRegistry> {
+    let mut registry = default_model_stack_registry();
+    let id = ModelStackId::new(host_stack_id(&model)).ok()?;
+    let name = model.as_str().to_owned();
+    let stack = ModelStack::new(
+        id.clone(),
+        name,
+        HOST_STACK_GENERATION,
+        vec![ModelStackModel::new(HOST_STACK_ROLE, model)],
+    )
+    .ok()?;
+    registry.stacks.entry(id).or_insert(stack);
+    Some(registry)
+}
+
+/// The stacks a received signature's model id reads against: the compiled
+/// ones, and the one-model stack its id spells, when it spells a model.
+pub(super) fn received_stacks(model_id: &str) -> ModelStackRegistry {
+    host_stack_model(model_id)
+        .and_then(with_host_stack)
+        .unwrap_or_else(default_model_stack_registry)
+}
+
+impl Vault {
+    /// The model stack serving `executor`: the one compiled stack that
+    /// includes it, else, when the host registry holds a row for exactly
+    /// that model, its one-model stack (FIX 7686). `None` for an executor
+    /// neither names.
+    fn registered_stack(&self, executor: &str) -> Result<Option<String>> {
+        if let Some(stack) = compiled_stack(executor) {
+            return Ok(Some(stack));
+        }
+        let Ok(model) = ModelId::new(executor) else {
+            return Ok(None);
+        };
+        Ok(self
+            .model_registry_row(&model)?
+            .map(|_| host_stack_id(&model)))
+    }
+
+    /// The stacks an issue signature's `model_id` is checked against, as
+    /// `txn` reads the host registry: the compiled ones, and the one-model
+    /// stack of the host model `model_id` spells while the registry holds a
+    /// row for it.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(super) fn signature_stacks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        model_id: &str,
+    ) -> Result<ModelStackRegistry> {
+        let Some(model) = host_stack_model(model_id) else {
+            return Ok(default_model_stack_registry());
+        };
+        if self.model_registry_row_in_txn(txn, &model)?.is_none() {
+            return Ok(default_model_stack_registry());
+        }
+        Ok(with_host_stack(model).unwrap_or_else(default_model_stack_registry))
+    }
 }

@@ -286,7 +286,7 @@ impl Vault {
         seen: Option<PolicyRevision>,
     ) -> Result<ConversationLearningView> {
         let mut txn = self.store.env.write_txn()?;
-        let (_, view) = self.set_conversation_learning_in_txn(
+        let (_, view, _) = self.set_conversation_learning_in_txn(
             &mut txn,
             owner,
             surface,
@@ -305,9 +305,9 @@ impl Vault {
     /// transaction, with every one of its checks: the proof's person
     /// revalidated, the admin rule, `seen`, the carrier, the signature and
     /// the fold counting the choice. It returns the signed choice's authority
-    /// entry and the setting's view after it, and commits nothing: the
-    /// caller commits, then tells the setting's watchers
-    /// (`notify_proactivity_changes`).
+    /// entry, the setting's view after it and the vault seconds the entry was
+    /// signed at (FIX 7712), and commits nothing: the caller commits, then
+    /// tells the setting's watchers (`notify_proactivity_changes`).
     ///
     /// # Errors
     /// As [`Vault::set_conversation_learning`]; the caller drops the
@@ -320,7 +320,7 @@ impl Vault {
         on: bool,
         allow_opt_out: bool,
         seen: Option<PolicyRevision>,
-    ) -> Result<(AuthorityEntryHash, ConversationLearningView)> {
+    ) -> Result<(AuthorityEntryHash, ConversationLearningView, u64)> {
         let person = owner.revalidate_person_in_txn(self, txn)?;
         self.require_learning_admin_in_txn(txn, person)?;
         let fold = self.authority_view_readonly_in_txn(txn)?;
@@ -388,7 +388,7 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
-        Ok((entry_hash, view))
+        Ok((entry_hash, view, now))
     }
 
     /// The admin's PERSON whose act the setting choice in force on `fold` is,

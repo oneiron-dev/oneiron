@@ -7,10 +7,13 @@
 
 use heed::RoTxn;
 
+use std::collections::{HashMap, HashSet};
+
 use super::{
-    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionClaim,
-    RepoProjectionIngressStore, RepoProjectionRecord, checkout_key, corrupt, decode_graph,
-    derive_id, entity, field, git_oid, ingress_store_key, text,
+    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionCheckoutRecipient,
+    RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionPlace, RepoProjectionRecord,
+    RepoProjectionRevealBinding, checkout_key, checkout_recipient_key, corrupt, decode_graph,
+    decode_place, derive_id, entity, field, git_oid, ingress_store_key, text,
 };
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -51,7 +54,60 @@ fn rebuilt(graph: EntityId, record: RepoProjectionRecord, body: &ClaimBody) -> R
     Ok(())
 }
 
+/// A masked copy's changed links and marked blobs, from its records alone
+/// (FIX 9328): every place a changed object occurs in a changed parent,
+/// by parent, and every ORIGINAL blob a mark masks.
+#[derive(Debug, Default)]
+pub(crate) struct RepoProjectionLinks {
+    pub(crate) links: HashMap<GitOid, Vec<(RepoProjectionPlace, GitOid)>>,
+    pub(crate) marked_blobs: HashSet<GitOid>,
+}
+
 impl RepoProjectionClaim {
+    /// The changed links and marked blobs the masked copy `graph`'s
+    /// standing records name, each once; a recipient copy's occurrence
+    /// records are not a masked copy's and are left out.
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn masked_links_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        graph: &EntityId,
+    ) -> Result<RepoProjectionLinks> {
+        let mut found = RepoProjectionLinks::default();
+        for id in vault.claims_for_subject_in_txn(txn, graph)? {
+            let Some(body) = standing(vault, txn, &id)? else {
+                continue;
+            };
+            let map = body.value.as_map().ok_or_else(corrupt)?;
+            match kind_of(&body)? {
+                "link" if field(map, "parent_occurrence")?.is_nil() => {
+                    found
+                        .links
+                        .entry(git_oid(field(map, "parent")?)?)
+                        .or_default()
+                        .push((
+                            decode_place(field(map, "place")?)?,
+                            git_oid(field(map, "child_original")?)?,
+                        ));
+                }
+                "object"
+                    if field(map, "occurrence")?.is_nil()
+                        && text(field(map, "object_type")?)? == GitObjectKind::Blob.as_str()
+                        && !field(map, "marks")?
+                            .as_array()
+                            .ok_or_else(corrupt)?
+                            .is_empty() =>
+                {
+                    found.marked_blobs.insert(git_oid(field(map, "original")?)?);
+                }
+                _ => {}
+            }
+        }
+        Ok(found)
+    }
+
     /// The checkout binding of the lease `checkout` at `epoch`, with the
     /// graph it binds; `None` when the lease checks out no copy.
     ///
@@ -81,6 +137,41 @@ impl RepoProjectionClaim {
         };
         rebuilt(graph, RepoProjectionRecord::Checkout(record.clone()), &body)?;
         Ok(Some((graph, record)))
+    }
+
+    /// The recipient the lease `checkout` at `epoch` was bound for, with
+    /// the graph its checkout binding names (FIX 10271); `None` when its
+    /// run bound none.
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn load_checkout_recipient_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        checkout: &str,
+        epoch: u64,
+    ) -> Result<Option<(EntityId, RepoProjectionRevealBinding)>> {
+        let id = derive_id(None, &checkout_recipient_key(checkout, epoch))?;
+        let Some(body) = standing(vault, txn, &id)? else {
+            return Ok(None);
+        };
+        let graph = about_graph(&body)?;
+        let map = body.value.as_map().ok_or_else(corrupt)?;
+        if text(field(map, "kind")?)? != "checkout_recipient" {
+            return Err(corrupt());
+        }
+        let record = RepoProjectionCheckoutRecipient {
+            checkout: checkout.to_owned(),
+            epoch,
+            reveal: RepoProjectionRevealBinding::decode(field(map, "reveal")?)?,
+        };
+        let reveal = record.reveal.clone();
+        rebuilt(
+            graph,
+            RepoProjectionRecord::CheckoutRecipient(record),
+            &body,
+        )?;
+        Ok(Some((graph, reveal)))
     }
 
     /// The ingress store record of the private ingress `ingress_store`,

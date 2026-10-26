@@ -221,23 +221,30 @@ pub(crate) fn settle_embedder_section(
 
 /// A managed vault's settings file, which managed mode has already refused
 /// leaf by leaf (`managed::settings`), settled once over the `config` it
-/// built from argv: read in the config file's schema, its `[models]`
-/// resolved beside the file (`dir`), applied as the vault file's layer, its
-/// `[embedder]` settled as [`settle_embedder_section`] settles one, and the
-/// result refused as serve refuses a config that cannot serve. No other
-/// layer is read: no environment, no default config path.
+/// built from argv: `table`, what it kept of the file at `path` whose text
+/// is `raw`, read in the config file's schema, its `[models]` resolved
+/// beside the file, applied as the vault file's layer, its `[embedder]`
+/// settled as [`settle_embedder_section`] settles one, and the result
+/// refused as serve refuses a config that cannot serve. No other layer is
+/// read: no environment, no default config path. A table that does not read
+/// names only the place in `raw` where it fails, never the value refused
+/// (FIX 9477, 10687); the caller names the file.
 pub(crate) fn settle_managed_settings(
     config: &mut ServeConfig,
     table: toml::Table,
-    dir: Option<&Path>,
+    path: &Path,
+    raw: &str,
 ) -> anyhow::Result<()> {
+    // The deserializer's error names the value it refused, and the table
+    // keeps no place in the file: it is dropped unread, and the file's own
+    // text read again for the place.
     let mut file: FileServeConfig = toml::Value::Table(table)
         .try_into()
-        .context("parse the settings file")?;
+        .map_err(|_| super::locate_toml_failure::<FileServeConfig>(raw))?;
     let models = file
         .models
         .take()
-        .map(|models| models.resolve(dir))
+        .map(|models| models.resolve(path.parent()))
         .transpose()
         .context("the settings file's [models]")?;
     let embedder = file.embedder.take();

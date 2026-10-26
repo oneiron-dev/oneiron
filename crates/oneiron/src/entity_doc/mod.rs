@@ -34,7 +34,7 @@ mod storage;
 pub(crate) use citation_floor::record_citation_floor_in_txn;
 pub(crate) use message_stream::{
     append_message_stream_in_txn, authorize_message_continuation_in_txn,
-    birth_message_stream_in_txn, ensure_quote_document_in_txn, quote_birth_admits_in,
+    ensure_quote_document_in_txn, quote_birth_admits_in,
 };
 pub(crate) use recovery::{
     capture as capture_canonical, restore as restore_canonical,
@@ -67,8 +67,8 @@ pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;
 pub(crate) use storage::{
     document_text_fields, erase_in_txn, guard_record_put, has_record_head, pointer_field_in,
-    record_body_at, record_body_history_in_txn, record_document, record_head_bytes,
-    reindex_repo_document_in_txn, resolve_record_body,
+    record_bodies_at_in_txn, record_body_at, record_body_history_in_txn, record_document,
+    record_head_bytes, reindex_repo_document_in_txn, resolve_record_body,
 };
 pub use verbs::{AnchoredEdit, EditVerb, TextAnchor, TextUpdateOutcome, TextUpdateRequest};
 

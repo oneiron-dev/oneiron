@@ -243,6 +243,14 @@ pub(crate) enum KindPlacement {
 pub(crate) trait SyncPayloadOwners {
     /// Where an entity row of the kind tagged `entity_type` goes.
     fn entity_kind(&self, entity_type: u8) -> KindPlacement;
+
+    /// The entity a row kept under `id` belongs to: a masked repo copy's
+    /// rows are its source's, so an erased source's copy goes with it (FIX
+    /// 7608, KEY STORE = A, FIX 10799). `id` itself unless the capture read
+    /// its copy aliases.
+    fn owner_entity(&self, id: EntityId) -> EntityId {
+        id
+    }
 }
 
 /// One atom a holder holds: the whole native row, exact, or one copy of a
