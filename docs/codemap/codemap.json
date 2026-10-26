@@ -25442,7 +25442,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 13
      }
     },
@@ -25557,7 +25557,7 @@
      "path": "src/dreamer_runner/maintenance/agent_health/dials.rs",
      "purpose": "Dial resolution: each `HEALTH_*` dial read for a project and task type",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -25657,7 +25657,9 @@
      "path": "src/dreamer_runner/maintenance/agent_health/outcomes.rs",
      "purpose": "Reviewer outcome receipts (OF-568 L9, agent-mind §3.7: \"Score the reviewer\"; \"Health flags never move…",
      "surface": {
+      "const": 1,
       "crate-vis": 2,
+      "fn": 1,
       "struct": 1
      }
     },
@@ -25669,6 +25671,16 @@
      "purpose": "One review: detect, emit each finding as a DIAGNOSTIC, route and merge",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/agent_health/policy.rs",
+     "purpose": "The reviewer's policy (FIX 8075, agent-mind §3.8: \"The recipe is a skill\"): the in-force…",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -31074,7 +31086,7 @@
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -39665,7 +39677,7 @@
      "path": "src/llm/registry/installed_pack.rs",
      "purpose": "The shipped catalog is read from an installed first-party hub pack",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -39677,6 +39689,16 @@
      "purpose": "An erased row out of the registry rows' source sets (FIX 6933)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/registry/stored_rows.rs",
+     "purpose": "The registry's stored rows",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -58618,6 +58640,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_attribution/health_review.rs",
+     "purpose": "The reviewer-outcome bridge (FIX 8075, agent-mind §3.8: \"Card outcomes give it a reliability like any skill…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -58692,7 +58724,7 @@
      "path": "src/skill_attribution/mod.rs",
      "purpose": "ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 17
      }
     },
@@ -61121,7 +61153,7 @@
      "path": "src/skill_reliability/mod.rs",
      "purpose": "Bayesian skill retrieval over the shared learning.reliability projection",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "re-export": 7
      }
     },
@@ -61198,6 +61230,16 @@
      "purpose": "Per-resident version bandit over independently attributed fork receipts",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_reliability/rule_outcome.rs",
+     "purpose": "Outcomes of a rule skill (FIX 8075): a closed-form recipe with no model and no pack receipt behind its work…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -73232,7 +73274,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 19,
+      "fn": 21,
       "struct": 4,
       "trait": 2
      }
@@ -76779,7 +76821,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 160,
+     "files": 161,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77101,7 +77143,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 133,
+     "files": 134,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77521,7 +77563,7 @@
      "purpose": "SKILL entity: lifecycle machine, governance tier, canonical identity, codec, and Vault doors"
     },
     "skill_attribution": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77549,7 +77591,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…"
     },
     "skill_reliability": {
-     "files": 16,
+     "files": 17,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77810,7 +77852,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5113,
+   "source_files": 5117,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99327,9 +99369,6 @@
       "ProvenanceArgs",
       "ReembedArgs",
       "RevokeArgs",
-      "SeatCommand",
-      "SeatLoginPlanArgs",
-      "SeatRunnerPolicyArgs",
       "SkillsPackArgs",
       "TokenAgentArgs",
       "TokenBootstrapArgs",
@@ -99342,10 +99381,10 @@
      "path": "src/cli.rs",
      "purpose": "—",
      "surface": {
-      "enum": 12,
+      "enum": 11,
       "fn": 3,
-      "re-export": 13,
-      "struct": 22
+      "re-export": 14,
+      "struct": 20
      }
     },
     {
@@ -99515,6 +99554,22 @@
      "surface": {
       "enum": 1,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatCommand",
+      "SeatLoginPlanArgs",
+      "SeatRunnerPolicyArgs"
+     ],
+     "path": "src/cli/seat_args.rs",
+     "purpose": "`oneiron seat …` arguments: the official-seat sign-in surface (OF-375)",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -105998,7 +106053,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 7
+      "fn": 6
      }
     },
     {
@@ -106073,16 +106128,29 @@
       "RunnerProviderRow",
       "RunnerSeatDreamerExecutor",
       "RunnerSeatPolicySettings",
-      "RunnerSeatSettings",
-      "SeatLoginSurface",
-      "SeatRouteRow",
-      "SeatSettings"
+      "RunnerSeatSettings"
      ],
      "path": "src/runtime/seat_login.rs",
      "purpose": "Host surface for official subscription seats (OF-375)",
      "surface": {
-      "fn": 10,
-      "struct": 12
+      "fn": 6,
+      "re-export": 1,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatLoginSurface",
+      "SeatRouteRow",
+      "SeatSettings"
+     ],
+     "path": "src/runtime/seat_login/surface.rs",
+     "purpose": "The owner-facing half of an official seat (OF-375): the settings the owner writes, the sign-in surface built…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -106956,9 +107024,9 @@
      "path": "src/usage/model.rs",
      "purpose": "Provider-list money facts and per-vault usage counters",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 5,
-      "fn": 9,
+      "fn": 11,
       "struct": 10
      }
     },
@@ -107310,8 +107378,19 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/wire_health/evidence.rs",
+     "purpose": "What the health check reads: each kind of kept crossing past its cursor, as one subject's crossing, and how…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "LimitQuestions",
+      "WireCrossed",
       "WireLimitQuestion",
       "WireQuestion",
       "WireQuestionKind",
@@ -107325,7 +107404,7 @@
       "enum": 1,
       "fn": 11,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -107736,7 +107815,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -108065,7 +108144,7 @@
      "purpose": "The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a…"
     },
     "runtime": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -108135,10 +108214,10 @@
      "purpose": "Endpoint discovery and browser access for an external shared web client"
     },
     "wire_health": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
@@ -108151,7 +108230,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1262,
+   "source_files": 1265,
    "test_files": 182
   },
   "oneiron-spawn": {

@@ -45,6 +45,7 @@ mod loaded;
 mod moves;
 mod outcomes;
 mod pipeline;
+mod policy;
 mod rollups;
 mod run_loop;
 mod silence;
@@ -83,9 +84,10 @@ pub use moves::{
     ConcernMove, ConcernMoveBasis, ConcernMoveLink, ConcernMoveOutcome, ConcernMoveReceipt,
     ConcernMoveRequest,
 };
-pub use outcomes::HealthReviewReceipt;
+pub use outcomes::{HEALTH_REVIEW_RECEIPT_PREFIX, HealthReviewReceipt};
 pub(super) use pipeline::run;
 use pipeline::{add_recipients, land};
+pub(crate) use policy::{AGENT_HEALTH_REVIEW_SKILL_ID, REVIEWER_POLICY_FILE};
 pub use rollups::{
     HealthTrendRollup, HealthTrendRollups, TrendMargin, TrendRatio, TrendSignalTally, TrendSource,
     TrendSpendTally, TrendStratum, health_trend_rollups,
