@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::get;
 use oneiron::secret_custody::{
@@ -18,7 +17,7 @@ use oneiron::secret_custody::{
 use serde::{Deserialize, Serialize};
 
 use super::super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -145,10 +144,10 @@ async fn pending(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owner
 async fn release(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReleaseBody>, JsonRejection>,
+    payload: OwnerJsonBody<ReleaseBody>,
 ) -> OwnerReply<ReceiptView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ReceiptView> {
         let batch = entity_id("batch", &request.batch)?;
         let confirmation = PendingCredentialConfirmation::parse(&request.confirm)

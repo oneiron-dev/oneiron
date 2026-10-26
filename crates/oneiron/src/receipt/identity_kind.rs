@@ -3,12 +3,13 @@ use std::collections::BTreeMap;
 
 use super::kernel::{
     FIELD_AMENDED_BODY, FIELD_AMENDMENT_DELTA, FIELD_CLAIM_SOURCE, FIELD_OP_KIND,
-    FIELD_PROPOSAL_REF, FIELD_SCOPE_ACTOR, FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, ReceiptKind,
-    ReceiptQuery, ReceiptRecord, hex_lower,
+    FIELD_PROPOSAL_REF, FIELD_SCOPE_ACTOR, FIELD_TARGET_CLASS, ReceiptKind, ReceiptQuery,
+    ReceiptRecord, hex_lower,
 };
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::ChannelIdentityLifecycleReceiptRecord;
 
 /// Projects ARCH-0055 identity-topology ledger events (merge / split / undo
@@ -16,33 +17,26 @@ use crate::store::ChannelIdentityLifecycleReceiptRecord;
 /// An applied decision projects only once a seal this vault counts binds it
 /// (H161); a stranger's merge is no completed act here.
 ///
-/// Scans the type-76 record family NEWEST-FIRST (reverse type-index walk;
-/// UUIDv7 ids order by mint time) and caps EVERY visited row, including rows
-/// outside the query's `[start_at, end_at]` window. This is a bound on query
-/// work, not merely on returned candidates: an attacker-controlled backlog
-/// cannot force an unbounded ledger walk. Because mint order is not `at`
-/// order, this bounded scan can starve an older-minted in-window receipt;
-/// avoiding that requires an `at`-ordered index or cursor pagination. The
-/// family is engine-authored and door-validated: an undecodable row is
-/// corruption, never skipped. Production passes [`MAX_RECEIPT_QUERY_SCAN`] as
-/// `scan_cap`; local tests inject a small cap to prove the bound without a
-/// 100k-row vault.
+/// Scans the whole type-76 record family NEWEST-FIRST (reverse type-index
+/// walk; UUIDv7 ids order by mint time), rows outside the query's
+/// `[start_at, end_at]` window included, so no older-minted in-window
+/// receipt is starved (FIX 3582). Past its threshold row the walk raises one
+/// check and reads on (rule 5). The family is engine-authored and
+/// door-validated: an undecodable row is corruption, never skipped.
 pub(super) fn identity_topology_receipts(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     query: &ReceiptQuery,
-    scan_cap: usize,
 ) -> Result<Vec<ReceiptRecord>> {
     let mut receipts = Vec::new();
     let mut trust = crate::identity_topology::SealTrust::default();
+    let topology = crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
+    let mut count = ScanCount::start(&vault.store, rtxn, EngineScan::TypeIndexRows, &[topology])?;
     for entry in vault
         .store
-        .port_entity_ids_by_type_descending(
-            rtxn,
-            crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-        )?
-        .take(scan_cap)
+        .port_entity_ids_by_type_descending(rtxn, topology)?
     {
+        count.row();
         let event_id = entry?;
         let mut record = vault
             .identity_topology_event_in_txn(rtxn, &event_id)?
@@ -110,6 +104,7 @@ pub(super) fn identity_topology_receipts(
             receipts.push(receipt);
         }
     }
+    count.finish(vault);
     Ok(receipts)
 }
 
@@ -302,15 +297,27 @@ fn identity_topology_receipt(
     }
 }
 
+/// Every channel identity lifecycle receipt `query` matches: the ledger is
+/// read to its end (FIX 3582), and past its threshold row the read raises
+/// one check (rule 5).
 pub(super) fn channel_identity_lifecycle_receipts(
     vault: &Vault,
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
+    let mut count = {
+        let txn = vault.store.env.read_txn()?;
+        ScanCount::start(
+            &vault.store,
+            &txn,
+            EngineScan::ReceiptSourceRows,
+            b"channel_identity_lifecycle",
+        )?
+    };
+    let records = vault.store.channel_identity_lifecycle_receipts(usize::MAX)?;
+    count.rows(records.len());
+    count.finish(vault);
     let mut receipts = Vec::new();
-    for record in vault
-        .store
-        .channel_identity_lifecycle_receipts(MAX_RECEIPT_QUERY_SCAN)?
-    {
+    for record in records {
         let receipt = channel_identity_lifecycle_receipt(&record);
         if query.matches(&receipt) {
             receipts.push(receipt);
