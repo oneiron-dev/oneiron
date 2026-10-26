@@ -26532,6 +26532,12 @@ pub struct CleanupReviewItem {
     pub content: Option<CleanupReviewContent>,
     #[serde(rename = "accept")]
     pub accept: CleanupAcceptEffect,
+    #[serde(
+        rename = "changed_during_review",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub changed_during_review: Option<bool>,
 }
 
 /// `oneiron::vault_cleanup::review_types::CleanupReviewView`.

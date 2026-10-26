@@ -36,7 +36,12 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 
+mod derived;
 mod invalidate;
+pub(crate) use derived::{
+    RepoDerivedIndexSources, repo_derived_dependents_in, repo_derived_index_sources_in,
+    repo_source_identity_in,
+};
 pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 
 /// The domain of a copy stamp's fingerprint.
@@ -298,6 +303,27 @@ impl RepoIndexMarks {
                     .any(|(_, value)| self.is_marked(blake3::hash(value.as_bytes()).as_bytes())))
     }
 
+    /// [`Self::touches`], or record `entity` is a text a model derived from
+    /// a marked blob (FIX 10405), which indexes only its safe copy.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn touches_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        body: &[u8],
+        fields: &[(String, String)],
+    ) -> Result<bool> {
+        if self.touches(entity, body, fields) {
+            return Ok(true);
+        }
+        Ok(!self.is_empty()
+            && crate::embed::repo_derived_index_text_in(vault, &vault.store, txn, self, entity)?
+                .is_some())
+    }
+
     /// `bytes` as an index reads them, joined by their own whole BLAKE3.
     ///
     /// # Errors
@@ -386,7 +412,8 @@ impl RepoIndexMarks {
     }
 
     /// The body record `entity` indexes from: a marked blob's snapshot ASSET
-    /// reads its copy, any other body by its own whole BLAKE3.
+    /// reads its copy, a text a model derived from a marked blob its safe
+    /// copy (FIX 10405), any other body by its own whole BLAKE3.
     ///
     /// # Errors
     /// As [`Self::input_in_txn`].
@@ -402,7 +429,18 @@ impl RepoIndexMarks {
         }
         Ok(match self.source_of(entity) {
             Some(source) => self.source_input_in_txn(vault, txn, &source, body)?,
-            None => self.input_in_txn(vault, txn, body)?,
+            None => {
+                if let Some(text) = crate::embed::repo_derived_index_text_in(
+                    vault,
+                    &vault.store,
+                    txn,
+                    self,
+                    entity,
+                )? {
+                    return Ok(text.into_bytes());
+                }
+                self.input_in_txn(vault, txn, body)?
+            }
         }
         .into_bytes())
     }
@@ -413,8 +451,10 @@ impl RepoIndexMarks {
     /// bytes, else the placeholder. Its other fields keep their text unless
     /// they are a marked blob's bytes, and an opaque blob's record reads the
     /// placeholder in every field, never its old title or tags. Any other
-    /// record's field is a copy only when it is a marked blob's whole bytes.
-    /// Every field stays, so the record stays searchable.
+    /// record's field is a copy only when it is a marked blob's whole bytes,
+    /// except a text a model derived from a marked blob, whose first field is
+    /// its safe copy and every other the placeholder (FIX 10405). Every field
+    /// stays, so the record stays searchable.
     ///
     /// # Errors
     /// As [`Self::input_in_txn`].
@@ -429,6 +469,11 @@ impl RepoIndexMarks {
             return Ok(fields);
         }
         let Some(source) = self.source_of(entity) else {
+            if let Some(text) =
+                crate::embed::repo_derived_index_text_in(vault, &vault.store, txn, self, entity)?
+            {
+                return Ok(crate::embed::repo_derived_fields(fields, text));
+            }
             return fields
                 .into_iter()
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))

@@ -572,6 +572,10 @@ side_tables! {
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;
     /// Repo-conflict claim to reconciliation task. Key: id16.
     REPO_CONFLICT_RECONCILIATION_INDEX: VaultMeta b"repo_conflict:reconciliation:v1:" Raw;
+    /// The safe index copy of a text a model derived from a marked repo blob, or of a probe query
+    /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
+    /// secret value. Key: u8 (owner kind) + id16.
+    REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named
