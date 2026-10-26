@@ -103,8 +103,11 @@ impl SyncSecretProjection {
         if self.is_empty() {
             return Ok(None);
         }
+        // A blob whose import metadata does not decode has unread contents:
+        // while any mark exists it is withheld and stays owed, never sent
+        // raw (FIX 10831).
         let Some(input) = meta(encoded) else {
-            return Ok(None);
+            return Err(Error::InvariantViolation(UNMASKABLE));
         };
         match input.mode {
             EncodedBlobMode::Snapshot | EncodedBlobMode::ShallowSnapshot => {
