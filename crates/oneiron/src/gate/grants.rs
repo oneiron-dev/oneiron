@@ -203,9 +203,10 @@ pub(crate) fn scoped_read_note_allowed(
 /// the read ceilings `held`, met per Grant, never a union across Grants.
 /// `None` where no applicable Grant names `actor` (the rows
 /// [`record_allowed_held`] judges: a read effector, the actor's own, no
-/// receipt or budget), or where a Grant's selectors do not decode, so the
-/// caller's path stays today's. World axis only: no other selector key, no
-/// position or placement is judged here.
+/// receipt or budget), or where no decoded Grant witnesses a world and an
+/// applicable Grant's selectors do not decode: unknown, never a denial, so
+/// the caller's path stays today's. World axis only: no other selector key,
+/// no position or placement is judged here.
 pub(crate) fn scoped_read_note_world_witness(
     policy: &PolicyManifestResolution,
     actor: &ScopedReadActorKey,
@@ -214,6 +215,7 @@ pub(crate) fn scoped_read_note_world_witness(
 ) -> Option<bool> {
     let proof = actor.authority_scope().map(|scope| &scope.worlds);
     let mut applicable = false;
+    let mut undecoded = false;
     for grant in policy.scoped_grants().iter().filter(|grant| {
         scoped_read_grant_has_read_effector(grant)
             && scoped_read_actor_matches(grant, actor)
@@ -221,6 +223,7 @@ pub(crate) fn scoped_read_note_world_witness(
             && grant.budget.is_none()
     }) {
         let Some(selected) = selector_world_axis(grant.scope.as_ref()) else {
+            undecoded = true;
             continue;
         };
         applicable = true;
@@ -231,7 +234,7 @@ pub(crate) fn scoped_read_note_world_witness(
             return Some(true);
         }
     }
-    applicable.then_some(false)
+    (applicable && !undecoded).then_some(false)
 }
 
 /// A read Grant's selector world alone, decoded as its full selectors are:

@@ -1,6 +1,7 @@
 //! Post-consent execution and the live registry projection.
 use super::claim::{PREDICATE_PLUGIN_SECTION_INSTALL, PluginInstallClaimPayload};
 use super::errors::{PluginResult, PluginSectionError};
+use super::fit_install::section_install_authorized;
 use super::install::ValidatedSectionManifest;
 use super::manifest::{
     ApprovedPluginIdentity, PluginInstallExecutor, SectionBindingResolver, SectionId,
@@ -185,8 +186,9 @@ impl PluginSectionRegistry {
         Ok(())
     }
 
-    /// Startup/restart rebuild: derives the same projection from approved
-    /// install claims plus exact `Active` skill records. Admits ONLY exact
+    /// Startup/restart rebuild: derives the same projection from authorized
+    /// install claims (owner-approved, or receipted after a ready fit) plus
+    /// exact `Active` skill records. Admits ONLY exact
     /// `Active` skills — a Candidate, Stale, Quarantined, Superseded, missing,
     /// or hash-mismatched pack simply does not appear.
     ///
@@ -203,18 +205,17 @@ impl PluginSectionRegistry {
             .map_err(crate::error::Error::from)?;
         let mut rows =
             vault.claims_with_predicate_in_txn(&rtxn, PREDICATE_PLUGIN_SECTION_INSTALL)?;
+        // The owner's consent or a ready fit's receipt authorizes a claim
+        // (FIX 9752); anything that fails to read authorizes nothing.
+        rows.retain(|(id, body)| {
+            section_install_authorized(vault, &rtxn, id, body).unwrap_or(false)
+        });
         drop(rtxn);
         rows.sort_by_key(|(id, _)| *id.as_bytes());
 
         let mut admitted: BTreeMap<SectionId, AdmittedPluginSection> = BTreeMap::new();
         let mut poisoned: BTreeSet<SectionId> = BTreeSet::new();
         for (claim_id, body) in rows {
-            if body.approval != ClaimApprovalStatus::Approved
-                || body.lifecycle != ClaimLifecycleStatus::Active
-                || body.stale
-            {
-                continue;
-            }
             let Ok(payload) = PluginInstallClaimPayload::from_value(&body.value) else {
                 continue;
             };
