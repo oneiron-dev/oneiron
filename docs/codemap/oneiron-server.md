@@ -894,6 +894,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
 | `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
 | `src/device_sync/renewal.rs` | src | m | 7 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
+| `src/device_sync/route.rs` | src | s | 5 crate-vis | — | FIX 3131: the home device sync dials over the mesh |
 | `src/document_memory.rs` | src | s | 1 crate-vis | — | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `src/embedded.rs` | src | m | 1 fn · 5 re-export · 7 crate-vis | — | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
 | `src/embedded/blocking.rs` | src | m | 4 struct · 15 fn | BlockingBody, BlockingConnection, BlockingEngine, BlockingReply | The embedded engine for a binding whose callers are app threads (OF-237): [`BlockingEngine`] runs an… |
