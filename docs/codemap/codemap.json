@@ -80628,6 +80628,7 @@
      "path": "src/federation/scope.rs",
      "purpose": "One Scope: six-axis audience lattice with explicit bottom on every wire axis",
      "surface": {
+      "const": 1,
       "enum": 3,
       "fn": 13,
       "struct": 2,
@@ -114578,7 +114579,7 @@
       "SelfUiValue",
       "Sensitivity",
       "SensitivityBand",
-      "SensitivityCeiling",
+      "SensitivityCeilingWire",
       "SensitivityName",
       "SeriesField",
       "ServedAssetForm",

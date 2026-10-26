@@ -53,7 +53,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/mod.rs` | src | s | 7 mod · 4 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |
 | `src/federation/pact_scope.rs` | src | m | 4 struct · 17 fn · 1 const · 1 re-export | Ceiling, FederationDirectionScope, FederationPactScope, Position | Pact direction scope: the worlds, facets and bands axes as `ScopeAxis` lattices, and their one canonical codec |
 | `src/federation/repo_scope.rs` | src | m | 2 struct · 2 enum · 10 fn · 2 const | RepoAccessBounds, RepoAccessIntent, RepoAccessRefusal, RepoTarget | Repo access bounds on an owner's agent Grant, and the pure admission of a repo target under them (FIX 6867… |
-| `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
+| `src/federation/scope.rs` | src | m | 2 struct · 3 enum · 1 trait · 13 fn · 1 const | Scope, ScopeAtom, ScopeAxis, ScopeId, Sensitivity, SensitivityCeiling | One Scope: six-axis audience lattice with explicit bottom on every wire axis |
 | `src/federation/scope_codec.rs` | src | s | 5 fn | — | Canonical MessagePack bridge for six-axis Scope positions and grant presets |
 | `src/federation/selector_kind.rs` | src | s | 1 enum · 6 fn | SelectorRange | Replication vocabulary keyed on declared classification and family, never byte ranges |
 | `src/lib.rs` | src | s | 4 mod | — | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… |
