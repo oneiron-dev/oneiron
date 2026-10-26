@@ -124,7 +124,9 @@ fn assignment(bytes: &[u8], start: usize, end: usize) -> Option<(RepoEnvEntry, u
                 .find(|&i| {
                     bytes.get(i) == Some(&b'#')
                         && i > at
-                        && bytes.get(i - 1).is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+                        && bytes
+                            .get(i - 1)
+                            .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
                 })
                 .unwrap_or(end);
             (at..trimmed_end(bytes, at, stop), end + 1)
@@ -154,7 +156,11 @@ fn line_end(bytes: &[u8], start: usize) -> usize {
 /// The first offset from `start` before `end` that is no space or tab.
 fn blank_end(bytes: &[u8], start: usize, end: usize) -> usize {
     (start..end)
-        .find(|&i| !bytes.get(i).is_some_and(|byte| matches!(byte, b' ' | b'\t')))
+        .find(|&i| {
+            !bytes
+                .get(i)
+                .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        })
         .unwrap_or(end)
 }
 
@@ -183,7 +189,11 @@ fn closing_quote(bytes: &[u8], start: usize, quote: u8) -> Option<usize> {
         if quote == b'\'' && byte == b'\n' {
             return None;
         }
-        at += if byte == b'\\' && quote != b'\'' { 2 } else { 1 };
+        at += if byte == b'\\' && quote != b'\'' {
+            2
+        } else {
+            1
+        };
     }
     None
 }
