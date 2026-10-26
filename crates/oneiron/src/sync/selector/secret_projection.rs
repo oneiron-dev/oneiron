@@ -60,6 +60,7 @@ use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_projection::index::{RepoIndexCopyKind, RepoIndexMarks};
+use crate::origin::secret_projection::types::REPO_OPAQUE_FILE_BYTES;
 use crate::ports::EntityStoreRead;
 use crate::secret_custody::KeyPlaces;
 
@@ -108,6 +109,11 @@ struct BlobCopy {
 pub(crate) struct SyncSecretProjection {
     /// Each marked blob's copy, by the blob's whole BLAKE3.
     blobs: BTreeMap<[u8; 32], BlobCopy>,
+    /// Each marked blob whose copy this pass could not make (a mark that
+    /// does not decode, a stored-bytes, mask or projection failure), by its
+    /// whole BLAKE3: only the items it could mark take the marked path's
+    /// fail-safe, never its stored bytes (FIX 10793).
+    unread: BTreeMap<[u8; 32], RepoSyncProjectionId>,
     /// Marked snapshot ASSET id -> its blob's whole BLAKE3.
     sources: BTreeMap<EntityId, [u8; 32]>,
     /// Copy id -> the snapshot ASSET it stands for (injective).
@@ -116,6 +122,22 @@ pub(crate) struct SyncSecretProjection {
     /// its own id.
     copy_bodies: BTreeMap<[u8; 32], [u8; 32]>,
 }
+
+/// What one item is this pass: the per-item answer every release reads.
+pub(crate) enum ItemCopy<'p> {
+    /// Provably no marked item: its stored bytes, as today.
+    Unmarked,
+    /// A marked item: `bytes` under `key` (the copy id for a marked
+    /// snapshot ASSET, the item's own id otherwise).
+    Copy { key: EntityId, bytes: &'p [u8] },
+    /// An item a marked blob whose copy is unread names: the sealed-file
+    /// placeholder for an export, withheld for a window frame.
+    Unread { key: EntityId },
+}
+
+/// The stamp an unread copy is fingerprinted by: no real stamp is all
+/// zero, so a copy read again later is a new generation.
+const UNREAD_STAMP: [u8; 32] = [0; 32];
 
 impl SyncSecretProjection {
     /// The rules a sync copy and its id are made by (CALL 4-I, ruling (e),
@@ -134,69 +156,119 @@ impl SyncSecretProjection {
     }
 
     /// The copies `txn` reads: one mark walk, one projection per marked
-    /// blob.
+    /// blob. A blob whose copy fails is unread for this pass: only the
+    /// items it could mark fail safe (FIX 10793).
     ///
     /// # Errors
-    /// A store failure, or a mark that does not decode. A masked lookup's
-    /// store error propagates; nothing falls back to the stored bytes.
+    /// A store failure in the walk, or a mark that does not decode and
+    /// names no blob: no item is then provably unmarked. Nothing falls back
+    /// to the stored bytes.
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
-        let marks = RepoIndexMarks::read_in_txn(vault, txn)?;
+        let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
         let mut projection = Self {
             blobs: BTreeMap::new(),
+            unread: BTreeMap::new(),
             sources: BTreeMap::new(),
             copies: BTreeMap::new(),
             copy_bodies: BTreeMap::new(),
         };
         for (source, hash) in marks.marked_sources() {
-            let stored = vault
-                .store
-                .port_entity_raw(txn, &source)?
-                .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
-                .filter(|body| blake3::hash(body).as_bytes() == &hash);
-            // Without its stored bytes the projector answers the sealed-file
-            // placeholder: never an exact fallback.
-            let input =
-                marks.source_input_in_txn(vault, txn, &hash, stored.clone().unwrap_or_default())?;
-            let Some(stamp) = input.stamp().cloned() else {
-                continue;
-            };
-            let places = match (&stored, stamp.kind) {
-                (Some(_), RepoIndexCopyKind::Masked) => {
-                    marks.copy_places_in_txn(vault, txn, &hash)?
-                }
-                _ => None,
-            };
-            let copy = input.into_bytes();
             let id = RepoSyncProjectionId {
                 source,
                 copy: copy_id(&source)?,
             };
+            match blob_copy_in_txn(vault, txn, &marks, id, hash) {
+                Ok(None) => continue,
+                Ok(Some(blob)) => {
+                    projection
+                        .copy_bodies
+                        .insert(*blake3::hash(&blob.copy).as_bytes(), hash);
+                    projection.blobs.insert(hash, blob);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "sync: a marked repo copy is unreadable; only the items it marks fail safe"
+                    );
+                    projection.unread.insert(hash, id);
+                }
+            }
             projection.sources.insert(source, hash);
             projection.copies.insert(id.copy, source);
-            projection.copy_bodies.insert(stamp.copy_blake3, hash);
-            projection.blobs.insert(
-                hash,
-                BlobCopy {
-                    id,
-                    stored,
-                    copy,
-                    places,
-                    stamp: stamp.fingerprint(),
-                },
-            );
         }
         Ok(projection)
     }
 
     /// No marked repo item: every release is today's bytes.
     pub(crate) fn is_empty(&self) -> bool {
-        self.blobs.is_empty()
+        self.blobs.is_empty() && self.unread.is_empty()
     }
 
     /// The copy id a peer knows the marked snapshot ASSET `source` by.
     pub(crate) fn copy_of(&self, source: &EntityId) -> Option<EntityId> {
-        let hash = self.sources.get(source)?;
-        self.blobs.get(hash).map(|blob| blob.id.copy)
+        self.sources
+            .get(source)
+            .and_then(|hash| self.id_of(hash))
+            .map(|id| id.copy)
+    }
+
+    /// The source and copy ids of the marked blob `hash`, read or not.
+    fn id_of(&self, hash: &[u8; 32]) -> Option<RepoSyncProjectionId> {
+        self.blobs
+            .get(hash)
+            .map(|blob| blob.id)
+            .or_else(|| self.unread.get(hash).copied())
+    }
+
+    /// What item `id`, whose body is `body`, is this pass. A marked snapshot
+    /// ASSET moves to its copy id (its own exact bytes masked, any other body
+    /// the placeholder); a known copy id keeps its id and carries its
+    /// source's current copy, unless it already holds it (FIX 10795); any
+    /// other item whose body is a marked blob's whole bytes keeps its id.
+    pub(crate) fn item(&self, id: &EntityId, body: &[u8]) -> ItemCopy<'_> {
+        if self.is_empty() {
+            return ItemCopy::Unmarked;
+        }
+        let hash = *blake3::hash(body).as_bytes();
+        // The marked blob `id` is bound to by id, and the copy id it keeps
+        // when it is a copy id itself.
+        let bound = match (self.sources.get(id), self.copies.get(id)) {
+            (Some(marked), _) => Some((*marked, None)),
+            (None, Some(source)) => self.sources.get(source).map(|marked| (*marked, Some(*id))),
+            (None, None) => None,
+        };
+        if let Some((marked, copy_key)) = bound {
+            let Some(blob) = self.blobs.get(&marked) else {
+                return match (copy_key, self.unread.get(&marked)) {
+                    (Some(key), _) => ItemCopy::Unread { key },
+                    (None, Some(unread)) => ItemCopy::Unread { key: unread.copy },
+                    (None, None) => ItemCopy::Unmarked,
+                };
+            };
+            return match copy_key {
+                Some(_) if self.copy_bodies.get(&hash) == Some(&marked) => ItemCopy::Unmarked,
+                Some(key) => ItemCopy::Copy {
+                    key,
+                    bytes: blob.copy.as_slice(),
+                },
+                None => ItemCopy::Copy {
+                    key: blob.id.copy,
+                    bytes: if hash == marked {
+                        blob.copy.as_slice()
+                    } else {
+                        REPO_OPAQUE_FILE_BYTES
+                    },
+                },
+            };
+        }
+        match (self.blobs.get(&hash), self.unread.contains_key(&hash)) {
+            (Some(blob), _) => ItemCopy::Copy {
+                key: *id,
+                bytes: blob.copy.as_slice(),
+            },
+            (None, true) => ItemCopy::Unread { key: *id },
+            (None, false) => ItemCopy::Unmarked,
+        }
     }
 
     /// The marked snapshot ASSET the copy id `copy` stands for.
@@ -232,17 +304,26 @@ impl SyncSecretProjection {
         let mut hasher = blake3::Hasher::new_derive_key(GENERATION_CONTEXT);
         hasher.update(&Self::SCHEMA.to_be_bytes());
         for source in carried {
-            let Some(blob) = self
+            let Some(stamp) = self
                 .sources
                 .get(&source)
-                .and_then(|hash| self.blobs.get(hash))
+                .and_then(|hash| self.stamp_of(hash))
             else {
                 continue;
             };
             hasher.update(source.as_bytes());
-            hasher.update(&blob.stamp);
+            hasher.update(&stamp);
         }
         *hasher.finalize().as_bytes()
+    }
+
+    /// The stamp of the marked blob `hash`'s copy; [`UNREAD_STAMP`] for an
+    /// unread one.
+    fn stamp_of(&self, hash: &[u8; 32]) -> Option<[u8; 32]> {
+        match self.blobs.get(hash) {
+            Some(blob) => Some(blob.stamp),
+            None => self.unread.contains_key(hash).then_some(UNREAD_STAMP),
+        }
     }
 
     /// The blob copy a marked snapshot ASSET stands for.
@@ -251,6 +332,42 @@ impl SyncSecretProjection {
             .get(source)
             .and_then(|hash| self.blobs.get(hash))
     }
+}
+
+/// The copy of the marked blob `hash`, whose snapshot ASSET is `id.source`;
+/// `None` when its marks leave it exact.
+///
+/// # Errors
+/// A store failure, or this blob's own marks or mask row not reading.
+fn blob_copy_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    marks: &RepoIndexMarks,
+    id: RepoSyncProjectionId,
+    hash: [u8; 32],
+) -> Result<Option<BlobCopy>> {
+    let stored = vault
+        .store
+        .port_entity_raw(txn, &id.source)?
+        .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
+        .filter(|body| blake3::hash(body).as_bytes() == &hash);
+    // Without its stored bytes the projector answers the sealed-file
+    // placeholder: never an exact fallback.
+    let input = marks.source_input_in_txn(vault, txn, &hash, stored.clone().unwrap_or_default())?;
+    let Some(stamp) = input.stamp().cloned() else {
+        return Ok(None);
+    };
+    let places = match (&stored, stamp.kind) {
+        (Some(_), RepoIndexCopyKind::Masked) => marks.copy_places_in_txn(vault, txn, &hash)?,
+        _ => None,
+    };
+    Ok(Some(BlobCopy {
+        id,
+        stored,
+        copy: input.into_bytes(),
+        places,
+        stamp: stamp.fingerprint(),
+    }))
 }
 
 /// The copy id of the marked snapshot ASSET `source`: an ASSET id (the

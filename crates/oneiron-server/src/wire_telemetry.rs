@@ -8,12 +8,15 @@ use oneiron::task_verb::sdk::{
 use oneiron::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 const RECEIPT: &str = "wire:window:v2:";
-const QUESTION: &str = "wire:question:v2:";
+/// Each call-volume question as it was kept, under its sequence (FIX 9531).
+const QUESTION_SEQ: &str = "wire:question:v2:seq:";
+/// Each window's call-volume questions, under the window: their sequences.
+const QUESTION_WINDOW: &str = "wire:question:v2:window:";
 const LIMIT_QUESTION: &str = "wire:limit-question:v1:";
 /// A row keeps one question for each window of this many seconds, and counts
 /// every crossing in the window in it.
@@ -48,10 +51,40 @@ pub enum WireQuestionKind {
     /// the owner's wire-health read (FIX 7656).
     InspectConnectionPoolPressure,
 }
+/// One call-volume question, kept once and never rewritten: a window asks
+/// again each time another actor or verb crosses its row (FIX 9531).
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WireQuestion {
     pub kind: WireQuestionKind,
+    /// Its place among every call-volume question this vault kept, in the
+    /// order they were kept, a later write to an earlier window's included.
+    pub seq: u64,
+    /// Every actor and verb past its row in the window when it was kept.
+    pub crossed: WireCrossed,
     pub evidence: WireWindowReceipt,
+}
+/// Who and what crossed their rows in one window: every one of them, never
+/// only the busiest.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WireCrossed {
+    pub actors: BTreeSet<String>,
+    pub verbs: BTreeSet<String>,
+}
+impl WireCrossed {
+    /// Every actor and verb `window` counts past its row in `thresholds`.
+    fn of(window: &WireWindowReceipt, thresholds: &WireThresholds) -> Self {
+        let over = |counts: &BTreeMap<String, u64>, row: u64| {
+            counts
+                .iter()
+                .filter(|(_, calls)| **calls > row)
+                .map(|(name, _)| name.clone())
+                .collect()
+        };
+        Self {
+            actors: over(&window.by_actor, thresholds.per_actor),
+            verbs: over(&window.by_verb, thresholds.per_verb),
+        }
+    }
 }
 
 mod connection_pressure;
@@ -246,7 +279,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[derive(Default)]
 struct Active {
     window: Option<WireWindowReceipt>,
-    asked: bool,
+    /// Who and what the window's latest kept question names as crossed.
+    asked: WireCrossed,
+    /// The sequence the next kept question takes, once read (FIX 9531).
+    next_seq: Option<u64>,
     persisted: bool,
     frozen: bool,
 }
@@ -277,16 +313,39 @@ fn count_in(counts: &mut BTreeMap<String, u64>, key: &str) -> u64 {
     *count = count.saturating_add(1);
     *count
 }
-/// Counts one call of `verb` by `actor`; whether either crossed its row.
+/// Counts into `window` what `kept`, an earlier copy of the same window,
+/// counted further: a question's counts are kept before its window's are,
+/// and every count only grows, so the greater of the two is the later.
+fn resume(window: &mut WireWindowReceipt, kept: &WireWindowReceipt) {
+    let further = |into: &mut BTreeMap<String, u64>, from: &BTreeMap<String, u64>| {
+        for (key, count) in from {
+            let at = into.entry(key.clone()).or_default();
+            *at = (*at).max(*count);
+        }
+    };
+    further(&mut window.by_verb, &kept.by_verb);
+    further(&mut window.by_actor, &kept.by_actor);
+    further(&mut window.mcp_envelopes, &kept.mcp_envelopes);
+    further(&mut window.mcp_errors, &kept.mcp_errors);
+    for (actor, tools) in &kept.by_actor_tool {
+        further(
+            window.by_actor_tool.entry(actor.clone()).or_default(),
+            tools,
+        );
+    }
+}
+/// Counts one call of `verb` by `actor`; whether either is past its row and
+/// not yet named by the window's questions: a new crossing (FIX 9531).
 fn count_call(
     window: &mut WireWindowReceipt,
     thresholds: &WireThresholds,
-    verb: &str,
-    actor: &str,
+    asked: &WireCrossed,
+    (verb, actor): (&str, &str),
 ) -> bool {
     let verb_crossed = count_in(&mut window.by_verb, verb) > thresholds.per_verb;
     let actor_crossed = count_in(&mut window.by_actor, actor) > thresholds.per_actor;
-    verb_crossed || actor_crossed
+    (verb_crossed && !asked.verbs.contains(verb))
+        || (actor_crossed && !asked.actors.contains(actor))
 }
 impl WireTelemetry {
     pub fn new(vault: Arc<Vault>) -> Self {
@@ -409,47 +468,46 @@ impl WireTelemetry {
     /// credential. A persistence error is telemetry loss, NOT a service denial.
     pub fn record(&self, verb: &str, actor: &str, now: u64) -> Result<()> {
         check_keys(verb, actor)?;
-        self.observe(now, |window, thresholds| {
-            count_call(window, thresholds, verb, actor)
-        })
+        self.observe(now, Some((verb, actor)), |_| {})
     }
     /// Records one MCP `tools/call` of a registered tool, under its logical
     /// key and the caller the gateway resolved (FIX 1085): one call in the
     /// totals the thresholds read, and in which tool that caller called.
     pub(crate) fn record_mcp_call(&self, tool: &str, actor: &str, now: u64) -> Result<()> {
         check_keys(tool, actor)?;
-        self.observe(now, |window, thresholds| {
+        self.observe(now, Some((tool, actor)), |window| {
             count_in(window.by_actor_tool.entry(actor.into()).or_default(), tool);
-            count_call(window, thresholds, tool, actor)
         })
     }
     /// Records one MCP envelope on its matched route: evidence beside the
     /// calls, which no threshold counts.
     pub(crate) fn record_mcp_envelope(&self, route: &str, now: u64) -> Result<()> {
-        self.observe(now, |window, _| {
+        self.observe(now, None, |window| {
             count_in(&mut window.mcp_envelopes, route);
-            false
         })
     }
     /// Records one MCP reply refused with no tool call's receipt over it,
     /// under its fixed category and no caller: evidence no threshold counts.
     pub(crate) fn record_mcp_error(&self, category: &str, now: u64) -> Result<()> {
-        self.observe(now, |window, _| {
+        self.observe(now, None, |window| {
             count_in(&mut window.mcp_errors, category);
-            false
         })
     }
-    /// Counts in the window `now` falls in, kept and rolled over first;
-    /// `count` says whether a call crossed its row, which asks once a window.
+    /// Counts in the window `now` falls in, kept and rolled over first: a
+    /// `call`'s verb and actor in the totals the rows read, and `count`'s
+    /// evidence beside them. Each call that puts another verb or actor past
+    /// its row asks: the window as it stands is kept as the next question.
     fn observe(
         &self,
         now: u64,
-        count: impl FnOnce(&mut WireWindowReceipt, &WireThresholds) -> bool,
+        call: Option<(&str, &str)>,
+        count: impl FnOnce(&mut WireWindowReceipt),
     ) -> Result<()> {
         let mut active = self
             .active
             .lock()
             .map_err(|_| Error::CorruptedIndex("wire counter lock"))?;
+        let active = &mut *active;
         if active.frozen {
             return Ok(());
         }
@@ -462,33 +520,123 @@ impl WireTelemetry {
             if let Some(prior) = &active.window {
                 self.persist(prior)?;
             }
-            active.asked = self.question(start, end)?.is_some();
-            let restored = self.receipt(start, end)?;
-            active.window = Some(restored.unwrap_or_else(|| WireWindowReceipt {
-                started_at: start,
-                ended_at: end,
-                ..Default::default()
-            }));
+            let mut restored = self
+                .receipt(start, end)?
+                .unwrap_or_else(|| WireWindowReceipt {
+                    started_at: start,
+                    ended_at: end,
+                    ..Default::default()
+                });
+            active.asked = match self.question(start, end)? {
+                Some(question) => {
+                    resume(&mut restored, &question.evidence);
+                    question.crossed
+                }
+                None => WireCrossed::default(),
+            };
+            active.window = Some(restored);
+            self.restore_newest(active, start, end)?;
         }
         let window = active.window.as_mut().expect("installed above");
-        let crossed = count(window, &thresholds);
+        count(window);
         active.persisted = false;
-        if crossed && !active.asked {
-            let question = WireQuestion {
-                kind: WireQuestionKind::InspectCallVolume,
-                evidence: active.window.clone().expect("window"),
-            };
-            let key = format!("{QUESTION}{start:020}:{end:020}");
-            self.vault.with_write_txn_grouped(|txn| {
-                if self.vault.sync_state_get_in_write_txn(txn, &key)?.is_none() {
-                    self.vault
-                        .sync_state_put_in_write_txn(txn, &key, &encode(&question)?)?;
-                }
-                Ok(())
-            })?;
-            active.asked = true;
+        let crossed = call.is_some_and(|call| count_call(window, &thresholds, &active.asked, call));
+        if crossed {
+            let crossed = WireCrossed::of(window, &thresholds);
+            let seq = self.keep_question(window, &crossed, active.next_seq)?;
+            active.next_seq = Some(seq.saturating_add(1));
+            active.asked = crossed;
+            self.index_question(window, seq)?;
         }
         Ok(())
+    }
+    /// Counts into the window just installed, `start`..`end`, the newest
+    /// call-volume question kept, when it is that window's: then it is the
+    /// window's latest, which its index may not name, as a question is kept
+    /// before its window's row names it (FIX 9531). A restart so resumes a
+    /// question whose index row never committed. The sequence is read once
+    /// per server, and the first question kept takes it.
+    fn restore_newest(&self, active: &mut Active, start: u64, end: u64) -> Result<()> {
+        let next = match active.next_seq {
+            Some(next) => next,
+            None => self.next_question_seq()?,
+        };
+        active.next_seq = Some(next);
+        let Some(seq) = next.checked_sub(1) else {
+            return Ok(());
+        };
+        let Some(question) = self
+            .vault
+            .sync_state_get(&format!("{QUESTION_SEQ}{seq:020}"))?
+            .map(|b| decode::<WireQuestion>(&b))
+            .transpose()?
+        else {
+            return Ok(());
+        };
+        if question.seq != seq {
+            return Err(Error::CorruptedIndex("wire question identity"));
+        }
+        if question.evidence.started_at != start || question.evidence.ended_at != end {
+            return Ok(());
+        }
+        if let Some(window) = active.window.as_mut() {
+            resume(window, &question.evidence);
+        }
+        active.asked = question.crossed;
+        Ok(())
+    }
+    /// Keeps `window` as the next call-volume question, naming `crossed`,
+    /// under the sequence `next`, or the vault's next when this server has
+    /// kept none yet or another question holds `next`. The row goes through
+    /// the telemetry door that only adds (FIX 10300): a kept question is
+    /// never rewritten, and no sequence is reused. The sequence it took.
+    fn keep_question(
+        &self,
+        window: &WireWindowReceipt,
+        crossed: &WireCrossed,
+        next: Option<u64>,
+    ) -> Result<u64> {
+        let mut seq = match next {
+            Some(seq) => seq,
+            None => self.next_question_seq()?,
+        };
+        loop {
+            let question = WireQuestion {
+                kind: WireQuestionKind::InspectCallVolume,
+                seq,
+                crossed: crossed.clone(),
+                evidence: window.clone(),
+            };
+            let (key, bytes) = (format!("{QUESTION_SEQ}{seq:020}"), encode(&question)?);
+            let rows = [(key.as_str(), bytes.as_slice())];
+            if self.vault.sync_state_put_telemetry_batch_if_absent(&rows)? == 1 {
+                break;
+            }
+            seq = self.next_question_seq()?.max(seq.saturating_add(1));
+        }
+        Ok(seq)
+    }
+    /// Names question `seq`, kept for `window`, under its window, through the
+    /// same door. The index speeds the window's restore, which reads the
+    /// newest question kept beside it (`restore_newest`).
+    fn index_question(&self, window: &WireWindowReceipt, seq: u64) -> Result<()> {
+        let key = format!(
+            "{QUESTION_WINDOW}{:020}:{:020}:{seq:020}",
+            window.started_at, window.ended_at
+        );
+        let bytes = encode(&seq)?;
+        self.vault
+            .sync_state_put_telemetry_batch_if_absent(&[(key.as_str(), bytes.as_slice())])?;
+        Ok(())
+    }
+    /// The sequence after the last call-volume question kept.
+    fn next_question_seq(&self) -> Result<u64> {
+        let last = self
+            .vault
+            .sync_state_keys_with_prefix(QUESTION_SEQ)?
+            .last()
+            .and_then(|key| key.strip_prefix(QUESTION_SEQ)?.parse::<u64>().ok());
+        Ok(last.map_or(0, |seq| seq.saturating_add(1)))
     }
     /// Keeps `window` as telemetry, which moves no backup watermark (FIX
     /// 6730).
@@ -575,24 +723,33 @@ impl WireTelemetry {
         }
         Ok(receipt)
     }
+    /// The latest call-volume question kept for the window `start`..`end`
+    /// that the window's index names.
     pub fn question(&self, start: u64, end: u64) -> Result<Option<WireQuestion>> {
+        let named = format!("{QUESTION_WINDOW}{start:020}:{end:020}:");
+        let Some(latest) = self.vault.sync_state_keys_with_prefix(&named)?.pop() else {
+            return Ok(None);
+        };
+        let seq: u64 = latest
+            .strip_prefix(&named)
+            .and_then(|seq| seq.parse().ok())
+            .ok_or(Error::CorruptedIndex("wire question identity"))?;
         let question: Option<WireQuestion> = self
             .vault
-            .sync_state_get(&format!("{QUESTION}{start:020}:{end:020}"))?
+            .sync_state_get(&format!("{QUESTION_SEQ}{seq:020}"))?
             .map(|b| decode(&b))
             .transpose()?;
-        if question
-            .as_ref()
-            .is_some_and(|q| q.evidence.started_at != start || q.evidence.ended_at != end)
-        {
+        if question.as_ref().is_none_or(|q| {
+            q.seq != seq || q.evidence.started_at != start || q.evidence.ended_at != end
+        }) {
             return Err(Error::CorruptedIndex("wire question identity"));
         }
         Ok(question)
     }
-    /// Every call-volume question kept, by key, oldest window first: what the
-    /// health check reads (OF-520).
+    /// Every call-volume question kept, by key, in the order they were kept:
+    /// what the health check reads (OF-520).
     pub(crate) fn kept_questions(&self) -> Result<Vec<(String, WireQuestion)>> {
-        self.kept(QUESTION)
+        self.kept(QUESTION_SEQ)
     }
     /// Every limit question kept, by key: each row's windows, oldest first.
     pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {

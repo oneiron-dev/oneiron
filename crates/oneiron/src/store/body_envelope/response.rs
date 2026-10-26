@@ -224,6 +224,14 @@ pub(crate) enum ResponseFamily {
     /// recorded render event or an owner index entry, carried whole and
     /// erased with the bank's subject or creator.
     VoiceBank,
+    /// A centroid verdict's evidence snapshot (FIX 10094): the candidate's
+    /// and labels' copied vectors and the retrieval run, carried whole and
+    /// owned by every source it copied; a retired snapshot leaves nothing.
+    CentroidEvidence,
+    /// A report cluster (FIX 9856): its member ISSUEs' copied vectors and
+    /// their centroid, carried whole and owned by every member; a retired
+    /// cluster leaves nothing.
+    ReportCluster,
 }
 
 impl ResponseFamily {
@@ -243,9 +251,14 @@ impl ResponseFamily {
                 ),
                 (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
                 (
+                    &side_table::SELF_HEAL_CENTROID_EVIDENCE,
+                    Self::CentroidEvidence,
+                ),
+                (
                     &side_table::MESSAGE_REPLY_ASSERTIONS,
                     Self::MessageReplyAssertions,
                 ),
+                (&side_table::FEEDBACK_REPORT_CLUSTER, Self::ReportCluster),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -286,7 +299,9 @@ impl ResponseFamily {
             | Self::ModelStepSubmission
             | Self::SavedQueryMemo
             | Self::MessageReplyAssertions
-            | Self::VoiceBank => ResponseDb::VaultMeta,
+            | Self::VoiceBank
+            | Self::CentroidEvidence
+            | Self::ReportCluster => ResponseDb::VaultMeta,
         }
     }
 
@@ -327,9 +342,11 @@ impl ResponseFamily {
             Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
+            Self::CentroidEvidence => crate::self_heal::centroid_evidence_carriage(value),
             Self::MessageReplyAssertions => ResponseScan::decoded(
                 crate::memory::reply_assertions_stub(value).map(ResponseCarriage::whole),
             ),
+            Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
     }
@@ -416,7 +433,9 @@ impl ResponseFamily {
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
+            Self::CentroidEvidence => Ok(crate::self_heal::centroid_evidence_owners(value)),
             Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
+            Self::ReportCluster => Ok(crate::feedback::intake::report_cluster_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
@@ -470,8 +489,11 @@ impl ResponseFamily {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
-            // A retired memo's row goes; the next evaluation derives anew.
-            Self::SavedQueryMemo => {
+            // A retired memo's row goes; the next evaluation derives anew. A
+            // retired centroid snapshot's row goes, as its source's erase
+            // deletes it live; a retired cluster's row goes, as its
+            // member's erase remakes it live without that member.
+            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -523,7 +545,7 @@ impl ResponseFamily {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo => {
+            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }

@@ -45,7 +45,8 @@ side_tables! {
     /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
     FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
     /// T2 report membership and vectors, keyed by the first ISSUE id.
-    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named
+        => crate::feedback::intake::forget_report_cluster_source_in_txn;
     /// One issue's publisher delivery lane (OF-420, FIX 739): the frozen ED-08 signature and its
     /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
     /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).

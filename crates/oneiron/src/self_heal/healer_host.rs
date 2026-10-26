@@ -339,7 +339,21 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
     ) -> Result<RepairBundle> {
-        self.submit_checked(run, session, proposal, None, || Ok(()))
+        self.submit_checked(run, session, proposal, None, None, || Ok(()))
+    }
+
+    /// [`Self::submit`], counted by the healer oversight receipts under
+    /// `case` from `now` in the write that persists the proposal, and as
+    /// routed to a person there when its route is human review.
+    pub(crate) fn submit_counted(
+        &self,
+        run: &str,
+        session: &str,
+        proposal: RepairProposal,
+        case: &str,
+        now: u64,
+    ) -> Result<RepairBundle> {
+        self.submit_checked(run, session, proposal, None, Some((case, now)), || Ok(()))
     }
 
     pub(crate) fn submit_case_bound(
@@ -349,7 +363,7 @@ impl HealerRegistration<'_> {
         proposal: RepairProposal,
         binding: CaseBinding,
     ) -> Result<RepairBundle> {
-        self.submit_checked(run, session, proposal, Some(binding), || Ok(()))
+        self.submit_checked(run, session, proposal, Some(binding), None, || Ok(()))
     }
 
     /// Test seam for a policy change after admission preflight and before the
@@ -362,7 +376,7 @@ impl HealerRegistration<'_> {
         proposal: RepairProposal,
         before_write: impl FnOnce() -> Result<()>,
     ) -> Result<RepairBundle> {
-        self.submit_checked(run, session, proposal, None, before_write)
+        self.submit_checked(run, session, proposal, None, None, before_write)
     }
 
     fn submit_checked(
@@ -371,6 +385,7 @@ impl HealerRegistration<'_> {
         session: &str,
         proposal: RepairProposal,
         binding: Option<CaseBinding>,
+        counted: Option<(&str, u64)>,
         before_write: impl FnOnce() -> Result<()>,
     ) -> Result<RepairBundle> {
         super::validate_ref(run)?;
@@ -429,7 +444,8 @@ impl HealerRegistration<'_> {
                 &[],
             )?;
             let reviewed = &bundle.proposals()[0];
-            if reviewed.route() == RepairConsentRoute::Denied {
+            let route = reviewed.route();
+            if route == RepairConsentRoute::Denied {
                 return Err(Error::InvalidConfig("repair admission denied".into()));
             }
             let mut proposal = reviewed.proposal().clone();
@@ -486,6 +502,23 @@ impl HealerRegistration<'_> {
                 policy_source,
                 true,
             )?;
+            // The case's oversight clock starts with its persisted proposal
+            // (FIX 9852): a bound case at this write's own time, a sweep's
+            // case at the sweep's.
+            let counted = match (counted, &binding) {
+                (Some((case, now)), _) => Some((case, now)),
+                (None, Some(binding)) => Some((
+                    binding.case.case_ref.as_str(),
+                    crate::ports::recorded_at_in_txn(&self.vault.store, txn)?,
+                )),
+                (None, None) => None,
+            };
+            if let Some((case, now)) = counted {
+                crate::failure_ladder::oversight::proposed_in_txn(self.vault, txn, case, now)?;
+                if route == RepairConsentRoute::HumanReview {
+                    crate::failure_ladder::oversight::routed_in_txn(self.vault, txn, case, now)?;
+                }
+            }
             Ok(bundle)
         })
     }
