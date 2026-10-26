@@ -46,7 +46,9 @@ pub(super) fn paces(outcome: &VmOutboxOutcome) -> bool {
 
 /// Records in `record` a refusal `code` of `transfer` that is a put whose
 /// bytes did not hash to its digest on arrival: the set's next paced look
-/// reads the file again. `false`, and nothing recorded, for any other.
+/// reads the file again. As any later refusal, it retires an older refused
+/// change, so a member changed back to that one goes again. `false`, and
+/// nothing recorded, for any other.
 pub(super) fn recheck(
     record: &mut MemberRecord,
     transfer: &VmOutboxDescriptor,
@@ -55,6 +57,7 @@ pub(super) fn recheck(
     let damaged =
         code == VmOutboxRefusal::DigestMismatch && transfer.operation == VmOutboxOperation::Put;
     if damaged {
+        record.refused = None;
         record.source = Some(SourceStatus::Recheck {
             blake3: transfer.blake3.clone(),
         });

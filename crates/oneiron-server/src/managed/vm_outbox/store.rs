@@ -80,7 +80,8 @@ pub(super) struct MemberRecord {
     pub(super) pending: Option<VmOutboxDescriptor>,
     /// The change the other end refused (`put:<digest>` or
     /// `remove:<digest>`), not sent again until the member changes; a put
-    /// refused as `digest_mismatch` is kept in `source` instead.
+    /// refused as `digest_mismatch` is kept in `source` instead, and clears
+    /// this as any later refusal replaces it.
     #[serde(default)]
     pub(super) refused: Option<String>,
     /// This end's own file, once the other end refused a put of it as
