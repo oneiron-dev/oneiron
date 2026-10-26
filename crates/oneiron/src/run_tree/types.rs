@@ -4,8 +4,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptInterventionKind, AttemptState};
 
-/// Renderable run tree for dashboard/read APIs.
+/// Renderable run tree for dashboard/read APIs. It is written and read as
+/// its flat [`RunTreeWire`] table (FIX 10603).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "RunTreeWire", try_from = "RunTreeWire")]
 pub struct RunTree {
     pub roots: Vec<RunTreeNode>,
     pub repairs: Vec<RunTreeRepair>,
@@ -15,10 +17,46 @@ pub struct RunTree {
 ///
 /// A persisted tree can be as deep as its run's parent chain, so dropping,
 /// cloning, comparing and debug-printing a node walk its subtree on a heap
-/// stack, never the call stack (FIX 10067). Its serde shape is the derived
-/// nested one.
-#[derive(Serialize, Deserialize)]
+/// stack, never the call stack (FIX 10067); so do writing and reading its
+/// tree, as the flat [`RunTreeWire`] table (FIX 10603).
 pub struct RunTreeNode {
+    pub attempt_id: String,
+    pub run_id: Option<String>,
+    pub parent_id: Option<String>,
+    pub worker_kind: String,
+    /// Operator-selected worker, if this attempt has been redirected.
+    pub worker: Option<String>,
+    /// The dispatched agent's label for `agent.dispatch` attempts (decoded from
+    /// the payload snapshot; tolerant — a malformed inner input renders as
+    /// `None`).
+    pub agent_id: Option<String>,
+    pub status: RunTreeStatus,
+    /// The artifact version this attempt's durable output lives in, copied
+    /// from the backing queue row. Cross-executor: any executor kind that
+    /// named a result projects it here, not only foreign ones.
+    pub result_ref: Option<String>,
+    pub timestamps: RunTreeTimestamps,
+    pub failure: Option<RunTreeFailure>,
+    pub events: Vec<RunTreeEvent>,
+    pub children: Vec<RunTreeNode>,
+}
+
+/// A run tree as it is written and read (FIX 10603): every node once, in
+/// pre-order, each naming its children by index, so a tree of any depth is
+/// written and read on a heap stack. The roots and each node's children
+/// keep their order; a table that is not one forest of its nodes does not
+/// read.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeWire {
+    pub nodes: Vec<RunTreeWireNode>,
+    /// The roots, as indexes into `nodes`, in order.
+    pub roots: Vec<u64>,
+    pub repairs: Vec<RunTreeRepair>,
+}
+
+/// One [`RunTreeNode`]'s own fields in its tree's [`RunTreeWire`] table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunTreeWireNode {
     #[serde(rename = "job_id")] // wire key pinned pre-rename (ONE-1714)
     pub attempt_id: String,
     pub run_id: Option<String>,
@@ -27,25 +65,20 @@ pub struct RunTreeNode {
     /// Operator-selected worker, if this attempt has been redirected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker: Option<String>,
-    /// The dispatched agent's label for `agent.dispatch` attempts (decoded from
-    /// the payload snapshot; tolerant — a malformed inner input renders as
-    /// `None`). Additive and elided when absent, so serialized trees stay
-    /// wire-compatible in both directions.
+    /// The dispatched agent's label for `agent.dispatch` attempts; elided
+    /// when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     pub status: RunTreeStatus,
-    /// The artifact version this attempt's durable output lives in, copied
-    /// from the backing queue row. Cross-executor: any executor kind that
-    /// named a result projects it here, not only foreign ones.
-    ///
-    /// Additive and elided when absent — the same shape as `agent_id` — so
-    /// serialized trees stay wire-compatible in both directions.
+    /// The artifact version this attempt's durable output lives in; elided
+    /// when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_ref: Option<String>,
     pub timestamps: RunTreeTimestamps,
     pub failure: Option<RunTreeFailure>,
     pub events: Vec<RunTreeEvent>,
-    pub children: Vec<RunTreeNode>,
+    /// The node's children, as indexes into the table's `nodes`, in order.
+    pub children: Vec<u64>,
 }
 
 impl RunTreeNode {

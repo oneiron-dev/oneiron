@@ -22,7 +22,7 @@ use serde::Deserialize;
 
 use super::super::encoding::{decode_record, encode_record};
 use super::super::types::{ATTEMPT_RECORD_VERSION, AttemptId, AttemptRecord};
-use super::{dispatch_payload_actor, erase_dispatch_payload_text};
+use super::{TextOwner, dispatch_payload_actor, erase_dispatch_payload_text};
 use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::entity_id::EntityId;
@@ -89,7 +89,7 @@ pub(crate) fn attempt_payload_scan(key: &[u8], raw: &[u8]) -> ResponseScan {
     let Some(mut record) = record_of(key, raw) else {
         return ResponseScan::opaque_row();
     };
-    match erase_dispatch_payload_text(&mut record) {
+    match erase_dispatch_payload_text(&mut record, TextOwner::Target) {
         Ok(true) => encode_record(&record).map_or_else(
             |_| ResponseScan::opaque_row(),
             |stub| ResponseScan::Decoded(ResponseCarriage::whole(stub)),

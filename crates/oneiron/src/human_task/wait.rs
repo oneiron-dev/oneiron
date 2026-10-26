@@ -171,20 +171,10 @@ fn require_persisted_human_response_trap(
     Ok(())
 }
 
-/// Retires the TASK's wait binding once its trap has been consumed: the one
-/// active binding it holds. A TASK several traps wait on retires none here,
-/// as this form cannot tell which was consumed; [`release_human_wait_trap`]
-/// names it.
-pub fn release_human_wait(vault: &Vault, task_ref: EntityId) -> Result<bool> {
-    let active = human_wait_bindings(vault, task_ref)?;
-    let [binding] = active.as_slice() else {
-        return Ok(false);
-    };
-    release_human_wait_trap(vault, task_ref, binding.trap_claim_id)
-}
-
 /// Retires the wait binding of one consumed trap on one TASK, leaving every
-/// other trap's binding on that TASK as it stands (FIX 9867).
+/// other trap's binding on that TASK as it stands (FIX 9867). Every release
+/// names the trap it consumed (FIX 10699): a TASK several traps wait on has
+/// no one binding to retire by the TASK alone.
 pub fn release_human_wait_trap(
     vault: &Vault,
     task_ref: EntityId,

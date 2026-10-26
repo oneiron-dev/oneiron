@@ -80,17 +80,19 @@ pub(super) fn before_seat(
         }
         TaskWorkflowOutcome::Pending | TaskWorkflowOutcome::Started { .. } => {}
     }
+    // FIX 8104: a program started at an earlier entry whose end was never
+    // recorded is not run again: the run hands off, its effects unknown. An
+    // entered run's start is ended here too (FIX 8947), so its pin never
+    // stays started.
+    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
+        let report = TaskWorkflowReport::Interrupted;
+        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
+    }
     // A run that entered before its end was recorded ran its first entry
     // without the program: running it now would say something new to a run
     // whose task its record holds.
     if !matches!(entered_run(vault, run_id), Ok(None)) {
         return Ok(BeforeSeat::Unbound);
-    }
-    // FIX 8104: a program started at an earlier entry whose end was never
-    // recorded is not run again: the run hands off, its effects unknown.
-    if matches!(pinned.outcome(), TaskWorkflowOutcome::Started { .. }) {
-        let report = TaskWorkflowReport::Interrupted;
-        return Ok(recorded(vault, &binding, &pinned, attempt, report, now));
     }
     let report = match pinned.active() {
         None => TaskWorkflowReport::Unavailable,

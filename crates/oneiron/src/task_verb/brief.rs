@@ -472,19 +472,15 @@ pub(super) fn pin_digest_in(
     Ok(Some(*hasher.finalize().as_bytes()))
 }
 
-fn check_pin(
+/// Whether the row a pin names still digests as the pin says: `None` when
+/// the row is gone.
+fn pin_holds_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
     digest: &[u8; 32],
-) -> MemoryResult<()> {
-    match pin_digest_in(vault, txn, target)? {
-        None => Err(MemoryError::from(Error::EntityNotFound)),
-        Some(held) if held == *digest => Ok(()),
-        Some(_) => Err(MemoryError::bad_request(
-            "a brief pin's digest does not match the row it names",
-        )),
-    }
+) -> MemoryResult<Option<bool>> {
+    Ok(pin_digest_in(vault, txn, target)?.map(|held| held == *digest))
 }
 
 fn require_entity(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> MemoryResult<()> {
@@ -530,6 +526,32 @@ impl QueueTaskBrief {
         txn: &heed::RoTxn<'_>,
         assignee: Option<TaskAssignee>,
     ) -> MemoryResult<()> {
+        self.checked_in(vault, txn, assignee, false)?;
+        Ok(())
+    }
+
+    /// [`Self::validate_in`] for a brief copied whole from an earlier TASK
+    /// (FIX 9001): a pin whose row moved since that brief pinned it is
+    /// answered, by its target, and never refused, as the copy keeps what
+    /// its source read; a pin whose row is gone still refuses.
+    pub(super) fn validate_copy_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+    ) -> MemoryResult<Vec<EntityId>> {
+        self.checked_in(vault, txn, assignee, true)
+    }
+
+    /// The checks [`Self::validate_in`] runs; a `copied` brief's moved pins
+    /// are answered rather than refused.
+    fn checked_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+        copied: bool,
+    ) -> MemoryResult<Vec<EntityId>> {
         if self.schema != TASK_BRIEF_SCHEMA {
             return Err(MemoryError::bad_request("unknown task brief schema"));
         }
@@ -581,16 +603,34 @@ impl QueueTaskBrief {
                 "escalation question ref does not resolve to an entity of its declared kind",
             ));
         }
-        if let Some(pack) = &self.context.pack {
-            check_pin(vault, txn, pack.pack_ref, &pack.digest)?;
-        }
-        for pin in &self.context.read_first {
-            check_pin(vault, txn, pin.target, &pin.digest)?;
+        let pins = self
+            .context
+            .pack
+            .iter()
+            .map(|pack| (pack.pack_ref, &pack.digest))
+            .chain(
+                self.context
+                    .read_first
+                    .iter()
+                    .map(|pin| (pin.target, &pin.digest)),
+            );
+        let mut moved = Vec::new();
+        for (target, digest) in pins {
+            match pin_holds_in(vault, txn, target, digest)? {
+                None => return Err(MemoryError::from(Error::EntityNotFound)),
+                Some(true) => {}
+                Some(false) if copied => moved.push(target),
+                Some(false) => {
+                    return Err(MemoryError::bad_request(
+                        "a brief pin's digest does not match the row it names",
+                    ));
+                }
+            }
         }
         if let Some(binding) = &self.context.workflow {
             binding.validate_in(vault, txn, assignee)?;
         }
-        Ok(())
+        Ok(moved)
     }
 
     /// The objectives an agent realizing this brief confesses against

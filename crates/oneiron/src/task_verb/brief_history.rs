@@ -1,6 +1,8 @@
 //! A TASK's earlier briefs (FIX 8077). Each revision a `tasks.brief`
 //! proposal landed is that settled CLAIM's value, so an exact revision and
-//! digest read back the brief that revision held. No revision store exists
+//! digest read back the brief that revision held. A TASK's first brief,
+//! which its post landed and no such CLAIM did, is read from the base brief
+//! a settled revision of it kept (FIX 9005). No revision store exists
 //! beside the CLAIMs.
 
 use crate::Vault;
@@ -22,10 +24,12 @@ const HISTORY_PAGE: usize = 256;
 /// the settled `tasks.brief` CLAIM that landed it says, read in `txn`, with
 /// that CLAIM's id, the row a copy of the brief was read from: an
 /// approved revision of `task` proposed against `rev - 1` whose brief
-/// digests to `digest`. Of two such CLAIMs (one revision approved on two
-/// replicas) the lowest CLAIM id answers. Only that exact revision is a hit:
-/// a nearby revision, or the current one, is never returned for it, and a
-/// revision no `tasks.brief` CLAIM landed (a posted TASK's first) is `None`.
+/// digests to `digest`, or, for the first revision, an approved revision
+/// proposed against it whose kept base brief digests to `digest`. Of two
+/// such CLAIMs (one revision approved on two replicas) the lowest CLAIM id
+/// answers. Only that exact revision is a hit: a nearby revision, or the
+/// current one, is never returned for it, and a first brief no settled
+/// revision kept is `None`.
 /// A CLAIM whose body does not read cannot be that revision and is passed
 /// over. Every CLAIM of the predicate is read until the hit, however many
 /// (rule 5): past the threshold row the read raises its check and reads on.
@@ -71,7 +75,8 @@ pub(crate) fn settled_brief_in(
 }
 
 /// The brief of CLAIM `id` when it is the settled `tasks.brief` revision
-/// that landed `task` at `rev` with `digest`.
+/// that landed `task` at `rev` with `digest`, or the base brief it kept when
+/// that was `task`'s first at `rev` with `digest`.
 fn landed_revision_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -87,8 +92,14 @@ fn landed_revision_in(
         return None;
     }
     let revision: BriefRevision = rmp_serde::from_slice(&canonical_bytes(&claim.value)).ok()?;
-    (revision.task_ref == task
-        && revision.base_rev.checked_add(1) == Some(rev)
-        && brief_digest(&revision.brief) == *digest)
-        .then_some(revision.brief)
+    if revision.task_ref != task {
+        return None;
+    }
+    if revision.base_rev.checked_add(1) == Some(rev) && brief_digest(&revision.brief) == *digest {
+        return Some(revision.brief);
+    }
+    let base_rev = revision.base_rev;
+    revision
+        .base_brief
+        .filter(|base| base_rev == rev && brief_digest(base) == *digest)
 }

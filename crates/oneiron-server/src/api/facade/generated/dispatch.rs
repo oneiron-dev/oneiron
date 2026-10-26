@@ -2391,8 +2391,8 @@ async fn tasks_redo(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_landing(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
@@ -2405,13 +2405,14 @@ async fn tasks_redo(
     tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke(
+        let output = facade_invoke_born(
             &server,
             &call,
             actor,
             class,
             "tasks.redo",
             value,
+            position,
             &producers,
         )?;
         Ok(FacadeCallOutput::listed(output, &producers))

@@ -592,10 +592,13 @@ fn consult_result_presence(record: &TaskTerminalRecord) -> Option<ConsultResultP
     }
 }
 
+/// Every node of `nodes` and their subtrees, in pre-order, on a heap stack
+/// (FIX 10603).
 fn collect_run_tree_nodes<'a>(nodes: &'a [RunTreeNode], out: &mut Vec<&'a RunTreeNode>) {
-    for node in nodes {
+    let mut pending: Vec<&RunTreeNode> = nodes.iter().rev().collect();
+    while let Some(node) = pending.pop() {
         out.push(node);
-        collect_run_tree_nodes(&node.children, out);
+        pending.extend(node.children.iter().rev());
     }
 }
 

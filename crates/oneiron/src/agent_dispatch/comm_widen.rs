@@ -116,6 +116,20 @@ pub(crate) struct CommWidenRequest {
 pub(crate) struct CommApproval {
     pub(crate) reach: CommReach,
     pub(crate) decision: CommWidenDecision,
+    /// When the owner revoked a stop-asking choice's standing (FIX 10695):
+    /// from then its descendants inherit nothing from it and ask again. The
+    /// choice stays as answered, and the asking run keeps its own reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) standing_revoked_at: Option<u64>,
+}
+
+impl CommApproval {
+    /// Whether descendants inherit this approval's reach: a stop-asking
+    /// choice whose standing the owner has not revoked.
+    fn stands(&self) -> bool {
+        self.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
+            && self.standing_revoked_at.is_none()
+    }
 }
 
 /// One child's comm widening.
@@ -164,12 +178,29 @@ impl CommWidenRecord {
                 self.approved = Some(CommApproval {
                     reach: needed,
                     decision,
+                    standing_revoked_at: None,
                 });
             }
         } else {
             request.state = CommWidenState::Declined;
         }
         true
+    }
+
+    /// Ends the standing of this record's stop-asking choice at `at` (FIX
+    /// 10695): the choice stays as answered and the asking run keeps its own
+    /// reach; only its descendants stop inheriting it. Answers the approval
+    /// and whether this call ended it, or `None` when the record holds no
+    /// stop-asking choice.
+    pub(crate) fn revoke_standing(&mut self, at: u64) -> Option<(CommApproval, bool)> {
+        let approval = self.approved.as_mut().filter(|approval| {
+            approval.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
+        })?;
+        let ended = approval.standing_revoked_at.is_none();
+        if ended {
+            approval.standing_revoked_at = Some(at);
+        }
+        Some((*approval, ended))
     }
 
     /// Takes `actor` out of the record (FIX 3520): a pending request it was
@@ -315,7 +346,8 @@ pub(crate) fn effective_comm_in_txn(
 
 /// What `child`'s real dispatch ancestors give its reach: the narrowest of
 /// their own live reaches, and the widest reach any of them approved and
-/// stopped asking for.
+/// stopped asking for, while the owner has not revoked that standing (FIX
+/// 10695).
 struct Ancestry {
     clamp: Option<CommReach>,
     standing: Option<CommReach>,
@@ -350,9 +382,7 @@ fn ancestry_in(vault: &Vault, txn: &heed::RoTxn<'_>, child: AttemptId) -> Result
             approval.reach.max(parent_input.comm)
         });
         ancestry.clamp = Some(clamped(own, ancestry.clamp));
-        if let Some(approval) = approval.filter(|approval| {
-            approval.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
-        }) {
+        if let Some(approval) = approval.filter(CommApproval::stands) {
             ancestry.standing = Some(
                 ancestry
                     .standing

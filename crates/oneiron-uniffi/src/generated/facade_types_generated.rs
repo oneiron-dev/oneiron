@@ -2046,9 +2046,9 @@ pub struct RunTreeEvent {
     pub note: Option<String>,
 }
 
-/// `oneiron::run_tree::types::RunTreeNode`.
+/// `oneiron::run_tree::types::RunTreeWireNode`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct RunTreeNode {
+pub struct RunTreeWireNode {
     #[serde(rename = "job_id")]
     pub job_id: String,
     #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
@@ -2076,7 +2076,7 @@ pub struct RunTreeNode {
     #[serde(rename = "events")]
     pub events: Vec<RunTreeEvent>,
     #[serde(rename = "children")]
-    pub children: Vec<RunTreeNode>,
+    pub children: Vec<u64>,
 }
 
 /// `oneiron::run_tree::types::RunTreeRepair`.
@@ -2099,11 +2099,13 @@ pub enum RunTreeRepair {
     },
 }
 
-/// `oneiron::run_tree::types::RunTree`.
+/// `oneiron::run_tree::types::RunTreeWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct RunTree {
+pub struct RunTreeWire {
+    #[serde(rename = "nodes")]
+    pub nodes: Vec<RunTreeWireNode>,
     #[serde(rename = "roots")]
-    pub roots: Vec<RunTreeNode>,
+    pub roots: Vec<u64>,
     #[serde(rename = "repairs")]
     pub repairs: Vec<RunTreeRepair>,
 }
@@ -2114,7 +2116,7 @@ pub struct AgentHealthRunTree {
     #[serde(rename = "run_id")]
     pub run_id: String,
     #[serde(rename = "tree")]
-    pub tree: RunTree,
+    pub tree: RunTreeWire,
     #[serde(rename = "marked")]
     pub marked: String,
 }

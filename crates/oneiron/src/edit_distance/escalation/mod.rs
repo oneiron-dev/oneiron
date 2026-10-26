@@ -71,6 +71,7 @@ pub use self::ledger::{
     DEFAULT_ESCALATION_STANDING_N, ESCALATION_LAST_RULINGS_BOUND, escalation_standing_n,
     escalation_stats, record_escalation, set_escalation_standing_n,
 };
+pub(crate) use self::policy::standing_policy_for_in;
 pub use self::policy::{
     accept_standing_policy, maybe_propose_standing_policy, standing_policy_for,
 };

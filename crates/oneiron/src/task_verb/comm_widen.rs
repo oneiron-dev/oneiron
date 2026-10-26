@@ -37,6 +37,9 @@ use crate::memory::{
 };
 use crate::{EdgeActorClass, EntityId, Vault};
 
+mod revoke;
+pub use self::revoke::CommWidenRevokeReceipt;
+
 /// Every comm widen ask's intent key starts so:
 /// `comm_widen/<child attempt hex>/<needed reach>/<question turn hex>`.
 const INTENT_PREFIX: &str = "comm_widen/";

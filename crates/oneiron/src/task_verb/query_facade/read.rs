@@ -20,7 +20,8 @@ impl Memory<'_> {
     ///
     /// A handle bound to a read credential describes only the TASKs that
     /// credential reads: a task it does not read has no card, as an absent
-    /// one has none.
+    /// one has none. So does a TASK a device-local world keeps from the
+    /// caller's machine (FIX 9000), as the section leaves it out.
     pub fn describe(&self, task_ref: Option<EntityId>) -> MemoryResult<TaskDescription> {
         let _provenance = facade_provenance(task_verb_contract(AgentVerb::Describe));
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -28,16 +29,16 @@ impl Memory<'_> {
             let rows = self.credential_rows(self.section_rows()?)?;
             return Ok(TaskDescription::Section(rows.render()));
         };
-        // The credential is judged before the card is read, so a task it
-        // does not read names no failure of its own, and again after, so a
-        // card read past a revocation is never served.
-        if self.credential_withholds(task_ref)? {
+        // The reader is judged before the card is read, so a task it does
+        // not read names no failure of its own, and again after, so a card
+        // read past a revocation is never served.
+        if self.task_read_withholds(task_ref)? {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
         let Some(intent) = task_presence_for_id(self.vault(), task_ref)? else {
             return Err(MemoryError::from(Error::EntityNotFound));
         };
-        if self.credential_withholds(task_ref)? {
+        if self.task_read_withholds(task_ref)? {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
         // An acked failure has left the TASKS surface (the renderer drops it);
@@ -84,6 +85,22 @@ impl Memory<'_> {
             bare_jobs: snapshot.bare_jobs,
             source_exhausted: snapshot.source_exhausted,
         })
+    }
+
+    /// Whether this handle's reader is kept from the TASK `task_ref`: its
+    /// read credential withholds it, or a device-local world keeps it from
+    /// the machine the read goes to (FIX 9000). A caller on this device is
+    /// kept from nothing by a world.
+    pub(in crate::task_verb) fn task_read_withholds(
+        &self,
+        task_ref: EntityId,
+    ) -> MemoryResult<bool> {
+        if self.credential_withholds(task_ref)? {
+            return Ok(true);
+        }
+        Ok(self
+            .vault()
+            .device_local_keeps_for(&task_ref, self.destination())?)
     }
 
     /// Whether this handle's read credential withholds `task_ref`. An unbound

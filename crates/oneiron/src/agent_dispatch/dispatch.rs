@@ -521,6 +521,16 @@ impl<'a> AgentDispatcher<'a> {
             Some(project_ref),
         )?;
 
+        // FIX 9181: a receipt prepared before its asker's hard erase carries
+        // that asker's ask; it rides no payload, as the erase took it out of
+        // every row it found.
+        let plan = spawn
+            .plan
+            .filter(|plan| !asker_hard_erased_in(self.vault, &*wtxn, plan.asker_ref));
+        let direct_spawn = spawn
+            .direct_spawn
+            .filter(|receipt| !asker_hard_erased_in(self.vault, &*wtxn, receipt.asker_ref));
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -540,11 +550,11 @@ impl<'a> AgentDispatcher<'a> {
             room: spawn.room,
             join: None,
             team,
-            plan: spawn.plan,
+            plan,
             objectives: spawn.objectives,
             comm,
             // OF-541: carried as asked; `spawn_intent` above never reads it.
-            direct_spawn: spawn.direct_spawn,
+            direct_spawn,
         })
     }
 
@@ -651,4 +661,24 @@ impl<'a> AgentDispatcher<'a> {
             now,
         })
     }
+}
+
+/// Whether a hard erase took `asker`, read in `txn` (FIX 9181): the fence a
+/// spawn's receipts meet as they enqueue. A marker that does not read is
+/// logged without content and reads as none, so the fence never fails the
+/// enqueue it stands in.
+fn asker_hard_erased_in(vault: &Vault, txn: &heed::RoTxn<'_>, asker: Option<EntityId>) -> bool {
+    let Some(asker) = asker else {
+        return false;
+    };
+    crate::ports::TombstoneStoreRead::port_deletion_marked(
+        &vault.store,
+        txn,
+        crate::ports::DeletionMarker::HardDelete,
+        &asker,
+    )
+    .unwrap_or_else(|_| {
+        tracing::warn!("spawn receipt fence: a hard-delete marker could not be read");
+        false
+    })
 }

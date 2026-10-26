@@ -5,12 +5,19 @@
 //! The first consent-requiring interruption freezes its case once, in the
 //! engine's own row: the case ref (the ask its human verdict settles), the
 //! interruption's kind and time, and its opener with the binding generation
-//! it held. A Finish of that interruption lands on the case's settled ask
-//! when one was raised: a governing decision with a counted human word from
-//! someone other than the opener. While that ask stands unsettled the ladder
-//! stays where it is. A case whose ask was never raised finishes as before
-//! and is recorded as unverified. Nothing here reads a caller's kind or
-//! approval: the case, the ask and its settlement are the engine's rows.
+//! and the credential lineage it held. A Finish of that interruption lands
+//! on the case's settled ask when one was raised (`consent_ask`): a
+//! governing decision with a counted human word from someone other than the
+//! opener and outside the opener's credential lineage (FIX 10693). While
+//! that ask stands unsettled, or once it settled on a denial, the ladder
+//! stays where it is. A case whose ask was never raised, or closed with no
+//! such verdict, finishes as before and is recorded as unverified.
+//! Nothing here reads a caller's kind or approval: the case, the ask, its
+//! words and its settlement are the engine's rows.
+//!
+//! The case is an authority record, kept in a session that keeps no record
+//! too, with its authority fields only and no conversation content (Engine
+//! 10-26, ARCH-0052, FIX 10694).
 
 use crate::Vault;
 use crate::consult_ladder::{InterruptedState, LadderTerminalState, LadderTransitionError};
@@ -33,6 +40,54 @@ const FIELD_CASE_REF: &str = "case_ref";
 const FIELD_KIND: &str = "interruption_kind";
 const FIELD_INTERRUPTED_AT: &str = "interrupted_at";
 const FIELD_OPENER_GENERATION: &str = "opener_generation";
+const FIELD_OPENER_LINEAGE: &str = "opener_lineage";
+
+/// A frozen case, as its Finish and its ask read it.
+pub(super) struct FrozenCase {
+    /// The ask group whose settlement verifies the case.
+    pub(super) case_ref: EntityId,
+    /// The actor whose interruption froze it.
+    pub(super) opener: Option<EntityId>,
+    /// The credential chains the opener's handle carried (FIX 10693).
+    opener_lineage: Vec<[u8; 32]>,
+}
+
+/// `task_ref`'s frozen case, read in `txn`: `None` when none was frozen or
+/// its case ref does not read.
+pub(super) fn frozen_case_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task_ref: EntityId,
+) -> MemoryResult<Option<FrozenCase>> {
+    let Some(case) = lifecycle_receipt::kept_in(vault, txn, &case_id(task_ref)?)? else {
+        return Ok(None);
+    };
+    let Some(case_ref) = case
+        .fields
+        .get(FIELD_CASE_REF)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+    else {
+        return Ok(None);
+    };
+    let opener = case
+        .actor
+        .as_deref()
+        .and_then(|hex| EntityId::from_hex(hex).ok());
+    let opener_lineage = case
+        .fields
+        .get(FIELD_OPENER_LINEAGE)
+        .map_or_else(Vec::new, |joined| {
+            joined
+                .split(',')
+                .filter_map(super::super::brief::decode_hex::<32>)
+                .collect()
+        });
+    Ok(Some(FrozenCase {
+        case_ref,
+        opener,
+        opener_lineage,
+    }))
+}
 
 /// A Finish of a consent-required interruption that its case's settled ask
 /// verified. Only [`verify_finish_in`] builds one.
@@ -61,17 +116,19 @@ fn case_id(task_ref: EntityId) -> MemoryResult<String> {
 }
 
 /// Freezes the case of `task_ref`'s first consent-requiring interruption,
-/// once, in `wtxn`, the transaction that records the interruption. Kept in a
-/// savepoint of its own: a case that does not land is logged and leaves the
-/// interruption's write as it is.
+/// once, in `wtxn`, the transaction that records the interruption, with the
+/// credential chains the opener's handle carried (`opener_lineage`, FIX
+/// 10693). Kept in a savepoint of its own: a case that does not land is
+/// logged and leaves the interruption's write as it is.
 pub(super) fn freeze_case_in(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     task_ref: EntityId,
     interrupted: &InterruptedState,
-    opener: EntityId,
+    opener: (EntityId, &[[u8; 32]]),
     generation: Option<&BindingGeneration>,
 ) {
+    let (opener, opener_lineage) = opener;
     let mut case = TaskLifecycleRecord {
         call: CASE_CALL.to_owned(),
         outcome: "consent_required".to_owned(),
@@ -101,6 +158,16 @@ pub(super) fn freeze_case_in(
                 .join(","),
         );
     }
+    if !opener_lineage.is_empty() {
+        case.fields.insert(
+            FIELD_OPENER_LINEAGE.to_owned(),
+            opener_lineage
+                .iter()
+                .map(|slip| bytes_to_hex_lower(slip))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+    }
     let kept = case_id(task_ref).and_then(|id| {
         if lifecycle_receipt::kept_in(vault, &*wtxn, &id)?.is_some() {
             return Ok(());
@@ -119,33 +186,24 @@ pub(super) fn freeze_case_in(
 /// carries, read in `txn`, the Finish's own transaction. Its frozen case's
 /// ask, when one was raised, must have settled a decision that governs this
 /// consult with a counted human word from someone other than the case's
-/// opener; an ask still open, or one that settled on none of that, leaves
-/// the ladder where it is.
+/// opener and outside its credential lineage. An ask still open, or one
+/// that settled on a denial, leaves the ladder where it is; one that closed
+/// on none of that (its deadline, a stale cut) leaves the Finish unverified.
 pub(super) fn verify_finish_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     task_ref: EntityId,
 ) -> MemoryResult<ConsultConsent> {
-    let Some(case) = lifecycle_receipt::kept_in(vault, txn, &case_id(task_ref)?)? else {
+    let Some(case) = frozen_case_in(vault, txn, task_ref)? else {
         return Ok(ConsultConsent::Unverified);
     };
-    let Some(case_ref) = case
-        .fields
-        .get(FIELD_CASE_REF)
-        .and_then(|hex| EntityId::from_hex(hex).ok())
-    else {
-        return Ok(ConsultConsent::Unverified);
-    };
+    let case_ref = case.case_ref;
     let Some(group) = ask_record::read_group(vault, txn, case_ref)? else {
         return Ok(ConsultConsent::Unverified);
     };
-    let opener = case
-        .actor
-        .as_deref()
-        .and_then(|hex| EntityId::from_hex(hex).ok());
     let governs = group.class_tasks().any(|task| task == task_ref);
     match ask_settlement_in(vault, txn, case_ref)? {
-        Some(result) if governs && settles_consent(&result, opener) => {
+        Some(result) if governs && settles_consent(vault, txn, &result, &case) => {
             Ok(ConsultConsent::Verified(VerifiedConsultFinish {
                 case_ref,
                 class: result
@@ -157,6 +215,11 @@ pub(super) fn verify_finish_in(
                 settled_at: result.settlement.at,
             }))
         }
+        // Closed with no governing verdict: the Finish lands unverified. Only
+        // a governing denial, or an ask still open, holds the ladder.
+        Some(result) if !(governs && matches!(result.decision, TaskAskDecision::No)) => {
+            Ok(ConsultConsent::Unverified)
+        }
         _ => Err(super::ladder_refusal(
             LadderTransitionError::ConsentRequired,
         )),
@@ -165,8 +228,13 @@ pub(super) fn verify_finish_in(
 
 /// Whether `result` is a human verdict: settled by its words, not its
 /// deadline or a stale cut, on a decision, with a counted human word from
-/// someone other than `opener`.
-fn settles_consent(result: &TaskAskResult, opener: Option<EntityId>) -> bool {
+/// someone other than `case`'s opener and outside its credential lineage.
+fn settles_consent(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    result: &TaskAskResult,
+    case: &FrozenCase,
+) -> bool {
     matches!(
         result.settlement.reason,
         TaskAskSettlementReason::FirstWord | TaskAskSettlementReason::AllResponded
@@ -176,8 +244,31 @@ fn settles_consent(result: &TaskAskResult, opener: Option<EntityId>) -> bool {
     ) && result.evidence.iter().any(|entry| {
         entry.reason == TaskAskEvidenceReason::Counted
             && entry.source == TaskAskSource::Human
-            && Some(entry.answer.actor_ref) != opener
+            && Some(entry.answer.actor_ref) != case.opener
+            && !from_opener_lineage(vault, txn, entry.answer.word_ref, &case.opener_lineage)
     })
+}
+
+/// Whether the word `word_ref` was admitted from `opener`'s credential
+/// lineage or a fork of it (FIX 10693, DEC-0006): its owner proof's frozen
+/// chains reach the opener's delegation roots. A common signing host is not
+/// a common lineage. A word whose chains are unknown, or that do not read,
+/// counts as the opener's: it verifies no consent.
+fn from_opener_lineage(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    word_ref: EntityId,
+    opener: &[[u8; 32]],
+) -> bool {
+    if opener.is_empty() {
+        return false;
+    }
+    match ask_record::answer_lineage_in(vault, txn, word_ref) {
+        Ok(Some(answer)) => vault
+            .frozen_lineages_meet_in_txn(txn, &answer, opener)
+            .unwrap_or(true),
+        Ok(None) | Err(_) => true,
+    }
 }
 
 /// Keeps the record of one Finish, in `wtxn`, the transaction it landed in:

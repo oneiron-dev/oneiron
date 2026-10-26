@@ -13,10 +13,12 @@ impl Memory<'_> {
     /// that, in the proposal's own transaction, once the gate has decided,
     /// naming that decision. A take rewrites the same receipt in the
     /// transaction of its effect, a decline or a landing (FIX 3273); a take
-    /// that moves nothing reaches it in one receipt-only write after.
+    /// that moves nothing reaches it in one receipt-only write after. A
+    /// redo's proposal names the TASK it copies (`redo_of`, FIX 9001), so its
+    /// settlement lands the copy as the post would have.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the parked post's request, its identity, the surface's decisions, its creator and whether it keeps a receipt"
+        reason = "the parked post's request, its identity, the surface's decisions, its creator, whether it keeps a receipt and the TASK it copies"
     )]
     pub(super) fn park_post(
         &self,
@@ -29,6 +31,7 @@ impl Memory<'_> {
         mut lifecycle: super::highway_types::TaskLifecycleRecord,
         creator: Option<&super::highway_types::HostBinding>,
         keep: bool,
+        redo_of: Option<EntityId>,
     ) -> MemoryResult<TaskCallReceipt> {
         if let Some(held) = self.held_proposal(TASK_CREATE_PROPOSAL_PREDICATE, key)? {
             if held.digest != digest {
@@ -83,6 +86,7 @@ impl Memory<'_> {
             birth_world: position.world,
             birth_facet: position.facet,
             brief: post.brief.clone(),
+            redo_of,
         };
         let Value::Map(mut entries) = task_create_proposal_value(spec, now) else {
             return Err(MemoryError::from(Error::InvariantViolation(

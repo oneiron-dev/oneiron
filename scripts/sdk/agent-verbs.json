@@ -1338,11 +1338,12 @@
       "task_decisions": true,
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
+        "born_record_scope": true,
         "readable": [
           "task_ref"
         ]
       },
+      "mcp_scope": "born",
       "section": true
     },
     {

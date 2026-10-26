@@ -290,6 +290,7 @@ impl<'a> HostSelfDispatcher<'a> {
                         &ask,
                         self.planner_bound(),
                         self.agent_lease.is_some(),
+                        self.actor.entity_ref(),
                     );
                     unapplied.clone_from(&receipt.unapplied);
                     context.direct_spawn = Some(receipt);
