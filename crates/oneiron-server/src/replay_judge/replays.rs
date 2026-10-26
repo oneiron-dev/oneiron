@@ -7,6 +7,9 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::{OutputRef, restore_output};
 use oneiron::dispatch_byoa::{decode_byoa_exhaust, parse_byoa_result_ref};
 use oneiron::dreamer_runner::decode_dreamer_attempt_payload;
+use oneiron::dreamer_runner::maintenance::agent_health::{
+    AgentHealthTone, HEALTH_REVIEW_RECEIPT_PREFIX,
+};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::MAX_DECISION_STATE_BYTES;
 use oneiron::skill_optimize::{
@@ -151,6 +154,79 @@ impl ServeReplayJudge {
         }))
     }
 
+    /// A reviewer receipt (`health_review:` and 64 hex) as a replay reads
+    /// it: the evaluator as its kind, the evidence its card held when the
+    /// outcome froze it as its task, and the evaluator's decision on that
+    /// evidence as its response; never the outcome, who set it or its label.
+    /// `None` when no card holds it.
+    fn health_review_texts(&self, receipt: &str) -> Result<Option<(String, String, String)>> {
+        let Some((card, held)) = self.vault.health_review_receipt(receipt)? else {
+            return Ok(None);
+        };
+        let hex = |ids: &[EntityId]| ids.iter().map(EntityId::to_hex).collect::<Vec<_>>();
+        let task = json!({
+            "signal": card.signal.as_str(),
+            "subject": card.subject.to_hex(),
+            "task": card.task.as_ref().map(EntityId::to_hex),
+            "dial": held.dial,
+            "measured": held.measured,
+            "diagnostics": hex(&held.diagnostics),
+            "evidence": hex(&held.evidence),
+            "observed_brief": held.observed_brief,
+        });
+        let response = json!({
+            "reviewer": held.reviewer,
+            "raised": AgentHealthTone::of(card.signal).as_str(),
+            "moves": card.moves,
+        });
+        Ok(Some((
+            held.reviewer,
+            task.to_string(),
+            response.to_string(),
+        )))
+    }
+
+    /// A reviewer receipt's honesty objective: its frozen evidence, beside
+    /// the evaluator's decision, as [`Self::honesty_objectives`] reads a run.
+    /// `None` when `receipt` is no reviewer receipt.
+    fn health_review_honesty(
+        &self,
+        case_fields: usize,
+        receipt: &str,
+    ) -> Result<Option<HonestyReplay>> {
+        if !receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+            return Ok(None);
+        }
+        let Some((kind, task, response)) = self.health_review_texts(receipt)? else {
+            return Ok(Some(HonestyReplay {
+                receipt: receipt.to_owned(),
+                state: json!({"receipt": receipt, "kept": false}),
+                objectives: vec![self.phrasing.missing_objective(receipt)],
+            }));
+        };
+        // Read whole; past its `[limits]` row it asks whether all is well.
+        self.measure(
+            EngineLimit::JudgeReplayTextBytes,
+            task.len() + response.len(),
+        );
+        let state = |at: Option<usize>| {
+            cut_at(
+                json!({"receipt": receipt, "kind": kind, "response": cut(&response, at)}),
+                at,
+            )
+        };
+        let at = fit(
+            case_fields + json_len(receipt),
+            task.len().max(response.len()),
+            |at| json!({"replay": state(at), "objective": cut(&task, at)}),
+        );
+        Ok(Some(HonestyReplay {
+            receipt: receipt.to_owned(),
+            state: state(at),
+            objectives: vec![cut(&task, at).to_owned()],
+        }))
+    }
+
     /// Measures `bytes` against `row`: past it the row asks whether all is
     /// well, and the text still rides whole.
     fn measure(&self, row: EngineLimit, bytes: usize) {
@@ -170,6 +246,11 @@ impl ServeReplayJudge {
         let receipts = case.held_out_receipts;
         let mut replays = Vec::with_capacity(receipts.len());
         for receipt in receipts {
+            // A reviewer receipt replays its card's frozen evidence.
+            if receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+                replays.push((receipt, self.health_review_texts(receipt)?));
+                continue;
+            }
             replays.push((receipt, self.replay_texts(receipt)?));
         }
         let texts = || replays.iter().filter_map(|(_, texts)| texts.as_ref());
@@ -250,6 +331,9 @@ impl ServeReplayJudge {
         case.held_out_receipts
             .iter()
             .map(|receipt| {
+                if let Some(replay) = self.health_review_honesty(case_fields, receipt)? {
+                    return Ok(replay);
+                }
                 Ok(match self.replay_texts(receipt)? {
                     None => HonestyReplay {
                         receipt: receipt.clone(),
@@ -296,6 +380,21 @@ impl ServeReplayJudge {
     pub(super) fn response_basis(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         let mut responses = Vec::with_capacity(receipts.len());
         for receipt in receipts {
+            // A reviewer receipt's decision is scored like a run's response.
+            if receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+                if let Some((_, task, response)) = self.health_review_texts(receipt)? {
+                    self.measure(
+                        EngineLimit::JudgeReplayTextBytes,
+                        task.len() + response.len(),
+                    );
+                    responses.push(SkillReplayResponse {
+                        receipt: receipt.clone(),
+                        task,
+                        response,
+                    });
+                }
+                continue;
+            }
             let Some(attempt) = attempt_of(&self.vault, receipt)? else {
                 continue;
             };
