@@ -12,6 +12,10 @@
 //! residence eviction never write it: they are not withdrawals. A replica
 //! that never held the Grant learns nothing here and keeps trusting the
 //! carrier.
+//!
+//! The owner-agent Grant enumeration every reader shares
+//! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
+//! Grant re-put at its id gives no read or principal standing either.
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -46,19 +50,17 @@ pub(crate) fn mark_withdrawn_grant_in_txn(
     WITHDRAWN_GRANT.put(store, wtxn, &HexId(grant), &())
 }
 
-/// [`mark_withdrawn_grant_in_txn`] for a row a semantic delete is about to
-/// remove, by its stored type alone: a live FEDERATION_GRANT row is marked;
-/// any other kind, a deleted shell, or no row is not. No Grant body is
-/// decoded here.
+/// [`mark_withdrawn_grant_in_txn`] for a row a peer's delete is about to
+/// remove, by its stored type alone: a FEDERATION_GRANT row this replica
+/// holds, live or as a deleted shell (the type read off the shell), is
+/// marked; any other kind, or no row, is not. No Grant body is decoded here.
 pub(crate) fn mark_if_withdrawn_grant_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
 ) -> Result<()> {
-    if let crate::vault::LiveEntityRow::Live {
-        entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
-        ..
-    } = crate::vault::live_entity_row_in_txn(store, wtxn, &id)?
+    if crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &id)?
+        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
     {
         mark_withdrawn_grant_in_txn(store, wtxn, id)?;
     }
@@ -68,7 +70,7 @@ pub(crate) fn mark_if_withdrawn_grant_in_txn(
 /// Whether `grant` is positively known withdrawn here. A marker that cannot
 /// be read answers by [`ISOLATION_NEW_CHECK_ERROR_MODE`]: not known, so the
 /// standing read goes on as it did before the marker existed.
-pub(super) fn grant_known_withdrawn_in_txn(
+pub(crate) fn grant_known_withdrawn_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     grant: EntityId,

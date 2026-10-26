@@ -4087,9 +4087,9 @@
     },
     {
       "name": "vault.packs.sections.propose",
-      "description": "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.",
+      "description": "The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim.",
       "input": "crate::memory::PluginSectionProposeRequest",
-      "output": "crate::memory::PluginSectionProposal",
+      "output": "crate::memory::PluginSectionInstallOutcome",
       "call": "memory.plugin_section_propose(&input)?",
       "host_door": true,
       "host_door_lists": true,

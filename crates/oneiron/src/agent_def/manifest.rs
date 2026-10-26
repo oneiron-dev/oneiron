@@ -258,7 +258,7 @@ pub(super) fn parse_system_agent_definition_manifest(
         validate_text_field(
             &seed.logical_id,
             AGENT_LOGICAL_ID_MAX_BYTES,
-            "manifest logical id must be a non-empty string at most 256 bytes",
+            "manifest logical id must be a non-empty string",
         )?;
         if !seed.logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -268,7 +268,7 @@ pub(super) fn parse_system_agent_definition_manifest(
         validate_text_field(
             &seed.display_name,
             AGENT_DISPLAY_NAME_MAX_BYTES,
-            "manifest display name must be a non-empty string at most 256 bytes",
+            "manifest display name must be a non-empty string",
         )?;
         // Schema v1: the gate classifier derives authority by reading the
         // entity stored AT the actor id, so a divergent actor id could never

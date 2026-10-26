@@ -6,6 +6,7 @@ use heed::{RoTxn, RwTxn};
 
 use super::envelope::{self, SealedHandoff, TableSection, VerifiedHandoff, VerifiedHomeAck};
 use super::lineage::{check_source, lineage_admits};
+use super::routes;
 use super::store::{self, HandoffHead, HandoffRole, HandoffTransfer, HeadFloor, MoveRequest};
 use super::table::{HomeTableRegistration, TableAdopt, check_registry};
 use super::{
@@ -20,8 +21,13 @@ use crate::side_table::SideTableDbs;
 /// to `to`. It reads and writes the head row only: no export, signing or
 /// sealing runs here, so the election's commit never fails for one. The
 /// drain freezes and exports later ([`freeze_export`]). A move to the node
-/// it left records nothing. A new move drops the route captured for the
-/// last one.
+/// it left records nothing.
+///
+/// FIX 6459: the move's route is captured here, in the election's own
+/// writer, from the routes the host last fed ([`super::routes`]); none fed
+/// yet, the next feed captures it. A node that holds its state and has not
+/// frozen it for the move it recorded keeps that move's source when the
+/// home moves on to a third node first: the state goes from here.
 pub(crate) fn request_move_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -32,8 +38,23 @@ pub(crate) fn request_move_in_txn(
         return Ok(());
     }
     let mut head = store::head_in_txn(dbs, txn)?;
+    let node = crate::identity::read_client_id_from(dbs, txn)?;
+    let from = match head.request {
+        Some(pending)
+            if node.is_some()
+                && head.holds_state()
+                && pending.from == node
+                && pending.to != node
+                && to != node =>
+        {
+            pending.from
+        }
+        _ => from,
+    };
     head.request = Some(MoveRequest { from, to });
-    head.route = None;
+    head.route = to
+        .filter(|to| Some(*to) != node)
+        .and_then(|to| routes::route_for(&head, to));
     store::put_head_in_txn(dbs, txn, &head)
 }
 
@@ -41,16 +62,26 @@ pub(crate) fn request_move_in_txn(
 /// that froze its state for a move refuses both kinds: its rows are history
 /// now. A node draining its state toward a move refuses a new admission and
 /// lets an admitted one settle, so its tables go quiescent. Every other
-/// node, a new home still waiting for its handoff included, writes as today.
+/// node, a new home still waiting for its handoff included, writes as today,
+/// as does one whose state no move exports (FIX 6575).
 pub(crate) fn guard_in_txn(vault: &Vault, txn: &RoTxn<'_>, mode: HomeWrite) -> Result<()> {
     let head = store::head_in_txn(vault, txn)?;
     if !head.holds_state() {
         return Err(refused("this node froze its home state for a move"));
     }
-    if mode == HomeWrite::Admit && draining(vault, txn, &head)? {
+    if mode == HomeWrite::Admit && holds_lineage_state(&head) && draining(vault, txn, &head)? {
         return Err(refused("this node is draining its home state for a move"));
     }
     Ok(())
+}
+
+/// FIX 6575: whether the state this node holds is the lineage's, the state
+/// a move from here exports. It is not where it is only the local opening of
+/// a move that carried nothing here (Incomplete) with no adopted floor under
+/// it: [`super::delivery_plan`] never exports that, so nothing is held back
+/// for a move there.
+pub(super) fn holds_lineage_state(head: &HandoffHead) -> bool {
+    head.holds_state() && (head.incomplete.is_none() || head.floor.is_some())
 }
 
 /// Whether the last move this node's election recorded leaves this node.
