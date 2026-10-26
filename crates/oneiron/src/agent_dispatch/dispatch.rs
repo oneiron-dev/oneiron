@@ -297,7 +297,7 @@ impl<'a> AgentDispatcher<'a> {
                     input.now,
                 )?;
                 if let Some(case) = &dispatch_input.healer_case {
-                    crate::failure_ladder::oversight::proposed_in_txn(
+                    crate::failure_ladder::oversight::opened_in_txn(
                         self.vault,
                         wtxn,
                         &case.case_ref,
