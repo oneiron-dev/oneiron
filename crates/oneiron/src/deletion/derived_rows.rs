@@ -41,6 +41,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     // FIX 9752: a fitted section install's receipt, with the skill or the
     // install claim it names.
     crate::context_board::erase_section_fit_receipts_in_txn,
+    // FIX 9918: a typed question's copies of an erased judgment answer.
+    crate::llm::decision::questions::erase_question_source_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
 ];
