@@ -503,7 +503,10 @@ pub fn repo_document_lineage_edit(
         .start_frontiers
         .iter()
         .chain(meta.partial_start_vv.iter().filter_map(|(peer, start)| {
-            start.checked_sub(1).filter(|last| *last >= 0).map(|last| ID::new(*peer, last))
+            start
+                .checked_sub(1)
+                .filter(|last| *last >= 0)
+                .map(|last| ID::new(*peer, last))
         }))
         .collect();
     !needed.is_empty()
