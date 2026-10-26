@@ -123,7 +123,8 @@ class CitedMessage(TypedDict):
 class RecordRef(TypedDict):
     kind: str
     id: str
-    short_id: NotRequired[str]
+    # Always present; null when the record has no short id (FIX 4802).
+    short_id: str | None
     label: str
 
 class ScopeHonesty(TypedDict):
@@ -1410,8 +1411,8 @@ class Oneiron:
         def put(self, spec: Facade.ConnectorPackGrantsPutRequest) -> Facade.ConnectorPackGrants:
             """Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint."""
     class _VaultPacksSectionsVerbs:
-        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionProposal:
-            """The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing."""
+        def propose(self, spec: Facade.PluginSectionProposeRequest) -> Facade.PluginSectionInstallOutcome:
+            """The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim."""
         def list(self, spec: Facade.PluginSectionListRequest) -> Facade.PluginSectionsView:
             """Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project."""
         def grant(self, spec: Facade.PluginSectionGrantRequest) -> Facade.PluginSectionGrant:

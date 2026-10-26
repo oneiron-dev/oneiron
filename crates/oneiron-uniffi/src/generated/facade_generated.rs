@@ -1266,7 +1266,7 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
-"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionProposal = |client| {
+"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionInstallOutcome = |client| {
     let input: oneiron::memory::PluginSectionProposeRequest = crate::codec::lower_record("vault.packs.sections.propose", input)?;
     let output = client.vault_packs_sections_propose(&input)?;
     crate::codec::lift_record("vault.packs.sections.propose", &output)

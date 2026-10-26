@@ -13,10 +13,16 @@
 //! the timer arms each try this node's admission takes by the claim's own
 //! readiness, and never one admission holds back here, so no deadline stands
 //! due for work no pass admits.
+//!
+//! FIX 6575: a node whose state is only the local opening of a move that
+//! carried nothing here (Incomplete, no adopted floor) never exports it, so
+//! no move carries its queued items. When its election moves the home away,
+//! every try bound to a cycle here, started or not, runs here to its own end
+//! the same way, rather than wait inert for this node to be home again.
 
 use std::collections::HashSet;
 
-use super::transfer::draining;
+use super::transfer::{draining, holds_lineage_state};
 use super::{HomeWrite, store, takes_home_write_in_txn};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
@@ -33,13 +39,15 @@ use crate::error::Result;
 /// C1's guard takes a new admission here. The second is this node's own
 /// started tries while it drains its state toward a home move: its election
 /// moved the home from this node to another, and it still holds its state.
-/// Both are empty where no free-time try waits.
+/// Where that state is only a local opening no move exports (FIX 6575), the
+/// guard takes new admissions and the second set is every bound try, started
+/// or not. Both are empty where no free-time try waits.
 ///
 /// # Errors
 ///
 /// Storage errors; a retry chain past its bound.
 pub(crate) fn free_time_arming(vault: &Vault) -> Result<(HashSet<AttemptId>, HashSet<AttemptId>)> {
-    let (candidates, drains) = {
+    let (candidates, drains, local) = {
         let txn = vault.store.env.read_txn()?;
         let head = store::head_in_txn(vault, &txn)?;
         let admits = takes_home_write_in_txn(vault, &txn, HomeWrite::Admit)?;
@@ -51,7 +59,7 @@ pub(crate) fn free_time_arming(vault: &Vault) -> Result<(HashSet<AttemptId>, Has
             .map(|record| (record.id, !free_time_item_waits_unstarted(record)))
             .filter(|(_, started)| *started || admits)
             .collect();
-        (candidates, drains)
+        (candidates, drains, !holds_lineage_state(&head))
     };
     let mut tries = HashSet::with_capacity(candidates.len());
     let mut drain = HashSet::new();
@@ -60,7 +68,7 @@ pub(crate) fn free_time_arming(vault: &Vault) -> Result<(HashSet<AttemptId>, Has
             continue;
         }
         tries.insert(attempt);
-        if started && drains {
+        if drains && (started || local) {
             drain.insert(attempt);
         }
     }

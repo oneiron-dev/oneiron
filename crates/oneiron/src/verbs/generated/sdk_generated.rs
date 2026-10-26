@@ -8043,9 +8043,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorPackGrants,
         >(),
-        "vault.packs.sections.propose" => {
-            crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionProposal>()
-        }
+        "vault.packs.sections.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::PluginSectionInstallOutcome,
+        >(),
         "vault.packs.sections.list" => {
             crate::code_run::vault_read::request_schema::<crate::memory::PluginSectionsView>()
         }
@@ -26745,7 +26745,7 @@ pub fn vault_packs_remove(
 pub fn vault_packs_sections_propose(
     memory: &Memory<'_>,
     input: crate::memory::PluginSectionProposeRequest,
-) -> MemoryResult<crate::memory::PluginSectionProposal> {
+) -> MemoryResult<crate::memory::PluginSectionInstallOutcome> {
     memory.plugin_section_propose(&input)
 }
 pub fn vault_packs_sections_list(

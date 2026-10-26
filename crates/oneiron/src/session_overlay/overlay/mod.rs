@@ -10,6 +10,7 @@ use self::segment::TxnSegment;
 
 mod lifecycle;
 mod repo_projection;
+mod retained;
 mod retire;
 mod rows;
 mod segment;

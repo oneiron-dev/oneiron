@@ -388,6 +388,19 @@ impl Vault {
             .map(|view| (*view).clone())
     }
 
+    /// This vault's authority id, as the shared verified fold of the current
+    /// snapshot names it; `None` until the vault is rooted. It only reads:
+    /// unlike [`Self::authority_fold`] it moves no first-seen clock, so a
+    /// host may ask it while it builds a caller's handle (FIX 11063).
+    ///
+    /// # Errors
+    ///
+    /// A fold that does not compute, or storage errors.
+    pub fn authority_vault_id(&self) -> Result<Option<[u8; 32]>> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
+    }
+
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1210 code-mode rows (1170 host rows, 40 run rows), 4210 declarations.
+// Census: 1210 code-mode rows (1170 host rows, 40 run rows), 4211 declarations.
 // Replies: 1087 fully typed, 119 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -721,7 +721,7 @@ declare namespace Sdk {
   type ImageViewRequest = { handle: string; region?: PixelRegion | null; edge?: number | null };
   type PulledImage = { asset_ref: string; pull: string; mime_type: string; bytes: string; width?: number | null; height?: number | null };
   type CallReceiptRequest = { receipt_ref: string };
-  type CallTransport = "http_facade" | "mcp" | "ws";
+  type CallTransport = "http_facade" | "mcp" | "ws" | "open_ai_proxy";
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallAttemptRef = { attempt: EntityId; generation: number };
   type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; attempt_ref?: CallAttemptRef | null; served: string[]; served_records?: RecordRef[] };
@@ -1127,9 +1127,9 @@ declare namespace Sdk {
   type SectionManifestEnvelope = { schema_version: number; manifest: SectionManifest };
   type PluginSectionTargetInput = { kind: "existing_skill"; skill_ref: EntityId } | { kind: "hub_package"; hub_ref: HubRef; target_skill_ref: EntityId };
   type PluginSectionProposeRequest = { manifest: SectionManifestEnvelope; target: PluginSectionTargetInput; turn_ref: string };
-  type PluginSectionProposal = { claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; manifest: SectionManifestEnvelope };
+  type PluginSectionInstallOutcome = { outcome: "installed"; claim_ref: string; section_id: string; skill_ref: string; manifest_digest: string; permissions: string[]; undo_verb: string; manifest: SectionManifestEnvelope } | { outcome: "permission_ask"; claim_ref: string; pending_ref: string; manifest_digest: string; section_id: string; analysis: string; permissions: string[]; manifest: SectionManifestEnvelope };
   type PluginSectionListRequest = { limit?: number | null; cursor?: string | null };
-  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean };
+  type PluginSectionPendingRow = { claim_ref: string; pack_id: string; section_id: string; label: string; origin: string; awaiting_owner_consent: boolean; analysis?: string | null; permissions?: string[] };
   type PluginSectionAdmittedRow = { claim_ref: string; section_id: string; manifest: SectionManifestEnvelope };
   type PluginSectionPackRow = { section_id: string; pack_name: string; source_id: string; content_hash: string; section: PackSection };
   type PluginSectionsView = { pending: PluginSectionPendingRow[]; pending_total: number; pending_remaining: number; next_cursor?: string | null; end: boolean; admitted: PluginSectionAdmittedRow[]; pack_sections: PluginSectionPackRow[]; rendered_pack_sections: string[] };
@@ -3571,8 +3571,9 @@ declare namespace Sdk {
   type ConversationTurnCreateInput = { conversation: string; id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreDagAddressMode = "broadcast" | "direct";
   type CoreDagQuoteInput = { message: string; start: number; end: number };
-  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null };
-  type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null };
+  type DagRecordAppendInput = { conversation: string; parent?: string | null; reply_to?: string | null; containing_turn?: string | null; addr?: CoreDagAddressMode | null; to?: string[] | null; advance: boolean; body: unknown; text?: CoreWriteTextField[] | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; session?: string | null; quote?: CoreDagQuoteInput | null; thread_audience?: string[] | null };
+  type DagReplyTarget = { kind: "turn"; record: EntityId; revision: string } | { kind: "message"; record: EntityId; revision: string; containing_turn: EntityId };
+  type DagRecordAppendReceipt = { id: string; head?: string | null; parent?: string | null; entity_type: number; containing_turn?: string | null; reply_target?: DagReplyTarget | null };
   type CoreBatchEntityInput = { id?: string | null; entity_type: number; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreBatchWriteInput = { entities: CoreBatchEntityInput[] };
   type CoreBatchEntityReceipt = { id: string; entity_type: number };
@@ -6290,8 +6291,8 @@ declare const vault: Sdk.VaultHost & {
       grant(input: Sdk.PluginSectionGrantRequest): Promise<Sdk.PluginSectionGrant | StoredResult>;
       /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
       list(input: Sdk.PluginSectionListRequest): Promise<Sdk.PluginSectionsView | StoredResult>;
-      /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
-      propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionProposal | StoredResult>;
+      /** The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim. */
+      propose(input: Sdk.PluginSectionProposeRequest): Promise<Sdk.PluginSectionInstallOutcome | StoredResult>;
       /** The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild. */
       revoke(input: Sdk.PluginSectionRevokeRequest): Promise<Sdk.PluginSectionRevoked | StoredResult>;
       /** Runs one workflow-pattern suggestion pass over a pinned hub on the caller's credential: a repeating pattern nominates at most one pack as an attributed proposal. */

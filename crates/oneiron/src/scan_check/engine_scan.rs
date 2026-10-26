@@ -259,11 +259,61 @@ pub enum EngineScan {
     /// One project card's text, list entry, joined list or fallback text,
     /// in bytes (once refused past 16 KiB).
     ProjectProposalTextBytes,
+    /// One page of a thread's quote reply strips, as its caller asked for
+    /// it (once refused past 256; a larger ask is served 256 a page).
+    ReplyStripRequestedRows,
+    /// One page of a room's history, thread history, find, participants or
+    /// offers, as its caller asked for it (once refused past 256; a larger
+    /// ask is served 256 a page).
+    RoomRequestedPageRows,
+    /// The rows one room thread list was asked to render (once refused past
+    /// 64; a larger ask renders 64 with its find/get continuation).
+    RoomThreadListRows,
+    /// The links one room reply-chain walk reads (once refused past
+    /// 100,000).
+    RoomLinkWalkRows,
+    /// The messages one Retry lineage walk, or the turns one inherited
+    /// offer walk, reads (once refused or cut short past 10,000).
+    RoomRetryLineageRows,
+    /// The room mentions one witnessed room turn names (once refused past
+    /// 256).
+    RoomMentions,
+    /// The rows per list one room thread policy names (once refused past
+    /// 100,000).
+    RoomThreadPolicyRows,
+    /// The tokens per list one room thread policy names (once refused past
+    /// 1,000,000).
+    RoomThreadTokens,
+    /// The waits per thread one room thread policy names (once refused past
+    /// 100,000).
+    RoomThreadWaitRows,
+    /// One resident binding's goal axes (once refused past 32).
+    ResidentGoalAxes,
+    /// One agent definition's agentId, logicalId or displayName, in bytes
+    /// (once refused past 256).
+    AgentDefinitionIdentityBytes,
+    /// One agent definition's desc or a model entry's `when`, in bytes (once
+    /// refused past 4096).
+    AgentDefinitionDescriptionBytes,
+    /// One agent definition's version or a skill or MCP minVersion, in bytes
+    /// (once refused past 128).
+    AgentDefinitionVersionBytes,
+    /// One agent definition's instructions, in bytes (once refused past
+    /// 16,384).
+    AgentDefinitionInstructionBytes,
+    /// One agent definition's model, backend, skill, connector, MCP or
+    /// optional-memory family reference, in bytes (once refused past 256).
+    AgentDefinitionReferenceBytes,
+    /// One agent definition's verbatim pin, in bytes (once refused past
+    /// 1024).
+    AgentDefinitionVerbatimPinBytes,
+    /// One agent birth source's encoded bytes (once refused past 32 MiB).
+    AgentBirthSourceBytes,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 97] = [
+    pub const ALL: [Self; 114] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -361,6 +411,23 @@ impl EngineScan {
         Self::ProjectCycleAssignments,
         Self::ProjectJointWork,
         Self::ProjectProposalTextBytes,
+        Self::ReplyStripRequestedRows,
+        Self::RoomRequestedPageRows,
+        Self::RoomThreadListRows,
+        Self::RoomLinkWalkRows,
+        Self::RoomRetryLineageRows,
+        Self::RoomMentions,
+        Self::RoomThreadPolicyRows,
+        Self::RoomThreadTokens,
+        Self::RoomThreadWaitRows,
+        Self::ResidentGoalAxes,
+        Self::AgentDefinitionIdentityBytes,
+        Self::AgentDefinitionDescriptionBytes,
+        Self::AgentDefinitionVersionBytes,
+        Self::AgentDefinitionInstructionBytes,
+        Self::AgentDefinitionReferenceBytes,
+        Self::AgentDefinitionVerbatimPinBytes,
+        Self::AgentBirthSourceBytes,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -472,6 +539,23 @@ impl EngineScan {
             Self::ProjectCycleAssignments => "project_cycle_assignments",
             Self::ProjectJointWork => "project_joint_work",
             Self::ProjectProposalTextBytes => "project_proposal_text_bytes",
+            Self::ReplyStripRequestedRows => "reply_strip_requested_rows",
+            Self::RoomRequestedPageRows => "room_requested_page_rows",
+            Self::RoomThreadListRows => "room_thread_list_rows",
+            Self::RoomLinkWalkRows => "room_link_walk_rows",
+            Self::RoomRetryLineageRows => "room_retry_lineage_rows",
+            Self::RoomMentions => "room_mentions",
+            Self::RoomThreadPolicyRows => "room_thread_policy_rows",
+            Self::RoomThreadTokens => "room_thread_tokens",
+            Self::RoomThreadWaitRows => "room_thread_wait_rows",
+            Self::ResidentGoalAxes => "resident_goal_axes",
+            Self::AgentDefinitionIdentityBytes => "agent_definition_identity_bytes",
+            Self::AgentDefinitionDescriptionBytes => "agent_definition_description_bytes",
+            Self::AgentDefinitionVersionBytes => "agent_definition_version_bytes",
+            Self::AgentDefinitionInstructionBytes => "agent_definition_instruction_bytes",
+            Self::AgentDefinitionReferenceBytes => "agent_definition_reference_bytes",
+            Self::AgentDefinitionVerbatimPinBytes => "agent_definition_verbatim_pin_bytes",
+            Self::AgentBirthSourceBytes => "agent_birth_source_bytes",
         }
     }
 
@@ -530,6 +614,21 @@ impl EngineScan {
             Self::ProjectCycleWorlds | Self::ProjectCycleAssignments => 64,
             Self::ProjectJointWork => 64 * 64,
             Self::ProjectProposalTextBytes => 16 * 1024,
+            Self::ReplyStripRequestedRows | Self::RoomRequestedPageRows | Self::RoomMentions => 256,
+            Self::RoomThreadListRows => 64,
+            Self::RoomLinkWalkRows | Self::RoomThreadPolicyRows | Self::RoomThreadWaitRows => {
+                100_000
+            }
+            Self::RoomRetryLineageRows => 10_000,
+            Self::RoomThreadTokens => 1_000_000,
+            Self::ResidentGoalAxes => 32,
+            Self::AgentDefinitionIdentityBytes => 256,
+            Self::AgentDefinitionDescriptionBytes => 4096,
+            Self::AgentDefinitionVersionBytes => 128,
+            Self::AgentDefinitionInstructionBytes => 16_384,
+            Self::AgentDefinitionReferenceBytes => 256,
+            Self::AgentDefinitionVerbatimPinBytes => 1024,
+            Self::AgentBirthSourceBytes => 32 * 1024 * 1024,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -633,6 +732,23 @@ impl EngineScan {
             Self::ProjectCycleAssignments => 122,
             Self::ProjectJointWork => 123,
             Self::ProjectProposalTextBytes => 124,
+            Self::ReplyStripRequestedRows => 125,
+            Self::RoomRequestedPageRows => 126,
+            Self::RoomThreadListRows => 127,
+            Self::RoomLinkWalkRows => 128,
+            Self::RoomRetryLineageRows => 129,
+            Self::RoomMentions => 130,
+            Self::RoomThreadPolicyRows => 131,
+            Self::RoomThreadTokens => 132,
+            Self::RoomThreadWaitRows => 133,
+            Self::ResidentGoalAxes => 134,
+            Self::AgentDefinitionIdentityBytes => 135,
+            Self::AgentDefinitionDescriptionBytes => 136,
+            Self::AgentDefinitionVersionBytes => 137,
+            Self::AgentDefinitionInstructionBytes => 138,
+            Self::AgentDefinitionReferenceBytes => 139,
+            Self::AgentDefinitionVerbatimPinBytes => 140,
+            Self::AgentBirthSourceBytes => 141,
         }]
     }
 }

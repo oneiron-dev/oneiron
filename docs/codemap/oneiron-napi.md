@@ -16,11 +16,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/boundary.rs` | src | s | 10 crate-vis | — | JS-boundary guards: error constructors, timestamp/number narrowing, blob ceiling |
 | `src/facade/bridge.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/client.rs` | src | m | 4 struct · 12 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
-| `src/facade/client/embedded_engine.rs` | src | s | 2 struct · 5 fn | NapiEngineOptions, NativeEngine | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
+| `src/facade/client/embedded_engine.rs` | src | m | 6 struct · 13 fn | NapiEngineHeader, NapiEngineOptions, NapiEngineReply, NapiEngineRequest, NativeEngine, NativeEngineConnection | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
 | `src/facade/client/generated/agent_verbs.rs` | src | generated | 1159 fn | — | — |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
-| `src/facade/dtos.rs` | src | L | 63 struct | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +55 | All napi(object) DTO structs for the actor-scoped surface |
-| `src/facade/input_error.rs` | src | s | 1 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
+| `src/facade/dtos.rs` | src | L | 60 struct · 1 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +52 | All napi(object) DTO structs for the actor-scoped surface |
+| `src/facade/dtos/read_scope.rs` | src | s | 3 struct | NapiReadReceipt, NapiReadScope, NapiRecallScope | The recall scope a caller asks for and the read receipt every read returns, as napi objects |
+| `src/facade/input_error.rs` | src | s | 2 crate-vis | — | Typed input refusals for the scoped SDK client, not the legacy bridge |
+| `src/facade/js_json.rs` | src | s | 1 crate-vis | — | JSON values from JavaScript, read as the typed decode behind them reads them (FIX 2884, 4804) |
 | `src/facade/mod.rs` | src | s | 1 re-export · 4 crate-vis | — | BRIDGE-01 (ONE-1454): napi lift of the engine memory facade |
 | `src/facade/numeric.rs` | src | s | 3 crate-vis | — | JavaScript numbers must be validated before N-API can narrow them |
 | `src/facade/pairing.rs` | src | s | 6 struct · 1 crate-vis | NapiCheckpointPin, NapiCheckpointPinBinding, NapiCheckpointPinKey, NapiCheckpointPinPolicy, NapiCheckpointPinRoot, NapiCheckpointPinSignature | The checkpoint pin `NativeClient.pair` returns (OF-469, FIX 3376), lifted whole from… |
@@ -33,4 +35,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lib/host_root.rs` | src | s | 1 struct · 3 crate-vis | HostRootOpenOptions | The host root secret the raw openers take (FIX 4730): `NapiVault` and `VaultBridge` opens that profile this… |
 | `src/lib/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | The raw N-API addon root: module registrations and the crate-level native exports |
 | `src/lib/vault.rs` | src | m | 1 struct · 30 fn · 1 crate-vis | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
+| `src/lib/vault/reads.rs` | src | s | 5 crate-vis | — | The content reads a bound [`NapiVault`] makes inside the off-record session it names (FIX 8119): the room's… |
 | `src/types.rs` | src | s | 7 struct · 1 crate-vis | NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig, NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry | Legacy `NapiVault` DTOs: edges, scored entities, subtrees, batches, codebase snapshots, email |

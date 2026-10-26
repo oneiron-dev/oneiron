@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4155 declarations.
+Census: 1159 facade rows, 4156 declarations.
 Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -3599,7 +3599,7 @@ class PulledImage(TypedDict):
     height: NotRequired[int | None]
 class CallReceiptRequest(TypedDict):
     receipt_ref: str
-CallTransport = Literal["http_facade", "mcp", "ws"]
+CallTransport = Literal["http_facade", "mcp", "ws", "open_ai_proxy"]
 class CallOutcomeRefusedBody(TypedDict):
     code: str
 class CallOutcomeRefused(TypedDict):
@@ -5617,12 +5617,25 @@ class PluginSectionProposeRequest(TypedDict):
     manifest: SectionManifestEnvelope
     target: PluginSectionTargetInput
     turn_ref: str
-class PluginSectionProposal(TypedDict):
+class PluginSectionInstallOutcomeInstalled(TypedDict):
+    outcome: Literal["installed"]
+    claim_ref: str
+    section_id: str
+    skill_ref: str
+    manifest_digest: str
+    permissions: list[str]
+    undo_verb: str
+    manifest: SectionManifestEnvelope
+class PluginSectionInstallOutcomePermissionAsk(TypedDict):
+    outcome: Literal["permission_ask"]
     claim_ref: str
     pending_ref: str
     manifest_digest: str
     section_id: str
+    analysis: str
+    permissions: list[str]
     manifest: SectionManifestEnvelope
+PluginSectionInstallOutcome = PluginSectionInstallOutcomeInstalled | PluginSectionInstallOutcomePermissionAsk
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
     cursor: NotRequired[str | None]
@@ -5633,6 +5646,8 @@ class PluginSectionPendingRow(TypedDict):
     label: str
     origin: str
     awaiting_owner_consent: bool
+    analysis: NotRequired[str | None]
+    permissions: NotRequired[list[str]]
 class PluginSectionAdmittedRow(TypedDict):
     claim_ref: str
     section_id: str
@@ -17348,7 +17363,10 @@ class VerbHookStopCompletedWithError(TypedDict):
     message: str
     receipt_ref: NotRequired[str | None]
 VerbHookStop = VerbHookStopSkipped | VerbHookStopPending | VerbHookStopHidden | VerbHookStopCompleted | VerbHookStopCompletedWithError
-class MemoryError(MemoryWrongRoot):
+class FacadeMemoryError(TypedDict):
+    attempted: NotRequired[str]
+    replacement: NotRequired[str]
+    schemaRef: NotRequired[str]
     code: str
     message: str
     suggestions: list[str]
@@ -17370,7 +17388,7 @@ class EsignDocumentTrailReadable(TypedDict):
     audit: list[EsignEventRow]
 class EsignDocumentTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignDocumentTrail = EsignDocumentTrailReadable | EsignDocumentTrailUnreadable
 EsignDocumentView = dict[str, Any]
 class EsignLinksIssueRequest(TypedDict):
@@ -17529,7 +17547,7 @@ class EsignSealTrailReadable(TypedDict):
     status: DocumentStatus
 class EsignSealTrailUnreadable(TypedDict):
     trail: Literal["unreadable"]
-    error: MemoryError
+    error: FacadeMemoryError
 EsignSealTrail = EsignSealTrailReadable | EsignSealTrailUnreadable
 EsignSealView = dict[str, Any]
 class CoreWriteTextField(TypedDict):
@@ -17564,6 +17582,7 @@ class DagRecordAppendInput(TypedDict):
     conversation: str
     parent: NotRequired[str | None]
     reply_to: NotRequired[str | None]
+    containing_turn: NotRequired[str | None]
     addr: NotRequired[CoreDagAddressMode | None]
     to: NotRequired[list[str] | None]
     advance: bool
@@ -17575,10 +17594,23 @@ class DagRecordAppendInput(TypedDict):
     session: NotRequired[str | None]
     quote: NotRequired[CoreDagQuoteInput | None]
     thread_audience: NotRequired[list[str] | None]
+class DagReplyTargetTurn(TypedDict):
+    kind: Literal["turn"]
+    record: EntityId
+    revision: str
+class DagReplyTargetMessage(TypedDict):
+    kind: Literal["message"]
+    record: EntityId
+    revision: str
+    containing_turn: EntityId
+DagReplyTarget = DagReplyTargetTurn | DagReplyTargetMessage
 class DagRecordAppendReceipt(TypedDict):
     id: str
     head: NotRequired[str | None]
     parent: NotRequired[str | None]
+    entity_type: int
+    containing_turn: NotRequired[str | None]
+    reply_target: NotRequired[DagReplyTarget | None]
 class CoreBatchEntityInput(TypedDict):
     id: NotRequired[str | None]
     entity_type: int

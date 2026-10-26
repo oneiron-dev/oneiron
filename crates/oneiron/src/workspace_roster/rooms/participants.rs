@@ -31,8 +31,8 @@ pub struct ParticipantsRequest {
     /// The `next_after` of the page before.
     #[serde(default)]
     pub after: Option<String>,
-    /// Rows per page, 1 to the room message page's bound; that bound when
-    /// unset.
+    /// Rows per page, positive; the room message page's bound when unset.
+    /// A page holds at most that bound; the rest follow through its cursor.
     #[serde(default)]
     pub limit: Option<u32>,
 }
@@ -139,11 +139,20 @@ impl Memory<'_> {
         &self,
         request: &ParticipantsRequest,
     ) -> MemoryResult<ParticipantsPage> {
-        let limit = request.limit.map_or(Ok(PAGE_LIMIT), usize::try_from);
-        let limit = match limit {
-            Ok(limit) if (1..=PAGE_LIMIT).contains(&limit) => limit,
-            _ => return Err(MemoryError::from(invalid())),
-        };
+        let limit = request.limit.map_or(PAGE_LIMIT, |limit| {
+            usize::try_from(limit).unwrap_or(usize::MAX)
+        });
+        if limit == 0 {
+            return Err(MemoryError::from(invalid()));
+        }
+        // A larger ask is served a page at a time through its cursor.
+        let limit = super::history::served_page_size(
+            self.vault(),
+            crate::scan_check::EngineScan::RoomRequestedPageRows,
+            request.room,
+            limit,
+            PAGE_LIMIT,
+        )?;
         let mut start = match request.after.as_deref() {
             Some(after) => Some(parse_cursor(after).ok_or_else(invalid)?),
             None => None,

@@ -80,7 +80,7 @@ pub(super) fn decode_memory_profile(value: &Value) -> Result<MemoryProfile> {
                 let tier = text_value(
                     value,
                     AGENT_MODEL_TIER_MAX_BYTES,
-                    "memory_profile compaction_backend must be a non-empty UTF-8 string at most 256 bytes",
+                    "memory_profile compaction_backend must be a non-empty UTF-8 string",
                 )?;
                 compaction_backend = Some(ModelTierRef(tier));
             }
@@ -281,7 +281,7 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
                 skill_id = Some(text_value(
                     value,
                     AGENT_REF_KEY_MAX_BYTES,
-                    "skill dependency skillId must be a non-empty UTF-8 string at most 256 bytes",
+                    "skill dependency skillId must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_DEP_MIN_VERSION => {
@@ -290,7 +290,7 @@ fn decode_skill_dependency(value: &Value) -> Result<SkillDependency> {
                     _ => Some(text_value(
                         value,
                         AGENT_VERSION_MAX_BYTES,
-                        "skill dependency minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                        "skill dependency minVersion must be nil or a non-empty UTF-8 string",
                     )?),
                 });
             }
@@ -320,7 +320,7 @@ pub(super) fn decode_connectors(value: &Value) -> Result<Vec<String>> {
             text_value(
                 value,
                 AGENT_REF_KEY_MAX_BYTES,
-                "connector key must be a non-empty UTF-8 string at most 256 bytes",
+                "connector key must be a non-empty UTF-8 string",
             )
         })
         .collect()
@@ -368,7 +368,7 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
                 key = Some(text_value(
                     value,
                     AGENT_REF_KEY_MAX_BYTES,
-                    "MCP ref key must be a non-empty UTF-8 string at most 256 bytes",
+                    "MCP ref key must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_MCP_MIN_VERSION => {
@@ -377,7 +377,7 @@ fn decode_mcp_ref(value: &Value) -> Result<McpRef> {
                     _ => Some(text_value(
                         value,
                         AGENT_VERSION_MAX_BYTES,
-                        "MCP ref minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                        "MCP ref minVersion must be nil or a non-empty UTF-8 string",
                     )?),
                 });
             }
@@ -413,51 +413,51 @@ pub(super) fn validate_agent_definition(def: &AgentDefinition) -> Result<()> {
     validate_text_field(
         &def.agent_id,
         AGENT_ID_MAX_BYTES,
-        "agentId must be a non-empty UTF-8 string at most 256 bytes",
+        "agentId must be a non-empty UTF-8 string",
     )?;
     validate_text_field(
         &def.desc,
         AGENT_DESC_MAX_BYTES,
-        "desc must be a non-empty UTF-8 string at most 4096 bytes",
+        "desc must be a non-empty UTF-8 string",
     )?;
     validate_text_field(
         &def.version,
         AGENT_VERSION_MAX_BYTES,
-        "version must be a non-empty UTF-8 string at most 128 bytes",
+        "version must be a non-empty UTF-8 string",
     )?;
     if let Some(instructions) = &def.instructions {
         validate_text_field(
             instructions,
             AGENT_INSTRUCTIONS_MAX_BYTES,
-            "instructions must be a non-empty UTF-8 string at most 16384 bytes",
+            "instructions must be a non-empty UTF-8 string",
         )?;
     }
     if let Some(model_tier) = &def.model_tier {
         validate_text_field(
             model_tier.as_str(),
             AGENT_MODEL_TIER_MAX_BYTES,
-            "modelTier must be a non-empty UTF-8 string at most 256 bytes",
+            "modelTier must be a non-empty UTF-8 string",
         )?;
     }
     if let Some(model) = &def.dreaming_model {
         validate_text_field(
             model.as_str(),
             AGENT_MODEL_TIER_MAX_BYTES,
-            "dreamingModel must be a non-empty UTF-8 string at most 256 bytes",
+            "dreamingModel must be a non-empty UTF-8 string",
         )?;
     }
     if let Some(logical_id) = &def.logical_id {
         validate_text_field(
             logical_id,
             AGENT_LOGICAL_ID_MAX_BYTES,
-            "logicalId must be a non-empty UTF-8 string at most 256 bytes",
+            "logicalId must be a non-empty UTF-8 string",
         )?;
     }
     if let Some(display_name) = &def.display_name {
         validate_text_field(
             display_name,
             AGENT_DISPLAY_NAME_MAX_BYTES,
-            "displayName must be a non-empty UTF-8 string at most 256 bytes",
+            "displayName must be a non-empty UTF-8 string",
         )?;
     }
     if !def.confidence.is_finite() || !(0.0..=1.0).contains(&def.confidence) {
@@ -504,7 +504,7 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
     validate_text_field(
         profile.compaction_backend.as_str(),
         AGENT_MODEL_TIER_MAX_BYTES,
-        "memory_profile compaction_backend must be a non-empty UTF-8 string at most 256 bytes",
+        "memory_profile compaction_backend must be a non-empty UTF-8 string",
     )?;
     if let Some(split) = profile.budget_split {
         let fractions = [split.claims, split.turns, split.summaries, split.other];
@@ -534,7 +534,7 @@ fn validate_memory_profile(profile: &MemoryProfile) -> Result<()> {
         validate_text_field(
             pin,
             MAX_MEMORY_PROFILE_VERBATIM_PIN_BYTES,
-            "memory_profile verbatim_pins entries must be non-empty UTF-8 strings at most 1024 bytes",
+            "memory_profile verbatim_pins entries must be non-empty UTF-8 strings",
         )?;
         if profile.verbatim_pins[..index].contains(pin) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -583,7 +583,7 @@ fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
         validate_text_field(
             &dependency.skill_id,
             AGENT_REF_KEY_MAX_BYTES,
-            "skill dependency skillId must be a non-empty UTF-8 string at most 256 bytes",
+            "skill dependency skillId must be a non-empty UTF-8 string",
         )?;
         if !seen.insert(dependency.skill_id.as_str()) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -594,7 +594,7 @@ fn validate_skill_dependencies(skills: &[SkillDependency]) -> Result<()> {
             validate_text_field(
                 min_version,
                 AGENT_VERSION_MAX_BYTES,
-                "skill dependency minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                "skill dependency minVersion must be nil or a non-empty UTF-8 string",
             )?;
         }
     }
@@ -607,7 +607,7 @@ fn validate_connectors(connectors: &[String]) -> Result<()> {
         validate_text_field(
             connector,
             AGENT_REF_KEY_MAX_BYTES,
-            "connector key must be a non-empty UTF-8 string at most 256 bytes",
+            "connector key must be a non-empty UTF-8 string",
         )?;
         if !seen.insert(connector.as_str()) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -624,7 +624,7 @@ fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
         validate_text_field(
             &mcp.key,
             AGENT_REF_KEY_MAX_BYTES,
-            "MCP ref key must be a non-empty UTF-8 string at most 256 bytes",
+            "MCP ref key must be a non-empty UTF-8 string",
         )?;
         if !seen.insert(mcp.key.as_str()) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -635,7 +635,7 @@ fn validate_mcp_refs(mcps: &[McpRef]) -> Result<()> {
             validate_text_field(
                 min_version,
                 AGENT_VERSION_MAX_BYTES,
-                "MCP ref minVersion must be nil or a non-empty UTF-8 string at most 128 bytes",
+                "MCP ref minVersion must be nil or a non-empty UTF-8 string",
             )?;
         }
     }
@@ -650,12 +650,16 @@ pub(super) fn text_value(value: &Value, max_bytes: usize, context: &'static str)
     Ok(text.to_owned())
 }
 
+/// A text field is non-blank. Its length refuses nothing (rule 5, FIX
+/// 10542): `_old_max_bytes`, the length it once refused past, is now the
+/// default a definition's put observes it against
+/// (`super::byte_observation`).
 pub(super) fn validate_text_field(
     text: &str,
-    max_bytes: usize,
+    _old_max_bytes: usize,
     context: &'static str,
 ) -> Result<()> {
-    if text.trim().is_empty() || text.len() > max_bytes {
+    if text.trim().is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(context)));
     }
     Ok(())
