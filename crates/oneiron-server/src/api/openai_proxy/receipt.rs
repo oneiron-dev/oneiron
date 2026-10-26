@@ -22,6 +22,7 @@ use serde_json::Value;
 use super::wire::Refusal;
 use crate::api::McpCallContext;
 use crate::api::call_receipt;
+use crate::api::llm::RefusalCode;
 use crate::server::SyncServer;
 
 /// The verb a raw proxy call's receipt states: the row the typed doors serve
@@ -165,19 +166,21 @@ impl ProxyCaller {
 }
 
 /// A refusal's outcome and content digest: the code and message the proxy's
-/// wire built it with ([`Refusal`]). One it did not build (the model
-/// admission's) states its status and no digest, as the facade records a
-/// reply its own refusal did not build.
+/// wire ([`Refusal`]) or the model admission ([`RefusalCode`]) built it
+/// with. One neither built states its status and no digest, as the facade
+/// records a reply its own refusal did not build.
 fn refusal(response: &Response) -> (CallOutcome, Option<String>) {
-    match response.extensions().get::<Refusal>() {
-        Some(refusal) => (
-            CallOutcome::Refused {
-                code: refusal.code.clone(),
-            },
-            Some(oneiron::receipt::call_refusal_digest(
-                &refusal.code,
-                &refusal.message,
-            )),
+    let built = match response.extensions().get::<Refusal>() {
+        Some(refusal) => Some((&refusal.code, &refusal.message)),
+        None => response
+            .extensions()
+            .get::<RefusalCode>()
+            .map(|refusal| (&refusal.code, &refusal.message)),
+    };
+    match built {
+        Some((code, message)) => (
+            CallOutcome::Refused { code: code.clone() },
+            Some(oneiron::receipt::call_refusal_digest(code, message)),
         ),
         None => (
             CallOutcome::Refused {
