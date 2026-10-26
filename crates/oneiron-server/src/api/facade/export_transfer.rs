@@ -66,7 +66,10 @@ impl ExportTransfers {
         rand_core::OsRng.fill_bytes(&mut random);
         let transfer_ref = format!(
             "{TRANSFER_REF_PREFIX}{}",
-            random.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+            random
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
         );
         let transfer = ExportTransfer {
             transfer_ref: transfer_ref.clone(),
@@ -139,14 +142,13 @@ pub(super) fn vault_export_answer(
     let vault = &server.vault;
     if input.delivery.unwrap_or_default() == ExportDelivery::Inline {
         let (output, rows) = match (proof, action, owner) {
-            (Some(proof), _, _) if proof.claims().holder_ref == "host" => {
-                vault.export_with_verified_host_owner_listing(
+            (Some(proof), _, _) if proof.claims().holder_ref == "host" => vault
+                .export_with_verified_host_owner_listing(
                     input,
                     proof,
                     surface,
                     auth.destination(),
-                )?
-            }
+                )?,
             (Some(proof), _, _) => {
                 let (actor, class) = super::identity::facade_actor(server, auth)?;
                 let producers = oneiron::memory::ProducerRows::default();
@@ -157,9 +159,12 @@ pub(super) fn vault_export_answer(
                     .export_with_verified_owner(input, proof, surface)?;
                 (output, producers.take())
             }
-            (None, Some(action), _) => {
-                vault.export_with_host_action_listing(input, &action, surface, auth.destination())?
-            }
+            (None, Some(action), _) => vault.export_with_host_action_listing(
+                input,
+                &action,
+                surface,
+                auth.destination(),
+            )?,
             (None, None, Some(owner)) => vault.export_with_authenticated_owner_listing(
                 input,
                 &owner,
@@ -249,7 +254,10 @@ async fn read_transfer(
     let mut response = Response::new(kept_body(kept, start, end));
     *response.status_mut() = status;
     let reply = response.headers_mut();
-    reply.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/zip"));
+    reply.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
     reply.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     reply.insert(header::CONTENT_LENGTH, HeaderValue::from(end - start));
     if let Ok(tag) = HeaderValue::from_str(&digest) {
@@ -303,7 +311,10 @@ fn admitted(
         }
         (Some(proof), _) => {
             let (actor, class) = super::identity::facade_actor(server, auth)?;
-            server.vault.memory(actor, class).admit_export(Some(proof))?;
+            server
+                .vault
+                .memory(actor, class)
+                .admit_export(Some(proof))?;
         }
         (None, Some(action)) => server.vault.admit_host_action_export(&action)?,
         (None, None) if auth.managed_owner().is_some() => {
