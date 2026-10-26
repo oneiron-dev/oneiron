@@ -1416,9 +1416,9 @@ class Oneiron:
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[dict[str, Any]]:
-            """Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit, kinds)))
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None, after: str | None = None) -> dict[str, Any]:
+            """Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. ``after`` takes the page before's ``next_after``."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(json.dumps({"limit": limit, "kinds": kinds, "after": after}))))
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))

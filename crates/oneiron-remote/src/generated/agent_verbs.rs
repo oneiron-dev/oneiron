@@ -465,11 +465,9 @@ impl OneironClient {
                 "vault.export.scoped" => {
                     remote_agent_verb_output::<oneiron::memory::ScopedExport>(client, verb, &input)
                 }
-                "vault.receipts" => {
-                    remote_agent_verb_output::<Vec<oneiron::memory::MemoryReceipt>>(
-                        client, verb, &input,
-                    )
-                }
+                "vault.receipts" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::VaultReceiptsPage,
+                >(client, verb, &input),
                 "vault.assets.ingest" => remote_agent_verb_output::<
                     oneiron::memory::AssetIngestReceipt,
                 >(client, verb, &input),
@@ -5421,18 +5419,21 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.export.scoped", value)
     }
-    /// Lists governance receipts, newest first: the gate decision ledger, or
-    /// the receipts of the named kinds.
+    /// Lists governance receipts, newest first, a page at a time: the gate
+    /// decision ledger, or the receipts of the named kinds. `after` takes the
+    /// page before's `next_after`.
     pub fn vault_receipts(
         &self,
         limit: usize,
         kinds: &[String],
-    ) -> Result<Vec<oneiron::memory::MemoryReceipt>, MemoryError> {
+        after: Option<&str>,
+    ) -> Result<oneiron::task_verb::sdk::VaultReceiptsPage, MemoryError> {
         let input = oneiron::task_verb::sdk::VaultReceiptsRequest {
             limit: Some(limit),
             kinds: kinds.to_vec(),
+            after: after.map(str::to_owned),
         };
-        oneiron::memory::caps::check_limit(
+        oneiron::memory::caps::check_limit_nonzero(
             input
                 .limit
                 .unwrap_or(oneiron::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),

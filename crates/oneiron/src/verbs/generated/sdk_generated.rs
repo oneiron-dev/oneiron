@@ -18560,7 +18560,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts" => {
             let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
-            crate::memory::caps::check_limit(
+            crate::memory::caps::check_limit_nonzero(
                 input
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
@@ -25831,17 +25831,18 @@ pub fn vault_export_scoped(
 pub fn vault_receipts(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::VaultReceiptsRequest,
-) -> MemoryResult<Vec<crate::memory::MemoryReceipt>> {
-    crate::memory::caps::check_limit(
+) -> MemoryResult<crate::task_verb::sdk::VaultReceiptsPage> {
+    crate::memory::caps::check_limit_nonzero(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
     )?;
-    memory.receipts_of_kinds(
+    memory.receipts_page(
         input
             .limit
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
         &input.kinds,
+        input.after.as_deref(),
     )
 }
 pub fn vault_assets_ingest(

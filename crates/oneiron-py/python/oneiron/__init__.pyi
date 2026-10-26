@@ -1063,7 +1063,7 @@ class Oneiron:
         def ceiling(self, spec: Facade.EmptyRequest | None = None) -> Facade.CredentialCeiling:
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
     class _VaultReceiptsVerbs:
-        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None, after: str | None = None) -> Facade.VaultReceiptsPage: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
         def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:

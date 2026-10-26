@@ -1309,7 +1309,7 @@ export interface FacadeResults {
   "vault.scope.position": Facade.ScopedReadResult<Facade.RecordPosition | null>;
   "vault.scope.ceiling": Facade.CredentialCeiling;
   "vault.export.scoped": Facade.ScopedExport;
-  "vault.receipts": Facade.MemoryReceipt[];
+  "vault.receipts": Facade.VaultReceiptsPage;
   "vault.assets.ingest": Facade.AssetIngestReceipt;
   "vault.assets.resolve": Facade.ScopedReadResult<Facade.AssetResolved>;
   "vault.search.vector": Facade.ScopedReadResult<Facade.VectorSearchResult>;
@@ -2487,7 +2487,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.scope.position": { description: "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.scope.ceiling": { description: "Reads the caller credential ceiling as a typed ceiling, never as a record position.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.export.scoped": { description: "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding.", scope: "Read", proposes: false, hostDoor: false, section: false },
-  "vault.receipts": { description: "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.receipts": { description: "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.assets.ingest": { description: "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.assets.resolve": { description: "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.search.vector": { description: "Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -3937,7 +3937,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
         ceiling: (input: Facade.EmptyRequest = {}, options?: O): FacadeReturns<"vault.scope.ceiling">[K] => invoke("vault.scope.ceiling", input, options, newInvocation()),
       },
-      /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
+      /** Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest. */
       receipts: Object.assign((input: Facade.VaultReceiptsRequest, options?: O): FacadeReturns<"vault.receipts">[K] => invoke("vault.receipts", input, options, newInvocation()), {
         /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
         get: (input: Facade.CallReceiptRequest, options?: O): FacadeReturns<"vault.receipts.get">[K] => invoke("vault.receipts.get", input, options, newInvocation()),

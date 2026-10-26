@@ -800,8 +800,8 @@ export class Oneiron {
       /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
       ceiling: (input: Facade.EmptyRequest = {}): Facade.CredentialCeiling => this.#call(() => this.#client.vaultScopeCeiling(input) as Facade.CredentialCeiling),
     },
-    /** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */
-    receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
+    /** Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. `after` takes the page before's `next_after`. */
+    receipts: Object.assign((limit: number = 100, kinds?: string[], after?: string): Facade.VaultReceiptsPage => this.#call(() => this.#client.vaultReceipts({limit: limit, kinds: kinds, after: after}) as Facade.VaultReceiptsPage), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
       get: (input: Facade.CallReceiptRequest): Facade.CallReceipt | null => this.#call(() => this.#client.vaultReceiptsGet(input) as Facade.CallReceipt | null),
       /** Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly. */

@@ -7181,11 +7181,18 @@ async fn execute_agent_verb_row(
                 .map_err(mcp_facade_error)?;
             served.extend(
                 output
+                    .receipts
                     .iter()
                     .filter_map(|receipt| receipt.claim_ref.as_deref())
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
-            let source = crate::mcp::McpPageSource::complete(output.len());
+            let source = crate::mcp::McpPageSource::scoped_window(
+                output.receipts.len(),
+                0,
+                usize::from(output.next_after.is_some()),
+                true,
+            )
+            .rows_at("receipts");
             mcp_agent_verb_output(output, source)
         }
         "vault.assets.ingest" => {

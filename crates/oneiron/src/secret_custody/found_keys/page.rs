@@ -23,7 +23,7 @@ pub struct FoundKeyCursor {
 impl FoundKeyCursor {
     /// The cursor's text form.
     #[must_use]
-    pub fn to_text(&self) -> String {
+    pub fn to_text(self) -> String {
         format!("{}.{}", self.latest, self.record.to_hex())
     }
 
@@ -39,7 +39,7 @@ impl FoundKeyCursor {
 
     /// Whether a notice at `latest` for `record` comes after this cursor in
     /// newest-first, then record-id order.
-    fn precedes(&self, latest: u64, record: &EntityId) -> bool {
+    fn precedes(self, latest: u64, record: &EntityId) -> bool {
         latest < self.latest || (latest == self.latest && *record > self.record)
     }
 }

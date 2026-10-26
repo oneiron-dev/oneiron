@@ -10793,7 +10793,7 @@ impl AgentVerb {
                 "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."
             }
             Self::VaultReceipts => {
-                "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
+                "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest."
             }
             Self::VaultAssetsIngest => {
                 "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."
