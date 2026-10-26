@@ -21,8 +21,9 @@ use crate::outbound_consent::OutboundBindingAuthority;
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, IntentEscalationReason, IntentLedgerError, IntentState,
     LedgerPayloadContext, OutboundCallRequest, RecordedOutboundOutcome, force_sync,
-    insert_pending_in_txn, insert_suppressed_in_txn, read_intent_for_attempt_in_txn,
-    read_intent_record_in_txn, stored_admission_in_txn,
+    insert_pending_in_txn, insert_suppressed_in_txn, payload_recipient_in_txn,
+    read_intent_for_attempt_in_txn, read_intent_record_in_txn, reserve_budget_in_txn,
+    stored_admission_in_txn,
 };
 use crate::ports::TombstoneStore;
 
@@ -313,12 +314,15 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     // FIX 9283, 9372: the actor the Gate verified and whether the caller keeps
     // no record, kept with the row's payload; never read from the request.
+    // FIX 10953: and the person the engine's own frozen send names as its
+    // counterparty, as the comm index resolves it now.
     let payload_context = LedgerPayloadContext {
         actor: prepared.gate.provenance.actor_entity_ref,
         off_record: matches!(
             &prepared.authorization,
             PreparedAuthorization::ScopedMcp { prepared, .. } if prepared.keeps_no_record()
         ),
+        recipient: payload_recipient_in_txn(vault, &wtxn, &prepared.payload),
     };
     let dedupe_key = dedupe::dedupe_key(&prepared)?;
     // `now_ms` is supplied by the dispatch caller; semantic suppression must
@@ -466,9 +470,16 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         result.budget_charge = budget_charge;
         return Ok(result);
     }
+    // FIX 7964: the charge is the send's reservation, every participant's
+    // usage entries kept beside its row until the send settles.
+    let mut reserved = budget_charge
+        .as_ref()
+        .map(|charge| charge.debits.clone())
+        .unwrap_or_default();
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
-        let (_, _, exhausted) =
+        let (_, co_charge, exhausted) =
             charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?;
+        reserved.extend(co_charge.into_iter().flat_map(|charge| charge.debits));
         if exhausted {
             // Preflighted above under this writer: fail the transaction
             // rather than persist the primary's debit alone.
@@ -577,6 +588,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let stored = stored_admission_in_txn(vault, &mut wtxn, &pending, &payload_context)?;
     insert_pending_in_txn(vault, &mut wtxn, &stored)?;
+    reserve_budget_in_txn(vault, &mut wtxn, &pending.id, reserved)?;
     // The wait's admission commits with the spend, the decision and the
     // Pending row, or not at all.
     if let Some((wait_id, _)) = code_wait {
