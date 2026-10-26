@@ -13048,7 +13048,7 @@
      "path": "src/claim/scoped_read/context_pack_filter.rs",
      "purpose": "Final actor-bound context-pack filtering before rendering and telemetry",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2
      }
     },
@@ -13102,6 +13102,17 @@
      "purpose": "FIX 7929: a guest's read stays inside its grant's current effective scope at every row, in the serving…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/instruction_files.rs",
+     "purpose": "A context pack's instruction-file handles, resolved under this read",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -17373,6 +17384,7 @@
      "purpose": "Index-only handles to the instruction files on a returned code unit's ancestor path in its mounted snapshot",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -17384,7 +17396,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "Repository snapshot ingestion, storage and file access",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 5
      }
     },
@@ -20843,15 +20855,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
-     "path": "src/context_pack/builder/mod.rs",
-     "purpose": "The fluent [`ContextPackBuilder`] query API and its assembly pipeline",
+     "path": "src/context_pack/builder/instruction_files.rs",
+     "purpose": "A pack's instruction-file handles, resolved in its assembly snapshot",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 2
+      "crate-vis": 2
      }
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/mod.rs",
+     "purpose": "The fluent [`ContextPackBuilder`] query API and its assembly pipeline",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 3
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SerializedContextPack",
@@ -20861,7 +20883,7 @@
      "purpose": "What a pack run produces and how its telemetry row is finalized or discarded",
      "surface": {
       "crate-vis": 6,
-      "fn": 5,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -20901,6 +20923,17 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/context_pack/builder/selection.rs",
+     "purpose": "Critical-first row selection under a pack's existing budgets, and the critical accounting a pack reports…",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/context_pack/edge_walk.rs",
@@ -20980,7 +21013,7 @@
      "path": "src/context_pack/mod.rs",
      "purpose": "Context-pack assembly: retrieval results in, a hydrated, validated, budget-clamped pack out",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "mod": 1,
       "re-export": 7
      }
@@ -21084,7 +21117,7 @@
      "purpose": "Public value types of the context pack: the pack itself, its entities, its stats, and its budget/allocation…",
      "surface": {
       "const": 4,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 3,
       "fn": 5,
       "struct": 9
@@ -45620,7 +45653,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -45824,7 +45857,7 @@
      "path": "src/note/live_body.rs",
      "purpose": "Live NOTE read projection without rewriting the immutable birth record",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -50342,7 +50375,17 @@
      "path": "src/pipeline/budget.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/budget/selection.rs",
+     "purpose": "Critical-first selection of a pack run's scored rows under its existing budgets (FIX 9760): every cut is…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -50426,9 +50469,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/criticality.rs",
-     "purpose": "Narrow-only manifest criticality selection at candidate admission",
+     "purpose": "Narrow-only manifest criticality selection at candidate admission, and the critical claims a pack's…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -50612,7 +50655,7 @@
      "path": "src/pipeline/filters.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -50960,7 +51003,7 @@
      "path": "src/pipeline/world_authority.rs",
      "purpose": "Per-turn world authority, bound to the host's executing principal",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -77880,7 +77923,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 108,
+     "files": 109,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78055,7 +78098,7 @@
      "purpose": "Typed Context Board render projections"
     },
     "context_pack": {
-     "files": 23,
+     "files": 25,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78643,7 +78686,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 65,
+     "files": 66,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79219,7 +79262,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5235,
+   "source_files": 5239,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95831,6 +95874,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/instruction_files.rs",
+     "purpose": "The instruction-file handles a context-pack response carries",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -95877,7 +95930,7 @@
      "path": "src/api/context_pack/resolve.rs",
      "purpose": "Route handler plus depth/policy/time/budget resolution for context-pack assembly",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 11
      }
     },
     {
@@ -95888,6 +95941,16 @@
      "purpose": "Response DTOs and engine-to-wire mapping functions for context-pack assembly",
      "surface": {
       "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_pack/response_limits.rs",
+     "purpose": "The response limits a context-pack response is cut to after its scoped filter, and the stats a cut pack shows",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -109511,7 +109574,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 572,
+     "files": 574,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -109989,7 +110052,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1296,
+   "source_files": 1298,
    "test_files": 182
   },
   "oneiron-spawn": {
