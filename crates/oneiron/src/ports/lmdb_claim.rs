@@ -5,24 +5,22 @@ use crate::claim::{ClaimBody, ClaimLifecycleStatus, decode_claim_body};
 use crate::context_pack::source_ranking::{SourceRankingPolicy, question_key, source_outranks};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 use crate::{EdgeKind, EntityId, TimeRange, Vault};
 use heed::{RoTxn, RwTxn};
 use std::collections::BTreeSet;
-/// The most claims one predicate's list holds before it refuses. A reader
-/// that must see every such claim, however many a vault holds, walks them
-/// with `Vault::for_each_readable_claim_with_predicate_in_txn` instead.
-#[cfg(not(test))]
-pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 100_000;
 #[cfg(test)]
 pub(crate) const MAX_PREDICATE_LIST_ROWS: usize = 64;
 
 impl Vault {
     /// Hands each stored CLAIM carrying `predicate` to `visit`, one at a time
     /// in type-index order, reserved predicates included. Nothing is held
-    /// between claims, so the walk has no count past which it refuses. This
-    /// walk is raw, for checkpoint and maintenance passes; a door that serves
-    /// claim bodies walks [`Self::for_each_readable_claim_with_predicate_in_txn`].
+    /// between claims, so the walk has no count past which it refuses: the
+    /// claim type-index rows it reads only feed the advisory
+    /// [`EngineScan::TypeIndexRows`] check (FIX 8656). This walk is raw, for
+    /// checkpoint and maintenance passes; a door that serves claim bodies
+    /// walks [`Self::for_each_readable_claim_with_predicate_in_txn`].
     pub(crate) fn for_each_claim_with_predicate_in_txn(
         &self,
         rtxn: &RoTxn<'_>,
@@ -99,11 +97,18 @@ impl Vault {
         readable: bool,
         mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
     ) -> Result<()> {
+        let mut count = ScanCount::start(
+            &self.store,
+            rtxn,
+            EngineScan::TypeIndexRows,
+            &[ENTITY_TYPE_CLAIM],
+        )?;
         for entry in self
             .store
             .type_index
             .prefix_iter(rtxn, &[ENTITY_TYPE_CLAIM])?
         {
+            count.row();
             let (key, _) = entry?;
             let id = crate::vault::entity_id_from_type_index_key(&key)?;
             let raw = self
@@ -137,6 +142,7 @@ impl Vault {
                 visit(id, body)?;
             }
         }
+        count.defer(&self.store);
         Ok(())
     }
 }
@@ -187,9 +193,6 @@ impl ClaimStore for Vault {
     ) -> Result<Vec<(EntityId, ClaimBody)>> {
         let mut rows = Vec::new();
         self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
-            if rows.len() >= MAX_PREDICATE_LIST_ROWS {
-                return Err(Error::IndexOverflow("claim predicate"));
-            }
             rows.push((id, body));
             Ok(())
         })?;
@@ -214,7 +217,12 @@ impl ClaimStore for Vault {
         }
         Ok(current_claim_head(heads))
     }
+    /// Every claim of `id`'s supersede chain, however long (FIX 10042): a
+    /// cycle or a fork is a typed error, and each link only feeds the
+    /// advisory [`EngineScan::TimelineRecords`] check of `id`'s chain.
     fn port_claim_supersede_chain(&self, txn: &RoTxn<'_>, id: &EntityId) -> Result<Vec<EntityId>> {
+        let scope = id.as_bytes();
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::TimelineRecords, scope)?;
         let mut result = Vec::new();
         let mut current = *id;
         let mut seen = std::collections::BTreeSet::new();
@@ -222,9 +230,7 @@ impl ClaimStore for Vault {
             if !seen.insert(current) {
                 return Err(Error::CorruptedIndex("claim supersede cycle"));
             }
-            if result.len() >= 10_000 {
-                return Err(Error::IndexOverflow("claim supersede chain"));
-            }
+            count.row();
             result.push(current);
             let next =
                 self.port_edge_list_by_dst(txn, &current, Some(EdgeKind::Supersedes), None, 2)?;
@@ -234,6 +240,7 @@ impl ClaimStore for Vault {
                 _ => return Err(Error::CorruptedIndex("forked supersede chain")),
             }
         }
+        count.defer(&self.store);
         Ok(result)
     }
     fn port_claim_predicate_history(

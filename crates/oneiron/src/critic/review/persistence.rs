@@ -138,7 +138,8 @@ pub(super) fn write_claim(
         body.subject,
         body.value.clone(),
         body.confidence,
-    );
+    )
+    .with_confidence_details(body.confidence_details());
     if let Some(evidence) = &body.evidence {
         candidate = candidate.with_evidence(evidence.clone());
     }
