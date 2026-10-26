@@ -133,12 +133,14 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         }
         _ => Default::default(),
     };
-    let provider_wait_held_until = effect_result
+    let held_by_provider_wait = effect_result
         .gate_receipt_reasons
         .iter()
-        .any(|reason| reason == crate::outbound_chokepoint::PROVIDER_WAIT_REASON)
-        .then(|| settlement.provider_wait.and_then(|wait| wait.not_before))
-        .flatten();
+        .any(|reason| reason == crate::outbound_chokepoint::PROVIDER_WAIT_REASON);
+    let provider_wait_held_until = settlement
+        .provider_wait
+        .and_then(|wait| wait.not_before)
+        .filter(|_| held_by_provider_wait);
     // A ceiling reached under the writer lock parks the send as Held.
     let parked = parked.or(effect_result
         .ceiling_count

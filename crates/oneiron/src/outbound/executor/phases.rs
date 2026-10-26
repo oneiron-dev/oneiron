@@ -182,8 +182,7 @@ pub(super) fn settle_failed_connector_task(
                 ..
             })
         );
-    let past_deadline =
-        |retry_at: u64| task.deadline_at.is_some_and(|deadline| retry_at > deadline);
+    let past_deadline = |retry_at: u64| task.deadline_at.filter(|deadline| retry_at > *deadline);
     if retryable {
         // A provider that stated its own cool-down (a rate-limit
         // `retry_after`) is obeyed exactly; without one the
@@ -198,10 +197,10 @@ pub(super) fn settle_failed_connector_task(
             curve: ConnectorRetryCurve::Transport,
         };
         let retry_at = connector_task_retry_at(queue, attempt, now, &arm)?;
-        if provider_wait && past_deadline(retry_at) {
+        if let Some(deadline) = past_deadline(retry_at).filter(|_| provider_wait) {
             // The caller's deadline ends the wait: the send stays recorded as
             // not delivered, and the TASK stops here.
-            return stop_at_deadline(vault, attempt, task_ref, result.receipt, now);
+            return stop_at_deadline(vault, attempt, task_ref, deadline, result.receipt, now);
         }
         // A retried transport failure is still an auditable outcome.
         // Stored as the audit-only (non-idempotency) row a hold takes,
@@ -309,12 +308,17 @@ fn stop_at_deadline(
     vault: &Vault,
     attempt: &crate::attempt_queue::AttemptRecord,
     task_ref: EntityId,
+    deadline: u64,
     mut receipt: crate::receipt::ReceiptRecord,
     now: u64,
 ) -> Result<(), ConnectorTaskExecutorError> {
     receipt.fields.insert(
         "dispatch_outcome".to_owned(),
         OutboundDispatchOutcome::Failed.as_str().to_owned(),
+    );
+    receipt.fields.insert(
+        PROVIDER_WAIT_DEADLINE_FIELD.to_owned(),
+        deadline.to_string(),
     );
     super::super::retry_audit::persist_terminal_send_receipt_and_fail(
         vault,

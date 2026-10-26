@@ -44,6 +44,8 @@ pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-exe
 /// The queue reason a provider wait ends with at its caller's deadline (FIX
 /// 8818).
 const PROVIDER_WAIT_DEADLINE_REASON: &str = "deadline_reached";
+/// The receipt field naming the deadline that ended a provider wait.
+const PROVIDER_WAIT_DEADLINE_FIELD: &str = "deadline_at";
 /// First re-arm delay for a send the Gate parked on a human decision.
 const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
 /// Ceiling for that curve: a granted approval waits at most five minutes.

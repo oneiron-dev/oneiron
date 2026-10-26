@@ -474,8 +474,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     // usage entries kept beside its row until the send settles.
     let mut reserved = budget_charge
         .as_ref()
-        .map(|charge| charge.debits.clone())
-        .unwrap_or_default();
+        .map_or_else(Vec::new, |charge| charge.debits.clone());
     if co_key_distinct && let Some(co) = co_governance.as_mut() {
         let (_, co_charge, exhausted) =
             charge_once(vault, &mut wtxn, co, prepared.budget_class, now_ms, co_pool)?;

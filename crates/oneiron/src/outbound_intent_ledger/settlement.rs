@@ -81,13 +81,10 @@ impl ProviderWait {
     /// The wait as kept with its send: `retry_after_secs` from `now`, vault
     /// clock seconds.
     #[must_use]
-    pub const fn directive_at(self, now: u64) -> ProviderRetryDirective {
+    pub fn directive_at(self, now: u64) -> ProviderRetryDirective {
         ProviderRetryDirective {
             kind: self.kind,
-            not_before: match self.retry_after_secs {
-                Some(secs) => Some(now.saturating_add(secs)),
-                None => None,
-            },
+            not_before: self.retry_after_secs.map(|secs| now.saturating_add(secs)),
         }
     }
 }
@@ -104,11 +101,8 @@ pub struct ProviderRetryDirective {
 impl ProviderRetryDirective {
     /// The provider's edge, when it is still ahead of `now`.
     #[must_use]
-    pub const fn waits_at(&self, now: u64) -> Option<u64> {
-        match self.not_before {
-            Some(edge) if edge > now => Some(edge),
-            _ => None,
-        }
+    pub fn waits_at(&self, now: u64) -> Option<u64> {
+        self.not_before.filter(|edge| *edge > now)
     }
 }
 
