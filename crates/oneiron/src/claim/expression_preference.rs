@@ -551,7 +551,12 @@ impl Vault {
         // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
         let direction = EdgeDirection::Out;
         let kind = EdgeKind::Supersedes;
-        let scope = [&[direction as u8][..], claim_id.as_bytes(), &[kind as u8][..]].concat();
+        let scope = [
+            &[direction as u8][..],
+            claim_id.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
         let mut count = ScanCount::start(&self.store, &wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut predecessors = Vec::new();
         for entry in self.port_edges(&wtxn, claim_id, direction, Some(kind), None)? {

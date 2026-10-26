@@ -97,8 +97,12 @@ impl Vault {
         readable: bool,
         mut visit: impl FnMut(EntityId, ClaimBody) -> Result<()>,
     ) -> Result<()> {
-        let mut count =
-            ScanCount::start(&self.store, rtxn, EngineScan::TypeIndexRows, &[ENTITY_TYPE_CLAIM])?;
+        let mut count = ScanCount::start(
+            &self.store,
+            rtxn,
+            EngineScan::TypeIndexRows,
+            &[ENTITY_TYPE_CLAIM],
+        )?;
         for entry in self
             .store
             .type_index
