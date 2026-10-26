@@ -224,6 +224,12 @@ pub(crate) fn grant_standing_in_txn(
     act: OwnerActKind,
     at: u64,
 ) -> crate::error::Result<GrantStanding> {
+    // A Grant positively known withdrawn here stays withdrawn, whatever
+    // stands at its id now: a restored or re-put row, or none (FIX-LIST
+    // 5107). A marker that cannot be read leaves the reads below as before.
+    if super::withdrawn_grant::grant_known_withdrawn_in_txn(store, txn, grant) {
+        return Ok(GrantStanding::Refused);
+    }
     Ok(
         match crate::vault::live_entity_row_in_txn(store, txn, &grant)? {
             crate::vault::LiveEntityRow::Live {

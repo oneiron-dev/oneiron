@@ -20,7 +20,7 @@ pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args)?;
     init_tracing(&config.log_level);
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let secret = config
+    config
         .sync_server_config()
         .auth_secret
         .filter(|secret| !secret.is_empty())
@@ -29,8 +29,9 @@ pub fn dreamer_grant(grant: DreamerGrantArgs) -> anyhow::Result<()> {
                 "the Dreamer writes with the host's machine identity: set ONEIRON_AUTH_SECRET (or auth_secret) first"
             )
         })?;
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    // The root signs with this install's own issuer seed (FIX-LIST 3018).
+    let issuer = super::owner::host_issuer(&config, &vault, true)?;
     vault.ensure_host_root_slip(&issuer)?;
     vault.provision_engine_machine_identities(&issuer)?;
     let owner = vault.ensure_embedded_owner_actor()?;

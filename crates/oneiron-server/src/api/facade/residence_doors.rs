@@ -20,7 +20,7 @@
 //! content-free control metadata, so it lists none.
 use std::sync::Arc;
 
-use oneiron::authority::{HostSlipIssuer, ResidenceAct};
+use oneiron::authority::ResidenceAct;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
 use oneiron::sync::SyncConnection;
@@ -79,15 +79,15 @@ fn relay(
             {
                 return Ok(state);
             }
-            let secret = server.config.auth_secret.as_deref().ok_or_else(|| {
+            // This install's own self-host root issuer (FIX-LIST 3018).
+            let issuer = server.host_root_issuer.as_deref().ok_or_else(|| {
                 oneiron::Error::InvalidConfig(
                     "this host holds no signing key for a residence directive".to_owned(),
                 )
             })?;
-            let issuer = HostSlipIssuer::from_secret(secret.as_bytes())?;
             vault.issue_residence_directive_as(
                 owner,
-                &issuer,
+                issuer,
                 oneiron::EntityId::now(),
                 machine,
                 act,

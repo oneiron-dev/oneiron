@@ -31,8 +31,8 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActAuthority, EnrolledOwnerKey, HostSlipIssuer, OWNER_KEY_POSSESSION_PROOF_LEN,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    ActAuthority, EnrolledOwnerKey, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
@@ -173,27 +173,17 @@ fn no_root_signer() -> OwnerError {
 }
 
 /// Enrols `input` as `authority`, with this host's root as the predecessor:
-/// the managed issuer, else the one the configured retained secret derives.
+/// the managed issuer, else this install's own self-host root issuer
+/// (FIX-LIST 3018).
 fn enrol_as_host(
     server: &SyncServer,
     authority: &ActAuthority,
     input: OwnerKeyEnrollment,
 ) -> OwnerResult<OwnerKeyEnrollmentReceipt> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return server
-            .vault()
-            .enrol_owner_signing_key_as_host(authority, input, issuer)
-            .map_err(refusal);
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(no_root_signer)?;
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| no_root_signer())?;
+    let issuer = server.host_issuer().ok_or_else(no_root_signer)?;
     server
         .vault()
-        .enrol_owner_signing_key_as_host(authority, input, &issuer)
+        .enrol_owner_signing_key_as_host(authority, input, issuer)
         .map_err(refusal)
 }
 

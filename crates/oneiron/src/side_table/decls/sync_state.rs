@@ -58,6 +58,9 @@ side_tables! {
     /// Admitted request nonce (empty marker), evicted once the proof clock is a day past its
     /// signed timestamp. Key: u64hex16 ":" hex64.
     AUTHORITY_SLIP_REPLAY_NONCE: SyncState b"authority:slip-replay:v2:" Raw;
+    /// Permanent presence-only marker (empty value) that a FEDERATION_GRANT was positively
+    /// withdrawn here (FIX-LIST 5107): read before a carried act's Grant standing. Key: hex32.
+    AUTHORITY_WITHDRAWN_GRANT: SyncState b"authority:withdrawn-grant:v1:" Raw;
     /// Cached currency-converted spend budget limit for one owner/vault pair. Key: hex ":" hex
     /// (owner, vault).
     USAGE_BUDGET_LIMIT: SyncState b"budget:usage:rollup:vault:" Named;

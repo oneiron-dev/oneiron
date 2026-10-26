@@ -183,6 +183,10 @@ impl Vault {
             })
             .map(|(id, _)| id)
             .collect();
+        // Each withdrawal stays known here, in this writer (FIX-LIST 5107).
+        for id in &ids {
+            crate::authority::mark_withdrawn_grant_in_txn(&self.store, txn, *id)?;
+        }
         self.apply_grant_ops(
             txn,
             ids.iter().map(|id| BatchOp::Delete { id: *id }).collect(),

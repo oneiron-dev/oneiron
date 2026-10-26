@@ -206,6 +206,8 @@ impl Vault {
                 surface,
                 AgentGrantAct::Revoke { grant: grant_ref },
             )?;
+            // The withdrawal stays known here, in this writer (FIX-LIST 5107).
+            crate::authority::mark_withdrawn_grant_in_txn(&self.store, txn, grant_ref)?;
             self.apply_grant_row_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
             Ok(GitPushRevokeOutcome {
                 member: Some(grant.member_ref),

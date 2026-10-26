@@ -58,29 +58,14 @@ struct CountersignRequest {
     part: String,
 }
 
-/// Runs `with` on the root this home signs as: the managed issuer, or the
-/// one its configured host secret derives, as the checkpoint upkeep takes
-/// it; `None` for a home with neither.
+/// Runs `with` on the root this home signs as: the managed issuer, or this
+/// install's own self-host root issuer (FIX-LIST 3018), as the checkpoint
+/// upkeep takes it; `None` for a home with neither.
 fn with_host_root<T>(
     server: &SyncServer,
     with: impl FnOnce(Option<&HostSlipIssuer>) -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return with(Some(issuer));
-    }
-    let derived = match server
-        .config
-        .auth_secret
-        .as_deref()
-        .filter(|secret| !secret.is_empty())
-    {
-        Some(secret) => Some(
-            HostSlipIssuer::from_secret(secret.as_bytes())
-                .map_err(|_| AppError::internal_server_error("host root unavailable"))?,
-        ),
-        None => None,
-    };
-    with(derived.as_ref())
+    with(server.host_issuer())
 }
 
 fn unavailable() -> AppError {

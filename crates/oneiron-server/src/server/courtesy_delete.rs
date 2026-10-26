@@ -10,7 +10,6 @@
 
 use std::time::Duration;
 
-use oneiron::authority::HostSlipIssuer;
 use oneiron::deletion::CooperativeDeletionTry;
 
 use super::SyncServer;
@@ -58,15 +57,7 @@ impl SyncServer {
         let vault = self.vault();
         let lease_owner = format!("courtesy-delete:{}", std::process::id());
         // This host's root key, as the owner's courtesy door signs with it.
-        let derived = match self.managed_issuer {
-            Some(_) => None,
-            None => self
-                .config
-                .auth_secret
-                .as_deref()
-                .and_then(|secret| HostSlipIssuer::from_secret(secret.as_bytes()).ok()),
-        };
-        let issuer = self.managed_issuer.as_ref().or(derived.as_ref());
+        let issuer = self.host_issuer();
         let mut client = None;
         for _ in 0..TRIES_PER_PASS {
             let delivery =

@@ -139,6 +139,10 @@ impl Vault {
             }
         }
         if !ids.is_empty() {
+            // Each retirement stays known here, in this writer (FIX-LIST 5107).
+            for id in &ids {
+                crate::authority::mark_withdrawn_grant_in_txn(&self.store, txn, *id)?;
+            }
             apply_ops(
                 &self.store,
                 &self.config,

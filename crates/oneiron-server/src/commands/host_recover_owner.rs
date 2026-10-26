@@ -5,7 +5,8 @@
 //! control the organization owning the shared vault; the engine has no check
 //! for that proof. It checks what it holds (no live Owner left, `from` still
 //! an Owner, the claimant a live person other than `from`), and this host's
-//! key, from the config's auth secret `serve` signs with, signs the
+//! root key, this install's own issuer seed for the vault (FIX-LIST 3018)
+//! that the config's auth secret admits, as `serve` signs, signs the
 //! `OwnerHandover`.
 //!
 //! The engine keeps the note's BLAKE3 with the signed `OwnerHandover`, never
@@ -13,8 +14,6 @@
 //! BLAKE3 beside the receipt id, for the operator's own record.
 
 use std::io::{self, Write};
-
-use zeroize::Zeroizing;
 
 use crate::cli::HostRecoverSharedOwnerArgs;
 use crate::config::resolve_serve_config;
@@ -43,23 +42,23 @@ pub fn host_recover_shared_owner(args: HostRecoverSharedOwnerArgs) -> anyhow::Re
     let config = resolve_serve_config(&args.serve).map_err(|error| {
         anyhow::anyhow!("{error} (detail withheld: the file may hold a secret)")
     })?;
-    let secret = Zeroizing::new(
-        config
-            .sync_server_config()
-            .auth_secret
-            .filter(|secret| !secret.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "the config names no auth secret, so this host has no key to sign the owner handover"
-                )
-            })?,
-    );
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    config
+        .sync_server_config()
+        .auth_secret
+        .filter(|secret| !secret.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "the config names no auth secret, so this host has no key to sign the owner handover"
+            )
+        })?;
     let vault = super::owner::open_stopped_vault_with(
         &config,
         super::owner::vault_config(&config),
         "or ask it under the host's root credential: `oneiron api raw POST /v1/operator/shared/recover-owner --data -`",
     )?;
+    // The vault's custody is open first; the handover signs with this
+    // install's own issuer seed for it (FIX-LIST 3018).
+    let issuer = super::owner::host_issuer(&config, &vault, false)?;
     // A blank note was refused above, so the handover always keeps a digest.
     let digest = blake3::hash(args.proof_note.as_bytes());
     // The stopped self-hosted vault's own host, on its config's key, is
