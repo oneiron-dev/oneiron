@@ -32,6 +32,7 @@ pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
 pub mod browser_planner;
 pub(crate) mod browser_program_admission;
+mod coach_browser_programs;
 pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
