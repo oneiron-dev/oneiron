@@ -812,24 +812,27 @@ impl Vault {
         {
             return Ok(false);
         }
+        // Every Supersedes out-edge of `new_id` is read until the `old_id`
+        // link (FIX 11015): the count only feeds the advisory EdgePeerRows
+        // check.
+        let direction = EdgeDirection::Out;
+        let kind = EdgeKind::Supersedes;
+        let scope = [
+            &[direction as u8][..],
+            new_id.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = ScanCount::start(&self.store, &*wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut linked = false;
-        let mut seen = 0usize;
-        for entry in self.port_edges(
-            &*wtxn,
-            new_id,
-            EdgeDirection::Out,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if seen >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("superseded claims"));
-            }
-            seen += 1;
+        for entry in self.port_edges(&*wtxn, new_id, direction, Some(kind), None)? {
+            count.row();
             if entry?.target == *old_id {
                 linked = true;
                 break;
             }
         }
+        count.defer(&self.store);
         if !linked {
             return Ok(false);
         }
