@@ -103,7 +103,7 @@ fn drop_rows(
     {
         marked.retain(|key| !keys.contains(key));
     }
-    Arc::make_mut(&mut state.journal).retain(|entry| !stale(entry));
+    Arc::make_mut(&mut state.journal).retain(|entry| !stale(&**entry));
     state.recalculate_bytes();
 }
 
