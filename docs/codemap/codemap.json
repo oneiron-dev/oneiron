@@ -8280,6 +8280,7 @@
       "BoardVerbContext",
       "BoardVerbError",
       "BoardVerbOutput",
+      "BoardVerbOutputWire",
       "BoardWorldScope",
       "LiveBoardSource",
       "LiveBoardView"
@@ -8287,7 +8288,7 @@
      "path": "src/board_verb.rs",
      "purpose": "—",
      "surface": {
-      "enum": 3,
+      "enum": 4,
       "fn": 4,
       "struct": 3,
       "trait": 1
@@ -32400,7 +32401,8 @@
      "path": "src/federation/record_scope/note_world.rs",
      "purpose": "A NOTE's world (FIX-LIST 9433): where its live `InWorld` edges place it, read again at every read",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 21,
+      "fn": 1
      }
     },
     {
@@ -98650,6 +98652,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/mcp_gateway/question_answers_result.rs",
+     "purpose": "`vault.questions.answers` on MCP (FIX 9175): its untagged reply counted as the rows it holds",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/mcp_gateway/served_rows.rs",
      "purpose": "The rows an MCP call's result was derived from, as its producers listed them (DEC-0005; SCAN C018, FIX…",
      "surface": {
@@ -98955,13 +98967,43 @@
      }
     },
     {
-     "bucket": "XL",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/openapi/owner_paths.rs",
      "purpose": "The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner` route, with the SDK row whose input…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_paths/routes_a_to_e.rs",
+     "purpose": "The `/v1/owner` routes from `/agent-grants` through `/embedding-spaces`, in path order: one table of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_paths/routes_f_to_packs.rs",
+     "purpose": "The `/v1/owner` routes from `/federation` through `/packs`, in path order: one table of…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/owner_paths/routes_pads_to_w.rs",
+     "purpose": "The `/v1/owner` routes from `/pads` through `/worlds`, in path order: one table of…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -105615,7 +105657,7 @@
       "const": 1,
       "crate-vis": 4,
       "enum": 3,
-      "fn": 22,
+      "fn": 24,
       "struct": 3
      }
     },
@@ -109469,7 +109511,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 568,
+     "files": 572,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -109945,9 +109987,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 32,
+   "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1292,
+   "source_files": 1296,
    "test_files": 182
   },
   "oneiron-spawn": {
