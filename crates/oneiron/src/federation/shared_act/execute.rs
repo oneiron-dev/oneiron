@@ -1,5 +1,6 @@
 //! Executing a matured delete-the-vault, ownership-transfer or owner-removal act.
 
+use super::membership::MemberMove;
 use super::*;
 
 impl Vault {
@@ -93,6 +94,9 @@ impl Vault {
             request_id.clone(),
             Some(receipt_id.clone()),
         )?;
+        // The grant ids an Owner handover wrote and retired, for its signed
+        // entry (FIX 5765).
+        let mut handover_ids = (Vec::new(), Vec::new());
         let effect = match kind {
             SharedActKind::DeleteVault => {
                 let plan: DeleteVaultPlan = decode(&act.payload)?;
@@ -124,7 +128,7 @@ impl Vault {
                 if plan.v != PLAN_VERSION || plan.from != act.starter {
                     return Err(invalid());
                 }
-                let (grants, revoked_slips) = self.hand_over_in_txn(
+                let moved = self.hand_over_in_txn(
                     &mut txn,
                     act.vault_id,
                     &owners,
@@ -134,6 +138,12 @@ impl Vault {
                     slips,
                     now,
                 )?;
+                handover_ids = moved.handover_ids();
+                let MemberMove {
+                    grants,
+                    revoked_slips,
+                    ..
+                } = moved;
                 Effect {
                     change: SharedVaultChange::OwnershipTransferred {
                         from: plan.from,
@@ -154,7 +164,7 @@ impl Vault {
                 {
                     return Err(invalid());
                 }
-                let (grants, revoked_slips) = self.hand_over_in_txn(
+                let moved = self.hand_over_in_txn(
                     &mut txn,
                     act.vault_id,
                     &owners,
@@ -164,6 +174,12 @@ impl Vault {
                     slips,
                     now,
                 )?;
+                handover_ids = moved.handover_ids();
+                let MemberMove {
+                    grants,
+                    revoked_slips,
+                    ..
+                } = moved;
                 Effect {
                     change: SharedVaultChange::OwnerRemoved {
                         target: plan.target,
@@ -198,6 +214,7 @@ impl Vault {
                 _ => None,
             };
             if let Some((cause, from, to, keeps)) = handover {
+                let (affected_grants, retired_own_device_grants) = handover_ids;
                 authority_entry = Some(self.append_owner_handover_in_txn(
                     &mut txn,
                     issuer,
@@ -210,6 +227,8 @@ impl Vault {
                         act: Some(act.id.clone()),
                         proof: None,
                         receipt: receipt_id.clone(),
+                        affected_grants,
+                        retired_own_device_grants,
                     },
                 )?);
             }
