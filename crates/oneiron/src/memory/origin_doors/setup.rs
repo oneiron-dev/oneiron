@@ -51,6 +51,7 @@ impl Memory<'_> {
                 user: input.user,
                 every_secs: input.every_secs,
                 sync_strategy: input.sync_strategy,
+                visibility: input.visibility,
             },
         )?;
         txn.commit().map_err(crate::Error::from)?;

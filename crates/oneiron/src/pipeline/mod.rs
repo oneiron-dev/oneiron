@@ -43,7 +43,9 @@ pub use self::types::{
     WorldScope, decode_world_access_claim_value, world_access_claim_body,
 };
 
-pub(crate) use self::authority::{claim_ceiling_allowed, type_allowed as retrieval_type_allowed};
+pub(crate) use self::authority::{
+    claim_ceiling_allowed, claim_scalars_ceiling_allowed, type_allowed as retrieval_type_allowed,
+};
 
 pub(crate) use self::types::{DEFAULT_RESULT_LIMIT, retrieval_recency_half_life_days_for_type};
 

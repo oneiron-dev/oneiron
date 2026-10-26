@@ -2,6 +2,7 @@
 //! The mutation request type is `RepoMutationRequest`.
 //! Child modules own the types, proposal actors and provenance helpers re-exported here.
 
+mod bundle;
 mod conflict;
 mod conflict_doors;
 pub(crate) use conflict_doors::conflict_proposals;
@@ -17,6 +18,7 @@ mod queue;
 mod received_file;
 mod reviewed_file;
 mod reviewed_stack;
+mod secret_remediation;
 mod snapshot;
 mod support;
 mod trailer;
@@ -34,6 +36,11 @@ pub use self::oplog::REPO_MUTATION_OPLOG_SCHEMA_VERSION;
 pub use self::proposal::actor_erase::{
     ACTOR_ERASE_PENDING_REPO_PROPOSAL, PendingRepoProposalErase, ProposalActor,
 };
+pub use self::secret_remediation::{
+    RepoSecretReferenceRenderer, RepoSecretRemediation, RepoSecretRemediationAction,
+    RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved,
+    RepoSecretUnresolvedReason,
+};
 pub use self::trailer::{
     REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS, REPO_PROVENANCE_NOTES_REF, REPO_PROVENANCE_PREDICATE,
     REPO_PROVENANCE_TRAILER_KEY, REPO_PROVENANCE_VALUE_KEYS, export_repo_provenance_git_note,
@@ -41,12 +48,13 @@ pub use self::trailer::{
     repo_commit_provenance_from_git_note, repo_provenance_git_note,
 };
 pub use self::types::{
-    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS,
+    REPO_MUTATION_ALLOWED_OPERATION_KINDS, REPO_MUTATION_FORBIDDEN_GIT_COMMANDS, RepoBundleFile,
     RepoCommitProvenance, RepoConflictClaim, RepoConflictResolutionClaim, RepoForkHash,
     RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome, RepoMutationRequest,
     RepoMutationStatus,
 };
 
+pub(crate) use self::bundle::bundle_merge_proposal;
 pub(crate) use self::conflict_value::validate_repo_conflict_claim_value;
 pub(crate) use self::git::canonical_mutation_scope;
 pub(crate) use self::oplog::erase_oplog_actor_in_txn;
@@ -56,6 +64,10 @@ pub(crate) use self::received_file::tree::{ReceivedTreeEdit, stage_received_tree
 pub(crate) use self::received_file::{
     ReceivedFilesProposalInput, received_file_operation, received_merge_proposal,
     received_proposal_id,
+};
+pub(crate) use self::secret_remediation::{
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, is_unindexed_dotenv_name, masked_record_name,
+    offer_secret_remediation_in_txn, repo_env_entries, repo_env_file,
 };
 
 // The flat repo_mutation.rs module used to provide these names to the test

@@ -726,6 +726,8 @@ vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
+vaultConnectorsReadGrantsGrant(input: unknown): unknown
+vaultConnectorsReadGrantsRevoke(input: unknown): unknown
 vaultRepoAnchorBind(input: unknown): unknown
 vaultRepoSnapshotsGet(input: unknown): unknown
 vaultRepoSnapshotsRead(input: unknown): unknown

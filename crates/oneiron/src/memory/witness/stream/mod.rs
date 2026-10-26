@@ -9,6 +9,7 @@ mod lift;
 mod policy;
 #[cfg(feature = "sync")]
 mod presence;
+mod reader;
 mod reply_assertions;
 mod storage;
 #[cfg(test)]
@@ -25,7 +26,9 @@ pub use lifecycle::MessageStreamPump;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use storage::Seed;
-pub(crate) use storage::{erase_stream_seeds_in_txn, message_stream_finality_in_txn};
+pub(crate) use storage::{
+    erase_stream_seeds_in_txn, message_stream_finality_in_txn, redact_receipt_assertions_in_txn,
+};
 pub use types::*;
 
 /// Registry lock never spans storage work. A per-handle lock serializes its

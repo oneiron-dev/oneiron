@@ -4,6 +4,7 @@ use crate::campaign::claims::{
     CampaignMemberState, PREDICATE_CAMPAIGN_MEMBER, decode_campaign_member_value,
 };
 use crate::claim::{ClaimSubject, ScopedReadActorKey, claim_surfaceable};
+use crate::limit_ask::EngineLimit;
 use crate::llm::decision::questions::GraphQuestionInput;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -17,6 +18,12 @@ pub struct CampaignJudgmentRow {
     pub signals: Vec<EntityId>,
 }
 
+/// Rows one judgment read joins under one task-work turn and one snapshot
+/// (FIX 9655). It paces a large request, a chunk at a time; every row is still
+/// joined, and the count itself only asks through
+/// [`EngineLimit::CampaignJudgmentRows`].
+pub const CAMPAIGN_JUDGMENT_READ_CHUNK: usize = 256;
+
 /// Resolve explicit membership rows under the asker's access. No cohort is
 /// copied into the campaign, no fit formula is installed, and no send is made.
 /// A row's stage outcome can bind through the membership claim's ClaimOf edge
@@ -25,17 +32,18 @@ pub struct CampaignJudgmentRow {
 /// None marks a missing, hidden, inactive or non-enrolled membership. Positions
 /// are retained so one omitted row cannot shift a later variant onto a lead.
 /// Every returned source is checked again when `run_graph_question` executes.
+///
+/// Every row is joined, however many there are. Past the
+/// [`EngineLimit::CampaignJudgmentRows`] row the count asks whether everything
+/// is okay, and the join goes on [`CAMPAIGN_JUDGMENT_READ_CHUNK`] rows at a
+/// time, each chunk in its own fair turn of the principal's task-work line.
 pub fn campaign_judgment_inputs(
     vault: &Vault,
     principal: EntityId,
     campaign: EntityId,
     rows: &[CampaignJudgmentRow],
 ) -> Result<Vec<Option<GraphQuestionInput>>> {
-    if rows.len() > 4096 {
-        return Err(Error::InvalidConfig(
-            "too many campaign judgment rows".into(),
-        ));
-    }
+    vault.measure_limit(EngineLimit::CampaignJudgmentRows, rows.len() as u64);
     let key = ScopedReadActorKey::new(principal.to_hex())
         .ok_or(Error::InvariantViolation(
             "canonical campaign judgment principal",
@@ -44,41 +52,53 @@ pub fn campaign_judgment_inputs(
     // FIX 7461: this locally built reader also reads under the principal's
     // own live owner authority once its admission and Grants refuse a row.
     let scoped = crate::llm::decision::questions::question_lane(vault, key);
-    let ids = rows.iter().map(|row| row.membership).collect::<Vec<_>>();
-    let memberships = scoped.get_entities_parts_with_receipt(&ids, None)?.value;
-    rows.iter()
-        .zip(memberships)
-        .map(|(row, parts)| {
-            let Some((kind, _, body)) = parts else {
-                return Ok(None);
-            };
-            if kind != crate::registry::ENTITY_TYPE_CLAIM {
-                return Ok(None);
-            }
-            let body = crate::claim::decode_claim_body(&body, true)?;
-            if body.predicate != PREDICATE_CAMPAIGN_MEMBER || !claim_surfaceable(&body) {
-                return Ok(None);
-            }
-            let value = decode_campaign_member_value(&body.value)?;
-            if value.campaign != campaign || value.state != CampaignMemberState::Enrolled {
-                return Ok(None);
-            }
-            let ClaimSubject::Entity(lead) = body.subject else {
-                return Ok(None);
-            };
-            let mut evidence = Vec::new();
-            for id in [lead, campaign, row.variant]
-                .into_iter()
-                .chain(row.signals.iter().copied())
-            {
-                if id != row.membership && !evidence.contains(&id) {
-                    evidence.push(id);
-                }
-            }
-            Ok(Some(GraphQuestionInput {
-                unit: row.membership,
-                evidence,
-            }))
-        })
-        .collect()
+    let mut inputs = Vec::with_capacity(rows.len());
+    for chunk in rows.chunks(CAMPAIGN_JUDGMENT_READ_CHUNK) {
+        let _turn = vault.admit_task_work_blocking(principal);
+        let ids = chunk.iter().map(|row| row.membership).collect::<Vec<_>>();
+        let memberships = scoped.get_entities_parts_with_receipt(&ids, None)?.value;
+        for (row, parts) in chunk.iter().zip(memberships) {
+            inputs.push(judgment_input(campaign, row, parts)?);
+        }
+    }
+    Ok(inputs)
+}
+
+/// One row's question input, or `None` when its membership is missing, hidden,
+/// inactive, not enrolled, or in another campaign.
+fn judgment_input(
+    campaign: EntityId,
+    row: &CampaignJudgmentRow,
+    parts: Option<(u8, u64, Vec<u8>)>,
+) -> Result<Option<GraphQuestionInput>> {
+    let Some((kind, _, body)) = parts else {
+        return Ok(None);
+    };
+    if kind != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(None);
+    }
+    let body = crate::claim::decode_claim_body(&body, true)?;
+    if body.predicate != PREDICATE_CAMPAIGN_MEMBER || !claim_surfaceable(&body) {
+        return Ok(None);
+    }
+    let value = decode_campaign_member_value(&body.value)?;
+    if value.campaign != campaign || value.state != CampaignMemberState::Enrolled {
+        return Ok(None);
+    }
+    let ClaimSubject::Entity(lead) = body.subject else {
+        return Ok(None);
+    };
+    let mut evidence = Vec::new();
+    for id in [lead, campaign, row.variant]
+        .into_iter()
+        .chain(row.signals.iter().copied())
+    {
+        if id != row.membership && !evidence.contains(&id) {
+            evidence.push(id);
+        }
+    }
+    Ok(Some(GraphQuestionInput {
+        unit: row.membership,
+        evidence,
+    }))
 }

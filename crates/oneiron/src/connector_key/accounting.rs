@@ -1,6 +1,6 @@
 //! Connector key budget admission and spend settlement.
-//! Entry: `admit_connector_key_dispatches`.
-//! Defines its own items.
+//! Entry: `admit_connector_key_send`.
+//! Defines its own items; batch admission lives in `batch`.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -8,10 +8,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 
 use super::meter::{
-    CONNECTOR_KEY_CHARTER_ROW_BASE, ConnectorDispatchTelemetry, ConnectorKeyDispatchTally,
-    EffectorBudgetCharge, EffectorBudgetChargeOutcome, EffectorBudgetRead, EffectorBudgetRowRead,
-    budget_exhausted_reason, budget_pool_read_in_txn, budget_read_from_states, budget_row_read,
-    charge_effector_budgets, load_budget_row_states,
+    EFFECTOR_BUDGET_ROW_KEY_LEN, EffectorBudgetCharge, EffectorBudgetChargeOutcome,
+    EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId, EffectorBudgetRowRead,
+    EffectorBudgetRowSource, budget_exhausted_reason, budget_pool_read_in_txn,
+    budget_read_from_states, budget_row_read, charge_effector_budgets, load_budget_row_states,
 };
 use super::record::{
     ConnectorKeyStatus, EffectorBudgetDimension, EffectorBudgetOnExhaust, invalid_body,
@@ -22,14 +22,15 @@ use super::txn::{
     suspend_connector_key_in_txn,
 };
 
-/// Upper bound on one admit batch — keeps a single LMDB write txn bounded.
-pub const CONNECTOR_KEY_MAX_DISPATCH_BATCH: u64 = 4096;
+mod batch;
+pub use self::batch::CONNECTOR_DISPATCH_TRANSACTION_CHUNK;
 
 /// vault_meta spend-settlement idempotency rows: key id ++ event_ref bytes ->
-/// row_index u16 BE ++ minor_units u64 BE ++ cost_occurred_at u64 BE. One row
-/// per settlement event id. Replay IDENTITY is the (row_index, minor_units)
-/// prefix — the settlement's actual content; the trailing declared cost time
-/// is first-writer-wins recorded data. A matching replay settles nothing
+/// row usage key (source tag u8 ++ ordinal u64 BE) ++ minor_units u64 BE ++
+/// cost_occurred_at u64 BE. One row per settlement event id. Replay IDENTITY
+/// is the (row, minor_units) prefix — the settlement's actual content; the
+/// trailing declared cost time is first-writer-wins recorded data. A
+/// matching replay settles nothing
 /// (even with a drifted declared time between honest retries); a same-id
 /// replay with different content fails closed (a pre-claimed event_ref
 /// cannot force a silent no-op for a different settlement).
@@ -71,8 +72,9 @@ pub enum ConnectorKeySendAdmission {
         /// `"connector_key_not_active"`, or the exhausted row's
         /// `budget_exhausted:*` reason.
         reason: String,
-        /// The first exceeding row, when a budget row refused.
-        row_index: Option<u16>,
+        /// The first exceeding row under the key that owns it, when a budget
+        /// row refused (FIX 3760).
+        location: Option<EffectorBudgetLocation>,
         /// Set when an `on_exhaust: Suspend` row flipped the key Suspended in
         /// the same transaction.
         suspended: bool,
@@ -89,19 +91,23 @@ fn send_admit_value(admitted_at: u64, sends_debit: u64, effect_channel: &str) ->
     value
 }
 
-/// Length of the settlement-event IDENTITY prefix (row_index ++ minor_units
+/// Length of the settlement-event IDENTITY prefix (row ++ minor_units
 /// — the settlement's actual content). The declared `cost_occurred_at`
 /// trails as first-writer-wins RECORDED data and is deliberately NOT part
 /// of the identity: an honest retry whose declared cost time drifted
 /// between attempts must stay idempotent, never fail closed into a
 /// fresh-event_ref retry that double-debits.
-const SETTLE_EVENT_IDENTITY_LEN: usize = size_of::<u16>() + size_of::<u64>();
+const SETTLE_EVENT_IDENTITY_LEN: usize = EFFECTOR_BUDGET_ROW_KEY_LEN + size_of::<u64>();
 
 /// The stored settlement-event value: identity prefix, then the declared
 /// cost time from the FIRST successful write.
-fn settle_event_value(row_index: u16, minor_units: u64, cost_occurred_at: u64) -> Vec<u8> {
+fn settle_event_value(
+    row: EffectorBudgetRowId,
+    minor_units: u64,
+    cost_occurred_at: u64,
+) -> Vec<u8> {
     let mut value = Vec::with_capacity(SETTLE_EVENT_IDENTITY_LEN + size_of::<u64>());
-    value.extend_from_slice(&row_index.to_be_bytes());
+    value.extend_from_slice(&row.usage_key());
     value.extend_from_slice(&minor_units.to_be_bytes());
     value.extend_from_slice(&cost_occurred_at.to_be_bytes());
     value
@@ -113,7 +119,7 @@ impl Vault {
     /// threshold firing, no usage-row writes. Liveness (window rollover,
     /// rolling prune/re-arm) is computed on the read, never stored. Rows
     /// include the key budget rows and, when a charter is stamped (GOV-10),
-    /// the compiled-cap rows at `0x8000 | i`. A per-grant key's read carries
+    /// the compiled-cap rows. A per-grant key's read carries
     /// its catalog pool's read as `pool` (ONE-1794).
     pub fn effector_budget_read(
         &self,
@@ -138,142 +144,6 @@ impl Vault {
         Ok(Some(read))
     }
 
-    /// Applies the existing effector-budget charger sequentially to a batch
-    /// of send-like dispatches through one key.
-    ///
-    /// Accounting time is the ENGINE clock, sampled ONCE here: every budget
-    /// window selection/roll, usage entry, suspension transition, and op
-    /// record in the admission transaction takes that one sample, so a long
-    /// batch cannot straddle two windows and a caller cannot pick the window
-    /// it debits. `telemetry` carries the caller's own observation as a
-    /// declared fact — echoed in the tally, never handed to the charger.
-    pub fn admit_connector_key_dispatches(
-        &self,
-        id: &EntityId,
-        effect_channel: &str,
-        count: u64,
-        telemetry: ConnectorDispatchTelemetry,
-    ) -> Result<ConnectorKeyDispatchTally> {
-        self.admit_connector_key_dispatch_batch(
-            id,
-            effect_channel,
-            count,
-            telemetry,
-            self.store.clock.now_recorded_at(),
-        )
-    }
-
-    /// Freezes the accounting clock for a dispatch batch.
-    ///
-    /// The ONLY door that takes an accounting timestamp, and it exists solely
-    /// so budget-window behavior is testable without sleeping. Compiled out of
-    /// production builds: `test` covers this crate's own unit tests,
-    /// `test-support` this crate's integration tests (self dev-dependency),
-    /// `test-hooks` downstream crates' tests.
-    #[cfg(any(test, feature = "test-support", feature = "test-hooks"))]
-    #[doc(hidden)]
-    pub fn admit_connector_key_dispatches_at(
-        &self,
-        id: &EntityId,
-        effect_channel: &str,
-        count: u64,
-        telemetry: ConnectorDispatchTelemetry,
-        accounting_now: u64,
-    ) -> Result<ConnectorKeyDispatchTally> {
-        self.admit_connector_key_dispatch_batch(
-            id,
-            effect_channel,
-            count,
-            telemetry,
-            accounting_now,
-        )
-    }
-
-    /// Sole body of connector-key batch admission. `accounting_now` is the
-    /// batch's single engine sample; it reaches this function from the public
-    /// door above and, under test cfg only, from the freezing seam.
-    fn admit_connector_key_dispatch_batch(
-        &self,
-        id: &EntityId,
-        effect_channel: &str,
-        count: u64,
-        telemetry: ConnectorDispatchTelemetry,
-        accounting_now: u64,
-    ) -> Result<ConnectorKeyDispatchTally> {
-        let effect_channel = normalize_connector_key(effect_channel);
-        if effect_channel.is_empty() {
-            return Err(invalid_body("effect channel must not be blank"));
-        }
-        if count > CONNECTOR_KEY_MAX_DISPATCH_BATCH {
-            return Err(invalid_body("dispatch batch too large"));
-        }
-        let mut wtxn = self.store.env.write_txn()?;
-        let mut record =
-            read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
-        let mut tally = ConnectorKeyDispatchTally {
-            admitted: 0,
-            refused: 0,
-            ladder_events: Vec::new(),
-            pool_key_ref: None,
-            pool_ladder_events: Vec::new(),
-            accounted_at: accounting_now,
-            caller_observed_at: telemetry.caller_observed_at,
-        };
-
-        for i in 0..count {
-            if record.status != ConnectorKeyStatus::Active {
-                tally.refused = tally.refused.saturating_add(count - i);
-                break;
-            }
-            match charge_effector_budgets(
-                &self.store,
-                &mut wtxn,
-                id,
-                &mut record,
-                &effect_channel,
-                true,
-                accounting_now,
-            )? {
-                EffectorBudgetChargeOutcome::NoRows(charge)
-                | EffectorBudgetChargeOutcome::Charged(charge) => {
-                    tally.admitted = tally.admitted.saturating_add(1);
-                    tally.take_ladder_events(charge);
-                }
-                EffectorBudgetChargeOutcome::Exhausted {
-                    row_index,
-                    on_exhaust,
-                    charge,
-                } => {
-                    if on_exhaust == EffectorBudgetOnExhaust::Suspend {
-                        record = suspend_connector_key_in_txn(
-                            &self.store,
-                            &mut wtxn,
-                            id,
-                            &record,
-                            budget_exhausted_reason(row_index),
-                            accounting_now,
-                        )?;
-                        let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
-                        append_connector_key_op_record(
-                            &self.store,
-                            &mut wtxn,
-                            id,
-                            "gate.connector_key.dispatch_suspend",
-                            &record,
-                            policy.read_frontier_hash()?,
-                            accounting_now,
-                        )?;
-                    }
-                    tally.take_ladder_events(charge);
-                    tally.refused = tally.refused.saturating_add(count - i);
-                    break;
-                }
-            }
-        }
-        wtxn.commit()?;
-        Ok(tally)
-    }
-
     /// Admits ONE LOGICAL SEND through a connector key, debiting `Sends`
     /// exactly once no matter how many physical attempts the transport layer
     /// makes.
@@ -283,9 +153,9 @@ impl Vault {
     /// `settle_connector_spend`'s `event_ref`: nonblank, ≤128 bytes, no NUL —
     /// checked BEFORE any charge or dedupe write.
     ///
-    /// Accounting time is the ENGINE clock, sampled once here, exactly as
-    /// [`Self::admit_connector_key_dispatches`] does: a caller cannot pick the
-    /// budget window it debits.
+    /// Accounting time is the ENGINE clock, sampled once here, as
+    /// [`Self::admit_connector_key_dispatches`] samples it per chunk: a caller
+    /// cannot pick the budget window it debits.
     ///
     /// This is the SENDS half of the split the live-transport wiring
     /// follow-on will land: `Rate` stays a per-physical-effector-call charge
@@ -373,13 +243,14 @@ impl Vault {
                 matched_rows: Vec::new(),
                 ladder_events: Vec::new(),
                 pool: None,
+                debits: Vec::new(),
             }));
         }
 
         if record.status != ConnectorKeyStatus::Active {
             return Ok(ConnectorKeySendAdmission::Refused {
                 reason: "connector_key_not_active".to_owned(),
-                row_index: None,
+                location: None,
                 suspended: false,
                 charge: None,
             });
@@ -406,7 +277,7 @@ impl Vault {
                 Ok(ConnectorKeySendAdmission::Admitted(charge))
             }
             EffectorBudgetChargeOutcome::Exhausted {
-                row_index,
+                location,
                 on_exhaust,
                 charge,
             } => {
@@ -420,7 +291,7 @@ impl Vault {
                         &mut wtxn,
                         id,
                         &record,
-                        budget_exhausted_reason(row_index),
+                        budget_exhausted_reason(&location),
                         accounting_now,
                     )?;
                     let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
@@ -437,8 +308,8 @@ impl Vault {
                 }
                 wtxn.commit()?;
                 Ok(ConnectorKeySendAdmission::Refused {
-                    reason: budget_exhausted_reason(row_index),
-                    row_index: Some(row_index),
+                    reason: budget_exhausted_reason(&location),
+                    location: Some(location),
                     suspended,
                     charge: Some(charge),
                 })
@@ -463,7 +334,7 @@ impl Vault {
     pub fn settle_connector_spend(
         &self,
         id: &EntityId,
-        row_index: u16,
+        row: EffectorBudgetRowId,
         minor_units: u64,
         cost_occurred_at: u64,
         event_ref: &str,
@@ -487,15 +358,12 @@ impl Vault {
         let mut wtxn = self.store.env.write_txn()?;
         let record =
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
-        let budget = if row_index & CONNECTOR_KEY_CHARTER_ROW_BASE == 0 {
-            record.budgets.get(usize::from(row_index))
-        } else {
-            record.charter.as_ref().and_then(|charter| {
-                charter
-                    .compiled
-                    .channel_caps
-                    .get(usize::from(row_index & !CONNECTOR_KEY_CHARTER_ROW_BASE))
-            })
+        let offset = usize::try_from(row.index).ok();
+        let budget = match row.source {
+            EffectorBudgetRowSource::Key => offset.and_then(|offset| record.budgets.get(offset)),
+            EffectorBudgetRowSource::Charter => record.charter.as_ref().and_then(|charter| {
+                offset.and_then(|offset| charter.compiled.channel_caps.get(offset))
+            }),
         };
         let Some(budget) = budget.cloned() else {
             return Err(invalid_body("spend settle on missing row"));
@@ -504,7 +372,7 @@ impl Vault {
             return Err(invalid_body("spend settle on non-spend row"));
         }
 
-        let usage_row_key = (*id, row_index.to_be_bytes());
+        let usage_row_key = (*id, row.usage_key());
         let mut usage = super::meter::USAGE
             .get(&self.store, &wtxn, &usage_row_key)?
             .unwrap_or_default();
@@ -516,7 +384,7 @@ impl Vault {
         // with a DIFFERENT (row, amount) fails closed, so a pre-claimed
         // event_ref cannot force a silent no-op for a different settlement.
         let event_key = (*id, event_ref.to_owned());
-        let event_value = settle_event_value(row_index, minor_units, cost_occurred_at);
+        let event_value = settle_event_value(row, minor_units, cost_occurred_at);
         if let Some(stored) = SETTLE_EVENT.get(&self.store, &wtxn, &event_key)? {
             if stored.len() < SETTLE_EVENT_IDENTITY_LEN
                 || stored[..SETTLE_EVENT_IDENTITY_LEN] != event_value[..SETTLE_EVENT_IDENTITY_LEN]
@@ -527,7 +395,7 @@ impl Vault {
             }
             // Read-only echo of the row's current state; nothing is written.
             usage.touch(&budget.window, budget.limit, settled_at);
-            return Ok(budget_row_read(row_index, &budget, &usage));
+            return Ok(budget_row_read(row, &budget, &usage));
         }
 
         usage.touch(&budget.window, budget.limit, settled_at);
@@ -540,7 +408,7 @@ impl Vault {
             && budget.on_exhaust == EffectorBudgetOnExhaust::Suspend
             && settled_record.status == ConnectorKeyStatus::Active
         {
-            let reason = budget_exhausted_reason(row_index);
+            let reason = budget_exhausted_reason(&EffectorBudgetLocation { key_ref: *id, row });
             settled_record = suspend_connector_key_in_txn(
                 &self.store,
                 &mut wtxn,
@@ -551,7 +419,7 @@ impl Vault {
             )?;
         }
 
-        let row_read = budget_row_read(row_index, &budget, &usage);
+        let row_read = budget_row_read(row, &budget, &usage);
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
         append_connector_key_op_record(
             &self.store,

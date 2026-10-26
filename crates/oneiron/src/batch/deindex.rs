@@ -175,7 +175,6 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
         id.as_bytes(),
         store.clock.now_recorded_at(),
     )?;
-    #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     // A tear keeps body keys: an erase stages its retirements before it
     // reaches here (KS-2A).

@@ -161,7 +161,7 @@ impl Memory<'_> {
                 "objective": post.brief.objective,
                 "need": post.brief.intent.need,
             });
-            let answer = ask(
+            let decision = ask(
                 Some(decisions),
                 TaskQuestion::Take,
                 agent_def_ref,
@@ -169,9 +169,16 @@ impl Memory<'_> {
                 &state,
                 post.brief.escalation.reversibility,
             );
+            let answer = decision.answer;
             lifecycle
                 .fields
                 .insert("take".to_owned(), answer.as_str().to_owned());
+            // The ladder's receipt rides with the take it decided (FIX 10179).
+            if let Some(receipt) = decision.receipt_field() {
+                lifecycle
+                    .fields
+                    .insert("take_decision_receipt".to_owned(), receipt);
+            }
             if answer == PortAnswer::No {
                 // The decline and the receipt naming it land together.
                 self.vault()
@@ -319,6 +326,7 @@ impl Memory<'_> {
                     grant_ref: None,
                     diff_handle: pending.diff_handle,
                     read_frontier_hash: pending.read_frontier_hash,
+                    context: Default::default(),
                     redacted_at: None,
                 },
             )?;
@@ -341,10 +349,21 @@ impl Memory<'_> {
         key: &str,
     ) -> MemoryResult<Option<HeldProposal>> {
         let rtxn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        self.held_proposal_in(&rtxn, predicate, key)
+    }
+
+    /// [`Self::held_proposal`] in `rtxn`, a snapshot the caller holds: a
+    /// writer finds the earlier proposal without opening a read of its own.
+    pub(super) fn held_proposal_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        predicate: &str,
+        key: &str,
+    ) -> MemoryResult<Option<HeldProposal>> {
         let actor = self.actor();
         Ok(self
             .vault()
-            .find_claim_for_subject_in_txn(&rtxn, &actor, |id, body| {
+            .find_claim_for_subject_in_txn(rtxn, &actor, |id, body| {
                 if body.predicate != predicate
                     || crate::claim::session_claim_producer(body) != Some(actor)
                 {

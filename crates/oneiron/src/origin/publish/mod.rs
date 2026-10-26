@@ -42,6 +42,7 @@ mod mirror_plan_types;
 mod mirror_review;
 mod reconcile;
 mod review;
+mod secret_hold;
 mod store;
 mod types;
 
@@ -162,6 +163,7 @@ impl Vault {
             user: mirror.user,
             secret_ref: mirror.secret_ref,
             target_generation: mirror.target_generation,
+            audience: mirror.audience,
         };
         let handle = scope.handle_at(&commit)?;
         let observed = self

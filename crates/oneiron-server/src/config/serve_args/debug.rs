@@ -51,6 +51,7 @@ impl fmt::Debug for ServeArgs {
             .field("seal_signing_url", &self.seal_signing_url)
             .field("seal_organ", &self.seal_organ)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,

@@ -20,13 +20,23 @@ pub(crate) struct RecordedDispatch {
     pub(crate) replayed: bool,
 }
 impl OutboundDispatchPipeline {
+    /// The public direct door: dispatches `request` and files its ordinary
+    /// outbound-family receipt once, held, denied and uncertain outcomes
+    /// included (FIX 8816). An executor that files its own canonical receipt
+    /// takes one of the crate's receipt-free doors instead.
+    ///
+    /// # Errors
+    /// The dispatch error, or a receipt persistence failure. A retry goes
+    /// through the intent ledger first, so no transport is blindly repeated.
     pub fn dispatch<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> Result<OutboundDispatchResult, OutboundDispatchError> {
-        self.dispatch_inner(vault, request, sink, None, None)
+        let result = self.dispatch_inner(vault, request, sink, None, None)?;
+        crate::receipt::record_direct_dispatch_receipt(vault, result.receipt.clone())?;
+        Ok(result)
     }
     pub(in crate::outbound) fn dispatch_from_step<S: OutboundExecutionSink>(
         self,
@@ -71,7 +81,7 @@ impl OutboundDispatchPipeline {
         prepared.co_actor = Some(co_actor);
         self.dispatch_prepared_or_completed(vault, prepared, sink)
     }
-    fn dispatch_inner<S: OutboundExecutionSink>(
+    pub(super) fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,
@@ -276,7 +286,7 @@ impl OutboundDispatchPipeline {
         let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
             request: &request,
-            sink,
+            sink: &mut *sink,
             verb_contract,
             effect,
             payload: payload.ok_or(Error::InvariantViolation("missing outbound payload"))?,
@@ -304,7 +314,7 @@ impl OutboundDispatchPipeline {
                 seat_ledger.held_at(verb_contract, count),
             );
         }
-        let result = crate::outbound::receipt_fields::dispatch_result_receipt(
+        let mut result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,
             policy_risk,
@@ -312,6 +322,16 @@ impl OutboundDispatchPipeline {
             Some(&admission),
             verdict,
             approval_digest,
+        );
+        // FIX 7962: a degraded interrupt's bound alternative goes now.
+        super::degrade::dispatch_ambient_alternative(
+            self,
+            vault,
+            &request,
+            &admission.window_decision,
+            verified_actor,
+            sink,
+            &mut result,
         );
         Ok(RecordedDispatch {
             result,

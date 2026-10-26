@@ -115,6 +115,16 @@ pub struct MessageStreamReceipt {
     pub recovered: bool,
     pub ephemeral_text_lost: bool,
     pub receipt_ref: String,
+    /// The records this generation's reply asserts it cited or created
+    /// (FIX 10258, FIX 10260): its stream's seed set and its terminal's, a
+    /// Continue's too, each by the registry type its row has and its id, as
+    /// admitted in the write that saved this generation, where each was read
+    /// through the writer's own lane (OF-063). Readability, not proof that
+    /// the writer made a record it names as `created`. Empty for one that
+    /// asserts none, and on a receipt kept before them; an erase of its
+    /// MESSAGE takes them off.
+    #[serde(default)]
+    pub reply_assertions: crate::llm::ReplyAssertions,
 }
 /// Observable local partial. This is never serialized into LMDB.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

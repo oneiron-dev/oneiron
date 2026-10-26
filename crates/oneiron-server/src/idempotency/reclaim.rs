@@ -42,9 +42,12 @@ impl IdempotencyStore {
 }
 
 /// Whether `raw` is an entry a lookup at `now` finds expired, an erased one
-/// alike: expiry is a delete, and keeps the entry's key (KS-2B2). A row that
-/// does not decode is not judged here, and stays.
+/// alike: expiry is a delete, and keeps the entry's key (KS-2B2). The erased
+/// marker of a retired entry that never decoded expires from the time it
+/// retired (FIX 10710). Any other row that does not decode, and a marker
+/// that kept no time, is not judged here, and stays.
 fn expired_at(raw: &[u8], now: u64) -> bool {
-    StoredIdempotencyEntry::decode(raw)
-        .is_ok_and(|stored| now.saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs())
+    let expired = |since: u64| now.saturating_sub(since) >= IDEMPOTENCY_TTL.as_secs();
+    StoredIdempotencyEntry::decode(raw).is_ok_and(|stored| expired(stored.created_at_secs))
+        || oneiron::store::http_opaque_retired_at(raw).is_some_and(expired)
 }

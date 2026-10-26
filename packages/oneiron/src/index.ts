@@ -767,14 +767,14 @@ export class Oneiron {
       },
     },
     tagging: {
-      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
-      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
-      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
-      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
-      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
-      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
-      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
-      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker, failure reason and how current its saved tags are, under the lane's scope receipt. */
+      status: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingStatusView> => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.ScopedReadResult<Facade.TaggingStatusView>),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them, marked stale and pending retag after an edit, under the lane's scope receipt. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingTagsView> => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.ScopedReadResult<Facade.TaggingTagsView>),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome, under the lane's scope receipt. */
+      history: (input: Facade.TaggingTurnRequest): Facade.ScopedReadResult<Facade.TaggingHistoryView> => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.ScopedReadResult<Facade.TaggingHistoryView>),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller, each marked with how current its turn's tags are, under the lane's scope receipt. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.ScopedReadResult<Facade.TaggingMentionsView> => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.ScopedReadResult<Facade.TaggingMentionsView>),
     },
     /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
     cluster: Object.assign((input: Facade.ClusterRequest): Facade.ScopedReadResult<Facade.ClusterProposal> => this.#call(() => this.#client.vaultCluster(input) as Facade.ScopedReadResult<Facade.ClusterProposal>), {
@@ -1217,6 +1217,12 @@ export class Oneiron {
       calls: {
         /** The owner approves once exactly one held connector call, by its call ref and the approve-once digest its current ask names; no standing grant is created and nothing is sent. */
         approve_once: (input: Facade.ConnectorCallApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConnectorsCallsApproveOnce(input) as Facade.ConsentActReceipt),
+      },
+      read_grants: {
+        /** The owner grants one agent its witness-read grant over a connector conversation again, by agent and conversation; a revoked grant is issued anew at its same id, a missing one is issued, and a repeat on an active grant changes nothing. */
+        grant: (input: Facade.ConnectorWitnessReadGrantRequest): Facade.ConnectorWitnessReadGranted => this.#call(() => this.#client.vaultConnectorsReadGrantsGrant(input) as Facade.ConnectorWitnessReadGranted),
+        /** The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing. */
+        revoke: (input: Facade.ConnectorWitnessReadGrantRevokeRequest): Facade.ConnectorWitnessReadGrantRevoked => this.#call(() => this.#client.vaultConnectorsReadGrantsRevoke(input) as Facade.ConnectorWitnessReadGrantRevoked),
       },
     },
     authority: {

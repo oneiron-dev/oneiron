@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::channel_identity_provider::{LINE_CHANNEL, is_line_chat_audience_key};
 use crate::connector_key::events::ConnectorEvent;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -56,6 +57,11 @@ pub struct SurfaceConnectorPayload {
     pub received_at: u64,
     pub foreign_inbound: bool,
     pub claims_not_instructions: bool,
+    /// The receiving identity was retiring when the event routed (released,
+    /// or quarantined on its own machine): inbound still delivers, and its
+    /// outbound rules still decide any reply.
+    #[serde(default)]
+    pub identity_retiring: bool,
 }
 
 impl SurfaceConnectorPayload {
@@ -87,6 +93,20 @@ impl SurfaceConnectorPayload {
     pub fn receiving_identity(&self) -> Result<EntityId> {
         EntityId::from_hex(&self.receiving_identity_ref)
             .map_err(|_| invalid("surface connector identity is not an entity"))
+    }
+
+    /// Where an answer to this event goes (FIX 10809). A LINE group or room
+    /// message is answered in its chat, the audience its counterparty names,
+    /// whichever member wrote it; every other event answers its source.
+    #[must_use]
+    pub fn reply_target(&self) -> &str {
+        if let SurfaceCounterpartyStamp::Unknown { counterparty_key } = &self.counterparty
+            && self.channel == LINE_CHANNEL
+            && is_line_chat_audience_key(counterparty_key)
+        {
+            return counterparty_key;
+        }
+        &self.source.user_ref
     }
 }
 
@@ -130,6 +150,7 @@ pub fn connector_event_from_surface(
         received_at: event.received_at,
         foreign_inbound: event.foreign_inbound,
         claims_not_instructions: event.claims_not_instructions,
+        identity_retiring: event.identity_retiring,
     };
     Ok(ConnectorEvent {
         event_id: request.idempotency_key.to_owned(),

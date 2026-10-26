@@ -58,6 +58,19 @@ pub(super) struct Seed {
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
     pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    /// The verified read proof the stream's opener held, when a host bound
+    /// one (FIX 1667): the terminal reads its links under that same proof,
+    /// after a restart too. `None` is an opener with no bound proof. Every
+    /// seed writes the field, so a stored seed without it does not decode.
+    #[serde(deserialize_with = "required_read_proof")]
+    pub read_proof: Option<crate::authority::StoredReadProof>,
+}
+/// Decodes [`Seed::read_proof`] whether it holds a proof or `None`; a seed
+/// missing the field is refused, never read as an opener with no proof.
+fn required_read_proof<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<crate::authority::StoredReadProof>, D::Error> {
+    Option::deserialize(deserializer)
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {
@@ -104,6 +117,33 @@ pub(crate) fn erase_stream_seeds_in_txn(
         .collect();
     for message in covered {
         ACTIVE.delete(store, txn, &message)?;
+    }
+    Ok(())
+}
+
+/// Takes the reply assertions off `message`'s stream receipts, its latest
+/// and each generation's, when an erase of it reaches them (FIX 10258): the
+/// receipts stay, naming no record. Registered with the reply assertions'
+/// eraser.
+pub(crate) fn redact_receipt_assertions_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+) -> Result<()> {
+    if let Some(mut latest) = RECEIPT.get(store, txn, message)?
+        && !latest.reply_assertions.is_empty()
+    {
+        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT.put(store, txn, message, &latest)?;
+    }
+    let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
+        .collect();
+    for (reference, mut done) in generations {
+        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
     }
     Ok(())
 }

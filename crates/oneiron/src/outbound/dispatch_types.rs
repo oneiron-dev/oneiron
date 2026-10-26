@@ -11,7 +11,7 @@ use crate::calendar::invite::{CalendarInviteMimePart, CalendarInvitePayload};
 use crate::campaign::send_hygiene::ListUnsubscribeTarget;
 use crate::channel_identity_autonomy::SendAutonomyContext;
 use crate::channel_identity_selection::RelationshipContext;
-use crate::connector_key::{EffectorBudgetRead, EffectorPoolCharge};
+use crate::connector_key::{EffectorBudgetLadderEvent, EffectorBudgetRead, EffectorPoolCharge};
 use crate::delivery_window::{
     DeliveryWindowApnsInterruptionLevel, DeliveryWindowContextCondition,
     DeliveryWindowEvaluationContext, DeliveryWindowEvaluator, DeliveryWindowPolicyClaim,
@@ -21,7 +21,6 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::gate::{ExternalEffectPolicyRisk, GateActor, GateProvenanceHandles};
 use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
-use crate::llm::BudgetLadderEvent;
 use crate::receipt::{ContextReceiptFields, ReceiptRecord};
 
 /// Actor context supplied to the outbound dispatch gate.
@@ -141,8 +140,13 @@ pub struct OutboundDispatchRequest {
     pub delivery_window_apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
     /// Non-APNs resolved delivery level for compatibility verbs. The only
     /// carrier that can promote a `telegram|line|imessage_mfb|imessage_bridge`
-    /// `send` to ambient; absent, the manifest's interrupt class stands.
+    /// `send` (and a `line|imessage_bridge` `send_media`, FIX 7961) to
+    /// ambient; absent, the manifest's interrupt class stands.
     pub delivery_window_resolved_level: Option<DeliveryWindowResolvedLevel>,
+    /// FIX 8817: the frozen host offset a drain derives this send's local
+    /// minute from, with the vault clock reading taken alongside
+    /// `occurred_at`. The window door reads the clock again for this send.
+    pub(crate) delivery_window_clock: Option<DeliveryWindowClock>,
     /// A human selected this exact instant; policy is observed but cannot park it.
     pub delivery_window_human_explicit_instant: bool,
     /// OF-369/RS9 context field-set captured at the context-assembly seam;
@@ -187,6 +191,18 @@ pub struct OutboundDispatchRequest {
     /// again under the outbound writer. In memory only, never persisted;
     /// `None` everywhere else.
     pub publisher_signature: Option<super::PublisherSignatureAuthorization>,
+    /// The host-selected ambient send an interrupt degrades to (FIX 7962):
+    /// when the delivery window degrades this send to its surface, the
+    /// pipeline sends it as a send of its own. `None` keeps today's park.
+    pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
+}
+
+/// A drain's clock for one send's delivery window (FIX 8817): the frozen host
+/// UTC offset, and the vault clock reading taken when the drain's `now` was.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DeliveryWindowClock {
+    pub(crate) utc_offset_minutes: i16,
+    pub(crate) anchor_recorded_at: u64,
 }
 
 impl OutboundDispatchRequest {
@@ -222,6 +238,7 @@ impl OutboundDispatchRequest {
             delivery_window_degrade_to: None,
             delivery_window_apns_interruption_level: None,
             delivery_window_resolved_level: None,
+            delivery_window_clock: None,
             delivery_window_human_explicit_instant: false,
             context_receipt: None,
             linkedin_sandbox_policy: None,
@@ -231,6 +248,7 @@ impl OutboundDispatchRequest {
             facet_ref: None,
             send_autonomy: None,
             publisher_signature: None,
+            ambient_alternative: None,
         }
     }
 
@@ -328,6 +346,22 @@ impl OutboundDispatchRequest {
         self
     }
 
+    /// FIX 8817: the drain's frozen offset and the vault clock reading taken
+    /// with `occurred_at`; the window door moves this send's local minute on
+    /// by the time the drain has spent since.
+    #[must_use]
+    pub(crate) fn delivery_window_clock(
+        mut self,
+        utc_offset_minutes: i16,
+        anchor_recorded_at: u64,
+    ) -> Self {
+        self.delivery_window_clock = Some(DeliveryWindowClock {
+            utc_offset_minutes,
+            anchor_recorded_at,
+        });
+        self
+    }
+
     #[must_use]
     pub fn delivery_window_channel(mut self, channel: impl Into<String>) -> Self {
         self.delivery_window_channel = Some(channel.into());
@@ -343,6 +377,16 @@ impl OutboundDispatchRequest {
     #[must_use]
     pub fn delivery_window_degrade_to(mut self, surface: impl Into<String>) -> Self {
         self.delivery_window_degrade_to = Some(surface.into());
+        self
+    }
+
+    /// Binds the ambient send this interrupt degrades to (FIX 7962): the
+    /// delivery window may degrade it to `alternative.surface`, and the
+    /// pipeline then sends the alternative.
+    #[must_use]
+    pub fn ambient_alternative(mut self, alternative: super::OutboundAmbientAlternative) -> Self {
+        self.delivery_window_degrade_to = Some(alternative.surface.clone());
+        self.ambient_alternative = Some(Box::new(alternative));
         self
     }
 
@@ -431,6 +475,17 @@ pub struct OutboundExecutionOutcome {
     pub provider_ref: Option<String>,
     pub retry_state: Option<String>,
     pub receipt_fields: BTreeMap<String, String>,
+    /// What the caller may do next after a send that did not certainly
+    /// deliver, as the sink names it (FIX 7965). Empty, the receipt files
+    /// the engine's typed fallback.
+    pub recovery_suggestions: Vec<super::OutboundRecoverySuggestion>,
+    /// The provider's handle on a send it accepted as a remote task (FIX
+    /// 7960); set only with [`OutboundExecutionOutcomeKind::Deferred`].
+    pub remote_task: Option<crate::outbound_intent_ledger::RemoteTaskHandle>,
+    /// Why the provider refused this send for now (FIX 8818): a rate limit
+    /// or a spent quota, on a definite non-delivery. Its stated seconds ride
+    /// the `retry_after` field.
+    pub provider_wait: Option<crate::outbound_intent_ledger::ProviderWaitKind>,
 }
 
 /// Typed adapter execution result. Unknown adapter outcomes must be modeled
@@ -439,6 +494,8 @@ pub struct OutboundExecutionOutcome {
 pub enum OutboundExecutionOutcomeKind {
     DeliveredToChannel,
     Failed,
+    /// The provider accepted the send as a remote task (FIX 7960).
+    Deferred,
 }
 
 impl OutboundExecutionOutcome {
@@ -450,6 +507,9 @@ impl OutboundExecutionOutcome {
             provider_ref: Some(provider_ref.into()),
             retry_state: None,
             receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
+            remote_task: None,
+            provider_wait: None,
         }
     }
 
@@ -461,7 +521,37 @@ impl OutboundExecutionOutcome {
             provider_ref: None,
             retry_state: Some(reason.into()),
             receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
+            remote_task: None,
+            provider_wait: None,
         }
+    }
+
+    /// The provider accepted the send as the remote task `handle` (FIX
+    /// 7960): delivery is not yet known, and the send is never repeated.
+    #[must_use]
+    pub fn deferred(handle: crate::outbound_intent_ledger::RemoteTaskHandle) -> Self {
+        Self {
+            kind: OutboundExecutionOutcomeKind::Deferred,
+            delivery_may_have_occurred: true,
+            provider_ref: None,
+            retry_state: None,
+            receipt_fields: BTreeMap::new(),
+            recovery_suggestions: Vec::new(),
+            remote_task: Some(handle),
+            provider_wait: None,
+        }
+    }
+
+    /// Marks this definite non-delivery as the provider's rate or quota
+    /// refusal (FIX 8818): the send stays queued for the provider's wait.
+    #[must_use]
+    pub const fn with_provider_wait(
+        mut self,
+        kind: crate::outbound_intent_ledger::ProviderWaitKind,
+    ) -> Self {
+        self.provider_wait = Some(kind);
+        self
     }
 
     #[must_use]
@@ -479,6 +569,19 @@ impl OutboundExecutionOutcome {
     #[must_use]
     pub const fn with_possible_delivery(mut self) -> Self {
         self.delivery_may_have_occurred = true;
+        self
+    }
+
+    /// Names one typed next step for the receipt of this failed send (FIX
+    /// 7965).
+    #[must_use]
+    pub fn with_recovery_suggestion(
+        mut self,
+        suggestion: super::OutboundRecoverySuggestion,
+    ) -> Self {
+        if !self.recovery_suggestions.contains(&suggestion) {
+            self.recovery_suggestions.push(suggestion);
+        }
         self
     }
 }
@@ -508,6 +611,8 @@ pub enum OutboundDispatchOutcome {
     LetGo,
     Failed,
     Ambiguous,
+    /// The provider accepted the send as a remote task (FIX 7960).
+    Deferred,
 }
 
 impl OutboundDispatchOutcome {
@@ -521,6 +626,7 @@ impl OutboundDispatchOutcome {
             Self::LetGo => "let_go",
             Self::Failed => "failed",
             Self::Ambiguous => "ambiguous",
+            Self::Deferred => "deferred",
         }
     }
 }
@@ -555,7 +661,7 @@ pub struct OutboundDispatchResult {
     pub effector_budget: Option<EffectorBudgetRead>,
     /// Effector-meter ladder events fired by this dispatch, for the host's
     /// one steering queue (same contract as `BudgetAdmission.ladder_events`).
-    pub budget_ladder_events: Vec<BudgetLadderEvent>,
+    pub budget_ladder_events: Vec<EffectorBudgetLadderEvent>,
     /// A per-grant key's catalog pool side of this dispatch's charge
     /// (ONE-1794): its debit, matched rows and ladder events for the same
     /// steering queue, under the catalog key's ref. The pool's post-debit
