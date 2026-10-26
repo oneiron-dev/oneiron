@@ -18583,7 +18583,8 @@
      "purpose": "Effector budget windows, usage rows and the budget charge facade",
      "surface": {
       "const": 5,
-      "crate-vis": 20,
+      "crate-vis": 21,
+      "re-export": 1,
       "struct": 6
      }
     },
@@ -18605,6 +18606,19 @@
      "purpose": "Whether a key's exhausted rows only pace its next effect (FIX 8788)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EffectorBudgetDebit"
+     ],
+     "path": "src/connector_key/meter/reservation.rs",
+     "purpose": "An outbound send's reserved budget (FIX 7964): the usage entries its admission charge wrote, and their…",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -42750,7 +42764,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 1,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -48233,6 +48247,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OutboundAmbientAlternative",
+      "OutboundScheduleContinuation"
+     ],
+     "path": "src/outbound/ambient_alternative.rs",
+     "purpose": "The ambient send an interrupt degrades to (FIX 7962), and what a scheduled send carries on to its connector…",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -48311,6 +48338,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/outbound/dispatch_pipeline/degrade.rs",
+     "purpose": "The ambient alternative of a degraded interrupt (FIX 7962): when the delivery window degrades an interrupt…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/outbound/dispatch_pipeline/effect.rs",
      "purpose": "Admitted effect: only this lane enters the replay-first chokepoint",
      "surface": {
@@ -48355,7 +48392,7 @@
      "path": "src/outbound/dispatch_pipeline/mod.rs",
      "purpose": "O2 resolve-gate-window-execute dispatch pipeline: replay-first ledger contract, gate decision…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 3
      }
     },
@@ -48368,7 +48405,7 @@
      "path": "src/outbound/dispatch_pipeline/pipeline.rs",
      "purpose": "O2 dispatch: shared request preparation, ledger replay, execution and receipts",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -48488,7 +48525,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 4,
-      "fn": 31,
+      "fn": 34,
       "struct": 6,
       "trait": 1
      }
@@ -48508,13 +48545,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/outbound/executor/phases.rs",
      "purpose": "The connector-send executor's per-attempt phases: the dispatch request a claimed task replays, and the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -48565,7 +48602,7 @@
      "surface": {
       "crate-vis": 11,
       "fn": 1,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -48575,7 +48612,7 @@
      "path": "src/outbound/receipt_fields.rs",
      "purpose": "Outbound receipt field projection",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -48631,7 +48668,7 @@
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic send-receipt retry and terminal settlement",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -48876,7 +48913,7 @@
      "path": "src/outbound_chokepoint/mod.rs",
      "purpose": "Replay-first outbound effect execution",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 1
      }
     },
@@ -48887,7 +48924,7 @@
      "path": "src/outbound_chokepoint/replay.rs",
      "purpose": "Replay/send path: ledger-state dispatch, recovery governance, live-retry gate, transport outcomes",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -49010,7 +49047,7 @@
      "path": "src/outbound_consent/connector_call_dispatch.rs",
      "purpose": "A connector dispatch's outcome mapped to a call step and its reason codes",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -49460,8 +49497,8 @@
      "path": "src/outbound_intent_ledger/mod.rs",
      "purpose": "Device-local durable intent ledger for effectful outbound calls",
      "surface": {
-      "crate-vis": 12,
-      "re-export": 3
+      "crate-vis": 13,
+      "re-export": 4
      }
     },
     {
@@ -49471,7 +49508,7 @@
      "path": "src/outbound_intent_ledger/payload.rs",
      "purpose": "A ledger row's payload at rest (FIX 9283, 9372, 2328, 2331)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -49497,11 +49534,32 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "BudgetReservation",
+      "ProviderRetryDirective",
+      "ProviderWait",
+      "ProviderWaitKind",
+      "RemoteTaskHandle",
+      "RemoteTaskObservation",
+      "ReservationStatus"
+     ],
+     "path": "src/outbound_intent_ledger/settlement.rs",
+     "purpose": "What a ledger row's send came to beside its state (FIX 7960, 7964, 8818): the remote task a provider…",
+     "surface": {
+      "crate-vis": 10,
+      "enum": 3,
+      "fn": 4,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/outbound_intent_ledger/store.rs",
      "purpose": "Storage-transaction reads, inserts, transitions, and the admission-gate validator",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -49532,6 +49590,17 @@
      "purpose": "The sends one attempt has not settled (DOOR-141 PR3b): what a held turn program's resume waits on, read over…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_intent_ledger/store/remote_task.rs",
+     "purpose": "A ledger row its provider accepted as a remote task (FIX 7960): its move to Deferred with the task's handle…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -77315,7 +77384,7 @@
      "purpose": "Caller-facing runtime configuration: `VaultConfig` + `HnswConfig` + `TextAnalyzerConfig` +…"
     },
     "connector_key": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77875,7 +77944,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 51,
+     "files": 53,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77903,8 +77972,8 @@
      "purpose": "Standing outbound-grant records for OF-367 RS6.2/RS6.5"
     },
     "outbound_intent_ledger": {
-     "files": 15,
-     "impl_vault": false,
+     "files": 17,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Device-local durable intent ledger for effectful outbound calls"
@@ -78514,7 +78583,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5174,
+   "source_files": 5179,
    "test_files": 902
   },
   "oneiron-android": {
@@ -101841,6 +101910,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/connector_call_host/remote_task.rs",
+     "purpose": "A connector's answer that takes a `tools/call` as a remote task (FIX 7960): the MCP task envelope…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/connector_call_host/reply_read.rs",
      "purpose": "The reply readers both halves of the call host share: one reply body, JSON read whole or an event stream…",
      "surface": {
@@ -101864,7 +101943,7 @@
      "path": "src/connector_call_host/sent.rs",
      "purpose": "What one send of the call host came to, before the ledger scrubs its raw fields",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -108723,7 +108802,7 @@
      "purpose": "The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint…"
     },
     "connector_call_host": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -109103,7 +109182,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1284,
+   "source_files": 1285,
    "test_files": 182
   },
   "oneiron-spawn": {
