@@ -4918,7 +4918,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -56058,6 +56058,7 @@
       "VerbAskCredentialCheck",
       "VerbAskCredentialRef",
       "VerbAskCredentialSource",
+      "VerbAskCredentialWitness",
       "VerbAskDoor",
       "VerbAskDrainPermit",
       "VerbAskDrainScope",
@@ -56069,9 +56070,9 @@
      "path": "src/runtime_hooks/verb/credential.rs",
      "purpose": "A credential caller's call a verb hook's ask stopped, resumed through the door it came in by (ARCH-0080 §3…",
      "surface": {
-      "crate-vis": 13,
-      "enum": 4,
-      "fn": 6,
+      "crate-vis": 14,
+      "enum": 5,
+      "fn": 9,
       "struct": 6,
       "trait": 1
      }
@@ -98387,7 +98388,7 @@
      "path": "src/api/mcp_gateway/owner_call.rs",
      "purpose": "A managed vault's console owner on `/mcp` (WILL-PLAN L14 row 01)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -98451,13 +98452,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/verb_hooks.rs",
      "purpose": "The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -99645,7 +99646,7 @@
      "path": "src/api/scoped_auth.rs",
      "purpose": "Legacy owner-auth gate and scoped-read constructors for both auth flavors",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -100949,7 +100950,7 @@
      "path": "src/code_consent_host.rs",
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
