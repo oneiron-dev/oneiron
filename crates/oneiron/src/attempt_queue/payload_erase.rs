@@ -226,6 +226,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     let tasks: BTreeSet<String> = actors.iter().map(EntityId::to_hex).collect();
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
+    let mut reply_jobs = Vec::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -236,6 +237,14 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
         };
         if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
+        } else if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+            // A connector reply job carries its event's sender, chat and
+            // receiving identity (FIX 2405): any erased id it names takes
+            // the event's payload, and the job's result, with it.
+            if crate::outbound::erase_connector_reply_job_payload(&mut record, actors)? {
+                reply_jobs.push(record.id);
+                rewrites.push((raw.into_owned(), record));
+            }
         } else if dispatch_payload_actor(&record).is_some_and(|actor| owners.contains(&actor))
             && erase_dispatch_payload_text(&mut record)?
         {
@@ -246,6 +255,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs)?;
+    crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;

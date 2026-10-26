@@ -467,6 +467,12 @@ pub enum EngineLimit {
     /// and the row asks whether everything is okay; only the memory floor
     /// and a round's own deadline end a question.
     ConnectorLiveQuestions,
+    /// UTF-8 bytes of the context one connector reply's model call reads:
+    /// the agent's instructions, the conversation's whole witnessed history
+    /// and the inbound message (FIX 2404). Past it the row asks whether
+    /// everything is okay and the call reads the context whole; nothing is
+    /// cut, refused or skipped.
+    ConnectorReplyContextBytes,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be

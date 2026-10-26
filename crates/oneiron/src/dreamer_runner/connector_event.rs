@@ -1,15 +1,11 @@
 //! Connector wake delivery retains its typed event; it is not a partition job.
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,
-    DreamerParkCause, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+    DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
+use crate::attempt_queue::AttemptId;
 use crate::connector_key::events::ConnectorEvent;
 use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
-use crate::outbound::{
-    ConnectorReply, ConnectorReplyDispatch, OutboundDispatchError, OutboundDispatchOutcome,
-    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
-    connector_reply_request,
-};
 use crate::{ClaimSource, EntityId, Error, Result, Vault};
 use rmpv::Value;
 
@@ -96,29 +92,37 @@ impl DreamerRunnerStore<'_> {
     }
 }
 
-/// What a host runs for one connector wake (OF-218): the target agent's turn
-/// on the event, and the sink its reply leaves through. The executor never
-/// sends on its own; a reply crosses
+/// What a host runs for one connector wake (OF-218): the hand-off of the
+/// target agent's reply to the host's durable reply work (FIX 2405). The
+/// pass never generates, sends or waits on a model call; the host's reply
+/// worker does, off the pass, and its reply crosses
 /// [`Vault::dispatch_connector_reply`](crate::Vault::dispatch_connector_reply),
 /// so gate, budget, window, intent ledger and receipt all apply.
 pub trait ConnectorEventResponder {
-    /// Runs `wake.agent` on the event. `Ok(None)`: the agent wrote no reply.
+    /// Hands `wake`'s reply off and returns at once: queues one durable
+    /// reply job for the agent and event (see
+    /// [`Vault::enqueue_connector_reply_job`](crate::Vault::enqueue_connector_reply_job)),
+    /// or answers that the event is not one it replies to. `parent` is the
+    /// wake attempt handing off.
     ///
     /// # Errors
-    /// The turn could not run; the driver parks the attempt.
-    fn reply(&mut self, vault: &Vault, wake: &ConnectorEventWake)
-    -> Result<Option<ConnectorReply>>;
-
-    /// The host's sink for the reply's channel and thread, its per-send plan
-    /// keyed by `dispatch.request.intent_ref`.
-    ///
-    /// # Errors
-    /// The host has no transport for this channel.
-    fn sink(
+    /// The job could not be queued; the driver parks the attempt.
+    fn handoff(
         &mut self,
+        vault: &Vault,
         wake: &ConnectorEventWake,
-        dispatch: &ConnectorReplyDispatch,
-    ) -> Result<&mut dyn OutboundExecutionSink>;
+        parent: AttemptId,
+        now: u64,
+    ) -> Result<ConnectorEventReplyHandoff>;
+}
+
+/// What a responder's hand-off did with one wake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectorEventReplyHandoff {
+    /// The event is not one the agent answers here.
+    NoReply,
+    /// The reply is queued as this job; the job carries its spend.
+    Queued { job: AttemptId },
 }
 
 /// Wraps the Dreamer's executor chain with the connector-event arm.
@@ -157,52 +161,19 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ConnectorEventExecuto
             );
             return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
         };
-        let Some(reply) = responder.reply(ctx.vault, &wake)? else {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
-        };
-        let dispatch = connector_reply_request(&wake.event, &reply)?;
-        let sink = responder.sink(&wake, &dispatch)?;
-        let result = ctx
-            .vault
-            .dispatch_connector_reply(&wake.event, &reply, &mut BorrowedSink(sink))
-            .map_err(|err| match err {
-                OutboundDispatchError::Engine(err) => err,
-                other => Error::InvalidConfig(format!("connector reply dispatch: {other}")),
-            })?;
-        // A reply that did not leave parks the wake; its resume re-sends the
-        // kept body, never a second model call. An ambiguous send may have
-        // landed, so it waits for a look rather than an automatic resend.
-        Ok(match result.outcome {
-            OutboundDispatchOutcome::DeliveredToChannel
-            | OutboundDispatchOutcome::Degraded
-            | OutboundDispatchOutcome::Suppressed
-            | OutboundDispatchOutcome::LetGo => {
-                DreamerAttemptExecution::Completed { completed_units: 0 }
+        // The pass hands the reply off and settles at once: it spent nothing,
+        // and the job carries the model spend and the send's outcome.
+        let parent = attempt.status.attempt.id;
+        match responder.handoff(ctx.vault, &wake, parent, crate::unix_seconds_now())? {
+            ConnectorEventReplyHandoff::NoReply => {}
+            ConnectorEventReplyHandoff::Queued { job } => {
+                tracing::info!(
+                    agent = %wake.agent.to_hex(),
+                    ?job,
+                    "connector reply handed to the reply worker"
+                );
             }
-            OutboundDispatchOutcome::Held => DreamerAttemptExecution::Park {
-                reason: format!(
-                    "connector reply held: {}",
-                    result.gate_reason_codes.join(",")
-                ),
-                cause: DreamerParkCause::Signal,
-            },
-            OutboundDispatchOutcome::Failed => DreamerAttemptExecution::Park {
-                reason: "connector reply failed".to_owned(),
-                cause: DreamerParkCause::ProviderUnavailable,
-            },
-            OutboundDispatchOutcome::Ambiguous => DreamerAttemptExecution::Park {
-                reason: "connector reply ambiguous".to_owned(),
-                cause: DreamerParkCause::Other,
-            },
-        })
-    }
-}
-
-/// A host's borrowed sink, sized for the generic dispatch door.
-struct BorrowedSink<'a>(&'a mut dyn OutboundExecutionSink);
-
-impl OutboundExecutionSink for BorrowedSink<'_> {
-    fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        self.0.execute(request)
+        }
+        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
     }
 }

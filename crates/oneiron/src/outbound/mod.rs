@@ -16,6 +16,7 @@ mod intent;
 mod manifests;
 mod receipt_fields;
 mod reply_content;
+mod reply_job;
 mod retry_audit;
 mod served_sink;
 mod window_door;
@@ -65,12 +66,19 @@ pub use self::intent::{
     OutboundIntentSource, OutboundIntentTrigger,
 };
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
+pub use self::reply_job::{
+    CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
+    ConnectorReplyJobResult, ConnectorReplyStage,
+};
 pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
+pub(crate) use self::reply_job::{
+    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

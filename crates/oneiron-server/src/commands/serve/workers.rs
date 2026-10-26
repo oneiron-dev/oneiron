@@ -209,6 +209,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
+    // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
+    workers.push(sync_server.spawn_connector_reply_worker(crate::server::admit_every_pass()));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(
         &sync_server,
