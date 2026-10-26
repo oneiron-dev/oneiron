@@ -53,7 +53,6 @@ impl AnswerContract {
         match self {
             Self::Choice { options }
                 if options.is_empty()
-                    || options.len() > 64
                     || options.iter().any(|s| s.is_empty() || s.len() > 256)
                     || options
                         .iter()
