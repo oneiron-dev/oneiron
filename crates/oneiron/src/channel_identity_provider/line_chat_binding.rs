@@ -7,7 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::shared_validate::normalize_line_chat_id;
+use super::shared_validate::{
+    MAX_LINE_COMPONENT_BYTES, normalize_line_chat_id, normalize_line_user_like_id,
+};
 use super::{LINE_CHANNEL, LineChat, LineOfficialAccountAdapter};
 use crate::Vault;
 use crate::claim::{
@@ -16,6 +18,7 @@ use crate::claim::{
 use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR;
 use crate::error::{Error, Result};
+use crate::surface_event::PROVIDER_EVENT_REF_PREFIX;
 use crate::temporal::TimeRange;
 
 /// Predicate of one observed LINE chat (FIX 3115).
@@ -58,7 +61,8 @@ impl Vault {
     /// provider-inbound machine this observation is about.
     ///
     /// # Errors
-    /// The chat id is not a LINE group or room id, or the write fails.
+    /// The bot is not a LINE bot id, the chat id is not a LINE group or room
+    /// id, or the write fails.
     pub fn observe_line_chat(
         &self,
         destination: &str,
@@ -66,14 +70,19 @@ impl Vault {
         payload_ref: &str,
         now: u64,
     ) -> Result<EntityId> {
+        let destination = normalize_line_user_like_id(
+            destination,
+            "LINE OA Messaging API destination",
+            MAX_LINE_COMPONENT_BYTES,
+        )?;
         let chat = LineChat::new(chat.kind, normalize_line_chat_id(&chat.id, chat.kind)?);
-        let id = line_chat_observation_ref(destination, &chat)?;
+        let id = line_chat_observation_ref(&destination, &chat)?;
         // A chat already seen costs a read, never the writer.
         if self.line_chat_observation(&id)?.is_some() {
             return Ok(id);
         }
         let observation = LineChatObservation {
-            destination: destination.to_owned(),
+            destination,
             chat,
             observed_at: now,
             payload_ref: payload_ref.to_owned(),
@@ -188,6 +197,42 @@ fn line_chat_observation_ref(destination: &str, chat: &LineChat) -> Result<Entit
 /// under: the subject of every chat observation.
 fn provider_inbound_actor() -> Result<EntityId> {
     EntityId::derive(SURFACE_PROVIDER_INBOUND_ACTOR, &[])
+}
+
+/// Whether `predicate` is the LINE chat observation family's one predicate
+/// (FIX 10810): a family of its own, apart from the ChannelIdentity record
+/// fields.
+#[must_use]
+pub fn is_line_chat_observation_claim_predicate(predicate: &str) -> bool {
+    predicate == LINE_CHAT_OBSERVATION_PREDICATE
+}
+
+/// The structural door of one observation claim (FIX 10810): it is about the
+/// provider-inbound machine, and its value is a [`LineChatObservation`]
+/// whose bot, chat and archived event are in intake's own shapes.
+pub(crate) fn validate_line_chat_observation_claim_structure(body: &ClaimBody) -> Result<()> {
+    let invalid = || Error::InvalidClaimBody("LINE chat observation claim structure is invalid");
+    if body.subject != ClaimSubject::Entity(provider_inbound_actor()?) {
+        return Err(invalid());
+    }
+    let observation: LineChatObservation =
+        rmpv::ext::from_value(body.value.clone()).map_err(|_| invalid())?;
+    let destination = normalize_line_user_like_id(
+        &observation.destination,
+        "LINE OA Messaging API destination",
+        MAX_LINE_COMPONENT_BYTES,
+    )
+    .map_err(|_| invalid())?;
+    let chat_id = normalize_line_chat_id(&observation.chat.id, observation.chat.kind)
+        .map_err(|_| invalid())?;
+    let archived = observation
+        .payload_ref
+        .strip_prefix(PROVIDER_EVENT_REF_PREFIX)
+        .is_some_and(|rest| !rest.is_empty());
+    if destination != observation.destination || chat_id != observation.chat.id || !archived {
+        return Err(invalid());
+    }
+    Ok(())
 }
 
 fn observation_of(body: &ClaimBody, subject: &EntityId) -> Option<LineChatObservation> {

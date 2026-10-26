@@ -34,8 +34,10 @@ pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
     line_audience_key, line_source_audience_key,
 };
+pub(crate) use self::line_chat_binding::validate_line_chat_observation_claim_structure;
 pub use self::line_chat_binding::{
     LINE_CHAT_OBSERVATION_PREDICATE, LineChatBindingOffer, LineChatObservation,
+    is_line_chat_observation_claim_predicate,
 };
 pub use self::shared_validate::{
     CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, DEFAULT_EMAIL_LOCAL_PART_PREFIX,
