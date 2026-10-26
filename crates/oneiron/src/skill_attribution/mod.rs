@@ -43,6 +43,7 @@ pub use self::causes::AttributionCauseRecord;
 pub(crate) use self::causes::{attempt_attribution_causes, erase_attribution_cause_entity_in_txn};
 mod codec;
 pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill};
+pub(crate) mod health_review;
 mod judge;
 pub(crate) use self::judge::JudgeTrace;
 mod judge_supersession;

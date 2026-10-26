@@ -29,7 +29,7 @@ const OUTCOME: SideTable<(EntityId, String), OutcomeRow, Raw> =
 /// carried for round-trip fidelity only — no reader decodes it back out today.
 pub(super) struct OutcomeRow {
     pub(super) win: bool,
-    at: u64,
+    pub(super) at: u64,
 }
 
 impl RawValue for OutcomeRow {

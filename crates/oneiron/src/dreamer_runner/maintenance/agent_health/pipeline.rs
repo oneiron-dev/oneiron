@@ -147,13 +147,21 @@ pub(super) fn land(
         for (((finding, diagnostic), route), causes) in
             findings.iter().zip(&emitted).zip(&routes).zip(&causes)
         {
-            let floor = book.for_attempt(dispatched, finding.attempt).card_floor;
-            if f64::from(AgentHealthTone::of(finding.signal).impact()) < floor {
+            let dials = book.for_attempt(dispatched, finding.attempt);
+            if f64::from(AgentHealthTone::of(finding.signal).impact()) < dials.card_floor {
                 continue;
             }
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
-            let mut card = merge(card, finding, *diagnostic, route, &owners, now);
+            let mut card = merge(
+                card,
+                finding,
+                *diagnostic,
+                route,
+                &owners,
+                dials.reviewer_revision(),
+                now,
+            );
             environment::fold_finding(vault, txn, &mut card, causes, coach);
             for items in [card.evidence.len(), card.diagnostics.len()] {
                 let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
@@ -450,13 +458,15 @@ fn moves(signal: AgentHealthSignal) -> Vec<AgentHealthMove> {
 }
 
 /// Merges a finding into its card. Repeats grow one card; a settled card stays
-/// quiet until its evidence grows past its watermark.
+/// quiet until its evidence grows past its watermark. `revision` is the
+/// reviewer revision that seeded the finding's dials, if one did.
 fn merge(
     card: Option<AgentHealthCard>,
     finding: &Finding,
     diagnostic: EntityId,
     route: &Route,
     owners: &[EntityId],
+    revision: Option<EntityId>,
     now: u64,
 ) -> AgentHealthCard {
     let mut card = card.unwrap_or_else(|| AgentHealthCard {
@@ -489,6 +499,7 @@ fn merge(
         coach: None,
         observed_brief: None,
         reviewer: detector_id(finding.signal),
+        reviewer_revision: revision,
         review_outcomes: Vec::new(),
         causes: Vec::new(),
         silence: None,
@@ -516,6 +527,7 @@ fn merge(
     card.observed_brief = finding.observed_brief.clone();
     card.silence = finding.silence;
     card.reviewer = detector_id(finding.signal);
+    card.reviewer_revision = revision;
     if card.outcome != AgentHealthOutcome::Open && card.evidence.len() > card.watermark {
         card.outcome = AgentHealthOutcome::Open;
         card.outcome_by = None;

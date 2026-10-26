@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::policy::ReviewerPolicy;
 use super::{
     Dispatched, Dispatches, HEALTH_CARD_FLOOR, HEALTH_CHECK_FAILS, HEALTH_COST_MIN_RUNS,
     HEALTH_COST_SPIKE, HEALTH_DUP_MIN_COST, HEALTH_ESCALATE_TTL_HOURS, HEALTH_LOOP_REPEATS,
@@ -11,7 +12,9 @@ use super::{
     HEALTH_WAIT_MINUTES, HEALTH_WAIT_SHARE, HEALTH_WIDEN_DENIALS,
 };
 use crate::attempt_queue::AttemptId;
-use crate::learning_setting::{SettingSpec, setting_value_in_scope_in_txn};
+use crate::learning_setting::{
+    SettingSpec, setting_value_in_scope_in_txn, setting_value_in_scope_sourced_in_txn,
+};
 use crate::{EntityId, Result, Vault};
 
 /// The dials in force for one project and task type.
@@ -33,13 +36,25 @@ pub(super) struct Dials {
     pub(super) window_secs: u64,
     /// The settled runs a task type's p90 needs.
     pub(super) cost_min_runs: usize,
+    /// Each dial the reviewer revision's seed decided, and that revision
+    /// (`policy`): none an owner row, a fit or a compiled seed decided.
+    pub(super) seeded: BTreeMap<&'static str, EntityId>,
+}
+
+impl Dials {
+    /// The reviewer revision whose policy seeded one of these dials: the
+    /// revision a card in this scope records. `None` when owner rows, fits
+    /// and the compiled seeds decided them all.
+    pub(super) fn reviewer_revision(&self) -> Option<EntityId> {
+        self.seeded.values().next().copied()
+    }
 }
 
 /// The dials for each project and task type the review meets (agent-mind
 /// §3.7): the narrowest owner pin (project, then type, then vault), else the
 /// narrowest scoped seed (project, then type), else the vault fit, else the
-/// vault seed, else the catalog seed. A finding with no dispatch behind it
-/// reads the vault's.
+/// vault seed, else the reviewer revision's seed, else the compiled seed. A
+/// finding with no dispatch behind it reads the vault's.
 pub(super) struct DialBook {
     vault: Dials,
     scoped: BTreeMap<Option<EntityId>, BTreeMap<String, Dials>>,
@@ -48,14 +63,23 @@ pub(super) struct DialBook {
 impl DialBook {
     pub(super) fn read(vault: &Vault, dispatched: &Dispatches) -> Result<Self> {
         let rtxn = vault.store.env.read_txn()?;
+        // One policy read per pass, its fallbacks logged once.
+        let policy = ReviewerPolicy::read_in_txn(vault, &rtxn);
+        policy.log_fallbacks();
         let mut book = Self {
-            vault: read_dials(vault, &rtxn, None, None)?,
+            vault: dials_in(vault, &rtxn, &policy, None, None)?,
             scoped: BTreeMap::new(),
         };
         for dispatch in dispatched.values() {
             let types = book.scoped.entry(dispatch.project).or_default();
             if !types.contains_key(&dispatch.type_node) {
-                let dials = read_dials(vault, &rtxn, dispatch.project, Some(&dispatch.type_node))?;
+                let dials = dials_in(
+                    vault,
+                    &rtxn,
+                    &policy,
+                    dispatch.project,
+                    Some(&dispatch.type_node),
+                )?;
                 types.insert(dispatch.type_node.clone(), dials);
             }
         }
@@ -105,12 +129,41 @@ pub(super) fn read_dials(
     project: Option<EntityId>,
     type_node: Option<&str>,
 ) -> Result<Dials> {
+    let policy = ReviewerPolicy::read_in_txn(vault, rtxn);
+    dials_in(vault, rtxn, &policy, project, type_node)
+}
+
+/// [`read_dials`] under a policy already read. A dial the reviewer revision
+/// seeds holds that seed in place of its compiled one; an owner row or a fit
+/// still decides first.
+fn dials_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    policy: &ReviewerPolicy,
+    project: Option<EntityId>,
+    type_node: Option<&str>,
+) -> Result<Dials> {
     let type_ref = type_node.map(|node_id| crate::learning::TypeRef {
         node_id: node_id.to_owned(),
         tree_version: 0,
     });
-    let value = |spec: &SettingSpec| {
-        setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref())
+    let mut seeded = BTreeMap::new();
+    let mut value = |spec: &SettingSpec| -> Result<f64> {
+        let Some((revision_spec, revision)) = policy.seed(spec) else {
+            return setting_value_in_scope_in_txn(vault, rtxn, spec, project, type_ref.as_ref());
+        };
+        let (read, rows) = setting_value_in_scope_sourced_in_txn(
+            vault,
+            rtxn,
+            &revision_spec,
+            project,
+            type_ref.as_ref(),
+        )?;
+        // No rows: the seed decided, so the revision's own did.
+        if rows.is_some_and(|rows| rows.is_empty()) {
+            seeded.insert(spec.key, revision);
+        }
+        Ok(read)
     };
     Ok(Dials {
         review: value(&HEALTH_REVIEW)? >= 0.5,
@@ -127,5 +180,6 @@ pub(super) fn read_dials(
         owner_copy: value(&HEALTH_OWNER_COPY)? >= 0.5,
         window_secs: (value(&HEALTH_REVIEW_WINDOW_HOURS)? * 3600.0).round() as u64,
         cost_min_runs: (value(&HEALTH_COST_MIN_RUNS)?.round() as usize).max(1),
+        seeded,
     })
 }

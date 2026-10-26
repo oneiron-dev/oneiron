@@ -328,6 +328,11 @@ pub struct AgentHealthCard {
     /// The deterministic evaluator that judged the newest finding,
     /// `coach.agent_health.<signal>.v1`: the reviewer an outcome scores.
     pub reviewer: String,
+    /// The `agent-health-review` skill revision whose policy seeded a dial of
+    /// the newest finding's scope (`policy`): the revision an owner's outcome
+    /// scores. `None` when owner rows, fits and the compiled seeds decided
+    /// every dial.
+    pub reviewer_revision: Option<EntityId>,
     /// Every outcome set on the card, oldest first, kept across reopens
     /// (`outcomes`).
     pub review_outcomes: Vec<HealthReviewReceipt>,
