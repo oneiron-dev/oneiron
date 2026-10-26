@@ -1,14 +1,14 @@
 //! The query a space move runs for a probe written from repo bytes (FIX
 //! 7608 S3F, FIX 10408; CALL PROBE-QUERY-COPY).
 //!
-//! A probe whose family document or media query a mark covers (itself, or
-//! through what it derives from) may hold words a model or the owner wrote
-//! from the stored bytes. Its stored row stays exactly as written: id,
-//! query, family, targets, author and cohort, and the owner's put, list and
-//! delete are today's doors. A move's evaluation runs only its safe
-//! evaluation copy instead: a query the vault's own probe author writes
-//! again from the family's CURRENT masked copy, under the probe's original
-//! id, bound to a proof of the probe's content and its sources. While that
+//! A probe one of whose query's sources a mark covers (itself, or through
+//! what it derives from) may hold words a model or the owner wrote from the
+//! stored bytes. Its stored row stays exactly as written: id, query, family,
+//! sources, targets, author and cohort, and the owner's put, list and delete
+//! are today's doors. A move's evaluation runs only its safe evaluation copy
+//! instead: a query the vault's own probe author writes again from its
+//! document's CURRENT masked copy, under the probe's original id, bound to
+//! a proof of the probe's content and its sources. While that
 //! copy is pending, or its proof is stale, the probe is left out of the
 //! evaluation, never scored as a placeholder; the author's next pass
 //! rebuilds it. A source that changes again makes it pending again, with no
@@ -34,9 +34,11 @@ use crate::origin::secret_projection::index::{RepoIndexMarks, repo_source_identi
 /// The domain of a probe copy's proof.
 const PROBE_COPY_PROOF_CONTEXT: &str = "oneiron.repo-index-projection.probe-proof.v1";
 
-/// Probe `id`'s proof under `marks` when its family or media query is
-/// marked: its id, its query's words and each of those sources' identity,
-/// with the sources' ids; `None` when neither is marked.
+/// Probe `id`'s proof under `marks` when a source of its query is marked
+/// ([`SpaceProbe::query_sources`]: its document, media query and the rows
+/// they were read and derived from, FIX 9829): its id, its query's words
+/// and each source's identity, with the sources' ids; `None` when none is
+/// marked.
 fn probe_proof_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -52,7 +54,7 @@ fn probe_proof_in(
     hasher.update(blake3::hash(probe.query.as_bytes()).as_bytes());
     let mut marked = false;
     let mut sources = Vec::new();
-    for source in std::iter::once(probe.family).chain(probe.query_media) {
+    for source in probe.query_sources() {
         let (source_marked, identity) =
             repo_source_identity_in(vault, &vault.store, txn, marks, &source)?.unwrap_or_default();
         marked |= source_marked;
@@ -74,8 +76,8 @@ fn current_probe_proof_in(
     probe_proof_in(vault, txn, &marks, id, probe)
 }
 
-/// In the writer that changed the marks: every stored probe whose family or
-/// media query is one of `affected` and is now marked is made pending,
+/// In the writer that changed the marks: every stored probe one of whose
+/// query's sources is one of `affected` and is now marked is made pending,
 /// unless its ready copy still holds. The stored probe is untouched; a
 /// target alone is no proof its query came from that record.
 ///
@@ -88,10 +90,10 @@ pub(crate) fn refresh_repo_probe_queries_in_txn(
     affected: &BTreeSet<EntityId>,
 ) -> Result<()> {
     for (id, probe) in EMBEDDING_PROBE.scan(&vault.store, wtxn)? {
-        let reached = affected.contains(&probe.family)
-            || probe
-                .query_media
-                .is_some_and(|media| affected.contains(&media));
+        let reached = probe
+            .query_sources()
+            .iter()
+            .any(|source| affected.contains(source));
         if !reached {
             continue;
         }
@@ -112,9 +114,9 @@ pub(crate) fn refresh_repo_probe_queries_in_txn(
     Ok(())
 }
 
-/// After the owner puts probe `id`: its evaluation copy is queued when its
-/// family or media query needs projection, and an older one dropped when
-/// neither does. It validates nothing and refuses nothing; marks that cannot
+/// After the owner puts probe `id`: its evaluation copy is queued when a
+/// source of its query needs projection, and an older one dropped when none
+/// does. It validates nothing and refuses nothing; marks that cannot
 /// be read queue it, for the author's pass to settle.
 ///
 /// # Errors
@@ -147,9 +149,9 @@ pub(super) fn drop_probe_query_copy_in_txn(
     delete_in_txn(&vault.store, wtxn, RepoDerivedOwner::Probe(*id))
 }
 
-/// After the author stores probe `id`, written from its family's projected
-/// copy in this same writer: when that family is marked, the query it wrote
-/// is its evaluation copy, ready under the current proof.
+/// After the author stores probe `id`, written from its document's projected
+/// copy in this same writer: when a source of its query is marked, the query
+/// it wrote is its evaluation copy, ready under the current proof.
 ///
 /// # Errors
 /// A store failure.
@@ -182,8 +184,8 @@ pub(super) fn record_authored_probe_copy_in_txn(
 /// The stored probes a move's evaluation runs, in id order (CALL
 /// PROBE-QUERY-COPY): a probe with no copy row as stored; one whose ready
 /// copy holds under its current proof as a transient clone carrying the
-/// safe query under its ORIGINAL id; one whose family and media query are no
-/// longer marked as stored; every other (pending, stale, or its marks
+/// safe query under its ORIGINAL id; one whose query's sources are no longer
+/// marked as stored; every other (pending, stale, or its marks
 /// unreadable) left out. Marks are read only when some probe has a row, so
 /// a mark failure never touches a probe without one.
 ///
@@ -237,8 +239,9 @@ pub(crate) fn projected_space_probes_in_txn(
 
 impl Vault {
     /// Rebuilds up to `max_items` pending evaluation copies of `kind`'s
-    /// probes through `author`: each from its family document's CURRENT
-    /// projected copy (never its old query), egress asked as the author's
+    /// probes through `author`: each from its document's CURRENT projected
+    /// copy ([`SpaceProbe::document`], never its old query, and never its
+    /// family, a grouping since FIX 9831), egress asked as the author's
     /// own pass asks it, landing only when the probe and its proof are
     /// unchanged in the writer. A probe whose sources are no longer marked
     /// runs as stored again. Returns how many landed.
@@ -287,14 +290,14 @@ impl Vault {
                 let mut read = MediaEmbedReport::default();
                 let document = match probe.kind {
                     InputKind::Text => {
-                        text_document_of(self, &self.store, &rtxn, probe.family, &mut read)?
+                        text_document_of(self, &self.store, &rtxn, probe.document(), &mut read)?
                     }
                     InputKind::Image | InputKind::Audio => {
                         super::super::repo_projection::asset_document_projected_in(
                             self,
                             &self.store,
                             &rtxn,
-                            probe.family,
+                            probe.document(),
                             &BTreeSet::from([kind]),
                             &mut read,
                         )?

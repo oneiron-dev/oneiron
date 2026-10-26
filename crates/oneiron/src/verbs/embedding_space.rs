@@ -162,6 +162,10 @@ pub struct EmbeddingSpaceProbePutRequest {
     /// Every document that answers it, as 32 hex; the family's when absent.
     #[serde(default)]
     pub targets: Vec<EntityId>,
+    /// Every other stored row the query was written from, as 32 hex (FIX 9829): erasing any
+    /// of them, the family or the media query erases the probe. Empty when absent.
+    #[serde(default)]
+    pub source_refs: Vec<EntityId>,
     /// Who wrote the query.
     pub author: String,
 }
@@ -385,6 +389,8 @@ pub fn put_embedding_space_probe_as(
         query: input.query,
         query_media: input.query_media,
         family: input.family,
+        written_from: None,
+        source_refs: input.source_refs.into_iter().collect(),
         targets,
         author: input.author,
         written_at: vault.now_recorded_at(),

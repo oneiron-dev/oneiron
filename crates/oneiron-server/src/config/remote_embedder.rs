@@ -9,6 +9,19 @@ pub struct EgressPolicy {
     pub deny: Vec<String>,
     /// An explicit host authorization, never a default verdict.
     pub allow_all: bool,
+    /// What the owner asks a remote rung's answer to show before the vault keeps it, beyond
+    /// the vault's own checks (FIX 9488); none asks nothing more.
+    pub remote_evidence: Option<RemoteEvidenceRule>,
+}
+
+/// The owner's rule on a remote rung's answers (FIX 9488).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum RemoteEvidenceRule {
+    /// Under the model's measured floors, an answer names its run profile, and that profile is
+    /// the measured one; an answer that names none fails as a remote failure does, and its
+    /// rows embed on this device.
+    MeasuredProfile,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]

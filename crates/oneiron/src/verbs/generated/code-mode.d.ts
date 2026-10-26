@@ -1829,10 +1829,10 @@ declare namespace Sdk {
   type EmbeddingSpaceCandidateRequest = { candidate: string };
   type EmbeddingSpaceMoveOutcome = "filling" | "swapped_in" | "kept" | "undecided";
   type EmbeddingSpaceMoveChecked = { outcome: EmbeddingSpaceMoveOutcome; check?: SpaceMoveCheck | null };
-  type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets: EntityId[]; author: string; written_at: number; cohort?: number | null };
+  type SpaceProbe = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; written_from?: EntityId | null; source_refs?: EntityId[]; targets: EntityId[]; author: string; written_at: number; cohort?: number | null };
   type EmbeddingSpaceProbe = SpaceProbe & { id: string };
   type EmbeddingSpaceProbes = { probes: EmbeddingSpaceProbe[] };
-  type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; author: string };
+  type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; query_media?: EntityId | null; family: EntityId; targets?: EntityId[]; source_refs?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
   type PolicyOutputContract = "binary" | "category_json" | "rationale_json";

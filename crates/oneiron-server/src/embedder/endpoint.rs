@@ -30,7 +30,7 @@ use serde_json::value::RawValue;
 
 use super::brokered::Reach;
 use super::local::evidence::{self, RunProfile};
-use super::remote::RungHold;
+use super::remote::{ConfiguredEgress, RungHold};
 use super::{EmbedderCommon, QueryEmbedder, engine_locality};
 use crate::config::EmbedderConfig;
 use crate::models::BrokerContext;
@@ -182,8 +182,8 @@ enum Admitted {
     /// must agree with ([`Listing::agrees_with`]).
     Listing(Listing),
     /// A remote rung, held to the vault's space without a listing of its own
-    /// ([`HttpEmbedder::hold_as_rung`]).
-    Rung(Arc<Mutex<RungHold>>),
+    /// and to the owner's egress rule ([`HttpEmbedder::hold_as_rung`]).
+    Rung(Arc<Mutex<RungHold>>, Arc<ConfiguredEgress>),
 }
 
 /// What the remote's `/models` listing said about the configured model.
@@ -508,9 +508,12 @@ impl HttpEmbedder {
     /// would: an answer that names the model it loaded must name the vault's,
     /// one that names a transform must name the one the vault admitted from
     /// its provider, and under a model's measured floors one that names its
-    /// profile must name the measured one ([`RungHold::holds`]).
-    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>) {
-        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) = Admitted::Rung(hold);
+    /// profile must name the measured one ([`RungHold::holds`]). An answer
+    /// also meets the owner's evidence rule in `egress`, the rule the rung's
+    /// rows are sent by ([`ConfiguredEgress::admits_profile`], FIX 9488).
+    pub(crate) fn hold_as_rung(&self, hold: Arc<Mutex<RungHold>>, egress: Arc<ConfiguredEgress>) {
+        *self.admitted.lock().unwrap_or_else(PoisonError::into_inner) =
+            Admitted::Rung(hold, egress);
     }
 
     /// Sends every embedding request of this remote through `door`, from
@@ -641,12 +644,21 @@ impl HttpEmbedder {
         let agrees = match &*self.admitted.lock().unwrap_or_else(PoisonError::into_inner) {
             Admitted::Unchecked => true,
             Admitted::Listing(listing) => listing.agrees_with(&parsed),
-            Admitted::Rung(hold) => hold.lock().unwrap_or_else(PoisonError::into_inner).holds(
-                &self.common.model_id,
-                parsed.model_id.as_deref(),
-                parsed.transform.as_deref(),
-                parsed.profile.as_ref(),
-            ),
+            Admitted::Rung(hold, egress) => {
+                let hold = hold.lock().unwrap_or_else(PoisonError::into_inner);
+                if !egress.admits_profile(parsed.profile.as_ref(), hold.measured) {
+                    return Err(oneiron::Error::UpstreamToolFailure {
+                        tool: EMBEDDER_TOOL,
+                        code: "the remote rung's answer names no measured run profile, which the owner's egress rule asks of it".to_owned(),
+                    });
+                }
+                hold.holds(
+                    &self.common.model_id,
+                    parsed.model_id.as_deref(),
+                    parsed.transform.as_deref(),
+                    parsed.profile.as_ref(),
+                )
+            }
         };
         if !agrees {
             return Err(oneiron::Error::UpstreamToolFailure {

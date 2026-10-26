@@ -483,6 +483,7 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                     query_media: None,
                     family,
                     targets,
+                    source_refs: Vec::new(),
                     author: args.author,
                 },
                 sdk::put_embedding_space_probe_as,

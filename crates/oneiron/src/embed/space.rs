@@ -40,6 +40,7 @@ use crate::store::{decode_vector_row, encode_vector_row_v1};
 use crate::temporal::TimeRange;
 
 mod bindings;
+mod capabilities;
 pub(super) mod repo_projection;
 
 /// Longest declared space id.
@@ -718,22 +719,26 @@ pub(crate) fn embedding_spaces_in_txn(
 }
 
 /// [`Vault::declare_embedding_space`] in the caller's write: a valid space, at its declared
-/// width when its id is declared already.
+/// width when its id is declared already, keeping what the slots it serves use
+/// ([`capabilities::reconcile_bound_space_capabilities_in_txn`], FIX 9832).
 pub(crate) fn declare_embedding_space_in_txn(
     store: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     space: &EmbeddingSpace,
 ) -> Result<()> {
     space.validate()?;
-    if let Some(existing) = embedding_space_in_txn(store, txn, &space.id)?
-        && existing.dimensions != space.dimensions
-    {
+    let Some(existing) = embedding_space_in_txn(store, txn, &space.id)? else {
+        return EMBEDDING_SPACE.put(store, txn, &space.id, space);
+    };
+    if existing.dimensions != space.dimensions {
         return Err(Error::InvalidConfig(format!(
             "embedding space {} is declared at width {}; a new width is a new space",
             space.id, existing.dimensions
         )));
     }
-    EMBEDDING_SPACE.put(store, txn, &space.id, space)
+    let effective =
+        capabilities::reconcile_bound_space_capabilities_in_txn(store, txn, &existing, space)?;
+    EMBEDDING_SPACE.put(store, txn, &space.id, &effective)
 }
 
 /// [`Vault::bind_kind_slot`] in the caller's write: a declared space that admits the binding,
