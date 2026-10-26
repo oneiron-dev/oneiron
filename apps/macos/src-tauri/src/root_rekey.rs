@@ -43,8 +43,9 @@ const LEASE_BUSY: &str = "another process holds the vault's writer lease, so thi
 const LEASE_NOT_OURS: &str = "this process does not hold the vault's writer lease it took";
 /// The embedded owner authenticated but owns no part of this vault.
 const NOT_THE_OWNER: &str = "the embedded owner is not this vault's owner";
-/// After a replace, the next open's search found no secret at all.
-const REREAD_NONE: &str = "the slot was replaced, but the next open finds no host root secret";
+/// After a replace, the issuer the vault loads is not the replacement's.
+const REREAD_OTHER: &str =
+    "the slot was replaced, but the vault does not load the replacement's host issuer";
 
 /// What the re-key commands share: the recorder's vault, where it lives,
 /// and one confirm at a time.
@@ -102,7 +103,7 @@ pub struct RekeyPrepared {
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum RekeyConfirmed {
     /// This Mac's retained slot holds the secret, replaced in place, and the
-    /// source the next open reads was read again and validates.
+    /// host issuer the vault now loads is the replacement's.
     Rekeyed {
         /// The settled root's binding key that source's secret derives, hex.
         root_key: String,
@@ -153,8 +154,9 @@ pub enum RekeyConfirmed {
         /// The keystore's reason.
         reason: &'static str,
     },
-    /// The slot was replaced, but reading the next open's source again did
-    /// not validate, so this is no success: prepare and confirm again.
+    /// The slot was replaced, but the host issuer the vault now loads is
+    /// not the replacement's, so this is no success: prepare and confirm
+    /// again.
     Unconfirmed {
         /// Why, naming no secret.
         reason: String,
@@ -189,8 +191,9 @@ pub fn root_rekey_prepare(app: AppHandle) -> Result<RekeyPrepared, String> {
 /// and releases it on every path. The local owner is proved first, then
 /// `secret` is checked by the engine against the settled root and this
 /// install, then kept in the source this Mac's open reads, when that is its
-/// own retained slot. Success only once that source is read again and
-/// validates. Every other outcome writes nothing and says why.
+/// own retained slot. Success only once the host issuer the vault then
+/// loads is the replacement's. Every other outcome writes nothing and says
+/// why.
 #[tauri::command]
 pub fn root_rekey_confirm(
     app: AppHandle,
@@ -260,7 +263,7 @@ fn confirm(state: &RekeyState, shown: &LocalHostRootContext, secret: &str) -> Re
 }
 
 /// Writes the validated secret over this Mac's retained slot in place, then
-/// reads the next open's source again from the top.
+/// checks the host issuer the vault now loads.
 fn replace_retained(
     state: &RekeyState,
     owner: &AuthenticatedOwner,
@@ -278,22 +281,19 @@ fn replace_retained(
         .vault
         .replace_retained_host_root_secret(owner, shown, &slot_secret)
     {
-        Ok(RetainedHostRootReplace::Replaced(_)) => {}
-        Ok(RetainedHostRootReplace::Empty) => return RekeyConfirmed::NothingToReplace,
-        Ok(RetainedHostRootReplace::Unsupported(reason)) => {
-            return RekeyConfirmed::KeystoreCannotReplace { reason };
-        }
-        Err(error) => {
-            return RekeyConfirmed::Refused {
-                reason: error.to_string(),
-            };
-        }
-    }
-    match reread(state, owner, shown) {
-        Ok(reread) => RekeyConfirmed::Rekeyed {
-            root_key: hex(&reread.root_key),
+        Ok(RetainedHostRootReplace::Replaced(validated)) => match reread(state, &validated) {
+            Ok(root_key) => RekeyConfirmed::Rekeyed {
+                root_key: hex(&root_key),
+            },
+            Err(reason) => RekeyConfirmed::Unconfirmed { reason },
         },
-        Err(reason) => RekeyConfirmed::Unconfirmed { reason },
+        Ok(RetainedHostRootReplace::Empty) => RekeyConfirmed::NothingToReplace,
+        Ok(RetainedHostRootReplace::Unsupported(reason)) => {
+            RekeyConfirmed::KeystoreCannotReplace { reason }
+        }
+        Err(error) => RekeyConfirmed::Refused {
+            reason: error.to_string(),
+        },
     }
 }
 
@@ -320,27 +320,18 @@ fn validate(
     Err(refusal)
 }
 
-/// The source the next open reads, searched again from the top, and its
-/// secret checked as a replacement would be.
-fn reread(
-    state: &RekeyState,
-    owner: &AuthenticatedOwner,
-    shown: &LocalHostRootContext,
-) -> Result<LocalHostRootValidated, String> {
-    with_effective_secret(
-        &state.vault,
-        &state.vault_dir,
-        DESKTOP_ROOT_SECRET_SOURCE,
-        false,
-        |found| match found {
-            Some((_, secret)) => state
-                .vault
-                .validate_local_host_root_replacement(owner, shown, secret)
-                .map_err(|error| error.to_string()),
-            None => Err(REREAD_NONE.to_owned()),
-        },
-    )
-    .map_err(failure_reason)?
+/// The host issuer the vault now loads from this install's seed slot, as
+/// its next open and every host signature read it (FIX-LIST 3018), checked
+/// against the replacement that validated: its root key when they agree.
+fn reread(state: &RekeyState, validated: &LocalHostRootValidated) -> Result<[u8; 32], String> {
+    let loaded = state
+        .vault
+        .load_host_slip_issuer()
+        .map_err(|error| error.to_string())?;
+    if loaded.binding_key() != validated.root_key {
+        return Err(REREAD_OTHER.to_owned());
+    }
+    Ok(validated.root_key)
 }
 
 /// The source the open reads first that holds a secret, as the open
