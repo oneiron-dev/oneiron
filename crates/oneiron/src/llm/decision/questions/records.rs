@@ -109,7 +109,7 @@ pub struct QuestionDefinition<Q = DecisionQuestion> {
     /// The lines each unit is judged by. They ride every call's state; the
     /// question's version versions them.
     #[serde(default)]
-    pub criteria: QuestionCriteria,
+    pub criteria: QuestionCriteria<String>,
     /// Who sees the answers.
     #[serde(default)]
     pub audience: QuestionAudience,

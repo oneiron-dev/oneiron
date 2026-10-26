@@ -79,7 +79,7 @@ pub struct GraphAskRequest {
     /// in its state. None when absent.
     #[serde(default)]
     #[schemars(with = "Option<serde_json::Value>")]
-    pub criteria: Option<QuestionCriteria>,
+    pub criteria: Option<QuestionCriteria<String>>,
 }
 
 /// A graph ask's type selection: the engine's by-type entry
