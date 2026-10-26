@@ -101,6 +101,8 @@ Its outputs go to `ONEIRON_CHECKER_OUT`, by default `checker-image` under
 `CARGO_TARGET_DIR` (the checkout's `target/` when unset):
 
 - `image-id`: the config digest, on every route and with `--store-id`;
+- `store-id`: the id this docker store answers the built image as, which
+  `--when-lock-changed` compares with the tag's;
 - `image.json`: the receipt, written inside the image: `image` (the config
   digest), `source_commit` (HEAD for the Dockerfile route, else the engine
   commit the image was built from), `cargo_lock_sha256`, `rustc`
@@ -124,8 +126,9 @@ Cargo.lock gains a crate or a version, rebuild the image: a check that
 needs a crate the store lacks cannot fetch it and is held
 (`Held(MissingOfflineInput)`). `--when-lock-changed`, with any route,
 builds only when the lockfile the route builds from is not the one the
-kept receipt (`image.json`) names, or the tagged image is gone; otherwise
-it prints the kept image's id and builds nothing. Run it on every
+kept receipt (`image.json`) names, or the tag no longer names the kept
+image (the store answers it with another id than `store-id`, or none);
+otherwise it prints the kept image's id and builds nothing. Run it on every
 Cargo.lock change (FIX 7317). The Dockerfile route builds from HEAD's
 lockfile; the image-family and `--archive` routes from release.toml's
 `inputs.engine`, which a lock change moves only with a new release.

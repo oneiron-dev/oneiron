@@ -25,13 +25,13 @@
 # the containerd image store, the config digest under the classic one.
 # --when-lock-changed, with any route, builds only when the lockfile the
 # route builds from (HEAD's for --dockerfile, release.toml's engine input
-# otherwise) is not the one the kept receipt names, or the tagged image is
-# gone; otherwise it prints the kept image's id and builds nothing. Run on
-# every Cargo.lock change, it keeps the store holding every crate a check
-# needs (FIX 7317).
-# The config digest (image-id) and the receipt (image.json) land in
-# ONEIRON_CHECKER_OUT on every route. Every other line of output goes to
-# stderr, so stdout holds the image id alone.
+# otherwise) is not the one the kept receipt names, or the tag no longer
+# names the kept image; otherwise it prints the kept image's id and builds
+# nothing. Run on every Cargo.lock change, it keeps the store holding every
+# crate a check needs (FIX 7317).
+# The config digest (image-id), the store's id (store-id) and the receipt
+# (image.json) land in ONEIRON_CHECKER_OUT on every route. Every other line
+# of output goes to stderr, so stdout holds the image id alone.
 set -euo pipefail
 
 : "${ONEIRON_CHECKER_DOCKER:=docker}"
@@ -147,11 +147,12 @@ PY
   echo "receipt: $ONEIRON_CHECKER_OUT/image.json" >&2
 }
 
-# The image-id file and the one stdout line: the config digest, or with
-# --store-id the store's id on stdout.
+# The image-id and store-id files and the one stdout line: the config
+# digest, or with --store-id the store's id on stdout.
 emit() {
   local store=$1 config=$2
   echo "$config" > "$ONEIRON_CHECKER_OUT/image-id"
+  echo "$store" > "$ONEIRON_CHECKER_OUT/store-id"
   echo "this docker store answers the image as $store; its config digest is $config" >&2
   if [ "$print" = store ]; then echo "$store"; else echo "$config"; fi
 }
@@ -171,15 +172,18 @@ PY
 }
 
 # --when-lock-changed: the kept image's id, and exit, when its receipt names
-# the lockfile this route builds from and the tag still names an image.
+# the lockfile this route builds from and the tag still names the kept
+# image: this store answers the tag with the id the build kept in store-id,
+# not merely with some image.
 if [ "$when" = lock ]; then
   if [ "$route" = dockerfile ]; then
     want_lock=$(git -C "$repo" show HEAD:Cargo.lock | sha256sum | cut -d' ' -f1)
   else
     want_lock=$(release_value input cargo_lock_sha256)
   fi
-  # The receipt's lock, when the receipt is of the image image-id names.
-  kept_lock=$(python3 - "$ONEIRON_CHECKER_OUT" <<'PY'
+  # The receipt's lock and the store id its build kept, when the receipt is
+  # of the image image-id names.
+  kept=$(python3 - "$ONEIRON_CHECKER_OUT" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -188,20 +192,25 @@ out = Path(sys.argv[1])
 try:
     receipt = json.loads((out / "image.json").read_text())
     kept = (out / "image-id").read_text().strip()
-    print(receipt["cargo_lock_sha256"] if receipt.get("image") == kept else "")
+    store = (out / "store-id").read_text().strip()
+    same = receipt.get("image") == kept and store
+    print(f"{receipt['cargo_lock_sha256']} {store}" if same else "")
 except (OSError, KeyError, TypeError, ValueError):
     print("")
 PY
 )
+  read -r kept_lock kept_store <<< "$kept"
+  store=$("$ONEIRON_CHECKER_DOCKER" image inspect --format '{{.Id}}' "$ONEIRON_CHECKER_TAG" 2>/dev/null || true)
   if [ -n "$want_lock" ] && [ "$kept_lock" = "$want_lock" ] \
-    && store=$("$ONEIRON_CHECKER_DOCKER" image inspect --format '{{.Id}}' "$ONEIRON_CHECKER_TAG" 2>/dev/null); then
+    && [ -n "$store" ] && [ "$store" = "$kept_store" ]; then
     echo "the kept image's store is of lockfile $want_lock already; nothing is built" >&2
     if [ "$print" = store ]; then echo "$store"; else cat "$ONEIRON_CHECKER_OUT/image-id"; fi
     exit 0
   fi
-  echo "the lockfile is ${want_lock:-unknown}, the kept image's store of ${kept_lock:-none}; building" >&2
+  echo "the lockfile is ${want_lock:-unknown}, the kept image's store of ${kept_lock:-none};" \
+    "$ONEIRON_CHECKER_TAG names ${store:-no image}, the kept image is ${kept_store:-none}; building" >&2
 fi
-rm -f "$ONEIRON_CHECKER_OUT/image-id" "$ONEIRON_CHECKER_OUT/image.json"
+rm -f "$ONEIRON_CHECKER_OUT/image-id" "$ONEIRON_CHECKER_OUT/store-id" "$ONEIRON_CHECKER_OUT/image.json"
 
 # Loads an OCI archive built from source commit $2, checks the store answers
 # it with one of the archive's own ids, tags it ONEIRON_CHECKER_TAG, writes
