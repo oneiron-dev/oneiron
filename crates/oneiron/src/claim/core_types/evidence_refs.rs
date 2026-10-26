@@ -10,7 +10,7 @@ use super::ClaimBody;
 use crate::error::{Error, Result};
 use crate::write_envelope::{
     WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
-    envelope_carried_evidence,
+    WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY, envelope_carried_evidence,
 };
 
 /// The evidence map key the typed citations ride under.
@@ -83,36 +83,60 @@ impl ClaimBody {
     /// [`Error::InvalidClaimBody`] when a slot names the field twice or holds
     /// citations of the wrong shape.
     pub fn evidence_refs(&self) -> Result<Vec<EvidenceRef>> {
+        let (mut written, carried) = self.evidence_ref_slots()?;
+        written.extend(carried);
+        Ok(written)
+    }
+
+    /// [`Self::evidence_refs`] by where they ride: the citations this body's
+    /// own writer gave (a raw body's evidence, a stamped body's
+    /// `candidate_evidence`), then those it carries from a raw predecessor.
+    pub(crate) fn evidence_ref_slots(&self) -> Result<(Vec<EvidenceRef>, Vec<EvidenceRef>)> {
         let Some(evidence) = self.evidence.as_ref() else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         };
         if field(evidence, WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY).is_none() {
-            return slot_refs(evidence);
+            return Ok((slot_refs(evidence)?, Vec::new()));
         }
-        let mut refs = match field(evidence, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY) {
+        // A stamp naming a recognized slot twice is malformed, never read
+        // as either copy.
+        for slot in [
+            WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+            WRITE_ENVELOPE_EVIDENCE_CARRIED_KEY,
+        ] {
+            if named(evidence, slot) > 1 {
+                return Err(Error::InvalidClaimBody("evidence names one slot twice"));
+            }
+        }
+        let written = match field(evidence, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY) {
             Some(candidate) => slot_refs(candidate)?,
             None => Vec::new(),
         };
-        if let Some(carried) = envelope_carried_evidence(evidence) {
-            refs.extend(slot_refs(carried)?);
-        }
-        Ok(refs)
+        let carried = match envelope_carried_evidence(evidence) {
+            Some(carried) => slot_refs(carried)?,
+            None => Vec::new(),
+        };
+        Ok((written, carried))
     }
 }
 
 /// The citations one evidence slot holds; a slot that names the field twice
 /// is malformed, never read as either copy.
 fn slot_refs(slot: &Value) -> Result<Vec<EvidenceRef>> {
-    let named = slot.as_map().map_or(0, |fields| {
-        fields
-            .iter()
-            .filter(|(key, _)| key.as_str() == Some(EVIDENCE_REFS_KEY))
-            .count()
-    });
-    if named > 1 {
+    if named(slot, EVIDENCE_REFS_KEY) > 1 {
         return Err(Error::InvalidClaimBody("evidence names evidence_refs twice"));
     }
     public_evidence_refs(Some(slot))
+}
+
+/// How many times the map `value` names `key`.
+fn named(value: &Value, key: &str) -> usize {
+    value.as_map().map_or(0, |fields| {
+        fields
+            .iter()
+            .filter(|(name, _)| name.as_str() == Some(key))
+            .count()
+    })
 }
 
 fn field<'v>(value: &'v Value, name: &str) -> Option<&'v Value> {

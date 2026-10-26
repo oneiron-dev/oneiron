@@ -114,9 +114,13 @@ pub(super) fn reference_refusal_receipt(
     reason: RefusalReason,
     at: u64,
 ) -> ReceiptRecord {
-    let trace = match facts.outcome {
-        ReferenceOutcome::CreationNotProven => TRACE_CREATION_NOT_PROVEN,
-        ReferenceOutcome::Refused | ReferenceOutcome::Unlinked => reason.as_str(),
+    // A creation status names no actor id: it records what the writer's
+    // reply asserted, and an actor's erase has no scrub to reach it.
+    let (trace, actor) = match facts.outcome {
+        ReferenceOutcome::CreationNotProven => (TRACE_CREATION_NOT_PROVEN, None),
+        ReferenceOutcome::Refused | ReferenceOutcome::Unlinked => {
+            (reason.as_str(), Some(facts.actor.to_hex()))
+        }
     };
     let fields = BTreeMap::from([
         (
@@ -130,7 +134,7 @@ pub(super) fn reference_refusal_receipt(
         receipt_id: receipt_id(id),
         receipt_kind: ReceiptKind::ReferenceRefusal,
         occurred_at: at,
-        actor: Some(facts.actor.to_hex()),
+        actor,
         on_behalf_of: None,
         outcome: facts.outcome.as_str().to_owned(),
         job_ref: None,
@@ -141,29 +145,35 @@ pub(super) fn reference_refusal_receipt(
 }
 
 /// Whether `receipt` is the reference-refusal record `id` carries: its own
-/// id, a hex actor, the outcome `refused` or `unlinked` with one typed
-/// reason, or `creation_not_proven` with its one trace, and exactly the
-/// refusal facts, each in its bounded shape, so no carrier can smuggle an
-/// attempt's content into the audit family.
+/// id, the outcome `refused` or `unlinked` with a hex actor and one typed
+/// reason, or `creation_not_proven` with no actor and its one trace, and
+/// exactly the refusal facts, each in its bounded shape, so no carrier can
+/// smuggle an attempt's content into the audit family.
 pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
     let field = |name: &str| receipt.fields.get(name).map(String::as_str);
+    let hex_actor = receipt.actor.as_deref().is_some_and(|actor| {
+        EntityId::from_hex(actor).is_ok_and(|parsed| parsed.to_hex() == actor)
+    });
     let traced = match receipt.outcome.as_str() {
-        OUTCOME_REFUSED | OUTCOME_UNLINKED => matches!(
-            receipt.policy_trace.as_slice(),
-            [reason] if RefusalReason::parse(reason).is_some()
-        ),
-        OUTCOME_CREATION_NOT_PROVEN => matches!(
-            receipt.policy_trace.as_slice(),
-            [trace] if trace == TRACE_CREATION_NOT_PROVEN
-        ),
+        OUTCOME_REFUSED | OUTCOME_UNLINKED => {
+            hex_actor
+                && matches!(
+                    receipt.policy_trace.as_slice(),
+                    [reason] if RefusalReason::parse(reason).is_some()
+                )
+        }
+        OUTCOME_CREATION_NOT_PROVEN => {
+            receipt.actor.is_none()
+                && matches!(
+                    receipt.policy_trace.as_slice(),
+                    [trace] if trace == TRACE_CREATION_NOT_PROVEN
+                )
+        }
         _ => false,
     };
     receipt.receipt_kind == ReceiptKind::ReferenceRefusal
         && receipt.receipt_id == receipt_id(id)
         && traced
-        && receipt.actor.as_deref().is_some_and(|actor| {
-            EntityId::from_hex(actor).is_ok_and(|parsed| parsed.to_hex() == actor)
-        })
         && receipt.on_behalf_of.is_none()
         && receipt.job_ref.is_none()
         && receipt.trigger_ref.is_none()
@@ -294,9 +304,10 @@ pub(crate) fn receipt_refusal(
 
 /// Records, best effort, that a landed reply's `created` records at
 /// `pointers` are not proven made by `memory`'s writer (FIX 1211), each as
-/// its own content-free reference record on one grouped write of their own,
-/// after the turn has committed: a failure there is logged and the reply
-/// stands. An anonymous off-record session keeps none, as for refusals.
+/// its own content-free reference record, naming the writer's class but no
+/// actor id, on one grouped write of their own after the turn has committed:
+/// a failure there is logged and the reply stands. An anonymous off-record
+/// session keeps none, as for refusals.
 pub(crate) fn receipt_creations_not_proven(
     memory: &crate::memory::Memory<'_>,
     row: &'static str,

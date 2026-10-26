@@ -51,30 +51,35 @@ pub(in crate::memory::witness) fn unread_assertion_in(
 }
 
 /// The pointers of the `created` records whose stored birth does not prove
-/// `writer` made them in `run`, the code run its host bound, read in `txn`
-/// on `dbs` after every asserted record has read (FIX 1211). Proof is the
-/// birth's producing actor and its `Run` trigger naming that run, whose
-/// durable replay record lives. A writer with no host-bound run proves no
-/// creation: its records are not proven, never guessed made. The reply
-/// stands either way; this only keeps "created" from reading as proved.
+/// `writer` made them in `run`, the durable code run its host's dispatcher is
+/// bound to, read in `txn` on `dbs` after every asserted record has read
+/// (FIX 1211). Proof is the birth's producing actor and its `Run` trigger
+/// naming that run, whose replay record lives in this snapshot. A writer
+/// with no bound run proves no creation: its records are not proven, never
+/// guessed made. A birth that cannot be read or decoded proves nothing
+/// either, and is logged; the reply stands whatever this finds.
 pub(in crate::memory::witness) fn unproven_creations_in(
     dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     assertions: &WitnessAssertions,
     writer: EntityId,
     run: Option<EntityId>,
-) -> MemoryResult<Vec<String>> {
+) -> Vec<String> {
     let mut unproven = Vec::new();
     for (index, record) in assertions.created.iter().enumerate() {
         let proven = match (EntityId::from_hex(&record.id), run) {
-            (Ok(id), Some(run)) => birth_proves_in(dbs, txn, &id, writer, run)?,
+            (Ok(id), Some(run)) => birth_proves_in(dbs, txn, &id, writer, run)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "a created record's birth was not read; not proven");
+                    false
+                }),
             _ => false,
         };
         if !proven {
             unproven.push(format!("/assertions/created/{index}/id"));
         }
     }
-    Ok(unproven)
+    unproven
 }
 
 /// Whether `id`'s stored birth names `writer` as its producer and `run` as
@@ -85,7 +90,7 @@ fn birth_proves_in(
     id: &EntityId,
     writer: EntityId,
     run: EntityId,
-) -> MemoryResult<bool> {
+) -> crate::error::Result<bool> {
     let Some(birth) = row_birth_in_txn(dbs, txn, id)? else {
         return Ok(false);
     };

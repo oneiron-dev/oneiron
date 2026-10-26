@@ -1037,11 +1037,10 @@ pub(crate) fn project_machine_claim(projection: &ClaimTransitionProjection) -> C
     body.approval = projection.approval;
     body.lifecycle = projection.lifecycle;
     body.valid_to = projection.valid_to;
-    // A signed weakening moves the number; it then reads in its own house
-    // band, never the birth's (FIX 7761).
-    if projection.confidence.to_bits() != body.confidence.to_bits() {
-        body.set_confidence(projection.confidence, None);
-    }
+    // The band and basis project as the birth stored them: a signed
+    // weakening carries its number only, and a reader invents no pair for
+    // it (FIX 7761).
+    body.confidence = projection.confidence;
     body.stale = projection.stale;
     if projection.demotion_rung.is_some() || projection.scope_band_floor.is_some() {
         let mut scope = match body.scope.take() {

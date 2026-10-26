@@ -322,6 +322,13 @@ impl Memory<'_> {
                 .iter()
                 .map(|exists| !exists)
                 .collect();
+            // An exact retry lands nothing new, so its assertions earn no
+            // creation status again (FIX 1211).
+            let lands_nothing = !matches!(admission.turn, AdmittedTurn::Mint { .. })
+                && !admission.has_new_messages();
+            if lands_nothing {
+                unproven.take();
+            }
             let landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(

@@ -111,6 +111,54 @@ impl ChangeLogStore for crate::store::Store {
         list_changes(self, txn, BY_ACTOR, actor, limit)
     }
 }
+/// An erased actor out of the change log (FIX 10044): each change row whose
+/// principal is `actor`, as its writer or as a lifecycle door's verified
+/// closer, names the storage service principal instead, the principal a
+/// change with no authenticated actor names, and its by-actor index row
+/// moves with it. The change itself, its entity, op, times and input hash,
+/// stays. One-way, in the erase's own transaction; an id whose entity is no
+/// actor scans nothing.
+pub(crate) fn erase_change_log_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let unattributed = super::mutation::storage_service_principal()?;
+    if *actor == unattributed || crate::deletion::names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let store = &vault.store;
+    let prefix = [BY_ACTOR, actor.as_bytes()].concat();
+    let mut indexed = Vec::new();
+    for row in store.vault_meta.prefix_iter(wtxn, &prefix)? {
+        let (index, id) = row?;
+        indexed.push((index.to_vec(), id.to_vec()));
+    }
+    for (index, id) in indexed {
+        let key = [CHANGE, id.as_slice()].concat();
+        let raw = store
+            .vault_meta
+            .get(wtxn, &key)?
+            .ok_or(Error::CorruptedIndex("changelog index"))?;
+        let mut record: ChangeLogRecord =
+            rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex("changelog record"))?;
+        record.actor_principal = unattributed;
+        let bytes = rmp_serde::to_vec_named(&record)
+            .map_err(|_| Error::InvariantViolation("changelog encode"))?;
+        store.vault_meta.put(wtxn, &key, &bytes)?;
+        store.vault_meta.delete(wtxn, &index)?;
+        let moved = [
+            BY_ACTOR,
+            unattributed.as_bytes(),
+            &record.recorded_at.to_be_bytes(),
+            &record.id,
+        ]
+        .concat();
+        store.vault_meta.put(wtxn, &moved, &record.id)?;
+    }
+    Ok(())
+}
+
 fn list_changes(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,

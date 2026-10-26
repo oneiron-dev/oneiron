@@ -106,35 +106,54 @@ pub(crate) fn verify_promotion_evidence_in_txn(
 }
 
 /// Pins, in a local claim write, each typed citation `body` adds over the
-/// row it replaces at `citer` (FIX 904): one that verifies against its
-/// document in this snapshot records its citation floor and derived edge.
-/// One that does not verify here (a frontier the document has since moved
-/// past, a source not yet arrived) is carried as written, never refused and
-/// never rebound to today's head; the writers that cite fresh checks refuse
-/// their own. A citation the stored row already holds (a lifecycle close
-/// keeps its own) is not a new one.
+/// row it replaces at `citer` (FIX 904). A citation its own writer gives is
+/// checked against its document in this snapshot, refuses the write if it
+/// does not hold, and records its citation floor and derived edge. One the
+/// body carries from a raw predecessor is that predecessor's history: it
+/// keeps its source dependency, and a floor where it still holds here, but
+/// it is never refused or rebound to today's head. A citation the stored row
+/// already holds (a lifecycle close keeps its own) is not a new one, and a
+/// replicated row is never pinned here.
 pub(crate) fn retain_fresh_claim_citations_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     citer: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    let refs = body.evidence_refs()?;
-    if refs.is_empty() {
+    let (written, carried) = body.evidence_ref_slots()?;
+    if written.is_empty() && carried.is_empty() {
         return Ok(());
     }
     let stored = stored_claim_citations(store, txn, citer)?;
-    for reference in refs.iter().filter(|reference| !stored.contains(reference)) {
-        if citation_source_in_txn(store, txn, reference).is_err() {
-            continue;
+    for reference in written.iter().filter(|reference| !stored.contains(reference)) {
+        citation_source_in_txn(store, txn, reference)?;
+        pin_citation_in_txn(store, txn, citer, reference)?;
+    }
+    for reference in carried.iter().filter(|reference| !stored.contains(reference)) {
+        if citation_source_in_txn(store, txn, reference).is_ok() {
+            pin_citation_in_txn(store, txn, citer, reference)?;
+        } else if let Ok(entity) = EntityId::from_hex(&reference.entity)
+            && store.port_entity_present(txn, &entity)?
+        {
+            crate::ports::record_derived_edge_in_txn(store, txn, citer, &entity)?;
         }
-        let entity = EntityId::from_hex(&reference.entity)?;
-        let qualified = super::source_frontier_in_txn(store, txn, &entity)?
-            .ok_or(invalid("citation document disappeared"))?;
-        super::record_citation_floor_in_txn(store, txn, &entity, citer, Some(&qualified))?;
-        crate::ports::record_derived_edge_in_txn(store, txn, citer, &entity)?;
     }
     Ok(())
+}
+
+/// Records `citer`'s floor at the cited document's live frontier and its
+/// derived edge to the document, for a citation verified in this snapshot.
+fn pin_citation_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    citer: &EntityId,
+    reference: &EvidenceRef,
+) -> Result<()> {
+    let entity = EntityId::from_hex(&reference.entity)?;
+    let qualified = super::source_frontier_in_txn(store, txn, &entity)?
+        .ok_or(invalid("citation document disappeared"))?;
+    super::record_citation_floor_in_txn(store, txn, &entity, citer, Some(&qualified))?;
+    crate::ports::record_derived_edge_in_txn(store, txn, citer, &entity)
 }
 
 /// The typed citations of the claim row stored at `id`, if one is.

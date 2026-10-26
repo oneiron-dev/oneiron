@@ -287,9 +287,10 @@ fn check_claim_policy_for_write_with_record_inner(
     // Preserve the write's member identities for both source-trust checks:
     // the evaluator below and the final Auto ceiling check. No member's
     // permit can answer for a different member of the observed history. An
-    // exact close by its verified closer renews neither (FIX 8655).
-    let verified_close =
-        closer::exact_close_by_verified_closer(store, &*wtxn, id, body, transition);
+    // exact close by its verified closer renews neither, and is decided,
+    // ceilinged and receipted as that closer (FIX 8655).
+    let closing_actor = closer::exact_close_closer(store, &*wtxn, id, body, transition);
+    let verified_close = closing_actor.is_some();
     let lineage = envelope.map(WriteEnvelope::lineage).filter(|_| !verified_close);
 
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
@@ -334,7 +335,7 @@ fn check_claim_policy_for_write_with_record_inner(
 
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
-            let actor = envelope.actor();
+            let actor = closing_actor.unwrap_or_else(|| envelope.actor());
             let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
@@ -386,7 +387,8 @@ fn check_claim_policy_for_write_with_record_inner(
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
         input.foreign_agent_ceiling = envelope
-            .map(|envelope| crate::gate::foreign_agent::resolve(store, &*wtxn, envelope.actor()))
+            .map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()))
+            .map(|actor| crate::gate::foreign_agent::resolve(store, &*wtxn, actor))
             .transpose()?
             .flatten();
         let mut decision = match hard_denial {

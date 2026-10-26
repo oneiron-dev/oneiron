@@ -131,11 +131,11 @@ impl Memory<'_> {
             ));
         }
         // FIX 1211: a created record every check above read is proved made
-        // by this writer in its host-bound run, or recorded not proven once
-        // the turn lands. The reply's words stand either way.
+        // by this writer in the durable run its dispatcher is bound to, or
+        // recorded not proven once the turn lands. The reply stands either way.
         if let Some(read) = assertions {
-            let run = self.host_origin.as_ref().and_then(HostWriteOrigin::code_run);
-            let created = unproven_creations_in(dbs, wtxn, &plan.turn.assertions, self.actor, run)?;
+            let run = self.host_origin.as_ref().and_then(HostWriteOrigin::bound_run);
+            let created = unproven_creations_in(dbs, wtxn, &plan.turn.assertions, self.actor, run);
             read.unproven.set(created);
         }
         // ONE-1686 (RT-04): the approval-ceiling door, before ANY row stages.
