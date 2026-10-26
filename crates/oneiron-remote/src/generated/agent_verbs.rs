@@ -817,7 +817,7 @@ impl OneironClient {
                     oneiron::skill_hub::pack_catalog::PackInstallReceipt,
                 >(client, verb, &input),
                 "vault.packs.sections.propose" => remote_agent_verb_output::<
-                    oneiron::memory::PluginSectionProposal,
+                    oneiron::memory::PluginSectionInstallOutcome,
                 >(client, verb, &input),
                 "vault.packs.sections.list" => remote_agent_verb_output::<
                     oneiron::memory::PluginSectionsView,
@@ -6800,7 +6800,7 @@ impl OneironClient {
     pub fn vault_packs_sections_propose(
         &self,
         input: &oneiron::memory::PluginSectionProposeRequest,
-    ) -> Result<oneiron::memory::PluginSectionProposal, MemoryError> {
+    ) -> Result<oneiron::memory::PluginSectionInstallOutcome, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

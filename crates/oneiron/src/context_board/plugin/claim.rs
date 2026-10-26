@@ -3,7 +3,7 @@ use super::codec::{
     decode_section_manifest, digest_from_hex, digest_to_hex, section_manifest_digest,
 };
 use super::errors::{PluginResult, PluginSectionError};
-use super::install::{PluginInstallOrigin, PluginInstallTarget};
+use super::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 use super::manifest::{
     PluginInstallSource, SectionBindingResolver, SectionId, SectionManifestEnvelope,
     SectionVerbAllowlist,
@@ -354,14 +354,32 @@ pub fn propose_plugin_section_install_with_evidence(
     let verbs = SectionVerbAllowlist::from_exported_verbs();
     let validated =
         validate_manifest_for_proposal(manifest.clone(), &target, source, bindings, &verbs)?;
+    let payload = install_payload(&validated, &target, origin)?;
+    land_proposed_install(
+        vault,
+        actor,
+        provenance,
+        &target,
+        &payload,
+        candidate_evidence,
+        now,
+    )
+}
 
+/// The install payload one validated manifest and its exact target carry:
+/// the canonical manifest bytes, their digest and the package identity.
+pub(super) fn install_payload(
+    validated: &ValidatedSectionManifest,
+    target: &PluginInstallTarget,
+    origin: PluginInstallOrigin,
+) -> PluginResult<PluginInstallClaimPayload> {
     let manifest_bytes = validated.canonical_bytes()?;
     let manifest_digest = section_manifest_digest(&manifest_bytes);
-    let (package_pin_type, package_pin) = match &target {
+    let (package_pin_type, package_pin) = match target {
         PluginInstallTarget::ExistingSkill { .. } => (String::new(), String::new()),
         PluginInstallTarget::HubPackage { hub_ref, .. } => hub_pin_parts(hub_ref),
     };
-    let payload = PluginInstallClaimPayload {
+    Ok(PluginInstallClaimPayload {
         schema_version: PLUGIN_INSTALL_CLAIM_SCHEMA_VERSION,
         manifest_bytes,
         manifest_digest,
@@ -373,8 +391,21 @@ pub fn propose_plugin_section_install_with_evidence(
         content_hash_hex: validated.provenance().content_hash_hex.clone(),
         package_pin_type,
         package_pin,
-    };
+    })
+}
 
+/// Lands one Generated/Proposed install claim carrying `payload` through the
+/// existing batch claim door with pending-consent persistence, and answers
+/// the fresh proposal's own consent row. Imports and registers nothing.
+pub(super) fn land_proposed_install(
+    vault: &Vault,
+    actor: WriteActor,
+    provenance: WriteProvenance,
+    target: &PluginInstallTarget,
+    payload: &PluginInstallClaimPayload,
+    candidate_evidence: Option<Value>,
+    now: u64,
+) -> PluginResult<PluginSectionInstallProposal> {
     let claim_id = vault.store.clock.entity_id()?;
     let mut candidate = ClaimCandidate::new(
         PREDICATE_PLUGIN_SECTION_INSTALL,
@@ -426,7 +457,7 @@ pub fn propose_plugin_section_install_with_evidence(
     Ok(PluginSectionInstallProposal {
         claim_id,
         decision_id,
-        manifest_digest,
+        manifest_digest: payload.manifest_digest,
     })
 }
 

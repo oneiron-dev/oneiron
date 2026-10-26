@@ -17,7 +17,8 @@ mod hub_owner;
 mod import_receipt;
 mod install_transition;
 pub use import_receipt::{
-    HubImportReceipt, MarketplaceFit, MarketplaceFitDecision, MarketplaceFitEvaluator,
+    CallerPermissions, HoldsNothing, HubImportReceipt, MarketplaceFit, MarketplaceFitDecision,
+    MarketplaceFitEvaluator, RuleSkillFit, SkillFitSetting,
 };
 mod package_codec;
 mod publisher;

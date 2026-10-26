@@ -1422,7 +1422,7 @@ export interface FacadeResults {
   "vault.packs.connector.grants.get": Facade.ConnectorPackGrants;
   "vault.packs.connector.grants.put": Facade.ConnectorPackGrants;
   "vault.packs.remove": Facade.PackInstallReceipt;
-  "vault.packs.sections.propose": Facade.PluginSectionProposal;
+  "vault.packs.sections.propose": Facade.PluginSectionInstallOutcome;
   "vault.packs.sections.list": Facade.PluginSectionsView;
   "vault.packs.sections.grant": Facade.PluginSectionGrant;
   "vault.packs.sections.revoke": Facade.PluginSectionRevoked;
@@ -2600,7 +2600,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.connector.grants.get": { description: "Reads current per-capability authority for one actor on the reviewed connector pack source.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.connector.grants.put": { description: "Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.remove": { description: "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.packs.sections.propose": { description: "The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.sections.propose": { description: "The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.list": { description: "Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.grant": { description: "The owner grants exactly the reviewed plugin section install: the claim settles through its review handle and the section is admitted under that same consent.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.sections.revoke": { description: "The owner revokes a plugin section grant by retracting its install claim; the section and its advertised verbs leave the next board rebuild.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -4263,7 +4263,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
         remove: (input: Facade.PackRemoveRequest, options?: O): FacadeReturns<"vault.packs.remove">[K] => invoke("vault.packs.remove", input, options, newInvocation()),
         sections: {
-          /** The caller offers one typed plugin section manifest for an existing skill or a pinned hub package; it waits as a proposed install claim and registers nothing. */
+          /** The caller offers one typed plugin section manifest. A code-free section requesting no permission the caller lacks installs at once (vault.packs.sections.revoke undoes it); anything else waits for the owner as a proposed install claim. */
           propose: (input: Facade.PluginSectionProposeRequest, options?: O): FacadeReturns<"vault.packs.sections.propose">[K] => invoke("vault.packs.sections.propose", input, options, newInvocation()),
           /** Plugin sections as they stand: one page of install offers awaiting the owner with their total and a cursor to the rest, admitted sections with their granted manifests, and the sections installed packs project. */
           list: (input: Facade.PluginSectionListRequest, options?: O): FacadeReturns<"vault.packs.sections.list">[K] => invoke("vault.packs.sections.list", input, options, newInvocation()),

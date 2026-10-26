@@ -231,8 +231,8 @@ pub use people_verbs::{
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
-    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
-    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionGrantState, PluginSectionInstallOutcome, PluginSectionListRequest,
+    PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,

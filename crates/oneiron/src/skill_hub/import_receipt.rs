@@ -13,6 +13,10 @@ use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::{Vault, entity_id::EntityId, error::Result, temporal::TimeRange};
 
+mod fitted;
+mod rule_fit;
+pub use rule_fit::{CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting};
+
 /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash
 /// of the source ref string).
 const IMPORT_RECEIPT: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
@@ -238,89 +242,10 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        let configured = {
-            let txn = self.store.env.read_txn()?;
-            self.check_publisher_in_txn(&txn, publisher)?;
-            let hub = self.hub_record_in_txn(&txn, &source.hub_id)?;
-            if publisher.hub != source.hub_id
-                || adapter.hub_id() != source.hub_id
-                || adapter.kind() != hub.kind
-                || adapter.endpoint() != Some(hub.endpoint.as_str())
-            {
-                return Err(invalid(
-                    "marketplace adapter is not the configured publisher source",
-                ));
-            }
-            hub
-        };
-        let package = adapter.fetch_package(source)?;
-        let parsed = super::folder::package_from_files(package.files)?;
-        let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
-        let fit = fit.evaluate(source, &parsed, &static_scan)?;
-        let advisory_scans = match advisories {
-            Some(query) => {
-                let inventory = super::osv::dependency_inventory(&parsed)?;
-                self.dependency_advisories(parsed.content_hash()?, &inventory, query, learned_at)?
-                    .2
-            }
-            None => Vec::new(),
-        };
-        self.with_write_txn_grouped(|txn| {
-            self.check_publisher_in_txn(txn, publisher)?;
-            if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
-                return Err(invalid("configured hub moved while fetching"));
-            }
-            let hash = parsed.content_hash()?;
-            if fit.source != *source
-                || fit.hash != hash
-                || fit.capabilities != parsed.capabilities
-                || fit.static_scan != crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?
-            {
-                return Err(invalid(
-                    "marketplace fit does not bind fetched source and permissions",
-                ));
-            }
-            let entity = self.import_skill_from_hub_in_txn(
-                txn,
-                source,
-                &parsed,
-                self.store.clock.entity_id()?,
-                occurred,
-                learned_at,
-            )?;
-            for scan in &advisory_scans {
-                self.ingest_skill_scan_verdict_in_txn(
-                    txn, &entity, hash, scan, occurred, learned_at,
-                )?;
-            }
-            let rule_blocked = marketplace_hash_blocked_in_txn(&self.store, txn, hash)?;
-            let code_bearing = parsed
-                .files
-                .iter()
-                .any(|file| file.path.starts_with("scripts/"));
-            let code_enabled = CODE_AUTO_INSTALL
-                .get(&self.store, txn, &())?
-                .is_some_and(|MarketplaceSwitch(enabled)| enabled);
-            let record = self.read_skill_record_in_txn(txn, &entity)?;
-            let plan = InstallPlan::marketplace(
-                &record,
-                InstallBinding::new(source, hash, &parsed.capabilities),
-                fit.outcome,
-                rule_blocked,
-                !code_bearing || code_enabled,
-            );
-            let result = self
-                .execute_hub_install_plan_in_txn(txn, &entity, &plan, occurred, learned_at, None)?;
-            self.write_hub_import_receipt_in_txn(
-                txn,
-                &entity,
-                hash,
-                source,
-                Some((publisher, result, fit.analysis.as_str())),
-                learned_at,
-            )?;
-            Ok(entity)
-        })
+        let fitted = self.fit_marketplace_skill(
+            adapter, source, publisher, fit, advisories, occurred, learned_at,
+        )?;
+        self.with_write_txn_grouped(|txn| self.commit_fitted_skill_in_txn(txn, &fitted, None))
     }
     pub(super) fn write_hub_import_receipt_in_txn(
         &self,

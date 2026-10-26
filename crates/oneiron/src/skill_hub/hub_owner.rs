@@ -12,8 +12,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// The fit rung for a skill the owner asked for: its requested permissions
-/// still reach the owner as one ask.
-struct OwnerAskedSkillFit;
+/// still reach the owner as one ask. The owner's skill fit setting can also
+/// pick it for every ordinary install (FIX 9752).
+pub(super) struct OwnerAskedSkillFit;
 impl MarketplaceFitEvaluator for OwnerAskedSkillFit {
     fn evaluate(
         &self,
