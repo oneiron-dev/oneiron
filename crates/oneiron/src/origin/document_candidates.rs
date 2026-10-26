@@ -43,6 +43,7 @@ mod projected_clearance;
 mod projected_decide;
 pub(crate) mod projected_files;
 mod projected_join;
+mod projected_reveal;
 pub(crate) mod projected_source;
 mod projected_tree;
 mod reads;
