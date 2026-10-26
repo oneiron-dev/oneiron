@@ -20,11 +20,13 @@ pub const MAX_CRITERION_BYTES: usize = 512;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionCriteria<Line = String> {
-    #[serde(default)]
+    // `Vec::new`, not a bare default: serde would otherwise bound `Line:
+    // Default`, which a done-means `Criterion` is not.
+    #[serde(default = "Vec::new")]
     pub yes_if_all: Vec<Line>,
-    #[serde(default)]
+    #[serde(default = "Vec::new")]
     pub no_if_any: Vec<Line>,
-    #[serde(default)]
+    #[serde(default = "Vec::new")]
     pub not_a_reason_to_say_no: Vec<Line>,
 }
 
