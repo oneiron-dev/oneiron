@@ -21521,7 +21521,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "QuoteAnchor",
@@ -21530,9 +21530,19 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 27,
       "enum": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/quote/reply_target.rs",
+     "purpose": "What a reply answers (FIX 9771): a TURN, or one MESSAGE inside the TURN that holds it, each at the content…",
+     "surface": {
+      "crate-vis": 10
      }
     },
     {
@@ -21685,6 +21695,7 @@
       "AppendedRecord",
       "DagPage",
       "DagPageRequest",
+      "DagReplyTarget",
       "QuoteSpan",
       "ResolvedScope",
       "ScopePath",
@@ -21693,7 +21704,8 @@
      "path": "src/conversation_dag/types.rs",
      "purpose": "Door inputs and snapshot results",
      "surface": {
-      "enum": 2,
+      "enum": 3,
+      "fn": 3,
       "struct": 7
      }
     },
@@ -21706,6 +21718,16 @@
      "surface": {
       "crate-vis": 5,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/conversation_dag/writes/messages.rs",
+     "purpose": "A MESSAGE the append door adds to its TURN (FIX 9771): `PartOf` the TURN its append names, a DAG TURN its…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -22655,7 +22677,7 @@
      "path": "src/deletion/receipt.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 22
      }
     },
     {
@@ -58667,7 +58689,7 @@
      "path": "src/session_overlay/overlay/lifecycle.rs",
      "purpose": "Overlay lifecycle state machine, leases, seal/rearm/close",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -58694,6 +58716,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/session_overlay/overlay/retained.rs",
+     "purpose": "The memory a room's overlay actually retains, the bytes its host's retained-memory line is charged (FIX…",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/session_overlay/overlay/retire.rs",
      "purpose": "Promoted-closure retirement reusing Store key builders",
      "surface": {
@@ -58707,7 +58739,7 @@
      "path": "src/session_overlay/overlay/rows.rs",
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -58737,7 +58769,7 @@
      "path": "src/session_overlay/short_id.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -59720,7 +59752,7 @@
      "path": "src/skill_attribution/run_writes.rs",
      "purpose": "OF-540/OF-397: the write envelope of a leased agent run",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 2,
       "struct": 1
      }
@@ -64343,7 +64375,7 @@
      "path": "src/sweep/owed.rs",
      "purpose": "Window compactions an erase owes (FIX 6387)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -74406,6 +74438,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/workspace_roster/join_door/authority.rs",
+     "purpose": "Who answers for a join, read live (FIX 10223, 10236): the one admission predicate every admission door asks…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/workspace_roster/join_door/publish.rs",
      "purpose": "A join's receipt reaching the live windows of its room or thread once the write that filed or answered it…",
      "surface": {
@@ -75220,7 +75262,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/workspace_roster/rooms/audience_erase.rs",
@@ -75319,8 +75361,19 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 13,
-      "fn": 10
+      "crate-vis": 14,
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/history/pages.rs",
+     "purpose": "Room history pages, thread lists and thread find/get: a positive ask of any size is served a page at a time…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -75361,7 +75414,7 @@
      "path": "src/workspace_roster/rooms/liveness.rs",
      "purpose": "Read-time room thread liveness; the room history and TASK rows remain truth",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "enum": 2,
       "fn": 3,
       "struct": 6
@@ -75383,7 +75436,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 41,
+      "crate-vis": 42,
       "enum": 2,
       "fn": 6,
       "re-export": 20,
@@ -77761,7 +77814,7 @@
      "purpose": "Room bodies, membership windows, session presence and audience visibility"
     },
     "conversation_dag": {
-     "files": 25,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78566,7 +78619,7 @@
      "purpose": "RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy…"
     },
     "session_overlay": {
-     "files": 14,
+     "files": 15,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78874,7 +78927,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 120,
+     "files": 122,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78895,9 +78948,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 124,
+   "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5207,
+   "source_files": 5212,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95522,7 +95575,17 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/conversation_dag/append.rs",
+     "purpose": "The DAG append doors' wire conversions (FIX 9771): a request becomes the engine's append of a TURN or of a…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/conversation_dag/mod.rs",
@@ -109072,7 +109135,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 566,
+     "files": 567,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -109548,9 +109611,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 33,
+   "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1289,
+   "source_files": 1290,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -110822,6 +110885,7 @@
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
+      "DagReplyTarget",
       "DataClass",
       "DecideRules",
       "DecideStep",
@@ -113895,7 +113959,7 @@
      "path": "src/generated/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 1018,
+      "enum": 1019,
       "struct": 3125
      }
     },
