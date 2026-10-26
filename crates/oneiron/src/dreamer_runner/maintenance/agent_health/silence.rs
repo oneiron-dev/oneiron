@@ -88,10 +88,13 @@ pub struct HealthOtherSession {
 /// A card's key: its subject, signal and TASK.
 type CardKey = ([u8; 16], [u8; 1], [u8; 16]);
 
-/// An open `silent` card's activity as read now, for a leased attempt
-/// `silent` found active (FIX 8376): `land` writes it onto the card.
+/// An open `silent` card's activity as read now, for the leased attempt the
+/// card names (FIX 8376): `land` writes it onto the card while the card
+/// still names that attempt.
 pub(super) struct SilenceRefresh {
     pub(super) key: CardKey,
+    /// The attempt whose activity was read.
+    pub(super) attempt: AttemptId,
     pub(super) silence: HealthSilenceActivity,
 }
 
@@ -131,8 +134,9 @@ impl SilenceCalls<'_> {
 /// `silent`: each leased attempt whose own activity is older than the dial,
 /// with no open wait (an ask, a trap, a park) and no word that it is stuck
 /// (a Blocked TASK or a blocked report). Saying it is stuck is the honest
-/// move. Each leased attempt with activity inside the dial refreshes its
-/// open `silent` card, when the card holds older activity.
+/// move. Each leased attempt that makes no finding refreshes the open
+/// `silent` card that names it, when the card holds older activity: an open
+/// wait keeps it from a finding, never from its activity.
 pub(super) fn silent_findings(
     vault: &Vault,
     calls: &SilenceCalls<'_>,
@@ -180,13 +184,6 @@ pub(super) fn silent_findings(
             refreshes.extend(refreshed(vault, key, &called, attempt, record, None));
             continue;
         }
-        let asked = record
-            .asks
-            .iter()
-            .any(|ask| ask.answers.len() < ask.questions.len());
-        if asked || traps.contains_key(id) {
-            continue;
-        }
         let (stepped, step_unread) = match own_step(vault, attempt, generation) {
             Ok(read) => read,
             Err(error) => {
@@ -215,6 +212,16 @@ pub(super) fn silent_findings(
             .max(tool_finished_at.unwrap_or(0));
         let quiet = now.saturating_sub(active);
         if quiet < dials.silent_secs {
+            refreshes.extend(refreshed(vault, key, &called, attempt, record, step));
+            continue;
+        }
+        // An open wait (an ask, a trap) keeps it from a finding; its card
+        // still shows what was read.
+        let asked = record
+            .asks
+            .iter()
+            .any(|ask| ask.answers.len() < ask.questions.len());
+        if asked || traps.contains_key(id) {
             refreshes.extend(refreshed(vault, key, &called, attempt, record, step));
             continue;
         }
@@ -283,9 +290,10 @@ fn other_session(called: &CallActivity) -> Option<HealthOtherSession> {
     })
 }
 
-/// The refresh of a leased attempt's open `silent` card, the attempt found
-/// active: its activity as read now, each part as a finding holds it, when
-/// that differs from the card's. Its step capsules are read here unless the
+/// The refresh of the open `silent` card that names a leased attempt making
+/// no finding: its activity as read now, each part as a finding holds it,
+/// when that differs from the card's. A card that names another attempt is
+/// never given this one's activity. Its step capsules are read here unless the
 /// caller read them (`step`). A read that fails, or a row that did not read,
 /// refreshes nothing: the card keeps what it holds.
 fn refreshed(
@@ -318,7 +326,9 @@ fn read_refresh(
         let rtxn = vault.store.env.read_txn()?;
         CARDS.get(&vault.store, &rtxn, &key)?
     };
-    let Some(card) = held.filter(|card| card.outcome == AgentHealthOutcome::Open) else {
+    let Some(card) = held
+        .filter(|card| card.outcome == AgentHealthOutcome::Open && card.attempt == Some(attempt))
+    else {
         return Ok(None);
     };
     if called.unread.is_some() {
@@ -342,7 +352,11 @@ fn read_refresh(
         tool_finished_at: runtime.and_then(|seen| seen.last_call_finished_at),
         other_session: other_session(called),
     };
-    Ok((card.silence != Some(silence)).then_some(SilenceRefresh { key, silence }))
+    Ok((card.silence != Some(silence)).then_some(SilenceRefresh {
+        key,
+        attempt: record.id,
+        silence,
+    }))
 }
 
 /// The newest model step of `attempt` at lease `generation`: the capture

@@ -428,27 +428,41 @@ fn withheld_for(metric: &TrendMetric, rollups: &HealthTrendRollups) -> u64 {
     }
 }
 
-/// Whether `withheld` rows could turn the direction. Each counts at most
-/// once more in one side's numerator (a finding on an attempt no review
-/// covered, once in its denominator too), so a side's value lies between its
-/// own and its numerator with all of them added; the direction moves the
-/// same way as each side, so the two ends decide.
+/// Whether `withheld` rows could turn the direction (FIX 8356). Each one
+/// counts at most once more on one side: in its numerator, or, for a signal,
+/// as a finding of another signal on an attempt no review covered, once more
+/// in its denominator alone, which only the side's unchecked attempts allow.
+/// So a side's value lies between its denominator with those added and its
+/// numerator with every row added. The direction moves with each side, so a
+/// side high against the other low, and the reverse, decide. An unknown
+/// comparison stays as it is.
 fn withheld_could_turn(
     metric: &TrendMetric,
     prior: &TrendRatio,
     latest: &TrendRatio,
     withheld: u64,
 ) -> bool {
-    if withheld == 0 {
+    let (_, direction) = judge(metric, prior, latest);
+    if withheld == 0 || matches!(direction, TrendDirection::Unknown(_)) {
         return false;
     }
-    let more = |ratio: &TrendRatio| TrendRatio {
+    let high = |ratio: &TrendRatio| TrendRatio {
         numerator: ratio.numerator.saturating_add(withheld),
         ..*ratio
     };
-    let (_, direction) = judge(metric, prior, latest);
-    judge(metric, &more(prior), latest).1 != direction
-        || judge(metric, prior, &more(latest)).1 != direction
+    let low = |ratio: &TrendRatio| match metric {
+        TrendMetric::Signal(_) => {
+            let unchecked = ratio.eligible.saturating_sub(ratio.known).min(withheld);
+            TrendRatio {
+                denominator: ratio.denominator.saturating_add(unchecked),
+                known: ratio.known.saturating_add(unchecked),
+                ..*ratio
+            }
+        }
+        _ => *ratio,
+    };
+    judge(metric, &high(prior), &low(latest)).1 != direction
+        || judge(metric, &low(prior), &high(latest)).1 != direction
 }
 
 /// The signed change from `prior` to `latest`, and its direction. A side

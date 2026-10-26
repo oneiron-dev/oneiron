@@ -60,7 +60,11 @@ pub(in crate::dreamer_runner::maintenance) fn run(vault: &Vault, now: u64) -> Re
         let since = now.saturating_sub(window);
         let (found, pairs, refreshed) =
             detect(vault, &dispatched, &attempts, &traps, &book, since, now)?;
-        refreshes.extend(refreshed);
+        refreshes.extend(refreshed.into_iter().filter(|refresh| {
+            book.for_attempt(&dispatched, Some(refresh.attempt))
+                .window_secs
+                == window
+        }));
         findings.extend(found.into_iter().filter(|finding| {
             book.for_attempt(&dispatched, finding.attempt).window_secs == window
         }));
@@ -70,8 +74,10 @@ pub(in crate::dreamer_runner::maintenance) fn run(vault: &Vault, now: u64) -> Re
                 .filter(|pair| book.of(dispatched.get(&pair.second)).window_secs == window),
         );
     }
-    // A project or task type whose review is off keeps its findings unsaid.
+    // A project or task type whose review is off keeps its findings unsaid,
+    // and its cards as they stand.
     findings.retain(|finding| book.for_attempt(&dispatched, finding.attempt).review);
+    refreshes.retain(|refresh| book.for_attempt(&dispatched, Some(refresh.attempt)).review);
     land(
         vault,
         findings,
@@ -202,7 +208,10 @@ pub(super) fn land(
             let Some(mut card) = CARDS.get(&vault.store, txn, &refresh.key)? else {
                 continue;
             };
-            if card.outcome != AgentHealthOutcome::Open || card.silence == Some(refresh.silence) {
+            if card.outcome != AgentHealthOutcome::Open
+                || card.attempt != entity(refresh.attempt)
+                || card.silence == Some(refresh.silence)
+            {
                 continue;
             }
             card.silence = Some(refresh.silence);
