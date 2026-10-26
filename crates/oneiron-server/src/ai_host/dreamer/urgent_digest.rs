@@ -40,9 +40,11 @@ struct Wording {
 /// the vault's proactivity to change; it subscribes before its first read,
 /// so no commit between the two is missed. Runs on the Dreamer's thread and
 /// stops with it. A candidate queued once in this process is not queued
-/// again: a changed intent, result or cadence is a new candidate, and after
-/// a restart each pending one is asked once more. The host's gate and pause
-/// (FIX 6909) start no round; the next change, or the pause lifting, does.
+/// again, and one the ladder answered is never queued again (FIX 8950: the
+/// vault keeps its basis), so a restart asks none of those once more: a
+/// changed intent, result or cadence is a new candidate. The host's gate and
+/// pause (FIX 6909) start no round; the next change, or the pause lifting,
+/// does.
 pub(super) async fn candidate_loop(
     vault: Arc<Vault>,
     configured: Option<String>,
@@ -80,8 +82,8 @@ pub(super) async fn candidate_loop(
     }
 }
 
-/// Queues each current candidate this process has not queued yet, on the
-/// elected home alone, as the regular digest is emitted there (FIX 8953): a
+/// Queues each current candidate this process has not queued yet and the
+/// ladder has not answered, on the elected home alone, as the regular digest is emitted there (FIX 8953): a
 /// device, or a host the home moved away from, queues nothing and keeps
 /// what it queued; an election change wakes the loop to look again.
 fn queue_round(
@@ -102,7 +104,7 @@ fn queue_round(
     let now = now_ms() / 1_000;
     for candidate in vault.digest_harm_candidates(now)? {
         let basis = candidate.basis(question)?;
-        if queued.contains(&basis) {
+        if queued.contains(&basis) || vault.digest_harm_answered(&basis)? {
             continue;
         }
         vault.request_digest_harm_assessment(&candidate, question, now)?;

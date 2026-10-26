@@ -17,7 +17,9 @@ use oneiron::code_run::{
 use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_INTERNAL};
 use tower::ServiceExt;
 
-use crate::api::call_receipt::{CallStamp, RECEIPT_REF_HEADER};
+use crate::api::call_receipt::{
+    CallStamp, RECEIPT_REF_HEADER, attempt_collector, with_attempt_collector,
+};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -46,6 +48,10 @@ pub(super) struct FacadeRowDoor {
     server: Arc<SyncServer>,
     refused: Mutex<Option<AgentVerbRefusalWords>>,
     stamp: Mutex<CallStamp>,
+    /// The action call's attempt collector, taken where the door is built:
+    /// each row runs on a spawned task, and a live-run hold in it reaches the
+    /// action's receipt only through this (FIX 8107).
+    collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
 }
 
 /// A row that did not answer: no route words it.
@@ -76,6 +82,7 @@ impl FacadeRowDoor {
             server: Arc::clone(server),
             refused: Mutex::new(None),
             stamp: Mutex::new(CallStamp::Unrecorded),
+            collector: attempt_collector(),
         }
     }
 
@@ -158,7 +165,7 @@ impl FacadeRowDoor {
             let server = Arc::clone(&self.server);
             let call = call.clone();
             let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-            self.runtime.spawn(async move {
+            let row = async move {
                 let invocation = invocation.to_hex();
                 let context = super::super::FacadeCall::bound(&auth, None, Some(&invocation), None);
                 let answer =
@@ -171,7 +178,9 @@ impl FacadeRowDoor {
                             suggestions: error.body.error.suggestions,
                         });
                 let _ = sender.send(answer);
-            });
+            };
+            self.runtime
+                .spawn(with_attempt_collector(self.collector.clone(), row));
             let output = receiver.recv().map_err(|_| refused())?.map_err(|row| {
                 let code = row.code.clone();
                 *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
@@ -200,9 +209,11 @@ impl FacadeRowDoor {
         // the server runtime, as a request of its own would.
         let (sender, receiver) = std::sync::mpsc::sync_channel(1);
         let rows = self.rows.clone();
-        self.runtime.spawn(async move {
+        let row = async move {
             let _ = sender.send(Self::answer(rows, request).await);
-        });
+        };
+        self.runtime
+            .spawn(with_attempt_collector(self.collector.clone(), row));
         let (stamp, answer) = receiver.recv().map_err(|_| refused())?;
         *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp;
         let output = answer.map_err(|row| {

@@ -10,12 +10,12 @@
 //! anything.
 //!
 //! Every stamp is the vault's clock in real Unix seconds, never a run's
-//! frozen bridge clock. Nothing here fails a run: a write that cannot reach
-//! the registry logs and moves on, and no lock is held past one counter
-//! update.
+//! frozen bridge clock. Nothing here fails a run: a poisoned registry is
+//! recovered with one warning, and no lock is held past one counter update
+//! or one snapshot's read.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use super::{ExecutorStorage, HostSelfDispatcher};
 use crate::attempt_queue::AttemptId;
@@ -74,7 +74,7 @@ pub(crate) struct AttemptActivityRuntime {
 
 impl AttemptActivityRuntime {
     /// Binds a run to `key`'s entry, making it when it is the first, with
-    /// `clock` as its stamps' clock. `None` when the registry is unavailable.
+    /// `clock` as its stamps' clock. `None` when the entry did not take it.
     fn register(&self, clock: &StoreClock, key: ActivityKey) -> Option<AttemptActivityBinding> {
         let witness = Arc::new(Witness {
             live: Arc::clone(&self.live),
@@ -89,21 +89,12 @@ impl AttemptActivityRuntime {
     }
 
     /// What the runtime witnesses now of `attempt` at lease `generation`.
-    /// `None` when no run of it is bound here, or when the registry is
-    /// contended or poisoned: it never waits.
+    /// `None` when no run of it is bound here. It waits for a writer holding
+    /// the registry (FIX 8522): every hold is one short update, and a busy
+    /// registry read as none would let a busy attempt read as quiet.
     pub(crate) fn snapshot(&self, attempt: AttemptId, generation: u32) -> Option<AttemptActivity> {
-        let live = match self.live.try_lock() {
-            Ok(live) => live,
-            Err(TryLockError::WouldBlock) => {
-                unavailable("contended");
-                return None;
-            }
-            Err(TryLockError::Poisoned(_)) => {
-                unavailable("poisoned");
-                return None;
-            }
-        };
-        live.iter()
+        lock_live(&self.live)
+            .iter()
             .filter(|((held, at, _), _)| *held == attempt && *at == generation)
             .map(|(_, entry)| entry.seen)
             .reduce(AttemptActivity::merge)
@@ -119,14 +110,8 @@ struct Witness {
 }
 
 impl Witness {
-    fn lock(&self) -> Option<MutexGuard<'_, Live>> {
-        match self.live.lock() {
-            Ok(live) => Some(live),
-            Err(_) => {
-                unavailable("poisoned");
-                None
-            }
-        }
+    fn lock(&self) -> MutexGuard<'_, Live> {
+        lock_live(&self.live)
     }
 
     /// The vault's clock now, in Unix seconds, without moving its floor.
@@ -136,9 +121,7 @@ impl Witness {
 
     /// Opens one binding on the entry, making it when it is the first.
     fn bind(&self) -> bool {
-        let Some(mut live) = self.lock() else {
-            return false;
-        };
+        let mut live = self.lock();
         let entry = live.entry(self.key.clone()).or_default();
         entry.bindings = entry.bindings.saturating_add(1);
         true
@@ -146,9 +129,7 @@ impl Witness {
 
     /// Closes one binding; the entry ends with its last.
     fn unbind(&self) {
-        let Some(mut live) = self.lock() else {
-            return;
-        };
+        let mut live = self.lock();
         let ended = live.get_mut(&self.key).is_some_and(|entry| {
             entry.bindings = entry.bindings.saturating_sub(1);
             entry.bindings == 0
@@ -160,9 +141,7 @@ impl Witness {
 
     /// Applies `change` to the entry while one is bound; whether it did.
     fn touch(&self, change: impl FnOnce(&mut AttemptActivity)) -> bool {
-        let Some(mut live) = self.lock() else {
-            return false;
-        };
+        let mut live = self.lock();
         let Some(entry) = live.get_mut(&self.key) else {
             return false;
         };
@@ -278,8 +257,14 @@ impl HostSelfDispatcher<'_> {
     }
 }
 
-/// The registry could not be read or written; the caller goes on without
-/// it.
-fn unavailable(kind: &'static str) {
-    tracing::warn!(kind, "attempt activity witness unavailable");
+/// The registry, waited for. A poisoned one is recovered (FIX 8523): its
+/// entries are counters and stamps, each written whole, so a panic inside one
+/// update loses at most that update. It warns once, clears the poison and
+/// goes on witnessing, so later writes neither warn nor drop.
+fn lock_live(live: &Mutex<Live>) -> MutexGuard<'_, Live> {
+    live.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("attempt activity witness recovered from a poisoned lock");
+        live.clear_poison();
+        poisoned.into_inner()
+    })
 }

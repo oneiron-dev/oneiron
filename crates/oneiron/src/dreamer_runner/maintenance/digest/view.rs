@@ -175,6 +175,7 @@ fn shown(digest: &ProactivityDigest) -> impl Serialize + '_ {
         &digest.rendered,
         &digest.voice_style,
         &digest.presentation,
+        &digest.witness,
     )
 }
 

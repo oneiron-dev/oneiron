@@ -46,7 +46,7 @@ const JUDGE_ASK_MARK: SideTable<EntityId, u64, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_JUDGE_ASKS);
 /// Generic proposed claim written through the existing gated agent memory
 /// verb. It changes NO settings until the owner confirms its exact revision;
-/// a Dreamer-born one too ([`Vault::apply_dreamer_proactivity_policy`]). Only
+/// a Dreamer-born one too ([`Vault::file_dreamer_proactivity_policy`]). Only
 /// the field a Coach's live digest-settings Grant covers applies at once
 /// ([`Vault::file_coach_proactivity_policy`], FIX 8712), and the owner
 /// reverts it.
@@ -270,6 +270,10 @@ pub struct ProactivityDigest {
     /// The presentation the digest was rendered under, which a viewer's
     /// view rebuilds its text with (FIX 6411).
     pub presentation: ProactivityPresentation,
+    /// The witness an urgent digest was delivered under (FIX 8955): the
+    /// `dreamer.digest.urgent` job whose input keeps the ladder's answer with
+    /// its full receipt. `None` for every other digest.
+    pub witness: Option<crate::attempt_queue::AttemptId>,
 }
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -290,6 +294,24 @@ struct DigestState {
     /// Applied maintenance receipts a digest already carried.
     #[serde(default)]
     applied_seen: std::collections::BTreeSet<String>,
+    /// Results an urgent digest carried, by the one owner it went to (FIX
+    /// 8952): they leave that owner's own digests, and every other reader's
+    /// digest still carries them.
+    urgent_seen: BTreeMap<String, BTreeMap<String, [u8; 32]>>,
+    /// The harm questions the ladder answered, by basis (FIX 8950), each a
+    /// current candidate's when the last answer landed: a host that restarts
+    /// asks none of them again.
+    answered_assessments: std::collections::BTreeSet<String>,
+}
+impl DigestState {
+    /// Whether an urgent digest carried the claim `claim_hex` at `revision`
+    /// to `recipient`.
+    fn urgent_seen_by(&self, recipient: EntityId, claim_hex: &str, revision: &[u8; 32]) -> bool {
+        self.urgent_seen
+            .get(&recipient.to_hex())
+            .and_then(|seen| seen.get(claim_hex))
+            == Some(revision)
+    }
 }
 impl Vault {
     pub fn set_proactivity_cadence(
@@ -349,7 +371,7 @@ impl Vault {
         let cadence_at = state
             .last_regular
             .map_or(0, |last| last.saturating_add(cadence.period_secs));
-        if pending_proposals(self, &txn, authority, &state, &cadence)?.is_empty()
+        if pending_proposals(self, &txn, authority, &state, &cadence, None)?.is_empty()
             && unseen_offers(&offers, &state).is_empty()
             && unseen_cleanup(self, &txn, &state)?.is_none()
             && unseen_note_tombstones(self, &txn, &state)?.is_none()

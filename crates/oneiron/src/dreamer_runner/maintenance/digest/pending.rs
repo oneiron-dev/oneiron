@@ -88,6 +88,7 @@ pub(super) fn pending_proposals(
     authority: EntityId,
     state: &DigestState,
     cadence: &ProactivityCadence,
+    recipient: Option<EntityId>,
 ) -> Result<Vec<(String, DigestProposal)>> {
     let mut pending = Vec::new();
     // Stream the producer index rather than using its capped 10k-ID query:
@@ -116,7 +117,11 @@ pub(super) fn pending_proposals(
             continue;
         }
         let revision = *blake3::hash(&bytes[ENTITY_METADATA_HEADER_LEN..]).as_bytes();
-        if state.seen.get(&id.to_hex()) == Some(&revision) {
+        let claim_hex = id.to_hex();
+        // An urgent digest's result leaves only its own owner's digests.
+        if state.seen.get(&claim_hex) == Some(&revision)
+            || recipient.is_some_and(|owner| state.urgent_seen_by(owner, &claim_hex, &revision))
+        {
             continue;
         }
         let group = if cadence.group_by_facet {

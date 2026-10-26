@@ -208,6 +208,7 @@ fn review_attempt(
     let calls =
         call_evidence::attempt_calls(vault, actor, witness, since, leased.then_some(claimed))?;
     let streams = calls.streams();
+    let mut refreshes = Vec::new();
     let mut findings = if whole {
         run_loop::run_loop_findings(vault, &dispatched, &attempts, &book, since)?
     } else {
@@ -228,7 +229,7 @@ fn review_attempt(
             &book,
             since,
         )?);
-        findings.extend(silent_findings(
+        let (silent, refreshed) = silent_findings(
             vault,
             &SilenceCalls::Attempt(attempt, calls.activity),
             &dispatched,
@@ -236,7 +237,9 @@ fn review_attempt(
             &traps,
             &book,
             now,
-        ));
+        );
+        findings.extend(silent);
+        refreshes.extend(refreshed);
         findings.extend(long_wait_findings(
             &dispatched,
             &attempts,
@@ -277,6 +280,7 @@ fn review_attempt(
         vault,
         findings,
         &[],
+        &refreshes,
         &dispatched,
         &attempts,
         &book,

@@ -48,6 +48,7 @@ pub(crate) use self::replay_bodies::{
     response_erased_error,
 };
 pub use self::replay_capsule::step_replay_capsules;
+pub(crate) use self::replay_capsule::undecodable_step_capsule_in_txn;
 pub(crate) use self::replay_capsule::{
     ForkRows, capsule_request, capsule_start_body, erase_capsule_actor_in_txn, finalize_capsule,
     fork_response, fork_rows, fork_rows_in_txn, put_fork, put_staged_capsule, put_unavailable,

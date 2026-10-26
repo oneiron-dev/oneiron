@@ -227,7 +227,7 @@ impl Vault {
         }
         let mut results = Vec::new();
         for (group, mut proposal) in
-            super::pending_proposals(self, &txn, authority, &state, &cadence)?
+            super::pending_proposals(self, &txn, authority, &state, &cadence, None)?
         {
             if !presentation.urgent_groups.contains(&group) {
                 continue;
@@ -247,10 +247,15 @@ impl Vault {
             return Ok(candidates);
         }
         for owner in crate::policy_model::owners_in_txn(self, &txn)? {
+            // A result an urgent digest already carried to this owner is no
+            // candidate of theirs; another owner's still is (FIX 8952).
             let readable: Vec<_> = results
                 .iter()
                 .filter(|(_, proposal)| {
-                    super::private_sources::digest_item_readable_by_in(self, &txn, proposal, owner)
+                    !state.urgent_seen_by(owner, &proposal.claim_ref.to_hex(), &proposal.revision)
+                        && super::private_sources::digest_item_readable_by_in(
+                            self, &txn, proposal, owner,
+                        )
                 })
                 .collect();
             if readable.is_empty() {
@@ -389,11 +394,27 @@ impl Vault {
         }))
     }
 
+    /// Whether the ladder answered the harm question whose basis is `basis`
+    /// (FIX 8950): its answer is kept as a witness, so a host never asks it
+    /// again, a host that restarted included.
+    ///
+    /// # Errors
+    ///
+    /// The digest state does not read.
+    pub fn digest_harm_answered(&self, basis: &[u8; 32]) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(super::load_state(self, &txn)?
+            .answered_assessments
+            .contains(&crate::entity_id::bytes_to_hex_lower(basis)))
+    }
+
     /// Keeps the ladder's answer to one admitted harm question as a witness:
     /// a [`DIGEST_URGENT_FACET`] job carrying the candidate, the decision
     /// with its full receipt, the Dreamer that asked and the asking job, in
     /// that job's run. Every answer is kept, a no and an abstain as surely as
-    /// a yes; a replayed ask finds the witness its basis already queued.
+    /// a yes; a replayed ask finds the witness its basis already queued. The
+    /// same write marks the basis answered, and keeps the mark only for
+    /// bases still current under the same wording (FIX 8950).
     ///
     /// # Errors
     ///
@@ -410,10 +431,14 @@ impl Vault {
             .dreamer_attempt_authority(attempt)?
             .ok_or_else(invalid)?
             .actor;
-        let key = format!(
-            "{DIGEST_URGENT_FACET}:{}",
-            crate::entity_id::bytes_to_hex_lower(&ask.candidate.basis(&ask.question)?)
-        );
+        let basis = crate::entity_id::bytes_to_hex_lower(&ask.candidate.basis(&ask.question)?);
+        let key = format!("{DIGEST_URGENT_FACET}:{basis}");
+        let mut current = std::collections::BTreeSet::new();
+        for candidate in self.digest_harm_candidates(now)? {
+            current.insert(crate::entity_id::bytes_to_hex_lower(
+                &candidate.basis(&ask.question)?,
+            ));
+        }
         let assessment = UrgentDigestAssessment {
             candidate: ask.candidate,
             decision,
@@ -423,6 +448,12 @@ impl Vault {
         };
         let input = Value::Map(vec![json_entry(ASSESSMENT_KEY, &assessment)?]);
         self.with_write_txn_grouped(|txn| {
+            let mut state = super::load_state(self, &*txn)?;
+            state
+                .answered_assessments
+                .retain(|answered| current.contains(answered));
+            state.answered_assessments.insert(basis.clone());
+            super::STATE.put(&self.store, txn, &(), &state)?;
             DreamerRunnerStore::new(self).enqueue_kind_in_txn(
                 txn,
                 super::super::MAINTENANCE_QUEUE_KIND,
@@ -462,7 +493,10 @@ pub(crate) fn emit_urgent_proactivity_digest(
     if !assessment.waiting_harms() {
         return Ok(None);
     }
-    vault.assemble_proactivity_digest(DigestAudience::Witnessed(&assessment), now)
+    vault.assemble_proactivity_digest(
+        DigestAudience::Witnessed(&assessment, attempt.status.attempt.id),
+        now,
+    )
 }
 
 /// Who one digest assembly is for.
@@ -476,8 +510,8 @@ pub(super) enum DigestAudience<'a> {
         Option<&'a UrgentDigestAssessment>,
     ),
     /// A witnessed yes: its intent's owner, resolved from the stored rows,
-    /// never from a credential.
-    Witnessed(&'a UrgentDigestAssessment),
+    /// never from a credential; and the witness job that keeps it.
+    Witnessed(&'a UrgentDigestAssessment, AttemptId),
 }
 
 impl DigestAudience<'_> {
@@ -494,7 +528,7 @@ impl DigestAudience<'_> {
             Self::Owner(owner, _) => Ok(Some(Some(super::super::validate_owner_in_txn(
                 vault, txn, owner,
             )?))),
-            Self::Witnessed(assessment) => {
+            Self::Witnessed(assessment, _) => {
                 let candidate = &assessment.candidate;
                 let stands = stated_intent_owner_in(vault, txn, candidate.intent.claim_ref)?
                     == Some(candidate.recipient)
@@ -510,7 +544,16 @@ impl DigestAudience<'_> {
     /// Whether this assembly runs the regular cadence and its asks. A
     /// witnessed delivery never does, so it never moves `last_regular`.
     pub(super) fn regular(&self) -> bool {
-        !matches!(self, Self::Witnessed(_))
+        !matches!(self, Self::Witnessed(..))
+    }
+
+    /// The witness job a witnessed delivery is kept by (FIX 8955); `None`
+    /// for every other assembly.
+    pub(super) const fn witness(&self) -> Option<AttemptId> {
+        match self {
+            Self::Witnessed(_, witness) => Some(*witness),
+            Self::Timer | Self::Owner(..) => None,
+        }
     }
 
     /// Whether an urgent answer breaks the cadence for `recipient` before
@@ -529,7 +572,7 @@ impl DigestAudience<'_> {
     ) -> Result<bool> {
         let assessment = match self {
             Self::Timer | Self::Owner(_, None) => return Ok(false),
-            Self::Owner(_, Some(assessment)) | Self::Witnessed(assessment) => assessment,
+            Self::Owner(_, Some(assessment)) | Self::Witnessed(assessment, _) => assessment,
         };
         let (Some(owner), Some(next)) = (recipient, next) else {
             return Ok(false);
@@ -538,7 +581,7 @@ impl DigestAudience<'_> {
             return Ok(false);
         }
         Ok(match self {
-            Self::Witnessed(_) => now < next,
+            Self::Witnessed(..) => now < next,
             _ => {
                 stated_intent_owner_in(vault, txn, assessment.candidate.intent.claim_ref)?
                     == Some(owner)
@@ -550,7 +593,7 @@ impl DigestAudience<'_> {
     /// carries the result it judged, at the revision it judged, alone.
     pub(super) fn carries(&self, proposal: &DigestProposal) -> bool {
         match self {
-            Self::Witnessed(assessment) => {
+            Self::Witnessed(assessment, _) => {
                 let result = &assessment.candidate.result;
                 proposal.claim_ref == result.claim_ref && proposal.revision == result.revision
             }

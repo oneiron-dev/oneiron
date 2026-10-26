@@ -23,11 +23,12 @@ use super::{
     AgentHealthCard, AgentHealthCoachAsk, AgentHealthMove, CARDS, card_ref, forbidden, may_read,
     parse_card_ref,
 };
-use crate::claim::CallerLocality;
+use crate::claim::{CallerLocality, ClaimReadStatus};
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::People;
 use crate::memory::{
-    Memory, MemoryError, MemoryResult, MessagePersonReceipt, MessagePersonRequest,
+    MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, MessagePersonReceipt,
+    MessagePersonRequest,
 };
 use crate::run_tree::RunSignalState;
 use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_child, steer_child_as_owner};
@@ -398,7 +399,8 @@ fn unix_ms() -> u64 {
 
 /// `self.message` to the PERSON of the card's agent, as the caller: the
 /// person comes from the card, never from the request, and the door reads
-/// it again through the caller's own read.
+/// it again through the caller's own read. A caller whose read does not hold
+/// that PERSON is refused here, its handle unnamed (FIX 8537).
 fn note(
     memory: &Memory<'_>,
     card: &AgentHealthCard,
@@ -407,12 +409,21 @@ fn note(
     to_project: Option<&str>,
 ) -> MemoryResult<MessagePersonReceipt> {
     let people = People::load(memory.vault(), unix_ms(), &mut |_| Ok(true))?;
-    let pr = people
+    let row = people
         .get(card.subject)
-        .map(|row| row.handle.clone())
         .ok_or_else(|| MemoryError::not_found("the card's agent is not a person in this vault"))?;
+    let readable = memory
+        .read_lane(ClaimReadStatus::Surfaceable)?
+        .is_entity_readable(&row.person)?;
+    if !readable {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "the caller's read does not hold the card's agent, so it cannot message it",
+            &[],
+        ));
+    }
     memory.message_person(&MessagePersonRequest {
-        pr,
+        pr: row.handle.clone(),
         text: text.to_owned(),
         mention: None,
         from_project: from_project.map(str::to_owned),

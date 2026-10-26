@@ -93,7 +93,7 @@ pub use rollups::{
     TrendSpendTally, TrendStratum, health_trend_rollups,
 };
 pub use silence::{HealthOtherSession, HealthSilenceActivity};
-use silence::{SilenceCalls, silent_findings};
+use silence::{SilenceCalls, SilenceRefresh, silent_findings};
 pub(super) use targeted::review;
 pub use trend::{
     COACH_HEALTH_TRENDS_FACET, HealthTrendComparison, HealthTrendInput, HealthTrendReview,
