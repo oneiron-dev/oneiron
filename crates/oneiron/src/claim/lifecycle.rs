@@ -17,18 +17,12 @@ use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, ClaimError, Error, RegistryError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::GateDecisionRecord;
 use crate::temporal::TimeRange;
 use crate::vault::{MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
 
 mod materialization;
-
-/// Bound on the supersession-chain walk behind the write-verb validity guard
-/// (ONE-1936). Cycles are caught by the walk's visited set; this caps the WORK
-/// a single corrupt-but-acyclic chain can demand. Real revision chains are
-/// short, so a walk this deep is evidence of a damaged graph, not of long
-/// history, and it ends in a typed refusal rather than an unbounded traversal.
-const MAX_SUPERSESSION_CHAIN_WALK: usize = 64;
 
 /// The family a want derived from behaviour is minted into, beside the
 /// user's own statement (ARCH-0003, ruled 2026-07-29).
@@ -207,15 +201,20 @@ impl Vault {
     /// typed errors. The successor is never chosen by iteration order, and the
     /// ref is never a hex fallback: a hex id is not resolvable at the public
     /// short-ref doors, so emitting one would hand the caller a token it
-    /// cannot re-get with.
+    /// cannot re-get with. An acyclic chain is walked to its head however
+    /// long (FIX 8662): each hop only feeds the advisory
+    /// [`EngineScan::TimelineRecords`] check of `target`'s chain.
     fn successor_chain_head_short_ref_in(
         &self,
         rtxn: &heed::RoTxn<'_>,
         target: &EntityId,
     ) -> Result<String> {
+        let scope = target.as_bytes();
+        let mut count = ScanCount::start(&self.store, rtxn, EngineScan::TimelineRecords, scope)?;
         let mut head = *target;
         let mut visited = HashSet::from([head]);
-        for _ in 0..MAX_SUPERSESSION_CHAIN_WALK {
+        let found = loop {
+            count.row();
             let next = match self.supersession_successors_in(rtxn, &head)?.as_slice() {
                 // Nothing newer. Only a node that ENDED its own lifecycle can
                 // be its own terminal head: a retracted claim was withdrawn
@@ -225,23 +224,24 @@ impl Vault {
                 // incident edges with it), so there is no head to name —
                 // answering with the node's own ref would hand the caller back
                 // the very token it already knows is stale.
-                [] => return self.terminal_head_short_ref_in(rtxn, &head),
+                [] => break self.terminal_head_short_ref_in(rtxn, &head),
                 [only] => *only,
                 // Two successors mean two terminal heads. There is no
                 // principled choice between them, so the walk refuses rather
                 // than taking whichever the index yielded first.
                 _ => {
-                    return Err(Error::InvariantViolation(
+                    break Err(Error::InvariantViolation(
                         "supersession chain branches: a claim has more than one superseding successor",
                     ));
                 }
             };
             if !visited.insert(next) {
-                return Err(Error::Registry(RegistryError::CycleDetected));
+                break Err(Error::Registry(RegistryError::CycleDetected));
             }
             head = next;
-        }
-        Err(Error::IndexOverflow("supersession chain walk"))
+        };
+        count.defer(&self.store);
+        found
     }
 
     /// The public ref of a chain node that has no successor — but only when
