@@ -84,18 +84,13 @@ impl Vault {
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
         // fold that closes it, after staging, and an import that leaves it
-        // open still refuses there.
-        let local = match self.authority_fold_readonly_in_txn(&txn) {
-            Ok(local) => Some(local),
-            Err(error) if crate::authority::readonly_fold::is_history_incomplete(&error) => None,
+        // open still refuses there. A row the fold before staging flags is
+        // judged there too, on the merged history (FIX 2536).
+        let judge_merged = match self.authority_fold_readonly_in_txn(&txn) {
+            Ok(local) => flags_retired_standing(&local, &merged, evidence.as_deref(), &arriving)?,
+            Err(error) if crate::authority::readonly_fold::is_history_incomplete(&error) => true,
             Err(error) => return Err(error),
         };
-        if let Some(local) = &local
-            && let Some(refused) =
-                retired_standing(&self.store, local, &merged, evidence.as_deref(), &arriving)?
-        {
-            return Ok(PageVerdict::Retired(refused));
-        }
         page_root(&merged, &resident, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
@@ -142,7 +137,7 @@ impl Vault {
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        if local.is_none()
+        if judge_merged
             && let Some(refused) =
                 retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?
         {

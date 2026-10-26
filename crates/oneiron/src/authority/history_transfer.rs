@@ -45,6 +45,32 @@ fn refuse_retired_standing(
     }
 }
 
+/// Whether an arriving row stands on a key a handoff retired in `fold`, as
+/// [`retired_standing`] reads it, recording nothing (FIX 2536). The fold
+/// before staging may lack a handoff's own ancestry, so an import it flags is
+/// judged again on the merged history it stages, and refused, with its
+/// evidence, only when that history still retires the key. An import it does
+/// not flag lands as before.
+fn flags_retired_standing(
+    fold: &AuthorityFold,
+    merged: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    evidence: Option<&AdoptedEvidence>,
+    arriving: &[AuthorityEntryHash],
+) -> Result<bool> {
+    for hash in arriving {
+        let Some((_, entry)) = merged.get(hash) else {
+            continue;
+        };
+        if fold.stands_on_retired_key(hash, entry, &mut |parent| match merged.get(parent) {
+            Some((_, row)) => Ok(Some(row.clone())),
+            None => evidence.map_or(Ok(None), |evidence| evidence.ancestor(parent)),
+        })? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn retired_standing_refusal() -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(
         "authority history standing on a key a handoff retired",
@@ -286,15 +312,13 @@ impl Vault {
         // A vault missing history it must hold has no fold until an import
         // closes the gap (OF-469): its arriving rows are judged against the
         // fold that closes it, after staging, and an import that leaves it
-        // open still refuses there.
-        let local = match self.authority_fold_readonly_in_txn(&txn) {
-            Ok(local) => Some(local),
-            Err(error) if super::readonly_fold::is_history_incomplete(&error) => None,
+        // open still refuses there. A row the fold before staging flags is
+        // judged there too, on the merged history (FIX 2536).
+        let judge_merged = match self.authority_fold_readonly_in_txn(&txn) {
+            Ok(local) => flags_retired_standing(&local, &merged, evidence.as_deref(), &arriving)?,
+            Err(error) if super::readonly_fold::is_history_incomplete(&error) => true,
             Err(error) => return Err(error),
         };
-        if let Some(local) = &local {
-            refuse_retired_standing(&self.store, local, &merged, evidence.as_deref(), &arriving)?;
-        }
         history_root(&merged, prefix)?.ok_or_else(invalid_authority)?;
         let now = crate::unix_seconds_now();
         let mut ids = Vec::new();
@@ -340,7 +364,7 @@ impl Vault {
         )?;
         // Read-side fold checks local sidecars as well as the signed chain.
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
-        if local.is_none() {
+        if judge_merged {
             refuse_retired_standing(&self.store, &fold, &merged, evidence.as_deref(), &arriving)?;
         }
         if fold.vault_root_is_conflicted() {
