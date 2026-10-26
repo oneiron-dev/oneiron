@@ -1325,6 +1325,37 @@ async fn vault_companions_access_requests_answer(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_grants_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "self.grants.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.grants.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.grants.answer", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::self_grants_answer(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_personas_preview(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -36846,6 +36877,7 @@ pub(crate) async fn call_verb(
         "vault.companions.access_requests.answer" => {
             vault_companions_access_requests_answer(server, call, input).await
         }
+        "self.grants.answer" => self_grants_answer(server, call, input).await,
         "vault.personas.preview" => vault_personas_preview(server, call, input).await,
         "vault.personas.export" => vault_personas_export(server, call, input).await,
         "vault.personas.edit" => vault_personas_edit(server, call, input).await,

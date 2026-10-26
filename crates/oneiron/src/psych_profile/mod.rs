@@ -11,7 +11,9 @@ mod mirror;
 mod record;
 mod store;
 
-pub use self::codec::{decode_psych_profile_body, encode_psych_profile_body};
+pub use self::codec::{
+    PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE, decode_psych_profile_body, encode_psych_profile_body,
+};
 pub use self::keys::{PsychProfileKey, psych_profile_entity_id};
 pub use self::mirror::{
     PSYCH_MIRROR_SELECTION_WEIGHTS, PsychMirrorDriftAnchor, PsychMirrorDriftAnchorEvent,
@@ -21,9 +23,8 @@ pub use self::mirror::{
     rank_psych_mirror_sources_with_weights,
 };
 pub use self::record::{
-    MAX_PSYCH_PROFILE_SOURCE_REVISIONS, PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION,
-    PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus, PsychProfileStaleReason,
-    PsychProfileState,
+    PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence,
+    PsychProfileSnapshotStatus, PsychProfileSource, PsychProfileStaleReason, PsychProfileState,
 };
 
 pub(crate) use self::codec::validate_psych_profile_body_bytes;

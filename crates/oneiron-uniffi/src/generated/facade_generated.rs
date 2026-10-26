@@ -230,6 +230,11 @@ export_facade! {
     let output = client.vault_companions_access_requests_answer(&input)?;
     crate::codec::lift_record("vault.companions.access_requests.answer", &output)
 };
+"self.grants.answer" => fn self_grants_answer(&self, input: GrantAnswerRequest) -> GrantAnswered = |client| {
+    let input: oneiron::task_verb::sdk::GrantAnswerRequest = crate::codec::lower_record("self.grants.answer", input)?;
+    let output = client.self_grants_answer(&input)?;
+    crate::codec::lift_record("self.grants.answer", &output)
+};
 "vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
     let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
     let output = client.vault_personas_preview(&input)?;

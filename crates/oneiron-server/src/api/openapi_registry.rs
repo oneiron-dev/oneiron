@@ -395,6 +395,7 @@ use utoipa::OpenApi;
         TurnVadAnnotateResponse,
         CompanionAccessGrantScopePayload,
         CompanionAccessGrantResponse,
+        super::CompanionAccessRequestPendingResponse,
         CompanionCreateAccessGrantRequest,
         CompanionRevokeAccessGrantRequest,
         CompanionProfileAccess,

@@ -21,6 +21,9 @@ pub(crate) fn companion_create_error(error: oneiron::Error) -> EnvelopedApiError
         ErrorKind::AccessGrantAlreadyExists => {
             ApiError::invalid_state(Some("access_grant_exists")).into()
         }
+        // The issuing credential was revoked, expired or left this vault
+        // while the write waited (FIX 8140).
+        ErrorKind::ConsentOwnerNotAuthenticated => ApiError::unauthorized().into(),
         _ => companion_engine_error("companion access grant create failed", error),
     }
 }

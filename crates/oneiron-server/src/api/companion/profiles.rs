@@ -4,11 +4,8 @@ use super::super::has_json_content_type;
 use super::super::parse_entity_id_param;
 use super::super::query_params;
 use super::access_grants::CompanionAccessGrantScopePayload;
-use super::access_grants::companion_scope_response;
 use super::auth::companion_profile_principal_ref;
 use super::auth::require_companion_profile_read;
-use super::errors::companion_access_denied;
-use super::errors::companion_engine_error;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::error::ApiErrorEnvelope;
@@ -22,18 +19,15 @@ use axum::extract::rejection::BytesRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
-use oneiron::psych_profile::{
-    MAX_PSYCH_PROFILE_SOURCE_REVISIONS, PsychProfileKey, psych_profile_entity_id,
-};
+use oneiron::psych_profile::{PsychProfileKey, psych_profile_entity_id};
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::de;
-use std::collections::HashSet;
-use std::fmt;
 use std::sync::Arc;
 use utoipa::IntoParams;
 use utoipa::ToSchema;
+
+mod admission;
+mod source_work;
 
 /// Query parameters for companion profile reads.
 #[derive(Clone, Debug, Deserialize, IntoParams)]
@@ -160,69 +154,9 @@ pub(crate) struct CompanionProfileNextAction {
 }))]
 pub(crate) struct CompanionProfileRefreshRequest {
     /// Currently selected source revisions for the next profile refresh.
-    #[serde(
-        rename = "sourceRevisionIds",
-        alias = "source_revision_ids",
-        default,
-        deserialize_with = "deserialize_bounded_source_revision_ids"
-    )]
+    /// Any number: a large set is read in fair, bounded batches.
+    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids", default)]
     source_revision_ids: Option<Vec<String>>,
-}
-
-/// Reads the body's id list but stops at the first entry past
-/// [`MAX_PSYCH_PROFILE_SOURCE_REVISIONS`], before it is copied.
-fn deserialize_bounded_source_revision_ids<'de, D>(
-    deserializer: D,
-) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct BoundedIds;
-
-    impl<'de> de::Visitor<'de> for BoundedIds {
-        type Value = Option<Vec<String>>;
-
-        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(
-                formatter,
-                "at most {MAX_PSYCH_PROFILE_SOURCE_REVISIONS} source revision ids"
-            )
-        }
-
-        fn visit_none<E>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_unit<E>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
-
-        fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-        where
-            D: Deserializer<'de>,
-        {
-            deserializer.deserialize_seq(self)
-        }
-
-        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-        where
-            A: de::SeqAccess<'de>,
-        {
-            let mut ids = Vec::new();
-            while ids.len() < MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
-                match seq.next_element::<String>()? {
-                    Some(id) => ids.push(id),
-                    None => return Ok(Some(ids)),
-                }
-            }
-            if seq.next_element::<de::IgnoredAny>()?.is_some() {
-                return Err(de::Error::invalid_length(ids.len() + 1, &self));
-            }
-            Ok(Some(ids))
-        }
-    }
-
-    deserializer.deserialize_option(BoundedIds)
 }
 
 /// Companion profile access response.
@@ -300,20 +234,24 @@ pub(crate) async fn get_companion_profile(
     require_companion_profile_read(&auth)?;
     let params = query_params(query)?;
     let key = companion_profile_key(&person_ref, &params)?;
-    let selected_source_revision_ids =
-        parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
     let requested_principal_ref = params
         .principal_ref
         .as_deref()
         .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
         .transpose()?;
     let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
-
-    let access = companion_profile_access(&server, &principal_ref, &key)?;
-    let state = companion_profile_response_state(
+    let selected_source_revision_ids = source_work::source_revision_ids(
         &server,
+        principal_ref,
+        query_source_values(params.source_revision_ids.as_deref()),
+    )
+    .await?;
+
+    let state = admission::admitted_companion_profile(
+        &server,
+        &auth,
+        &principal_ref,
         &key,
-        access,
         selected_source_revision_ids.as_deref(),
     )?;
     Ok(Json(state))
@@ -348,26 +286,36 @@ pub(crate) async fn refresh_companion_profile(
     let params = query_params(query)?;
     let req = optional_companion_profile_refresh_request(&headers, payload)?;
     let key = companion_profile_key(&person_ref, &params)?;
-    let query_source_revision_ids =
-        parse_source_revision_ids_query(params.source_revision_ids.as_deref())?;
-    let body_source_revision_ids = parse_source_revision_ids_body(req.source_revision_ids)?;
-    let selected_source_revision_ids =
-        select_refresh_source_revision_ids(body_source_revision_ids, query_source_revision_ids)?;
     let requested_principal_ref = params
         .principal_ref
         .as_deref()
         .map(|principal_ref| parse_entity_id_param(principal_ref, "principal_ref"))
         .transpose()?;
     let principal_ref = companion_profile_principal_ref(&auth, requested_principal_ref)?;
-
-    let access = companion_profile_access(&server, &principal_ref, &key)?;
-    let state = companion_profile_response_state(
+    let query_source_revision_ids = source_work::source_revision_ids(
         &server,
+        principal_ref,
+        query_source_values(params.source_revision_ids.as_deref()),
+    )
+    .await?;
+    let body_source_revision_ids =
+        source_work::source_revision_ids(&server, principal_ref, req.source_revision_ids).await?;
+    let selected_source_revision_ids =
+        select_refresh_source_revision_ids(body_source_revision_ids, query_source_revision_ids)?;
+
+    let state = admission::admitted_companion_profile(
+        &server,
+        &auth,
+        &principal_ref,
         &key,
-        access,
         selected_source_revision_ids.as_deref(),
     )?;
     Ok(Json(state))
+}
+
+/// The comma-separated query list as its entries, unparsed.
+fn query_source_values(raw: Option<&str>) -> Option<Vec<String>> {
+    raw.map(|raw| raw.split(',').map(str::to_owned).collect())
 }
 
 /// The PERSON x FACET x WORLD address a profile request names. The grant
@@ -388,58 +336,16 @@ fn companion_profile_key(
     })
 }
 
-pub(crate) fn companion_profile_access(
-    server: &SyncServer,
-    principal_ref: &oneiron::EntityId,
-    key: &PsychProfileKey,
-) -> Result<CompanionProfileAccess, EnvelopedApiError> {
-    let grant_id = server
-        .vault
-        .companion_profile_access_grant(principal_ref, &key.person, key.facet.as_ref())
-        .map_err(|error| {
-            tracing::error!(
-                error = %error,
-                principal_ref = %principal_ref.to_hex(),
-                person_ref = %key.person.to_hex(),
-                facet_ref = ?key.facet.map(|facet| facet.to_hex()),
-                "companion profile grant lookup failed"
-            );
-            companion_engine_error("companion profile grant lookup failed", error)
-        })?
-        .ok_or_else(companion_access_denied)?;
-
-    let scope = companion_scope_response(&key.person, key.facet.as_ref());
-    Ok(CompanionProfileAccess {
-        grant_id: grant_id.to_hex(),
-        principal_ref: principal_ref.to_hex(),
-        scope,
-    })
-}
-
+/// The response for the admitted profile `state` at `key`.
 pub(crate) fn companion_profile_response_state(
-    server: &SyncServer,
     key: &PsychProfileKey,
     access: CompanionProfileAccess,
+    state: oneiron::PsychProfileState,
     selected_source_revision_ids: Option<&[oneiron::EntityId]>,
-) -> Result<CompanionProfileResponse, EnvelopedApiError> {
+) -> CompanionProfileResponse {
     let profile_ref = psych_profile_entity_id(key);
-    let state = match server
-        .vault
-        .psych_profile_state(&profile_ref, selected_source_revision_ids)
-    {
-        Ok(state) => state,
-        Err(error) => {
-            tracing::error!(
-                error = %error,
-                profile_ref = %profile_ref.to_hex(),
-                "psych profile lookup failed"
-            );
-            return Err(companion_engine_error("psych profile lookup failed", error));
-        }
-    };
-
     let selected_hex = selected_source_revision_ids.map(entity_ids_hex);
-    let response = match state {
+    match state {
         oneiron::PsychProfileState::Missing => {
             let drift_anchors = selected_source_revision_ids
                 .map(|selected| companion_profile_drift_anchors(&[], selected))
@@ -512,8 +418,7 @@ pub(crate) fn companion_profile_response_state(
                 drift_anchors,
             }
         }
-    };
-    Ok(response)
+    }
 }
 
 pub(crate) fn companion_profile_payload(
@@ -571,56 +476,6 @@ pub(crate) fn companion_profile_drift_anchors(
         source_revision_ref: event.source_revision_ref.to_hex(),
     })
     .collect()
-}
-
-pub(crate) fn parse_source_revision_ids_query(
-    raw: Option<&str>,
-) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
-    raw.map(|value| parse_source_revision_ids(value.split(',')))
-        .transpose()
-        .map(|ids| ids.and_then(non_empty_source_revision_ids))
-}
-
-pub(crate) fn parse_source_revision_ids_body(
-    raw: Option<Vec<String>>,
-) -> Result<Option<Vec<oneiron::EntityId>>, ApiError> {
-    raw.map(|values| parse_source_revision_ids(values.iter().map(String::as_str)))
-        .transpose()
-        .map(|ids| ids.and_then(non_empty_source_revision_ids))
-}
-
-pub(crate) fn parse_source_revision_ids<T>(
-    values: impl IntoIterator<Item = T>,
-) -> Result<Vec<oneiron::EntityId>, ApiError>
-where
-    T: AsRef<str>,
-{
-    let mut ids = Vec::new();
-    let mut seen = HashSet::new();
-    // Every submitted entry counts, empty or repeated, so the work stays bounded.
-    for (submitted, value) in values.into_iter().enumerate() {
-        if submitted >= MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
-            return Err(too_many_source_revision_ids());
-        }
-        let value = value.as_ref().trim();
-        if value.is_empty() {
-            continue;
-        }
-        let id = parse_entity_id_param(value, "sourceRevisionIds")?;
-        if seen.insert(id) {
-            ids.push(id);
-        }
-    }
-    Ok(ids)
-}
-
-fn too_many_source_revision_ids() -> ApiError {
-    ApiError::bad_request(
-        format!(
-            "sourceRevisionIds must contain at most {MAX_PSYCH_PROFILE_SOURCE_REVISIONS} entries"
-        ),
-        Some("sourceRevisionIds"),
-    )
 }
 
 pub(crate) fn entity_ids_hex(ids: &[oneiron::EntityId]) -> Vec<String> {

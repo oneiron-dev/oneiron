@@ -165,6 +165,7 @@ impl Vault {
             created_at: now,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         };
         if let Some(raw) = self
             .store

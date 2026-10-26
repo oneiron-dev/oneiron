@@ -39,6 +39,7 @@ impl DiaryConsent {
             created_at,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         })
     }
 }

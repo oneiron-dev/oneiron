@@ -58,7 +58,11 @@ impl Memory<'_> {
     /// [`ShapePlanCard::generated_ui`] puts it on the envelope.
     pub fn shape_plan_card(&self, input: &ShapePlanRequest) -> MemoryResult<ShapePlanCard> {
         let plan = self.shape_plan(input)?;
-        let apply = self.vault.shape_apply(&plan.frontier)?;
+        // The open apply reads as `vault.shape.read` lists it (FIX 9960).
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let apply = self
+            .vault
+            .shape_apply_visible(&plan.frontier, &mut |id| read.is_entity_readable(id))?;
         Ok(ShapePlanCard::of(&plan, apply.as_ref()))
     }
 

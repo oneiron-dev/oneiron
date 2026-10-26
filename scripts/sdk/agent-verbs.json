@@ -728,6 +728,18 @@
       "openapi": true
     },
     {
+      "name": "self.grants.answer",
+      "description": "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner.",
+      "input": "crate::task_verb::sdk::GrantAnswerRequest",
+      "output": "crate::task_verb::sdk::GrantAnswered",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.grants.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
+    },
+    {
       "name": "vault.personas.preview",
       "description": "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp.",
       "input": "crate::task_verb::sdk::PersonaSnapshotPreviewRequest",

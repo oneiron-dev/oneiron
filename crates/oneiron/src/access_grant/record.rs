@@ -290,6 +290,10 @@ pub struct AccessGrant {
     pub revoked_at: Option<u64>,
     /// Exclusive wall-clock end, in Unix seconds. None means no expiry.
     pub expires_at: Option<u64>,
+    /// The bounds of the credential that issued a companion grant (FIX
+    /// 8140): the issuing slip and its record ceiling. None for a grant an
+    /// unbounded issuer made, and for every other scope.
+    pub companion_bounds: Option<super::CompanionGrantBounds>,
 }
 
 impl AccessGrant {
@@ -310,6 +314,7 @@ impl AccessGrant {
             created_at,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         }
     }
 
@@ -333,6 +338,7 @@ impl AccessGrant {
             created_at,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         }
     }
 
@@ -432,7 +438,9 @@ impl AccessGrant {
                 "scope and capability are not a matched pair",
             )));
         }
-        if self.expires_at.is_some_and(|end| end < self.created_at) {
+        if self.expires_at.is_some_and(|end| end < self.created_at)
+            || (self.companion_bounds.is_some() && self.scope.companion_profile_refs().is_none())
+        {
             return Err(invalid_grant());
         }
         match (self.status, self.revoked_at) {

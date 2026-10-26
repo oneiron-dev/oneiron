@@ -80,6 +80,7 @@ vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
+selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown

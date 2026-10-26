@@ -7,30 +7,36 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// Current PsychProfile record body schema version.
-pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 1;
+pub const PSYCH_PROFILE_SCHEMA_VERSION: u64 = 2;
 
-/// Pinned on-disk MessagePack key set for PSYCH_PROFILE bodies.
-pub const PSYCH_PROFILE_BODY_KEYS: [&str; 8] = [
+/// Pinned on-disk MessagePack key set for PSYCH_PROFILE bodies. Source
+/// revisions and source placements are paged codec frames (FIX 10054).
+pub const PSYCH_PROFILE_BODY_KEYS: [&str; 9] = [
     "schemaVersion",
     "subjectRef",
     "compact",
     "text",
     "narrative",
-    "sourceRevisionIds",
+    "sourceRevisionPages",
     "confidence",
     "status",
+    "sourcePages",
 ];
 
 /// Minimal projection: enough to answer "is there a profile and is it fresh?"
-pub(crate) const PSYCH_PROFILE_FIELDS_MINIMAL: &[&str] =
-    &["schemaVersion", "subjectRef", "sourceRevisionIds", "status"];
+pub(crate) const PSYCH_PROFILE_FIELDS_MINIMAL: &[&str] = &[
+    "schemaVersion",
+    "subjectRef",
+    "sourceRevisionPages",
+    "status",
+];
 
 /// Standard projection: add the cheap compact render and confidence metadata.
 pub(crate) const PSYCH_PROFILE_FIELDS_STANDARD: &[&str] = &[
     "schemaVersion",
     "subjectRef",
     "compact",
-    "sourceRevisionIds",
+    "sourceRevisionPages",
     "confidence",
     "status",
 ];
@@ -48,34 +54,21 @@ pub(super) const KEY_TEXT: &str = PSYCH_PROFILE_BODY_KEYS[3];
 
 pub(super) const KEY_NARRATIVE: &str = PSYCH_PROFILE_BODY_KEYS[4];
 
-pub(super) const KEY_SOURCE_REVISION_IDS: &str = PSYCH_PROFILE_BODY_KEYS[5];
+pub(super) const KEY_SOURCE_REVISION_PAGES: &str = PSYCH_PROFILE_BODY_KEYS[5];
 
 pub(super) const KEY_CONFIDENCE: &str = PSYCH_PROFILE_BODY_KEYS[6];
 
 pub(super) const KEY_STATUS: &str = PSYCH_PROFILE_BODY_KEYS[7];
 
+pub(super) const KEY_SOURCE_PAGES: &str = PSYCH_PROFILE_BODY_KEYS[8];
+
 pub(super) const CONFIDENCE_KEYS: [&str; 3] = ["compact", "text", "narrative"];
 
 pub(super) const MAX_COMPACT_BYTES: usize = 4096;
 
-pub(super) const TOO_MANY_SOURCE_REVISIONS: &str =
-    "sourceRevisionIds must contain at most 4096 revision ids";
-
 pub(super) const MAX_TEXT_BYTES: usize = 32 * 1024;
 
 pub(super) const MAX_NARRATIVE_BYTES: usize = 32 * 1024;
-
-/// Most source revisions one snapshot may cite, far above the handful a refresh
-/// selects. Counted before the ids are sorted, copied or encoded.
-pub const MAX_PSYCH_PROFILE_SOURCE_REVISIONS: usize = 4096;
-
-/// Largest body a valid snapshot encodes to: every text tier at its cap, every source
-/// id as a 34-byte hex string, and 4 KiB for keys, confidence and the subject.
-pub(super) const MAX_PSYCH_PROFILE_BODY_BYTES: usize = MAX_COMPACT_BYTES
-    + MAX_TEXT_BYTES
-    + MAX_NARRATIVE_BYTES
-    + MAX_PSYCH_PROFILE_SOURCE_REVISIONS * 34
-    + 4096;
 
 /// Per-tier confidence metadata stored with a PsychProfile snapshot.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -171,6 +164,20 @@ pub enum PsychProfileState {
     },
 }
 
+/// Where one source a snapshot was built from lives (FIX 8141): the
+/// revision it cites, the record that revision is of, and the WORLD that
+/// record lies in. A recipient read honours the owner's recipient choice for
+/// every source's world, as for the world the read names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PsychProfileSource {
+    /// The source revision the snapshot cites.
+    pub revision_ref: EntityId,
+    /// The record that revision is of.
+    pub document_ref: EntityId,
+    /// The WORLD the record lies in; None for a world-free record.
+    pub world_ref: Option<EntityId>,
+}
+
 /// Persisted PsychProfile snapshot record.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PsychProfile {
@@ -188,6 +195,9 @@ pub struct PsychProfile {
     pub confidence: PsychProfileConfidence,
     /// Stored freshness marker.
     pub status: PsychProfileSnapshotStatus,
+    /// Where the sources live, canonical; each cites one of
+    /// `source_revision_ids`. Empty for a snapshot built without placements.
+    pub sources: Vec<PsychProfileSource>,
 }
 
 impl PsychProfile {
@@ -209,9 +219,21 @@ impl PsychProfile {
             source_revision_ids: canonical_source_revision_ids(source_revision_ids)?,
             confidence,
             status: PsychProfileSnapshotStatus::Fresh,
+            sources: Vec::new(),
         };
         profile.validate()?;
         Ok(profile)
+    }
+
+    /// This snapshot with where its sources live (FIX 8141), canonicalized
+    /// by sorting and deduplicating them. Each must cite one of the
+    /// snapshot's own source revisions.
+    pub fn with_sources(mut self, mut sources: Vec<PsychProfileSource>) -> Result<Self> {
+        sources.sort_unstable();
+        sources.dedup();
+        self.sources = sources;
+        self.validate()?;
+        Ok(self)
     }
 
     /// Returns this profile with an explicit stored stale marker.
@@ -249,9 +271,6 @@ impl PsychProfile {
                 "sourceRevisionIds must contain at least one revision id",
             ));
         }
-        if self.source_revision_ids.len() > MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
-            return Err(invalid_profile(TOO_MANY_SOURCE_REVISIONS));
-        }
         if !self
             .source_revision_ids
             .windows(2)
@@ -259,6 +278,17 @@ impl PsychProfile {
         {
             return Err(invalid_profile(
                 "sourceRevisionIds must be canonical sorted unique ids",
+            ));
+        }
+        if !self.sources.windows(2).all(|pair| pair[0] < pair[1])
+            || self.sources.iter().any(|source| {
+                self.source_revision_ids
+                    .binary_search(&source.revision_ref)
+                    .is_err()
+            })
+        {
+            return Err(invalid_profile(
+                "sources must be canonical and cite the snapshot's own source revisions",
             ));
         }
         self.confidence.validate()?;
