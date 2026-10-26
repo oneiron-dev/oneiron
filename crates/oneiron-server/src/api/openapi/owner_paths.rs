@@ -28,8 +28,9 @@ pub(crate) const OWNER_ROUTE_TABLES: &[&[OwnerRoute]] = &[
 ];
 
 /// Adds each owner route to `spec`'s paths: owner-grade bearer, its row's
-/// input schema as the JSON body where it has one, an object answer, and the
-/// one 403 the owner door answers every refusal with.
+/// input schema as the JSON body where it has one, its row's output schema as
+/// the answer where the SDK publishes one (else a JSON answer of unstated
+/// shape), and the one 403 the owner door answers every refusal with.
 pub(crate) fn merge_owner_paths(spec: &mut Value) {
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
         return;
@@ -80,9 +81,15 @@ fn operation(route: &OwnerRoute, path: &str) -> Value {
             json!({"required": true, "content": {"application/json": {"schema": schema}}}),
         );
     }
+    // The mapped row's own answer schema where the SDK publishes one (FIX
+    // 8194); any other answer is JSON whose shape this table does not state.
+    let content = route
+        .row
+        .and_then(oneiron::task_verb::sdk::output_schema)
+        .map_or_else(|| json!({}), |schema| json!({ "schema": schema }));
     let mut answer = json!({
         "description": "The owner action's answer.",
-        "content": {"application/json": {"schema": {"type": "object"}}}
+        "content": {"application/json": content}
     });
     if let Some(row) = route.row {
         answer["description"] = json!(format!(

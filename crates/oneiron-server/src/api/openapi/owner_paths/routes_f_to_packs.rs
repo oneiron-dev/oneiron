@@ -257,6 +257,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/intents",
+        summary: "The owner states an intent in his own words (FIX 8949): `text` (required, his exact words) and an optional `message` (32 hex, the MESSAGE they came from). They land as an Approved, UserStated `profile.intent` claim about him, citing that MESSAGE when one is named. Answers `{claim}`, the claim's id as 32 hex.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/legal-holds",
         summary: "Every customer hold, and each host order the owner may be told of, without its order reference or operator.",

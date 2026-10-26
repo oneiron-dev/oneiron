@@ -6944,7 +6944,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
@@ -6958,7 +6959,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.roots.requests.cancel",
