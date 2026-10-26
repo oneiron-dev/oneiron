@@ -124,8 +124,8 @@ impl KeptExport {
 /// as the caller's `delivery` asks (FIX 3676). Both run the same four owner
 /// paths: a host root's slip, an owner's slip, a host action with no slip,
 /// and a managed vault's attested owner. Each arm's receipt records the
-/// owner's act, with where he spoke from as this request proved it (audit
-/// only; FIX 4625, 4626).
+/// owner's act, with where the owner spoke from as this request proved it
+/// (audit only; FIX 4625, 4626).
 pub(super) fn vault_export_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
