@@ -147,6 +147,11 @@ side_tables! {
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
+    /// The scope a deleted record held, bound to its delete request, so a narrower grant's export
+    /// carries its tombstone only where the grant reads that scope (FIX 10161). Ids and levels
+    /// only, never content. Local to this vault: never replicated or exported. Key: hex32 (entity
+    /// id).
+    FEDERATION_TOMBSTONE_SCOPE: SyncState b"fedtombscope:" Named;
     /// Registers a foreign world as content delivered by one federation pact, scanned when the pact
     /// goes terminal. Key: hex64 (pact id) ":" hex32 (world id).
     FEDERATION_WORLD_REGISTRATION: SyncState b"fedworld:" Raw;

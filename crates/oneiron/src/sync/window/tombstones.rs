@@ -455,6 +455,9 @@ fn replay_tombstone_markers(
                     tombstone.is_hard(),
                 )?;
             }
+            crate::deletion::tombstone_scope::capture_received_scope_in_txn(
+                vault, wtxn, &key.id, value,
+            );
             PENDING_TOMBSTONE.delete(&vault.store, wtxn, key)?;
         }
         // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:

@@ -766,6 +766,10 @@ pub(super) fn filter_window_doc(
     });
 
     let out_tombstones = out.get_map("tombstones");
+    let open = facets.is_none() && band_filter(scope_position).is_none();
+    let all = matches!(selector.world, SyncSelectorWorld::All);
+    let export = super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
+    let ttxn = vault.store.env.read_txn()?;
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
@@ -773,11 +777,7 @@ pub(super) fn filter_window_doc(
         if claims_withheld.contains(&id) {
             return;
         }
-        if kept.contains(&id)
-            || (facets.is_none()
-                && band_filter(scope_position).is_none()
-                && matches!(selector.world, SyncSelectorWorld::All))
-        {
+        if kept.contains(&id) || export.admits(vault, &ttxn, &id, value) {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });

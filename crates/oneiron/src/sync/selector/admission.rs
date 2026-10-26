@@ -7,10 +7,6 @@ use loro::{CommitOptions, ExportMode, LoroDoc};
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::Vault;
-use crate::authority::{
-    AuthorityOp, authority_entry_hash, authority_log_entity_id, decode_authority_log_entry_body,
-    genesis_vault_id, validate_authority_log_entry_body_bytes,
-};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimSubject, restamp_federated_claim_source, validate_claim_body_and_decode};
 use crate::edge::EdgeKind;
@@ -34,6 +30,8 @@ use super::edge::{
     EarlyStamps, HeldStamp, ReleasedStamps, copy_admitted_edges, hold_stamps, pending_births,
     refuse_admitted_stamps, refuse_non_binary_edges, release_born_stamps,
 };
+#[cfg(feature = "sync")]
+use super::validators::{admit_federated_authority_log, validate_federated_pack};
 use crate::error::{RecordError, SyncError};
 
 /// Role carried by a member/guest federation import path.
@@ -1109,7 +1107,7 @@ pub(in crate::sync) fn revalidate_admitted_federated_claims(
         if result.is_err() {
             return;
         }
-        result = recheck_admitted_claim_blob(&vault.store, &policy, value).and_then(|()| {
+        result = recheck_admitted_claim_blob(&vault.store, &rtxn, &policy, value).and_then(|()| {
             let id = EntityId::from_hex(key).map_err(|_| Error::InvalidKey)?;
             let blob = value.ok_or(Error::InvalidKey)?;
             refuse_peer_agent_definition_widening(&vault.store, &rtxn, &id, blob)
@@ -1140,6 +1138,7 @@ pub(in crate::sync) fn revalidate_admitted_facet_stamps(
 #[cfg(feature = "sync")]
 fn recheck_admitted_claim_blob(
     store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
     value: Option<&[u8]>,
 ) -> Result<()> {
@@ -1147,7 +1146,7 @@ fn recheck_admitted_claim_blob(
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
-        return validate_federated_pack(store, blob);
+        return validate_federated_pack(store, txn, blob);
     }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(());
@@ -1317,12 +1316,12 @@ fn admit_federated_entity_blob_graded(
     let header =
         EntityMetadataHeader::parse(blob).ok_or(Error::CorruptedIndex("entity metadata"))?;
     if crate::sync::pack_sync::is_pack_handle(header.entity_type) {
-        validate_federated_pack(&vault.store, blob)?;
+        validate_federated_pack(&vault.store, txn, blob)?;
         return Ok((id, blob.to_vec()));
     }
     if header.entity_type != ENTITY_TYPE_CLAIM {
         if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-            admit_federated_authority_log(vault, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
+            admit_federated_authority_log(vault, txn, &id, &blob[ENTITY_METADATA_HEADER_LEN..])?;
             return Ok((id, blob.to_vec()));
         }
         // A guest's WORLD row lands under the foreign id its CLAIMs in that
@@ -1571,73 +1570,6 @@ pub(in crate::sync) fn validate_sync_identity_body(entity_type: u8, body: &[u8])
     Ok(())
 }
 
-/// Federation admission door for a AUTHORITY_LOG carrier.
-///
-/// ONE-1604-D1 (fix-leg 4): the CRDT row's KEY is bound to the id derived
-/// from the decoded body, exactly as `check_authority_log_store_key` binds it
-/// at the write door. Without the bind, admission validated the body and the
-/// vault root but never checked that the body belonged at `id` — so a
-/// wrong-key authority row entered the ADMITTED doc and only failed later at
-/// materialize. That is strictly worse than rejecting here: the admitted doc
-/// is what the ordinary replay path imports, so the mismatch surfaced after
-/// the row had already been copied into locally authored bytes, and anything
-/// this door scopes off the same key operated on a row that could never be
-/// admitted under it.
-///
-/// The bind is a REMOTE rejection, not a local failure:
-/// `AuthorityLogStoreKeyMismatch` is already classified in
-/// `quarantine::remote_rejection_reason`, so the replay sites quarantine the
-/// row and continue rather than aborting the window (H2). Deriving the id
-/// costs one hash over bytes this function has already decoded.
-#[cfg(feature = "sync")]
-fn admit_federated_authority_log(vault: &Vault, id: &EntityId, body: &[u8]) -> Result<()> {
-    validate_authority_log_entry_body_bytes(body)?;
-    let entry = decode_authority_log_entry_body(body)?;
-    if authority_log_entity_id(&entry)? != *id {
-        return Err(Error::Record(RecordError::AuthorityLogStoreKeyMismatch {
-            id: *id,
-        }));
-    }
-    let entry_vault_id = match &entry.op {
-        AuthorityOp::Genesis { .. } => genesis_vault_id(&entry)?,
-        _ => entry
-            .vault_id
-            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
-                "missing authority vault id",
-            )))?,
-    };
-    let local = vault.authority_fold()?;
-    let local_vault_id =
-        local
-            .vault_id
-            .ok_or(Error::Record(RecordError::InvalidAuthorityLogBody(
-                "missing local authority root",
-            )))?;
-    if entry_vault_id != local_vault_id {
-        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-            "foreign authority log vault id",
-        )));
-    }
-    let rtxn = vault.store.env.read_txn()?;
-    let evidence = crate::authority::adopted_evidence_in_txn(&vault.store, &rtxn)?;
-    if !crate::authority::authority_row_resident(&vault.store, &rtxn, &entry)?
-        && crate::authority::door_refuses_retired_standing(
-            &vault.store,
-            &local,
-            &authority_entry_hash(&entry)?,
-            &entry,
-            &mut |hash| {
-                crate::authority::door_ancestor_row(&vault.store, &rtxn, evidence.as_deref(), hash)
-            },
-        )?
-    {
-        return Err(Error::Record(RecordError::InvalidAuthorityLogBody(
-            "authority row signed by a key a handoff retired",
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(feature = "sync")]
 fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
     let mut has_tombstone = false;
@@ -1650,16 +1582,6 @@ fn reject_federated_tombstones(source: &LoroDoc) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-#[cfg(feature = "sync")]
-fn validate_federated_pack(store: &crate::store::Store, blob: &[u8]) -> Result<()> {
-    let source = crate::registry::pack_byte_map::PackInstanceEnvelope::from_bytes(
-        &blob[ENTITY_METADATA_HEADER_LEN..],
-    )?;
-    let txn = store.env.read_txn()?;
-    let (handle, local) = store.remap_pack_instance_in_txn(&txn, &source)?;
-    store.validate_pack_instance_in_txn(&txn, handle, &local.to_bytes()?)
 }
 
 #[cfg(all(test, feature = "sync"))]
