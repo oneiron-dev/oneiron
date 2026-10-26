@@ -117,6 +117,8 @@ pub(crate) use super::off_record_room_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+// The general access request answer (FIX 1379), likewise.
+pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.

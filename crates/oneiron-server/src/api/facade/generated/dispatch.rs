@@ -1325,6 +1325,37 @@ async fn vault_companions_access_requests_answer(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn self_grants_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "self.grants.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.grants.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.grants.answer", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::self_grants_answer(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_personas_preview(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -4173,63 +4204,15 @@ async fn vault_export(
     let args = hooks.args.clone();
     let ran = async {
         let input: oneiron::memory::ExportOptions = facade_input(args)?;
-        // Beside the archive, the rows its snapshot read past where
+        // Beside the answer, the rows its snapshot read past where
         // the caller's rows go (its locality, with the machine its
         // connection proved; FIX 4937): every owner path lists them.
-        // A slip keeps its own path; a host action with no slip (the
-        // dev mode) takes the engine's host-action export; the
-        // attested owner takes the engine's request-proof export,
-        // toward its own destination. Each arm's receipt records the
-        // owner's act, with where he spoke from as this request proved
-        // it (audit only; FIX 4625, 4626).
-        let surface = call.surface();
-        let (output, rows) = match (proof, action, owner) {
-            (Some(proof), _, _) if proof.claims().holder_ref == "host" => {
-                server.vault.export_with_verified_host_owner_listing(
-                    &input,
-                    proof,
-                    surface,
-                    auth.destination(),
-                )?
-            }
-            (Some(proof), _, _) => {
-                let (actor, class) = facade_actor(server, auth)?;
-                let producers = oneiron::memory::ProducerRows::default();
-                let output = server
-                    .vault
-                    .memory(actor, class)
-                    .for_destination(&auth.destination())
-                    .listing_producers(&producers)
-                    .export_with_verified_owner(&input, proof, surface)?;
-                (output, producers.take())
-            }
-            (None, Some(action), _) => server.vault.export_with_host_action_listing(
-                &input,
-                &action,
-                surface,
-                auth.destination(),
-            )?,
-            (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
-                &input,
-                &owner,
-                surface,
-                auth.destination(),
-            )?,
-            (None, None, None) => {
-                return Err(FacadeApiError::forbidden(
-                    "full-vault export requires verified owner authority",
-                    ["Present a verified owner credential."],
-                ));
-            }
-        };
-        let output = serde_json::to_value(output).map_err(|_| {
-            FacadeApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                MEMORY_CODE_INTERNAL,
-                "export result encoding failed",
-                ["Report this SDK response mismatch."],
-            )
-        })?;
+        // The answer is the archive inline, or kept on the server and
+        // named by a transfer, as the caller's `delivery` asks (FIX
+        // 3676); the leaf runs all four owner paths for both.
+        let (output, rows) = super::export_transfer::vault_export_answer(
+            server, call, &input, proof, action, owner,
+        )?;
         Ok::<_, FacadeApiError>((output, rows))
     }
     .await;
@@ -36880,6 +36863,7 @@ pub(crate) async fn call_verb(
         "vault.companions.access_requests.answer" => {
             vault_companions_access_requests_answer(server, call, input).await
         }
+        "self.grants.answer" => self_grants_answer(server, call, input).await,
         "vault.personas.preview" => vault_personas_preview(server, call, input).await,
         "vault.personas.export" => vault_personas_export(server, call, input).await,
         "vault.personas.edit" => vault_personas_edit(server, call, input).await,

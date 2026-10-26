@@ -470,7 +470,6 @@ enum ContextRow {
     /// No visible text: absent, deleted, archived, stale or undecodable.
     Nothing,
     /// Its text lives in an entity document.
-    #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     Unbounded,
     /// Its visible, non-empty text, as stored.
     Shown(Vec<u8>),
@@ -481,7 +480,8 @@ fn context_row_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Re
     if hidden_in_txn(vault, txn, id)? {
         return Ok(ContextRow::Nothing);
     }
-    #[cfg(feature = "sync")]
+    // Every build holds entity documents (FIX 5319), so a document-backed
+    // MESSAGE's row is its pointer, never its text (FIX 10893).
     if crate::entity_doc::has_record_head(store, txn, id)? {
         return Ok(ContextRow::Unbounded);
     }

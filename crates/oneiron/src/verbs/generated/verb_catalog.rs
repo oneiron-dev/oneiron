@@ -50,6 +50,7 @@ pub enum AgentVerb {
     SelfMessage,
     SelfGrantsAsk,
     VaultCompanionsAccessRequestsAnswer,
+    SelfGrantsAnswer,
     VaultPersonasPreview,
     VaultPersonasExport,
     VaultPersonasEdit,
@@ -1235,6 +1236,7 @@ impl AgentVerb {
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::VaultCompanionsAccessRequestsAnswer,
+        Self::SelfGrantsAnswer,
         Self::VaultPersonasPreview,
         Self::VaultPersonasExport,
         Self::VaultPersonasEdit,
@@ -2423,6 +2425,7 @@ impl AgentVerb {
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
+            Self::SelfGrantsAnswer => "self.grants.answer",
             Self::VaultPersonasPreview => "vault.personas.preview",
             Self::VaultPersonasExport => "vault.personas.export",
             Self::VaultPersonasEdit => "vault.personas.edit",
@@ -3638,6 +3641,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -4852,6 +4856,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -6210,6 +6215,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -7291,6 +7297,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::Cancel
@@ -8043,6 +8050,7 @@ impl AgentVerb {
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -9246,6 +9254,7 @@ impl AgentVerb {
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -10519,6 +10528,9 @@ impl AgentVerb {
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
             }
+            Self::SelfGrantsAnswer => {
+                "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."
+            }
             Self::VaultPersonasPreview => {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
             }
@@ -10787,7 +10799,7 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
