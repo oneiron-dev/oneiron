@@ -11,14 +11,18 @@
 //! rows, unpublished LFS chunks and masked-key rows that are not marked
 //! repo sources still drop.
 //!
-//! The copies are read once per export, in its transaction. A read that
-//! fails leaves the export exactly as before this leaf: the masked-key
-//! rows drop and nothing is carried as a copy, never as raw bytes.
+//! The copies are read once per export, in its transaction, and judged
+//! per carried row (FIX 10797): a row whose own copy is unread this pass
+//! leaves as the sealed-file placeholder, never its admitted bytes, and
+//! every other row keeps its bytes and its place. Only a read that proves
+//! no row unmarked (a store failure in the mark walk, or a mark that names
+//! no blob) fails the export, as any other store failure of it does.
 
 use heed::RoTxn;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
+use crate::error::Result;
 use crate::provenance::birth::RowBirth;
 use crate::sync::selector::secret_projection::{CopyRow, SyncSecretProjection};
 
@@ -26,24 +30,20 @@ use crate::sync::selector::secret_projection::{CopyRow, SyncSecretProjection};
 pub(super) struct ExportProjection(Option<SyncSecretProjection>);
 
 impl ExportProjection {
-    /// The copies `txn` reads; none when the read fails.
-    pub(super) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Self {
-        match SyncSecretProjection::read_in_txn(vault, txn) {
-            Ok(projection) if !projection.is_empty() => Self(Some(projection)),
-            Ok(_) => Self(None),
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "scoped export: marked repo copies unreadable; masked-key rows drop as before"
-                );
-                Self(None)
-            }
-        }
+    /// The copies `txn` reads; none when no marked repo item is.
+    ///
+    /// # Errors
+    /// A store failure in the mark walk, or a mark that does not decode and
+    /// names no blob: no row is then provably unmarked.
+    pub(super) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
+        let projection = SyncSecretProjection::read_in_txn(vault, txn)?;
+        Ok(Self((!projection.is_empty()).then_some(projection)))
     }
 
     /// Whether row `raw`, stored under `id`, is a marked repo item this
-    /// export carries as its copy: the one case today's masked-key
-    /// exclusion no longer drops.
+    /// export carries as its copy, or as the sealed-file placeholder when
+    /// its copy is unread: the one case today's masked-key exclusion no
+    /// longer drops.
     pub(super) fn carries_copy(&self, id: &EntityId, raw: &[u8]) -> bool {
         self.0
             .as_ref()
@@ -51,16 +51,12 @@ impl ExportProjection {
     }
 
     /// Row `id`'s admitted bytes as the export carries them: a marked item's
-    /// copy, under its copy id for a marked snapshot ASSET; any other row as
-    /// admitted.
+    /// copy, under its copy id for a marked snapshot ASSET, or the sealed-file
+    /// placeholder when its copy is unread; any other row as admitted.
     pub(super) fn released(&self, id: EntityId, bytes: Vec<u8>) -> (EntityId, Vec<u8>) {
-        match self
-            .0
-            .as_ref()
-            .map(|projection| projection.project_row(&id, &bytes))
-        {
-            Some(CopyRow::Copy { key, row }) => (key, row),
-            _ => (id, bytes),
+        match &self.0 {
+            Some(projection) => projection.project_row(&id, &bytes).released(id, bytes),
+            None => (id, bytes),
         }
     }
 
