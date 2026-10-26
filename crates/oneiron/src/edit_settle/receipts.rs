@@ -24,14 +24,19 @@ use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 /// The query filter is applied DURING the scan — the settlement key is ordered
 /// by artifact id then proposal-ref hash, NOT by time, so filtering before the
 /// caller's newest-first sort + `limit` truncation keeps a narrow query from
-/// being starved by unrelated rows. The scan is capped at the family DoS guard.
+/// being starved by unrelated rows. The ledger is read to its end (FIX 3582):
+/// past its threshold row the scan raises one check and reads on (rule 5).
 pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"artifact_settle",
+    )?;
     let mut out = Vec::new();
-    for (scanned, entry) in RECORD.iter_from(&vault.store, &rtxn, &[])?.enumerate() {
-        if scanned >= crate::receipt::MAX_RECEIPT_QUERY_SCAN {
-            break;
-        }
+    for entry in RECORD.iter_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let ((artifact_id, _), record) = entry?;
         let receipt = settlement_receipt_record(artifact_id, &record)?;
         let receipt = vault.with_withdrawn_units_in_txn(&rtxn, artifact_id, &record, receipt)?;
@@ -39,6 +44,7 @@ pub(crate) fn settle_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec
             out.push(receipt);
         }
     }
+    count.finish(vault);
     Ok(out)
 }
 

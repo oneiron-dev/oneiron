@@ -570,10 +570,8 @@ pub(super) struct McpPageContinuation {
     pub(super) position: u32,
     /// The immutable producer result this position indexes.
     pub(super) snapshot: Option<McpPageSnapshot>,
-    /// Mint order within this registry, from its own monotonic counter and no
-    /// clock. It is the ONLY input to the retention bound's eviction choice, so
-    /// which handle a full connection loses is deterministic and replayable.
-    pub(super) minted_seq: u64,
+    /// The measured bytes `snapshot` retains, counted once at mint (FIX 9507).
+    pub(super) retained_bytes: u64,
 }
 
 /// A foreign TTL can only narrow this endpoint's refusal to cache.

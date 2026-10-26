@@ -9,10 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use super::reference_refusal::{self, ReferenceRefusalFacts};
 use super::served_form::{self, ServedForm};
-use super::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan,
-    retain_newest_receipt,
-};
+use super::{ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, retain_newest_receipt};
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::ScopedReadActorKey;
@@ -489,13 +486,20 @@ pub(crate) fn suppression_for_intent(vault: &Vault, intent_id: &IntentId) -> Res
     Ok(receipt)
 }
 
+/// Every outbound suppression receipt, read through its whole index: past
+/// its threshold row the walk raises one check and reads on (rule 5, FIX
+/// 3582), so no count refuses the read.
 pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
     let txn = vault.store.env.read_txn()?;
+    let mut count = ScanCount::start(
+        &vault.store,
+        &txn,
+        EngineScan::ReceiptSourceRows,
+        b"outbound_suppression",
+    )?;
     let mut receipts = Vec::new();
-    for (scanned, row) in INDEX.iter_raw_from(&vault.store, &txn, &[])?.enumerate() {
-        if scanned >= MAX_RECEIPT_QUERY_SCAN {
-            return Err(Error::IndexOverflow("outbound suppression receipt scan"));
-        }
+    for row in INDEX.iter_raw_from(&vault.store, &txn, &[])? {
+        count.row();
         let (key, value) = row?;
         let id_bytes: [u8; 16] = key
             .as_slice()
@@ -528,6 +532,7 @@ pub(super) fn scan_suppression_receipts(vault: &Vault) -> Result<ReceiptScan> {
         }
         receipts.push(asset.receipt);
     }
+    count.finish(vault);
     Ok(ReceiptScan::from_complete_records(receipts))
 }
 

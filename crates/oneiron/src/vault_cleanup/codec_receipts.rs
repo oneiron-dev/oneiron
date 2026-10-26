@@ -15,10 +15,7 @@ use crate::attempt_queue::AttemptId;
 use crate::deletion::DeleteReason;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower,
-    retain_newest_receipt,
-};
+use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Raw, SideTable};
 use rmpv::Value;
 use std::collections::BTreeMap;
@@ -345,31 +342,24 @@ pub fn is_vault_cleanup_receipt(record: &ReceiptRecord) -> bool {
 /// fields, so the per-entity fact is still auditable without a per-entity
 /// receipt.
 ///
-/// Bounded like its siblings: digest keys are UUIDv7-ordered, so walking them
-/// newest-first under [`MAX_RECEIPT_QUERY_SCAN`] spends the work bound on the
-/// decisions a reader asked for.
+/// Digest keys are UUIDv7-ordered, so the walk reads them newest-first, the
+/// whole ledger with no count cutting it short (FIX 3582); past its threshold
+/// row it raises one check and reads on (rule 5).
 ///
 /// # Errors
 ///
 /// Storage errors; [`Error::CorruptedIndex`] on an unreadable row.
 pub(crate) fn cleanup_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"vault_cleanup",
+    )?;
     let mut out = Vec::new();
-    // One row PAST the cap is reached and never decoded: it is what separates
-    // a ledger holding exactly the cap from one the cap truncated.
-    for (scanned, row) in DIGEST
-        .iter_rev_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN + 1)
-        .enumerate()
-    {
-        if scanned == MAX_RECEIPT_QUERY_SCAN {
-            tracing::warn!(
-                scan_cap = MAX_RECEIPT_QUERY_SCAN,
-                "vault cleanup digest scan hit the receipt-family work cap; older runs were not \
-                 projected"
-            );
-            break;
-        }
+    for row in DIGEST.iter_rev_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let (id, raw) = row?;
         let record = cleanup_digest_receipt(&decode_digest(id, &raw)?);
         if !query.matches(&record) {
@@ -381,6 +371,7 @@ pub(crate) fn cleanup_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Ve
             retain_newest_receipt(&mut out, record, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
 }
 

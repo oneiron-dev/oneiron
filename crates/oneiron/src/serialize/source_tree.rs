@@ -212,8 +212,8 @@ impl ExportFileTree {
 
     /// Every member's proof: sorted credential-free paths, each clean
     /// member's exact bytes (a file member's read from `files`) scanned again
-    /// and matching its SHA-256, the package byte bounds, and the tree hash
-    /// exactly when no member is redacted.
+    /// and matching its SHA-256, and the tree hash exactly when no member is
+    /// redacted. No byte count refuses a member or a tree (FIX 8202).
     pub(crate) fn validate_in(&self, files: &dyn ArchiveFiles) -> Result<()> {
         self.members_in(files).map(drop)
     }
@@ -248,7 +248,6 @@ impl ExportFileTree {
     /// Each member's path and exact bytes, its proof checked; a redacted
     /// member holds none.
     fn members_in<'t>(&'t self, files: &dyn ArchiveFiles) -> Result<Vec<(&'t str, Cow<'t, [u8]>)>> {
-        let mut total = 0usize;
         let mut prior: Option<&str> = None;
         let mut complete = true;
         let mut members = Vec::new();
@@ -263,13 +262,6 @@ impl ExportFileTree {
             let content = match (&file.content, &file.sha256) {
                 (ExportSourceContent::Text(text), Some(_)) => Cow::Borrowed(text.as_bytes()),
                 (ExportSourceContent::File(body), Some(_)) => {
-                    // Bounded before a byte of it is read.
-                    let len = usize::try_from(body.bytes()).unwrap_or(usize::MAX);
-                    if len > crate::skill_hub::MAX_HUB_FILE_BYTES
-                        || total.saturating_add(len) > crate::skill_hub::MAX_HUB_PACKAGE_TOTAL_BYTES
-                    {
-                        return Err(invalid("source files exceed package bounds"));
-                    }
                     // UTF-8 bytes carried as a file read as any file member:
                     // the proofs below are over the bytes, not their carrier.
                     Cow::Owned(body.read(files)?)
@@ -284,14 +276,6 @@ impl ExportFileTree {
                 && (!source_file_is_safe(&file.path, &content) || source_digest(&content) != *hash)
             {
                 return Err(invalid("source file proof is invalid"));
-            }
-            total = total
-                .checked_add(content.len())
-                .ok_or_else(|| invalid("source size overflow"))?;
-            if content.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
-                || total > crate::skill_hub::MAX_HUB_PACKAGE_TOTAL_BYTES
-            {
-                return Err(invalid("source files exceed package bounds"));
             }
             members.push((file.path.as_str(), content));
         }

@@ -42,6 +42,8 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+// FIX 3676: vault.export written into the caller's sink.
+mod export_to;
 // OF-237: a served client over a server this process runs.
 mod in_process;
 mod invocation;

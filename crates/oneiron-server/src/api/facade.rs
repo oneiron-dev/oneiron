@@ -83,6 +83,7 @@ mod dispatch;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;
+pub(super) mod export_transfer;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_burst_doors;
@@ -194,6 +195,7 @@ pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
+pub(crate) use export_transfer::ExportTransfers;
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{

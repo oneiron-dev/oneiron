@@ -682,7 +682,7 @@ export_facade! {
     let output = client.vault_retrieval_policy_update(&input)?;
     crate::codec::lift_record("vault.retrieval.policy.update", &output)
 };
-"vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
+"vault.export" => fn vault_export(&self, format: Option<String>) -> ExportAnswer = |client| {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };

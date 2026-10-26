@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1160 facade rows, 4163 declarations.
+Census: 1160 facade rows, 4166 declarations.
 Inputs: 1095 of 1160 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1043 of 1160 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
@@ -3422,13 +3422,21 @@ class RetrievalPolicyUpdateReceipt(TypedDict):
     reason: NotRequired[str | None]
     candidate: RetrievalPolicyCandidate
     view: RetrievalPolicyView
+ExportDelivery = Literal["inline", "transfer"]
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
+    delivery: NotRequired[ExportDelivery | None]
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+class ExportTransfer(TypedDict):
+    transfer_ref: str
+    format: str
+    bytes: int
+    digest: str
+ExportAnswer = MemoryExport | ExportTransfer
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):

@@ -1054,7 +1054,7 @@ class Oneiron:
         def resolve_proposal(self, spec: Facade.ClusterResolveRequest) -> Facade.ClusterTopologyReceipt:
             """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
-        def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
+        def __call__(self, format: PackFormat | None = None) -> Facade.ExportAnswer: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
             """Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."""
     class _VaultScopeVerbs:
