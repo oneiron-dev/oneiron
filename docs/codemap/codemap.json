@@ -35993,7 +35993,7 @@
      "path": "src/hnsw/one_way.rs",
      "purpose": "Orphan-protection one-way exception index",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -55499,7 +55499,22 @@
      "purpose": "Local-service and HTTPS crossencoder adapters, with a nonblocking prepared pipeline rung",
      "surface": {
       "fn": 5,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CrossEncoderWork"
+     ],
+     "path": "src/rerank/crossencoder/batches.rs",
+     "purpose": "An admitted block of any size, scored in batches of [`BATCH_SIZE`] taken one after another in candidate…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -78805,7 +78820,7 @@
      "purpose": "Queued repository mutations, recovery snapshots and reviewed proposals"
     },
     "rerank": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -79262,7 +79277,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5239,
+   "source_files": 5240,
    "test_files": 902
   },
   "oneiron-android": {
@@ -93091,7 +93106,7 @@
      "surface": {
       "const": 3,
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 2
      }
     },
