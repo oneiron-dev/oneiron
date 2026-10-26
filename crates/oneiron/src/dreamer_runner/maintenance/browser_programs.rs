@@ -50,9 +50,11 @@ pub struct CoachBrowserProgramsReport {
     pub evidence: usize,
     /// Failed programs read, live or retired.
     pub failed_programs: usize,
+    /// Candidates induced.
     pub candidates: usize,
-    /// Findings filed, the diagnostics among them.
+    /// Findings filed.
     pub findings: usize,
+    /// Diagnostic findings among them.
     pub diagnostics: usize,
     /// Candidates an earlier pass proposed.
     pub already_seen: usize,
@@ -70,7 +72,9 @@ pub struct CoachBrowserProgramsReport {
 /// A failed program the pass could not propose a repair for, and why.
 #[derive(Debug, Clone)]
 pub struct CoachBrowserRepairPending {
+    /// The failed program.
     pub program: EntityId,
+    /// Why no repair was proposed.
     pub reason: &'static str,
 }
 
