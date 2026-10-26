@@ -48,7 +48,9 @@ const ALARM_PREFIX: &[u8] = b"authority:handoff-alarm:v1:";
 /// The saved fork alarm for one key a held handoff retired: the refused row
 /// that raised it and the handoffs the key signed. It stays until the vault's
 /// owner acknowledges it; a refused row the owner has not seen raises it again.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityHandoffAlarm {
     /// The retired key, `suite:hex`.
@@ -64,7 +66,9 @@ pub struct AuthorityHandoffAlarm {
 }
 
 /// Who acknowledged an alarm, and when.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct AuthorityHandoffAlarmAck {
     pub by: String,

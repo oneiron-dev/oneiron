@@ -227,7 +227,11 @@ pub(crate) async fn execute_mcp_generated_verb(
     // The granted budget is ENFORCED here, not merely reported.
     mcp_cap_verb_rows(&mut output, &mut page, snapshot.source);
     // A continuation that goes back inside the call's own argument (FIX 9175).
-    if let Some(resume) = snapshot.source.resume.filter(|resume| resume.within.is_some()) {
+    if let Some(resume) = snapshot
+        .source
+        .resume
+        .filter(|resume| resume.within.is_some())
+    {
         let arguments = serde_json::to_value(&args.payload.arguments).unwrap_or_default();
         page.resume_within(resume, arguments.get(resume.argument));
     }
