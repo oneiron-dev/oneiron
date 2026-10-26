@@ -8827,6 +8827,40 @@ async fn vault_authority_history_import(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_authority_clock_repair(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.authority.clock.repair")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.authority.clock.repair", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.authority.clock.repair", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_authority_clock_repair(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_wire_health_thresholds_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -37160,6 +37194,7 @@ pub(crate) async fn call_verb(
         "vault.authority.history.import" => {
             vault_authority_history_import(server, call, input).await
         }
+        "vault.authority.clock.repair" => vault_authority_clock_repair(server, call, input).await,
         "vault.wire_health.thresholds.get" => {
             vault_wire_health_thresholds_get(server, call, input).await
         }
