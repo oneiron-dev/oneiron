@@ -167,7 +167,8 @@ fn derived_from(
         .collect()
 }
 
-/// Source `id`'s markedness and identity; `None` for a source that is gone.
+/// Source `id`'s markedness and identity; `None` for a source that is gone
+/// and no marked blob's snapshot record.
 fn source_identity(
     vault: &Vault,
     view: &impl ManifestDbs,
@@ -177,7 +178,14 @@ fn source_identity(
     visited: &mut BTreeSet<EntityId>,
 ) -> Result<Option<(bool, [u8; 32])>> {
     let Some(row) = view.port_entity_record(txn, id)? else {
-        return Ok(None);
+        // A marked blob's snapshot record stays marked by its id alone, held
+        // or erased: a text written from it never reads as unmarked.
+        return Ok(marks.source_of(id).map(|source| {
+            let mut hasher = blake3::Hasher::new_derive_key(REPO_DERIVED_SOURCE_CONTEXT);
+            hasher.update(id.as_bytes());
+            hasher.update(&source);
+            (true, *hasher.finalize().as_bytes())
+        }));
     };
     let mut hasher = blake3::Hasher::new_derive_key(REPO_DERIVED_SOURCE_CONTEXT);
     hasher.update(id.as_bytes());
