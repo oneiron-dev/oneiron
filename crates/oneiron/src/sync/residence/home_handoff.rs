@@ -16,6 +16,10 @@
 //! free-time pass ([`prepare_home_handoff`]) and arms the free-time tries
 //! this node admits, the old home's drain among them
 //! ([`free_time_arming`]).
+//!
+//! FIX 6574: a status names a handoff its source cancelled here as fenced,
+//! for good, so a source that missed its own cancel takes its state back
+//! rather than deliver it again.
 
 use std::collections::HashSet;
 
@@ -35,6 +39,8 @@ pub enum HomeHandoffStanding {
     Staged { parts: u32 },
     /// Adopted here: the ack this node signed, as named MessagePack.
     Adopted { ack: Vec<u8> },
+    /// FIX 6574: its source cancelled it here; it never lands here.
+    Fenced,
 }
 
 /// The free-time tries the host timer arms on this node (FIX 5661 C2b, FIX
@@ -45,9 +51,11 @@ pub struct FreeTimeArming {
     /// Every free-time try this node's admission takes now; one that never
     /// started only while this node takes new free-time work.
     pub tries: HashSet<AttemptId>,
-    /// The started ones this node drains as the home its election left,
-    /// armed without the home gate so each runs to its own end here before
-    /// the node freezes its state for the move.
+    /// The ones this node drains as the home its election left, armed
+    /// without the home gate so each runs to its own end here: the started
+    /// ones, before the node freezes its state for the move, and, on a node
+    /// whose state is only the local opening of a move that carried nothing
+    /// (FIX 6575), which no move exports, every bound one, started or not.
     pub drain: HashSet<AttemptId>,
 }
 
@@ -99,6 +107,9 @@ pub fn home_handoff_status(
         return Ok(HomeHandoffStanding::Adopted {
             ack: saved_ack(&ack, &digest)?,
         });
+    }
+    if home_handoff::fenced_here(vault, &id)? {
+        return Ok(HomeHandoffStanding::Fenced);
     }
     Ok(HomeHandoffStanding::Staged {
         parts: home_handoff::staged_position(vault, &id)?,
@@ -219,9 +230,10 @@ pub fn prepare_home_handoff(vault: &Vault) -> Result<()> {
 }
 
 /// FIX 5661 C2b (FIX 6212): the free-time tries the host timer arms on this
-/// node ([`FreeTimeArming`]): every one its admission takes now, and the
-/// started ones it drains as the home its election left, which run here to
-/// their own end before it freezes its state for the move.
+/// node ([`FreeTimeArming`]): every one its admission takes now, and the ones
+/// it drains as the home its election left, which run here to their own end:
+/// the started ones before it freezes its state for the move, and every bound
+/// one where its state is only a local opening no move exports (FIX 6575).
 ///
 /// # Errors
 ///

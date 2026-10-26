@@ -114,7 +114,8 @@ impl SyncConnection {
     /// The loop [`Self::run`] and [`Self::run_observed`] drive, with the
     /// owner's residence directives naming this machine run beside it, across
     /// its reconnects, each time the residence upkeep wakes them (OF-534),
-    /// and the home handoff's delivery worker beside both (FIX 5661 C2a).
+    /// and the home handoff's delivery worker beside both (FIX 5661 C2a), and
+    /// the mode that follows the committed home (FIX 8869).
     async fn drive(
         &self,
         client: SyncClient,
@@ -122,10 +123,12 @@ impl SyncConnection {
     ) -> crate::error::Result<()> {
         let directives = self.run_residence_directives(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
+        let residence_mode = self.run_residence_mode(client.event_tx.clone());
         tokio::select! {
             result = self.drive_loop(client, shutdown_rx) => result,
             never = directives => match never {},
             never = home_handoff => match never {},
+            never = residence_mode => match never {},
         }
     }
 
@@ -165,6 +168,7 @@ impl SyncConnection {
         let mut backoff_ms = self.config.client_config.reconnect_initial_ms;
         let mut promotion_rx = self.manager.subscribe_promotions();
         let mut left_rx = self.left.subscribe();
+        let mut mode_rx = self.mode.subscribe();
         self.running.send_replace(true);
 
         loop {
@@ -174,7 +178,7 @@ impl SyncConnection {
                 break;
             }
             // A residence-mode switch takes effect at this connect's hello.
-            client.config.residence_mode = *self.mode.borrow();
+            client.config.residence_mode = *mode_rx.borrow_and_update();
             // Attempt connection
             let _ = event_tx.send(SyncEvent::StatusChanged(SyncStatus::Connecting));
 
@@ -187,6 +191,7 @@ impl SyncConnection {
                     break;
                 }
             };
+            let mut renegotiate = false;
             match connected {
                 Ok(ws_stream) => {
                     // Reset backoff on successful connect
@@ -218,6 +223,12 @@ impl SyncConnection {
                             let _ =
                                 event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
                         }
+                        // FIX 8869: a mode change is no outage.
+                        LoopExit::Renegotiate => {
+                            let _ =
+                                event_tx.send(SyncEvent::StatusChanged(SyncStatus::Disconnected));
+                            renegotiate = super::residence_mode::RENEGOTIATE_AT_ONCE;
+                        }
                     }
                 }
                 Err(e) => {
@@ -226,19 +237,24 @@ impl SyncConnection {
                 }
             }
 
-            if !self.config.auto_reconnect {
+            if !renegotiate && !self.config.auto_reconnect {
                 break;
             }
 
             // Check for queue overflow → re-bootstrap
             self.handle_queue_overflow_check(&mut client, &event_tx, self.queue.is_full());
+            if renegotiate {
+                continue;
+            }
 
-            // Wait with backoff before reconnecting
+            // Wait with backoff before reconnecting; a mode change while it
+            // waits reconnects at once with the new hello (FIX 8869).
             let delay = Duration::from_millis(backoff_ms as u64);
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {
                     backoff_ms = next_backoff(backoff_ms, self.config.client_config.reconnect_backoff_max_ms);
                 }
+                Ok(()) = mode_rx.changed(), if super::residence_mode::RENEGOTIATE_AT_ONCE => {}
                 _ = &mut shutdown_rx => {
                     break;
                 }

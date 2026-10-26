@@ -1,7 +1,7 @@
 //! FIX 5661 C2a: what delivery asks of the carrier, additive beside C1. The
 //! source's connection worker reads its plan here ([`delivery_plan`]): freeze
 //! for the move its election recorded, deliver what it froze to the route
-//! captured with the move ([`capture_route`]), or first resolve where its
+//! captured with the move ([`super::routes`]), or first resolve where its
 //! target stands. The target's engine doors stage the parts here and adopt
 //! through C1's [`super::adopt`].
 //!
@@ -13,12 +13,17 @@
 //! same way: adopted at B, B drains its own state; provably not, A supersedes
 //! from its frozen state in one writer ([`supersede_export`]). An absent ack
 //! or a timeout is never read as "not adopted".
+//!
+//! FIX 6574: a target's status names a handoff fenced there for good. A
+//! source that delivers one (it missed its own cancel, then the home moved
+//! to that target again) takes its state back and records a fresh move to
+//! the home its election names, that same target included
+//! ([`replan_fenced`]); the new export takes a fresh id.
 
 use heed::{RoTxn, RwTxn};
 
-use super::store::{
-    self, HandoffHead, HandoffRole, HandoffRoute, HeadFloor, MoveRequest, StagedHandoff,
-};
+use super::routes;
+use super::store::{self, HandoffHead, HandoffRole, HeadFloor, MoveRequest, StagedHandoff};
 use super::table::check_registry;
 use super::transfer::{ack_in_txn, freeze_in_txn};
 use super::{
@@ -261,42 +266,6 @@ fn election_basis(
     *hasher.finalize().as_bytes()
 }
 
-/// Captures the route of the move this node's election last recorded, at
-/// the move: `endpoint_of` names the target node's endpoint as the host's
-/// topology names it now, or `None` when it names none (recorded so, never
-/// invented). A move to this node, one already captured and no move write
-/// nothing.
-pub(crate) fn capture_route(
-    vault: &Vault,
-    endpoint_of: impl FnOnce(u64) -> Option<String>,
-) -> Result<()> {
-    let wanted = {
-        let txn = vault.store.env.read_txn()?;
-        let head = store::head_in_txn(vault, &txn)?;
-        let node = crate::identity::read_client_id_in_txn(vault, &txn)?;
-        match head.request.and_then(|request| request.to) {
-            Some(to) if head.route.is_none() && Some(to) != node => Some((head.request, to)),
-            _ => None,
-        }
-    };
-    let Some((request, to)) = wanted else {
-        return Ok(());
-    };
-    let route = HandoffRoute {
-        to,
-        endpoint: endpoint_of(to),
-    };
-    vault.with_write_txn(|txn| {
-        let mut head = store::head_in_txn(vault, txn)?;
-        // Another election moved the home meanwhile; its own capture follows.
-        if head.request != request || head.route.is_some() {
-            return Ok(());
-        }
-        head.route = Some(route);
-        store::put_head_in_txn(vault, txn, &head)
-    })
-}
-
 /// Part `index` of the sealed bytes of handoff `id` this node froze.
 pub(crate) fn frozen_part(vault: &Vault, id: &HandoffId, index: u32) -> Result<Vec<u8>> {
     let txn = vault.store.env.read_txn()?;
@@ -367,6 +336,41 @@ fn cancel_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, id: &HandoffId) -> Result<(
     store::put_head_in_txn(vault, txn, &head)
 }
 
+/// FIX 6574: handoff `id`, which this node froze, is fenced at its target
+/// for good (its status said so). In one writer this node cancels it, as
+/// [`cancel_frozen`] does, after the same check that the floor still names
+/// it frozen, and records a fresh move from this node to the home its
+/// election names now, that same target included, so the next round freezes
+/// a new export for it. The move's route comes from the routes the host fed,
+/// else the one the fenced handoff kept for that node. A node its election
+/// names home records no move; the consumers wake.
+pub(crate) fn replan_fenced(vault: &Vault, id: &HandoffId) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        let kept = store::transfer_in_txn(vault, txn, id)?.and_then(|transfer| transfer.route);
+        cancel_in_txn(vault, txn, id)?;
+        let node = crate::identity::read_client_id_in_txn(vault, txn)?;
+        let home = DreamerRunnerStore::new(vault)
+            .home_node_designation_in_txn(txn)?
+            .map(|home| home.node_id);
+        let (Some(node), Some(home)) = (node, home) else {
+            return Ok(());
+        };
+        let fresh = MoveRequest {
+            from: Some(node),
+            to: Some(home),
+        };
+        let mut head = store::head_in_txn(vault, txn)?;
+        if home == node || head.request == Some(fresh) {
+            return Ok(());
+        }
+        head.request = Some(fresh);
+        head.route = routes::route_for(&head, home).or(kept.filter(|route| route.to == home));
+        store::put_head_in_txn(vault, txn, &head)
+    })?;
+    vault.store.notify_proactivity_changes();
+    Ok(())
+}
+
 /// Why a supersession's writer dropped.
 enum Unfrozen {
     NotQuiescent,
@@ -431,6 +435,14 @@ pub(crate) fn staged_position(vault: &Vault, id: &HandoffId) -> Result<u32> {
     let txn = vault.store.env.read_txn()?;
     not_source_in_txn(vault, &txn, id)?;
     store::staged_position_in_txn(vault, &txn, id)
+}
+
+/// FIX 6574: whether handoff `id`'s source cancelled it here, so it never
+/// lands here.
+pub(crate) fn fenced_here(vault: &Vault, id: &HandoffId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    not_source_in_txn(vault, &txn, id)?;
+    Ok(store::head_in_txn(vault, &txn)?.fenced(id))
 }
 
 /// Stages part `index` of handoff `id` here as its target; returns the

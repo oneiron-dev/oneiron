@@ -45,6 +45,7 @@ mod artifacts;
 mod base;
 mod connect;
 mod documents;
+mod endpoint;
 mod federated;
 mod federation_replay;
 mod inbound;

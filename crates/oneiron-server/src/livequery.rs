@@ -238,6 +238,55 @@ impl RpcReply {
         })
     }
 
+    /// [`Self::answer`] for a call no bound credential carries: a home
+    /// handoff call on a socket that bound no actor (FIX 6458). Its receipt
+    /// is the connection's, as a ping's is, with the call's outcome and
+    /// digests.
+    fn answer_unbound(
+        server: &crate::server::SyncServer,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> Result<Self, ProtocolError> {
+        let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
+        let packed = result.and_then(|(value, rows)| {
+            wire::packed(&value)
+                .map(|bytes| (bytes, rows))
+                .map_err(|_| too_large())
+        });
+        let (outcome, result_digest) = match &packed {
+            Ok((bytes, _)) => (
+                oneiron::receipt::CallOutcome::Ok,
+                oneiron::receipt::call_bytes_digest(bytes),
+            ),
+            Err(error) => (
+                oneiron::receipt::CallOutcome::Refused {
+                    code: error.code().to_owned(),
+                },
+                oneiron::receipt::call_refusal_digest(error.code(), error.message()),
+            ),
+        };
+        let stamp = call_receipt::record_socket_reply(
+            server,
+            call.method,
+            outcome,
+            call.request_digest,
+            Some(result_digest),
+        );
+        let (frames, rows) = match packed {
+            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
+                Ok(frames) => (frames, Some(rows)),
+                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+            },
+            Err(error) => (rpc_error(request_id, error, &stamp)?, None),
+        };
+        Ok(Self {
+            request_id,
+            frames,
+            rows,
+        })
+    }
+
     /// The frames as `conn`'s send door takes them: each chunk of a result
     /// carries the rows the release judges again (DEC-0005).
     pub(crate) fn queued(self, conn: u32) -> Vec<Vec<u8>> {
@@ -311,6 +360,26 @@ pub(crate) fn residence_rpc(
     index_cache: &mut Option<ResidenceIndexCache>,
 ) -> Result<RpcReply, ProtocolError> {
     residence::run(server, auth, peer, request, index_cache)
+}
+
+/// FIX 6458: whether `method` is one of the home handoff's own calls, the
+/// only ones a socket that bound no actor makes.
+pub(crate) fn machine_handoff_method(method: &str) -> bool {
+    residence::machine_method(method)
+}
+
+/// FIX 6458: one home handoff call on a socket that bound no actor. Its
+/// owner-grade upgrade's machine, `peer`, judged again now, is the caller;
+/// the reply carries its rows to the send door, and its receipt is the
+/// connection's ([`RpcReply::answer_unbound`]).
+pub(crate) fn machine_handoff_rpc(
+    server: &crate::server::SyncServer,
+    peer: oneiron::authority::PeerMachine,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
+    let call = RpcCall::of(&request);
+    let result = residence::run_machine(server, peer, &request.method, request.params);
+    RpcReply::answer_unbound(server, call, request.request_id, result)
 }
 
 #[cfg(test)]

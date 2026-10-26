@@ -10,8 +10,8 @@ pub enum SyncResidenceMode {
     All,
 }
 
-/// Client-side sync configuration.
-#[derive(Debug, Clone)]
+/// Client-side sync configuration. Its `Debug` never prints `auth_token`.
+#[derive(Clone)]
 pub struct SyncClientConfig {
     /// Non-home devices default to opened items; full replication is opt-in.
     pub residence_mode: SyncResidenceMode,
@@ -85,6 +85,33 @@ impl Default for SyncClientConfig {
             mesh_dialer: None,
             authority_checkpoint_pin: None,
         }
+    }
+}
+
+/// FIX 8866: the legacy bearer token prints as `[redacted]`, as the transport
+/// and NOTE credentials beside it print; every other field prints as it is.
+impl std::fmt::Debug for SyncClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SyncClientConfig")
+            .field("residence_mode", &self.residence_mode)
+            .field("residence_selector", &self.residence_selector)
+            .field("federation_peer", &self.federation_peer)
+            .field("federation_admission_role", &self.federation_admission_role)
+            .field("server_url", &self.server_url)
+            .field("auth_token", &"[redacted]")
+            .field("transport_credential", &self.transport_credential)
+            .field("note_session", &self.note_session)
+            .field("followed_worlds", &self.followed_worlds)
+            .field("home_node_topology", &self.home_node_topology)
+            .field("residence_home_route", &self.residence_home_route)
+            .field("default_window_count", &self.default_window_count)
+            .field("sync_debounce_ms", &self.sync_debounce_ms)
+            .field("reconnect_backoff_max_ms", &self.reconnect_backoff_max_ms)
+            .field("reconnect_initial_ms", &self.reconnect_initial_ms)
+            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
+            .field("mesh_dialer", &self.mesh_dialer)
+            .field("authority_checkpoint_pin", &self.authority_checkpoint_pin)
+            .finish()
     }
 }
 

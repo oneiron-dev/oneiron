@@ -19,6 +19,7 @@ use oneiron_crypto::{
     Argon2Cost, Envelope, Header, HybridPublicKey, MAX_PLAINTEXT_LEN, OpenKey, OpenPolicy, Purpose,
     SealKey, SealParams, SuiteId, WrapType, seal,
 };
+use rand_core::{OsRng, RngCore};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -54,6 +55,9 @@ pub(super) struct HandoffHeader {
     pub(super) movement: HomeMove,
     /// The digest of the encoded sections.
     pub(super) sections: [u8; 32],
+    /// FIX 6574: random per export, so a new export never takes the id of
+    /// one its target fenced, even for the same move, evidence and rows.
+    pub(super) incarnation: [u8; 16],
 }
 
 /// A header as its source signed it: the exact bytes and the signature. A
@@ -182,7 +186,9 @@ impl VerifiedHomeAck {
 
 /// Signs `movement` over `sections` with the source's install key and seals
 /// the manifest to `target`'s key. Returns the sealed handoff and its signed
-/// header, which a later move carries as its lineage.
+/// header, which a later move carries as its lineage. Each call signs a
+/// fresh incarnation, so each export has its own id; a frozen export asked
+/// for again is read back from its parts, never sealed again.
 pub(super) fn seal_handoff(
     movement: &HomeMove,
     key: &SigningKey,
@@ -191,9 +197,14 @@ pub(super) fn seal_handoff(
     sections: &[TableSection],
 ) -> Result<(SealedHandoff, SignedHeader)> {
     let sections = encode(sections)?;
+    let mut incarnation = [0u8; 16];
+    OsRng
+        .try_fill_bytes(&mut incarnation)
+        .map_err(|_| refused("os randomness unavailable"))?;
     let header = HandoffHeader {
         movement: *movement,
         sections: *blake3::hash(&transcript(SECTIONS_DOMAIN, &sections)).as_bytes(),
+        incarnation,
     };
     let signed = SignedHeader::sign(&header, key)?;
     let id = signed.id();

@@ -37,6 +37,7 @@ mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod residence_mode;
 mod session;
 mod steady;
 mod topology;
@@ -663,6 +664,9 @@ enum LoopExit {
     Shutdown,
     /// WebSocket disconnected (with error description).
     Disconnected(String),
+    /// The residence mode changed (FIX 8869): what was buffered is queued,
+    /// and the next connect sends the new mode's hello.
+    Renegotiate,
 }
 
 #[cfg(test)]
