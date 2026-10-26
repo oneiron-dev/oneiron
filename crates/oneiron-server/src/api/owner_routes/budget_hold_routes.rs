@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -16,8 +16,9 @@ use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldState, PartialResultHol
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::api::run_tree::parse_attempt_id_param;
-use crate::api::{json_payload, query_params};
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -115,12 +116,12 @@ async fn hold(
 async fn resume(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HeldRun>, JsonRejection>,
+    payload: OwnerJsonBody<HeldRun>,
 ) -> OwnerReply<HeldRunView> {
     // The owner's proof rides into the resume's own transaction and is
     // revalidated there; the resume records the person it names (FIX 8197).
     let proof = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let root = parse_attempt_id_param(&request.run, "run")?;
     let view = blocking(move || -> OwnerResult<HeldRunView> {
         let dispatcher = AgentDispatcher::new(server.vault());

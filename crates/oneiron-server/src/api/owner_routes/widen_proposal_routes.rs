@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -19,7 +19,8 @@ use oneiron::agent_dispatch::widen_doors::{
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
@@ -63,10 +64,10 @@ async fn list(
 async fn approve(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WidenProposalAnswer>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let answer = json_payload(payload)?;
+    let answer = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -89,10 +90,10 @@ async fn approve(
 async fn decline(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WidenProposalAnswer>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let answer = json_payload(payload)?;
+    let answer = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(

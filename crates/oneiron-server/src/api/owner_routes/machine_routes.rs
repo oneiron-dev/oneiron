@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -26,7 +26,8 @@ use oneiron::authority::{
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -209,11 +210,11 @@ async fn set_answer(
     headers: HeaderMap,
     extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<SetAnswer>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;
         let seen = request
@@ -243,11 +244,11 @@ async fn remove(
     headers: HeaderMap,
     extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RemoveMachine>, JsonRejection>,
+    payload: OwnerJsonBody<RemoveMachine>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;
         let seen = request

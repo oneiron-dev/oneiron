@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
@@ -34,7 +34,8 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner, owner_error};
-use crate::api::{has_json_content_type, json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::{has_json_content_type, query_params};
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id, secrets};
@@ -136,11 +137,11 @@ async fn rewrap_secret(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     headers: HeaderMap,
-    payload: Result<Json<RewrapBody>, JsonRejection>,
+    payload: OwnerJsonBody<RewrapBody>,
 ) -> OwnerReply<secrets::CustodyReply> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || {
         let plan = secrets::custody_plan(request.holder, request.recipients)?;
         secrets::rewrap(server.vault(), &owner, surface, &request.name, &plan)
@@ -245,10 +246,20 @@ struct PermitBody {
     encryption_key_digest: String,
 }
 
-/// A register or rotate whose protected input the surface sealed itself.
+/// A register or rotate whose protected input the surface sealed itself:
+/// every member but `input_base64`, which `sealed_spool` decodes into a
+/// file of its own as it reads the body. That member is the input sealed to
+/// the holder's key, as standard base64: one envelope, or the frame of
+/// numbered envelopes, two or more, which a body past one envelope's
+/// plaintext bound needs (FIX 5521): its label, the envelope count as a
+/// big-endian `u32`, each envelope's length as a big-endian `u32` and its
+/// bytes in order, then the closing mark. Each numbered envelope seals the
+/// input label and the next run of the body under the one-envelope key id,
+/// then its index and the count, each a big-endian `u32`
+/// (`secret_custody::control::input::envelopes`).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SealedBody {
+struct SealedHead {
     /// `register` or `rotate`.
     change: String,
     secret_id: String,
@@ -257,15 +268,6 @@ struct SealedBody {
     seen: String,
     holder: String,
     recipients: Vec<PermitBody>,
-    /// The input sealed to the holder's key, as standard base64: one
-    /// envelope, or the frame of numbered envelopes, two or more, which a
-    /// body past one envelope's plaintext bound needs (FIX 5521): its label,
-    /// the envelope count as a big-endian `u32`, each envelope's length as a
-    /// big-endian `u32` and its bytes in order, then the closing mark. Each
-    /// numbered envelope seals the input label and the next run of the body
-    /// under the one-envelope key id, then its index and the count, each a
-    /// big-endian `u32` (`secret_custody::control::input::envelopes`).
-    input_base64: String,
     /// For a register, the `manifest_ref` its sealed record names: this
     /// install attaches the manifest it resolves for it. Absent, it attaches
     /// the vault's one current approved manifest, or records that the
@@ -278,8 +280,11 @@ struct SealedBody {
 /// protected input the surface sealed to the holder under the binding `GET
 /// /secrets/custody` gave it. This install sees only ciphertext. The body is
 /// read after the owner door, spooled whole under the disk floor, whose
-/// `disk_capacity` is the only refusal its size meets (FIX 5674); the floor
-/// keeps the room the engine stores the input in until the change returns.
+/// `disk_capacity` is the only refusal its size meets (FIX 5674), and its
+/// input decoded into a file of its own (FIX 7917); the floor keeps the room
+/// the engine stores the input in until the change returns. The custody
+/// door takes the input as one slice, so it is read from that file once,
+/// here (FIX-LIST: L04's reader path through persistence and execution).
 async fn sealed_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -291,11 +296,9 @@ async fn sealed_change(
         return Err(ApiError::bad_request("invalid JSON request body", None).into());
     }
     let surface = act_surface(&server, &auth, &headers);
-    let mut spooled = sealed_spool::spool(&server, &headers, body).await?;
+    let sealed = sealed_spool::read::<SealedHead>(&server, &headers, body).await?;
     let reply = blocking(move || -> OwnerResult<secrets::CustodyReply> {
-        let request: SealedBody = spooled
-            .json()
-            .ok_or_else(|| OwnerError::Invalid("invalid JSON request body".into()))?;
+        let request = &sealed.head;
         let change = CustodyChange::from_name(&request.change)
             .filter(|change| matches!(change, CustodyChange::Register | CustodyChange::Rotate))
             .ok_or_else(|| OwnerError::Invalid("change must be register or rotate".into()))?;
@@ -313,9 +316,11 @@ async fn sealed_change(
                 })
             })
             .collect::<OwnerResult<Vec<_>>>()?;
-        let input = base64::engine::general_purpose::STANDARD
-            .decode(&request.input_base64)
-            .map_err(|_| OwnerError::Invalid("input_base64 must be standard base64".into()))?;
+        let input = sealed
+            .input
+            .ok_or_else(|| OwnerError::Invalid("input_base64 must be standard base64".into()))?
+            .read_all()
+            .map_err(|error| OwnerError::Host(error.into()))?;
         let vault = server.vault();
         let custody = vault.seal_custody_change_as_owner(
             &owner,
@@ -332,7 +337,6 @@ async fn sealed_change(
             },
             vault.now_recorded_at(),
         )?;
-        drop(spooled);
         Ok(custody.into())
     })
     .await?;

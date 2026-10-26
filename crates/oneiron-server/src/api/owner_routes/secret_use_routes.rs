@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::post;
@@ -16,7 +15,7 @@ use oneiron::secret_custody::{CustodyTier, RevealTarget, SecretBindRequest, Secr
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::secrets::CustodyReply;
 use crate::owner::{OwnerError, OwnerResult};
@@ -95,11 +94,11 @@ async fn bind(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindBody>, JsonRejection>,
+    payload: OwnerJsonBody<BindBody>,
 ) -> OwnerReply<BoundView> {
     let owner = owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let bound = blocking(move || -> OwnerResult<BoundView> {
         let target = match (body.handle, body.name) {
             (Some(handle), None) => RevealTarget::Handle(handle),
