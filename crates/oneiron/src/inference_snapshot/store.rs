@@ -323,7 +323,7 @@ impl Vault {
                     return Ok(None);
                 }
             };
-            match store.read_inference_snapshot_key(&id.0) {
+            match store.read_inference_snapshot_key(&wtxn, &id.0) {
                 Ok(Some(wrapped)) => (record, wrapped),
                 Ok(None) => return Ok(None),
                 Err(_) => {
@@ -411,9 +411,9 @@ impl Vault {
     }
 
     /// Carries out every staged snapshot retirement, an interrupted
-    /// process's included: a row whose key no longer reads is retired
-    /// first, so the custody finisher never retires the key of a row that
-    /// stands; then the keys retire, and the body files no row names are
+    /// process's included: a row whose key is absent is retired first, so
+    /// the custody finisher never retires the key of a row that stands;
+    /// then the keys retire, and the body files no row names are
     /// unlinked. Startup and housekeeping run it.
     ///
     /// # Errors
@@ -432,14 +432,19 @@ impl Vault {
             !catalog::rows(store, &txn)?.is_empty()
         };
         if kept {
-            // A row whose key does not read (a standing retirement, a key
-            // gone or damaged) is dead: it retires before the finisher runs.
+            // A row whose key is absent (a standing retirement, a key gone)
+            // is dead: it retires before the finisher runs. A key that does
+            // not read keeps its row for the next pass.
             let mut wtxn = store.env.write_txn()?;
             let mut dead = Vec::new();
             for (id, _) in catalog::rows(store, &wtxn)? {
-                match store.read_inference_snapshot_key(&id.0) {
+                match store.read_inference_snapshot_key(&wtxn, &id.0) {
                     Ok(Some(wrapped)) => wrapped.retire(),
-                    Ok(None) | Err(_) => dead.push(id),
+                    Ok(None) => dead.push(id),
+                    Err(error) => tracing::warn!(
+                        kind = ?error.kind(),
+                        "an inference snapshot key did not read; its row is kept"
+                    ),
                 }
             }
             if !dead.is_empty() {

@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use crate::error::{Error, Result, StoreError};
@@ -79,26 +79,24 @@ impl Store {
     /// Snapshot `catalog_id`'s wrapped key, or `None` when no live key stands
     /// for it: no custody, no entry, a standing retirement intent, or a
     /// retired entry. Absent means the caller treats the snapshot as gone
-    /// (cold). A live entry of other bytes is damaged, never absent. The
-    /// caller holds a writer, or took the custody read guard before its
-    /// snapshot; it checks the catalog row first, so an absent row denies
-    /// this read without reaching here.
+    /// (cold). A live entry of other bytes is damaged, never absent. `txn`
+    /// is the caller's: a writer, or a snapshot taken after the custody read
+    /// guard. The caller checks the catalog row first, so an absent row
+    /// denies this read without reaching here.
     ///
     /// # Errors
     /// A damaged entry, and custody and storage faults.
     pub(crate) fn read_inference_snapshot_key(
         &self,
+        txn: &RoTxn<'_>,
         catalog_id: &[u8; 16],
     ) -> Result<Option<WrappedSnapshotKey>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
         };
         let subject = snapshot_subject(custody.binding(), catalog_id)?;
-        {
-            let txn = self.env.read_txn()?;
-            if retirement_in_txn(self, &txn, &subject)?.is_some() {
-                return Ok(None);
-            }
+        if retirement_in_txn(self, txn, &subject)?.is_some() {
+            return Ok(None);
         }
         match custody.state(&subject.at(0))? {
             EntryState::Live => Ok(Some(copy_wrapped(&custody.read(&subject.at(0))?)?)),
@@ -107,14 +105,16 @@ impl Store {
     }
 
     /// Stages retirement of snapshot `catalog_id`'s wrapped key in `wtxn`,
-    /// the writer that deletes its catalog row: one erase intent through the
-    /// newest generation custody holds, so a restored pre-erase image cannot
-    /// open it, and a standing intent denies reads from then on. The custody
-    /// finisher carries it out after commit. No custody, or an archived vault
-    /// whose custody is its replacement's, stages none.
+    /// the writer that deletes its catalog row: one erase intent through
+    /// generation 0, the only one a snapshot key is minted at, so a restored
+    /// pre-erase image cannot open it, and a standing intent denies reads
+    /// from then on. No custody file is read here. The custody finisher
+    /// carries it out after commit; an entry never published retires as a
+    /// marker alone. No custody, or an archived vault whose custody is its
+    /// replacement's, stages none.
     ///
     /// # Errors
-    /// Custody and storage faults.
+    /// Storage faults.
     pub(crate) fn stage_inference_snapshot_retirement_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -126,16 +126,12 @@ impl Store {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(());
         };
-        let subject = snapshot_subject(custody.binding(), catalog_id)?;
-        let Some(through) = custody.newest_generation(&subject)? else {
-            return Ok(());
-        };
         stage_retirement_in_txn(
             self,
             wtxn,
             &RetirementIntent {
-                subject,
-                through,
+                subject: snapshot_subject(custody.binding(), catalog_id)?,
+                through: 0,
                 cause: RetireCause::Erase,
             },
         )
