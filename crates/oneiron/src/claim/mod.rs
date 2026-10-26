@@ -30,8 +30,8 @@
 //!
 //! File map (declarations and re-exports only live here):
 //!
-//! * `core_types` — [`ClaimBody`], [`ClaimSubject`], the pinned key set, the
-//!   codec, and the structural-validation dispatcher. The hub; kept whole.
+//! * `core_types` — [`ClaimBody`], [`ClaimSubject`], the pinned key set and
+//!   the structural-validation dispatcher; its `codec` child holds the codec.
 //! * `status` — the approval / lifecycle / source status axes.
 //! * `decay` — the pure read-side aging-class `access_factor` contract.
 //! * `predicate_grammar` — namespaces, registry, D17 grammar, reserved gate.
