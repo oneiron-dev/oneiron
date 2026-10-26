@@ -10,16 +10,22 @@
 //!
 //! A copy leaving the vault reads each token it carries through the export
 //! rows: the actor's hex while the actor stands, [`ERASED_CALL_IDENTITY`]
-//! once its erase forgot it. Only `word/document.xml` is read, and only a
-//! copy that carries a token is zipped again. A token no row here names
-//! stays as it is: one opaque id in place of another. The stored bytes and
-//! every reader inside the vault keep the token.
+//! once its erase forgot it. Only `word/document.xml` is read, as XML: a
+//! token is read only as the whole value of a tracked revision's `w:author`
+//! (FIX 9993), and only that value's quoted source is rewritten; text,
+//! comments, every other attribute and a token inside a longer value stay
+//! byte for byte. Only a copy that carries a token is zipped again. A token
+//! no row here names stays as it is: one opaque id in place of another. The
+//! stored bytes and every reader inside the vault keep the token.
 //!
 //! [`ERASED_CALL_IDENTITY`]: crate::receipt::ERASED_CALL_IDENTITY
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use heed::RoTxn;
+use oneiron_docedit::ooxml::{XmlError, XmlTree};
+use oneiron_docedit::resource::Resources;
 use oneiron_docedit::retained_opc::Package;
 
 use super::{EXPORTS, OfficeBodyExportRequest, OfficeBodyKind};
@@ -35,6 +41,37 @@ const TOKEN_HEX_LEN: usize = 32;
 
 /// The package part a DOCX keeps its tracked revisions in.
 const DOCUMENT_PART: &str = "word/document.xml";
+
+/// WordprocessingML's main namespace, the one a revision's `w:author` is in.
+const W_MAIN: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+
+/// The WordprocessingML elements whose `w:author` names a tracked
+/// revision's author (ECMA-376 Part 1, 17.13.5): the only attributes a
+/// default author's token is read in.
+const REVISION_ELEMENTS: &[&str] = &[
+    "ins",
+    "del",
+    "moveFrom",
+    "moveTo",
+    "moveFromRangeStart",
+    "moveToRangeStart",
+    "customXmlInsRangeStart",
+    "customXmlDelRangeStart",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveToRangeStart",
+    "rPrChange",
+    "pPrChange",
+    "sectPrChange",
+    "tblPrChange",
+    "tblPrExChange",
+    "trPrChange",
+    "tcPrChange",
+    "tblGridChange",
+    "numberingChange",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+];
 
 /// The author an export lands in its bytes, the one its record shows, and
 /// the token, when it is one.
@@ -97,7 +134,8 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// Storage errors reading the export rows.
+    /// Storage errors reading the export rows; memory or a deadline that
+    /// stopped reading the document's XML, as that refusal.
     pub(crate) fn resolve_docx_authors_in_txn(
         &self,
         txn: &RoTxn<'_>,
@@ -119,13 +157,6 @@ impl Vault {
         let Ok(Some(document)) = package.part(DOCUMENT_PART) else {
             return Ok(bytes);
         };
-        let marker = DOCX_AUTHOR_TOKEN_MARKER.as_bytes();
-        if !document
-            .windows(marker.len())
-            .any(|window| window == marker)
-        {
-            return Ok(bytes);
-        }
         // Every row, by token: an undo, a restore or a fork copies a
         // version's bytes into another version, so the version is no key.
         let authors: BTreeMap<Vec<u8>, String> = EXPORTS
@@ -133,8 +164,20 @@ impl Vault {
             .into_iter()
             .filter_map(|(_, record)| Some((record.token?.into_bytes(), record.actor.to_hex())))
             .collect();
-        let Some(resolved) = swap_tokens(&document, &authors) else {
+        // With no row naming a token, the copy holds none of ours. A token is
+        // matched decoded, so no raw-byte scan stands in for this one.
+        if authors.is_empty() {
             return Ok(bytes);
+        }
+        let resolved = match swap_tokens(&document, &authors, package.resources()) {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) => return Ok(bytes),
+            // Memory or a deadline stopped the read: that refusal, never a
+            // copy left unread as if it held no token.
+            Err(error) => match error.resource() {
+                Some(refusal) => return Err(super::resources::document_refused(refusal)),
+                None => return Ok(bytes),
+            },
         };
         match package
             .replace_xml_part(DOCUMENT_PART, resolved)
@@ -146,30 +189,86 @@ impl Vault {
     }
 }
 
-/// `document` with each token `authors` names replaced by its author;
-/// `None` when it names none.
-fn swap_tokens(document: &[u8], authors: &BTreeMap<Vec<u8>, String>) -> Option<Vec<u8>> {
-    let marker = DOCX_AUTHOR_TOKEN_MARKER.as_bytes();
-    let len = marker.len() + TOKEN_HEX_LEN;
-    let mut out = Vec::with_capacity(document.len());
-    let mut swapped = false;
-    let mut at = 0;
-    while let Some(&byte) = document.get(at) {
-        let author = document
-            .get(at..at.saturating_add(len))
-            .filter(|token| token.starts_with(marker))
-            .and_then(|token| authors.get(token));
-        match author {
-            Some(author) => {
-                out.extend_from_slice(author.as_bytes());
-                swapped = true;
-                at += len;
-            }
-            None => {
-                out.push(byte);
-                at += 1;
-            }
+/// `document` with each default-author token `authors` names, as the whole
+/// value of a tracked revision's `w:author`, replaced by its author; `None`
+/// when it holds none. Only that value's quoted source is rewritten; every
+/// other byte stays.
+fn swap_tokens(
+    document: &[u8],
+    authors: &BTreeMap<Vec<u8>, String>,
+    resources: &Resources,
+) -> std::result::Result<Option<Vec<u8>>, XmlError> {
+    let tree = XmlTree::parse(document, resources)?;
+    let mut splices: Vec<(Range<usize>, &str)> = Vec::new();
+    for node in &tree.nodes {
+        if node.namespace != W_MAIN || !REVISION_ELEMENTS.contains(&node.name.as_str()) {
+            continue;
+        }
+        let Some(value) = node
+            .attr_ns(W_MAIN, "author")
+            .filter(|value| is_token(value))
+        else {
+            continue;
+        };
+        let Some(author) = authors.get(value.as_bytes()) else {
+            continue;
+        };
+        // The one prefixed `author` the source spells holding this value:
+        // two that hold it leave the element as it is.
+        let mut spelled = node.attr_spans.iter().filter(|(name, _)| {
+            name.rsplit_once(':')
+                .is_some_and(|(_, local)| local == "author")
+                && node.attr(name) == Some(value)
+        });
+        let (Some((_, pair)), None) = (spelled.next(), spelled.next()) else {
+            continue;
+        };
+        if let Some(inner) = quoted_value(document, pair) {
+            splices.push((inner, author.as_str()));
         }
     }
-    swapped.then_some(out)
+    if splices.is_empty() {
+        return Ok(None);
+    }
+    splices.sort_by_key(|(range, _)| range.start);
+    let mut out = Vec::with_capacity(document.len());
+    let mut at = 0;
+    for (range, author) in splices {
+        out.extend_from_slice(document.get(at..range.start).unwrap_or_default());
+        for byte in author.bytes() {
+            match byte {
+                b'&' => out.extend_from_slice(b"&amp;"),
+                b'<' => out.extend_from_slice(b"&lt;"),
+                b'"' => out.extend_from_slice(b"&quot;"),
+                b'\'' => out.extend_from_slice(b"&apos;"),
+                other => out.push(other),
+            }
+        }
+        at = range.end;
+    }
+    out.extend_from_slice(document.get(at..).unwrap_or_default());
+    Ok(Some(out))
+}
+
+/// Whether `value` is a whole default author's token: the marker, then a
+/// new id's hex characters and nothing else.
+fn is_token(value: &str) -> bool {
+    value
+        .strip_prefix(DOCX_AUTHOR_TOKEN_MARKER)
+        .is_some_and(|hex| hex.len() == TOKEN_HEX_LEN && hex.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// The source bytes between the quotes of one `name="value"` pair.
+fn quoted_value(document: &[u8], pair: &Range<usize>) -> Option<Range<usize>> {
+    let bytes = document.get(pair.clone())?;
+    let equals = bytes.iter().position(|&byte| byte == b'=')?;
+    let open = equals
+        + 1
+        + bytes
+            .get(equals + 1..)?
+            .iter()
+            .position(|byte| !byte.is_ascii_whitespace())?;
+    let quote = *bytes.get(open)?;
+    (matches!(quote, b'"' | b'\'') && bytes.len() >= open + 2 && bytes.last() == Some(&quote))
+        .then(|| pair.start + open + 1..pair.end - 1)
 }

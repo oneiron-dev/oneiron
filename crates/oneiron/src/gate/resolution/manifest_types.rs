@@ -404,6 +404,9 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    /// The trusted rows behind `diagnostic_bounds` and the fields they state
+    /// (FIX 10096): carried for the tripwire receipt, never consulted to admit.
+    pub(crate) diagnostic_bounds_origin: Option<crate::self_heal::tripwires::TripwireBoundsOrigin>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     /// The trusted residence rows met so far, whose resolution is

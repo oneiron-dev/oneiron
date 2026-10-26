@@ -2,7 +2,9 @@
 
 use super::super::MemoryError;
 use super::super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_INVALID_STATE};
-use crate::outbound::{OutboundDispatchError, OutboundDispatchOutcome};
+use crate::outbound::{
+    OutboundDispatchError, OutboundDispatchOutcome, UnsupportedOutboundCapability,
+};
 /// Maps a calendar-layer verdict onto the facade error vocabulary.
 ///
 /// A refusal is a `bad_request`, not an internal fault: the engine declining to
@@ -80,10 +82,31 @@ pub(crate) fn facade_error_from_outbound_dispatch(err: OutboundDispatchError) ->
             format!("durable step verification failed: {error}"),
             &[],
         ),
-        OutboundDispatchError::UnsupportedCapability(capability) => MemoryError::bad_request_with(
-            format!("unsupported outbound capability: {capability}"),
+        OutboundDispatchError::UnsupportedCapability(capability) => {
+            facade_error_from_unsupported_capability(&capability)
+        }
+    }
+}
+
+/// The facade error for a channel/verb pair no manifest registers (FIX 8797):
+/// a `bad_request` whose suggestions are the capability's own concrete
+/// alternatives, with the manifest pointer only when it names none.
+pub(super) fn facade_error_from_unsupported_capability(
+    capability: &UnsupportedOutboundCapability,
+) -> MemoryError {
+    let message = format!("unsupported outbound capability: {capability}");
+    let alternatives: Vec<&str> = capability
+        .recovery_suggestions()
+        .iter()
+        .map(String::as_str)
+        .collect();
+    if alternatives.is_empty() {
+        MemoryError::bad_request_with(
+            message,
             &["Use a registered channel/verb pair from the connector manifest."],
-        ),
+        )
+    } else {
+        MemoryError::bad_request_with(message, &alternatives)
     }
 }
 
@@ -96,5 +119,6 @@ pub(super) const fn dispatch_outcome_str(outcome: &OutboundDispatchOutcome) -> &
         OutboundDispatchOutcome::LetGo => "let_go",
         OutboundDispatchOutcome::Failed => "failed",
         OutboundDispatchOutcome::Ambiguous => "ambiguous",
+        OutboundDispatchOutcome::Deferred => "deferred",
     }
 }

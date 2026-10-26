@@ -274,6 +274,41 @@ pub(crate) async fn provision_clone(
     include_generated: bool,
     language: Option<&str>,
 ) -> Result<VoiceTargetReceipt, VoiceBankRefusal> {
+    let request = CloneRequest {
+        voice_id,
+        target,
+        include_generated,
+        language,
+    };
+    provision_clone_funded(server, actor, None, request).await
+}
+
+/// One clone a door asks for: the voice, the target, whether generated refs
+/// count, and the clips' language when the target needs it.
+pub(crate) struct CloneRequest<'a> {
+    pub(crate) voice_id: &'a str,
+    pub(crate) target: &'a str,
+    pub(crate) include_generated: bool,
+    pub(crate) language: Option<&'a str>,
+}
+
+/// [`provision_clone`], its vendor calls billed to `payer` when the acting
+/// payer's own account or consent explicitly funds this clone (FIX 9421),
+/// the creator still carried as their initiator. With none, the clone runs
+/// on the vault's run, as it always did: no payer is inferred from who made
+/// the voice, and none missing refuses it.
+pub(crate) async fn provision_clone_funded(
+    server: &SyncServer,
+    actor: Option<&VoiceBankActor>,
+    payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    request: CloneRequest<'_>,
+) -> Result<VoiceTargetReceipt, VoiceBankRefusal> {
+    let CloneRequest {
+        voice_id,
+        target,
+        include_generated,
+        language,
+    } = request;
     if let Some(actor) = actor {
         server
             .vault
@@ -306,7 +341,10 @@ pub(crate) async fn provision_clone(
     // naming the acting person or creator as its initiator (FIX 8970); who
     // pays is the run's, unchanged.
     let initiator = actor.and_then(|actor| actor.entity_for_read(&server.vault).ok());
-    let created = match media.clone_run().map(|run| run.initiated_by(initiator)) {
+    let created = match media
+        .clone_run_funded(payer)
+        .map(|run| run.initiated_by(initiator))
+    {
         Ok(run) => cloner
             .create(&run, &name, &clone.clips, language)
             .await

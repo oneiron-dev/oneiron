@@ -394,7 +394,7 @@ impl Memory<'_> {
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(id);
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
 
     /// Adds an authenticated claim citation to this NOTE. Stable cursor data is
@@ -681,3 +681,8 @@ pub(crate) fn resolve_deck_pin_in_txn(
     super::citation_erase::validate_pins(vault, txn, std::slice::from_ref(pin))?;
     load(vault, txn, pin.document)?.resolve(pin)
 }
+
+mod deck;
+pub(crate) use deck::{
+    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+};

@@ -6,6 +6,9 @@ use serde_json::Value;
 use super::codec_json::campaign_record_to_json;
 use super::parse::invalid;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::campaign::presets::{
+    SnoozePolicyData, default_reply_snooze_policy, validate_snooze_policy,
+};
 use crate::campaign::{CAMPAIGN_SHORT_ID_PREFIX, CRM_PACK_ID};
 use crate::error::{Error, Result};
 use crate::temporal::TimeRange;
@@ -64,6 +67,10 @@ pub struct CampaignDefinition {
     pub definition_version: u64,
     /// Lifecycle state.
     pub lifecycle: CampaignLifecycle,
+    /// The pause a positive-later reply takes (FIX 9667). Create stores the
+    /// shipped default when the request names none; the owner edits it, and
+    /// each reply reads the value stored when it arrives.
+    pub reply_snooze_policy: SnoozePolicyData,
 }
 
 /// A stored campaign.
@@ -87,6 +94,9 @@ pub struct CreateCampaignRequest {
     pub schema_version: u32,
     /// Operator-facing name.
     pub name: String,
+    /// The positive-later pause, as a loaded preset's `snooze_policy` or the
+    /// owner's own; absent takes the shipped default.
+    pub reply_snooze_policy: Option<SnoozePolicyData>,
 }
 
 /// Update request. Also carries no owner field.
@@ -96,6 +106,8 @@ pub struct UpdateCampaignRequest {
     pub expected_definition_version: u64,
     /// Replacement name.
     pub name: String,
+    /// Replacement positive-later pause; absent keeps the stored one.
+    pub reply_snooze_policy: Option<SnoozePolicyData>,
 }
 
 /// Creates a campaign owned by the authenticated principal.
@@ -116,12 +128,17 @@ pub fn create_campaign(
     request: &CreateCampaignRequest,
     now: u64,
 ) -> Result<CampaignRecord> {
+    let reply_snooze_policy = match &request.reply_snooze_policy {
+        Some(policy) => policy.clone(),
+        None => default_reply_snooze_policy()?,
+    };
     let definition = CampaignDefinition {
         schema_version: request.schema_version,
         owner_actor: authenticated_principal,
         name: request.name.clone(),
         definition_version: 1,
         lifecycle: CampaignLifecycle::Active,
+        reply_snooze_policy,
     };
     validate_campaign_definition(&definition)?;
     let record = CampaignRecord {
@@ -182,6 +199,10 @@ pub fn update_campaign(
             name: request.name.clone(),
             definition_version: next_campaign_version(record.definition.definition_version)?,
             lifecycle: record.definition.lifecycle,
+            reply_snooze_policy: request
+                .reply_snooze_policy
+                .clone()
+                .unwrap_or_else(|| record.definition.reply_snooze_policy.clone()),
         };
         validate_campaign_definition(&definition)?;
         record.definition = definition;
@@ -230,7 +251,7 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
     if definition.name.chars().any(char::is_control) {
         return Err(invalid("campaign name must not contain control characters"));
     }
-    Ok(())
+    validate_snooze_policy(&definition.reply_snooze_policy)
 }
 
 /// Loads a campaign the principal owns THROUGH the caller's transaction, or
@@ -264,6 +285,11 @@ fn next_campaign_version(current: u64) -> Result<u64> {
 
 /// The vault-scoped CAMPAIGN type byte, assigned at pack registration.
 pub(crate) fn campaign_type_byte(vault: &Vault) -> Result<u8> {
+    registered_campaign_type_byte(vault)
+        .ok_or_else(|| invalid("campaign kind is not registered in this vault"))
+}
+
+fn registered_campaign_type_byte(vault: &Vault) -> Option<u8> {
     vault
         .structural_kind_registrations()
         .into_iter()
@@ -272,11 +298,24 @@ pub(crate) fn campaign_type_byte(vault: &Vault) -> Result<u8> {
                 && registration.pack == CRM_PACK_ID
         })
         .map(|registration| registration.type_byte)
-        .ok_or_else(|| invalid("campaign kind is not registered in this vault"))
 }
 
 fn load_campaign(vault: &Vault, campaign_ref: EntityId) -> Result<Option<CampaignRecord>> {
     let kind = campaign_type_byte(vault)?;
+    let rtxn = vault.store.env.read_txn()?;
+    load_campaign_in_txn(vault, &rtxn, campaign_ref, kind)
+}
+
+/// The stored campaign at `campaign_ref`, whoever owns it, or `None` when the
+/// vault holds none there or registers no campaign kind at all. An engine read
+/// for engine policy, never a caller's read.
+pub(crate) fn load_registered_campaign(
+    vault: &Vault,
+    campaign_ref: EntityId,
+) -> Result<Option<CampaignRecord>> {
+    let Some(kind) = registered_campaign_type_byte(vault) else {
+        return Ok(None);
+    };
     let rtxn = vault.store.env.read_txn()?;
     load_campaign_in_txn(vault, &rtxn, campaign_ref, kind)
 }
@@ -363,6 +402,11 @@ fn decode_campaign_record(raw: &[u8]) -> Result<CampaignRecord> {
                 .get("lifecycle")
                 .and_then(Value::as_str)
                 .and_then(CampaignLifecycle::parse)
+                .ok_or_else(corrupt)?,
+            reply_snooze_policy: definition
+                .get("reply_snooze_policy")
+                .cloned()
+                .and_then(|policy| serde_json::from_value(policy).ok())
                 .ok_or_else(corrupt)?,
         },
         created_at: stored_u64(&value, "created_at")?,

@@ -488,6 +488,7 @@ impl Vault {
                 diff_handle: identity.as_bytes().to_vec(),
                 read_frontier_hash: crate::gate::resolve_policy_manifest(&self.store, &*txn)?
                     .read_frontier_hash()?,
+                context: Default::default(),
                 redacted_at: None,
             };
             self.store.append_gate_decision_in_txn(txn, &receipt)?;
@@ -527,7 +528,7 @@ impl Vault {
                 Ok(ConnectorWakeStatus::Enqueued)
             }
             EffectorBudgetChargeOutcome::Exhausted {
-                row_index,
+                location,
                 on_exhaust,
                 ..
             } => {
@@ -537,7 +538,7 @@ impl Vault {
                         txn,
                         &row.connector_key,
                         &key,
-                        budget_exhausted_reason(row_index),
+                        budget_exhausted_reason(&location),
                         now,
                     )?;
                     let floor = crate::gate::resolve_policy_manifest(&self.store, &*txn)?

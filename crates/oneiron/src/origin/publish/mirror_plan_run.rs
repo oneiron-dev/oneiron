@@ -13,6 +13,7 @@ use super::mirror_plan::{MirrorRunScope, MirrorSelection};
 use super::mirror_plan_dispatch::ref_outcomes;
 use super::mirror_plan_reconcile::MirrorReconcile;
 use super::mirror_plan_types::{MirrorBatchClaim, MirrorPushPlan, MirrorRefOutcome};
+use super::secret_hold::held_refs_failure;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -225,6 +226,7 @@ fn summarize(
     let mut vector = Vec::new();
     let (mut deleted, mut unproven, mut paused) = (0_u64, 0_u64, 0_u64);
     let (mut remote_moved, mut refused) = (Vec::new(), Vec::new());
+    let mut secret_held = Vec::new();
     for (plan_ref, outcome) in plan.refs.iter().zip(outcomes) {
         match &plan_ref.new {
             Some(new) => vector.push((
@@ -237,6 +239,7 @@ fn summarize(
             MirrorRefOutcome::RemoteMoved => remote_moved.push(plan_ref.ref_name.clone()),
             MirrorRefOutcome::Refused => refused.push(plan_ref.ref_name.clone()),
             MirrorRefOutcome::Paused => paused = paused.saturating_add(1),
+            MirrorRefOutcome::Held => secret_held.push(plan_ref.ref_name.clone()),
             outcome if !outcome.settled() => unproven = unproven.saturating_add(1),
             _ => {}
         }
@@ -245,6 +248,9 @@ fn summarize(
     let landed = outcomes.iter().all(|outcome| outcome.landed());
     let failure = (!landed).then(|| {
         let mut parts = Vec::new();
+        if !secret_held.is_empty() {
+            parts.push(held_refs_failure(&secret_held));
+        }
         if unproven > 0 {
             parts.push(format!(
                 "mirror_plan_unproven: {unproven} refs await a reconcile read"

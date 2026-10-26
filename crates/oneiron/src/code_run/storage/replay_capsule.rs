@@ -190,6 +190,27 @@ pub(crate) fn step_replay_capsules_in_txn(
     Ok(capsules)
 }
 
+/// Whether a capsule row of `attempt` at lease `generation` does not decode,
+/// in the caller's transaction. [`step_replay_capsules_in_txn`] reads such a
+/// row as none, so a reader that judges the attempt's newest step by those
+/// capsules learns here that the newest may be the row it could not read.
+pub(crate) fn undecodable_step_capsule_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    attempt: EntityId,
+    generation: u32,
+) -> Result<bool> {
+    let mut prefix = attempt.as_bytes().to_vec();
+    prefix.extend_from_slice(&u64::from(generation).to_be_bytes());
+    for row in CAPSULES.iter_raw_from(&vault.store, rtxn, &prefix)? {
+        let (_, bytes) = row?;
+        if CAPSULES.decode_value(&bytes).is_err() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The capsule's start body (FIX 3694), read in the caller's transaction, as
 /// stored: masked, its prefix row the run's row as the wall admitted it.
 /// `None` when the capsule has no start, holds its content no longer (its

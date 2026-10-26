@@ -72,28 +72,32 @@ impl Memory<'_> {
         } else {
             ClaimSource::Observed
         };
-        let approval = self.with_actor_content_write_txn(|content| {
+        // The intake reconciles with the person's one membership in this
+        // writer (FIX 9664, 10221): the candidate carries the effective value,
+        // and once the gate admits it, it supersedes every admitted head.
+        let (approval, effective) = self.with_actor_content_write_txn(|content| {
             require_readable(&lane, content.read(), &refs)?;
-            let candidate = crate::campaign::enrollment::manual_enrollment_candidate_in_txn(
+            let intake = crate::campaign::enrollment::manual_enrollment_candidate_in_txn(
                 self.vault,
                 content.read(),
                 self.actor,
                 person,
                 &value,
                 &evidence,
+                now,
             )?;
             let mut envelope =
                 self.claim_envelope(source, "vault.campaign.enroll", ClaimApprovalStatus::Auto)?;
-            self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
+            self.sign_machine_claim_in_txn(content.read(), id, &intake.candidate, &mut envelope)?;
             let owner_authored = self.owner_authored_write_in_txn(content.read())?;
             content.apply_claim_ops(
                 vec![BatchOp::ClaimCandidate {
                     id,
-                    candidate: Box::new(candidate),
+                    candidate: Box::new(intake.candidate),
                     envelope,
                     occurred: TimeRange {
-                        start: now,
-                        end: now,
+                        start: intake.occurred_start,
+                        end: intake.occurred_start,
                     },
                     learned_at: now,
                     internal_lexical_query_hint: false,
@@ -101,20 +105,44 @@ impl Memory<'_> {
                 self.vault.text_index_trusted.load(Ordering::Acquire),
                 ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
             )?;
-            Ok(self
+            let approval = self
                 .vault
                 .get_claim_in_txn(content.read(), &id)?
                 .ok_or(Error::EntityNotFound)?
-                .approval
-                .as_str()
-                .to_owned())
+                .approval;
+            if !intake.supersedes.is_empty() {
+                // A pending or rejected candidate closes no admitted head;
+                // beside one it would be a second live head, so it is refused
+                // as every intake beside a live head was before.
+                if !matches!(
+                    approval,
+                    ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                ) {
+                    return Err(Error::ConcurrentWrite(
+                        "campaign membership already has a live head",
+                    )
+                    .into());
+                }
+                for prior in &intake.supersedes {
+                    content.update_claim(*prior, |txn| {
+                        self.vault.supersede_claim_in_txn_as(
+                            txn,
+                            &id,
+                            prior,
+                            now,
+                            Some(crate::WriteActor::new(self.actor, self.actor_class)),
+                        )
+                    })?;
+                }
+            }
+            Ok((approval.as_str().to_owned(), intake.value))
         })?;
         Ok(CampaignEnrollmentReceipt {
             membership_claim_ref: id.to_hex(),
             person_ref: person.to_hex(),
             campaign_ref: campaign.to_hex(),
-            state: CampaignEnrollmentState::Enrolled,
-            channels: value
+            state: enrollment_state(effective.state),
+            channels: effective
                 .channels
                 .iter()
                 .map(|row| CampaignMemberChannelSpec {
@@ -366,4 +394,14 @@ fn require_campaign_person(
         ));
     }
     Ok(())
+}
+
+/// The receipt's token for a membership's effective state (FIX 9664, 10221).
+const fn enrollment_state(state: CampaignMemberState) -> CampaignEnrollmentState {
+    match state {
+        CampaignMemberState::Enrolled => CampaignEnrollmentState::Enrolled,
+        CampaignMemberState::Paused { .. } => CampaignEnrollmentState::Paused,
+        CampaignMemberState::Exited => CampaignEnrollmentState::Exited,
+        CampaignMemberState::Suppressed => CampaignEnrollmentState::Suppressed,
+    }
 }

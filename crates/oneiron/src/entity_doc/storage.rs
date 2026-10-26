@@ -17,7 +17,9 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod history;
 mod repo_index;
+pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
 /// Location of the body text. Editable metadata shares its owning document.
@@ -380,7 +382,19 @@ impl Vault {
                 generation: 0,
                 pending: 0,
             };
-            persist(self, txn, entity, &mut h, &doc, None)
+            persist(self, txn, entity, &mut h, &doc, None)?;
+            // A MESSAGE's quotes taken of its atomic text are pinned at the
+            // birth frontier, as a stream or quote birth pins them (FIX 4840).
+            if header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+                crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
+                    self,
+                    txn,
+                    entity,
+                    &initial,
+                    birth_actor,
+                )?;
+            }
+            Ok(())
         })?;
         registry.remove(entity);
         Ok(())
@@ -659,69 +673,6 @@ pub(crate) fn record_body_at(
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?.fork(frontier)?;
     body_with_document(&h.field, body, &doc)
-}
-
-/// One state of an entity's document, as [`record_body_history_in_txn`]
-/// lists it.
-pub(crate) struct RetainedBody {
-    /// The frontier [`super::source_frontier_in_txn`] names the state by.
-    pub(crate) frontier: Vec<u8>,
-    /// The record body there ([`resolve_record_body`] at that state).
-    pub(crate) body: Vec<u8>,
-}
-
-/// `entity`'s record body at the states its document's retained history
-/// names, newest first: the current one, then for each of the newest
-/// `limit` changes the state it left and the state it was made on (its
-/// dependencies, which name a merged state the next edit followed). `None`
-/// for an unmigrated row. A state of concurrent heads no later change was
-/// made on, or whose history was purged, is not listed.
-pub(crate) fn record_body_history_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    entity: &EntityId,
-    body: &[u8],
-    limit: usize,
-) -> Result<Option<Vec<RetainedBody>>> {
-    if !has_record_head(store, txn, entity)? {
-        return Ok(None);
-    }
-    let h = head(store, txn, entity)?;
-    let doc = load(store, txn, &h)?;
-    let current = doc.doc.oplog_frontiers();
-    let mut frontiers = vec![current.encode()];
-    let mut visited = 0;
-    doc.doc
-        .travel_change_ancestors(&current.to_vec(), &mut |meta| {
-            let last = meta.id.inc(i32::try_from(meta.len).unwrap_or(i32::MAX) - 1);
-            frontiers.push(loro::Frontiers::from_id(last).encode());
-            if !meta.deps.is_empty() {
-                frontiers.push(meta.deps.encode());
-            }
-            visited += 1;
-            if visited < limit {
-                std::ops::ControlFlow::Continue(())
-            } else {
-                std::ops::ControlFlow::Break(())
-            }
-        })
-        .map_err(|_| Error::CorruptedIndex("document change history"))?;
-    let mut states: Vec<RetainedBody> = Vec::with_capacity(frontiers.len());
-    for frontier in frontiers {
-        let mut pin = h.incarnation.clone().into_bytes();
-        pin.extend_from_slice(&frontier);
-        if states.iter().any(|state| state.frontier == pin) {
-            continue;
-        }
-        let Ok(version) = doc.fork(&frontier) else {
-            continue;
-        };
-        states.push(RetainedBody {
-            frontier: pin,
-            body: body_with_document(&h.field, body, &version)?,
-        });
-    }
-    Ok(Some(states))
 }
 
 /// A typed read projection of the body and metadata at one document version.

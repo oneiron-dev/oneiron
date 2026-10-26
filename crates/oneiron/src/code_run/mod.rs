@@ -38,6 +38,7 @@ mod run_verbs;
 mod scoped_child;
 mod scoped_child_io;
 pub mod shadow_runner;
+mod spawn_replay;
 mod storage;
 mod support;
 mod team_submit;
@@ -116,6 +117,7 @@ pub(crate) use self::result_read::{
     refusal as result_refusal, resolve as resolve_result, unknown_handle,
 };
 pub use self::storage::step_replay_capsules;
+pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply,
     erase_settled_reply_of_erased_run_in_txn, replay_carriage, replay_owners,
@@ -136,7 +138,7 @@ pub(crate) use self::storage::{
 };
 pub(crate) use self::storage::{
     ProgramCheckpointTail, ProgramResumeCall, ProgramResumeCommit, ProgramResumeHead,
-    ProgramResumeWait, load_program_checkpoint_tail, program_resume_call,
+    ProgramResumeWait, ProgramRowAnswer, load_program_checkpoint_tail, program_resume_call,
     program_resume_calls_in_txn, program_resume_head_in_txn, wait_delivered_in_txn,
 };
 pub(crate) use self::storage::{

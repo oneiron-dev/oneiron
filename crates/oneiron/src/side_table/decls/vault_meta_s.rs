@@ -157,7 +157,8 @@ side_tables! {
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
-    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
+        => crate::self_heal::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -362,6 +363,15 @@ side_tables! {
         => crate::skill_attribution::erase_contribution_checks_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the
+    /// run left stored, with its producer, whether the run's lease held as it landed and when
+    /// (each end nil once erased); beside them, each scope summary a run asked for, with its lease
+    /// owner. Key: "d" + id16 (run attempt) + u32be (lease generation) + hash32 (the edge pair),
+    /// or "r" + id16 (summary attempt) + id16 (asking run's attempt) + u32be (its generation).
+    /// An erase moves a scrubbed edge's row to a fresh ULID in place of the pair (or to "e" +
+    /// ULID once its run is erased) and drops a request that names the erased entity.
+    SKILL_ATTRIBUTION_DERIVATION_WITNESS: VaultMeta b"skill_attribution:derivation_witness:v1:" Named Engine
+        => crate::skill_attribution::erase_derivation_witness_in_txn;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
     /// (evidence sequence).
     SKILL_ATTRIBUTION_DISPLACED_JUDGE: VaultMeta b"skill_attribution:displaced_judge:v1:" Raw;

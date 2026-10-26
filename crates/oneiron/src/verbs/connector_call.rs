@@ -34,7 +34,7 @@ use crate::memory::{
 };
 use crate::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorQuestion, ConnectorToolSchema, UntrustedToolResult,
+    ConnectorQuestion, ConnectorResultAbsence, ConnectorToolSchema, UntrustedToolResult,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
@@ -43,6 +43,11 @@ use crate::runtime_hooks::InvocationId;
 /// it. The ledger never keeps a reply's bytes, and a call is never resent to
 /// rebuild one.
 pub const CONNECTOR_RESULT_NOT_RETAINED: &str = "result_not_retained";
+
+/// The reason a delivered reply carries when the send presented a custody
+/// record's value and the reply could not be cleared of it, so it was
+/// withheld (FIX 2823). The call was delivered; nothing is resent.
+pub const CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED: &str = "result_credential_clear_failed";
 
 /// The reason an `awaiting_input` reply carries when its questions are not
 /// in it: a replay or a status read from the call's row, which keeps the
@@ -239,9 +244,23 @@ impl ConnectorCallReply {
                 result: Some(ConnectorToolResult::foreign(name, tool, result)),
                 reasons: Vec::new(),
             },
-            ConnectorCallOutcome::Delivered { result: None, .. } => Self::Delivered {
+            ConnectorCallOutcome::Delivered {
                 result: None,
-                reasons: vec![CONNECTOR_RESULT_NOT_RETAINED.to_owned()],
+                result_absence,
+                ..
+            } => Self::Delivered {
+                result: None,
+                reasons: vec![
+                    match result_absence {
+                        Some(ConnectorResultAbsence::CredentialClearFailed) => {
+                            CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED
+                        }
+                        Some(ConnectorResultAbsence::NotRetained) | None => {
+                            CONNECTOR_RESULT_NOT_RETAINED
+                        }
+                    }
+                    .to_owned(),
+                ],
             },
             ConnectorCallOutcome::Held {
                 call_ref,

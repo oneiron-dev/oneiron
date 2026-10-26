@@ -561,6 +561,7 @@ fn park(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &record)?;

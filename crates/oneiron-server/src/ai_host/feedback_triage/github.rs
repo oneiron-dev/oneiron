@@ -92,6 +92,18 @@ impl ListedIssue {
     }
 }
 
+/// How a skipped entry is named: `#<number>`, else `id <id>`, else its place
+/// on the page. Nothing else of the entry is kept.
+fn entry_name(entry: &serde_json::Value, place: usize) -> String {
+    if let Some(number) = entry.get("number").and_then(serde_json::Value::as_u64) {
+        return format!("#{number}");
+    }
+    if let Some(id) = entry.get("id").and_then(serde_json::Value::as_u64) {
+        return format!("id {id}");
+    }
+    format!("entry {place}")
+}
+
 /// The client every source's walk shares: redirects off, as the feedback
 /// transport's.
 pub(super) fn client() -> oneiron::Result<reqwest::blocking::Client> {
@@ -180,16 +192,25 @@ impl GithubIssueSource {
             None => None,
         };
         let etag = header(response.headers(), ETAG.as_str()).map(str::to_owned);
-        let listed: Vec<ListedIssue> = response.json().map_err(|_| unreadable)?;
+        // Each entry parses on its own: one that does not is skipped by its
+        // number, id or place, and the rest of the page goes on (FIX 7631).
+        let listed: Vec<serde_json::Value> = response.json().map_err(|_| unreadable)?;
+        let mut items = Vec::with_capacity(listed.len());
+        let mut skipped = Vec::new();
+        for (place, entry) in listed.into_iter().enumerate() {
+            let named = entry_name(&entry, place);
+            match serde_json::from_value::<ListedIssue>(entry) {
+                Ok(issue) => items.push(issue.revision(&self.name)),
+                Err(_) => skipped.push(named),
+            }
+        }
         Ok(GithubIssuePage {
             source: self.name.clone(),
             read: from.cloned(),
-            items: listed
-                .into_iter()
-                .map(|issue| issue.revision(&self.name))
-                .collect(),
+            items,
             next,
             etag,
+            skipped,
         })
     }
 
@@ -236,9 +257,12 @@ pub(super) fn sweep(
     source: &GithubIssueSource,
 ) -> oneiron::Result<()> {
     let vault = server.vault();
-    // `None`: no skill is bound, and the sweep reads no source.
-    let Some(row) = vault.feedback_triage_source(admitted, source.name())? else {
-        return Ok(());
+    // `None`: no skill is bound, and the sweep reads no source. A read that
+    // fails is recorded on the row as the later engine calls are (FIX 9367).
+    let row = match vault.feedback_triage_source(admitted, source.name()) {
+        Ok(Some(row)) => row,
+        Ok(None) => return Ok(()),
+        Err(error) => return Err(engine_failed(vault, admitted, source, error)),
     };
     if row
         .retry_after

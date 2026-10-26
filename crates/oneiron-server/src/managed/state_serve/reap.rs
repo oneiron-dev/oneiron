@@ -108,15 +108,18 @@ impl ManagedState {
         // Counted BEFORE drain/export. A writer finishing after export must
         // not turn a stale exported ledger into a quiescent reply.
         let at_freeze = self.freeze_counted()?;
-        self.drain_export(at_freeze).await
+        self.drain_export(at_freeze, true).await
     }
 
-    /// The drain and the export after a freeze that found `at_freeze`.
+    /// The drain and the export after a freeze that found `at_freeze`. With
+    /// `drain_leases` false the lease table is not drained, and reads as not
+    /// drained.
     pub(super) async fn drain_export(
         &self,
         at_freeze: InFlightCounts,
+        drain_leases: bool,
     ) -> Result<Prepared, ManagedError> {
-        let drained = self.drain_lease_table().await;
+        let drained = drain_leases && self.drain_lease_table().await;
         let report = self.ledger.export_at_freeze(&self.server).await?;
         // The pages carry the entries, so they are bounds-checked before
         // they are served rather than after a supervisor has trusted them,

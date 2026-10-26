@@ -55,6 +55,9 @@ pub(super) fn admit_claim_put(
         },
     )?;
     if let Some(body) = &body {
+        // The typed citations the evidence carries are read once here, in
+        // their recognized slots: a malformed one is a malformed body.
+        body.evidence_refs()?;
         crate::comm::guard_send_override_put(
             body,
             input.allow_reserved_predicate,
@@ -136,4 +139,23 @@ pub(super) fn validate_witness_message_body(data: &[u8], replicated: bool) -> Re
         crate::gate::validate_canonical_witness_message_body(data)?;
     }
     Ok(())
+}
+
+/// Whether `reader` may put a row at `id` in `txn` (FIX 6068): an id that
+/// names no stored row is free to take; an occupied one only when its
+/// original row, whatever it holds (a deleted, retained or other-kind row
+/// included), is one `reader` reads. Judged before any incoming body, scope
+/// stamp or edge can change what the row means.
+pub(crate) fn put_target_admitted_in(
+    reader: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !crate::ports::EntityStoreRead::port_entity_present(&reader.vault().store, txn, id)? {
+        return Ok(true);
+    }
+    match reader.is_entity_readable_in(txn, id) {
+        Err(error) if error.kind() == crate::ErrorKind::InvalidSecretCustodyBody => Ok(false),
+        readable => readable,
+    }
 }

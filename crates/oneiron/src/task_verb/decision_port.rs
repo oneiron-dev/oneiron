@@ -58,13 +58,43 @@ impl PortAnswer {
     }
 }
 
-/// A routed answer beside the model whose answer stands (FIX 1877): the
-/// provider pin of the rung that answered, `None` when no model did (a rule,
-/// a person's queue, an abstention, a refused call or no ladder).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TracedAnswer {
+/// One surface question's routed answer and, when the ladder decided it, the
+/// receipt the ladder returned with it (FIX 10179): its question version,
+/// provider pins, paired readings and deadline record, carried to the
+/// lifecycle or proposal effect the answer drives. An absent ladder, an
+/// abstention or a refused call has no receipt, and none is made up.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct PortDecision {
     pub(super) answer: PortAnswer,
-    pub(super) answered_by: Option<ProviderPin>,
+    pub(super) receipt: Option<DecisionReceipt>,
+}
+
+impl PortDecision {
+    /// "Ask up", with no receipt: no ladder decided it.
+    const fn ask_up() -> Self {
+        Self {
+            answer: PortAnswer::AskUp,
+            receipt: None,
+        }
+    }
+
+    /// The receipt, whole, as one lifecycle field's value: `None` when the
+    /// ladder kept none, or when it does not encode.
+    pub(super) fn receipt_field(&self) -> Option<String> {
+        self.receipt
+            .as_ref()
+            .and_then(|receipt| serde_json::to_string(receipt).ok())
+    }
+
+    /// The model whose answer stands (FIX 1877): the provider pin of the rung
+    /// that answered, `None` when no model did (a rule, a person's queue, an
+    /// abstention, a refused call or no ladder).
+    pub(super) fn answered_by(&self) -> Option<ProviderPin> {
+        if self.answer == PortAnswer::AskUp {
+            return None;
+        }
+        answering_model(self.receipt.as_ref()?)
+    }
 }
 
 /// Asks one surface question for `principal` over `evidence` and the bounded
@@ -76,33 +106,9 @@ pub(super) fn ask(
     evidence: &[EntityId],
     state: &serde_json::Value,
     reversibility: Reversibility,
-) -> PortAnswer {
-    ask_traced(
-        decisions,
-        question,
-        principal,
-        evidence,
-        state,
-        reversibility,
-    )
-    .answer
-}
-
-/// [`ask`], beside the model whose answer stands.
-pub(super) fn ask_traced(
-    decisions: Option<&TaskDecisions<'_>>,
-    question: TaskQuestion,
-    principal: EntityId,
-    evidence: &[EntityId],
-    state: &serde_json::Value,
-    reversibility: Reversibility,
-) -> TracedAnswer {
-    let unanswered = TracedAnswer {
-        answer: PortAnswer::AskUp,
-        answered_by: None,
-    };
+) -> PortDecision {
     let Some(decisions) = decisions else {
-        return unanswered;
+        return PortDecision::ask_up();
     };
     let typed = match question {
         TaskQuestion::Take => &decisions.take,
@@ -120,16 +126,16 @@ pub(super) fn ask_traced(
         &RetrievalDeadline::hard(Instant::now(), decisions.budget),
     );
     let Ok(decision) = decided else {
-        return unanswered;
+        return PortDecision::ask_up();
     };
     let answer = match decision.answer {
         DecisionAnswer::Noul(true) => PortAnswer::Yes,
         DecisionAnswer::Noul(false) => PortAnswer::No,
-        _ => return unanswered,
+        _ => PortAnswer::AskUp,
     };
-    TracedAnswer {
+    PortDecision {
         answer,
-        answered_by: answering_model(&decision.receipt),
+        receipt: Some(decision.receipt),
     }
 }
 

@@ -4,9 +4,13 @@ use super::agent_grants::{AskedFilter, HeldGrants};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
 use crate::claim::{ClaimBody, decode_claim_body};
+use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::Scope;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 use std::cell::RefCell;
 
@@ -147,6 +151,30 @@ impl<'v> ScopedRead<'v> {
         Ok(read.allowed_by(&context))
     }
 
+    /// [`Self::relationship_claim_allowed_in`] for a claim that may never
+    /// have landed, from the relationship axes and record Scope its Gate
+    /// decision kept (FIX 7499). No stored row names it, so no support slip
+    /// can name it either: only the reader's memberships and grants decide.
+    pub(super) fn relationship_axes_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        space: Option<EntityId>,
+        private: bool,
+        record: &Scope,
+    ) -> Result<bool> {
+        if !self.relationship_gated_in(txn)? {
+            return Ok(true);
+        }
+        let read = RelationshipRead::Gated {
+            kind: ENTITY_TYPE_CLAIM,
+            space,
+            private,
+            record: record.clone(),
+        };
+        let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
+        Ok(read.allowed_by(&context))
+    }
+
     /// The support-disclosure projection at the relationship gate (OF-606):
     /// a live support slip reads a relationship-gated row it names exactly
     /// in its records, inside its own read Scope, and never a private one.
@@ -212,9 +240,72 @@ impl<'v> ScopedRead<'v> {
             Some(context) => context,
             None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
         };
-        let allowed = read.allowed_by(&context);
+        let allowed = read.allowed_by(&context)
+            || self.conversation_message_granted_in(txn, id, &read, &context);
         *held = Some(context);
         Ok(allowed)
+    }
+
+    /// Whether `context` holds a live read grant over the conversation the
+    /// MESSAGE `id` is part of (FIX 10895): a MESSAGE that names no
+    /// relationship and no private scope, which no membership or
+    /// relationship grant admits, is read on a `ConversationMessages` grant
+    /// over its conversation, found on this read's content as the
+    /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
+    /// conversation). The grant stands in for the relationship check alone;
+    /// every other check on the row still binds. Edges that do not read
+    /// admit nothing.
+    fn conversation_message_granted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+        context: &AccessContext<'_>,
+    ) -> bool {
+        let RelationshipRead::Gated {
+            kind: ENTITY_TYPE_MESSAGE,
+            space: None,
+            private: false,
+            record,
+        } = read
+        else {
+            return false;
+        };
+        if !context.holds_conversation_grants() {
+            return false;
+        }
+        self.edge_targets_in(txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
+            .iter()
+            .flat_map(|turn| {
+                self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+            })
+            .any(|conversation| {
+                context.allows_conversation_message_at_snapshot(conversation, record)
+            })
+    }
+
+    /// The targets of `id`'s outgoing `kind` edges whose rows are of
+    /// `entity_type`, on this read's content; none when the edges do not
+    /// read.
+    fn edge_targets_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: EdgeKind,
+        entity_type: u8,
+    ) -> Vec<EntityId> {
+        let Ok(edges) = self.out_edges_in(txn, id, Some(kind)) else {
+            return Vec::new();
+        };
+        edges
+            .filter_map(|edge| edge.ok().map(|edge| edge.target))
+            .filter(|target| {
+                self.entity_record_in(txn, target)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|row| row.entity_type == entity_type)
+            })
+            .collect()
     }
 }
 

@@ -394,6 +394,62 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// reads the status runs against an engine at or after the floor, and no
 /// reader of an answer without it is kept. The supervisor's `Shed` ctl
 /// request and its answers are unchanged, and this version stays 3.
+///
+/// Catalog rate currency (FIX 9534): a model catalog cost (the engine's
+/// `llm::LlmCatalogCost`, on every facade, SDK and binding surface that
+/// carries a catalog entry, and in each stored registry row and mesh peer
+/// row) requires `currency`, the provider's three-letter code or `null` when
+/// it named none, and a usage rate snapshot (the host's `UsageCostRates`, on
+/// usage events posted and stored) now requires `currency` as a code or
+/// `null` in place of a code alone. An unpriced call gains the reason
+/// `unknown_currency`: rates with a `null` currency that are not zero
+/// throughout, kept with their snapshot, and no amount. Only the installed
+/// first-party model pack's rows, which have always quoted US dollars, read
+/// a missing `currency` as `USD`: at that pack's decode, and at the decode of
+/// a stored registry row whose source rows name that pack. It carries a
+/// build floor, at the engine revision it merged in, with no `Ping` field: a
+/// reader or writer of catalog rows or usage events runs at or after the
+/// floor, and no other missing-field default or reader of a row without it
+/// is kept. This version stays 3.
+///
+/// Wire health check revisions (FIX 9531): each kept call-volume question is
+/// a health check of its own on the owner's `/v1/owner/wire-health` read,
+/// its `subject` the crossed set's digest and the question's sequence
+/// (`wire:<digest>:<seq>`), with its own question and unit. An answered
+/// check's `state.by` gains the value `cover`: the answer to an earlier
+/// revision of the same crossed set that still covered it, whose `question`
+/// and `unit` it cites, and it was not asked itself. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of the checks runs against an engine at or after the floor, and no reader
+/// of a check without it is kept. This version stays 3.
+///
+/// Custom endpoint usage (FIX 7765): an unpriced call gains the reason
+/// `custom_endpoint`, on usage events posted and stored: a call on the
+/// owner's own key whose route goes to no provider API origin a catalog price
+/// is quoted for, with a token count and no `costRates`. Such a call logs
+/// token counts only, whatever price its model id has. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of usage events runs at or after the floor, and no reader of an event
+/// without it is kept. This version stays 3.
+///
+/// Backup handoff readiness (FIX 6705): a managed vault's readiness on
+/// `Ping` gains the facility `backup_handoff` and the reason
+/// `install_failed`: its backup handoff policy could not be installed, so
+/// its pruning past `keep` is held and every backup is kept; backups are
+/// still taken and the vault serves. It carries a build floor, at the engine
+/// revision it merged in, with no `Ping` field: a supervisor that reads the
+/// readiness runs at or after the floor, and no reader of a readiness
+/// without them is kept. This version stays 3.
+///
+/// Superseded wire health checks (FIX 10868): a check on the owner's
+/// `/v1/owner/wire-health` read gains the state `superseded`, with `by`, the
+/// subject of the later revision of the same crossed set that was held while
+/// it was still held or asked, and `question` and `unit`, the ones it was
+/// asked on or `null`. A superseded check is never asked or polled again;
+/// the later revision is asked in its place. It carries a build floor, at the
+/// engine revision it merged in, with no `Ping` field: a reader of the checks
+/// runs against an engine at or after the floor, and no reader of a check
+/// without it is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

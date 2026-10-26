@@ -1,0 +1,13 @@
+{
+  "health.loop.repeats": 3,
+  "health.check.fails": 3,
+  "health.wait.share": 0.5,
+  "health.wait.minutes": 10,
+  "health.silent.minutes": 30,
+  "health.widen.denials": 3,
+  "health.cost.spike": 3,
+  "health.card.floor": 0,
+  "health.dup.min_cost": 2000,
+  "health.cost.min_runs": 10,
+  "health.review.window_hours": 24
+}

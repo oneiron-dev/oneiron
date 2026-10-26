@@ -63,6 +63,10 @@ pub(in crate::repo_mutation) fn validate_operation(
             }
             validate_commit_message(message)
         }
+        RepoMutationOperation::CommitFiles { files, message } => {
+            super::super::bundle::validate_bundle_files(files)?;
+            validate_commit_message(message)
+        }
     }
 }
 
@@ -72,6 +76,7 @@ pub(super) fn writes_file(operation: &RepoMutationOperation) -> bool {
         RepoMutationOperation::CommitFile { .. }
             | RepoMutationOperation::ResolveConflictFile { .. }
             | RepoMutationOperation::ReceivedFiles { .. }
+            | RepoMutationOperation::CommitFiles { .. }
     )
 }
 
@@ -91,5 +96,8 @@ pub(super) fn operation_subject(operation: &RepoMutationOperation) -> String {
         RepoMutationOperation::RecoverSnapshot { fork_hash } => hex_bytes(fork_hash),
         RepoMutationOperation::ResolveConflictFile { path, .. } => path.clone(),
         RepoMutationOperation::ReceivedFiles { candidate, .. } => candidate.to_hex(),
+        RepoMutationOperation::CommitFiles { message, .. } => {
+            super::super::bundle::bundle_operation_subject(message)
+        }
     }
 }
