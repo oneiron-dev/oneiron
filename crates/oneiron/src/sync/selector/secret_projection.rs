@@ -71,7 +71,9 @@ pub(crate) use documents::{
     IndexCopies, document_copy_in_txn, import_document_copy, stored_item_in_txn,
     with_copy_generation_in_txn,
 };
-pub use documents::{RepoCopyAliases, repo_document_copy_vector, repo_document_source};
+pub use documents::{
+    RepoCopyAliases, repo_document_copy_vector, repo_document_lineage_edit, repo_document_source,
+};
 pub(crate) use history::ProjectedHistory;
 pub use release::{
     RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame, repo_copy_generation,

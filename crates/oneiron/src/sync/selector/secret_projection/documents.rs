@@ -26,7 +26,7 @@
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
-use loro::{ExportMode, LoroDoc, UpdateOptions, VersionVector};
+use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
 use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
 use crate::Vault;
@@ -433,21 +433,82 @@ pub fn repo_document_copy_vector(vault: &Vault, source: EntityId) -> Result<Vec<
 }
 
 /// The document `id` names on this device: the marked source a copy id
-/// stands for, when that source's row is held here; else `id`. An id held
-/// here is no copy id, so it reads no mark (FIX 10793): a source-id update
-/// takes today's path.
+/// stands for, when that source's row is held here; else `id`. A copy row
+/// held here beside its source (a device holding both roles) names its
+/// source too (FIX 10832). For an id held here a mark read that fails
+/// answers `id`, today's path (FIX 10793): a source-id update meets no new
+/// failure.
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode and names no blob.
+/// A store failure, or, for an id not held here, a mark that does not decode
+/// and names no blob.
 pub fn repo_document_source(vault: &Vault, id: EntityId) -> Result<EntityId> {
     if vault.entity_exists(&id)? {
-        return Ok(id);
+        let txn = vault.store.env.read_txn()?;
+        return Ok(held_copy_source(vault, &txn, id).unwrap_or(id));
     }
     let source = RepoCopyAliases::read(vault)?.stored(&id);
     if source == id || !vault.entity_exists(&source)? {
         return Ok(id);
     }
     Ok(source)
+}
+
+/// The marked source a copy row held here as `id` stands for, when that
+/// source's row is held here too (FIX 10832). `None` for any other id, and
+/// whenever the marks or the source row do not read.
+fn held_copy_source(vault: &Vault, txn: &RoTxn<'_>, id: EntityId) -> Option<EntityId> {
+    let source = RepoCopyAliases::read_in_txn(vault, txn).ok()?.stored(&id);
+    (source != id && matches!(vault.store.port_entity_raw(txn, &source), Ok(Some(_))))
+        .then_some(source)
+}
+
+/// Whether `update`, a peer's update sent under the id `id` of a document
+/// held here, edits the copy lineage kept for `id` rather than the document
+/// itself (FIX 10829): a whole-text copy and a re-released copy id keep their
+/// lineage under `copy_id(id)` and release its frames under `id`. It does
+/// when the lineage holds every operation the update depends on and the
+/// document (`resident_vv`, its encoded version vector) does not. Reads no
+/// mark: an update with no dependency, one whose metadata does not decode,
+/// or an id with no stored lineage takes today's path.
+#[must_use]
+pub fn repo_document_lineage_edit(
+    vault: &Vault,
+    id: EntityId,
+    resident_vv: &[u8],
+    update: &[u8],
+) -> bool {
+    let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
+        return false;
+    };
+    let Ok(copy) = copy_id(&id) else {
+        return false;
+    };
+    let lineage = vault.store.env.read_txn().ok().and_then(|txn| {
+        vault
+            .store
+            .port_document_row(&txn, DocumentSlot::of(copy), DocumentRow::StateVector)
+            .ok()
+            .flatten()
+    });
+    let (Some(Ok(lineage)), Ok(resident)) = (
+        lineage.map(|bytes| VersionVector::decode(&bytes)),
+        VersionVector::decode(resident_vv),
+    ) else {
+        return false;
+    };
+    // What the update builds on: its outside dependencies, and each
+    // author's operations before its first one here.
+    let needed: Vec<ID> = meta
+        .start_frontiers
+        .iter()
+        .chain(meta.partial_start_vv.iter().filter_map(|(peer, start)| {
+            start.checked_sub(1).filter(|last| *last >= 0).map(|last| ID::new(*peer, last))
+        }))
+        .collect();
+    !needed.is_empty()
+        && needed.iter().all(|dep| lineage.includes_id(*dep))
+        && !needed.iter().all(|dep| resident.includes_id(*dep))
 }
 
 /// One read's marked repo aliases: the copy id a peer knows each marked
@@ -547,14 +608,16 @@ pub(crate) fn with_copy_generation_in_txn(
 }
 
 /// The stored item a residence request's `id` stands for: a copy id is
-/// judged as its source. An id held here is no copy id, so it reads no
-/// mark (FIX 10793).
+/// judged as its source, a copy row held here beside its source too (FIX
+/// 10832). For an id held here a mark read that fails answers `id` (FIX
+/// 10793).
 ///
 /// # Errors
-/// A store failure, or a mark that does not decode and names no blob.
+/// A store failure, or, for an id not held here, a mark that does not decode
+/// and names no blob.
 pub(crate) fn stored_item_in_txn(vault: &Vault, txn: &RoTxn<'_>, id: EntityId) -> Result<EntityId> {
     if vault.store.port_entity_raw(txn, &id)?.is_some() {
-        return Ok(id);
+        return Ok(held_copy_source(vault, txn, id).unwrap_or(id));
     }
     Ok(RepoCopyAliases::read_in_txn(vault, txn)?.stored(&id))
 }
