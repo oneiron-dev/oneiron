@@ -15,7 +15,7 @@ use super::keys::{
     ERR_EXISTING_NODE_ZERO_COUNT, ERR_NEIGHBOR_KEY_BYTES, ERR_REMAINING_NODES_MISSING,
     ERR_ZERO_COUNT_GRAPH_NOT_EMPTY,
 };
-use super::one_way::record_one_way_exception;
+use super::one_way::{reconcile_removed_one_way_links, record_one_way_exception};
 use super::rebuild::{
     build_hnsw_graph_from_snapshot, collect_vector_ids, rebuild_dropped_graph_from_snapshot,
     rebuild_hnsw_from_current_snapshot, write_rebuilt_hnsw,
@@ -617,6 +617,8 @@ fn hnsw_refresh_localized(
         write_neighbors(store, wtxn, neighbor_id, &filtered)?;
         *ops += 1;
     }
+    // Every link `id` held goes with its row, the one-way ones included.
+    reconcile_removed_one_way_links(store, wtxn, id, &old_neighbors, &[], ops)?;
     store.hnsw_neighbors().delete(wtxn, id.as_bytes())?;
     *ops += 1;
 
