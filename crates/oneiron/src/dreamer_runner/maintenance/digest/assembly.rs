@@ -50,7 +50,8 @@ impl Vault {
                 return Ok(None);
             }
             let mut groups: BTreeMap<String, Vec<DigestProposal>> = BTreeMap::new();
-            for (group, mut proposal) in pending_proposals(self, txn, authority, &state, &cadence)?
+            for (group, mut proposal) in
+                pending_proposals(self, txn, authority, &state, &cadence, recipient)?
             {
                 if !due
                     && (!breakthrough
@@ -149,6 +150,7 @@ impl Vault {
                     health_cards,
                     presentation,
                     recipient,
+                    witness: audience.witness(),
                     due,
                     breakthrough,
                     now,
@@ -177,18 +179,23 @@ impl Vault {
             health_cards,
             presentation,
             recipient,
+            witness,
             due,
             breakthrough,
             now,
         } = parts;
+        let is_urgent = !due && breakthrough && !groups.is_empty();
         // What this digest carries is marked seen; its text follows,
-        // under the presentation it keeps.
+        // under the presentation it keeps. An urgent digest marks it seen
+        // for its one owner alone (FIX 8952).
+        let seen = match recipient {
+            Some(owner) if is_urgent => state.urgent_seen.entry(owner.to_hex()).or_default(),
+            _ => &mut state.seen,
+        };
         for proposals in groups.values_mut() {
             proposals.sort_by_key(|p| p.claim_ref);
             for proposal in proposals.iter() {
-                state
-                    .seen
-                    .insert(proposal.claim_ref.to_hex(), proposal.revision);
+                seen.insert(proposal.claim_ref.to_hex(), proposal.revision);
             }
         }
         state
@@ -206,7 +213,6 @@ impl Vault {
         if let Some(line) = &applied {
             line.mark_seen(&mut state.applied_seen);
         }
-        let is_urgent = !due && breakthrough && !groups.is_empty();
         let mut digest = ProactivityDigest {
             id: [0; 32],
             content_hash: [0; 32],
@@ -224,6 +230,7 @@ impl Vault {
             rendered: String::new(),
             voice_style: presentation.voice_style.clone(),
             presentation,
+            witness,
         };
         let rendered = view::render(&digest, &digest.groups);
         digest.rendered = rendered;
@@ -307,6 +314,7 @@ struct DigestParts {
     health_cards: Vec<agent_health::ConcernCardSummary>,
     presentation: ProactivityPresentation,
     recipient: Option<EntityId>,
+    witness: Option<crate::attempt_queue::AttemptId>,
     due: bool,
     breakthrough: bool,
     now: u64,
