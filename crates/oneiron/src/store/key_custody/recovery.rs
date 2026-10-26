@@ -22,6 +22,7 @@
 //! advance to that epoch fences the lineage's old writer before the restore
 //! is kept.
 
+mod pads;
 mod unopened;
 
 use std::collections::{BTreeMap, BTreeSet};

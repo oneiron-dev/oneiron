@@ -28,6 +28,29 @@ pub fn machine_secret(
         .map_err(|_| refused("the machine seed does not expand"))
 }
 
+/// The secret of install `install` for `vault_id` when its keystore already
+/// holds that machine's slot: `None` when it holds none (FIX 10468). It never
+/// creates a slot or a seed, so a restore naming a previously admitted
+/// machine opens with that machine's key or with nothing, and never mints
+/// one.
+pub fn existing_machine_secret(
+    keystore: &dyn DeviceKeystore,
+    vault_id: [u8; 32],
+    install: [u8; 16],
+) -> Result<Option<HybridSecretKey>> {
+    let slot = KeystoreSlot {
+        vault_id,
+        install,
+        kind: SlotKind::MachineEncryption,
+    };
+    let Some(seed) = keystore.get(&slot).map_err(keystore_error)? else {
+        return Ok(None);
+    };
+    HybridSecretKey::from_seed(&seed, MACHINE_KEY_LABEL)
+        .map(Some)
+        .map_err(|_| refused("the machine seed does not expand"))
+}
+
 /// `slot`'s seed, created from the OS CSPRNG on first use. The keystore is
 /// create-only, so a concurrent first use keeps the slot's first seed.
 pub(crate) fn slot_seed(

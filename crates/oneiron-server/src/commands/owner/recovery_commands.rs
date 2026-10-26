@@ -9,6 +9,8 @@ use super::{
 };
 use crate::owner::backup;
 
+mod open_pads;
+
 pub fn backup(args: BackupArgs) -> anyhow::Result<()> {
     let mut config = resolve_serve_config(&args.serve)?;
     if let Some(dir) = args.dir {
@@ -84,6 +86,12 @@ fn restore_unlocked(
         .as_deref()
         .map(vault_key::read_pins)
         .transpose()?;
+    // `--open-pads`: the existing vault's Locked worlds, opened from the
+    // custody head beside the backup with the kit or an admitted machine
+    // (FIX 10470); nothing is restored.
+    if args.open_pads {
+        return open_pads::open_pads(args, config, backup, keystore, unlock, pins);
+    }
     if !args.rehearse && !config.vault_path.join("data.mdb").exists() {
         // Its custody anchor door's owner credential, on the pipe the owner
         // named, read before the new vault is made (FIX 5788).

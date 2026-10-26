@@ -66,8 +66,8 @@ pub use self::kit::{
     ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WORLD_KIT_ESCROW,
     WorldKitRestore, WorldKitStatus,
 };
+pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
-pub use self::machine::{machine_encryption_key, machine_secret};
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,
@@ -98,8 +98,9 @@ pub(crate) use self::pad_custody::{
 };
 pub(crate) use self::pad_erase::erase_batch_pad_row_in_txn;
 pub(crate) use self::pad_image::{
-    drop_pad_rows_in_txn, image_pad_form_ok, image_pad_projection, image_pad_row_of,
-    live_pad_carrier, plan_archived_pads, rested_pad_row,
+    PadRowRest, drop_pad_rows_in_txn, image_pad_form_ok, image_pad_projection, image_pad_row_of,
+    live_pad_carrier, pad_row_rest_in_txn, pad_row_rests_in_txn, plan_archived_pads,
+    rested_pad_row,
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;

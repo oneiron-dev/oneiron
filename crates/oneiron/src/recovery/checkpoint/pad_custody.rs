@@ -29,18 +29,24 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use heed::RwTxn;
 use heed::types::Bytes;
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{CheckpointImage, Custody, Rejected, RestoreAdmissionReason as R, codec_error};
+use super::{
+    CheckpointImage, Custody, Rejected, RestoreAdmissionReason as R, RestorePadState, codec_error,
+};
 use crate::entity_id::EntityId;
 use crate::store::{CustodyPlan, PlannedPad, plan_world_pad};
 use crate::world_keys::WorldKeyId;
 use crate::{Error, Vault};
 
 /// What a restore says of a world key pad its image names that it did not
-/// land at rest (CALLS: KS-5 restore outcomes).
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// land at rest (CALLS: KS-5 restore outcomes); its epoch keeps it
+/// (`RestorePadState`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum PadRestoreNote {
     /// The custody the restore took retired the pad after the image was
     /// taken: its row stayed out, as the erase left it.
@@ -256,19 +262,25 @@ pub(super) fn require(
 /// Once the rows landed and `vault` reopened under its own custody: each
 /// bare reference rests again with the pad that custody holds beside it, or
 /// else lands as the carrier its side restore's source gave it. Returns
-/// what the restore says of the pads it did not land; a pad neither held
-/// nor withheld refuses the restore, `custody_key_missing`.
+/// what the restore says of the pads it did not land, with each bare
+/// reference it left owed (Pending, Withheld or Locked) by its key: what
+/// the restore's epoch records (PAD-2). A pad neither held nor withheld
+/// refuses the restore, `custody_key_missing`.
 pub(super) fn land(
     vault: &Vault,
     landing: PadLanding,
-) -> std::result::Result<Vec<PadRestoreNote>, Rejected> {
+) -> std::result::Result<RestorePadState, Rejected> {
     let PadLanding {
         source,
         referenced,
         mut notes,
     } = landing;
+    let mut owed = Vec::new();
     if referenced.is_empty() {
-        return Ok(notes);
+        return Ok(RestorePadState {
+            required_refs: owed,
+            remaining: notes,
+        });
     }
     let mut rested = Vec::new();
     let mut unheld = Vec::new();
@@ -305,7 +317,11 @@ pub(super) fn land(
         };
         let mut locked = BTreeMap::new();
         for key in unheld {
-            match missing_pad_outcome(source, withheld.contains(key.world.as_bytes())) {
+            let outcome = missing_pad_outcome(source, withheld.contains(key.world.as_bytes()));
+            if !matches!(outcome, PadOutcome::Refused) {
+                owed.push(*key);
+            }
+            match outcome {
                 PadOutcome::Pending => notes.push(PadRestoreNote::pending(key)),
                 PadOutcome::Withheld => notes.push(PadRestoreNote::withheld(key)),
                 PadOutcome::Locked => {
@@ -328,17 +344,32 @@ pub(super) fn land(
         ));
     }
     if !rested.is_empty() {
-        vault.with_write_txn_grouped(|txn| {
-            let entities = vault
-                .store
-                .env
-                .open_database::<Bytes, Bytes>(txn, Some("entities"))?
-                .ok_or_else(codec_error)?;
-            for (row_key, row) in &rested {
-                entities.put(txn, row_key, row)?;
-            }
-            Ok(())
-        })?;
+        let rows: Vec<(&[u8], &[u8])> = rested
+            .iter()
+            .map(|(row_key, row)| (row_key.as_slice(), row.as_slice()))
+            .collect();
+        vault.with_write_txn_grouped(|txn| put_rows_in_txn(vault, txn, &rows))?;
     }
-    Ok(notes)
+    Ok(RestorePadState {
+        required_refs: owed,
+        remaining: notes,
+    })
+}
+
+/// Puts each pad row of `rows` under its key in `txn`: the one write a
+/// restore's landing and a pad reopen's rest share (PAD-2).
+pub(super) fn put_rows_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    rows: &[(&[u8], &[u8])],
+) -> crate::Result<()> {
+    let entities = vault
+        .store
+        .env
+        .open_database::<Bytes, Bytes>(txn, Some("entities"))?
+        .ok_or_else(codec_error)?;
+    for (row_key, row) in rows {
+        entities.put(txn, row_key, row)?;
+    }
+    Ok(())
 }

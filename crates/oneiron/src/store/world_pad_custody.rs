@@ -21,6 +21,7 @@
 mod census;
 #[cfg(feature = "sync")]
 mod current;
+mod install;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;

@@ -11,7 +11,7 @@
 //! rest, its pad beside its reference, is never an image's form: a decode
 //! refuses one ([`image_pad_form_ok`]).
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use super::WorldKeyId;
@@ -19,11 +19,11 @@ use super::pad_custody::{
     PadBody, decode_pad_body, encode_carrier, encode_reference, encode_resting, pad_item,
     pad_row_body, reference_namespace,
 };
-use super::pads::{held_pad_world_in_txn, world_keys_destroyed_in_txn};
+use super::pads::{held_pad_world_in_txn, pad_row_id, world_keys_destroyed_in_txn};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
 use crate::store::{CustodyPlan, PlannedPad, Store, WorldPadCustody, plan_world_pad};
@@ -136,6 +136,90 @@ pub(crate) fn rested_pad_row(store: &Store, raw: &[u8]) -> Result<Option<Zeroizi
     let mut row = Zeroizing::new(raw[..ENTITY_METADATA_HEADER_LEN].to_vec());
     row.extend_from_slice(&encode_resting(&key, &namespace, &pad));
     Ok(Some(row))
+}
+
+/// What `key`'s pad row comes to where a restore's owed reference is settled
+/// again (PAD-2, FIX 10470).
+pub(crate) enum PadRowRest {
+    /// A bare reference whose pad current custody holds: the row at rest
+    /// with that pad beside it, to put under `row`.
+    Rest {
+        row: EntityId,
+        rested: Zeroizing<Vec<u8>>,
+    },
+    /// The row holds its pad already: its own beside its reference, or a
+    /// carrier's.
+    Held,
+    /// A bare reference whose pad current custody does not hold, a
+    /// header-only shell, or no row.
+    Unheld,
+}
+
+/// [`PadRowRest`] for `key`'s pad row as `txn` reads it: the row its full id
+/// derives, which must name exactly that key.
+///
+/// # Errors
+///
+/// A row of another kind or key, a body that does not decode, and custody
+/// and storage faults.
+pub(crate) fn pad_row_rest_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &WorldKeyId,
+) -> Result<PadRowRest> {
+    let row = pad_row_id(key)?;
+    let Some(raw) = store.port_entity_raw(txn, &row)?.map(Zeroizing::new) else {
+        return Ok(PadRowRest::Unheld);
+    };
+    if crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD)
+    {
+        return Err(Error::CorruptedIndex("world key pad row of another kind"));
+    }
+    let Some(body) = pad_row_body(&raw).filter(|body| !body.is_empty()) else {
+        return Ok(PadRowRest::Unheld);
+    };
+    let decoded = decode_pad_body(body)?;
+    if decoded.key() != key {
+        return Err(Error::CorruptedIndex("world key pad names another key"));
+    }
+    if decoded.pad().is_some() {
+        return Ok(PadRowRest::Held);
+    }
+    Ok(match rested_pad_row(store, &raw)? {
+        Some(rested) => PadRowRest::Rest { row, rested },
+        None => PadRowRest::Unheld,
+    })
+}
+
+/// Whether `key`'s pad row as `txn` reads it rests with its own pad beside
+/// its reference, the pad current custody holds for it: a rest's read back
+/// once committed.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(crate) fn pad_row_rests_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &WorldKeyId,
+) -> Result<bool> {
+    let Some(raw) = store
+        .port_entity_raw(txn, &pad_row_id(key)?)?
+        .map(Zeroizing::new)
+    else {
+        return Ok(false);
+    };
+    let Some(Ok(PadBody::Reference(found, Some(pad)))) = pad_row_body(&raw).map(decode_pad_body)
+    else {
+        return Ok(false);
+    };
+    if found != *key {
+        return Ok(false);
+    }
+    Ok(store
+        .world_pad_in_custody(&pad_item(key))?
+        .is_some_and(|held| *held == *pad.bytes()))
 }
 
 /// The bare reference row `image` with the pad the live row `live` of the
