@@ -35,14 +35,20 @@
 //! rows never land. Each handle is looked up alone. A fenced row lands with
 //! its value withheld, ErasedUnavailable, and no fork copies its key; one
 //! whose own evidence did not read lands withheld, PendingCustody, warned,
-//! with a retry. The restored vault takes each fence, its discovery owed,
+//! with a retry. Where a kept restore's source did not read, its row as the
+//! image carried it lands beside, saved, and lands in its place once that
+//! source reads again or the owner keeps the batch without it (FIX-LIST
+//! 10671, `crate::secret_custody` `pending_restore`); a copy beside its
+//! source drops each saved row an image carried. The restored vault takes
+//! each fence, its discovery owed,
 //! so its own finisher retires every key the id names in the custody it
 //! holds now.
 
 use super::{CheckpointImage, Custody, Rejected, codec_error};
 use crate::Vault;
 use crate::secret_custody::{
-    CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
+    CredentialDisposition, CredentialRoute, ImageCredentialRow, PendingRestoreStage,
+    PlannedCredentials,
 };
 use crate::store::{CredentialFences, CustodyPlan, Store};
 
@@ -241,7 +247,9 @@ fn route_fences(
 /// own evidence did not read, which is never planned. An image's own fence
 /// and credential intent rows never land, but where a restore carries its
 /// live source's rows; each fence the route's evidence names lands with the
-/// rows instead. Never refuses for a value.
+/// rows instead, and, where a kept restore's source did not read, each row
+/// it withholds on that alone, saved (FIX-LIST 10671 (a)). Never refuses
+/// for a value.
 pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut crate::store::CustodyPlan,
@@ -253,6 +261,10 @@ pub(super) fn require(
         Custody::NewHost => CredentialRoute::Absent,
     };
     let mut fences = route_fences(image, plan, custody);
+    let mut staged = PendingRestoreStage::keeping(match custody {
+        Custody::Keep if fences.source_unread() => plan.source(),
+        _ => None,
+    });
     let rows = image
         .databases
         .get_mut("entities")
@@ -269,7 +281,12 @@ pub(super) fn require(
             {
                 // Its value never opens here, whatever key custody holds.
                 match crate::secret_custody::withheld_credential_row(raw) {
-                    Some(row) => *raw = row,
+                    Some(row) => {
+                        if fenced.named_pending(&credential.id) {
+                            staged.keep(&credential.id, credential.generation, raw, &row);
+                        }
+                        *raw = row;
+                    }
                     None => {
                         malformed.insert(key.clone());
                     }
@@ -321,8 +338,14 @@ pub(super) fn require(
     if !matches!(custody, Custody::Fork(None) | Custody::Replace(..)) {
         vault_meta.retain(|(key, _)| !CredentialFences::image_owned(key));
     }
-    // The restored vault keeps every fence, its discovery owed.
-    for (key, value) in fences.rows()? {
+    // A copy's fresh custody never holds a saved row's key (CALLS
+    // G7_COPY_RECOVERY).
+    if matches!(custody, Custody::Fork(_)) {
+        vault_meta.retain(|(key, _)| !PendingRestoreStage::image_row(key));
+    }
+    // The restored vault keeps every fence, its discovery owed, and every
+    // row it saved.
+    for (key, value) in fences.rows()?.into_iter().chain(staged.into_rows()) {
         match vault_meta.binary_search_by(|(held, _)| held.as_slice().cmp(key.as_slice())) {
             Ok(at) => vault_meta[at].1 = value,
             Err(at) => vault_meta.insert(at, (key, value)),

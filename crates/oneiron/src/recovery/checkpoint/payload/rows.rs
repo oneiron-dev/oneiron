@@ -509,9 +509,10 @@ families! {
     // KS-3's known-value history references: custody slots and the master's
     // generation, never a payload.
     Class::Structure => STORAGE_SCHEMA_VERSION SHORT_ID_GRAMMAR_VERSION SHORT_ID_COUNTER
-        STORAGE_ABI_VERSION SECRET_KNOWN_HISTORY SECRET_KNOWN_INDEX SECRET_CUSTODY_ERASE;
+        STORAGE_ABI_VERSION SECRET_KNOWN_HISTORY SECRET_KNOWN_INDEX SECRET_CUSTODY_ERASE
+        SECRET_CUSTODY_RESTORE_RELEASE;
     Class::Other(Client::Dispatch(OtherClient::Credential)) => SECRET_CUSTODY_INPUT
-        SECRET_CUSTODY_TRANSITION SECRET_CUSTODY_WITNESS;
+        SECRET_CUSTODY_TRANSITION SECRET_CUSTODY_WITNESS SECRET_CUSTODY_RESTORE_PENDING;
     // A centroid verdict's copied vectors and run (FIX 10094), owned by every
     // source it copied.
     Class::Other(Client::Dispatch(OtherClient::Response)) => SELF_HEAL_CENTROID_EVIDENCE;

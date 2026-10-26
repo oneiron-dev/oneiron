@@ -75,6 +75,17 @@ side_tables! {
     /// pending. Canonical (FIX 5337): a checkpoint carries it with the record it was taken into,
     /// and a restore over a live vault keeps the live vault's. Key: hex32(entity id).
     SECRET_CUSTODY_REBIND: VaultMeta b"secret_custody:rebind:v1:" Raw Engine;
+    /// One credential a restore keeping this host's custody landed withheld, pending, because
+    /// its source vault did not read (FIX-LIST 10671 (a)): its row as the image carried it, the
+    /// value sealed under its generation's key, the digest of the withheld row that took its
+    /// place, and the binding whose source it waits on. Never a plaintext or a key. Key: id16
+    /// (restore batch) + id16 (custody record id).
+    SECRET_CUSTODY_RESTORE_PENDING: VaultMeta b"secret_custody:restore_pending:v1:" Named Ciphertext;
+    /// The owner's release of one restore batch's pending credentials (FIX-LIST 10671 (b)): who
+    /// confirmed, when, the typed confirm and what each credential came to. Value-free; his
+    /// election, never a check of the source. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_RELEASE: VaultMeta b"secret_custody:restore_release:v1:" Named Engine
+        => crate::secret_custody::erase_pending_restore_actor_in_txn;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
