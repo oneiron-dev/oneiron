@@ -17,6 +17,7 @@ use crate::host::OrganHost;
 use crate::mesh::{self, ORGAN_ALPN, PeerError};
 use crate::outcome::OrganOutcome;
 use crate::resource_memory::{MachineFloor, SharedFloor};
+use crate::shutdown;
 use crate::spec::{LentInput, OrganCall, OrganInput, SightedInput};
 
 /// How long a node has to answer the dial and say what it offers.
@@ -208,7 +209,7 @@ impl OrganRouter {
         let lent = match &self.local {
             Some(host) => {
                 let spare = self.mesh.is_some().then(|| lent.clone());
-                match host.call_with(vault, call.clone(), lent, asks) {
+                match shutdown::settle(host.call_with(vault, call.clone(), lent, asks)) {
                     Ok(outcome) => {
                         return Ok(Routed::Done {
                             outcome,
@@ -256,6 +257,7 @@ impl OrganRouter {
         }
         let inputs = read_inputs(vault, &call, lent)?;
         for machine in nodes {
+            shutdown::check()?;
             let tried_node = mesh.runtime.block_on(mesh.try_node(
                 machine,
                 &call,
