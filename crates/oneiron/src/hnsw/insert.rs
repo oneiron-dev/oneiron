@@ -264,7 +264,7 @@ fn start_graph(
     store
         .hnsw_meta()
         .put(wtxn, COUNT_KEY, &1_u64.to_le_bytes())?;
-    store.hnsw_neighbors().put(wtxn, id.as_bytes(), &[])?;
+    write_neighbors(store, wtxn, id, &[])?;
     // A graph created from empty is symmetric by construction and every
     // subsequent write in this module preserves the invariant.
     mark_symmetric_links(store, wtxn)?;
