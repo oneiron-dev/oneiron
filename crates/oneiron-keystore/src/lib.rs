@@ -64,6 +64,11 @@ pub enum SlotKind {
     /// origin with no configured secret, such as the desktop app's own vault
     /// (FIX 4730). The root's recovery material, on this device only.
     HostRoot,
+    /// The independent seed this install's host issuer signs with for one
+    /// vault (FIX-LIST 3018): drawn once from the OS CSPRNG when the install
+    /// roots a new vault, never derived from a shared secret, a data key or
+    /// the vault id, and never minted again for a vault already rooted.
+    HostIssuerSeed,
 }
 
 impl SlotKind {
@@ -76,6 +81,7 @@ impl SlotKind {
             Self::VaultUnlock => "vault-unlock",
             Self::CheckpointSigning => "checkpoint-signing",
             Self::HostRoot => "host-root",
+            Self::HostIssuerSeed => "host-issuer-seed",
         }
     }
 }
