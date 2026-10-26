@@ -88,6 +88,7 @@ impl WireCrossed {
 }
 
 mod connection_pressure;
+mod kept;
 mod rows;
 pub(crate) use connection_pressure::{
     BodyCredential, ConnectionPoolPressure, ObservedBody, ObservedSocket, PoolPressure,
@@ -745,24 +746,6 @@ impl WireTelemetry {
             return Err(Error::CorruptedIndex("wire question identity"));
         }
         Ok(question)
-    }
-    /// Every call-volume question kept, by key, in the order they were kept:
-    /// what the health check reads (OF-520).
-    pub(crate) fn kept_questions(&self) -> Result<Vec<(String, WireQuestion)>> {
-        self.kept(QUESTION_SEQ)
-    }
-    /// Every limit question kept, by key: each row's windows, oldest first.
-    pub(crate) fn kept_limit_questions(&self) -> Result<Vec<(String, WireLimitQuestion)>> {
-        self.kept(LIMIT_QUESTION)
-    }
-    fn kept<T: serde::de::DeserializeOwned>(&self, prefix: &str) -> Result<Vec<(String, T)>> {
-        let mut kept = Vec::new();
-        for key in self.vault.sync_state_keys_with_prefix(prefix)? {
-            if let Some(bytes) = self.vault.sync_state_get(&key)? {
-                kept.push((key, decode(&bytes)?));
-            }
-        }
-        Ok(kept)
     }
 }
 impl Drop for WireTelemetry {

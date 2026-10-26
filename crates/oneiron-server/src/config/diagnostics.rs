@@ -61,6 +61,23 @@ pub(crate) fn locate_toml_failure<T: DeserializeOwned>(raw: &str) -> ConfigParse
     }
 }
 
+/// Where the `[section]` table starts in `raw`, the text of a config file
+/// the caller's context names: what a failure met settling that table names
+/// in place of its own error, which may name a value it refused (FIX 10925).
+/// The table's first header line, column 1; no place when `raw` names none.
+pub(crate) fn locate_toml_section(raw: &str, section: &str) -> ConfigParseError {
+    let line = raw.lines().position(|line| {
+        line.trim_start()
+            .strip_prefix('[')
+            .and_then(|header| header.trim_start().strip_prefix(section))
+            .is_some_and(|rest| rest.trim_start().starts_with([']', '.']))
+    });
+    ConfigParseError {
+        path: None,
+        location: line.map(|line| (line + 1, 1)),
+    }
+}
+
 /// The one-based line and column in `raw` of the span `error` gives.
 fn located(raw: &str, error: &toml::de::Error) -> Option<(usize, usize)> {
     error

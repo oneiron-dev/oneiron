@@ -306,7 +306,8 @@ pub struct SeatUsage {
     /// The unpriced calls whose record says they measured no tokens.
     pub no_usage: u64,
     /// The unpriced calls whose record says no list price was frozen on
-    /// them at admission.
+    /// them at admission, those on the owner's own key to a custom endpoint
+    /// included (FIX 7765).
     pub unpriced_model: u64,
     /// The unpriced calls whose record says their frozen rates name no
     /// currency and are not free in any (FIX 9534).
@@ -482,6 +483,10 @@ impl UsageLedger {
                             (None, None) if free_call(&stored.event) => {}
                             (None, Some(UnpricedReason::NoUsage)) => usage.no_usage += 1,
                             (None, Some(UnpricedReason::UnpricedModel)) => {
+                                usage.unpriced_model += 1;
+                            }
+                            // No list price was frozen on it either (FIX 7765).
+                            (None, Some(UnpricedReason::CustomEndpoint)) => {
                                 usage.unpriced_model += 1;
                             }
                             (None, Some(UnpricedReason::UnknownCurrency)) => {
