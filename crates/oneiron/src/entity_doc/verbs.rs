@@ -126,6 +126,8 @@ impl Vault {
                     .actor
                     .ok_or(invalid("text operation requires an actor"))?;
                 super::forks::authorize(self, txn, authorization, entity, actor)?;
+                // A shared vault's role and record scope (FIX 9846).
+                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
                 doc.doc
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
@@ -155,6 +157,9 @@ impl Vault {
         let out = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
+            // A shared vault's role and record scope, whether the update lands
+            // or is retained for review (FIX 9846).
+            self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;

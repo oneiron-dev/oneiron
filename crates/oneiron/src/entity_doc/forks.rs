@@ -455,6 +455,9 @@ pub(super) fn open_proposal_in_txn(
     let mut plan = crate::batch::secret_scan::Lifted::default();
     for req in requests {
         validate_actor(vault, txn, req.actor)?;
+        // A shared vault's role and record scope, in this writer, for a fork
+        // retained for review as for one a grant lands (FIX 9846).
+        vault.authorize_shared_content_write_in_txn(txn, req.entity, &req.actor)?;
         let h = storage::head(&vault.store, txn, &req.entity)?;
         let live = storage::load(&vault.store, txn, &h)?;
         let mut fork = live.fork(&req.base)?;

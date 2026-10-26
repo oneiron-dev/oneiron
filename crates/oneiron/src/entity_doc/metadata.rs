@@ -129,6 +129,9 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         let frontier = self.with_write_txn_grouped(|txn| {
             super::forks::authorize(self, txn, authorization, entity, actor)?;
+            // A shared vault's role and record scope, in the committing writer
+            // (FIX 9846).
+            self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
             let mut head = storage::head(&self.store, txn, entity)?;
             let doc = storage::load(&self.store, txn, &head)?;
             let before = doc.doc.oplog_vv();
