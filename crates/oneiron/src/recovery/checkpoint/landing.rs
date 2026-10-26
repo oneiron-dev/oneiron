@@ -234,8 +234,10 @@ impl Vault {
         }
         // Each pad a row names by reference rests again with the pad its
         // custody holds, or is withheld by its world's setting; any other is
-        // refused before the vault is kept (KS-5).
-        let pad_notes = super::pad_custody::land(&vault, pads)?;
+        // refused before the vault is kept (KS-5). Each it left owed, and
+        // what it says of them, its epoch records (PAD-2).
+        let pad_recovery = super::pad_custody::land(&vault, pads)?;
+        let pad_notes = pad_recovery.remaining.clone();
         // Each credential value reads back from the custody this vault now
         // holds; each it did not land readable is named (KS-6 part 2).
         let credential_notes = super::credential_custody::land(&vault, credentials);
@@ -251,6 +253,7 @@ impl Vault {
             checkpoint_id,
             restored_at,
             reason,
+            pad_recovery,
         };
         vault.with_write_txn_grouped(|txn| {
             let sequence = match RESTORE_EPOCH.iter_rev_from(&vault.store, txn, &[])?.next() {

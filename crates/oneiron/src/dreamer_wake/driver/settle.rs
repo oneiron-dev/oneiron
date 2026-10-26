@@ -1,10 +1,10 @@
 //! Where one executed attempt settles: its budget, its completion, its
-//! deferral, landing or park, with the milestone and the report count each
-//! writes. The loop then checks whether the pass stops.
+//! failure, deferral, landing or park, with the milestone and the report
+//! count each writes. The loop then checks whether the pass stops.
 
 use super::*;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::{DreamerAdmittedAttempt, FailDreamerAttempt};
 use crate::error::ErrorKind;
 
 /// What one executed attempt settles from: the pass, the admitted attempt,
@@ -49,6 +49,35 @@ impl DreamerWakeDriver<'_> {
                 self.complete_attempt(exec, admitted, input.now).await?;
                 self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
                 report.completed += 1;
+            }
+            DreamerAttemptExecution::Failed {
+                reason,
+                completed_units,
+            } => {
+                // Terminal for this try alone: its spend settles, the queue
+                // records why, and the pass goes on (FIX 11090).
+                self.store.settle_budget(SettleDreamerBudget {
+                    budget_id: line.clone(),
+                    child_attempt: attempt_id,
+                    actual_units: completed_units,
+                    now: input.now,
+                })?;
+                self.store.fail(FailDreamerAttempt {
+                    id: attempt_id,
+                    lease_owner: admitted
+                        .status
+                        .attempt
+                        .lease_owner
+                        .clone()
+                        .unwrap_or_default(),
+                    attempt_count: admitted.status.attempt.attempt_count,
+                    reason,
+                    now: input.now,
+                })?;
+                let stage = stage.unwrap_or("failed");
+                self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
+                self.write_attempt_milestone(admitted, DreamerMilestoneKind::Failed, input.now)?;
+                report.failed += 1;
             }
             DreamerAttemptExecution::Deferred {
                 completed_units,

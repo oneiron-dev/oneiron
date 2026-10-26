@@ -11,10 +11,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/iroh_transport.rs` | src | m | 1 struct · 6 fn | IrohTransport | Private iroh data plane |
-| `src/iroh_transport/dial.rs` | src | s | 1 fn · 1 crate-vis | — | The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt |
+| `src/iroh_transport.rs` | src | m | 1 struct · 6 fn · 1 re-export | IrohTransport | Private iroh data plane |
+| `src/iroh_transport/admission.rs` | src | m | 6 crate-vis | — | Fair dispatch of authenticated inbound admissions (FIX 8620), and the one receipt each leaves however it… |
+| `src/iroh_transport/dial.rs` | src | s | 3 fn · 1 type · 1 crate-vis | — | The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt |
 | `src/lib.rs` | src | s | 5 struct · 1 enum · 8 trait · 2 fn · 2 type · 1 const · 3 mod · 2 re-export | AcceptPolicy, MachineGrants, MachineRoster, MeshConnection, MeshDuplex, MeshError, MeshService, MeshStream +6 | Vault-scoped mesh transport |
-| `src/sync_dialer.rs` | src | s | 1 struct · 2 fn | MeshSyncDialer | The sync client's carrier to its home machine over the mesh (OF-535) |
+| `src/sync_dialer.rs` | src | s | 1 struct · 3 fn · 1 type | MeshSyncDialer | The sync client's carrier to its home machine over the mesh (OF-535) |
 | `src/transport_key.rs` | src | s | 1 struct · 4 fn · 1 crate-vis | TransportKey | Pairing derives a distinct transport signer; only the public endpoint key is recorded |
 | `tests/conformance.rs` | test | m | — | — | The admission, stream and reconnect laws for the iroh transport |
 | `tests/roster.rs` | test | s | — | — | A vault MACHINE row is an address hint only when it carries the exact versioned envelope |

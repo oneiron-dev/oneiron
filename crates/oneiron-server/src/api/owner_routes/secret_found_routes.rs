@@ -23,17 +23,19 @@ use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
-use oneiron::secret_custody::{FoundKeyCard, FoundKeyNotice, FoundKeySettled};
+use oneiron::secret_custody::{FoundKeyCard, FoundKeyCursor, FoundKeyNotice, FoundKeySettled};
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
+use crate::error::ApiError;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-/// The most records one read lists.
+/// The most records one page lists; a larger limit is served a page at a
+/// time through `next_cursor` (FIX 8204).
 const MAX_FOUND_PAGE: usize = 200;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -50,9 +52,24 @@ struct FoundQuery {
     /// Only the records with a key the owner has not answered.
     #[serde(default)]
     pending: bool,
-    /// At most this many, newest first; 50 when unset.
+    /// At most this many a page, newest first; 50 when unset, and
+    /// [`MAX_FOUND_PAGE`] a page past that.
     #[serde(default)]
     limit: Option<usize>,
+    /// The `next_cursor` of the page before; from the newest when absent.
+    #[serde(default)]
+    after: Option<String>,
+}
+
+/// One page of notices, and where the next one starts.
+#[derive(Debug, Serialize)]
+struct FoundPage {
+    notices: Vec<NoticeView>,
+    /// The next page's `after`; absent once `done`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    next_cursor: Option<String>,
+    /// No older notice is left under this filter.
+    done: bool,
 }
 
 /// One record's notice.
@@ -147,27 +164,39 @@ struct GrantFoundKey {
     project: Option<String>,
 }
 
-/// `GET /v1/owner/secrets/found?pending=true&limit=50`: each record the
-/// write door lifted keys out of, newest first, with its keys. No value is
-/// read.
+/// `GET /v1/owner/secrets/found?pending=true&limit=50&after=<cursor>`: each
+/// record the write door lifted keys out of, newest first, with its keys, a
+/// page at a time; `next_cursor` continues to every older notice. No value
+/// is read.
 async fn found(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<FoundQuery>, QueryRejection>,
-) -> OwnerReply<Vec<NoticeView>> {
+) -> OwnerReply<FoundPage> {
     let owner = owner(&auth, &server)?;
     let query = query_params(query)?;
     let limit = query.limit.unwrap_or(50).min(MAX_FOUND_PAGE);
-    let views = blocking(move || -> OwnerResult<Vec<NoticeView>> {
-        Ok(server
+    let after = query
+        .after
+        .as_deref()
+        .map(|text| {
+            FoundKeyCursor::parse(text).ok_or_else(|| {
+                ApiError::bad_request("after is not a found-key page's next_cursor", Some("after"))
+            })
+        })
+        .transpose()?;
+    let page = blocking(move || -> OwnerResult<FoundPage> {
+        let page = server
             .vault()
-            .found_keys(&owner, query.pending, limit)?
-            .into_iter()
-            .map(NoticeView::from)
-            .collect())
+            .found_keys_page(&owner, query.pending, after, limit)?;
+        Ok(FoundPage {
+            notices: page.notices.into_iter().map(NoticeView::from).collect(),
+            next_cursor: page.next_cursor.map(|cursor| cursor.to_text()),
+            done: page.done,
+        })
     })
     .await?;
-    Ok(Json(views))
+    Ok(Json(page))
 }
 
 /// `POST /v1/owner/secrets/found/delete` with `{"handle"}`: deletes the

@@ -590,6 +590,7 @@ impl Vault {
             attempt_cancels: Default::default(),
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
+            managed_owner_check: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
