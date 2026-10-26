@@ -42,13 +42,15 @@ pub(super) fn vault_rollup_key(owner: &str, vault: &str) -> String {
 pub(super) fn vault_rollup_key_of_parts(owner: &str, vault: &str) -> String {
     format!("usage:rollup:vault:{owner}:{vault}")
 }
-/// The key a meter row of `metric` is kept under (FIX 7764).
+/// The key a meter row of `metric` is kept under (FIX 7764). Its last part
+/// is the digest of the idempotency key, so a key that repeats the owner and
+/// vault (a storage day's) still fits; the stored row keeps the whole key.
 pub(super) fn meter_key(owner: &str, vault: &str, metric: &str, id: &str) -> String {
     format!(
         "usage:meter:{}:{}:{metric}:{}",
         key_part(owner),
         key_part(vault),
-        key_part(id)
+        blake3::hash(id.as_bytes()).to_hex()
     )
 }
 /// The key of one owner/vault/metric/day meter rollup (FIX 7764).
