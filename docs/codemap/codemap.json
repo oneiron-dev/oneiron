@@ -25206,6 +25206,7 @@
      "kind": "src",
      "notable": [
       "ConnectorEventExecutor",
+      "ConnectorEventReplyHandoff",
       "ConnectorEventResponder",
       "ConnectorEventWake"
      ],
@@ -25214,6 +25215,7 @@
      "surface": {
       "const": 2,
       "crate-vis": 1,
+      "enum": 1,
       "fn": 4,
       "struct": 2,
       "trait": 1
@@ -26687,7 +26689,7 @@
      "purpose": "Evidence-citing user-voice plans",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "re-export": 3,
@@ -36181,6 +36183,16 @@
      "path": "src/ingest/bulk_review_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ingest/connector_conversation.rs",
+     "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
+     "surface": {
+      "fn": 3
+     }
     },
     {
      "bucket": "s",
@@ -48286,9 +48298,9 @@
      "path": "src/outbound/mod.rs",
      "purpose": "Outbound action capability manifests and dispatch spine for OF-327",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -48318,6 +48330,24 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "ConnectorReplyJob",
+      "ConnectorReplyJobResult",
+      "ConnectorReplyStage"
+     ],
+     "path": "src/outbound/reply_job.rs",
+     "purpose": "The durable connector reply job (FIX 2405)",
+     "surface": {
+      "const": 2,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 6,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/outbound/retry_audit.rs",
      "purpose": "Atomic send-receipt retry and terminal settlement",
@@ -48335,8 +48365,18 @@
      "path": "src/outbound/served_sink.rs",
      "purpose": "The sink a served connector-send worker hands the connector executor (OF-187): the transports this engine…",
      "surface": {
-      "fn": 6,
+      "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound/served_sink/content.rs",
+     "purpose": "The text an outbound content ref sends (OF-187): one resolver over the typed content-family loaders this…",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -67223,7 +67263,8 @@
      "path": "src/task_verb/ask_soft_confirm.rs",
      "purpose": "Durable, once-per-person soft-confirm notice for a companion commitment",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 5,
+      "fn": 1
      }
     },
     {
@@ -77174,7 +77215,7 @@
      "purpose": "A vault-owned inference snapshot at rest: its body sealed under its own erasable data key, the key wrapped…"
     },
     "ingest": {
-     "files": 57,
+     "files": 58,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77335,7 +77376,7 @@
      "purpose": "Vault-as-origin serving plane (ARCH-0068 Phase A)"
     },
     "outbound": {
-     "files": 47,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77974,7 +78015,7 @@
    },
    "over_bar": 125,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5129,
+   "source_files": 5132,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92902,7 +92943,17 @@
      "path": "src/ai_host/connector_event.rs",
      "purpose": "The served connector-event responder (OF-519): what a Dreamer pass runs when a subscribed Slack or LINE…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/connector_event/worker.rs",
+     "purpose": "The reply worker's job body (FIX 2405): one connector reply job, run off the Dreamer pass on a blocking…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -93207,7 +93258,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 3,
       "re-export": 1,
       "struct": 2
@@ -106404,6 +106455,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/connector_replies.rs",
+     "purpose": "The served connector reply worker (FIX 2405): the one consumer of the `connector.reply` jobs a Dreamer pass…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/connector_sends.rs",
      "purpose": "The served connector-send drain (OF-187): the one consumer of the `bridge.outbound.schedule` queue that…",
      "surface": {
@@ -107874,7 +107935,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -108280,7 +108341,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 66,
+     "files": 67,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -108352,7 +108413,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1265,
+   "source_files": 1267,
    "test_files": 182
   },
   "oneiron-spawn": {
