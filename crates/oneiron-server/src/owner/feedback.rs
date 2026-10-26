@@ -141,6 +141,7 @@ pub(crate) fn preview_view(
 ) -> OwnerResult<Preview> {
     let route = host.config.route();
     let principal_ref = owner.principal_ref_for_read(vault)?;
+    preview.bundle().measure_diagnosis_counts(vault);
     let approval =
         preview.approval_component_id(&FeedbackApprovalScope::Send(route.clone()), principal_ref);
     let previewed_at = vault.now_recorded_at();

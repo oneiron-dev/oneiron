@@ -228,6 +228,10 @@ pub(crate) enum ResponseFamily {
     /// and labels' copied vectors and the retrieval run, carried whole and
     /// owned by every source it copied; a retired snapshot leaves nothing.
     CentroidEvidence,
+    /// A report cluster (FIX 9856): its member ISSUEs' copied vectors and
+    /// their centroid, carried whole and owned by every member; a retired
+    /// cluster leaves nothing.
+    ReportCluster,
 }
 
 impl ResponseFamily {
@@ -254,6 +258,7 @@ impl ResponseFamily {
                     &side_table::MESSAGE_REPLY_ASSERTIONS,
                     Self::MessageReplyAssertions,
                 ),
+                (&side_table::FEEDBACK_REPORT_CLUSTER, Self::ReportCluster),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
@@ -295,7 +300,8 @@ impl ResponseFamily {
             | Self::SavedQueryMemo
             | Self::MessageReplyAssertions
             | Self::VoiceBank
-            | Self::CentroidEvidence => ResponseDb::VaultMeta,
+            | Self::CentroidEvidence
+            | Self::ReportCluster => ResponseDb::VaultMeta,
         }
     }
 
@@ -340,6 +346,7 @@ impl ResponseFamily {
             Self::MessageReplyAssertions => ResponseScan::decoded(
                 crate::memory::reply_assertions_stub(value).map(ResponseCarriage::whole),
             ),
+            Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
             Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
         }
     }
@@ -428,6 +435,7 @@ impl ResponseFamily {
             Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
             Self::CentroidEvidence => Ok(crate::self_heal::centroid_evidence_owners(value)),
             Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
+            Self::ReportCluster => Ok(crate::feedback::intake::report_cluster_owners(value)),
             // A bank row's are its subject's or creator's, as far as the
             // bank's own rows prove them; the rest are reported.
             Self::VoiceBank => {
@@ -483,8 +491,9 @@ impl ResponseFamily {
             }
             // A retired memo's row goes; the next evaluation derives anew. A
             // retired centroid snapshot's row goes, as its source's erase
-            // deletes it live.
-            Self::SavedQueryMemo | Self::CentroidEvidence => {
+            // deletes it live; a retired cluster's row goes, as its
+            // member's erase remakes it live without that member.
+            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
@@ -536,7 +545,7 @@ impl ResponseFamily {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo | Self::CentroidEvidence => {
+            Self::SavedQueryMemo | Self::CentroidEvidence | Self::ReportCluster => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
