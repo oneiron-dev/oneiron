@@ -80,7 +80,9 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
     if let Some(payload) = readable {
         approval::validate_admitted_approval(record, payload)?;
     }
-    if record.state == IntentState::Pending && payload::payload_erased(record.payload())? {
+    if matches!(record.state, IntentState::Pending | IntentState::Deferred)
+        && payload::payload_erased(record.payload())?
+    {
         return Err(IntentLedgerError::InvalidRecord(
             "an erased outbound intent cannot stay pending",
         ));
@@ -119,6 +121,10 @@ pub(in crate::outbound_intent_ledger) fn validate_record(
                 Some(RecordedOutboundOutcome::DefiniteNonDelivery)
             )
             | (IntentState::Done, Some(RecordedOutboundOutcome::Acked))
+            | (
+                IntentState::Deferred,
+                Some(RecordedOutboundOutcome::Deferred)
+            )
             | (
                 IntentState::Abandoned,
                 Some(RecordedOutboundOutcome::Abandoned(_))

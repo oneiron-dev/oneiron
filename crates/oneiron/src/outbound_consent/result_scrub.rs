@@ -107,6 +107,13 @@ pub struct OutboundTransportResult {
 /// frozen call whose bytes were authorized.
 pub trait OutboundResultSender {
     fn send(&mut self, call: &FrozenOutboundCall) -> OutboundTransportResult;
+
+    /// The remote task handle the last send's connector accepted it as, when
+    /// that send came back [`OutboundSendOutcome::Deferred`] (FIX 7960). By
+    /// default a sender hands on none.
+    fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
+        None
+    }
 }
 
 /// Stdio child restrictions a real transport must apply before spawn.

@@ -159,7 +159,9 @@ fn answer(
         OutboundDispatchOutcome::DeliveredToChannel
         | OutboundDispatchOutcome::Degraded
         | OutboundDispatchOutcome::Suppressed
-        | OutboundDispatchOutcome::LetGo => ConnectorReplyStage::Dispatched,
+        | OutboundDispatchOutcome::LetGo
+        // The provider took the reply as a remote task: it is never resent.
+        | OutboundDispatchOutcome::Deferred => ConnectorReplyStage::Dispatched,
         OutboundDispatchOutcome::Held => ConnectorReplyStage::Held,
         OutboundDispatchOutcome::Failed => ConnectorReplyStage::Failed,
         OutboundDispatchOutcome::Ambiguous => ConnectorReplyStage::Ambiguous,

@@ -117,6 +117,30 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         }
     };
     let resolution = effect_result.resolution;
+    // FIX 7964, 8818: what the ledger keeps beside this send's row. A read
+    // that fails after a send never fails the dispatch: the receipt then
+    // carries neither field, as before them.
+    let settlement = match effect_result.dispatch.intent_id {
+        Some(id) if effect_result.dispatch.state.is_some() => {
+            crate::outbound_intent_ledger::intent_settlement(vault, &id).unwrap_or_else(|error| {
+                tracing::warn!(
+                    reason = "outbound_settlement_unread",
+                    %error,
+                    "an outbound send's settlement row did not read; its receipt omits it"
+                );
+                Default::default()
+            })
+        }
+        _ => Default::default(),
+    };
+    let held_by_provider_wait = effect_result
+        .gate_receipt_reasons
+        .iter()
+        .any(|reason| reason == crate::outbound_chokepoint::PROVIDER_WAIT_REASON);
+    let provider_wait_held_until = settlement
+        .provider_wait
+        .and_then(|wait| wait.not_before)
+        .filter(|_| held_by_provider_wait);
     // A ceiling reached under the writer lock parks the send as Held.
     let parked = parked.or(effect_result
         .ceiling_count
@@ -146,6 +170,9 @@ pub(super) fn execute_admitted<S: OutboundExecutionSink>(
         ceiling_count: effect_result.ceiling_count,
         held_approval_digest: effect_result.approval_digest,
         held_approval_actor: effect_result.approval_actor,
+        provider_wait: settlement.provider_wait,
+        provider_wait_held_until,
+        budget_reservation: settlement.reservation.map(|reservation| reservation.status),
     })
 }
 
@@ -159,6 +186,7 @@ fn outbound_effect_outcome(
 ) -> OutboundDispatchOutcome {
     match resolution {
         Some(IntentResolution::Delivered) => OutboundDispatchOutcome::DeliveredToChannel,
+        Some(IntentResolution::Deferred) => OutboundDispatchOutcome::Deferred,
         Some(IntentResolution::Stopped {
             delivery: UnconfirmedDelivery::Unresolved,
             ..

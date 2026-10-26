@@ -81,7 +81,7 @@ impl OutboundDispatchPipeline {
         prepared.co_actor = Some(co_actor);
         self.dispatch_prepared_or_completed(vault, prepared, sink)
     }
-    fn dispatch_inner<S: OutboundExecutionSink>(
+    pub(super) fn dispatch_inner<S: OutboundExecutionSink>(
         self,
         vault: &Vault,
         request: OutboundDispatchRequest,
@@ -286,7 +286,7 @@ impl OutboundDispatchPipeline {
         let verdict = super::effect::execute_admitted(super::effect::EffectInput {
             vault,
             request: &request,
-            sink,
+            sink: &mut *sink,
             verb_contract,
             effect,
             payload: payload.ok_or(Error::InvariantViolation("missing outbound payload"))?,
@@ -314,7 +314,7 @@ impl OutboundDispatchPipeline {
                 seat_ledger.held_at(verb_contract, count),
             );
         }
-        let result = crate::outbound::receipt_fields::dispatch_result_receipt(
+        let mut result = crate::outbound::receipt_fields::dispatch_result_receipt(
             &request,
             verb_contract,
             policy_risk,
@@ -322,6 +322,16 @@ impl OutboundDispatchPipeline {
             Some(&admission),
             verdict,
             approval_digest,
+        );
+        // FIX 7962: a degraded interrupt's bound alternative goes now.
+        super::degrade::dispatch_ambient_alternative(
+            self,
+            vault,
+            &request,
+            &admission.window_decision,
+            verified_actor,
+            sink,
+            &mut result,
         );
         Ok(RecordedDispatch {
             result,

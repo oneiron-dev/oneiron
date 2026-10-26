@@ -8,15 +8,17 @@ use super::connector_task::{
     mark_connector_send_task_attempt_started, project_connector_send_task_outcome,
     project_connector_send_task_outcome_in_txn, send_receipt_exists_for_task,
 };
-use super::dispatch_pipeline::{GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD};
+use super::dispatch_pipeline::{
+    ALTERNATIVE_OUTCOME_FIELD, GATE_OUTCOME_PENDING, PROVIDER_RETRY_AFTER_FIELD,
+};
 use super::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchRequest, OutboundDispatchResult, OutboundExecutionSink,
 };
-use super::receipt_fields::append_connector_task_window_receipt;
+use super::receipt_fields::{PROVIDER_WAIT_FIELD, append_connector_task_window_receipt};
 use super::retry_audit::{
-    persist_failed_send_receipt_and_retry, persist_send_receipt_and_retry,
-    reconcile_connector_task, settle_suppressed_send,
+    complete_degraded_connector_task, persist_failed_send_receipt_and_retry,
+    persist_send_receipt_and_retry, reconcile_connector_task, settle_suppressed_send,
 };
 use super::window_door::local_minute_of_day_at;
 use crate::Vault;
@@ -34,10 +36,16 @@ use crate::receipt::SendReceiptOutcome;
 mod phases;
 
 use self::phases::{
-    connector_dispatch_request, settle_failed_connector_task, settle_held_connector_task,
+    ambient_alternative_went, connector_dispatch_request, settle_failed_connector_task,
+    settle_held_connector_task,
 };
 
 pub(super) const CONNECTOR_TASK_EXECUTOR_LEASE_OWNER: &str = "connector-task-executor";
+/// The queue reason a provider wait ends with at its caller's deadline (FIX
+/// 8818).
+const PROVIDER_WAIT_DEADLINE_REASON: &str = "deadline_reached";
+/// The receipt field naming the deadline that ended a provider wait.
+const PROVIDER_WAIT_DEADLINE_FIELD: &str = "deadline_at";
 /// First re-arm delay for a send the Gate parked on a human decision.
 const PENDING_GATE_BACKOFF_BASE_SECS: u64 = 1;
 /// Ceiling for that curve: a granted approval waits at most five minutes.
@@ -291,6 +299,26 @@ impl Vault {
                     )? {
                         executed = executed.saturating_add(1);
                     }
+                }
+                // The provider accepted the send as a remote task (FIX 7960):
+                // the TASK completes, and the send is never repeated.
+                OutboundDispatchOutcome::Deferred => {
+                    reconcile_connector_task(
+                        self,
+                        &attempt,
+                        &task,
+                        &receipt_id,
+                        now,
+                        None,
+                        Some(result.receipt),
+                    )?;
+                }
+                // FIX 7962: the ambient send the interrupt degraded to went,
+                // so the TASK's send is carried out; the interrupt is not
+                // re-armed.
+                OutboundDispatchOutcome::Degraded if ambient_alternative_went(&result) => {
+                    complete_degraded_connector_task(self, &attempt, &task, result.receipt, now)?;
+                    executed = executed.saturating_add(1);
                 }
                 OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
                     settle_held_connector_task(

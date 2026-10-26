@@ -110,6 +110,12 @@ fn step_from_dispatch(
         {
             Step::Unsettled { intent, reasons }
         }
+        // FIX 7960: the connector took the call as a remote task. Its
+        // outcome is still out, and it is never sent again.
+        (Some(IntentState::Deferred), Some(intent)) => {
+            push_reason(&mut reasons, REMOTE_TASK_DEFERRED);
+            Step::Unsettled { intent, reasons }
+        }
         (Some(IntentState::Abandoned), _) => {
             if reasons.is_empty() {
                 reasons.push("abandoned".to_owned());
@@ -132,7 +138,11 @@ fn step_from_dispatch(
                 push_reason(&mut reasons, "delivery_failed");
                 Step::Retryable { intent, reasons }
             }
-            Some(OutboundSendOutcome::Ambiguous | OutboundSendOutcome::Acked) => {
+            Some(
+                OutboundSendOutcome::Ambiguous
+                | OutboundSendOutcome::Acked
+                | OutboundSendOutcome::Deferred,
+            ) => {
                 push_reason(&mut reasons, "delivery_unconfirmed");
                 Step::Retryable { intent, reasons }
             }
@@ -141,6 +151,10 @@ fn step_from_dispatch(
         _ => hold_or_deny(reasons, decision_ref),
     }
 }
+
+/// The reason an unsettled call its connector took as a remote task names
+/// (FIX 7960).
+pub(super) const REMOTE_TASK_DEFERRED: &str = "remote_task_deferred";
 
 fn push_reason(reasons: &mut Vec<String>, reason: &str) {
     if !reasons.iter().any(|known| known == reason) {
@@ -185,5 +199,7 @@ pub(super) fn intent_escalation_code(reason: IntentEscalationReason) -> &'static
         IntentEscalationReason::OwnerStopped => "owner_stopped",
         IntentEscalationReason::ConnectorSlateNeverAllow => "connector_key_slate_never_allow",
         IntentEscalationReason::ActorErased => "actor_erased",
+        IntentEscalationReason::RecipientErased => "recipient_erased",
+        IntentEscalationReason::RemoteTaskFailed => "remote_task_failed",
     }
 }

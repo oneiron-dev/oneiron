@@ -136,6 +136,7 @@ pub(super) fn decode_recorded_outcome(
             Ok(Some(RecordedOutboundOutcome::DefiniteNonDelivery))
         }
         ("acked", Value::Nil) => Ok(Some(RecordedOutboundOutcome::Acked)),
+        ("deferred", Value::Nil) => Ok(Some(RecordedOutboundOutcome::Deferred)),
         ("abandoned", value) => {
             let reason = value
                 .as_str()

@@ -119,5 +119,6 @@ pub(super) const fn dispatch_outcome_str(outcome: &OutboundDispatchOutcome) -> &
         OutboundDispatchOutcome::LetGo => "let_go",
         OutboundDispatchOutcome::Failed => "failed",
         OutboundDispatchOutcome::Ambiguous => "ambiguous",
+        OutboundDispatchOutcome::Deferred => "deferred",
     }
 }

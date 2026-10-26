@@ -23,11 +23,14 @@ use super::txn::suspend_connector_key_in_txn;
 
 mod charge;
 mod rate_window;
+mod reservation;
 pub(crate) use self::charge::{
     charge_effector_budgets, charge_effector_budgets_pooled, preflight_effector_budgets_pooled,
     shares_budget_pool,
 };
 pub(crate) use self::rate_window::{BudgetBlock, budget_block_pooled};
+pub use self::reservation::EffectorBudgetDebit;
+pub(crate) use self::reservation::release_effector_debits_in_txn;
 
 /// Compiled-charter cap usage rows live at `0x8000 | i` (GOV-10); key budget
 /// rows live at `0..=15`.
@@ -379,6 +382,11 @@ pub struct EffectorBudgetCharge {
     /// post-debit read rides `read.pool`. `None` for any other key, and when
     /// the pool was charged through another key of the same effect.
     pub pool: Option<EffectorPoolCharge>,
+    /// Every usage entry this charge wrote, the catalog pool's included,
+    /// each under its own key: what an outbound send's reservation releases
+    /// when the send certainly did not go (FIX 7964). Empty when nothing
+    /// debited.
+    pub debits: Vec<EffectorBudgetDebit>,
 }
 
 /// What one charge did to a per-grant key's catalog pool (ONE-1794). It is

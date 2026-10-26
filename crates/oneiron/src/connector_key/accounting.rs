@@ -373,6 +373,7 @@ impl Vault {
                 matched_rows: Vec::new(),
                 ladder_events: Vec::new(),
                 pool: None,
+                debits: Vec::new(),
             }));
         }
 

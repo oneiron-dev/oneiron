@@ -5,6 +5,7 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
+mod ambient_alternative;
 mod capability;
 mod connector_reply;
 mod connector_task;
@@ -27,6 +28,7 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
+pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,

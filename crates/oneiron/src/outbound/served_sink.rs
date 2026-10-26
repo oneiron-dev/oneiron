@@ -32,6 +32,7 @@ use crate::channel_identity_provider::{
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
+use crate::outbound_intent_ledger::ProviderWaitKind;
 use crate::surface_event::SurfaceConnectorPayload;
 use crate::{EntityId, Vault};
 
@@ -243,7 +244,9 @@ impl<'a> ServedChannelSink<'a> {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         if status == 429 {
-            let failed = OutboundExecutionOutcome::failed("slack_rate_limited");
+            // FIX 8818: a rate limit keeps the send queued for the wait.
+            let failed = OutboundExecutionOutcome::failed("slack_rate_limited")
+                .with_provider_wait(ProviderWaitKind::RateLimit);
             return match retry_after {
                 Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
                 None => failed,
@@ -521,11 +524,19 @@ impl<'a> ServedChannelSink<'a> {
                 accepted_id.unwrap_or_else(|| "unknown".to_owned())
             )),
             400 if message == LINE_INVALID_REPLY_TOKEN => return LineAnswer::TokenInvalid,
+            // FIX 8818: a spent quota or a rate limit keeps the send queued
+            // for the provider's wait, and its stated seconds ride along.
             429 if message.contains(LINE_MONTHLY_LIMIT) => {
-                OutboundExecutionOutcome::failed("line_monthly_limit")
+                let failed = OutboundExecutionOutcome::failed("line_monthly_limit")
+                    .with_provider_wait(ProviderWaitKind::Quota);
+                match retry_after {
+                    Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
+                    None => failed,
+                }
             }
             429 => {
-                let failed = OutboundExecutionOutcome::failed("line_rate_limited");
+                let failed = OutboundExecutionOutcome::failed("line_rate_limited")
+                    .with_provider_wait(ProviderWaitKind::RateLimit);
                 match retry_after {
                     Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
                     None => failed,

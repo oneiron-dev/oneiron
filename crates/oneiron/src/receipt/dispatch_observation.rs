@@ -66,6 +66,7 @@ impl DispatchObservation {
             "let_go" => OutboundDispatchOutcome::LetGo,
             "failed" => OutboundDispatchOutcome::Failed,
             "ambiguous" => OutboundDispatchOutcome::Ambiguous,
+            "deferred" => OutboundDispatchOutcome::Deferred,
             _ => return Err(Error::CorruptedIndex("dispatch observation outcome")),
         };
         Ok(OutboundDispatchResult {

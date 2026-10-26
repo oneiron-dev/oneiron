@@ -92,6 +92,12 @@ pub(super) struct ConnectorSendTaskBody {
     /// executor replays this frozen body rather than recomputing any of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) calendar_invite: Option<CalendarInvitePayload>,
+    /// The caller's deadline for a provider wait (FIX 8818).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) deadline_at: Option<u64>,
+    /// The ambient send the interrupt degrades to (FIX 7962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) ambient_alternative: Option<super::OutboundAmbientAlternative>,
     pub(super) occurred_at: u64,
 }
 
@@ -151,6 +157,11 @@ pub struct ConnectorSendTask {
     /// invite. The executor re-freezes exactly these bytes; it never mints a
     /// UID or bumps a SEQUENCE.
     pub calendar_invite: Option<CalendarInvitePayload>,
+    /// The caller's deadline, vault clock seconds: past it the TASK stops
+    /// waiting on its provider (FIX 8818). `None` sets none.
+    pub deadline_at: Option<u64>,
+    /// The ambient send the interrupt degrades to (FIX 7962).
+    pub ambient_alternative: Option<super::OutboundAmbientAlternative>,
     pub occurred_at: u64,
 }
 
@@ -182,6 +193,7 @@ pub(crate) fn put_connector_send_task_in_txn(
     actor_class: EdgeActorClass,
     originating_session_ref: Option<&str>,
     schedule_context: &crate::memory::OutboundScheduleContext,
+    continuation: &super::OutboundScheduleContinuation,
     calendar_invite: Option<&CalendarInvitePayload>,
     counterparty_ref: Option<&str>,
     occurred_at: u64,
@@ -224,6 +236,8 @@ pub(crate) fn put_connector_send_task_in_txn(
         apns_interruption_level: schedule_context.apns_interruption_level,
         resolved_level: schedule_context.resolved_level,
         calendar_invite: calendar_invite.cloned(),
+        deadline_at: continuation.deadline_at,
+        ambient_alternative: continuation.ambient_alternative.clone(),
         occurred_at,
     };
     let task_body = rmp_serde::to_vec_named(&task_body)
@@ -407,6 +421,8 @@ impl Vault {
             apns_interruption_level: body.apns_interruption_level,
             resolved_level: body.resolved_level,
             calendar_invite: body.calendar_invite,
+            deadline_at: body.deadline_at,
+            ambient_alternative: body.ambient_alternative,
             occurred_at: body.occurred_at,
         }))
     }

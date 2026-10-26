@@ -262,6 +262,10 @@ side_tables! {
     /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
     OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
         => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
+    /// What one ledger row's send came to beside its state, written with the ledger change it
+    /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
+    /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
+    OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).

@@ -189,6 +189,7 @@ fn record_entries_without_digest(record: &IntentLedgerRecord) -> Vec<(Value, Val
         let (kind, reason) = match outcome {
             RecordedOutboundOutcome::DefiniteNonDelivery => ("definite_non_delivery", Value::Nil),
             RecordedOutboundOutcome::Acked => ("acked", Value::Nil),
+            RecordedOutboundOutcome::Deferred => ("deferred", Value::Nil),
             RecordedOutboundOutcome::Abandoned(reason) => {
                 ("abandoned", Value::from(reason.as_str()))
             }

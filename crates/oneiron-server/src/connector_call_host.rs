@@ -54,6 +54,7 @@ use oneiron::outbound_consent::{
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
+    RemoteTaskHandle,
 };
 use oneiron::secret_custody::{KeptSentValue, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
@@ -71,6 +72,7 @@ use crate::server::SyncServer;
 
 mod live_exchange;
 mod presenting;
+mod remote_task;
 mod reply_read;
 mod resume;
 mod sent;
@@ -145,6 +147,8 @@ pub struct ServedConnectorCallHost {
     /// The resume state of the last send's first round, until the engine
     /// binds that round to its call's row (FIX 9157).
     resume: Option<RoundResume>,
+    /// The remote task the last send's connector accepted it as (FIX 7960).
+    remote_task: Option<RemoteTaskHandle>,
 }
 
 impl ServedConnectorCallHost {
@@ -193,6 +197,7 @@ impl ServedConnectorCallHost {
             presented: None,
             presentation: None,
             resume: None,
+            remote_task: None,
         })
     }
 
@@ -302,10 +307,15 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.reply = sent.reply;
         self.awaiting = sent.awaiting;
         self.resume = sent.resume;
+        self.remote_task = sent.remote_task;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
         }
+    }
+
+    fn remote_task(&self) -> Option<RemoteTaskHandle> {
+        self.remote_task.clone()
     }
 }
 
@@ -764,6 +774,11 @@ impl<'a> Exchange<'a> {
             };
             let kept = value.map(SentValue::keep);
             return hand_over(declared, round, continuation, live, body, kept);
+        }
+        // FIX 7960: a connector that takes the call as a remote task answers
+        // with its task, not the tool's result.
+        if let Some(handle) = remote_task::remote_task_from_result(message) {
+            return Sent::deferred(handle, body);
         }
         match tool_result(message) {
             Some(reply) => Sent::acked(Some(reply), body),

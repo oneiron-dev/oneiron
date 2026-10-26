@@ -30,12 +30,16 @@ pub(crate) enum IntentResolution {
         delivery: UnconfirmedDelivery,
         reason: IntentEscalationReason,
     },
+    /// The provider accepted the send as a remote task (FIX 7960): it is
+    /// never sent again, and its delivery is not yet known.
+    Deferred,
 }
 
 impl IntentResolution {
     pub(crate) fn from_record(record: &IntentLedgerRecord) -> IntentLedgerResult<Self> {
         match (record.state, record.recorded_outcome) {
             (IntentState::Done, Some(RecordedOutboundOutcome::Acked)) => Ok(Self::Delivered),
+            (IntentState::Deferred, Some(RecordedOutboundOutcome::Deferred)) => Ok(Self::Deferred),
             (
                 IntentState::Pending,
                 latest @ (None | Some(RecordedOutboundOutcome::DefiniteNonDelivery)),

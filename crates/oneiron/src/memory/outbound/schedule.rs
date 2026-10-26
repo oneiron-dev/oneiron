@@ -16,8 +16,8 @@ use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchOutcome, OutboundDispatchRequest, OutboundExecutionOutcome,
     OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger, connector_send_attempt_payload, outbound_verb_contract,
-    put_connector_send_task_in_txn,
+    OutboundIntentTrigger, OutboundScheduleContinuation, connector_send_attempt_payload,
+    outbound_verb_contract, put_connector_send_task_in_txn,
 };
 use crate::receipt::delivered_send_receipt_for_task;
 
@@ -46,8 +46,35 @@ impl Memory<'_> {
         draft: &OutboundDraftInput,
         schedule_context: &OutboundScheduleContext,
     ) -> MemoryResult<OutboundIntentReceipt> {
-        self.schedule_outbound_inner(draft, schedule_context, None, None)
-            .map(|(receipt, _)| receipt)
+        self.schedule_outbound_inner(
+            draft,
+            schedule_context,
+            &OutboundScheduleContinuation::default(),
+            None,
+            None,
+        )
+        .map(|(receipt, _)| receipt)
+    }
+
+    /// The schedule door that also carries a deadline and an ambient
+    /// alternative on to the connector TASK (FIX 7962, 8818): the TASK stops
+    /// waiting on its provider past the deadline, and an interrupt the
+    /// delivery window degrades sends the alternative instead.
+    pub fn schedule_outbound_with_continuation(
+        &self,
+        draft: &OutboundDraftInput,
+        schedule_context: &OutboundScheduleContext,
+        continuation: &OutboundScheduleContinuation,
+        counterparty_ref: Option<&str>,
+    ) -> MemoryResult<OutboundIntentReceipt> {
+        self.schedule_outbound_inner(
+            draft,
+            schedule_context,
+            continuation,
+            None,
+            counterparty_ref,
+        )
+        .map(|(receipt, _)| receipt)
     }
 
     /// Returns the sender recorded by the real outbound admission.
@@ -55,7 +82,13 @@ impl Memory<'_> {
         &self,
         draft: &OutboundDraftInput,
     ) -> MemoryResult<(OutboundIntentReceipt, Option<EntityId>)> {
-        self.schedule_outbound_inner(draft, &OutboundScheduleContext::default(), None, None)
+        self.schedule_outbound_inner(
+            draft,
+            &OutboundScheduleContext::default(),
+            &OutboundScheduleContinuation::default(),
+            None,
+            None,
+        )
     }
 
     /// Schedules a communication addressed to an explicit counterparty.
@@ -81,8 +114,14 @@ impl Memory<'_> {
         schedule_context: &OutboundScheduleContext,
         counterparty_ref: &str,
     ) -> MemoryResult<OutboundIntentReceipt> {
-        self.schedule_outbound_inner(draft, schedule_context, None, Some(counterparty_ref))
-            .map(|(receipt, _)| receipt)
+        self.schedule_outbound_inner(
+            draft,
+            schedule_context,
+            &OutboundScheduleContinuation::default(),
+            None,
+            Some(counterparty_ref),
+        )
+        .map(|(receipt, _)| receipt)
     }
 
     // ── calendar (CAL-09) ───────────────────────────────────────────────
