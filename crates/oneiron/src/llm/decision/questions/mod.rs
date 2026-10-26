@@ -5,6 +5,7 @@ mod arrival;
 mod artifact_refresh;
 mod ask_history;
 mod backfill;
+mod criteria;
 mod graph_ask;
 mod health_ask;
 mod outcomes;

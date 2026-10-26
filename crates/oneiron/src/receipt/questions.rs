@@ -53,8 +53,9 @@ pub struct GraphAskRequest {
     /// type, up to `limit`.
     #[serde(default)]
     pub select: Option<GraphAskSelection>,
-    /// The highest rung that may answer; `big` when absent. A graph answer
-    /// never queues an owner ask, so `human` is refused.
+    /// The highest rung that may answer; `big` when absent. `human` asks the
+    /// next authorised role for a unit no model rung settles: the caller as
+    /// the responsible actor, climbing to the vault's owners (OF-506).
     #[serde(default)]
     pub ceiling: Option<DecisionRung>,
     /// Each unit's own clock on the ladder, 1 to 60000 milliseconds; the
@@ -73,7 +74,7 @@ pub struct GraphAskRequest {
     pub posture: Option<crate::config::HostingPrivacyPosture>,
     /// The lines each unit is judged by, as a standing question's
     /// `criteria`: `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each
-    /// at most 16 nonempty lines of at most 512 bytes. A yes/no question's
+    /// a list of nonempty lines of at most 512 bytes. A yes/no question's
     /// rungs read them as its rubric; another contract's call carries them
     /// in its state. None when absent.
     #[serde(default)]
@@ -294,8 +295,8 @@ pub struct QuestionCreateRequest {
     /// binding?, criteria?, audience?, posture?, media?, deadline_ms?}`.
     /// `question` is `{text, class, contract, accept_type}`, with no `id` or
     /// `version`: the engine owns both and refuses either. `criteria` is
-    /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each at most 16
-    /// lines of 512 bytes; `audience` is `asker`; `posture` is `managed`,
+    /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each a list of
+    /// lines of at most 512 bytes; `audience` is `asker`; `posture` is `managed`,
     /// `relay` or `self-host` (absent: the vault's); `media` is `{images,
     /// audio}` (each absent: on); `deadline_ms` is each call's clock, 1 to
     /// 60000.
