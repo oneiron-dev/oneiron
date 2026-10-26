@@ -13791,7 +13791,7 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"evidence\", input.evidence.len())?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false
     },
@@ -14794,8 +14794,7 @@
       "call": "memory.commit_scoped(&input.claims, false)?",
       "scope": "Write",
       "admission": {
-        "claim_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
+        "claim_record_scope": true
       },
       "section": false,
       "binding": {
@@ -15593,8 +15592,7 @@
       "call": "memory.hydrate(&input.refs)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"refs\", input.refs.len())?;"
+        "lane_record_scope": true
       },
       "section": false,
       "binding": {
@@ -17561,8 +17559,7 @@
       "call": "memory.commit_scoped(&input.claims, true)?",
       "scope": "Write",
       "admission": {
-        "claim_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
+        "claim_record_scope": true
       },
       "section": false,
       "binding": {

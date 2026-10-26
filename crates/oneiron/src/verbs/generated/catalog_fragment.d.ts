@@ -4977,7 +4977,7 @@ declare const vault: Sdk.VaultHost & {
       import(input: Sdk.SignedAuthorityHistory): Promise<Sdk.AuthorityHistoryImported | StoredResult>;
     };
   };
-  /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+  /** Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   /** Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation. */
   begin_message_stream(input: Sdk.BeginMessageStreamRequest): Promise<Sdk.MessageStreamHandle | StoredResult>;

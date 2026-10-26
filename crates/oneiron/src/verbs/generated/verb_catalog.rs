@@ -13301,7 +13301,7 @@ impl AgentVerb {
                 "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."
             }
             Self::VaultBatch => {
-                "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."
+                "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

@@ -790,7 +790,7 @@ class Oneiron:
         def esign(self) -> "Oneiron._VaultEsignVerbs":
             return Oneiron._VaultEsignVerbs(self._client)
         def batch(self, spec):
-            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
+            """Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
             return json.loads(_translate(lambda: self._client.vault_batch(json.dumps(spec))))
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":

@@ -14392,7 +14392,6 @@ impl OneironClient {
         &self,
         input: &oneiron::task_verb::sdk::AiVerdictRequest,
     ) -> Result<oneiron::task_verb::sdk::AiVerdict, MemoryError> {
-        oneiron::memory::caps::check_batch_len("evidence", input.evidence.len())?;
         oneiron::memory::caps::check_deadline_ms(input.deadline_ms)?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
@@ -14687,7 +14686,6 @@ impl OneironClient {
         &self,
         input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
-        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -15312,7 +15310,6 @@ impl OneironClient {
         input: &oneiron::task_verb::sdk::HydrateRequest,
     ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::EntityView>>, MemoryError>
     {
-        oneiron::memory::caps::check_batch_len("refs", input.refs.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",
@@ -16501,7 +16498,6 @@ impl OneironClient {
         &self,
         input: &oneiron::memory::ScopedCommitRequest,
     ) -> Result<Vec<oneiron::memory::CommitOutcome>, MemoryError> {
-        oneiron::memory::caps::check_batch_len("claims", input.claims.len())?;
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

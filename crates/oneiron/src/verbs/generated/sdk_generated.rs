@@ -20997,7 +20997,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.verdict" => {
             let input: crate::task_verb::sdk::AiVerdictRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
         "vault.graph.ask" => {
@@ -21138,8 +21137,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::dreamer_consolidation::ThingDecideInput = decode(value.clone())?;
         }
         "vault.commit" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.remember" => {
             let input: crate::memory::ClaimInput = decode(value.clone())?;
@@ -21306,8 +21304,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             )?;
         }
         "vault.hydrate" => {
-            let input: HydrateRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("refs", input.refs.len())?;
+            let _input: HydrateRequest = decode(value.clone())?;
         }
         "vault.get" => {
             let _input: EntityRequest = decode(value.clone())?;
@@ -21626,8 +21623,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::SignalExtractionResultRequest = decode(value.clone())?;
         }
         "vault.claims.seed" => {
-            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
-            crate::memory::caps::check_batch_len("claims", input.claims.len())?;
+            let _input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
         }
         "vault.channel_identities.provision" => {
             let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
@@ -31816,7 +31812,6 @@ pub fn ai_verdict(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::AiVerdictRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiVerdict> {
-    crate::memory::caps::check_batch_len("evidence", input.evidence.len())?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::host_only(memory, "ai.verdict", &input)
 }
@@ -32189,7 +32184,6 @@ pub fn vault_commit(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.commit",
@@ -32549,7 +32543,6 @@ pub fn vault_hydrate(
     memory: &Memory<'_>,
     input: HydrateRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>> {
-    crate::memory::caps::check_batch_len("refs", input.refs.len())?;
     memory.hydrate(&input.refs)
 }
 pub fn vault_get(
@@ -33461,7 +33454,6 @@ pub fn vault_claims_seed(
     memory: &Memory<'_>,
     input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
-    crate::memory::caps::check_batch_len("claims", input.claims.len())?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.seed",

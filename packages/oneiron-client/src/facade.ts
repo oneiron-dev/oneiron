@@ -3329,7 +3329,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.conversations.create": { description: "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.conversations.turns.create": { description: "Puts one TURN under a conversation, with its text index and checked ChildOf edge, in one batch; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.conversations.records.append": { description: "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.batch": { description: "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.batch": { description: "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.artifacts.put": { description: "Registers one blob artifact; its bytes ride vault.artifacts.append.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.import": { description: "Imports one DOCX, XLSX or PPTX version of an artifact (its head by default) as the artifact's live body: a typed model in a Loro document.", scope: "Write", proposes: false, hostDoor: false, section: false },
   "vault.artifacts.body.head": { description: "An artifact's live body: its source version, import and head frontiers, and commit count; null when it has none.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -5917,7 +5917,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           get: (input: Facade.EsignSealGetRequest, options?: O): FacadeReturns<"vault.esign.seal.get">[K] => invoke("vault.esign.seal.get", input, options, newInvocation()),
         },
       },
-      /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
+      /** Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
       batch: (input: Facade.CoreBatchWriteInput, options?: O): FacadeReturns<"vault.batch">[K] => invoke("vault.batch", input, options, newInvocation()),
       consolidation: {
         /** Enqueues one consolidation attempt and returns its durable job reference. */
