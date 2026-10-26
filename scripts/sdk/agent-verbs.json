@@ -1338,11 +1338,12 @@
       "task_decisions": true,
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
+        "born_record_scope": true,
         "readable": [
           "task_ref"
         ]
       },
+      "mcp_scope": "born",
       "section": true
     },
     {
@@ -6944,7 +6945,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
@@ -6958,7 +6960,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.roots.requests.cancel",
@@ -13899,6 +13902,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
+      "mcp_page": true,
       "section": false
     },
     {
