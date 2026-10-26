@@ -363,6 +363,7 @@ pub(crate) fn execute(
         run_direct_channel(scoped, request, &mut acc)?;
     }
     if request.effort == Effort::Light || acc.partial {
+        acc.fuse();
         return finish_with_spend(acc, scoped, request.limit);
     }
     run_subquery_channels(scoped, request, &mut acc)?;
