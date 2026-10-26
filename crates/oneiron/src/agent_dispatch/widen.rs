@@ -7,10 +7,9 @@ use crate::consent::{
     AuthenticatedOwner, approve_once_authorization_in_txn, spend_approve_once_in_txn,
 };
 use crate::context_projection::{
-    ContextResolutionRequest, ContextSpec, MemoryProjection, ResolvedContextProjection,
-    resolve_context_spec, validate_context_narrows, validate_context_spec, validate_spec_narrows,
+    ContextResolutionRequest, ContextSpec, ResolvedContextProjection, resolve_context_spec_in_txn,
+    validate_context_narrows, validate_context_spec, validate_spec_narrows,
 };
-use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -25,11 +24,12 @@ use super::widen_record::{
 };
 use super::workflow_record::WorkflowTaskBinding;
 use super::{
-    AgentDispatchInput, AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget,
-    AgentDispatcher, AgentSpawnContext, DispatchAgent,
+    AgentDispatchOutcome, AgentDispatchStatus, AgentDispatchTarget, AgentDispatcher,
+    AgentSpawnContext, DirectSpawnReceipt, DispatchAgent,
 };
 
 mod board_authority;
+mod context;
 
 /// An ephemeral proof, constructed only after the authenticated board's live
 /// slice has bounded this exact parent. This is never stored or caller-created.
@@ -45,6 +45,7 @@ impl PreparedParentContext {
     pub(super) fn resolve_child(
         &self,
         dispatcher: &AgentDispatcher<'_>,
+        txn: &heed::RoTxn<'_>,
         input: &DispatchAgent,
         spawn: &AgentSpawnContext,
         world_scope: crate::pipeline::WorldScope,
@@ -54,13 +55,15 @@ impl PreparedParentContext {
         }
         let spec = spawn.context_spec.clone().unwrap_or_default();
         validate_spec_narrows(&self.spec, &spec)?;
-        dispatcher.require_sibling_result_lineage(
+        dispatcher.require_sibling_result_lineage_in_txn(
+            txn,
             input.parent_attempt,
             input.run_id.as_deref(),
             &spawn.context_from,
         )?;
-        resolve_context_spec(
+        resolve_context_spec_in_txn(
             dispatcher.vault,
+            txn,
             ContextResolutionRequest {
                 spec,
                 parent: Some(self.projection.clone()),
@@ -73,33 +76,6 @@ impl PreparedParentContext {
 }
 
 impl AgentDispatcher<'_> {
-    /// Re-resolves an attempt's live recursive slice, including approved widening.
-    /// Executors must use this door rather than resolve a payload standalone.
-    pub fn resolve_attempt_context(&self, attempt: AttemptId) -> Result<ResolvedContextProjection> {
-        let mut projection = self
-            .resolve_ancestor_projection(attempt)?
-            .ok_or_else(|| invalid("attempt has no provable context lineage"))?;
-        let row = AttemptQueue::new(self.vault)
-            .get(attempt)?
-            .ok_or_else(|| invalid("context attempt is missing"))?;
-        let input =
-            record_dispatch_input(&row).ok_or_else(|| invalid("context input is malformed"))?;
-        let parent = decode_dreamer_attempt_payload(&row.payload)?.parent_attempt;
-        self.require_sibling_result_lineage(parent, row.run_id.as_deref(), &input.context_from)?;
-        projection.sibling_result_refs = resolve_context_spec(
-            self.vault,
-            ContextResolutionRequest {
-                spec: ContextSpec::excluded(),
-                parent: None,
-                context_from: input.context_from,
-                world_scope: None,
-            },
-        )?
-        .sibling_result_refs;
-        projection.workflow_output_refs = self.workflow_output_refs_for_attempt(attempt, parent)?;
-        Ok(projection)
-    }
-
     /// Runs structural validation before classifying the *direct child's* refusal.
     /// Ancestor, descriptor, settlement and sibling-lineage errors remain errors.
     pub(super) fn propose_context_widen(
@@ -140,14 +116,17 @@ impl AgentDispatcher<'_> {
             ..WidenIntent::new(input, spawn)?
         };
         validate_context_spec(&intent.spec)?;
-        self.require_sibling_result_lineage(
+        // Every read below is the writer's own (FIX 10543).
+        self.require_sibling_result_lineage_in_txn(
+            wtxn,
             Some(parent_id),
             input.run_id.as_deref(),
             &spawn.context_from,
         )?;
         // Validate settled refs independently, so a widen cannot hide a bad ref.
-        resolve_context_spec(
+        resolve_context_spec_in_txn(
             self.vault,
+            wtxn,
             ContextResolutionRequest {
                 spec: ContextSpec::excluded(),
                 parent: None,
@@ -155,11 +134,11 @@ impl AgentDispatcher<'_> {
                 world_scope: None,
             },
         )?;
-        let Some(parent) = self.parent_dispatch_input(parent_id)? else {
+        let Some(parent) = self.parent_dispatch_input_in_txn(wtxn, parent_id)? else {
             return Ok(None);
         };
-        let parent_spec = self.effective_context_spec(parent_id, &parent)?;
-        let projection = self.resolve_attempt_context(parent_id)?;
+        let parent_spec = self.effective_context_spec_in_txn(wtxn, parent_id, &parent)?;
+        let projection = self.resolve_attempt_context_in_txn(wtxn, parent_id)?;
         // FIX 2314: the intent as the side-row wall stores it, before its
         // key, its request's id or any compare is derived from it, so its
         // proposal masks a secret rather than refusing it. Whether the
@@ -192,7 +171,7 @@ impl AgentDispatcher<'_> {
             request: WidenRequest {
                 intent,
                 target_fingerprint,
-                board: self.recorded_parent(parent_id)?,
+                board: self.recorded_parent_in_txn(wtxn, parent_id)?,
                 parent_spec: parent_spec.clone(),
                 widened_spec: widened_parent(
                     &parent_spec,
@@ -292,7 +271,7 @@ impl AgentDispatcher<'_> {
         }
         let board = record.request.board;
         let act = self.authorize_board_act_in_txn(&wtxn, board, actor)?;
-        if self.recorded_parent(record.request.intent.parent)? != board {
+        if self.recorded_parent_in_txn(&wtxn, record.request.intent.parent)? != board {
             return Err(invalid("widen board is not the immediate board above"));
         }
         // A settled proposal answers as it settled: its landing, or its
@@ -301,10 +280,11 @@ impl AgentDispatcher<'_> {
             return self.widen_outcome(&wtxn, &record);
         }
         let (input, spawn) = record.dispatch(&proposal.proposal_id, now)?;
-        // In this writer's snapshot: a read snapshot opened beside the
-        // writer would not see it.
+        // In this writer's snapshot, as every read below (FIX 10543): a read
+        // snapshot opened beside the writer would not see it.
         self.project_depth_limit_in_txn(&wtxn, Some(record.request.intent.parent), None)?;
-        self.require_sibling_result_lineage(
+        self.require_sibling_result_lineage_in_txn(
+            &wtxn,
             input.parent_attempt,
             input.run_id.as_deref(),
             &spawn.context_from,
@@ -314,12 +294,12 @@ impl AgentDispatcher<'_> {
             return Err(invalid("widen target changed since the proposal"));
         }
         let parent_input = self
-            .parent_dispatch_input(record.request.intent.parent)?
+            .parent_dispatch_input_in_txn(&wtxn, record.request.intent.parent)?
             .ok_or_else(|| invalid("widen parent is no longer dispatchable lineage"))?;
         // First replay the existing chain; an invalid ancestor is not an offer
         // to repair or widen it. Concurrent approvals serialize on this writer.
-        self.resolve_attempt_context(record.request.intent.parent)?;
-        if self.effective_context_spec(record.request.intent.parent, &parent_input)?
+        self.resolve_attempt_context_in_txn(&wtxn, record.request.intent.parent)?;
+        if self.effective_context_spec_in_txn(&wtxn, record.request.intent.parent, &parent_input)?
             != record.request.parent_spec
         {
             return Err(invalid("widen parent slice changed since the proposal"));
@@ -330,22 +310,23 @@ impl AgentDispatcher<'_> {
         let above = match board {
             Some(board) => {
                 let board_input = self
-                    .parent_dispatch_input(board)?
+                    .parent_dispatch_input_in_txn(&wtxn, board)?
                     .ok_or_else(|| invalid("widen board has no dispatch input"))?;
-                let board_spec = self.effective_context_spec(board, &board_input)?;
+                let board_spec = self.effective_context_spec_in_txn(&wtxn, board, &board_input)?;
                 validate_spec_narrows(&board_spec, &record.request.widened_spec)?;
-                Some(self.resolve_attempt_context(board)?)
+                Some(self.resolve_attempt_context_in_txn(&wtxn, board)?)
             }
             None => None,
         };
-        let widened = resolve_context_spec(
+        let widened = resolve_context_spec_in_txn(
             self.vault,
+            &wtxn,
             ContextResolutionRequest {
                 spec: record.request.widened_spec.clone(),
                 parent: above,
                 context_from: Vec::new(),
                 world_scope: Some(
-                    self.dispatchable_definition(&parent_input.target)?
+                    self.dispatchable_definition_in_txn(&wtxn, &parent_input.target)?
                         .scope
                         .to_world_scope(),
                 ),
@@ -359,7 +340,13 @@ impl AgentDispatcher<'_> {
         // Workflow admission checks every leaf through the same proof below.
         if let AgentDispatchTarget::Custom(_) = &input.target {
             let target = self.dispatchable_definition_in_txn(&wtxn, &input.target)?;
-            prepared_parent.resolve_child(self, &input, &spawn, target.scope.to_world_scope())?;
+            prepared_parent.resolve_child(
+                self,
+                &wtxn,
+                &input,
+                &spawn,
+                target.scope.to_world_scope(),
+            )?;
         }
         match actor {
             // Only the existing authenticated-owner door mints approval.
@@ -478,7 +465,7 @@ impl AgentDispatcher<'_> {
         }
         let board = record.request.board;
         let act = self.authorize_board_act_in_txn(&wtxn, board, actor)?;
-        if self.recorded_parent(record.request.intent.parent)? != board {
+        if self.recorded_parent_in_txn(&wtxn, record.request.intent.parent)? != board {
             return Err(invalid("widen board is not the immediate board above"));
         }
         if record.landed.is_some() {
@@ -506,6 +493,22 @@ impl AgentDispatcher<'_> {
         WIDEN.put(self.vault, &mut wtxn, &key_hash, &record)?;
         wtxn.commit()?;
         Ok(())
+    }
+
+    /// The direct-spawn receipt the first call that proposed `proposal`
+    /// kept (FIX 9051), read on the exact stored proposal in one snapshot of
+    /// its own: a repeated proposal answers with it, never its own ask.
+    /// `None` when the first call kept none.
+    pub(crate) fn widen_direct_spawn_receipt(
+        &self,
+        proposal: &super::ContextWidenProposal,
+    ) -> Result<Option<DirectSpawnReceipt>> {
+        let txn = self.vault.store.env.read_txn()?;
+        let (_, record) = self.stored_widen_proposal(&txn, &proposal.proposal_id)?;
+        if record.request.proposal()? != *proposal {
+            return Err(invalid("widen proposal differs from the stored request"));
+        }
+        Ok(record.direct_spawn)
     }
 
     fn stored_widen_proposal(
@@ -610,125 +613,4 @@ impl AgentDispatcher<'_> {
             }
         }
     }
-
-    pub(super) fn effective_context_spec(
-        &self,
-        attempt: AttemptId,
-        input: &AgentDispatchInput,
-    ) -> Result<ContextSpec> {
-        let txn = self.vault.store.env.read_txn()?;
-        let Some(slice) = SLICE.get(&self.vault.store, &txn, &attempt)? else {
-            return Ok(input.context_spec.clone().unwrap_or_default());
-        };
-        self.replay_board_act_in_txn(
-            &txn,
-            slice.board,
-            EntityId::from_hex(&slice.actor)?,
-            slice.proof,
-        )?;
-        let (_, record) = self.stored_widen_proposal(&txn, &slice.proposal_id)?;
-        drop(txn);
-        if self.recorded_parent(attempt)? != slice.board {
-            return Err(invalid("approved slice has a different board lineage"));
-        }
-        if record.landed.is_none() || record.request.intent.parent != attempt {
-            return Err(invalid("slice has no matching landed board decision"));
-        }
-        if record.request.widened_spec == slice.spec {
-            return Ok(slice.spec);
-        }
-        // SLICE keeps a layer or domain equal to a custody value as its
-        // handle; the intent row keeps the same slice's references as written
-        // (FIX 6665), so those are the ones every read resolves.
-        if masked_slice_of(&slice.spec, &record.request.widened_spec) {
-            return Ok(record.request.widened_spec);
-        }
-        Err(invalid("slice has no matching landed board decision"))
-    }
-
-    fn recorded_parent(&self, attempt: AttemptId) -> Result<Option<AttemptId>> {
-        let row = AttemptQueue::new(self.vault)
-            .get(attempt)?
-            .ok_or_else(|| invalid("widen lineage attempt is missing"))?;
-        self.workflow_authority_parent(decode_dreamer_attempt_payload(&row.payload)?.parent_attempt)
-    }
-}
-
-/// Whether `slice`, an approved slice as SLICE keeps it, is `widened`, the
-/// intent row's copy written beside it (FIX 6665). SLICE masks known values in
-/// every field, while the intent row keeps the slice's layers and memory
-/// domains raw, so a layer or domain may hold a custody handle where
-/// `widened` holds bytes; every other field reads the same in both.
-fn masked_slice_of(slice: &ContextSpec, widened: &ContextSpec) -> bool {
-    let refs_match = |masked: &[String], raw: &[String]| {
-        masked.len() == raw.len()
-            && masked
-                .iter()
-                .zip(raw)
-                .all(|(masked, raw)| masked == raw || handles_stand_in(masked, raw))
-    };
-    if !refs_match(&slice.layers, &widened.layers) {
-        return false;
-    }
-    let mut aligned = slice.clone();
-    aligned.layers.clone_from(&widened.layers);
-    if let MemoryProjection::Scoped { domains, .. } = &mut aligned.memory
-        && let MemoryProjection::Scoped { domains: raw, .. } = &widened.memory
-    {
-        if !refs_match(domains, raw) {
-            return false;
-        }
-        domains.clone_from(raw);
-    }
-    aligned == *widened
-}
-
-/// Whether `masked` is `raw` with spans the side-row wall replaced by custody
-/// handles: all of it as one handle, or each span as the text form
-/// `[secret sc12]` between the bytes the wall kept. Each replaced span held at
-/// least one character.
-fn handles_stand_in(masked: &str, raw: &str) -> bool {
-    const HANDLE_OPEN: &str = "[secret ";
-    if raw.is_empty() {
-        return false;
-    }
-    if crate::secret_custody::parse_secret_handle(masked).is_ok() {
-        return true;
-    }
-    let mut kept = Vec::new();
-    let mut from = 0;
-    let mut at = 0;
-    while let Some(open) = masked[at..].find(HANDLE_OPEN).map(|found| at + found) {
-        let Some(close) = masked[open..].find(']').map(|found| open + found + 1) else {
-            break;
-        };
-        if crate::secret_custody::parse_secret_handle(&masked[open..close]).is_ok() {
-            kept.push(&masked[from..open]);
-            from = close;
-            at = close;
-        } else {
-            at = open + HANDLE_OPEN.len();
-        }
-    }
-    if kept.is_empty() {
-        return false;
-    }
-    kept.push(&masked[from..]);
-    let [first, middle @ .., last] = kept.as_slice() else {
-        return false;
-    };
-    if !raw.starts_with(*first) {
-        return false;
-    }
-    let mut cursor = first.len();
-    for segment in middle {
-        let Some((found, _)) = raw[cursor..]
-            .match_indices(*segment)
-            .find(|(found, _)| *found > 0)
-        else {
-            return false;
-        };
-        cursor += found + segment.len();
-    }
-    raw.ends_with(*last) && raw.len() - last.len() > cursor
 }

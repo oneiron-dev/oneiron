@@ -31,7 +31,10 @@ use crate::memory::{
     MessagePersonRequest,
 };
 use crate::run_tree::RunSignalState;
-use crate::task_verb::sdk::{SteerReceipt, SteerRequest, steer_child, steer_child_as_owner};
+use crate::task_verb::sdk::{
+    SteerReceipt, SteerRequest, steer_child, steer_child_as_owner, steer_child_at,
+    steer_child_at_as_owner,
+};
 use crate::{EdgeActorClass, EntityId, Error, Result, Vault};
 
 const BASIS_DOMAIN: &[u8] = b"oneiron.coach.agent_health.move_basis.v1";
@@ -557,9 +560,19 @@ fn take(
                 instruction: instruction.to_owned(),
                 key: steer_key(actor, &handle, key),
             };
-            Landed::Steer(match taker {
-                Taker::Agent => steer_child(memory, request)?,
-                Taker::Owner(owner) => steer_child_as_owner(memory, owner, request)?,
+            // FIX 8534: a card that recorded its attempt steers that run,
+            // never the TASK's later try; one with none steers the live run.
+            let attempt = card
+                .attempt
+                .map(|attempt| crate::attempt_queue::AttemptId::from_bytes(attempt.as_bytes()))
+                .transpose()?;
+            Landed::Steer(match (taker, attempt) {
+                (Taker::Agent, None) => steer_child(memory, request)?,
+                (Taker::Agent, Some(attempt)) => steer_child_at(memory, request, attempt)?,
+                (Taker::Owner(owner), None) => steer_child_as_owner(memory, owner, request)?,
+                (Taker::Owner(owner), Some(attempt)) => {
+                    steer_child_at_as_owner(memory, owner, request, attempt)?
+                }
             })
         }
     };

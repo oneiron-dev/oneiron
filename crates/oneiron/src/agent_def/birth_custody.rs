@@ -87,6 +87,7 @@ pub(crate) fn stage_birth_custody_put(
     if kind == ENTITY_TYPE_ASSET
         && let Some(source) = decode_birth_source(bytes)?
     {
+        super::byte_observation::observe_birth_source_bytes(store, txn, id, bytes);
         let child = source.child()?;
         super::birth_dependencies::bind_inputs(store, txn, &source)?;
         OWNED.put(store, txn, &child, id)?;
