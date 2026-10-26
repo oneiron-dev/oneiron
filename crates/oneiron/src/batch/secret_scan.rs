@@ -485,6 +485,13 @@ pub(crate) fn scan_staged_payload(store: &Store, data: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Whether the write door's scan finds a secret in `data`, whatever the
+/// owner's switch says (FIX 2328): the outbound intent ledger seals such a
+/// request whole instead of keeping it, or refusing it, in the clear.
+pub(crate) fn payload_carries_secret(data: &[u8]) -> bool {
+    scan_payload(data).is_err()
+}
+
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
     let haystack = String::from_utf8_lossy(data);
     let secrets_nulled =
