@@ -198,6 +198,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/actor_claims/candidate/decision_context.rs",
+     "purpose": "The context an owner's craft review keeps (FIX 7499, 7500): the candidate as it was shown, and the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -12717,7 +12727,7 @@
      "path": "src/claim/scoped_read/access_gate.rs",
      "purpose": "Relationship access checks share the row read transaction with grant resolution",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -12879,6 +12889,16 @@
      "purpose": "An authorised read of loop admissions and rejections for the weave (OF-499 A2): the gate decisions a Dreamer…",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/scoped_read/loop_decision_read/context.rs",
+     "purpose": "A loop decision's own context as the authorised loop read admits it: the loop link its writer stamped (FIX…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -25137,6 +25157,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/authority/decision_context.rs",
+     "purpose": "The loop link an attempt's action carries on its Gate decision (FIX 7500), from the attempt's own authority…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "BaseAgent",
       "DreamerAgentBoundary"
@@ -25858,6 +25888,16 @@
      "purpose": "The owner's apply of an action-mode finding's ceiling patch on the applied list (FIX 1786): the finding's…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/applied/decision_context.rs",
+     "purpose": "The context an applied write's receipt and its revert carry (FIX 7499, 7500): the attempt that wrote it, as…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -26954,7 +26994,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 1
      }
     },
@@ -33042,6 +33082,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/bundle/decision_context.rs",
+     "purpose": "The context a consent bundle's receipt keeps (FIX 7499, 7500): the Dreamer run it answers, and each member's…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/bundle/pending_heal.rs",
      "purpose": "The Coach's proposals still waiting in the pending-consent tray, for the healer's residue read (OF-418 L4)",
      "surface": {
@@ -33338,6 +33388,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/doors/claim_write/decision_context.rs",
+     "purpose": "A claim decision's context, computed once from the full candidate before its record is built (FIX 7499…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/doors/claim_write/reference_read.rs",
      "purpose": "OF-063 (FIX 1218): the typed record refs a CLAIM body names, judged under its writer's own scoped read in…",
      "surface": {
@@ -33536,7 +33596,7 @@
      "path": "src/gate/grants.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -39785,16 +39845,17 @@
       "ModelScoreDiff",
       "ModelWireFormat",
       "ScoreObservation",
-      "ScoreSnapshot"
+      "ScoreSnapshot",
+      "SkippedRegistryRow"
      ],
      "path": "src/llm/registry.rs",
      "purpose": "Vault-persisted, priced model catalogs",
      "surface": {
       "crate-vis": 7,
       "enum": 1,
-      "fn": 16,
+      "fn": 17,
       "re-export": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -41645,6 +41706,16 @@
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
       "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/conflict_settle/decision_context.rs",
+     "purpose": "The loop a conflict settlement, its approval or its revert answers (FIX 7500): the one decision it answers…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -47372,7 +47443,7 @@
      "path": "src/origin/secret_marks/read.rs",
      "purpose": "The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable…",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -49718,7 +49789,7 @@
      "path": "src/pipeline/authority.rs",
      "purpose": "Enforcement of gate-resolved retrieval authority",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -54428,9 +54499,9 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "Queued repository mutations, recovery snapshots and reviewed proposals",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "mod": 3,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -54471,7 +54542,7 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 2,
       "fn": 5,
       "mod": 1,
@@ -54652,6 +54723,80 @@
      "purpose": "Atomic critic admission and exact-prefix replay for a tested proposal stack",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RepoSecretRemediation",
+      "RepoSecretRemediationAction",
+      "RepoSecretRemediationRequest",
+      "RepoSecretRemediationStatus",
+      "RepoSecretUnresolved",
+      "RepoSecretUnresolvedReason"
+     ],
+     "path": "src/repo_mutation/secret_remediation.rs",
+     "purpose": "Current-code remediation of marked secrets (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: \"Proposal…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 3,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/secret_remediation/env.rs",
+     "purpose": "The dotenv reading (FIX 7608 slice 6, owner ruling SECRETS-IN-REPOS = A: \".env: values -> secret store…",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/secret_remediation/link.rs",
+     "purpose": "The `repo.secret_remediation` links (FIX 7608 slice 6): value-free facts tying the marked keys in a…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/secret_remediation/plan.rs",
+     "purpose": "One remediation's plan (FIX 7608 slice 6), built in one read of the marks: the files its bundle writes or…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RepoSecretReferenceRenderer"
+     ],
+     "path": "src/repo_mutation/secret_remediation/render.rs",
+     "purpose": "The reference a remediation writes where a marked literal stood (FIX 7608 slice 6): an expression in the…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/repo_mutation/secret_remediation/text.rs",
+     "purpose": "The text a remediation reads and writes around a marked literal (FIX 7608 slice 6): the literal's quoted…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -57044,7 +57189,7 @@
      "purpose": "SECRET-01 (ONE-1919) repo-side secret manifest — declaration + narrow-only validation (ARCH-0069 S2)",
      "surface": {
       "const": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2
      }
     },
@@ -62270,6 +62415,32 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GateAnalysisCoverage",
+      "GateClaimReadSelectors",
+      "GateDecisionAnalysis",
+      "GateDecisionContext",
+      "GateDecisionReadContext",
+      "GateLoopFamily",
+      "GateLoopLink",
+      "GateLoopOrigin",
+      "GateLoopSource",
+      "GateReadPosition",
+      "GateRiskAxis",
+      "GateRiskState"
+     ],
+     "path": "src/store/gate_decision/context.rs",
+     "purpose": "What a Gate decision was made about, the loop it came from and the ruled analysis of the input it judged…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 5,
+      "fn": 7,
+      "struct": 7
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -62338,7 +62509,7 @@
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
       "crate-vis": 15,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -70405,6 +70576,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/vault/transactions/sync_state_page.rs",
+     "purpose": "One page of a host table's rows, read in key order through the generic host door (FIX 10863, FIX 10866): the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/vault/transactions/sync_state_reclaim.rs",
      "purpose": "One page of a host cache's expiry reclaim through the generic host door (FIX 5951): a host table with no…",
      "surface": {
@@ -76762,7 +76943,7 @@
      "purpose": "AccessGrant control-plane record substrate"
     },
     "actor_claims": {
-     "files": 14,
+     "files": 15,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -76965,7 +77146,7 @@
      "purpose": "Checkout leases and optional repository environment plans"
     },
     "claim": {
-     "files": 104,
+     "files": 105,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77273,7 +77454,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 162,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77406,7 +77587,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 154,
+     "files": 156,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77616,7 +77797,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 277,
+     "files": 278,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77840,7 +78021,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 42,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -78071,7 +78252,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 149,
+     "files": 150,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78211,7 +78392,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 40,
+     "files": 41,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -78304,7 +78485,7 @@
    },
    "over_bar": 124,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5157,
+   "source_files": 5172,
    "test_files": 902
   },
   "oneiron-android": {
@@ -98675,7 +98856,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/usage_repair_routes.rs",
-     "purpose": "`/v1/owner/usage/events/undecodable`: the stored usage events of this server's metering scope that no longer…",
+     "purpose": "`/v1/owner/usage/events/undecodable`: the stored usage events of this server's metering scope, every billing…",
      "surface": {
       "crate-vis": 1
      }
@@ -100852,7 +101033,7 @@
      "path": "src/config/diagnostics.rs",
      "purpose": "Config parse failures as diagnostics that are safe to print (FIX 9477): the file and the place in it, never…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -103553,7 +103734,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 10,
       "struct": 3
      }
@@ -106811,7 +106992,7 @@
      "path": "src/runtime/usage/pricing.rs",
      "purpose": "The list price an admitted model call is metered at (FIX 2629): the vault's priced catalog row for that…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -107583,7 +107764,7 @@
      "path": "src/usage/keys.rs",
      "purpose": "Owner/vault keys and validation for the durable meter queue",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 17
      }
     },
     {
@@ -107618,6 +107799,25 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MeterRecordResult",
+      "MeterRollup",
+      "MeterRow",
+      "MeterTotal",
+      "OperationalMetric"
+     ],
+     "path": "src/usage/meters.rs",
+     "purpose": "The four per-vault operational meters (ARCH-0011 `#meters`, FIX 7764): what the host's own cost went to…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
+      "fn": 10,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -107625,7 +107825,7 @@
      "purpose": "Provider-list metering and host-pushed vault budget limits",
      "surface": {
       "crate-vis": 1,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -107674,7 +107874,7 @@
      "path": "src/usage/repair.rs",
      "purpose": "The repair of stored usage events that no longer decode (FIX 6476)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -108027,7 +108227,7 @@
      "path": "src/wire_telemetry.rs",
      "purpose": "RC42 observation-only wire counters",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 11,
       "re-export": 2,
@@ -108050,6 +108250,16 @@
      "notable": [],
      "path": "src/wire_telemetry/http.rs",
      "purpose": "The HTTP observer every routed request passes, and the tick that keeps the observed window",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/wire_telemetry/kept.rs",
+     "purpose": "The kept questions as the health check reads them (OF-520): the call-volume questions past its cursor, a…",
      "surface": {
       "crate-vis": 2
      }
@@ -108820,7 +109030,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "usage": {
-     "files": 10,
+     "files": 11,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -108855,7 +109065,7 @@
      "purpose": "The health check past a threshold (OF-520, ARCH-0044 C5)"
     },
     "wire_telemetry": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -108864,7 +109074,7 @@
    },
    "over_bar": 34,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1282,
+   "source_files": 1284,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -113529,7 +113739,7 @@
      "purpose": "How a managed vault came up (contract v3): the readiness every `Ping` reports, and the facilities it names…",
      "surface": {
       "enum": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },

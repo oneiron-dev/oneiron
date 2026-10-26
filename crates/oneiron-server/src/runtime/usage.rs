@@ -5,7 +5,9 @@
 //! admitted with, and a free-time item's call the agent, cycle, item and
 //! spend scope the engine stamped on its run before it began (FIX 4453);
 //! every other call stays unbound. A model call carries the vault catalog's
-//! list price as it read when the call was admitted (FIX 2629).
+//! list price as it read when the call was admitted (FIX 2629), except one on
+//! the owner's own key to a custom endpoint, which logs token counts only
+//! (FIX 7765).
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -38,7 +40,12 @@ pub struct VaultUsage {
 
 struct AdmittedCall {
     facts: PermitFacts,
+    /// `None` too for a call on the owner's own key to a custom endpoint,
+    /// which logs token counts only (FIX 7765).
     rates: Option<UsageCostRates>,
+    /// Whether the call went out on the owner's own key to a custom
+    /// endpoint (`pricing::custom_endpoint`), read at admission.
+    custom_endpoint: bool,
     /// The rows `rates` was read from: the catalog row's, none for the
     /// host's override (FIX 5760).
     price_sources: Option<Vec<EntityId>>,

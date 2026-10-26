@@ -15,11 +15,19 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use crate::skill_optimize::{live_source_rows_in, union_source_rows};
 use crate::{
     Vault,
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A stored registry row a scan skipped (FIX 10862): its key, the model id
+/// it is stored under, and why it does not read: it did not decode, or did
+/// not validate.
+#[derive(Debug)]
+pub struct SkippedRegistryRow {
+    pub key: String,
+    pub error: Error,
+}
 /// One priced model registry row. Key: string (model id). A stored copy of
 /// the installed pack's row reads under that pack's currency contract (FIX
 /// 9534).
@@ -344,16 +352,53 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.model_registry_rows_in_txn(&txn)
     }
+    /// Every stored row that reads and validates, in key order. A row that
+    /// does not is skipped, said in the log by its key and error kind, and
+    /// named by [`Self::model_registry_skipped_rows`]: one bad row never
+    /// hides the vault's others (FIX 10862). A storage failure fails the
+    /// scan.
     pub(super) fn model_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<ModelRegistryRow>> {
-        let mut rows = Vec::new();
-        for (_, row) in REGISTRY_ROW.scan(&self.store, txn)? {
-            row.validate()?;
-            rows.push(row);
+        let (rows, skipped) = self.model_registry_scan_in_txn(txn)?;
+        if !skipped.is_empty() {
+            let rows: Vec<(&str, ErrorKind)> = skipped
+                .iter()
+                .map(|row| (row.key.as_str(), row.error.kind()))
+                .collect();
+            tracing::warn!(
+                reason = "model_registry_row_skipped",
+                ?rows,
+                "stored model registry rows that do not read were skipped; the vault's other \
+                 rows still read"
+            );
         }
         Ok(rows)
+    }
+    /// The stored registry rows every scan skips (FIX 10862), each by its key
+    /// and why it does not read.
+    pub fn model_registry_skipped_rows(&self) -> Result<Vec<SkippedRegistryRow>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self.model_registry_scan_in_txn(&txn)?.1)
+    }
+    /// The rows that read and validate, and the rows that do not.
+    fn model_registry_scan_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(Vec<ModelRegistryRow>, Vec<SkippedRegistryRow>)> {
+        let mut rows = Vec::new();
+        let mut skipped = Vec::new();
+        for (key, row) in REGISTRY_ROW.scan_each(&self.store, txn)? {
+            match row.and_then(|row| row.validate().map(|()| row)) {
+                Ok(row) => rows.push(row),
+                Err(error) if matches!(error.kind(), ErrorKind::Storage | ErrorKind::Io) => {
+                    return Err(error);
+                }
+                Err(error) => skipped.push(SkippedRegistryRow { key, error }),
+            }
+        }
+        Ok((rows, skipped))
     }
     pub fn model_catalog_entries(&self, wire: ModelWireFormat) -> Result<Vec<LlmCatalogEntry>> {
         let mut rows = self.model_registry_rows()?;

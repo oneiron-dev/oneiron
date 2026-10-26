@@ -18,6 +18,7 @@ mod queue;
 mod received_file;
 mod reviewed_file;
 mod reviewed_stack;
+mod secret_remediation;
 mod snapshot;
 mod support;
 mod trailer;
@@ -34,6 +35,11 @@ pub use self::conflict_value::{
 pub use self::oplog::REPO_MUTATION_OPLOG_SCHEMA_VERSION;
 pub use self::proposal::actor_erase::{
     ACTOR_ERASE_PENDING_REPO_PROPOSAL, PendingRepoProposalErase, ProposalActor,
+};
+pub use self::secret_remediation::{
+    RepoSecretReferenceRenderer, RepoSecretRemediation, RepoSecretRemediationAction,
+    RepoSecretRemediationRequest, RepoSecretRemediationStatus, RepoSecretUnresolved,
+    RepoSecretUnresolvedReason,
 };
 pub use self::trailer::{
     REPO_PROVENANCE_DERIVATION_ENVELOPE_KEYS, REPO_PROVENANCE_NOTES_REF, REPO_PROVENANCE_PREDICATE,
@@ -58,6 +64,10 @@ pub(crate) use self::received_file::tree::{ReceivedTreeEdit, stage_received_tree
 pub(crate) use self::received_file::{
     ReceivedFilesProposalInput, received_file_operation, received_merge_proposal,
     received_proposal_id,
+};
+pub(crate) use self::secret_remediation::{
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, is_unindexed_dotenv_name, masked_record_name,
+    offer_secret_remediation_in_txn, repo_env_entries, repo_env_file,
 };
 
 // The flat repo_mutation.rs module used to provide these names to the test

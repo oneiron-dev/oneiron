@@ -99,6 +99,9 @@ pub(crate) struct BackupPlan {
     pub(crate) registry: Option<String>,
     /// When this label's handoff backlog last raised its check (`handoff`).
     backlog_checked: handoff::BacklogChecked,
+    /// Pruning past `keep` is held and every backup is kept: a managed
+    /// vault whose backup handoff policy could not be installed (FIX 6705).
+    pub(crate) prune_held: bool,
 }
 
 impl BackupPlan {
@@ -111,6 +114,7 @@ impl BackupPlan {
             floor: None,
             registry: None,
             backlog_checked: handoff::BacklogChecked::default(),
+            prune_held: false,
         }
     }
 }
@@ -275,8 +279,9 @@ pub(crate) fn prune(
     plan: &BackupPlan,
     spared: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
-    // A standing hold keeps them all; the exclusion below reads it again.
-    if vault.legal_hold_keeps_backups()? {
+    // A standing hold keeps them all; the exclusion below reads it again. So
+    // does a held prune (FIX 6705).
+    if plan.prune_held || vault.legal_hold_keeps_backups()? {
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
