@@ -10,7 +10,7 @@ use jni::objects::{JFloatArray, JObject, JString, JValue};
 use jni::sys::{jboolean, jint, jobjectArray, jsize, jstring};
 use oneiron::{EdgeKind, EntityId, PackFormat, ScoredEntity};
 
-use super::{MAX_SEARCH_LIMIT, NativeVault, display, float_values, run, scored_array};
+use super::{NativeVault, display, float_values, run, scored_array};
 
 impl NativeVault {
     /// A context pack over `text` and `vector`, at most `limit` items, as
@@ -84,12 +84,10 @@ impl NativeVault {
     }
 }
 
-/// A search limit of at most [`MAX_SEARCH_LIMIT`].
-fn search_limit(limit: jint) -> Result<usize, String> {
-    usize::try_from(limit)
-        .ok()
-        .filter(|limit| *limit <= MAX_SEARCH_LIMIT)
-        .ok_or_else(|| format!("search limit {limit} is not within 0..={MAX_SEARCH_LIMIT}"))
+/// A search limit as the engine's row count: any `jint` from zero up, served
+/// whole; a negative one names no count.
+pub(super) fn search_limit(limit: jint) -> Result<usize, String> {
+    usize::try_from(limit).map_err(|_| format!("search limit {limit} is negative"))
 }
 
 /// The pack format `format` names, JSON when it names none, as the C ABI

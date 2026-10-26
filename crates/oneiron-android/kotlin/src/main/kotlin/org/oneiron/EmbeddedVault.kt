@@ -115,7 +115,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
         putVectorNative(id, vector)
     }
 
-    /** The [limit] (at most 1000) entities nearest [query], best first. */
+    /** The [limit] entities nearest [query], however many, best first. */
     @Synchronized
     fun searchVector(query: FloatArray, limit: Int = 10): Array<ScoredEntity> {
         check(!closed) { "vault is closed" }
@@ -124,7 +124,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
 
     /**
      * A context pack over [text] and [vector] as UTF-8 in [format] (`json` when null or unknown;
-     * `yaml`, `toon`, `markdown`, `plaintext`), at most [limit] (at most 1000) items, as the C
+     * `yaml`, `toon`, `markdown`, `plaintext`), at most [limit] items, any count, as the C
      * ABI's `oneiron_vault_context_pack` packs it.
      */
     @Synchronized
@@ -138,7 +138,7 @@ class EmbeddedVault private constructor() : AutoCloseable {
         return contextPackNative(text, vector, limit, format)
     }
 
-    /** The [limit] (at most 1000) best BM25 text matches for [query], best first. */
+    /** The [limit] best BM25 text matches for [query], however many, best first. */
     @Synchronized
     fun searchText(query: String, limit: Int = 10): Array<ScoredEntity> {
         check(!closed) { "vault is closed" }

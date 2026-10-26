@@ -128,7 +128,7 @@ fn disposition(value: &Value) -> bool {
 /// that no longer does, or that a hook dropped, gives way to the caller's
 /// own put. The notes say what changed (`applied` adds one for a change that
 /// stands). `None` when the caller's puts cannot be put back: no list of
-/// puts is left, or putting one back would pass the batch's bound.
+/// puts is left.
 pub(super) fn keep_puts(
     kept: &[Value],
     candidate: &mut Value,
@@ -155,9 +155,6 @@ pub(super) fn keep_puts(
                 ));
             }
             None => {
-                if entities.len() >= crate::core_write::shape::CORE_MAX_BATCH_ENTITIES {
-                    return None;
-                }
                 entities.push(put.clone());
                 notes.push(format!(
                     "a hook took this batch's withdrawal of grant {named} out; it was put back"

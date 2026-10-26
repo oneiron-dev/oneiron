@@ -73,7 +73,6 @@ impl HybridSearchRequest {
                 return Err(MemoryError::bad_request("query_vector must be finite"));
             }
         }
-        caps::check_batch_len("phonetic_codes", self.phonetic_codes.len())?;
         for code in &self.phonetic_codes {
             caps::check_query(code)?;
             if code.trim().is_empty() {
@@ -81,7 +80,6 @@ impl HybridSearchRequest {
             }
         }
         if let Some(ppr) = &self.ppr {
-            caps::check_batch_len("ppr.seeds", ppr.seeds.len())?;
             if ppr.seeds.is_empty() {
                 return Err(MemoryError::bad_request("ppr requires seeds"));
             }

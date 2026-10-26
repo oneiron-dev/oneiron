@@ -5,7 +5,8 @@
 
 use super::family::collect_receipt_records;
 use super::kernel::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, lineage_scan_query,
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition,
+    lineage_scan_query,
 };
 use super::projection::finalize_receipt_query_records;
 use crate::Vault;
@@ -132,8 +133,22 @@ impl Vault {
         query: ReceiptQuery,
         destination: &ReadDestination,
     ) -> Result<Vec<ReceiptRecord>> {
+        self.receipts_walk_for_caller(query, destination)
+            .map(|(page, _)| page)
+    }
+
+    /// [`Self::receipts_for_caller`], beside where its walk stopped when the
+    /// work cap cut it short of a full page before the receipts ran out: the
+    /// position of the last receipt it walked, kept or withheld, so a page
+    /// that kept few or none still moves on from there (FIX 10186). `None`
+    /// when the page is the whole answer up to its limit.
+    pub(crate) fn receipts_walk_for_caller(
+        &self,
+        query: ReceiptQuery,
+        destination: &ReadDestination,
+    ) -> Result<(Vec<ReceiptRecord>, Option<ReceiptScanPosition>)> {
         if !destination.is_off_device() || query.limit == 0 {
-            return self.receipts(query);
+            return self.receipts(query).map(|page| (page, None));
         }
         let limit = query.limit;
         let lineage = match query.job_ref {
@@ -159,11 +174,17 @@ impl Vault {
             let collected = ordered.len();
             let mut page = Vec::new();
             let mut walked = 0;
+            let mut last_walked = None;
             for receipt in ordered {
                 if page.len() == limit {
                     break;
                 }
                 walked += 1;
+                last_walked = Some(ReceiptScanPosition {
+                    occurred_at: receipt.occurred_at,
+                    receipt_kind: receipt.receipt_kind,
+                    receipt_id: receipt.receipt_id.clone(),
+                });
                 if off_device_admits(self, &receipt, destination)? {
                     page.push(receipt);
                 }
@@ -177,8 +198,14 @@ impl Vault {
             } else {
                 collected < bound
             };
-            if settled || bound >= MAX_RECEIPT_QUERY_SCAN {
-                return Ok(page);
+            if settled {
+                return Ok((page, None));
+            }
+            if bound >= MAX_RECEIPT_QUERY_SCAN {
+                // Cut by the cap: a short page, and receipts may lie past
+                // the last one walked.
+                let cut = (page.len() < limit).then_some(last_walked).flatten();
+                return Ok((page, cut));
             }
             bound = bound
                 .saturating_mul(REFILL_GROWTH)

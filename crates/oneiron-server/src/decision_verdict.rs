@@ -36,8 +36,8 @@ use oneiron::claim::ScopedRead;
 use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
-    LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
-    cut_text, fit_state, routine_choice,
+    LocatedDecision, ModelDecisionProvider, RoutineOutcome, RoutineTrail, cut_text, fit_state,
+    routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
@@ -303,7 +303,6 @@ fn answer_verdict(
 ) -> MemoryResult<AiVerdict> {
     let started = Instant::now();
     oneiron::memory::caps::check_deadline_ms(request.deadline_ms)?;
-    oneiron::memory::caps::check_batch_len("evidence", request.evidence.len())?;
     let ceiling = request.ceiling.unwrap_or(DecisionRung::Big);
     if ceiling == DecisionRung::Human {
         return Err(MemoryError::bad_request_with(
@@ -339,15 +338,9 @@ fn answer_verdict(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| internal())?;
     let caller_state = request.state.clone().unwrap_or(Value::Null);
+    // One verdict over every evidence ref: a state its fit cannot bring under
+    // the ladder's fit target goes whole at its deepest cut (Rule 5).
     let (state, cut_at) = verdict_state(&caller_state, &views);
-    if serde_json::to_vec(&state).map_or(true, |bytes| bytes.len() > MAX_DECISION_STATE_BYTES) {
-        return Err(MemoryError::bad_request_with(
-            format!(
-                "the state and the evidence views pass the ladder's {MAX_DECISION_STATE_BYTES}-byte state, even with every evidence text cut"
-            ),
-            &["Name fewer evidence refs, or a smaller state."],
-        ));
-    }
     let images = match (&request.image, held) {
         (Some(handle), Some(held)) => vec![kept(reader, handle, readable(held)?)],
         (Some(handle), None) if handle.starts_with(HELD_PREFIX) => {
@@ -487,7 +480,8 @@ fn answer_verdict(
 /// cut to the same bytes ([`cut_text`]), halving until the whole fits. A cut
 /// state says where (`cut_at_bytes`) and each cut view says it is (`cut`),
 /// so a provider knows it reads a cut text; beside it, the cut. A state the
-/// rest does not let fit comes back over the bound, for its caller to refuse.
+/// rest does not let fit comes back over the bound at its deepest cut, and
+/// the ladder reads it whole.
 fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u64>) {
     let longest = views
         .iter()

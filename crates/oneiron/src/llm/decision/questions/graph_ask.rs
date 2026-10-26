@@ -27,7 +27,6 @@ use std::collections::HashSet;
 
 mod fit;
 
-const MAX_UNITS: usize = 4096;
 const MAX_NEIGHBORS: usize = 16;
 const MAX_NEIGHBOR_SCAN: usize = 4096;
 const MAX_SOURCE_BYTES: usize = 1_048_576;
@@ -245,27 +244,21 @@ impl GraphAskFailure {
 /// Enumerate up to `limit` live units of a graph type under the asker's own
 /// read lane `lane`. The type index only nominates IDs: no raw row or count
 /// from that index reaches the answerer or the result without a scoped point
-/// read. This scan has a fixed bound, including invisible rows.
+/// read. The scan pages 256 index rows at a time, invisible ones included,
+/// until `limit` units are selected or the index ends.
 pub fn select_graph_units_by_type(
     lane: &ScopedRead<'_>,
     entity_type: u8,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    if limit > MAX_UNITS {
-        return Err(Error::InvalidConfig(
-            "graph ask selection exceeds limit".into(),
-        ));
-    }
     let vault = lane.vault();
     let mut selected = Vec::new();
     let mut after = None;
-    let mut scanned = 0;
-    while selected.len() < limit && scanned < 100_000 {
+    while selected.len() < limit {
         let page = vault.entities_by_type_page(entity_type, after.as_ref(), 256)?;
         if page.is_empty() {
             break;
         }
-        scanned += page.len();
         after = page.last().copied();
         let values = lane.get_entities_parts_with_receipt(&page, None)?;
         for (id, value) in page.into_iter().zip(values.value) {
@@ -377,8 +370,7 @@ pub fn run_graph_ask_receipted(
     now: u64,
 ) -> std::result::Result<GraphAskReceipts, GraphAskFailure> {
     question.validate().map_err(GraphAskFailure::before_units)?;
-    if units.len() > MAX_UNITS || units.iter().copied().collect::<HashSet<_>>().len() != units.len()
-    {
+    if units.iter().copied().collect::<HashSet<_>>().len() != units.len() {
         return Err(GraphAskFailure::before_units(Error::InvalidConfig(
             "invalid graph ask unit selection".into(),
         )));

@@ -91,7 +91,6 @@ impl Memory<'_> {
         claims: &[ScopedClaimInput],
         proposed: bool,
     ) -> MemoryResult<Vec<CommitOutcome>> {
-        super::caps::check_batch_len("claims", claims.len())?;
         let row = if proposed {
             "vault.claims.seed"
         } else {

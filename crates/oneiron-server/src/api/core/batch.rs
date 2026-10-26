@@ -4,7 +4,6 @@ use super::super::DagWriteError;
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::parse_entity_id_param;
-use super::write_shape::CORE_MAX_BATCH_ENTITIES;
 use super::write_shape::core_entity_timestamps;
 use super::write_shape::core_write_refusal;
 use super::write_shape::core_write_text;
@@ -140,13 +139,6 @@ pub(crate) async fn core_batch(
 ) -> Result<Json<CoreBatchResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
-    if req.entities.len() > CORE_MAX_BATCH_ENTITIES {
-        return Err(ApiError::bad_request(
-            format!("entities must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
-            Some("entities"),
-        )
-        .into());
-    }
     // The route's own refusals first; the row mints what the body omits.
     for entity in &req.entities {
         if let Some(id) = &entity.id {

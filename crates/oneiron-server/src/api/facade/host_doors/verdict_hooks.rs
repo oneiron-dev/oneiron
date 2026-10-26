@@ -9,7 +9,7 @@ use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult,
 };
 use oneiron::runtime_hooks::HookVerdict;
-use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest, HookReplayRow, HooksReplayRequest};
+use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest, HooksReplayPage, HooksReplayRequest};
 
 use super::support::{
     Listed, MaybeListed, asking, credential_listing, internal, owner_proof, read_beside, refused,
@@ -94,7 +94,7 @@ pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HooksReplayRequest,
-) -> MaybeListed<Vec<HookReplayRow>> {
+) -> MaybeListed<HooksReplayPage> {
     match vault_hooks_replay_answer(server, auth, input).await {
         Ok((replayed, rows)) => (Ok(replayed), rows),
         Err(refusal) => (Err(refusal), Some(Vec::new())),
@@ -106,7 +106,7 @@ pub(super) async fn vault_hooks_replay_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HooksReplayRequest,
-) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
+) -> MemoryResult<(HooksReplayPage, Option<Vec<EntityId>>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
     vault_hooks_replay_as_owner(server, owner, input).await
 }
@@ -118,7 +118,7 @@ pub(crate) async fn vault_hooks_replay_as_owner(
     server: &Arc<SyncServer>,
     owner: oneiron::consent::AuthenticatedOwner,
     input: HooksReplayRequest,
-) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
+) -> MemoryResult<(HooksReplayPage, Option<Vec<EntityId>>)> {
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {

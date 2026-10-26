@@ -23,10 +23,6 @@ use crate::llm::decision::questions::{
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
 
-/// The most graph units one ask names or selects: the engine's own bound on
-/// a graph ask's selection.
-pub const GRAPH_ASK_MAX_UNITS: usize = 4096;
-
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
 /// `ai.verdict` call's default.
@@ -47,8 +43,8 @@ pub struct GraphAskRequest {
     /// `{"kind":"score","min":..,"max":..}` or `{"kind":"box"}`.
     #[schemars(with = "serde_json::Value")]
     pub question: DecisionQuestion,
-    /// The graph units asked about: distinct, at most
-    /// [`GRAPH_ASK_MAX_UNITS`]. Each is read under the caller's own scoped
+    /// The graph units asked about: distinct, as many as the caller names
+    /// (Rule 5). Each is read under the caller's own scoped
     /// read; a unit it cannot read is passed over as a missing one is, and
     /// appears nowhere in the answer.
     #[serde(default)]
@@ -92,14 +88,14 @@ pub struct GraphAskRequest {
 pub struct GraphAskSelection {
     /// The entity type, by its registry number.
     pub entity_type: u8,
-    /// At most this many units, 1 to [`GRAPH_ASK_MAX_UNITS`].
+    /// At most this many units, 1 or more.
     pub limit: usize,
 }
 
 impl GraphAskRequest {
     /// The ask's bounds, checked before any model work: the per-unit clock,
-    /// the ceiling, one selection of at most [`GRAPH_ASK_MAX_UNITS`]
-    /// distinct units, and the question itself.
+    /// the ceiling, one selection of distinct units, and the question
+    /// itself.
     pub fn validate(&self) -> MemoryResult<()> {
         crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
         if self.ceiling == Some(DecisionRung::Human) {
@@ -123,12 +119,6 @@ impl GraphAskRequest {
             }
             _ => {}
         }
-        if self.units.len() > GRAPH_ASK_MAX_UNITS {
-            return Err(MemoryError::bad_request_with(
-                format!("vault.graph.ask names more than {GRAPH_ASK_MAX_UNITS} units"),
-                &["Ask over fewer units at once."],
-            ));
-        }
         let mut seen = HashSet::with_capacity(self.units.len());
         if !self.units.iter().all(|unit| seen.insert(*unit)) {
             return Err(MemoryError::bad_request_with(
@@ -137,11 +127,11 @@ impl GraphAskRequest {
             ));
         }
         if let Some(select) = self.select
-            && (select.limit == 0 || select.limit > GRAPH_ASK_MAX_UNITS)
+            && select.limit == 0
         {
             return Err(MemoryError::bad_request_with(
-                format!("select.limit must be between 1 and {GRAPH_ASK_MAX_UNITS}"),
-                &["Select fewer units at once."],
+                "select.limit must be at least 1",
+                &["Select one unit or more."],
             ));
         }
         if self

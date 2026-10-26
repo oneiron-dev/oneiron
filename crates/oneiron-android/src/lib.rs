@@ -19,10 +19,6 @@ use oneiron::{
 };
 use std::sync::{Arc, MutexGuard};
 
-/// The most hits one vector search answers, as the C ABI's
-/// (`MAX_FFI_SEARCH_LIMIT`).
-const MAX_SEARCH_LIMIT: usize = 1_000;
-
 // Public so its JNI exports are reachable items, as this file's are.
 #[cfg(feature = "engine")]
 pub mod engine;
@@ -167,12 +163,9 @@ impl NativeVault {
             None => self.vault.put_vector(&id, vector).map_err(display),
         }
     }
-    /// The `limit` nearest entities to `query`, at most [`MAX_SEARCH_LIMIT`].
+    /// The `limit` nearest entities to `query`, however many it asks for.
     fn search_vector(&self, query: &[f32], limit: jint) -> Result<Vec<ScoredEntity>, String> {
-        let limit = usize::try_from(limit)
-            .ok()
-            .filter(|limit| *limit <= MAX_SEARCH_LIMIT)
-            .ok_or_else(|| format!("search limit {limit} is not within 0..={MAX_SEARCH_LIMIT}"))?;
+        let limit = reads::search_limit(limit)?;
         self.vault.search_vector(query, limit).map_err(display)
     }
 }

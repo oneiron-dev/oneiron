@@ -6,6 +6,7 @@
 //! over its sources, a verb hook over its newest saved runs.
 
 mod body;
+mod page;
 
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
@@ -23,15 +24,18 @@ use super::filter;
 use super::grant::{HookGrant, effective_grant};
 use super::read;
 use super::runner::{Verdict, bounded};
-use super::source::{self, FactEntry, FactKind, FactPosition, FactPositionHex, FactSource};
+use super::source::{FactEntry, FactKind, FactPositionHex, FactSource};
 use super::store::{self, HookReadPin, HookRunRecord, HookRunRef, HookVerdictPin, RunKey};
 use super::verb::{HookVerbRunRecord, VERB_RUNS};
 
-/// Entries one replay returns at most.
+pub use self::page::{HookReplayCursor, HookReplayEntryPage};
+
+/// Entries one replay page returns at most: a larger limit is served a page
+/// at a time ([`HookReplayCursor`]).
 const MAX_REPLAY_ENTRIES: usize = 256;
 /// Entries one source read takes.
 const REPLAY_BATCH: usize = 256;
-/// Source reads one replay makes per source.
+/// Source reads one replay page makes per source.
 const MAX_REPLAY_BATCHES: usize = 64;
 
 /// One past entry the hook takes, and what its body returns for it.
@@ -176,28 +180,8 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
-        let (binding_id, row) = self
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(id, _)| *id == binding)
-            .ok_or(Error::EntityNotFound)?;
-        let (entries, rows) = self.hooks_replay_binding_listing(
-            runtime,
-            verdict.as_deref(),
-            binding_id,
-            &row,
-            since,
-            limit,
-        )?;
-        // The binding was read from its stored row, so it is one of the rows
-        // the answer stands on (FIX 4710).
-        let rows = rows.map(|mut rows| {
-            rows.push(binding_id);
-            rows.sort_unstable();
-            rows.dedup();
-            rows
-        });
-        Ok((entries, rows))
+        self.hooks_replay_page_listing(runtime, verdict, binding, since, None, limit)
+            .map(|(page, rows)| (page.entries, rows))
     }
 
     /// [`Self::hooks_replay`] over `row` as given, stored or not: a hub
@@ -231,23 +215,8 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
-        let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
-        let body = self.bound_body(row);
-        if row.selector.phase != HookPhase::Fact {
-            if since.is_some() {
-                return Err(Error::InvalidConfig(
-                    "since is a fact position: a verb hook replays its newest runs".to_owned(),
-                ));
-            }
-            let runs = saved_runs(self, binding_id, limit)?;
-            return self.replaying(runtime, verdict, binding_id, row, body, |replay, lane| {
-                Ok(runs.iter().map(|run| replay.saved(lane, run)).collect())
-            });
-        }
-        let since = since.as_ref().map(FactPositionHex::parse).transpose()?;
-        self.replaying(runtime, verdict, binding_id, row, body, |replay, lane| {
-            replay.walk(lane, since, limit)
-        })
+        self.hooks_replay_binding_page(runtime, verdict, binding_id, row, since, None, limit)
+            .map(|(page, rows)| (page.entries, rows))
     }
 
     /// `body` over `runs`, each on what it saved, by hex run key: one
@@ -359,42 +328,6 @@ impl Replay<'_> {
             pins.iter()
                 .flat_map(|pin| pin.rows.iter().map(|row| row.id)),
         );
-    }
-
-    /// The fact sources after `since`, or each from its start, until
-    /// `limit` entries the hook takes.
-    fn walk(
-        &self,
-        lane: &ScopedRead<'_>,
-        since: Option<FactPosition>,
-        limit: usize,
-    ) -> Result<Vec<HookReplayEntry>> {
-        let starts: Vec<_> = match since {
-            Some(position) => vec![(position.source(), Some(position))],
-            None => FactSource::ALL
-                .iter()
-                .map(|source| (*source, None))
-                .collect(),
-        };
-        let mut entries = Vec::new();
-        for (source, mut after) in starts {
-            for _ in 0..MAX_REPLAY_BATCHES {
-                let batch = source::read_after(self.vault, source, after, REPLAY_BATCH)?;
-                for entry in &batch.entries {
-                    if entries.len() >= limit {
-                        return Ok(entries);
-                    }
-                    if let Some(found) = self.entry(lane, entry)? {
-                        entries.push(found);
-                    }
-                }
-                if !batch.more {
-                    break;
-                }
-                after = batch.through;
-            }
-        }
-        Ok(entries)
     }
 
     fn entry(&self, lane: &ScopedRead<'_>, entry: &FactEntry) -> Result<Option<HookReplayEntry>> {

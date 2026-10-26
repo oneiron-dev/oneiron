@@ -263,9 +263,9 @@ fn check_unit_interval(label: &str, value: f64) -> Result<f32, MemoryError> {
     Ok(value as f32)
 }
 
-/// Checks the witness batch and each message before either transport dispatches.
+/// Checks each message of the witness batch before either transport
+/// dispatches; the batch takes every message it names.
 pub fn check_witness_turn(turn: &WitnessTurn) -> Result<(), MemoryError> {
-    check_batch_len("messages", turn.messages.len())?;
     for message in &turn.messages {
         check_payload_bytes("message content", message.content.len())?;
     }

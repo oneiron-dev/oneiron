@@ -456,6 +456,7 @@ where it sat. Answer each key one of four ways:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw GET '/v1/owner/secrets/found?pending=true&after=<next_cursor>'    # the next page, until done
 oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
 oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
 oneiron api raw POST /v1/owner/secrets/found/grant \
@@ -1954,7 +1955,7 @@ The core conversation writes and the atomic batch are verbs too:
 - `vault.conversations.records.append` appends one TURN to a conversation's DAG, under your
   name. It takes the same fields as `POST /v1/core/conversations/{id}/records`, plus
   `conversation` and less `actor`.
-- `vault.batch` with `{"entities": [...]}` commits up to 256 puts at once. An owner-grade
+- `vault.batch` with `{"entities": [...]}` commits every put it names at once, or none. An owner-grade
   credential commits them at owner grade. Any other credential, and an embedded handle, commits
   them below it, which refuses a put that turns an agent definition back on.
 

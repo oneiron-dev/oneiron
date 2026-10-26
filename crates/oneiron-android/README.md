@@ -23,7 +23,7 @@ EmbeddedVault(context.filesDir.resolve("memory").absolutePath).use { vault ->
 ```
 
 Beside `put` and `get`, `delete`, `putEdge`, `edgesOut`/`edgesIn`, `putVector` and
-`searchVector` (at most 1000 hits) cross the same boundary, with 32-character hex ids, and so do
+`searchVector` (every hit asked for) cross the same boundary, with 32-character hex ids, and so do
 the C ABI's reads: `contextPack(text, vector, limit, format)` (UTF-8 in `json`, `yaml`, `toon`,
 `markdown` or `plaintext`), `searchText(query, limit)`, `targets`/`sources(id, kind, type)`,
 `subtree(root, maxDepth)` and `ancestors(node)`, each lowered to the same core read. A vault

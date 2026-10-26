@@ -333,7 +333,7 @@ ARGUMENTS = {
     # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
     # is the gate decision ledger.
     'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
-        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': '{name}.to_vec()'},
+        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': 'Some({name}.to_vec())'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
 RESULTS = {
@@ -905,7 +905,14 @@ def mcp_input_dispatch(row):
                   f'usize::from(output.{page["cursor"]}.is_some()), true).rows_at({json.dumps(page["rows"])})')
         if 'resume' in page:
             assert page['resume'] in row['mcp_fields'], f'{name}: page.resume names no MCP argument'
-            source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
+            if 'within' in page:
+                # The cursor goes back inside the argument that carries the
+                # whole input, as its `within` key (FIX 9175, FIX 10186).
+                assert row['mcp_fields'][page['resume']] == '$', f'{name}: page.within needs page.resume to carry the whole input'
+                source += (f'.resumed_within({json.dumps(page["cursor"])}, {json.dumps(page["resume"])}, '
+                           f'{json.dumps(page["within"])})')
+            else:
+                source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
         body += f'let source = {source};\n'
     else:
         count = 'output.len()' if row['output'].startswith('Vec<') else '1'

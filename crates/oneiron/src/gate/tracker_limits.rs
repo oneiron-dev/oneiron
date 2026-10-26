@@ -91,9 +91,6 @@ impl PolicyTrackerLimits {
                     let Value::Array(rows) = value else {
                         return None;
                     };
-                    if rows.len() > 1024 {
-                        return None;
-                    }
                     for row in rows {
                         let Value::Map(fields) = row else {
                             return None;

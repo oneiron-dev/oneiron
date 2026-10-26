@@ -21,7 +21,7 @@ impl PipelineBuilder<'_> {
         if self.residence_page {
             requested
         } else {
-            scoped_text_channel_limit(requested)
+            scoped_text_channel_limit(requested, self.result_limit())
         }
     }
 }
