@@ -30913,7 +30913,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OversightCounts",
@@ -30923,7 +30923,7 @@
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -56648,9 +56648,19 @@
      "purpose": "Immutable, content-addressed centroid inputs beside vault-local telemetry",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/centroid_evidence/erase.rs",
+     "purpose": "A centroid snapshot's sources and their erase (FIX 10094)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -56660,7 +56670,7 @@
      "path": "src/self_heal/consent_depth.rs",
      "purpose": "Whole-tray consent queue depth (ARCH-0066 §4, \"consent-storm queue depth\"; OF-298)",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1
      }
     },
@@ -56778,6 +56788,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/self_heal/heal_context/admitted.rs",
+     "purpose": "The reader's admission of a heal context's recorded trace (FIX 10093)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -56802,7 +56822,7 @@
      "path": "src/self_heal/healer_host.rs",
      "purpose": "External healer capability, durable propose receipts, and human-only PR release",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 10,
       "struct": 5
@@ -56863,7 +56883,7 @@
      "path": "src/self_heal/mod.rs",
      "purpose": "GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "mod": 8,
       "re-export": 11
      }
@@ -56968,6 +56988,7 @@
      "path": "src/self_heal/scheduled.rs",
      "purpose": "Signed host-scheduled T1 runs",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
@@ -56980,6 +57001,7 @@
      "purpose": "The served degradation signals (ARCH-0066 §4, OF-298): every tier-1 tripwire whose facts a serving vault…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -57092,9 +57114,29 @@
      "purpose": "Closed-form T1 projections",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 10,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResolvedTripwireBounds",
+      "TripwireBound",
+      "TripwireBoundOrigin",
+      "TripwirePolicyReceipt",
+      "TripwirePolicySource"
+     ],
+     "path": "src/self_heal/tripwires/policy.rs",
+     "purpose": "The tripwire policy a pass applied, as it was resolved (FIX 10096): the four bounds every detector of the…",
+     "surface": {
+      "crate-vis": 5,
+      "enum": 1,
+      "fn": 1,
+      "struct": 4
      }
     },
     {
@@ -77244,7 +77286,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 45,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -77596,7 +77638,7 @@
    },
    "over_bar": 128,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5094,
+   "source_files": 5097,
    "test_files": 902
   },
   "oneiron-android": {
