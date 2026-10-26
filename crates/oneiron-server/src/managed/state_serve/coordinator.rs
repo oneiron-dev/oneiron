@@ -137,7 +137,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     // The owner's backups and restore rehearsals, on the tenant's own disk
     // beside the data directory, as plain serve keeps them beside its vault.
-    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config, &managed, anchor);
+    // A backup handoff policy that is not installed holds pruning and is
+    // named missing in the readiness every `Ping` carries (FIX 6705).
+    let (owner_host, backup_handoff) =
+        super::owner_storage::owner_host(&config, rehearsal_config, &managed, anchor);
+    let readiness = match backup_handoff {
+        Some(notice) => readiness.and_missing(notice),
+        None => readiness,
+    };
     // A direct `[linear]` mirror's response custody, private beside them.
     super::owner_storage::linear_responses(&config);
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes

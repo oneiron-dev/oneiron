@@ -431,6 +431,15 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// floor, at the engine revision it merged in, with no `Ping` field: a reader
 /// of usage events runs at or after the floor, and no reader of an event
 /// without it is kept. This version stays 3.
+///
+/// Backup handoff readiness (FIX 6705): a managed vault's readiness on
+/// `Ping` gains the facility `backup_handoff` and the reason
+/// `install_failed`: its backup handoff policy could not be installed, so
+/// its pruning past `keep` is held and every backup is kept; backups are
+/// still taken and the vault serves. It carries a build floor, at the engine
+/// revision it merged in, with no `Ping` field: a supervisor that reads the
+/// readiness runs at or after the floor, and no reader of a readiness
+/// without them is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
