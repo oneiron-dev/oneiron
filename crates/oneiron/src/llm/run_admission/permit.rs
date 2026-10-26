@@ -36,7 +36,20 @@ pub struct RunPermit {
     /// answer that reports no usage.
     pub(super) reserve_native: u128,
     pub(super) rates: Vec<UnitRate>,
+    /// The host stays awake from admission until the call settles (FIX 506).
+    _awake: RunAwake,
     settled: bool,
+}
+
+/// A permit's hold on the host's wake assertion, if the host set one.
+struct RunAwake(#[allow(dead_code)] std::sync::Mutex<Option<Box<dyn Send>>>);
+
+impl RunAwake {
+    fn hold() -> Self {
+        Self(std::sync::Mutex::new(
+            oneiron_vault_contract::host_adapters::run_awake(),
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -251,6 +264,7 @@ impl RunInner {
             unit_cost: 1,
             reserve_native: u128::from(line.reserve_units),
             rates: offer.rates.clone(),
+            _awake: RunAwake::hold(),
             settled: false,
         })
     }
@@ -346,6 +360,7 @@ impl RunInner {
             unit_cost: connector.unit_cost,
             reserve_native: native,
             rates: connector.rates.clone(),
+            _awake: RunAwake::hold(),
             settled: false,
         })
     }
