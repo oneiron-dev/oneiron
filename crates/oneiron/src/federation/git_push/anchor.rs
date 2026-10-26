@@ -41,6 +41,33 @@ pub(crate) struct ServedRepoAnchor {
 }
 
 impl Vault {
+    /// The CODE anchor the served store of object identity `identity` has
+    /// in `project`, when it stands live (FIX 7608 pre-flip, FIX 9328): the
+    /// repo a run's per-file reads name. Read-only, in `txn`; `None` when
+    /// the owner bound none.
+    ///
+    /// # Errors
+    /// A failed id derivation, or a store failure.
+    pub(crate) fn served_repo_anchor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        identity: &str,
+        project: EntityId,
+    ) -> Result<Option<EntityId>> {
+        let repo = crate::codebase::entity_id_from_hash_material(
+            SERVED_REPO_ANCHOR_DOMAIN,
+            &[identity.as_bytes(), project.as_bytes()],
+        )?;
+        Ok(matches!(
+            live_entity_row_in_txn(&self.store, txn, &repo)?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_CODE_ARTIFACT,
+                ..
+            }
+        )
+        .then_some(repo))
+    }
+
     /// Binds the served repo `repo_name` to its CODE anchor in `project`,
     /// as the live owner `owner`, in one writer: the anchor row and its
     /// `belongs_to` edge, each only when missing.

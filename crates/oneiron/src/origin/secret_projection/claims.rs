@@ -28,8 +28,15 @@
 
 use heed::{RoTxn, RwTxn};
 
+mod codec;
 mod lookup;
 use rmpv::Value;
+
+use self::codec::{
+    decode_graph, decode_place, digest_of, digest_value, entity, field, fields, git_oid,
+    occurrence_value, oid, optional_binding, packed, place_value, record_fields, text,
+};
+use super::recipient::RepoProjectionRevealBinding;
 
 use crate::Vault;
 use crate::claim::{
@@ -48,15 +55,6 @@ pub(crate) const REPO_SECRET_PROJECTION_PREDICATE: &str = "repo.secret_projectio
 
 /// The derivation domain of a record's id.
 const REPO_SECRET_PROJECTION_DOMAIN: &[u8] = b"oneiron:repo-secret-projection:v1";
-
-/// The one audience a copy serves today: every masked reader.
-const AUDIENCE_MASKED: &str = "masked";
-
-/// CALL P2, as a record names it.
-const POLICY_PRESERVE_PAYLOAD: &str = "preserve_payload";
-
-/// CALL P3, as a record names it.
-const LIFETIME_SOURCE_BOUND: &str = "source_bound";
 
 /// Where a changed object occurs in a changed parent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,6 +83,8 @@ pub(crate) enum RepoProjectionRecord {
         private_root: Option<GitOid>,
         /// Every readable mark the copy was made under, sorted.
         marks: Vec<EntityId>,
+        /// Who the copy serves (FIX 9328).
+        audience: RepoProjectionAudience,
     },
     /// One object's copy, the original's own id when nothing it names
     /// changed.
@@ -95,6 +95,10 @@ pub(crate) enum RepoProjectionRecord {
         signature_not_preserved: bool,
         /// The marks its copy masks (a blob's), sorted.
         marks: Vec<EntityId>,
+        /// A recipient copy's tree or blob, by the byte path it occurs at
+        /// (FIX 9328): one copy per occurrence. `None` in a masked copy,
+        /// and for every commit and tag.
+        occurrence: Option<Vec<u8>>,
     },
     /// One root ref's copy, fenced by the original it was frozen at.
     Ref {
@@ -107,6 +111,8 @@ pub(crate) enum RepoProjectionRecord {
     /// One place a changed object occurs in a changed parent.
     Link {
         parent: GitOid,
+        /// The parent's occurrence, as its object record names it.
+        parent_occurrence: Option<Vec<u8>>,
         place: RepoProjectionPlace,
         child_original: GitOid,
         child_copy: GitOid,
@@ -125,6 +131,38 @@ pub(crate) enum RepoProjectionRecord {
     Checkout(RepoProjectionCheckout),
     /// The private ingress seeded from this copy (FIX 7608 2b-ii-B2).
     IngressStore(RepoProjectionIngressStore),
+    /// The recipient a run's checkout lease on this copy was bound for
+    /// (FIX 7608 pre-flip, FIX 10271): a companion of its checkout
+    /// binding, never a change of it.
+    CheckoutRecipient(RepoProjectionCheckoutRecipient),
+}
+
+/// The recipient a run's checkout lease was bound for: the lease's
+/// checkout and epoch, and the agent, CODE anchor, PROJECT and run its
+/// host admitted. Its id is derived from the checkout and epoch alone, so
+/// the lease finds it; it is about the graph, so the graph's erasure
+/// reaches it. Ids only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionCheckoutRecipient {
+    pub(crate) checkout: String,
+    pub(crate) epoch: u64,
+    pub(crate) reveal: RepoProjectionRevealBinding,
+}
+
+/// Who a masked copy serves (FIX 7608 pre-flip, FIX 9328, CALL
+/// GIT-REVEAL-OPT-IN).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RepoProjectionAudience {
+    /// Every masked reader: each marked blob masked.
+    Masked,
+    /// One proven recipient whose explicit reason a live grant answered:
+    /// each released file (its exact byte path and ORIGINAL blob, sorted)
+    /// at its stored bytes, every other marked blob masked. Never a why or
+    /// a receipt: the same recipient and release set is the same copy.
+    Recipient {
+        binding: RepoProjectionRevealBinding,
+        released: Vec<(Vec<u8>, GitOid)>,
+    },
 }
 
 /// A checkout lease bound to a copy: the lease's checkout and epoch, its
@@ -160,6 +198,10 @@ pub(crate) struct RepoProjectionIngress {
     pub(crate) canonical_store: EntityId,
     pub(crate) ingress_store: String,
     pub(crate) authority: [u8; 32],
+    /// The recipient its host proved for the push, when it proved one
+    /// (FIX 10271): what a live grant's clearance of its held files names.
+    /// Never authority.
+    pub(crate) reveal: Option<RepoProjectionRevealBinding>,
 }
 
 /// A received copy change's translation: its candidate and operation, the
@@ -238,7 +280,9 @@ impl RepoProjectionClaim {
         match self.record {
             RepoProjectionRecord::Graph { .. } => Ok(self.graph),
             // Found from the lease or the ingress alone, never the graph.
-            RepoProjectionRecord::Checkout(_) | RepoProjectionRecord::IngressStore(_) => {
+            RepoProjectionRecord::Checkout(_)
+            | RepoProjectionRecord::IngressStore(_)
+            | RepoProjectionRecord::CheckoutRecipient(_) => {
                 derive_id(None, &identity_part(&self.record))
             }
             _ => derive_id(Some(&self.graph), &identity_part(&self.record)),
@@ -389,6 +433,7 @@ impl RepoProjectionClaim {
             canonical_store: entity(field(map, "canonical_store")?)?,
             ingress_store: text(field(map, "ingress_store")?)?.to_owned(),
             authority: digest_of(field(map, "authority")?)?,
+            reveal: optional_binding(field(map, "reveal")?)?,
         };
         let claim = Self::of(*graph, RepoProjectionRecord::Ingress(ingress.clone()));
         if claim.value() != body.value || claim.claim()?.subject != body.subject {
@@ -419,21 +464,29 @@ fn derive_id(graph: Option<&EntityId>, identity: &Value) -> Result<EntityId> {
 fn identity_part(record: &RepoProjectionRecord) -> Value {
     match record {
         RepoProjectionRecord::Graph { .. } => fields(record_fields(record)),
-        RepoProjectionRecord::Object { original, .. } => {
-            Value::Array(vec![Value::from("object"), oid(original)])
-        }
+        RepoProjectionRecord::Object {
+            original,
+            occurrence,
+            ..
+        } => Value::Array(vec![
+            Value::from("object"),
+            oid(original),
+            occurrence_value(occurrence.as_deref()),
+        ]),
         RepoProjectionRecord::Ref { name, .. } => {
             Value::Array(vec![Value::from("ref"), Value::from(name.as_str())])
         }
         RepoProjectionRecord::PrivateRoot { .. } => Value::Array(vec![Value::from("private_root")]),
         RepoProjectionRecord::Link {
             parent,
+            parent_occurrence,
             place,
             child_original,
             ..
         } => Value::Array(vec![
             Value::from("link"),
             oid(parent),
+            occurrence_value(parent_occurrence.as_deref()),
             place_value(place),
             oid(child_original),
         ]),
@@ -461,7 +514,19 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             checkout_key(&checkout.checkout, checkout.epoch)
         }
         RepoProjectionRecord::IngressStore(ingress) => ingress_store_key(&ingress.ingress_store),
+        RepoProjectionRecord::CheckoutRecipient(recipient) => {
+            checkout_recipient_key(&recipient.checkout, recipient.epoch)
+        }
     }
+}
+
+/// The identity a checkout recipient's id is derived from.
+fn checkout_recipient_key(checkout: &str, epoch: u64) -> Value {
+    Value::Array(vec![
+        Value::from("checkout_recipient"),
+        Value::from(checkout),
+        Value::from(epoch),
+    ])
 }
 
 /// The identity a checkout binding's id is derived from.
@@ -479,261 +544,4 @@ fn ingress_store_key(ingress_store: &str) -> Value {
         Value::from("ingress_store"),
         Value::from(ingress_store),
     ])
-}
-
-fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str, Value)> {
-    match record {
-        RepoProjectionRecord::Graph {
-            store_identity,
-            store_id,
-            roots,
-            private_root,
-            marks,
-        } => vec![
-            ("kind", Value::from("graph")),
-            ("store_identity", Value::from(store_identity.as_str())),
-            ("store_id", Value::from(store_id.to_hex())),
-            ("audience", Value::from(AUDIENCE_MASKED)),
-            ("policy", Value::from(POLICY_PRESERVE_PAYLOAD)),
-            ("lifetime", Value::from(LIFETIME_SOURCE_BOUND)),
-            (
-                "roots",
-                Value::Array(
-                    roots
-                        .iter()
-                        .map(|(name, original)| {
-                            Value::Array(vec![Value::from(name.as_str()), oid(original)])
-                        })
-                        .collect(),
-                ),
-            ),
-            (
-                "private_root",
-                private_root.as_ref().map_or(Value::Nil, oid),
-            ),
-            ("marks", ids(marks)),
-        ],
-        RepoProjectionRecord::Object {
-            original,
-            copy,
-            kind,
-            signature_not_preserved,
-            marks,
-        } => vec![
-            ("kind", Value::from("object")),
-            ("original", oid(original)),
-            ("copy", oid(copy)),
-            ("object_type", Value::from(kind.as_str())),
-            (
-                "signature_not_preserved",
-                Value::from(*signature_not_preserved),
-            ),
-            ("marks", ids(marks)),
-        ],
-        RepoProjectionRecord::Ref {
-            name,
-            original,
-            copy,
-        } => vec![
-            ("kind", Value::from("ref")),
-            ("name", Value::from(name.as_str())),
-            ("original", oid(original)),
-            ("copy", oid(copy)),
-        ],
-        RepoProjectionRecord::PrivateRoot { original, copy } => vec![
-            ("kind", Value::from("private_root")),
-            ("original", oid(original)),
-            ("copy", oid(copy)),
-        ],
-        RepoProjectionRecord::Link {
-            parent,
-            place,
-            child_original,
-            child_copy,
-        } => vec![
-            ("kind", Value::from("link")),
-            ("parent", oid(parent)),
-            ("place", place_value(place)),
-            ("child_original", oid(child_original)),
-            ("child_copy", oid(child_copy)),
-        ],
-        RepoProjectionRecord::Ingress(ingress) => vec![
-            ("kind", Value::from("ingress")),
-            ("operation", Value::from(ingress.operation.to_hex())),
-            (
-                "canonical_store",
-                Value::from(ingress.canonical_store.to_hex()),
-            ),
-            ("ingress_store", Value::from(ingress.ingress_store.as_str())),
-            ("authority", digest_value(&ingress.authority)),
-        ],
-        RepoProjectionRecord::Translation(translation) => vec![
-            ("kind", Value::from("translation")),
-            ("candidate", Value::from(translation.candidate.to_hex())),
-            ("operation", Value::from(translation.operation.to_hex())),
-            ("submitted_new", oid(&translation.submitted_new)),
-            ("canonical_base", oid(&translation.canonical_base)),
-            (
-                "canonical_target",
-                translation
-                    .canonical_target
-                    .as_ref()
-                    .map_or(Value::Nil, oid),
-            ),
-            ("pins", digest_value(&translation.pins)),
-        ],
-        RepoProjectionRecord::Clearance(clearance) => vec![
-            ("kind", Value::from("clearance")),
-            ("candidate", Value::from(clearance.candidate.to_hex())),
-            ("cause", Value::from(clearance.cause.as_str())),
-            ("files", digest_value(&clearance.files)),
-            ("target", clearance.target.as_ref().map_or(Value::Nil, oid)),
-            ("owner", Value::from(clearance.owner.to_hex())),
-        ],
-        RepoProjectionRecord::ExactForward(forward) => vec![
-            ("kind", Value::from("exact_forward")),
-            ("operation", Value::from(forward.operation.to_hex())),
-            ("ref_name", Value::from(forward.ref_name.as_str())),
-            ("old", forward.old.as_ref().map_or(Value::Nil, oid)),
-            ("new", oid(&forward.new)),
-            ("marks", ids(&forward.marks)),
-        ],
-        RepoProjectionRecord::Checkout(checkout) => vec![
-            ("kind", Value::from("checkout")),
-            ("checkout", Value::from(checkout.checkout.as_str())),
-            ("epoch", Value::from(checkout.epoch)),
-            ("holder", Value::from(checkout.holder.as_str())),
-            ("original", oid(&checkout.original)),
-            ("copy", oid(&checkout.copy)),
-        ],
-        RepoProjectionRecord::IngressStore(ingress) => vec![
-            ("kind", Value::from("ingress_store")),
-            ("ingress_store", Value::from(ingress.ingress_store.as_str())),
-            (
-                "canonical_store",
-                Value::from(ingress.canonical_store.to_hex()),
-            ),
-        ],
-    }
-}
-
-fn place_value(place: &RepoProjectionPlace) -> Value {
-    match place {
-        RepoProjectionPlace::TreeEntry { mode, name } => Value::Array(vec![
-            Value::from("tree_entry"),
-            Value::from(*mode),
-            Value::Binary(name.clone()),
-        ]),
-        RepoProjectionPlace::CommitTree => Value::Array(vec![Value::from("commit_tree")]),
-        RepoProjectionPlace::CommitParent { index } => {
-            Value::Array(vec![Value::from("commit_parent"), Value::from(*index)])
-        }
-        RepoProjectionPlace::TagTarget => Value::Array(vec![Value::from("tag_target")]),
-    }
-}
-
-fn oid(oid: &GitOid) -> Value {
-    Value::from(oid.as_str())
-}
-
-fn ids(ids: &[EntityId]) -> Value {
-    Value::Array(ids.iter().map(|id| Value::from(id.to_hex())).collect())
-}
-
-fn fields(entries: Vec<(&str, Value)>) -> Value {
-    Value::Map(
-        entries
-            .into_iter()
-            .map(|(key, value)| (Value::from(key), value))
-            .collect(),
-    )
-}
-
-fn packed(value: &Value) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value)
-        .map_err(|_| Error::InvariantViolation("a masked copy record part did not encode"))?;
-    Ok(out)
-}
-
-/// The graph record at `id`, at schema 1 only, rebuilt and checked against
-/// both its stored value and its id.
-fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjectionClaim> {
-    if body.predicate != REPO_SECRET_PROJECTION_PREDICATE
-        || body.source != Some(ClaimSource::Observed)
-    {
-        return Err(corrupt());
-    }
-    let map = body.value.as_map().ok_or_else(corrupt)?;
-    let schema = field(map, "schema_version")?.as_u64().ok_or_else(corrupt)?;
-    if schema != u64::from(RepoProjectionClaim::SCHEMA) || text(field(map, "kind")?)? != "graph" {
-        return Err(corrupt());
-    }
-    let roots = field(map, "roots")?
-        .as_array()
-        .ok_or_else(corrupt)?
-        .iter()
-        .map(|root| match root.as_array().map(Vec::as_slice) {
-            Some([name, original]) => Ok((text(name)?.to_owned(), git_oid(original)?)),
-            _ => Err(corrupt()),
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let private_root = match field(map, "private_root")? {
-        Value::Nil => None,
-        value => Some(git_oid(value)?),
-    };
-    let marks = field(map, "marks")?
-        .as_array()
-        .ok_or_else(corrupt)?
-        .iter()
-        .map(entity)
-        .collect::<Result<Vec<_>>>()?;
-    let record = RepoProjectionRecord::Graph {
-        store_identity: text(field(map, "store_identity")?)?.to_owned(),
-        store_id: entity(field(map, "store_id")?)?,
-        roots,
-        private_root,
-        marks,
-    };
-    let claim = RepoProjectionClaim::graph(record)?;
-    if claim.graph != *id || claim.value() != body.value || claim.claim()?.subject != body.subject {
-        return Err(corrupt());
-    }
-    Ok(claim)
-}
-
-fn field<'v>(map: &'v [(Value, Value)], key: &str) -> Result<&'v Value> {
-    map.iter()
-        .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value)
-        .ok_or_else(corrupt)
-}
-
-fn text(value: &Value) -> Result<&str> {
-    value.as_str().ok_or_else(corrupt)
-}
-
-fn entity(value: &Value) -> Result<EntityId> {
-    EntityId::from_hex(text(value)?).map_err(|_| corrupt())
-}
-
-fn digest_value(digest: &[u8; 32]) -> Value {
-    Value::from(crate::entity_id::bytes_to_hex_lower(digest))
-}
-
-fn digest_of(value: &Value) -> Result<[u8; 32]> {
-    let hex = text(value)?.as_bytes();
-    let mut digest = [0_u8; 32];
-    if hex.len() != 64 {
-        return Err(corrupt());
-    }
-    for (at, pair) in hex.chunks(2).enumerate() {
-        let pair = std::str::from_utf8(pair).map_err(|_| corrupt())?;
-        digest[at] = u8::from_str_radix(pair, 16).map_err(|_| corrupt())?;
-    }
-    Ok(digest)
-}
-
-fn git_oid(value: &Value) -> Result<GitOid> {
-    GitOid::parse_hex(text(value)?).map_err(|_| corrupt())
 }

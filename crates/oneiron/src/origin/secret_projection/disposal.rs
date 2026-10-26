@@ -1,8 +1,9 @@
 //! Disposal of masked Git copies (FIX 7608 slice 2b-ii-B2, FIX 9107).
 //!
 //! A copy is source-bound (CALL P3): once the readable marks it was made
-//! under moved (a mark was added, settled or erased, or its store went),
-//! it is never served again. This collector retires such a copy only when
+//! under moved (a mark was added, settled or erased), or the owner erased
+//! its canonical store (FIX 10274, by the store's permanent hard-delete
+//! marker, whatever its marks say), it is never served again. This collector retires such a copy only when
 //! nothing still owns it: no checkout binding whose lease still holds its
 //! worktree (active, settling, or retained with work kept), and no private
 //! ingress a push was received into (a pending push or proposal is never
@@ -11,7 +12,8 @@
 //! itself through the ordinary delete path, then removes the copy's own
 //! directory; the canonical store is never touched. No TTL, size or count
 //! ends a copy. A failed filesystem removal is retried by the next pass
-//! from the same deterministic layout.
+//! from the same deterministic layout, which also finds an erased store's
+//! copies whose records its erase already took (`erased_store`).
 
 use std::cell::Cell;
 
@@ -24,6 +26,10 @@ use crate::checkout::lease::{CheckoutId, CheckoutLeaseAct, CheckoutLeaseState, l
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
+
+mod erased_store;
+
+use self::erased_store::{collect_erased_store_graphs, repo_projection_store_erased_in_txn};
 
 thread_local! {
     /// Set while this thread collects: the deletes it makes run the
@@ -65,7 +71,8 @@ pub(crate) fn collect_repo_secret_projections(vault: &Vault) -> Result<usize> {
     if COLLECTING.with(|collecting| collecting.replace(true)) {
         return Ok(0);
     }
-    let collected = collect_unowned(vault);
+    let collected = collect_unowned(vault)
+        .and_then(|retired| collect_erased_store_graphs(vault).map(|removed| retired + removed));
     COLLECTING.with(|collecting| collecting.set(false));
     collected
 }
@@ -83,7 +90,9 @@ fn collect_unowned(vault: &Vault) -> Result<usize> {
             else {
                 return Ok(());
             };
-            if *marks != readable && !owned_in_txn(vault, &txn, &graph.graph)? {
+            let stale =
+                *marks != readable || repo_projection_store_erased_in_txn(vault, &txn, store_id)?;
+            if stale && !owned_in_txn(vault, &txn, &graph.graph)? {
                 retiring.push((graph.graph, *store_id));
             }
             Ok(())

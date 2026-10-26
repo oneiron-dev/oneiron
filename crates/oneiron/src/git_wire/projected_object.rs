@@ -226,6 +226,45 @@ impl GitWire<'_> {
         })
     }
 
+    /// A tree of a recipient copy (FIX 7608 pre-flip, FIX 9328): each entry
+    /// `copies` names by its name bytes pointed at that copy, at the very
+    /// id position it is stored at, and nothing else changed. One id named
+    /// by two entries may so take two copies; a submodule's entry is never
+    /// rewritten. With no entry rewritten the payload is the original's.
+    ///
+    /// # Errors
+    /// A malformed tree, an object that is not a tree, or an IO failure.
+    pub(crate) fn project_tree_occurrences(
+        &self,
+        original: &GitRetainedObject,
+        copies: &HashMap<Vec<u8>, GitOid>,
+    ) -> GitWireResult<GitProjectedPayload> {
+        if !matches!(original.kind(), GitObjectKind::Tree) {
+            return Err(invalid("only a tree is re-encoded by occurrence"));
+        }
+        let raw = original.read_bytes()?;
+        let mut out: Option<Vec<u8>> = None;
+        for entry in tree_entries(&raw)? {
+            if entry.mode == GITLINK_MODE {
+                continue;
+            }
+            let Some(copy) = copies.get(&entry.name).filter(|copy| **copy != entry.oid) else {
+                continue;
+            };
+            let bytes = out.get_or_insert_with(|| raw.to_vec());
+            bytes[entry.oid_at..entry.oid_at + RAW_OID_BYTES].copy_from_slice(&raw_oid(copy)?);
+        }
+        let Some(bytes) = out else {
+            return Ok(unchanged(original));
+        };
+        let spool = GitSpool::pump(self.spool_dir(), bytes.as_slice())?;
+        Ok(GitProjectedPayload {
+            object: GitRetainedObject::encoded(GitObjectKind::Tree, spool),
+            changed: true,
+            signature_not_preserved: false,
+        })
+    }
+
     /// Makes the fresh bare store a masked copy is written into, at
     /// `root/repo.git`, and binds it for object writes and ref
     /// publications. `root` must not hold a store yet. The handle pins no

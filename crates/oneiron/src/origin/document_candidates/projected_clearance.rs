@@ -8,7 +8,8 @@
 //! projected one answers its uncleared typed cause: `sealed_file_edited`
 //! or `projection_edit_conflict`, cleared only by the owner's settlement
 //! of this exact replacement (its clearance record) or a live matching
-//! reveal. A projected source that no longer stands, or a candidate with
+//! reveal grant for the recipient its push proved (FIX 10271), read only
+//! when no settlement clears it. A projected source that no longer stands, or a candidate with
 //! no canonical target, holds as a conflict: never ordinary-clear. The
 //! hold joins the existing queue path; nothing here adds a human wait, and
 //! a vault with no review policy lands a cleared candidate on green.
@@ -18,6 +19,7 @@ use heed::RoTxn;
 use super::super::document_candidate_types::CodePushCandidate;
 use super::projected::RepoProjectedCandidatePins;
 use super::projected_join::receive_operation_in_txn;
+use super::projected_reveal::ProjectedRevealCheck;
 use super::projected_source::require_projected_candidate_source_in_txn;
 use crate::error::Result;
 use crate::git_wire::GitOid;
@@ -62,7 +64,8 @@ impl Vault {
         let Some(pins) = &attached.projected else {
             return Ok(None);
         };
-        let stands = match receive_operation_in_txn(self, txn, provenance)? {
+        let operation = receive_operation_in_txn(self, txn, provenance)?;
+        let stands = match operation {
             Some(operation) => {
                 require_projected_candidate_source_in_txn(self, txn, pins, candidate, operation)?
             }
@@ -76,7 +79,23 @@ impl Vault {
             return Ok(None);
         }
         let owners = crate::policy_model::owners_in_txn(self, txn)?;
-        require_projection_edit_clearance_in_txn(self, txn, &held, &owners, live_reveal_clears)
+        // The push's recipient is read only once a file needs a reveal.
+        let mut reveal: Option<Option<ProjectedRevealCheck>> = None;
+        let live_reveal = |file: &RepoProjectionHeldFile| -> Result<bool> {
+            if reveal.is_none() {
+                reveal = Some(match operation {
+                    Some(operation) => {
+                        self.projected_reveal_check_in_txn(txn, &held.graph, &operation)?
+                    }
+                    None => None,
+                });
+            }
+            match reveal.as_ref().and_then(Option::as_ref) {
+                Some(check) => check.covers_in_txn(self, txn, &file.path, file.original.as_ref()),
+                None => Ok(false),
+            }
+        };
+        require_projection_edit_clearance_in_txn(self, txn, &held, &owners, live_reveal)
     }
 
     /// The held proposal `candidate`'s pins name (its candidate, copy,
@@ -145,13 +164,4 @@ fn held_proposal(
         files,
         target: parse(&pins.canonical_target_tree)?,
     })
-}
-
-/// Whether a live reveal Grant clears `file` now. A Git push carries no
-/// connection, provider, project or run to rebuild the reveal asker from,
-/// so no Grant is matched here yet (FIX line): until it is, the owner's
-/// settlement of the exact replacement, or an exact or rebased push,
-/// clears the cause. One hook, so the later wiring changes one line.
-fn live_reveal_clears(_file: &RepoProjectionHeldFile) -> Result<bool> {
-    Ok(false)
 }

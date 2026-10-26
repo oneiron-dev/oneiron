@@ -22,6 +22,7 @@ use super::door::DoorAdmissionStamp;
 use super::paths::serve_failed;
 use super::push_projection::{bind_projection_ingress_in_txn, prepare_projection_ingress};
 use super::read_projection::{RepoGitBackend, prepare_recipient_read_backend};
+use super::recipient_serve::delivery::prepare_repo_git_delivery;
 use super::recipient_serve::{RepoGitReadContext, store_holds_readable_marks_in_txn};
 use super::serve::unpinned_repo_ref;
 use super::serve_cmd::{ServeCommand, ServeRequest};
@@ -31,14 +32,19 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
+use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::checkout::retained_projected_checkout;
+use crate::origin::secret_projection::checkout_recipient::projected_checkout_recipient;
 use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionRecord,
 };
 use crate::origin::secret_projection::git::{
     RepoGitProjection, RepoGitProjectionRoots, materialize_masked_git_graph,
-    projection_ingress_dir, reopen_repo_git_projection,
+    materialize_recipient_git_graph, plan_repo_git_release, projection_ingress_dir,
+    recipient_repo_anchor, reopen_repo_git_projection,
 };
+use crate::origin::secret_projection::recipient::RepoProjectionRevealBinding;
+use crate::secret_custody::RepoFileReadDisclosure;
 
 /// What a masked recipient's exchange on a marked store runs against.
 pub(super) enum ProjectedExchange {
@@ -48,12 +54,34 @@ pub(super) enum ProjectedExchange {
     Ingress(ProjectedIngress),
 }
 
-/// The private ingress a projection-bound push is received into.
+/// The private ingress a projection-bound push is received into, with the
+/// recipient its host proved for it, if any.
 pub(super) struct ProjectedIngress {
     projection: RepoGitProjection,
     canonical_store: EntityId,
     root: PathBuf,
     identity: String,
+    recipient: Option<RepoRevealRecipient>,
+    bound: Option<RepoProjectionRevealBinding>,
+}
+
+impl ProjectedIngress {
+    /// The recipient binding the push's ingress record keeps (FIX 10271):
+    /// the one its lease's run was bound for, or else the host-proved
+    /// recipient reading the CODE anchor its admission named, in that
+    /// anchor's PROJECT when the recipient named none. No recipient, or no
+    /// anchor, keeps none: its held files then clear only by the owner's
+    /// settlement or an exact or rebased push, as today.
+    fn reveal(&self, stamp: &DoorAdmissionStamp) -> Option<RepoProjectionRevealBinding> {
+        if let Some(bound) = &self.bound {
+            return Some(bound.clone());
+        }
+        let recipient = self.recipient.as_ref()?;
+        let code = stamp.push.as_ref()?.code_repo()?;
+        let mut binding = RepoProjectionRevealBinding::of(code.repo, recipient);
+        binding.project = binding.project.or(Some(code.project));
+        Some(binding)
+    }
 }
 
 impl ProjectedExchange {
@@ -104,6 +132,7 @@ impl ProjectedExchange {
             ingress.canonical_store,
             &ingress.identity,
             &ingress.root,
+            ingress.reveal(stamp),
         )?;
         let at = stamp.admitted_at();
         let id = vault.with_write_txn_grouped(|wtxn| {
@@ -140,13 +169,20 @@ pub(super) fn select_projected_exchange(
     }
     let canonical = wire.open_repo(unpinned_repo_ref(repo_dir), repo_dir)?;
     let lease = admitted_lease(vault, request, repo_dir)?;
+    let mut bound_for = None;
     let projection = match &lease {
         Some(lease) => match retained_projected_checkout(vault, store, lease)? {
-            Some(bound) => Some(
-                reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(|| {
-                    serve_failed("the checkout's masked copy no longer stands; bind it again")
-                })?,
-            ),
+            Some(bound) => {
+                if let Some(actual) = read.actual() {
+                    bound_for =
+                        projected_checkout_recipient(vault, lease, &bound.graph, actual.agent())?;
+                }
+                Some(
+                    reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(|| {
+                        serve_failed("the checkout's masked copy no longer stands; bind it again")
+                    })?,
+                )
+            }
             None => current_projection(vault, &wire, &canonical, store, Some(lease_pin(lease)?))?,
         },
         None => current_projection(vault, &wire, &canonical, store, None)?,
@@ -155,8 +191,13 @@ pub(super) fn select_projected_exchange(
         return Ok(None);
     };
     if request.is_push() {
-        return receive_into_ingress(vault, &wire, projection, store).map(Some);
+        let recipient = read.actual().cloned();
+        return receive_into_ingress(vault, &wire, projection, store, recipient, bound_for)
+            .map(Some);
     }
+    let projection = granted_variant(
+        vault, &wire, &canonical, projection, request, read, bound_for,
+    )?;
     match prepare_recipient_read_backend(vault, &wire, &canonical, &projection, project_root, read)?
     {
         Some(backend) => Ok(Some(ProjectedExchange::Read(backend))),
@@ -164,6 +205,57 @@ pub(super) fn select_projected_exchange(
             "the masked copy moved while it was selected; retry",
         )),
     }
+}
+
+/// CALL GIT-REVEAL-OPT-IN (FIX 9328): the copy a masked read is served.
+/// A proven recipient (the one its lease's run was bound for, `bound`, or
+/// one in a PROJECT with a CODE anchor), its own valid reason and a live
+/// grant on some of its marked files reads the granted sibling of
+/// `masked`, each released file delivered afresh before an upload-pack
+/// exchange sends anything; every other read is `masked`, as today, with
+/// no ask and no refusal.
+///
+/// # Errors
+/// A store or git failure, or the file check's own.
+fn granted_variant(
+    vault: &Vault,
+    wire: &GitWire<'_>,
+    canonical: &GitWireRepo,
+    masked: RepoGitProjection,
+    request: &ServeRequest,
+    read: &RepoGitReadContext,
+    bound: Option<RepoProjectionRevealBinding>,
+) -> Result<RepoGitProjection> {
+    let (Some(actual), Some(why)) = (read.actual(), read.reveal_why()) else {
+        return Ok(masked);
+    };
+    // An invalid reason opts nothing in: the read stays masked.
+    let Ok(RepoFileReadDisclosure::Ask { why, .. }) =
+        RepoFileReadDisclosure::from_optional_why(Some(why), Some(actual.asker()))
+    else {
+        return Ok(masked);
+    };
+    let binding = match bound {
+        Some(bound) => bound,
+        None => match recipient_repo_anchor(vault, canonical, actual.project())? {
+            Some(repo) => RepoProjectionRevealBinding::of(repo, actual),
+            None => return Ok(masked),
+        },
+    };
+    let Some(mut plan) = plan_repo_git_release(vault, &masked, binding)? else {
+        return Ok(masked);
+    };
+    if request.method == "POST" && request.path_info.ends_with("/git-upload-pack") {
+        plan = prepare_repo_git_delivery(vault, wire, canonical, plan, &why)?;
+        if plan.is_empty() {
+            return Ok(masked);
+        }
+    }
+    let now = vault.now_recorded_at();
+    Ok(
+        materialize_recipient_git_graph(vault, wire, canonical, &masked, &plan, now)?
+            .unwrap_or(masked),
+    )
 }
 
 /// The lease the request's checkout ticket names, as the credential door
@@ -227,6 +319,8 @@ fn receive_into_ingress(
     wire: &GitWire<'_>,
     projection: RepoGitProjection,
     store: EntityId,
+    recipient: Option<RepoRevealRecipient>,
+    bound: Option<RepoProjectionRevealBinding>,
 ) -> Result<ProjectedExchange> {
     let dir = projection_ingress_dir(vault, store, projection.graph_id())?;
     let refs: Vec<(GitRefName, GitOid)> = projection
@@ -257,5 +351,7 @@ fn receive_into_ingress(
         canonical_store: store,
         root: ingress.repo_root().to_path_buf(),
         identity,
+        recipient,
+        bound,
     }))
 }
