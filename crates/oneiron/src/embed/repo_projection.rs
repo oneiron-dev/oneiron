@@ -31,6 +31,7 @@ pub(crate) use derived::{
     finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
     repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
 };
+pub(crate) use session::apply_ops_session_projected;
 
 use super::PendingEmbeddingPayload;
 use super::media::{MediaEmbedReport, PendingMedia, TEXT_MEDIA_TYPE, asset_document_in};
