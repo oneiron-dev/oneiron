@@ -322,9 +322,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/machine_standing.rs` | src | m | 23 crate-vis | — | A machine's standing as the owner-act fold reads it: each chain's revisions, the carrier rule and its… |
 | `src/authority/machine_write.rs` | src | m | 4 fn · 9 crate-vis | — | MACHINE origin signatures for claim writes; enrollment is `machine_enroll` |
 | `src/authority/machine_write/successor.rs` | src | s | 1 crate-vis | — | Re-signing a MACHINE claim's successor with its writer's retained signer |
+| `src/authority/managed_owner_check.rs` | src | s | 1 enum · 1 trait · 2 fn · 5 crate-vis | ManagedOwnerCheck, ManagedOwnerCheckError | The live-owner check a managed vault's attested owner's queued work runs under (FIX 11090) |
 | `src/authority/mesh_machine.rs` | src | m | 2 struct · 7 fn · 1 const · 1 re-export | MeshMachineAddress, MeshMachineAddressEnvelope | Local host-authorized mesh binding and grants, distinct from address hints |
-| `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 7 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
-| `src/authority/mod.rs` | src | m | 61 re-export · 36 crate-vis | — | AUTHORITY_LOG record substrate |
+| `src/authority/mesh_machine/doors.rs` | src | m | 3 struct · 8 fn | MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding | Public mesh setup inputs and owner-bound doors over the host's existing binding, ALPN and terminal… |
+| `src/authority/mod.rs` | src | m | 62 re-export · 37 crate-vis | — | AUTHORITY_LOG record substrate |
 | `src/authority/observation_policy.rs` | src | s | 1 struct · 2 fn · 8 const · 1 crate-vis | AuthorityObservationPolicy | Device-local authority observation policy and its versioned duration row |
 | `src/authority/op_apply.rs` | src | m | 7 crate-vis | — | Applies one [`super::AuthorityOp`] to a [`super::fold_state::FoldState`] |
 | `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 13 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
@@ -1532,7 +1533,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/consent/bypass_lifecycle.rs` | src | s | 9 struct · 4 fn | ActiveBypassGrantsRequest, BypassActionEnvelopeRequest, BypassActiveState, BypassGrantBoundRequest, BypassGrantWarningRequest, BypassGrantWarningView, BypassedEffectReceipt, BypassedEffectReceiptsRequest +1 | Typed owner doors for the scoped catastrophe bypass (DEC-0006 #bypass-grant) |
 | `src/consent/codec.rs` | src | m | 2 fn · 2 const · 15 crate-vis | — | — |
 | `src/consent/contact_clearance.rs` | src | L | 3 struct · 3 enum · 16 fn · 8 const · 6 crate-vis | ContactClearanceAct, ContactDisclosureOffer, ContactDisclosureOutcome, ContactDisclosureProposal, DisclosureConfirmationReceipt, DisclosureOfferMode | Contact clearance: the owner's authenticated answer to one frozen contact-disclosure offer (OF-365, the… |
-| `src/consent/doors.rs` | src | L | 2 struct · 11 fn · 25 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
+| `src/consent/doors.rs` | src | L | 2 struct · 11 fn · 26 crate-vis | AuthenticatedOwner, ConsentEvaluation | — |
 | `src/consent/doors/grants.rs` | src | s | 5 fn · 5 crate-vis | — | The owner's consent acts: approve once, standing grants, denials, revokes and reuse receipts |
 | `src/consent/doors/lineage.rs` | src | s | 4 crate-vis | — | The opener's lineage and its forks never settle their own proposal (DEC-0006 "Proposals, settlements and the… |
 | `src/consent/doors/owner.rs` | src | s | 5 fn | — | The owner-proof doors: authenticate, bind, recheck and the proof's read key |
@@ -1691,7 +1692,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/conversation/tests/audience_boundaries.rs` | test | m | — | — | — |
 | `src/conversation/tests/deletion.rs` | test | L | — | — | — |
 | `src/conversation/tests/restore.rs` | test | s | — | — | ASTRA-9A-2 F2: a restore over the live vault never brings back room authority narrowed since the checkpoint |
-| `src/conversation/turn_actions.rs` | src | m | 5 struct · 1 enum · 8 fn · 1 const · 3 crate-vis | TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest | Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped… |
+| `src/conversation/turn_actions.rs` | src | m | 5 struct · 1 enum · 6 fn · 1 const · 1 re-export · 3 crate-vis | TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest | Continue and Retry on an assistant turn (owner ruling 10-17): a reply interrupted by a crash or a dropped… |
+| `src/conversation/turn_actions/standing.rs` | src | s | 1 enum · 3 fn · 1 crate-vis | TurnActionAuthority | What a queued turn action stands on, judged again against the live vault whenever its standing is: the… |
 | `src/conversation/visibility.rs` | src | m | 1 fn · 8 crate-vis | — | The audience predicate shared by all ScopedRead paths |
 | `src/conversation/visibility/covers.rs` | src | s | 2 crate-vis | — | A row's covers, walked on the heap (rule 5, FIX 9113): a summary's or a claim's covers, each cover's own… |
 | `src/conversation/visibility/private_sources.rs` | src | s | 3 crate-vis | — | The private-thread walk every audience read meets (FIX 2951), split from its parent, which re-exports it |
@@ -2160,7 +2162,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/owner_doors.rs` | src | m | 10 struct · 4 fn · 1 crate-vis | ConsolidationHomeCandidate, ConsolidationHomeNode, ConsolidationHomePickHead, ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView, ConsolidationLineageRequest, ConsolidationLineageView +2 | The owner's doors over the private Dreamer runner (DOOR-101): which node this runner holds as the elected… |
 | `src/dreamer_runner/program/admit.rs` | src | s | 1 crate-vis | — | DOOR-141 admission: one writer judges a wake against the live vault and, in one commit, records its Gate… |
 | `src/dreamer_runner/program/arm.rs` | src | s | 5 crate-vis | — | DOOR-141 setup: an actor arms a pinned callable SKILL entry for its own future turns |
-| `src/dreamer_runner/program/authority.rs` | src | m | 1 fn · 20 crate-vis | — | The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as… |
+| `src/dreamer_runner/program/authority.rs` | src | m | 1 fn · 23 crate-vis | — | The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as… |
 | `src/dreamer_runner/program/bodies.rs` | src | s | 3 crate-vis | — | A turn program's STEP bodies under body custody (KS-2B1, FIX 5719; FIX 5683 part B1) |
 | `src/dreamer_runner/program/lease.rs` | src | s | 1 fn · 1 crate-vis | — | The program kind's own lease and reservation (DOOR-141): the runner's one admission chain over program… |
 | `src/dreamer_runner/program/mod.rs` | src | s | 3 re-export · 7 crate-vis | — | Turn-woken programs (DOOR-141, FIX 4382) |
@@ -2201,7 +2203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_wake/driver/observe.rs` | src | s | 5 crate-vis | — | The wake observation's seams in the pass (DOOR-144): its header and end, the attempt generations it admits… |
 | `src/dreamer_wake/driver/park_cause.rs` | src | s | 3 crate-vis | — | What a non-deadline executor error parks as (FIX 7272) |
 | `src/dreamer_wake/driver/rewrite.rs` | src | s | 3 crate-vis | — | The Rewrite a `host.wake` pre-hook may make (ARCH-0080 §5): add material for the wake, and nothing else (FIX… |
-| `src/dreamer_wake/driver/settle.rs` | src | s | 2 crate-vis | — | Where one executed attempt settles: its budget, its completion, its deferral, landing or park, with the… |
+| `src/dreamer_wake/driver/settle.rs` | src | s | 2 crate-vis | — | Where one executed attempt settles: its budget, its completion, its failure, deferral, landing or park, with… |
 | `src/dreamer_wake/driver/stop.rs` | src | s | 2 crate-vis | — | Where a wake pass stops between attempts: at the attempt boundary (a cancellation, the hard deadline, or the… |
 | `src/dreamer_wake/follower/keyframe.rs` | src | m | 1 fn · 13 crate-vis | — | The follower's keyframe (FIX 7510): how a session sizes its calls and how it folds its retained frames when… |
 | `src/dreamer_wake/follower/log.rs` | src | s | 9 crate-vis | — | The follower's log (FIX 7510): the ordered feed of newly admitted source observations, read forward from the… |
@@ -3428,7 +3430,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/subscriptions.rs` | src | s | 1 struct · 1 trait · 2 fn | MemorySubscriptionOwner, ScopedView | Transport-neutral subscription verbs |
 | `src/memory/support.rs` | src | s | 2 struct · 3 fn · 1 type · 1 re-export · 10 crate-vis | HostWriteOrigin, Memory | Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and… |
 | `src/memory/support/actors.rs` | src | s | 1 fn · 6 crate-vis | — | Actor verification: store-truth bindings, the folded owner binding and deletion authority |
-| `src/memory/support/builders.rs` | src | m | 21 fn · 12 crate-vis | — | Handle binders: the `with_*` methods and the accessors that read back what a binder set |
+| `src/memory/support/builders.rs` | src | m | 21 fn · 13 crate-vis | — | Handle binders: the `with_*` methods and the accessors that read back what a binder set |
 | `src/memory/support/constructors.rs` | src | s | 5 fn · 1 crate-vis | — | Handle construction: the vault's `Memory` openers and the room-turn and task rebinders |
 | `src/memory/support/refs.rs` | src | s | 2 fn · 11 crate-vis | — | Ref and id utilities: actor keys, entity refs, short ids, hex ids and hard-delete refusals |
 | `src/memory/support/transactions.rs` | src | s | 4 fn · 14 crate-vis | — | Write plumbing: owner authorship, host origin, claim envelopes and actor-verified write txns |
@@ -4280,12 +4282,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/decisions/tests/tasks.rs` | test | m | 9 crate-vis | — | Census cases for what a task, an ask and an agent may do |
 | `src/recovery/checkpoint/decisions/tests/worlds.rs` | test | s | 1 crate-vis | — | Census case and regression for the worlds an agent may read |
 | `src/recovery/checkpoint/decisions/worlds.rs` | src | s | 2 crate-vis | — | Which worlds an executing principal may read: the owner grants and the default about it, as the… |
+| `src/recovery/checkpoint/epochs.rs` | src | s | 1 struct · 1 fn · 6 crate-vis | RestorePadState | What a restore epoch still owes of its world key pads (PAD-2, FIX 10470; CALLS… |
 | `src/recovery/checkpoint/host_holds.rs` | src | s | 2 struct · 1 enum · 8 fn · 3 crate-vis | BackupHoldVisibility, BackupHolds, HostOrderHolds | Legal holds across a restore and against backup expiry (OF-470; ARCH-0038 #legal-hold: every path that… |
 | `src/recovery/checkpoint/image.rs` | src | s | 6 crate-vis | — | A checkpoint image and its structural read (moved out of the checkpoint module whole) |
 | `src/recovery/checkpoint/landing.rs` | src | m | 1 crate-vis | — | Landing one checkpoint image in its destination: the restore pipeline behind every restore, wake and migrate… |
 | `src/recovery/checkpoint/landing_lengths.rs` | src | s | 3 crate-vis | — | The length each image row lands at, known before anything is opened, so a restore claims its real size up… |
-| `src/recovery/checkpoint/mod.rs` | src | m | 3 struct · 2 enum · 19 fn · 11 re-export · 2 crate-vis | HomeTableNote, RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
-| `src/recovery/checkpoint/pad_custody.rs` | src | m | 1 enum · 4 crate-vis | PadRestoreNote | A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes) |
+| `src/recovery/checkpoint/mod.rs` | src | m | 3 struct · 2 enum · 19 fn · 13 re-export · 2 crate-vis | HomeTableNote, RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
+| `src/recovery/checkpoint/pad_custody.rs` | src | m | 1 enum · 5 crate-vis | PadRestoreNote | A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes) |
+| `src/recovery/checkpoint/pad_reopen.rs` | src | m | 2 struct · 1 enum · 1 fn | PadReopenFault, PadReopenReport, PadReopenStage | Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS… |
 | `src/recovery/checkpoint/payload/actors.rs` | src | s | 4 crate-vis | — | Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each… |
 | `src/recovery/checkpoint/payload/mod.rs` | src | m | 22 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
 | `src/recovery/checkpoint/payload/rows.rs` | src | m | 10 crate-vis | — | The payload registry (KS7-2b): one class for every declared side-table family, by its declaration's… |
@@ -5022,6 +5026,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/publish/pending.rs` | src | s | 1 crate-vis | — | A publication pass that stays pending before it seals anything (FIX 8825): its policy did not read, so no… |
 | `src/store/key_custody/recipients.rs` | src | s | 7 crate-vis | — | Released escrow recipients a cold managed restore retired (LC FIX 5384/5385), kept in the lineage's exterior… |
 | `src/store/key_custody/recovery.rs` | src | m | 22 crate-vis | — | Recovering a lineage's custody from its published head (KS-4, FIX 5685): the requirement a sealed image… |
+| `src/store/key_custody/recovery/pads.rs` | src | s | 5 crate-vis | — | A restored vault's world pads, admitted again from the custody head beside its backup (PAD-2, FIX 10470)… |
 | `src/store/key_custody/recovery/unopened.rs` | src | s | 2 crate-vis | — | What a restore says of the custody head's compartments it left unopened (FIX 9178): which key opens each, by… |
 | `src/store/key_custody/retirement.rs` | src | s | 12 crate-vis | — | Durable retirement intents and the one finisher that carries them out |
 | `src/store/key_custody/targets.rs` | src | m | 26 crate-vis | — | The all-target acknowledgement journal (KS-4A2, FIX 5685), kept beside the keyless log in… |
@@ -5084,7 +5089,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/usage_sources.rs` | src | s | 1 fn · 1 crate-vis | — | An erased row out of the stored usage events' source sets (FIX 6933) |
 | `src/store/world_pad_custody.rs` | src | m | 14 crate-vis | — | The world key pad's custody client (KS-5, FIX 346; KEY STORE = A): the exterior custody a world key's… |
 | `src/store/world_pad_custody/census.rs` | src | s | 1 crate-vis | — | Which worlds a custody head's pad compartments are sealed for (FIX 9178): a world whose pads custody holds… |
-| `src/store/world_pad_custody/current.rs` | src | s | 6 crate-vis | — | One world's current pads, moved between the owner's machines (KS-5, FIX 6706, L04 leaf): what pad hydration… |
+| `src/store/world_pad_custody/current.rs` | src | s | 5 crate-vis | — | One world's current pads, moved between the owner's machines (KS-5, FIX 6706, L04 leaf): what pad hydration… |
+| `src/store/world_pad_custody/install.rs` | src | s | 3 crate-vis | — | One world's pads installed into current custody and read back (KS-5, FIX 6706; PAD-2, FIX 10470): the core a… |
 | `src/store/writer_lease.rs` | src | m | 1 struct · 5 fn · 2 const · 7 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `src/store/writer_lease/tests.rs` | test | m | — | — | Focused process-owner lease and bootstrap regressions |
 | `src/subject_model.rs` | src | L | 1 struct · 2 enum · 12 fn · 3 const · 1 re-export · 8 crate-vis | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
@@ -5201,7 +5207,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/connection/session.rs` | src | s | 20 crate-vis | — | Session types: WS aliases, pump budget, convergence session, resync markers |
 | `src/sync/connection/steady.rs` | src | m | 1 crate-vis | — | Steady state: debounced multiplex loop over WS, local updates, shutdown |
 | `src/sync/connection/tests.rs` | test | L | — | — | — |
-| `src/sync/connection/topology.rs` | src | s | 1 struct · 3 fn · 2 crate-vis | HomeNodeTopology | Host-authorized home-node candidate updates, independent of socket liveness |
+| `src/sync/connection/topology.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | HomeNodeTopology, HomeRoute | Host-authorized home-node candidate updates, independent of socket liveness |
 | `src/sync/convergence_props_internal.rs` | src | m | — | — | ONE-1136 (M4-14) — store-internal halves of the convergence property suite |
 | `src/sync/custody.rs` | src | m | 11 crate-vis | — | OF-422: custody transitions on the window plane (ARCH-0069 `#custody-seal-planned`), each enacting an… |
 | `src/sync/custody/checkpoint.rs` | src | s | 2 crate-vis | — | A custody carrier in a checkpoint (KS7-3a): a custody transition, a protected input and a witness part (FIX… |
@@ -6027,7 +6033,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/doors/frontier.rs` | src | m | 8 crate-vis | — | The read-only plan of one machine's wraps of one key (FIX 5552): the rows its records name, how its… |
 | `src/world_keys/doors/provenance.rs` | src | s | 1 crate-vis | — | A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does… |
 | `src/world_keys/kit.rs` | src | m | 7 struct · 5 fn · 1 const · 11 crate-vis | ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WorldKitRestore, WorldKitStatus | The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of… |
-| `src/world_keys/machine.rs` | src | s | 2 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
+| `src/world_keys/machine.rs` | src | s | 3 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
 | `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 21 re-export · 25 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
 | `src/world_keys/owner_work/diagnostics.rs` | src | m | 8 struct · 8 enum · 3 fn · 5 crate-vis | BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead, OwnerWorkDiagnostics, PublicationDiagnostics +8 | What blocks one pending owner work request, as its executor observes it (FIX 4686, 4784, 4785, 4786, 4787)… |
 | `src/world_keys/owner_work/diagnostics/key_plan.rs` | src | s | 2 crate-vis | — | A world's keys and its ensure step on their executor, through the holder's own read checks and the writer's… |
@@ -6039,7 +6045,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/pad_custody/recipients.rs` | src | s | 4 crate-vis | — | Who one world's pads go to, and what this machine holds of them, for pad hydration (KS-5, FIX 6706, L04… |
 | `src/world_keys/pad_custody/reference.rs` | src | m | 9 crate-vis | — | A world key pad row as its reference alone, for the bytes that persist (KS-5, the 02A projector agreed with… |
 | `src/world_keys/pad_erase.rs` | src | s | 1 crate-vis | — | A local hard erase of one world key pad row alone (KS-5, FIX 7192): its key's custody entry retires, as a… |
-| `src/world_keys/pad_image.rs` | src | s | 9 crate-vis | — | A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1… |
+| `src/world_keys/pad_image.rs` | src | m | 12 crate-vis | — | A world key pad in a physical image (KS-5, FIX 5686 part 2): a checkpoint or backup image and a Layer-1… |
 | `src/world_keys/pads.rs` | src | m | 2 struct · 1 enum · 2 fn · 26 crate-vis | PromotedWorldPad, WorldKeyDestroyCause, WorldKeyDestruction | A world key's erasable half, and the world erase that destroys it (world privacy fix 7) |
 | `src/world_keys/page_seal.rs` | src | L | 2 struct · 15 fn · 1 const · 16 crate-vis | SealedSwap, VaultPageSeal | The maximum tier (OF-570): every LMDB page of a vault sealed under a page key |
 | `src/world_keys/page_seal/read_only.rs` | src | s | 3 crate-vis | — | The read-only door to a sealed vault (OF-570 maximum tier): the page key a reader that opens no `Vault`… |
