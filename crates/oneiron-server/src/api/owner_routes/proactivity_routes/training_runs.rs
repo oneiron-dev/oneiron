@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::edit_distance::reservoir::ReservoirScope;
@@ -22,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use super::super::{OwnerReply, blocking, owner};
 use super::{hex_id, now_secs};
 use crate::ai_host::training_pack::{trainer_binding, training_declaration};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -100,10 +99,10 @@ struct PreparedTrainingRun {
 async fn prepare(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PrepareTrainingRun>, JsonRejection>,
+    payload: OwnerJsonBody<PrepareTrainingRun>,
 ) -> OwnerReply<PreparedTrainingRun> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let prepared = blocking(move || -> OwnerResult<PreparedTrainingRun> {
         let offer = entity_id("offer", &request.offer)?;
         let vault = server.vault();
@@ -141,10 +140,10 @@ struct AuthorizeOfferTraining {
 async fn authorize(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AuthorizeOfferTraining>, JsonRejection>,
+    payload: OwnerJsonBody<AuthorizeOfferTraining>,
 ) -> OwnerReply<OfferTrainingHandoff> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let handoff = blocking(move || -> OwnerResult<OfferTrainingHandoff> {
         let offer = entity_id("offer", &request.offer)?;
         let choice = training_choice(&server, &request.run, &request.spec)?;
@@ -215,10 +214,10 @@ fn status(run: TrainingRun) -> TrainingRunStatus {
 async fn training(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<OfferTrainingRequest>, JsonRejection>,
+    payload: OwnerJsonBody<OfferTrainingRequest>,
 ) -> OwnerReply<OfferTraining> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || -> OwnerResult<OfferTraining> {
         let offer = entity_id("offer", &request.offer)?;
         let vault = server.vault();

@@ -1,7 +1,7 @@
 //! The vault's own retrieval probes, which a space version move runs paired on its incumbent
 //! and its candidate (OF-370; ARCH-0004 `#swap-check-not-worse`).
 //!
-//! A probe is one query written from one stored document, which is its source family, and the
+//! A probe is one query written from one stored document, in its source family, and the
 //! documents that answer it: that document and those derived from it or it from them. Its query
 //! is text another model wrote, or a stored image or audio document itself (a media query,
 //! FIX 1637). The design note's recipe, not a ruling: about twenty probes per kind, written at
@@ -28,8 +28,11 @@ use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 
+mod dependencies;
+mod family;
 mod ledger;
 mod repo_projection;
+pub(crate) use dependencies::erase_probe_sources_in_txn;
 pub(super) use ledger::ProbeCohortLedger;
 pub(super) use repo_projection::{
     projected_space_probes_in_txn, refresh_repo_probe_queries_in_txn,
@@ -60,8 +63,20 @@ pub struct SpaceProbe {
     /// that media kind; `None` for a text query. Never one of its targets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query_media: Option<EntityId>,
-    /// The document it was written from, its source family; one of its targets.
+    /// Its source family (FIX 9831): for a probe the vault's author wrote, the least source
+    /// root of the `DerivedFrom` component its document is in, so a document and those derived
+    /// from it, or it from them, are one family; for one put by hand, the document it was
+    /// written from.
     pub family: EntityId,
+    /// The document the vault's author wrote it from, one of its targets; `None` for a probe
+    /// put by hand, whose family is that document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub written_from: Option<EntityId>,
+    /// The other stored rows its query was written from (FIX 9829): the rows its document's
+    /// words or bytes are read from, and every record those derive from. Erasing any of them,
+    /// its document or its media query erases the probe ([`Self::query_sources`]).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub source_refs: BTreeSet<EntityId>,
     /// Every document that answers the query.
     pub targets: BTreeSet<EntityId>,
     /// The model that wrote it.
@@ -92,6 +107,23 @@ impl SpaceProbe {
         id
     }
 
+    /// The document its query was written from: the author's, or for a probe put by hand the
+    /// family it names.
+    #[must_use]
+    pub fn document(&self) -> EntityId {
+        self.written_from.unwrap_or(self.family)
+    }
+
+    /// Every stored row its query was written from: its document, its media query and its
+    /// [`Self::source_refs`].
+    #[must_use]
+    pub fn query_sources(&self) -> BTreeSet<EntityId> {
+        let mut sources = self.source_refs.clone();
+        sources.insert(self.document());
+        sources.extend(self.query_media);
+        sources
+    }
+
     fn validate(&self) -> Result<()> {
         let query = self.query.trim();
         if (query.is_empty() && self.query_media.is_none())
@@ -115,9 +147,15 @@ impl SpaceProbe {
                 "a space probe names at least one target document".into(),
             ));
         }
-        if !self.targets.contains(&self.family) {
+        // A family is a grouping, not always a document that answers (FIX 9831): what the
+        // query was written from is.
+        if !self
+            .query_sources()
+            .iter()
+            .any(|source| self.targets.contains(source))
+        {
             return Err(Error::InvalidConfig(
-                "a space probe's source document is one of its targets".into(),
+                "a space probe's query is written from one of its targets".into(),
             ));
         }
         if self.author.trim().is_empty() {
@@ -165,8 +203,10 @@ pub(crate) fn space_probes_in_txn(
 }
 
 impl Vault {
-    /// Stores one probe; every target must be a stored record, and a media query a stored ASSET
-    /// holding inline image or audio. The write checks the owner's proof again (FIX 8200).
+    /// Stores one probe; every target, its document and every source it names must be a stored
+    /// record, read in the write, so no erased row's words come back (FIX 9829), and a media
+    /// query a stored ASSET holding inline image or audio. The write checks the owner's proof
+    /// again (FIX 8200).
     pub fn put_space_probe(
         &self,
         owner: &AuthenticatedOwner,
@@ -176,8 +216,14 @@ impl Vault {
         let id = probe.id();
         let mut wtxn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &wtxn)?;
-        for target in &probe.targets {
-            if self.store.port_entity_record(&wtxn, target)?.is_none() {
+        let document = probe.document();
+        for row in probe
+            .targets
+            .iter()
+            .chain(&probe.source_refs)
+            .chain(std::iter::once(&document))
+        {
+            if self.store.port_entity_record(&wtxn, row)?.is_none() {
                 return Err(Error::EntityNotFound);
             }
         }
@@ -214,12 +260,13 @@ impl Vault {
     }
 
     /// Tops `kind` up toward [`SPACE_PROBES_PER_KIND`] probes, at most `max_items` this pass:
-    /// `author` reads documents of that kind no probe comes from yet, outside any transaction,
-    /// drawn across date-cut cohorts ([`SPACE_PROBE_COHORT_SECS`]): the cohort holding fewest
-    /// probes first, the newest on a tie, and its newest document first. Each query it writes
-    /// is stored with that document as its family and cohort, and as its targets that document
-    /// and each one a `DerivedFrom` edge away that is a document of `kind`, all of them
-    /// (ARCH-0053 `#eval-derivation`).
+    /// `author` reads documents of that kind from source families no probe comes from yet, the
+    /// newest of each family (FIX 9831), outside any transaction, drawn across date-cut cohorts
+    /// ([`SPACE_PROBE_COHORT_SECS`]): the cohort holding fewest probes first, the newest on a
+    /// tie, and its newest document first. Each query it writes is stored with its document's
+    /// family as the write reads it, that document and its cohort, the rows the query was
+    /// written from (FIX 9829), and as its targets that document and each one a `DerivedFrom`
+    /// edge away that is a document of `kind`, all of them (ARCH-0053 `#eval-derivation`).
     ///
     /// # Errors
     ///
@@ -285,12 +332,19 @@ impl Vault {
             let mut documents = Vec::new();
             if want > 0 {
                 let kinds = BTreeSet::from([kind]);
-                // Each candidate's date cut, its bytes left unread until it is drawn.
-                let mut cohorts: BTreeMap<u64, Vec<(u64, EntityId)>> = BTreeMap::new();
+                // A family is taken as a probe stores it, and as its document's reads now.
+                let mut resolved = family::ProbeFamilies::default();
+                let mut taken = families.clone();
+                for probe in &probes {
+                    taken.insert(resolved.family_of(self, &rtxn, probe.document())?);
+                }
+                // Each untaken family's newest document, its bytes left unread until it is drawn.
+                let mut newest: BTreeMap<EntityId, (u64, EntityId)> = BTreeMap::new();
                 let mut scan = MediaEmbedReport::default();
                 let mut withheld = 0;
                 self.scan_documents_in_txn(&rtxn, &kinds, &mut scan, |document| {
-                    if families.contains(&document.id) {
+                    let family = resolved.family_of(self, &rtxn, document.id)?;
+                    if taken.contains(&family) {
                         return Ok(true);
                     }
                     if let Some(gate) = &gate
@@ -299,13 +353,21 @@ impl Vault {
                         withheld += 1;
                         return Ok(true);
                     }
-                    cohorts
-                        .entry(cohort_of(document.learned_at))
-                        .or_default()
-                        .push((document.learned_at, document.id));
+                    let found = (document.learned_at, document.id);
+                    newest
+                        .entry(family)
+                        .and_modify(|kept| *kept = (*kept).max(found))
+                        .or_insert(found);
                     Ok(true)
                 })?;
                 report.withheld += withheld;
+                let mut cohorts: BTreeMap<u64, Vec<(u64, EntityId)>> = BTreeMap::new();
+                for (learned_at, id) in newest.into_values() {
+                    cohorts
+                        .entry(cohort_of(learned_at))
+                        .or_default()
+                        .push((learned_at, id));
+                }
                 let mut held: BTreeMap<u64, usize> = BTreeMap::new();
                 for cohort in probes.iter().filter_map(|probe| probe.cohort) {
                     *held.entry(cohort).or_default() += 1;
@@ -327,13 +389,16 @@ impl Vault {
                             )?
                         }
                     };
-                    documents.extend(document);
+                    if let Some(document) = document {
+                        let sources = dependencies::probe_source_refs_in(self, &rtxn, &document)?;
+                        documents.push((document, sources));
+                    }
                 }
             }
             documents
         };
         let mut written = Vec::new();
-        for document in &documents {
+        for (document, sources) in &documents {
             let input = document.input();
             if let Some(egress) = egress
                 && (egress.decide_media(&input) != EgressDecision::Allow
@@ -358,14 +423,14 @@ impl Vault {
                 report.declined += 1;
                 continue;
             }
-            written.push((document, query));
+            written.push((document, sources, query));
         }
         if written.is_empty() {
             return Ok(report);
         }
         let mut wtxn = self.store.env.write_txn()?;
         let written_at = self.store.clock.now_recorded_at();
-        for (document, query) in written {
+        for (document, sources, query) in written {
             let moved = match document.text_hash {
                 Some(hash) => super::media::text_document_in_txn(self, &wtxn, &document.id)?
                     .is_none_or(|text| super::space::text_hash(&text) != hash),
@@ -383,6 +448,7 @@ impl Vault {
                     .store
                     .port_entity_record(&wtxn, &document.id)?
                     .is_none()
+                || !dependencies::all_stored_in(self, &wtxn, sources)?
             {
                 report.vanished += 1;
                 continue;
@@ -391,7 +457,9 @@ impl Vault {
                 kind,
                 query,
                 query_media: None,
-                family: document.id,
+                family: family::probe_source_family_in_txn(self, &wtxn, document.id)?.id,
+                written_from: Some(document.id),
+                source_refs: sources.clone(),
                 targets: family_targets_in(self, &wtxn, document.id, kind)?,
                 author: author.author_id().to_owned(),
                 written_at,
@@ -449,20 +517,20 @@ fn draw_across_cohorts(
     drawn
 }
 
-/// The documents that answer a probe written from `family`: it, and each record one
+/// The documents that answer a probe written from `document`: it, and each record one
 /// `DerivedFrom` edge away (a summary written from it, or what it was written from) that is a
-/// document of `kind` here, every one of them. Derived rows inherit their source's family
+/// document of `kind` here, every one of them. Derived rows share their source's family
 /// (ARCH-0053 `#eval-derivation`).
 fn family_targets_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
-    family: EntityId,
+    document: EntityId,
     kind: InputKind,
 ) -> Result<BTreeSet<EntityId>> {
-    let mut targets = BTreeSet::from([family]);
+    let mut targets = BTreeSet::from([document]);
     let peers = vault.store.port_edge_peers(
         txn,
-        &family,
+        &document,
         EdgeDirection::Both,
         crate::EdgeKind::DerivedFrom,
     )?;

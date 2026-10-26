@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::embed::PendingEmbedderBinding;
@@ -31,7 +30,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
 use crate::ai_host::trained_serving::{TrainedServing, trained_serving};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -157,10 +156,10 @@ fn hash_field(field: &str, value: &str) -> OwnerResult<[u8; 32]> {
 async fn view(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ViewTrainingRun>, JsonRejection>,
+    payload: OwnerJsonBody<ViewTrainingRun>,
 ) -> OwnerReply<TrainingRunView> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || -> OwnerResult<TrainingRunView> {
         let id = entity_id("run", &request.run)?;
         let vault = server.vault();
@@ -217,10 +216,10 @@ async fn view(
 async fn swap(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SwapTrainingRun>, JsonRejection>,
+    payload: OwnerJsonBody<SwapTrainingRun>,
 ) -> OwnerReply<RoleSwapReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<RoleSwapReceipt> {
         let id = entity_id("run", &request.run)?;
         let spec = hash_field("expected.spec", &request.expected.spec)?;
