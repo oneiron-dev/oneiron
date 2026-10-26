@@ -23,6 +23,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::path::Path;
+use std::sync::MutexGuard;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use heed::RwTxn;
@@ -419,14 +420,26 @@ impl Vault {
     /// # Errors
     /// Storage, custody and file faults.
     pub fn finish_inference_snapshot_retirements(&self) -> Result<()> {
-        self.sweep_inference_snapshots().map(drop)
+        let files = self.store.inference_snapshots.files();
+        self.sweep_inference_snapshots(&files).map(drop)
     }
 
-    /// [`Self::finish_inference_snapshot_retirements`], with the number of
-    /// body files unlinked.
-    fn sweep_inference_snapshots(&self) -> Result<u64> {
+    /// [`Self::finish_inference_snapshot_retirements`] unless a publication
+    /// or a sweep holds the body files: then nothing is done.
+    ///
+    /// # Errors
+    /// Storage, custody and file faults.
+    pub(crate) fn try_finish_inference_snapshot_retirements(&self) -> Result<()> {
+        let Some(files) = self.store.inference_snapshots.try_files() else {
+            return Ok(());
+        };
+        self.sweep_inference_snapshots(&files).map(drop)
+    }
+
+    /// [`Self::finish_inference_snapshot_retirements`] under the body files'
+    /// guard `_files`, with the number of body files unlinked.
+    fn sweep_inference_snapshots(&self, _files: &MutexGuard<'_, ()>) -> Result<u64> {
         let store = &self.store;
-        let _files = store.inference_snapshots.files();
         let kept = {
             let txn = store.env.read_txn()?;
             !catalog::rows(store, &txn)?.is_empty()
@@ -495,22 +508,20 @@ impl Vault {
     pub fn reconcile_inference_snapshots(&self) -> Result<SnapshotReconcile> {
         let store = &self.store;
         let mut retired = 0;
-        {
-            let _files = store.inference_snapshots.files();
-            let dir = store.inference_snapshot_dir();
-            let mut wtxn = store.env.write_txn()?;
-            for (id, record) in catalog::rows(store, &wtxn)? {
-                let whole = record.is_some_and(|record| {
-                    fs::metadata(dir.join(body_name(&id)))
-                        .is_ok_and(|meta| meta.is_file() && meta.len() == record.sealed_bytes)
-                });
-                if !whole && retire_in_txn(store, &mut wtxn, &id)? {
-                    retired += 1;
-                }
+        let files = store.inference_snapshots.files();
+        let dir = store.inference_snapshot_dir();
+        let mut wtxn = store.env.write_txn()?;
+        for (id, record) in catalog::rows(store, &wtxn)? {
+            let whole = record.is_some_and(|record| {
+                fs::metadata(dir.join(body_name(&id)))
+                    .is_ok_and(|meta| meta.is_file() && meta.len() == record.sealed_bytes)
+            });
+            if !whole && retire_in_txn(store, &mut wtxn, &id)? {
+                retired += 1;
             }
-            wtxn.commit()?;
         }
-        let unlinked = self.sweep_inference_snapshots()?;
+        wtxn.commit()?;
+        let unlinked = self.sweep_inference_snapshots(&files)?;
         Ok(SnapshotReconcile { retired, unlinked })
     }
 }

@@ -21,7 +21,7 @@
 //! beyond the timer that bounds the wait.
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, TryLockError};
 use std::time::{Duration, Instant};
 
 use serde::Serialize;
@@ -169,6 +169,16 @@ impl SnapshotLifecycle {
         self.files.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The body files' guard, or `None` while a publication or a sweep
+    /// holds it.
+    pub(super) fn try_files(&self) -> Option<MutexGuard<'_, ()>> {
+        match self.files.try_lock() {
+            Ok(files) => Some(files),
+            Err(TryLockError::Poisoned(files)) => Some(files.into_inner()),
+            Err(TryLockError::WouldBlock) => None,
+        }
+    }
+
     /// Closes the gate: the generation it closed admits nothing again.
     fn close(&self) -> u64 {
         let mut gate = self.gate();
@@ -302,6 +312,19 @@ impl Vault {
     /// runs this again.
     pub(crate) fn finish_inference_snapshot_retirements_after_commit(&self) {
         if let Err(error) = self.finish_inference_snapshot_retirements() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "inference snapshot retirement deferred to the next housekeeping pass"
+            );
+        }
+    }
+
+    /// [`Self::finish_inference_snapshot_retirements_after_commit`] for a
+    /// user delete, which never waits on a publication: while one holds the
+    /// body files this does nothing, and housekeeping carries the
+    /// retirements out. Their standing intents already deny every key read.
+    pub(crate) fn try_finish_inference_snapshot_retirements_after_commit(&self) {
+        if let Err(error) = self.try_finish_inference_snapshot_retirements() {
             tracing::warn!(
                 kind = ?error.kind(),
                 "inference snapshot retirement deferred to the next housekeeping pass"
