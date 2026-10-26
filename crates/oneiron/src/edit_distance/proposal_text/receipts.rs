@@ -210,6 +210,32 @@ pub(super) fn receipted_message(
     Ok(message)
 }
 
+/// A message [`receipted_message`] spells (`<prefix> <open|edit>
+/// actor=<id>.<class> before=<hash> |made_by=<json>`), cut around its stamp's
+/// actor id: the stamp before the id, the id (any token, so an erased one
+/// cuts too), the stamp's rest up to its receipt, and the receipt's JSON as
+/// written. `None` for any other message. It reads a spelling only and
+/// authenticates nothing (FIX 6479).
+pub(crate) fn cut_receipted_message(message: &str) -> Option<(&str, &str, &str, &str)> {
+    let (stamped, receipt) = message.split_once(RECEIPT_PREFIX)?;
+    let rest = stamped
+        .strip_prefix(crate::sync::window::PROPOSAL_TEXT_COMMIT_MSG_PREFIX)?
+        .strip_prefix(' ')?;
+    let (kind, rest) = rest.split_once(' ')?;
+    StampKind::parse(kind)?;
+    let id_on = rest.strip_prefix(super::STAMP_ACTOR_PREFIX)?;
+    let (id, class_on) = id_on.split_once('.')?;
+    let (class, before) = class_on.split_once(' ')?;
+    crate::edit_distance::actor_class_from_token(class)?;
+    let hash = before.strip_prefix("before=")?.strip_suffix(' ')?;
+    if id.is_empty() || hash.is_empty() || hash.contains(' ') {
+        return None;
+    }
+    let head = stamped.get(..stamped.len() - id_on.len())?;
+    let tail = id_on.get(id.len()..)?;
+    Some((head, id, tail, receipt))
+}
+
 fn trigger_is_valid(vault: &crate::Vault, trigger: &MadeByTrigger) -> Result<bool> {
     let (id, expected) = match trigger {
         MadeByTrigger::Task(id) => (id, crate::registry::ENTITY_TYPE_TASK),

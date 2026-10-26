@@ -1,6 +1,7 @@
 //! Stable-cursor edit verbs and the lossless whole-text timeout path.
 
 use super::document::{BODY, decode_frontier};
+use super::prose_admission::{EDIT_ROW, LandedProse, UPDATE_ROW, admit_landed};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
 use crate::batch::secret_scan::{Lifted, LiftedKeys, Part, admit_parts_in_txn};
 use crate::error::Result;
@@ -100,8 +101,9 @@ impl Vault {
         self.read_entity_doc(entity, |doc| make_anchor(doc, *entity, start, end))?
     }
 
-    /// Applies at most 50 operations atomically. Every actor is checked in the
-    /// same write transaction; a rejected later operation rolls back the set.
+    /// Applies every operation atomically, however many (FIX 9848). Every
+    /// actor is checked in the same write transaction; a rejected later
+    /// operation rolls back the set.
     pub fn edit_entity_text(
         &self,
         entity: &EntityId,
@@ -114,28 +116,39 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
             let mut plan = Lifted::default();
             let before = doc.doc.oplog_vv();
-            for edit in edits {
+            let mut landed = Vec::with_capacity(edits.len());
+            for (index, edit) in edits.iter().enumerate() {
                 let actor = edit
                     .actor
                     .ok_or(invalid("text operation requires an actor"))?;
                 super::forks::authorize(self, txn, authorization, entity, actor)?;
+                // A shared vault's role and record scope (FIX 9846).
+                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
                 doc.doc
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
-                apply(&mut doc, *entity, edit, &text, at, &lifted)?;
+                let place = apply(&mut doc, *entity, edit, &text.stored, at, &[], &lifted)?;
+                if let Some(place) = place {
+                    let slot = format!("/edits/{index}/text");
+                    let said = LandedProse::anchored(actor, slot, &doc, place, &text, &lifted);
+                    landed.push(said);
+                }
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
-            Ok(doc.frontier())
+            Ok((doc.frontier(), landed))
         })?;
         registry.remove(entity);
+        drop(registry);
+        // Landed prose's links, once the edits have landed (FIX 1227).
+        admit_landed(self, EDIT_ROW, &landed);
         Ok(out)
     }
 
@@ -151,17 +164,21 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
+            // A shared vault's role and record scope, whether the update lands
+            // or is retained for review (FIX 9846).
+            self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
+            let base_text = fork.text();
             // The new text is admitted before any operation holds it, and a
             // handle of a key the live text's lift marked writes its value
             // again (OF-067; FIX 2371).
             let lifted = LiftedKeys::of_in_txn(&self.store, txn, [live.text()])?;
-            let text = &admitted_text_in_txn(
+            let admitted = admitted_text_in_txn(
                 self,
                 txn,
                 request.entity,
@@ -169,7 +186,15 @@ impl Vault {
                 &lifted,
                 &mut Lifted::default(),
             )?;
+            let text = &admitted.stored;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
+            // The complete text is the writer's prose, wherever it lands; text
+            // equal to its base says nothing new (FIX 1227).
+            let landed = if *text == base_text {
+                None
+            } else {
+                Some(LandedProse::whole(request.actor, "/text".to_owned(), &admitted.said))
+            };
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
                 || fork
@@ -212,10 +237,11 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                 )?;
-                return Ok(TextUpdateOutcome::RewriteFork {
+                let outcome = TextUpdateOutcome::RewriteFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
             super::document::stamp(&fork.doc, request.actor, request.at, "update")?;
             if !permitted {
@@ -238,10 +264,11 @@ impl Vault {
                     ForkStatus::Pending,
                     request.at,
                 )?;
-                return Ok(TextUpdateOutcome::ProposedFork {
+                let outcome = TextUpdateOutcome::ProposedFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
             super::forks::merge_into(&live, &fork, &request.base)?;
             storage::persist(self, txn, &request.entity, &mut h, &live, Some(&before))?;
@@ -259,11 +286,14 @@ impl Vault {
                 &request.base,
                 &live.frontier(),
             )?;
-            Ok(TextUpdateOutcome::Merged {
+            let outcome = TextUpdateOutcome::Merged {
                 frontier: live.frontier(),
-            })
+            };
+            Ok((outcome, landed))
         })?;
         registry.remove(&request.entity);
+        drop(registry);
+        admit_landed(self, UPDATE_ROW, landed.as_slice());
         Ok(out)
     }
 }
@@ -306,9 +336,6 @@ impl Vault {
 }
 
 pub(super) fn validate_edits(edits: &[AnchoredEdit]) -> Result<()> {
-    if edits.len() > 50 {
-        return Err(invalid("at most 50 text operations are allowed"));
-    }
     if edits.iter().any(|edit| edit.actor.is_none()) {
         return Err(invalid("text operation requires an actor"));
     }
@@ -418,7 +445,7 @@ pub(super) fn admitted_prose_in_txn(
     edit: &AnchoredEdit,
     lifted: &LiftedKeys,
     plan: &mut Lifted,
-) -> Result<String> {
+) -> Result<Admitted> {
     admitted_text_in_txn(vault, txn, entity, verb_parts(edit).1, lifted, plan)
 }
 
@@ -436,7 +463,7 @@ pub(super) fn admitted_text_in_txn(
     text: &str,
     lifted: &LiftedKeys,
     plan: &mut Lifted,
-) -> Result<String> {
+) -> Result<Admitted> {
     let mut admitted = text.to_owned();
     admit_parts_in_txn(
         vault,
@@ -445,40 +472,64 @@ pub(super) fn admitted_text_in_txn(
         &mut [("text:body", Part::Text(&mut admitted))],
         plan,
     )?;
-    Ok(lifted.resolved(&admitted).unwrap_or(admitted))
+    let stored = lifted
+        .resolved(&admitted)
+        .unwrap_or_else(|| admitted.clone());
+    Ok(Admitted {
+        stored,
+        said: admitted,
+    })
+}
+
+/// A writer's new text as admitted ([`admitted_text_in_txn`]).
+pub(super) struct Admitted {
+    /// As the document stores it: each handle of a key the live text's lift
+    /// marked is the value it stands for again.
+    pub(super) stored: String,
+    /// As its writer said it, every handle still a handle: the text its
+    /// prose links are read in (FIX 1227).
+    pub(super) said: String,
 }
 
 /// `replacement` is the text `edit` writes as admitted
-/// ([`admitted_prose_in_txn`]); `lifted` are the keys the live text's lift
-/// marked, for a quote a masked reader was issued (FIX 2936).
+/// ([`admitted_prose_in_txn`]); `sources` are the rows its writer read for
+/// it, which its commit's receipt names (FIX 7790); `lifted` are the keys the
+/// live text's lift marked, for a quote a masked reader was issued (FIX 2936).
+/// Returns the Unicode position `replacement` landed at, or `None` when it
+/// replaced a span with the same text, which says nothing new (FIX 1227).
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
     replacement: &str,
     at: u64,
+    sources: &[EntityId],
     lifted: &LiftedKeys,
-) -> Result<()> {
+) -> Result<Option<usize>> {
     let actor = edit
         .actor
         .ok_or(invalid("text operation requires an actor"))?;
     let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
+    let mut same = false;
     if replacing {
         let current: String = doc.text().chars().skip(start).take(end - start).collect();
         if !quotes(anchor, &current, lifted) {
             return Err(invalid("quoted span changed concurrently"));
         }
+        same = current == replacement;
     }
-    doc.edit_as(actor, at, |body| {
+    let place = if replacing { start } else { end };
+    doc.edit_with(actor, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;
         }
-        body.insert(if replacing { start } else { end }, replacement)
+        body.insert(place, replacement)
             .map_err(|_| invalid("anchored insert"))
-    })
+    })?;
+    Ok((!same).then_some(place))
 }
 
 /// Whether `current`, the span `anchor` resolves to, is still the quote it

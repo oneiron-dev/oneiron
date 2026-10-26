@@ -1,6 +1,7 @@
 //! Scope-summary documents: retained derivations, purpose and editor `keep` memo.
 
 use super::document::{map_get_bytes, map_insert_bytes};
+use super::prose_admission::{SUMMARY_ROW, admit_landed_as};
 use super::{DocAuthorization, EntityDoc, TextField, storage};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreMaintenance, EntityStoreRead, TombstoneStoreRead};
@@ -239,7 +240,7 @@ pub(crate) fn open_summary_proposal(
         .entity_docs
         .lock()
         .map_err(|_| super::invalid("document registry poisoned"))?;
-    let bundle = vault.try_with_write_txn_grouped(|txn| {
+    let (bundle, landed) = vault.try_with_write_txn_grouped(|txn| {
         vault.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
         let mut admitted = sources.clone();
         admitted.push(request.entity);
@@ -268,13 +269,14 @@ pub(crate) fn open_summary_proposal(
                 return Err(Error::ConcurrentWrite("summary keep memo changed").into());
             }
         }
-        let mut bundle = super::forks::open_proposal_in_txn(
+        let (mut bundle, landed) = super::forks::open_proposal_in_txn(
             vault,
             txn,
             &proposal,
             std::slice::from_ref(request),
             authorization,
             vault.now_recorded_at(),
+            &sources,
         )?;
         let refs: Vec<String> = sources.iter().map(EntityId::to_hex).collect();
         for record in &mut bundle.forks {
@@ -298,9 +300,13 @@ pub(crate) fn open_summary_proposal(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &request.entity, source)?;
         }
-        Ok::<_, crate::memory::MemoryError>(bundle)
+        Ok::<_, crate::memory::MemoryError>((bundle, landed))
     })?;
     registry.clear();
+    drop(registry);
+    // The change's prose, read under the caller's own handle once it has
+    // landed (FIX 1227).
+    admit_landed_as(memory, SUMMARY_ROW, &landed);
     memory.produced_from(sources);
     Ok(bundle)
 }
