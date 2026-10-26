@@ -171,6 +171,13 @@ pub struct ClaimInput {
     pub learned_at: Option<i64>,
     /// Optional salience in `[0, 1]`.
     pub salience: Option<f32>,
+    /// The band a calibrated producer gave `confidence`
+    /// (`low|medium|high|certain`), with `confidence_basis`; both omitted
+    /// mean the house band of the number.
+    pub confidence_band: Option<String>,
+    /// Where `confidence_band` came from
+    /// (`calibrated_model|deterministic_fallback`).
+    pub confidence_basis: Option<String>,
 }
 
 /// Receipt for one committed claim.
@@ -731,8 +738,11 @@ pub struct MemoryItem {
     pub value_text: String,
     /// Calibrated-absolute confidence in `[0, 1]`.
     pub confidence: f32,
-    /// Hedge vocabulary bucket derived from confidence.
+    /// Hedge vocabulary bucket: a claim's stored confidence band, by name.
     pub hedge_bucket: String,
+    /// Where a claim's band came from (`calibrated_model` or
+    /// `deterministic_fallback`); omitted for an item that is not a claim.
+    pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: MemoryProvenance,
     pub stale: Option<MemoryStaleStamp>,

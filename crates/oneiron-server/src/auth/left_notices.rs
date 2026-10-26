@@ -180,24 +180,15 @@ fn no_notice_signing_key() -> ApiError {
     )
 }
 
-/// Runs `sign` with this host's root key: the managed issuer, else the one
-/// the configured retained secret derives. Neither refuses before the
-/// engine is asked, so no nonce is spent.
+/// Runs `sign` with this host's root key: the managed issuer, else this
+/// install's own self-host root issuer (FIX-LIST 3018). Neither refuses
+/// before the engine is asked, so no nonce is spent.
 fn with_notice_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return sign(issuer).map_err(|_| ApiError::unauthorized());
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(no_notice_signing_key)?;
-    let issuer =
-        HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| no_notice_signing_key())?;
-    sign(&issuer).map_err(|_| ApiError::unauthorized())
+    let issuer = server.host_issuer().ok_or_else(no_notice_signing_key)?;
+    sign(issuer).map_err(|_| ApiError::unauthorized())
 }
 
 async fn left_notices(

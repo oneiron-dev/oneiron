@@ -424,6 +424,7 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
         value_text: item.value_text,
         confidence: f64::from(item.confidence),
         hedge_bucket: item.hedge_bucket,
+        confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
         provenance: NapiMemoryProvenance {
             source: item.provenance.source,
             source_revision_ids: item.provenance.source_revision_ids,

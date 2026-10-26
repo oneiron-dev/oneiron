@@ -30,9 +30,11 @@
 //! `session`); a raw CLAIM put carries its verified caller's envelope
 //! through its gate and apply (FIX 8118).
 //!
-//! A raw body is opaque bytes here. NOTE and keyed-value prose admission
-//! (L01's, FIX 1228) runs on their typed writers only, so a raw put of such
-//! a body is not read for links.
+//! A raw body is opaque bytes here, except for prose admission (OF-063,
+//! FIX 1228, 3734): a NOTE's markdown and a keyed value's nested value are
+//! read for links once, through the caller, as their typed writers read
+//! them, and their `unlinked` receipt is written only once the batch lands.
+//! A put its room stages lands in no base batch and earns none.
 
 use crate::batch::BatchBuilder;
 use crate::core_write::CoreWriteLane;
@@ -87,11 +89,15 @@ impl Memory<'_> {
         if self.raw_write_in_session(&staged)? {
             return Ok(());
         }
+        // Read before the writer opens; receipted only for a batch that lands.
+        let unlinked_prose = self.raw_put_prose(puts)?;
         let mut batch = self.vault().batch();
         for put in puts {
             batch = self.raw_put_on(batch, put)?;
         }
-        self.commit_raw_batch(batch, puts)
+        self.commit_raw_batch(batch, puts)?;
+        crate::gate::record_references::receipt_landed_prose(self, &unlinked_prose);
+        Ok(())
     }
 
     /// Puts a directed edge as this surface's caller.

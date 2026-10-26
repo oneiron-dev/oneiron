@@ -7,41 +7,44 @@ use crate::{Error, Result};
 
 impl ScopedRead<'_> {
     /// Current engine-issued refs for live claims in declared critical classes.
-    /// Policy, row admission and reference binding share one read snapshot.
+    /// Policy, row admission and reference binding share one read snapshot,
+    /// and every pinned posting is judged, however many (FIX 8659).
     pub fn manifest_pinned_refs(&self) -> Result<ScopedReadResult<Vec<String>>> {
         let txn = self.grant_read_txn()?;
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         let mut value = Vec::new();
         let mut suppressed = 0;
-        for id in crate::claim::projection_index::pinned_claim_ids_in_txn(
+        crate::claim::projection_index::for_each_pinned_claim_id_in_txn(
             &self.vault.store,
             &txn,
             &policy,
-        )? {
-            let Some(raw) = self.entity_record_in(&txn, &id)?.map(|row| row.encode()) else {
-                continue;
-            };
-            let header = EntityMetadataHeader::parse(&raw)
-                .ok_or(Error::CorruptedIndex("pin entity header"))?;
-            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-                || raw.len() == ENTITY_METADATA_HEADER_LEN
-            {
-                continue;
-            }
-            let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
-            if !policy.pins_predicate(&body.predicate) {
-                continue;
-            }
-            if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)? {
-                suppressed += 1;
-                continue;
-            }
-            let Some((short_id, hash)) = self.vault.store.port_short_id_reference(&txn, &id)?
-            else {
-                continue;
-            };
-            value.push(format!("{short_id}:{hash:02x}"));
-        }
+            |id| {
+                let Some(raw) = self.entity_record_in(&txn, &id)?.map(|row| row.encode()) else {
+                    return Ok(());
+                };
+                let header = EntityMetadataHeader::parse(&raw)
+                    .ok_or(Error::CorruptedIndex("pin entity header"))?;
+                if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+                    || raw.len() == ENTITY_METADATA_HEADER_LEN
+                {
+                    return Ok(());
+                }
+                let body = decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
+                if !policy.pins_predicate(&body.predicate) {
+                    return Ok(());
+                }
+                if !self.is_entity_retrievable_with_policy_in(&txn, &policy, &filter, &id)? {
+                    suppressed += 1;
+                    return Ok(());
+                }
+                let Some((short_id, hash)) = self.vault.store.port_short_id_reference(&txn, &id)?
+                else {
+                    return Ok(());
+                };
+                value.push(format!("{short_id}:{hash:02x}"));
+                Ok(())
+            },
+        )?;
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(None, &policy, &filter, suppressed),

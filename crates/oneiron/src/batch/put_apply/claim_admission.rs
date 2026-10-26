@@ -55,6 +55,9 @@ pub(super) fn admit_claim_put(
         },
     )?;
     if let Some(body) = &body {
+        // The typed citations the evidence carries are read once here, in
+        // their recognized slots: a malformed one is a malformed body.
+        body.evidence_refs()?;
         crate::comm::guard_send_override_put(
             body,
             input.allow_reserved_predicate,

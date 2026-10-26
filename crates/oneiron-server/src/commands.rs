@@ -118,6 +118,7 @@ mod device;
 pub use device::device_enrol;
 mod serve;
 pub(crate) use self::serve::hook_sandbox;
+pub(crate) use self::serve::open_served_vault_anchored;
 use self::serve::serve_anchored;
 #[cfg(test)]
 use self::serve::serve_with_config;
@@ -220,12 +221,14 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
     );
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let secret = config
+    config
         .sync_server_config()
         .auth_secret
         .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    // The configured secret admits this; the root signs with this install's
+    // own issuer seed for the vault (FIX-LIST 3018).
+    let issuer = owner::host_issuer(&config, &vault, true)?;
     // Init seeds the embedded owner. Never accept a caller-chosen holder on
     // this offline root link, and never re-create a deleted owner actor.
     let owner = vault.ensure_embedded_owner_actor()?;
@@ -284,12 +287,12 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
     );
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let secret = config
+    config
         .sync_server_config()
         .auth_secret
         .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())?;
+    let issuer = owner::host_issuer(&config, &vault, true)?;
     let owner = vault.ensure_embedded_owner_actor()?;
     let principal_ref = args.principal_ref.unwrap_or_else(|| owner.to_hex());
     // Pairing names an existing actor whose kind can act as the class asked
@@ -440,11 +443,10 @@ fn mint_agent_credential(
 ) -> anyhow::Result<MintedAgent> {
     let config = resolve_serve_config(&args.serve)?;
     ensure_existing_vault_for_revoke(&config.vault_path)?;
-    let secret = config
+    config
         .sync_server_config()
         .auth_secret
         .ok_or_else(|| anyhow::anyhow!("configured host issuer secret is required"))?;
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).map_err(
         |error| match error {
             oneiron::Error::ConcurrentWrite(oneiron::VAULT_WRITER_LEASE_HELD) => anyhow::anyhow!(
@@ -454,6 +456,7 @@ fn mint_agent_credential(
             error => anyhow::anyhow!("open vault {}: {error}", config.vault_path.display()),
         },
     )?;
+    let issuer = owner::host_issuer(&config, &vault, true)?;
     let owner = crate::owner::local_owner(&vault)?;
     let agent = vault
         .ensure_agent_principal(&args.name)
@@ -707,11 +710,11 @@ pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
             "invalid slip id"
         );
-        let secret = config
+        config
             .sync_server_config()
             .auth_secret
             .ok_or_else(|| anyhow::anyhow!("host secret required"))?;
-        let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+        let issuer = owner::host_issuer(&config, &vault, false)?;
         let bytes = (0..64)
             .step_by(2)
             .map(|index| u8::from_str_radix(&args.jti[index..index + 2], 16))
