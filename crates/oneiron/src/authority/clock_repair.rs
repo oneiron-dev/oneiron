@@ -3,21 +3,29 @@
 //!
 //! The floor is the least second this vault has observed; every authority
 //! reading stands on it, and a damaged one is never read as zero
-//! (`first_seen_clock`). The repair replaces it with the highest second this
-//! vault itself can prove it observed: each authority row's first-seen stamp
-//! and this handle's anchored reading. It never takes a peer's time, a row's
-//! signed `ts`, a number a caller hands it or the wall clock. With no such
-//! proof the repair says so, and the floor stays as it is.
+//! (`first_seen_clock`). The repair replaces it only with the committed
+//! high-water this vault itself proves: the floor's own high-water copy,
+//! written in the same writer as every floor, or this handle's live anchor;
+//! the result is at least every first-seen stamp and every earlier repair's
+//! floor too. It never takes a peer's time, a row's signed `ts`, a number a
+//! caller hands it or the wall clock. When the vault cannot prove its
+//! high-water (no whole copy and no live anchor, or an earlier repair receipt
+//! that does not read), the repair answers Unproven and changes nothing: a
+//! stale first-seen stamp alone could roll the clock back.
 //!
 //! The repair does not stand behind the clock it repairs: in its own writer
-//! it stages the proven floor, then judges the owner's proof as every owner
-//! door does, against that floor, and commits the floor and its provenance
-//! receipt together only when the proof holds. The authority cache moves to
-//! a new generation with them.
+//! it stages the proven floor (for an Unproven answer, the best proven lower
+//! bound, then aborts), then judges the owner's proof as every owner door
+//! does, against that floor, and commits the floor, its high-water copy and
+//! its provenance receipt together only when the proof holds. The authority
+//! cache moves to a new generation with them. A slip holder reaches it through
+//! [`crate::Vault::repair_authority_clock_by_slip`], whose request proof is
+//! judged in that same writer.
 
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::EntityId;
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
@@ -26,8 +34,9 @@ use crate::side_table::{self, Raw, SideTable};
 /// repair evidence`): this vault's own local observations only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuthorityClockRepairEvidence {
-    /// The first-seen stamps of its authority rows and this handle's anchored
-    /// reading.
+    /// The floor's high-water copy or this handle's anchored reading proves
+    /// the committed high-water; the first-seen stamps of its authority rows
+    /// and every earlier repair receipt bound it from below.
     LocalObservations,
 }
 
@@ -49,8 +58,8 @@ pub enum AuthorityClockRepairOutcome {
     Sound,
     /// The damaged floor was replaced by the proven one.
     Repaired,
-    /// The floor is damaged and this vault holds no observation that proves
-    /// a replacement: nothing was written.
+    /// The floor is damaged and this vault cannot prove its committed
+    /// high-water: nothing was written.
     Unproven,
 }
 
@@ -87,81 +96,206 @@ struct AuthorityClockRepairReceipt {
     actor: String,
 }
 
-/// The highest second this vault proves it observed: its authority rows'
-/// first-seen stamps (each 64-hex key in the family; the floor, the backfill
-/// marker and repair receipts are not stamps), and how many it read.
-fn observed_stamps_in_txn(
+/// The key prefix of a repair receipt in the first-seen family.
+const REPAIR_RECEIPT_PREFIX: &str = "clock_repair:";
+
+/// The floor's high-water copy as it reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HighWater {
+    Whole(u64),
+    Absent,
+    Damaged,
+}
+
+/// What this vault holds of its own clock without its floor.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ClockEvidence {
+    /// The latest first-seen stamp of an authority row, and how many read.
+    stamped: Option<u64>,
+    observations: u64,
+    high_water: HighWater,
+    /// The latest earlier repair's floor, and whether every receipt read.
+    repaired: Option<u64>,
+    receipts_whole: bool,
+    /// This handle's anchored reading.
+    anchored: Option<u64>,
+}
+
+impl ClockEvidence {
+    /// The highest second any of it proves this vault observed.
+    pub(super) fn lower_bound(&self) -> Option<u64> {
+        let copy = match self.high_water {
+            HighWater::Whole(floor) => Some(floor),
+            HighWater::Absent | HighWater::Damaged => None,
+        };
+        [self.stamped, copy, self.repaired, self.anchored]
+            .into_iter()
+            .flatten()
+            .max()
+    }
+
+    /// The committed high-water, when this vault proves it: a whole
+    /// high-water copy or a live anchor, with every repair receipt read.
+    fn proven_floor(&self) -> Option<u64> {
+        let proven = matches!(self.high_water, HighWater::Whole(_)) || self.anchored.is_some();
+        (proven && self.receipts_whole)
+            .then(|| self.lower_bound())
+            .flatten()
+    }
+}
+
+/// Reads [`ClockEvidence`] in `txn`: the first-seen stamps (each 64-hex key
+/// of the family), the floor's high-water copy, the repair receipts, and this
+/// handle's anchored reading.
+pub(super) fn clock_evidence_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<(Option<u64>, u64)> {
-    let mut highest = None;
-    let mut count = 0u64;
+) -> Result<ClockEvidence> {
+    let high_water_key = authority_clock_high_water_key();
+    let mut evidence = ClockEvidence {
+        stamped: None,
+        observations: 0,
+        high_water: HighWater::Absent,
+        repaired: None,
+        receipts_whole: true,
+        anchored: authority_anchored_secs(store),
+    };
     for row in AUTHORITY_FIRST_SEEN.iter_raw_from(store, txn, &[])? {
         let (key, value) = row?;
-        let stamp_key = key.len() == AUTHORITY_HASH_LEN * 2
+        if key == high_water_key.as_bytes() {
+            evidence.high_water = AUTHORITY_FIRST_SEEN
+                .decode_value(&value)
+                .map_or(HighWater::Damaged, HighWater::Whole);
+        } else if key.starts_with(REPAIR_RECEIPT_PREFIX.as_bytes()) {
+            match serde_json::from_slice::<AuthorityClockRepairReceipt>(&value) {
+                Ok(receipt) => evidence.repaired = evidence.repaired.max(Some(receipt.floor)),
+                Err(_) => evidence.receipts_whole = false,
+            }
+        } else if key.len() == AUTHORITY_HASH_LEN * 2
             && key
                 .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte));
-        let Some(stamp) = stamp_key
-            .then(|| AUTHORITY_FIRST_SEEN.decode_value(&value).ok())
-            .flatten()
-        else {
-            continue;
-        };
-        count += 1;
-        highest = highest.max(Some(stamp));
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+            && let Ok(stamp) = AUTHORITY_FIRST_SEEN.decode_value(&value)
+        {
+            evidence.observations += 1;
+            evidence.stamped = evidence.stamped.max(Some(stamp));
+        }
     }
-    Ok((highest, count))
+    Ok(evidence)
+}
+
+/// The floor row as a repair finds it: whole (or absent), or its damaged
+/// bytes.
+enum FloorRow {
+    Whole(Option<u64>),
+    Damaged(Vec<u8>),
+}
+
+fn floor_row_in_txn(store: &crate::store::Store, txn: &heed::RoTxn<'_>) -> Result<FloorRow> {
+    Ok(
+        match AUTHORITY_FIRST_SEEN.get_bytes(store, txn, &authority_first_seen_clock_key())? {
+            None => FloorRow::Whole(None),
+            Some(bytes) => match AUTHORITY_FIRST_SEEN.decode_value(&bytes) {
+                Ok(floor) => FloorRow::Whole(Some(floor)),
+                Err(_) => FloorRow::Damaged(bytes),
+            },
+        },
+    )
+}
+
+fn sound(floor: Option<u64>) -> AuthorityClockRepair {
+    AuthorityClockRepair {
+        outcome: AuthorityClockRepairOutcome::Sound,
+        floor,
+        observations: 0,
+        anchored: None,
+    }
 }
 
 impl crate::Vault {
     /// Repairs a damaged authority clock floor for `owner` (FIX 10106). A
-    /// whole or absent floor is left as it is ([`AuthorityClockRepairOutcome::Sound`]);
-    /// a damaged one is replaced by the highest second this vault proves it
-    /// observed ([`AUTHORITY_CLOCK_REPAIR_EVIDENCE`]), staged in this
-    /// writer before the owner's proof is judged against it, and committed
-    /// with its provenance receipt only when that proof holds. With no proof
-    /// it is [`AuthorityClockRepairOutcome::Unproven`]. Every outcome
-    /// revalidates `owner` in this writer.
+    /// whole or absent floor is left as it is
+    /// ([`AuthorityClockRepairOutcome::Sound`]); a damaged one is replaced by
+    /// the committed high-water this vault proves
+    /// ([`AUTHORITY_CLOCK_REPAIR_EVIDENCE`]), staged in this writer before the
+    /// owner's proof is judged against it, and committed with its provenance
+    /// receipt only when that proof holds. When the high-water is not proven
+    /// it is [`AuthorityClockRepairOutcome::Unproven`] and nothing changes.
+    /// Every outcome revalidates `owner` in this writer.
     pub fn repair_authority_clock(
         &self,
         owner: &AuthenticatedOwner,
     ) -> Result<AuthorityClockRepair> {
         let txn = self.store.env.write_txn()?;
-        let key = authority_first_seen_clock_key();
-        let damaged = match AUTHORITY_FIRST_SEEN.get_bytes(&self.store, &txn, &key)? {
-            Some(bytes) if AUTHORITY_FIRST_SEEN.decode_value(&bytes).is_err() => bytes,
-            whole => {
+        match floor_row_in_txn(&self.store, &txn)? {
+            FloorRow::Whole(floor) => {
                 owner.revalidate_in_txn(self, &txn)?;
-                let floor = whole
-                    .map(|bytes| AUTHORITY_FIRST_SEEN.decode_value(&bytes))
-                    .transpose()?;
-                return Ok(AuthorityClockRepair {
-                    outcome: AuthorityClockRepairOutcome::Sound,
-                    floor,
-                    observations: 0,
-                    anchored: None,
-                });
+                Ok(sound(floor))
             }
+            FloorRow::Damaged(damaged) => {
+                self.repair_damaged_floor(txn, &damaged, |txn| owner.revalidate_in_txn(self, txn))
+            }
+        }
+    }
+
+    /// [`Self::repair_authority_clock`] for a request that carries the
+    /// owner's own full slip and its holder proof (`timestamp`, `signature`,
+    /// `nonce`), as the repair's own ingress takes it: the slip and the proof
+    /// are judged, and the proof's nonce spent, in the repair's writer, after
+    /// it stages the floor, so a damaged floor never refuses them first. Only
+    /// the owner's own unattenuated human slip binds; a host root acts as
+    /// nobody here.
+    pub fn repair_authority_clock_by_slip(
+        &self,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<AuthorityClockRepair> {
+        let holder = slip.claims.holder_ref.as_str();
+        let actor = EntityId::from_hex(holder).map_err(|_| {
+            crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+                "the slip names no person",
+            ))
+        })?;
+        let owner =
+            self.authenticate_owner(actor, holder, true, crate::store::GateDecisionId::now())?;
+        let bind = |txn: &mut heed::RwTxn<'_>| -> Result<EntityId> {
+            let verified =
+                self.admit_capability_slip_request_in_txn(txn, slip, timestamp, signature, nonce)?;
+            self.bind_owner_credential_in_txn(txn, owner.clone(), verified)
         };
-        let anchored = authority_anchored_secs(&self.store);
-        let (stamped, observations) = match AUTHORITY_CLOCK_REPAIR_EVIDENCE {
+        let mut txn = self.store.env.write_txn()?;
+        match floor_row_in_txn(&self.store, &txn)? {
+            FloorRow::Whole(floor) => {
+                bind(&mut txn)?;
+                txn.commit()?;
+                Ok(sound(floor))
+            }
+            FloorRow::Damaged(damaged) => self.repair_damaged_floor(txn, &damaged, bind),
+        }
+    }
+
+    /// Stages the proven floor (or, unproven, the best proven lower bound) in
+    /// `txn`, judges the caller with `judge` against it, and commits the
+    /// proven floor with its receipt; an unproven one aborts. A reading the
+    /// staged floor seeded into this handle's anchor is undone unless the
+    /// repair commits.
+    fn repair_damaged_floor(
+        &self,
+        mut txn: heed::RwTxn<'_>,
+        damaged: &[u8],
+        judge: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<EntityId>,
+    ) -> Result<AuthorityClockRepair> {
+        let evidence = match AUTHORITY_CLOCK_REPAIR_EVIDENCE {
             AuthorityClockRepairEvidence::LocalObservations => {
-                observed_stamps_in_txn(&self.store, &txn)?
+                clock_evidence_in_txn(&self.store, &txn)?
             }
         };
-        let Some(floor) = stamped.max(anchored) else {
-            owner.revalidate_in_txn(self, &txn)?;
-            return Ok(AuthorityClockRepair {
-                outcome: AuthorityClockRepairOutcome::Unproven,
-                floor: None,
-                observations,
-                anchored,
-            });
-        };
-        // The owner's proof is judged against the staged floor, and a first
-        // reading it seeds into this handle's anchor is undone unless the
-        // repair commits.
+        let proven = evidence.proven_floor();
+        let staged = proven
+            .or_else(|| evidence.lower_bound())
+            .ok_or_else(authority_clock_corrupt)?;
         let clock = || {
             self.store
                 .authority_local_clock
@@ -169,45 +303,67 @@ impl crate::Vault {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
         };
         let anchor = clock().anchor_state();
-        let receipt = AuthorityClockRepairReceipt {
-            floor,
-            damaged_digest: blake3::hash(&damaged).to_hex().to_string(),
-            damaged_len: damaged.len() as u64,
-            observations,
-            anchored,
-            actor: String::new(),
+        let judged = self.stage_clock_floor(&mut txn, staged, judge);
+        let committed = match (judged, proven) {
+            (Ok(actor), Some(floor)) => self.commit_clock_repair(
+                txn,
+                &AuthorityClockRepairReceipt {
+                    floor,
+                    damaged_digest: blake3::hash(damaged).to_hex().to_string(),
+                    damaged_len: damaged.len() as u64,
+                    observations: evidence.observations,
+                    anchored: evidence.anchored,
+                    actor: actor.to_hex(),
+                },
+            ),
+            (Ok(_), None) => {
+                drop(txn);
+                clock().restore_anchor(anchor);
+                return Ok(AuthorityClockRepair {
+                    outcome: AuthorityClockRepairOutcome::Unproven,
+                    floor: None,
+                    observations: evidence.observations,
+                    anchored: evidence.anchored,
+                });
+            }
+            (Err(error), _) => Err(error),
         };
-        if let Err(error) = self.commit_clock_repair(txn, owner, receipt) {
+        if let Err(error) = committed {
             clock().restore_anchor(anchor);
             return Err(error);
         }
         Ok(AuthorityClockRepair {
             outcome: AuthorityClockRepairOutcome::Repaired,
-            floor: Some(floor),
-            observations,
-            anchored,
+            floor: proven,
+            observations: evidence.observations,
+            anchored: evidence.anchored,
         })
     }
 
-    /// Stages `receipt`'s floor in `txn`, judges `owner`'s proof against it,
-    /// and commits the floor, a new authority cache generation and the
-    /// receipt together.
+    /// Writes `floor` and a new authority cache generation in `txn`, then
+    /// judges the caller against them.
+    fn stage_clock_floor(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        floor: u64,
+        judge: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<EntityId>,
+    ) -> Result<EntityId> {
+        put_authority_clock_floor_in_txn(&self.store, txn, floor)?;
+        advance_authority_cache_generation(&self.store, txn)?;
+        judge(txn)
+    }
+
+    /// Commits the staged floor with `receipt`.
     fn commit_clock_repair(
         &self,
         mut txn: heed::RwTxn<'_>,
-        owner: &AuthenticatedOwner,
-        mut receipt: AuthorityClockRepairReceipt,
+        receipt: &AuthorityClockRepairReceipt,
     ) -> Result<()> {
-        AUTHORITY_FIRST_SEEN.put(
-            &self.store,
-            &mut txn,
-            &authority_first_seen_clock_key(),
-            &receipt.floor,
-        )?;
-        advance_authority_cache_generation(&self.store, &mut txn)?;
-        receipt.actor = owner.revalidate_in_txn(self, &txn)?.to_hex();
-        let key = format!("clock_repair:{}", self.store.clock.entity_id()?.to_hex());
-        let bytes = serde_json::to_vec(&receipt)
+        let key = format!(
+            "{REPAIR_RECEIPT_PREFIX}{}",
+            self.store.clock.entity_id()?.to_hex()
+        );
+        let bytes = serde_json::to_vec(receipt)
             .map_err(|_| crate::error::Error::InvariantViolation("clock repair receipt"))?;
         AUTHORITY_CLOCK_REPAIRS.put(&self.store, &mut txn, &key, &bytes)?;
         txn.commit()?;

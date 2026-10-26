@@ -352,6 +352,7 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
+pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
 pub(crate) use handover_evidence::HandoverEvidence;

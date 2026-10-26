@@ -117,6 +117,11 @@ impl HandoverRows {
                 let (recipient, id) = suffix.split_once(':')?;
                 (Some(recipient), id)
             };
+        // Exact canonical keys only: each id in the key is a 32-hex entity id
+        // that round-trips; any other key keeps its class.
+        if !canonical_id(id) || !recipient.is_none_or(canonical_id) {
+            return None;
+        }
         let signed = if by_act {
             self.evidence.acts.get(id)
         } else {
@@ -135,4 +140,9 @@ impl HandoverRows {
             UnprovenRestore::RefuseIfChanged => named.then_some(HANDOVER_ACT_RESTORE_CLASS),
         }
     }
+}
+
+/// Whether `text` is an entity id in its one canonical spelling.
+fn canonical_id(text: &str) -> bool {
+    EntityId::from_hex(text).is_ok_and(|id| id.to_hex() == text)
 }
