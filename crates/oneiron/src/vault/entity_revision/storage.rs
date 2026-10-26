@@ -11,7 +11,9 @@ use loro::{ExportMode, Frontiers, LoroDoc, LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 pub(crate) mod checkpoint;
 mod retained;
-pub(super) use retained::{retained_rows_in_txn, row_revisions_starting_with_in_txn};
+pub(super) use retained::{
+    retained_rows_in_txn, row_aliases_in_txn, row_revisions_starting_with_in_txn,
+};
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);

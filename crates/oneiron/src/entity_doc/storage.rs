@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 mod history;
 mod repo_index;
-pub(crate) use history::record_body_history_in_txn;
+pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
 /// Location of the body text. Editable metadata shares its owning document.
@@ -387,7 +387,11 @@ impl Vault {
             // birth frontier, as a stream or quote birth pins them (FIX 4840).
             if header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
                 crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
-                    self, txn, entity, &initial, birth_actor,
+                    self,
+                    txn,
+                    entity,
+                    &initial,
+                    birth_actor,
                 )?;
             }
             Ok(())

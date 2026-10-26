@@ -17,17 +17,18 @@ pub(crate) struct RetainedBody {
 }
 
 /// `entity`'s record body at the states its document's retained history
-/// names, newest first: the current one, then for each of the newest
-/// `limit` changes the state it left and the state it was made on (its
-/// dependencies, which name a merged state the next edit followed). `None`
-/// for an unmigrated row. A state of concurrent heads no later change was
-/// made on, or whose history was purged, is not listed.
+/// names, newest first: the current one, then for each change the state it
+/// left and the state it was made on (its dependencies, which name a merged
+/// state the next edit followed). `Some(limit)` reads the newest `limit`
+/// changes; `None` reads every change the document retains. `None` for an
+/// unmigrated row. A state of concurrent heads no later change was made on,
+/// or whose history was purged, is not listed.
 pub(crate) fn record_body_history_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     entity: &EntityId,
     body: &[u8],
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<Option<Vec<RetainedBody>>> {
     if !has_record_head(store, txn, entity)? {
         return Ok(None);
@@ -45,7 +46,7 @@ pub(crate) fn record_body_history_in_txn(
                 frontiers.push(meta.deps.encode());
             }
             visited += 1;
-            if visited < limit {
+            if limit.is_none_or(|limit| visited < limit) {
                 std::ops::ControlFlow::Continue(())
             } else {
                 std::ops::ControlFlow::Break(())
@@ -68,4 +69,30 @@ pub(crate) fn record_body_history_in_txn(
         });
     }
     Ok(Some(states))
+}
+
+/// `entity`'s record body at each of `frontiers`, a retained frontier under
+/// its key, read through the current document at that frontier. A frontier
+/// the document no longer reaches, as a purge or a revision from before its
+/// text moved into it leaves one, gives none; an unmigrated row gives none.
+pub(crate) fn record_bodies_at_in_txn<K>(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    body: &[u8],
+    frontiers: Vec<(K, Vec<u8>)>,
+) -> Result<Vec<(K, Vec<u8>)>> {
+    if frontiers.is_empty() || !has_record_head(store, txn, entity)? {
+        return Ok(Vec::new());
+    }
+    let h = head(store, txn, entity)?;
+    let doc = load(store, txn, &h)?;
+    let mut bodies = Vec::with_capacity(frontiers.len());
+    for (key, frontier) in frontiers {
+        let Ok(version) = doc.fork(&frontier) else {
+            continue;
+        };
+        bodies.push((key, body_with_document(&h.field, body, &version)?));
+    }
+    Ok(bodies)
 }

@@ -154,7 +154,7 @@ impl Memory<'_> {
                     txn,
                     &message,
                     body,
-                    limit,
+                    Some(limit),
                 )?;
                 let exists = states.is_some();
                 let history = states
