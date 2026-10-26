@@ -39,7 +39,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
             json!({
                 "type": "http",
                 "scheme": "bearer",
-                "description": "Bearer credential for protected routes: a logged `v2.slip.*` capability slip with its holder proof in `x-oneiron-binding`. The issuer secret and device lease never authorize requests. The protected legacy `/api/*` routes (all except the public `/api/health`), and `/v1/usage/*` all require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. Scoped tokens are accepted only on the scoped `/v1/core/*` and `/v1/companion/*` routes, subject to the scopes the token names."
+                "description": "Bearer credential for protected routes: a logged `v2.slip.*` capability slip with its holder proof in `x-oneiron-binding`. The issuer secret and device lease never authorize requests. The grade each route requires is per-route. The protected legacy `/api/*` routes (all except the public `/api/health`) and `/v1/usage/*` require an owner-grade credential; a scoped token is refused there with the same `UNAUTHORIZED` as an absent one, however wide its scopes. The `/v1/owner/*` routes admit only the vault's live human owner on an unattenuated owner slip, or a managed vault's attested live owner, and refuse anyone else with 403. Scoped tokens are accepted on the scoped routes, subject to the scopes the token names: `/v1/core/*` (the facade verb routes included), `/v1/companion/*`, `POST /v1/ai/anonymous-chat` (an authenticated credential holding Read; the turn keeps no memory, but the caller is not anonymous to the server), and the memory proxy `POST /v1/chat/completions`. The proxy admits a paired connector credential holding Read and Propose (or Write), narrowed by no more than the connector's world and landing facet, whose connector binds `vault.recall` and `vault.remember` and holds a live `openai_proxy` registration with a stamped grant slate; a managed vault's attested live owner needs no registration."
             }),
         );
 
@@ -47,9 +47,11 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
     // `Authorization: Bearer`. The grade required is per-route, not per-plane:
     // the legacy `/api/*` routes listed below demand an owner-grade
     // credential, and so do the `/v1/usage/*` routes,
-    // which authenticate through the same `check_api_auth`. Scoped tokens
-    // reach `/v1/core/*` and the companion control-plane routes, which read a
-    // `CoreAuth` and enforce the scopes it names.
+    // which authenticate through the same `check_api_auth`; the `/v1/owner/*`
+    // door admits only the vault's live owner. Scoped tokens reach
+    // `/v1/core/*`, the companion control-plane routes, the anonymous-chat
+    // route and the memory proxy, which read a `CoreAuth` (or resolve the
+    // connector caller) and enforce the scopes it names.
     //
     // `/api/health` is absent from this list by design, not by omission: it is
     // public (it takes no `CoreAuth` and calls no `check_api_auth`), so
