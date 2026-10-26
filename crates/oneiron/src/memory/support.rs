@@ -235,6 +235,21 @@ impl HostWriteOrigin {
     pub const fn source(&self) -> ClaimSource {
         self.envelope.source()
     }
+
+    /// The durable code run the dispatcher bound this origin to: the run ref
+    /// its envelope's provenance names under `run`, when that ref is a run
+    /// id. Read from the host-owned envelope, never from the guest; `None`
+    /// for a ref that names no id.
+    pub(crate) fn code_run(&self) -> Option<EntityId> {
+        let Value::Map(fields) = self.envelope.provenance().value() else {
+            return None;
+        };
+        fields
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("run"))
+            .and_then(|(_, run)| run.as_str())
+            .and_then(|run| EntityId::from_hex(run).ok())
+    }
 }
 
 type MachineSignFn<'a> = dyn Fn(&[u8]) -> crate::Result<[u8; 64]> + Send + Sync + 'a;
