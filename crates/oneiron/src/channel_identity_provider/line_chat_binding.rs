@@ -3,7 +3,8 @@
 //! no identity serves are recorded once per (bot, chat) as an observed
 //! claim, so the owner can see the chat and bind it through the ordinary
 //! provision door. An observation is a fact, never a binding, and nothing
-//! waits on it: a message keeps routing per sender either way.
+//! waits on it: a message keeps routing per sender either way. Its id is
+//! opaque (FIX 10807): nothing about a chat confirms that it was seen.
 
 use serde::{Deserialize, Serialize};
 
@@ -23,10 +24,6 @@ use crate::temporal::TimeRange;
 
 /// Predicate of one observed LINE chat (FIX 3115).
 pub const LINE_CHAT_OBSERVATION_PREDICATE: &str = "channel_identity.line_chat_observed";
-
-/// Domain of an observation's id: one per bot destination, chat kind and
-/// chat id, whoever wrote and whichever event showed it.
-const LINE_CHAT_OBSERVATION_DOMAIN: &[u8] = b"oneiron:line-chat-observation:v1";
 
 /// One LINE group or room the bot was seen in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,8 +54,9 @@ pub struct LineChatBindingOffer {
 impl Vault {
     /// Records that the bot `destination` saw `chat` (FIX 3115), once per
     /// (bot, chat): the first sighting stays and a later one changes
-    /// nothing. Archive the event first; the archive keeps the
-    /// provider-inbound machine this observation is about.
+    /// nothing. A new sighting gets a fresh opaque id (FIX 10807). Archive
+    /// the event first; the archive keeps the provider-inbound machine this
+    /// observation is about.
     ///
     /// # Errors
     /// The bot is not a LINE bot id, the chat id is not a LINE group or room
@@ -76,10 +74,15 @@ impl Vault {
             MAX_LINE_COMPONENT_BYTES,
         )?;
         let chat = LineChat::new(chat.kind, normalize_line_chat_id(&chat.id, chat.kind)?);
-        let id = line_chat_observation_ref(&destination, &chat)?;
+        let subject = provider_inbound_actor()?;
         // A chat already seen costs a read, never the writer.
-        if self.line_chat_observation(&id)?.is_some() {
-            return Ok(id);
+        {
+            let rtxn = self.store.env.read_txn()?;
+            if let Some(id) =
+                self.line_chat_observed_in_txn(&rtxn, &subject, &destination, &chat)?
+            {
+                return Ok(id);
+            }
         }
         let observation = LineChatObservation {
             destination,
@@ -91,7 +94,7 @@ impl Vault {
             .map_err(|_| Error::InvariantViolation("LINE chat observation did not encode"))?;
         let mut body = ClaimBody::new(
             LINE_CHAT_OBSERVATION_PREDICATE,
-            ClaimSubject::Entity(provider_inbound_actor()?),
+            ClaimSubject::Entity(subject),
             value,
             1.0,
             ClaimApprovalStatus::Auto,
@@ -99,20 +102,55 @@ impl Vault {
         )?;
         body.source = Some(ClaimSource::Observed);
         let mut wtxn = self.store.env.write_txn()?;
-        if self.get_claim_in_txn(&wtxn, &id)?.is_none() {
-            self.put_claim_in_txn(
-                &mut wtxn,
-                &id,
-                &body,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )?;
-            wtxn.commit()?;
+        // The first sighting stays under the writer too.
+        if let Some(id) = self.line_chat_observed_in_txn(
+            &wtxn,
+            &subject,
+            &observation.destination,
+            &observation.chat,
+        )? {
+            return Ok(id);
         }
+        let id = self.store.clock.entity_id()?;
+        self.put_claim_in_txn(
+            &mut wtxn,
+            &id,
+            &body,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )?;
+        wtxn.commit()?;
         Ok(id)
+    }
+
+    /// The live observation of `chat` on the bot `destination` in `txn`, if
+    /// one stands: found by its value, never by a key the chat derives.
+    fn line_chat_observed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        subject: &EntityId,
+        destination: &str,
+        chat: &LineChat,
+    ) -> Result<Option<EntityId>> {
+        let mut found = None;
+        self.for_each_readable_claim_with_predicate_in_txn(
+            txn,
+            LINE_CHAT_OBSERVATION_PREDICATE,
+            |observation_ref, body| {
+                if found.is_none()
+                    && let Some(observation) = observation_of(&body, subject)
+                    && observation.destination == destination
+                    && observation.chat == *chat
+                {
+                    found = Some(observation_ref);
+                }
+                Ok(())
+            },
+        )?;
+        Ok(found)
     }
 
     /// One observation by its ref, or `None` when the ref names no live
@@ -129,10 +167,7 @@ impl Vault {
         let Some(body) = self.get_claim_in_txn(&rtxn, observation_ref)? else {
             return Ok(None);
         };
-        Ok(observation_of(&body, &subject).filter(|observation| {
-            line_chat_observation_ref(&observation.destination, &observation.chat).ok()
-                == Some(*observation_ref)
-        }))
+        Ok(observation_of(&body, &subject))
     }
 
     /// Every chat the adapter's bot was seen in, each as an optional bind
@@ -179,18 +214,6 @@ impl Vault {
             })
             .collect()
     }
-}
-
-/// The derived ref of one (bot, chat) observation.
-fn line_chat_observation_ref(destination: &str, chat: &LineChat) -> Result<EntityId> {
-    EntityId::derive(
-        LINE_CHAT_OBSERVATION_DOMAIN,
-        &[
-            destination.as_bytes(),
-            chat.kind.as_str().as_bytes(),
-            chat.id.as_bytes(),
-        ],
-    )
 }
 
 /// The provider-inbound machine every archived provider event is kept
