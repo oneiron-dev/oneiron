@@ -8,13 +8,36 @@
 use std::sync::Arc;
 
 use oneiron::llm::LlmCatalogCost;
-use oneiron::llm::run_admission::PermitFacts;
+use oneiron::llm::run_admission::{Payer, PermitFacts};
 use oneiron::{EntityId, ModelId};
 
 use crate::usage::{UsageCostRates, catalog_cost_rates};
 
 /// Domain tag of the price-table snapshot digest.
 const SNAPSHOT_DOMAIN: &[u8] = b"oneiron.usage.catalog-list-price.v1";
+
+/// The provider API origins whose own list prices a catalog quotes: a call
+/// on the owner's own key to any other origin is a custom endpoint (FIX
+/// 7765).
+const PROVIDER_API_ORIGINS: [&str; 4] = [
+    "https://api.anthropic.com",
+    "https://api.openai.com",
+    "https://api.x.ai",
+    "https://generativelanguage.googleapis.com",
+];
+
+/// Whether `facts` is a call on the owner's own key to a custom endpoint,
+/// one whose route goes to no provider API origin a catalog price is
+/// quoted for: it logs token counts only, whatever price its model id has
+/// (owner, 2026-10-10; ARCH-0011 `#byok-usage`, FIX 7765). Read from the
+/// route the run admitted, never from the request.
+pub(super) fn custom_endpoint(facts: &PermitFacts) -> bool {
+    facts.payer == Payer::CustomerKey
+        && facts
+            .route
+            .split_once('@')
+            .is_none_or(|(_, origin)| !PROVIDER_API_ORIGINS.contains(&origin))
+}
 
 /// The vault registry whose list prices meter its admitted model calls.
 pub(super) struct CatalogPrices {

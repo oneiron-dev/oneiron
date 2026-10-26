@@ -422,6 +422,15 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// floor, at the engine revision it merged in, with no `Ping` field: a reader
 /// of the checks runs against an engine at or after the floor, and no reader
 /// of a check without it is kept. This version stays 3.
+///
+/// Custom endpoint usage (FIX 7765): an unpriced call gains the reason
+/// `custom_endpoint`, on usage events posted and stored: a call on the
+/// owner's own key whose route goes to no provider API origin a catalog price
+/// is quoted for, with a token count and no `costRates`. Such a call logs
+/// token counts only, whatever price its model id has. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of usage events runs at or after the floor, and no reader of an event
+/// without it is kept. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.
