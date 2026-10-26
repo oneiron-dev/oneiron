@@ -20,6 +20,7 @@ mod rendezvous;
 mod sweep_queue;
 mod timeline;
 mod tombstone;
+pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
 
 #[cfg(test)]
