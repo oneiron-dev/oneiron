@@ -182,6 +182,14 @@ impl<'v, 't, 'env> ActorContentTxn<'v, 't, 'env> {
         self.require_claim(id)
     }
 
+    /// Finishes a diary gate in this writer: the read log, the spent yes and
+    /// any review request a copy's source read owes land with the copy, or
+    /// not at all (FIX 9953). A supporting effect, not a content record.
+    pub(crate) fn finish_diary_read(&mut self, gate: crate::memory::DiaryReadGate) -> Result<()> {
+        gate.finish_in_txn(self.vault, self.txn)?;
+        Ok(())
+    }
+
     pub(crate) fn finish(&mut self) -> Result<()> {
         if !self.pending_claim_support.is_empty() {
             return Err(Error::InvariantViolation(

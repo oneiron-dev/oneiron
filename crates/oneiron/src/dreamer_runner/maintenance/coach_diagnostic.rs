@@ -347,6 +347,7 @@ impl Vault {
                 now,
             )?;
             crate::failure_ladder::oversight::proposed_in_txn(self, txn, &issue_id.to_hex(), now)?;
+            crate::failure_ladder::oversight::routed_in_txn(self, txn, &issue_id.to_hex(), now)?;
             blocked_reports::record_issue_settled_in_txn(self, txn, &issue_id, proposal, now)?;
             Ok(true)
         })?;

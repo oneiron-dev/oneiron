@@ -10,6 +10,7 @@ mod gmail_header;
 mod inbound_types;
 mod line_adapter;
 mod line_chat_binding;
+mod line_chat_erase;
 pub mod mail_placement;
 pub mod mailbox_cursor;
 pub mod mailbox_skipped;
@@ -32,11 +33,14 @@ pub use self::inbound_types::{
 };
 pub use self::line_adapter::{
     LineOfficialAccountAdapter, LineOfficialAccountAdapterConfig, LineOfficialAccountPlanTier,
-    line_audience_key,
+    is_line_chat_audience_key, line_audience_key, line_source_audience_key,
 };
+pub(crate) use self::line_chat_binding::validate_line_chat_observation_claim_structure;
 pub use self::line_chat_binding::{
     LINE_CHAT_OBSERVATION_PREDICATE, LineChatBindingOffer, LineChatObservation,
+    is_line_chat_observation_claim_predicate,
 };
+pub(crate) use self::line_chat_erase::erase_line_chat_observations_for_delete_in_txn;
 pub use self::shared_validate::{
     CHANNEL_IDENTITY_PROVIDER_ADAPTER_VERSION, DEFAULT_EMAIL_LOCAL_PART_PREFIX,
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, DEV_EMAIL_PROVIDER_KEY, EMAIL_CHANNEL, LINE_CHANNEL,

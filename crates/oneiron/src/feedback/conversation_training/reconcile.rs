@@ -22,8 +22,9 @@
 //! an orphaned generation (its key lost with a restore that brought none,
 //! FIX 5892) is recorded nowhere and never written; each pass counts those
 //! unavailable, while a purge, which carries no codes, still goes for every
-//! generation's scopes, and an anonymous piece's withdrawal goes under its
-//! stored C. A receipt for a scope this vault never used is refused and
+//! generation's scopes, a hosted forget whose row kept its source code
+//! from its hold (FIX 9855) goes under that code with no key, and an
+//! anonymous piece's withdrawal goes under its stored C. A receipt for a scope this vault never used is refused and
 //! left where it is. The writer that applies the last `removed` receipt of
 //! the purge (TL-5) stages the training link key's retirement; the pass
 //! finishes it after the commit.
@@ -64,6 +65,7 @@ use super::lifecycle::{
     TrainingSubmissionId, TrainingUnavailable,
 };
 use super::link;
+use super::withdraw::{forget_hosted_in, may_reach_intake};
 
 /// C2 (CALLS-2) retention: whether an offer's local bytes outlive the
 /// intake's receipt for them. Conservative: they do not. Once an
@@ -435,10 +437,12 @@ impl Vault {
 /// Writes what a plan found, re-reading each row so a concurrent pass never
 /// records the same control twice. A world's control goes to every (month,
 /// generation) in which a retained submission names it, one control per
-/// pair; a gone source's forget control to every pair its withdrawn
-/// published submissions were prepared in. Each rides its pair's scope at
-/// its next ordinal, in this one writer with the withdrawal; none goes to
-/// an orphaned generation, whose rows still stand withdrawn. Every
+/// pair; a gone source's forget control to every pair its withdrawn hosted
+/// submissions that are held or were ever published (so may be at the
+/// intake, FIX 9855) were prepared in. Each rides its pair's scope at its
+/// next ordinal, in this one writer with the withdrawal; none that needs
+/// codes goes to an orphaned generation, whose rows still stand withdrawn
+/// (a forget by a kept source code goes whatever its generation). Every
 /// anonymous piece it withdraws takes its withdrawal intent in the same
 /// write, whatever its generation, and rides no control: only hosted
 /// submissions place a world control or join a forget control.
@@ -472,7 +476,7 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
     for id in &plan.gone {
         withdraw.entry(*id).or_insert(Withdrawal::Forget);
     }
-    let mut forgets: BTreeMap<(EntityId, String, u32), Vec<[u8; 16]>> = BTreeMap::new();
+    let mut owed = Vec::new();
     for (id, mut row) in retained {
         if !is_active(&row) {
             continue;
@@ -480,28 +484,16 @@ fn apply_plan(vault: &Vault, txn: &mut heed::RwTxn<'_>, plan: &Plan, now: u64) -
         let Some(how) = withdraw.get(&id) else {
             continue;
         };
-        if *how == Withdrawal::Forget
-            && row.published_at.is_some()
-            && row.transport == TrainingTransport::Hosted
-        {
-            forgets
-                .entry((row.source, row.month.clone(), row.generation))
-                .or_default()
-                .push(id.0);
-        }
+        let forget = *how == Withdrawal::Forget && may_reach_intake(&row);
         row.state = SubmissionState::Withdrawn;
         anonymous::withdraw(&mut row);
-        put_submission_in(vault, txn, id, &row)?;
-    }
-    for ((source, month, generation), submissions) in forgets {
-        let control = ControlChange::ForgetSource {
-            source,
-            submissions,
-        };
-        if record_control_in(vault, txn, (&month, generation), control, now)?.is_some() {
-            recorded += 1;
+        if forget {
+            owed.push((id, row));
+        } else {
+            put_submission_in(vault, txn, id, &row)?;
         }
     }
+    recorded += forget_hosted_in(vault, txn, owed, now)?;
     Ok(recorded)
 }
 
@@ -576,7 +568,8 @@ fn purge_due(row: &SubmissionCustody) -> bool {
 
 /// A control's change as the wire spells it: raw ids coded for `month`
 /// under `key`, submission ids as they are. A purge names no code and needs
-/// no key.
+/// no key; a hosted forget is the same wire forget, under the source code
+/// kept from its hold (FIX 9855), and needs none either.
 fn wire_change(
     key: Option<&[u8; 32]>,
     month: &str,
@@ -605,5 +598,15 @@ fn wire_change(
             })
         }
         ControlChange::PurgeScope => TrainingControlChangeV2::PurgeScope(TrainingPurgeScopeV2 {}),
+        ControlChange::ForgetHosted {
+            source_code,
+            submissions,
+        } => TrainingControlChangeV2::ForgetSource(TrainingForgetSourceV2 {
+            source: oneiron_vault_contract::hex(source_code),
+            submissions: submissions
+                .iter()
+                .map(|id| oneiron_vault_contract::hex(id.as_slice()))
+                .collect(),
+        }),
     })
 }

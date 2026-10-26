@@ -46,6 +46,7 @@ mod fallback_tests;
 mod family;
 mod forward;
 mod gemini_media;
+mod host_budgets;
 mod hosted_speech;
 mod http;
 #[cfg(test)]
@@ -90,10 +91,9 @@ pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
+pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::{
-    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
-};
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
@@ -164,6 +164,9 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// The vault's model byte budgets its media rungs and mesh routes hold
+    /// their bytes on (FIX 9321, FIX 9323).
+    budgets: ModelHostBudgets,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's

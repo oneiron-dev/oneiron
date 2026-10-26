@@ -28,7 +28,7 @@ use super::dispatch_types::{
 use super::intent::OutboundIntentSource;
 use crate::channel_identity_provider::{
     DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LineChat, LineChatKind, SLACK_CHANNEL,
-    line_audience_key,
+    line_source_audience_key,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
@@ -300,8 +300,10 @@ impl<'a> ServedChannelSink<'a> {
         };
         // Read before the door opens: the door holds the vault's writer. The
         // archived event answers only the audience the reply was admitted
-        // on: its token and chat never carry a reply into another group,
-        // room or user (FIX 2838).
+        // on: its token never carries a reply into another group, room or
+        // user (FIX 2838). An event written in another chat, or one whose
+        // archive does not read, answers nothing: the send pushes to its
+        // own target, the audience the Gate admitted (FIX 10809).
         let answered = self
             .answered_provider_event(request, LINE_CHANNEL)
             .filter(|body| {
@@ -316,7 +318,7 @@ impl<'a> ServedChannelSink<'a> {
         if mode == LineMode::Reply && reply_token.is_none() {
             return OutboundExecutionOutcome::failed("line_reply_token_unavailable");
         }
-        let destination = line_destination(answered.as_ref(), &request.intent.target);
+        let destination = line_destination(&request.intent.target);
         let mut outcome = None;
         let _door = self.vault.inject_secret_at_door(
             &secret.name,
@@ -401,7 +403,7 @@ impl<'a> ServedChannelSink<'a> {
             }
         };
         let origin = SurfaceConnectorPayload::from_connector_event(&event).ok()?;
-        if origin.channel != channel || origin.source.user_ref != intent.target {
+        if origin.channel != channel || origin.reply_target() != intent.target {
             return None;
         }
         let body = match self
@@ -577,37 +579,26 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// The reply token an archived LINE event carries, while the event is
-/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
-/// Where a LINE push goes: the group or room the answered message came
-/// from, as a Slack reply goes to its channel, else the target's user
-/// (`line:user:<id>`), group (`line:group:<id>`), room (`line:room:<id>`)
-/// or bare LINE id. `None` for a target LINE cannot address. A fresh reply
-/// token already answers in the message's own chat.
-fn line_destination(answered: Option<&serde_json::Value>, target: &str) -> Option<String> {
-    let chat = answered
-        .and_then(|body| body.pointer("/event/source"))
-        .and_then(|source| match source.get("type")?.as_str()? {
-            "group" => source.get("groupId")?.as_str(),
-            "room" => source.get("roomId")?.as_str(),
-            _ => None,
-        });
-    let to = match chat {
-        Some(chat) => chat,
-        None => [
-            LINE_USER_TARGET_PREFIX,
-            LINE_GROUP_TARGET_PREFIX,
-            LINE_ROOM_TARGET_PREFIX,
-        ]
-        .iter()
-        .find_map(|prefix| target.strip_prefix(prefix))
-        .unwrap_or(target),
-    };
+/// Where a LINE push goes: the target's user (`line:user:<id>`), group
+/// (`line:group:<id>`), room (`line:room:<id>`) or bare LINE id. `None` for
+/// a target LINE cannot address. A push never takes its chat from an
+/// answered event: that event answers only the audience that is the target
+/// (FIX 10809), and a fresh reply token already answers in its chat.
+fn line_destination(target: &str) -> Option<String> {
+    let to = [
+        LINE_USER_TARGET_PREFIX,
+        LINE_GROUP_TARGET_PREFIX,
+        LINE_ROOM_TARGET_PREFIX,
+    ]
+    .iter()
+    .find_map(|prefix| target.strip_prefix(prefix))
+    .unwrap_or(target);
     (!to.is_empty() && !to.contains(':')).then(|| to.to_owned())
 }
 
-/// The audience of an archived LINE event in [`line_audience_key`]'s
-/// spelling: the group or room it was written in, else its sender.
+/// The audience of an archived LINE event, normalized and spelled by
+/// [`line_source_audience_key`] as intake spelled the reply target: the
+/// group or room it was written in, else its sender.
 fn line_archived_audience(answered: &serde_json::Value) -> Option<String> {
     let source = answered.pointer("/event/source")?;
     let chat = source
@@ -616,9 +607,11 @@ fn line_archived_audience(answered: &serde_json::Value) -> Option<String> {
         .and_then(LineChatKind::parse)
         .and_then(|kind| Some(LineChat::new(kind, source.get(kind.id_field())?.as_str()?)));
     let user = source.get("userId").and_then(serde_json::Value::as_str);
-    line_audience_key(chat.as_ref(), user)
+    line_source_audience_key(chat.as_ref(), user)
 }
 
+/// The reply token an archived LINE event carries, while the event is
+/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
 fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {
     let token = value.pointer("/event/replyToken")?.as_str()?.trim();
     let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;

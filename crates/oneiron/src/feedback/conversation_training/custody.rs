@@ -28,14 +28,15 @@
 //! its withdrawal still goes whatever its generation (`anonymous`).
 //!
 //! A person's erase (FIX 3520) forgets their name here: every submission
-//! carrying their words stands withdrawn, each that reached the intake named
-//! by an id-only forget control in the erase's own transaction, one control
-//! per month those submissions were prepared in, so the withdrawal still
-//! flows without naming them; every anonymous piece among them takes its
+//! carrying their words stands withdrawn, each hosted one that is held or
+//! was ever published (so may be at the intake, FIX 9855) named by an
+//! id-only forget control in the erase's own transaction, one control per
+//! month those submissions were prepared in, so the withdrawal still flows
+//! without naming them; every anonymous piece among them takes its
 //! withdrawal intent before their id leaves its row instead, and joins no
-//! control.
+//! control (`withdraw`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use rand_core::{OsRng, RngCore};
@@ -48,7 +49,7 @@ use crate::side_table::{self, Named, SideTable};
 
 use super::anonymous::{self, AnonymousPiece, TrainingTransport};
 use super::lifecycle::{ReceiptCursor, TrainingControlId, TrainingScope, TrainingSubmissionId};
-use super::{link, purge};
+use super::{link, purge, withdraw};
 
 /// A custody key: the row's kind, then its id.
 pub(super) type CustodyKey = ([u8; 1], [u8; 16]);
@@ -106,6 +107,12 @@ pub(super) struct SubmissionCustody {
     /// and a restore that brings this row keeps it even after K is minted
     /// afresh (FIX 5892). No log or error names it.
     pub(super) piece: [u8; 32],
+    /// The code its hosted offer names its source by, for its month under
+    /// its generation's key (FIX 9855): made once, in the writer that holds
+    /// it, and the very code its sealed offer carries, so a forget of it
+    /// needs no key, even once that generation is orphaned. A retry keeps
+    /// it. `None` on a row held before it was kept.
+    pub(super) source_code: Option<[u8; 32]>,
     /// How its offer leaves the vault (TL-6): set at its first preparation
     /// from the offer pass, kept by a retry.
     pub(super) transport: TrainingTransport,
@@ -114,8 +121,12 @@ pub(super) struct SubmissionCustody {
     /// signed revision and state, the cursor and the withdrawal intent. A
     /// hosted row keeps the default and never touches it.
     pub(super) anonymous: AnonymousPiece,
-    /// When it was published; `None` while it never left.
+    /// When it was published; `None` while it never left. A publication
+    /// marked after its withdrawal is recorded too (FIX 9855).
     pub(super) published_at: Option<u64>,
+    /// The id-only forget control that names it at the intake, once one is
+    /// recorded (FIX 9855): a second withdrawal records no second control.
+    pub(super) forget: Option<[u8; 16]>,
     pub(super) state: SubmissionState,
     /// Whether its files may still be in the outbox.
     pub(super) files: bool,
@@ -192,13 +203,22 @@ pub(super) enum ControlChange {
     WorldEligibility { world: EntityId, everywhere: bool },
     /// Purge everything under the control's own scope (TL-5).
     PurgeScope,
+    /// Remove these hosted submissions of one source, named by the source
+    /// code their offers carried, kept on their rows from their hold (FIX
+    /// 9855). Its wire spelling is a forget of that source, made with no
+    /// key.
+    ForgetHosted {
+        source_code: [u8; 32],
+        submissions: Vec<[u8; 16]>,
+    },
 }
 
 impl ControlChange {
-    /// Whether the wire spelling of this change carries codes, so signing it
-    /// needs its generation's key. A purge names none.
+    /// Whether the wire spelling of this change carries codes made when it
+    /// is signed, so signing it needs its generation's key. A purge names
+    /// none, and a hosted forget carries its code already.
     pub(super) const fn needs_codes(&self) -> bool {
-        !matches!(self, Self::PurgeScope)
+        !matches!(self, Self::PurgeScope | Self::ForgetHosted { .. })
     }
 }
 
@@ -526,9 +546,11 @@ pub(super) fn record_control_in(
 
 impl Vault {
     /// A person's erase over the custody family (FIX 3520), in the erase's
-    /// own transaction: the submissions carrying their words that reached
-    /// the intake get id-only forget controls, one per source, month and
-    /// generation, each under that pair's scope (none for an orphaned
+    /// own transaction: the hosted submissions carrying their words that
+    /// are held or were ever published, so may be at the intake (FIX 9855),
+    /// get id-only forget controls, one per source, month and generation,
+    /// each under that pair's scope (by the source code kept from the hold,
+    /// or, on a row held before it was kept, none for an orphaned
     /// generation, counted unavailable), every anonymous one takes its
     /// withdrawal intent instead and joins no control, and every such row
     /// forgets their id and stands withdrawn, its files left for the next
@@ -538,21 +560,12 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         actor: &EntityId,
     ) -> Result<()> {
-        let mut forgets: BTreeMap<(EntityId, String, u32), Vec<[u8; 16]>> = BTreeMap::new();
+        let mut owed = Vec::new();
         for ((_, id), mut row) in SUBMISSIONS.scan_from(&self.store, wtxn, &SUBMISSION)? {
             if !row.persons.contains(actor) {
                 continue;
             }
-            let removed = row
-                .receipt
-                .is_some_and(|mark| mark.status == TrainingReceiptStatusV2::Removed);
-            if row.published_at.is_some() && !removed && row.transport == TrainingTransport::Hosted
-            {
-                forgets
-                    .entry((row.source, row.month.clone(), row.generation))
-                    .or_default()
-                    .push(id);
-            }
+            let forget = withdraw::may_reach_intake(&row);
             // TL-6: an anonymous piece's C withdrawal intent, set before the
             // person's id leaves its row.
             anonymous::withdraw(&mut row);
@@ -563,21 +576,13 @@ impl Vault {
             ) {
                 row.state = SubmissionState::Withdrawn;
             }
-            SUBMISSIONS.put(&self.store, wtxn, &(SUBMISSION, id), &row)?;
+            if forget {
+                owed.push((TrainingSubmissionId(id), row));
+            } else {
+                SUBMISSIONS.put(&self.store, wtxn, &(SUBMISSION, id), &row)?;
+            }
         }
-        let now = crate::unix_seconds_now();
-        for ((source, month, generation), submissions) in forgets {
-            record_control_in(
-                self,
-                wtxn,
-                (&month, generation),
-                ControlChange::ForgetSource {
-                    source,
-                    submissions,
-                },
-                now,
-            )?;
-        }
+        withdraw::forget_hosted_in(self, wtxn, owed, crate::unix_seconds_now())?;
         Ok(())
     }
 }

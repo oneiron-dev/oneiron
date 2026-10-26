@@ -40,6 +40,7 @@ impl AiHost {
             Some(server.host_account()),
             Some(Attached { device, control }),
             server.broker_context(),
+            Some(server.model_budgets.clone()),
         )
         .await;
         if host.handle.hints.is_some() {
@@ -162,14 +163,22 @@ impl AiHost {
         receipts: Arc<dyn RunReceiptSink>,
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
     ) -> Self {
-        Self::start_with(vault, models, host_root, receipts, account, None, None).await
+        Self::start_with(
+            vault, models, host_root, receipts, account, None, None, None,
+        )
+        .await
     }
 
     /// `start_receipted`, `attached` to a server when `Some`, on a device
     /// host and under a Dreamer control as that says, its `key_secret`
     /// providers sending through `broker`, the vault's one credential-broker
     /// context. An attached host's turn-action worker waits for
-    /// [`Self::bind_turn_actions`].
+    /// [`Self::bind_turn_actions`]. Its runtime holds model bytes on
+    /// `budgets`, the server's vault's (FIX 9321), or on its own.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one fact of the host being started"
+    )]
     async fn start_with(
         vault: Arc<Vault>,
         models: Option<&ModelsConfig>,
@@ -178,11 +187,13 @@ impl AiHost {
         account: Option<Arc<oneiron::llm::run_admission::HostAccount>>,
         attached: Option<Attached>,
         broker: Option<&BrokerContext>,
+        budgets: Option<crate::models::ModelHostBudgets>,
     ) -> Self {
         let device = attached.as_ref().is_some_and(|attached| attached.device);
         recover_dead_leases(&vault);
         let rests = OfferCooldowns::in_vault(Arc::clone(&vault));
-        let mut runtime = ModelRuntime::build_hosted(models, broker, rests)
+        let budgets = budgets.unwrap_or_else(crate::models::ModelHostBudgets::unhosted);
+        let mut runtime = ModelRuntime::build_hosted_on(models, broker, rests, &budgets)
             .with_receipts(receipts)
             .with_media_vault(Arc::clone(&vault));
         if let Some(account) = account {
