@@ -43,6 +43,9 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::context_board::erase_section_fit_receipts_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
+    // FIX 7998: retained federation and maintenance copies of the row.
+    #[cfg(feature = "sync")]
+    crate::sync::federation_burst::erase_retained_copies_in_txn,
 ];
 
 /// Runs before the record's body and edges go. `physical` is false for a soft
