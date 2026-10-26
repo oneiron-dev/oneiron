@@ -456,6 +456,7 @@ where it sat. Answer each key one of four ways:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw GET '/v1/owner/secrets/found?pending=true&after=<next_cursor>'    # the next page, until done
 oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
 oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
 oneiron api raw POST /v1/owner/secrets/found/grant \
