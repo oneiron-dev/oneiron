@@ -57,6 +57,7 @@ mod checkpoint_root_intake;
 mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
+mod clock_repair;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
@@ -234,6 +235,10 @@ pub use checkpoint_root_status::{
     AuthorityCheckpointRootState, AuthorityCheckpointRoots, CheckpointRootDelivery,
     ROOT_CHECKPOINT_MISSING_SIGNER, ROOT_CHECKPOINT_POLICY_CHANGE, RootCheckpointMissingSigner,
     RootCheckpointPolicyChange,
+};
+pub use clock_repair::{
+    AUTHORITY_CLOCK_REPAIR_EVIDENCE, AuthorityClockRepair, AuthorityClockRepairEvidence,
+    AuthorityClockRepairOutcome,
 };
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;

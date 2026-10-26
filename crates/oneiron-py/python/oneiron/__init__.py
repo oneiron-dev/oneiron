@@ -2203,6 +2203,9 @@ class Oneiron:
         def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs":
             return Oneiron._VaultAuthorityHistoryVerbs(self._client)
         @property
+        def clock(self) -> "Oneiron._VaultAuthorityClockVerbs":
+            return Oneiron._VaultAuthorityClockVerbs(self._client)
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
             return Oneiron._VaultAuthorityHandoffAlarmsVerbs(self._client)
     class _VaultAuthorityHistoryVerbs:
@@ -2214,6 +2217,12 @@ class Oneiron:
         def import_(self, spec):
             """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
             return json.loads(_translate(lambda: self._client.vault_authority_history_import(json.dumps(spec))))
+    class _VaultAuthorityClockVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def repair(self, spec=None):
+            """Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so."""
+            return json.loads(_translate(lambda: self._client.vault_authority_clock_repair(json.dumps({} if spec is None else spec))))
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

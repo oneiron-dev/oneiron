@@ -93,13 +93,13 @@ pub(super) fn authority_observation_secs_for_write(
     wtxn: &mut RwTxn<'_>,
     candidate_secs: u64,
 ) -> Result<u64> {
-    let floor_key = crate::authority::authority_first_seen_clock_key();
-    let previous_floor = crate::authority::AUTHORITY_FIRST_SEEN
-        .get(store, wtxn, &floor_key)?
-        .unwrap_or(0);
+    // Strict as before; a damaged floor now names itself (FIX 10106).
+    let previous_floor =
+        crate::authority::read_authority_clock_floor_in_txn(store, wtxn)?.unwrap_or(0);
     let observed_secs =
         crate::authority::authority_observation_secs(store, previous_floor, candidate_secs);
     if observed_secs != previous_floor {
+        let floor_key = crate::authority::authority_first_seen_clock_key();
         crate::authority::AUTHORITY_FIRST_SEEN.put(store, wtxn, &floor_key, &observed_secs)?;
     }
     Ok(observed_secs)

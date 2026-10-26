@@ -1410,6 +1410,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.authority.clock.repair",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.wire_health.thresholds.get",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -6886,6 +6890,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.connectors.slates.reask_issuer",
     "vault.authority.history.export",
     "vault.authority.history.import",
+    "vault.authority.clock.repair",
     "vault.wire_health.thresholds.get",
     "vault.wire_health.thresholds.set",
     "vault.slim.policy",
@@ -8101,6 +8106,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AuthorityHistoryImported,
+        >(),
+        "vault.authority.clock.repair" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AuthorityClockRepair,
         >(),
         "vault.wire_health.thresholds.get" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WireThresholds>()
@@ -11957,6 +11965,13 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.history.export" => &[],
         "vault.authority.history.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.authority.clock.repair" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -18998,6 +19013,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.history.import" => {
             let _input: crate::task_verb::sdk::SignedAuthorityHistory = decode(value.clone())?;
         }
+        "vault.authority.clock.repair" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.wire_health.thresholds.get" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
@@ -22673,6 +22691,9 @@ pub fn invoke(
         }
         "vault.authority.history.import" => {
             encode(vault_authority_history_import(memory, decode(value)?)?)
+        }
+        "vault.authority.clock.repair" => {
+            encode(vault_authority_clock_repair(memory, decode(value)?)?)
         }
         "vault.wire_health.thresholds.get" => {
             encode(vault_wire_health_thresholds_get(memory, decode(value)?)?)
@@ -26945,6 +26966,15 @@ pub fn vault_authority_history_import(
         memory.vault(),
         &memory.embedded_owner("vault.authority.history.import")?,
         input,
+    )
+}
+pub fn vault_authority_clock_repair(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::AuthorityClockRepair> {
+    crate::task_verb::sdk::repair_authority_clock_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.authority.clock.repair")?,
     )
 }
 pub fn vault_wire_health_thresholds_get(

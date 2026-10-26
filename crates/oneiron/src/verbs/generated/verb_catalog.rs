@@ -284,6 +284,7 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultAuthorityClockRepair,
     VaultWireHealthThresholdsGet,
     VaultWireHealthThresholdsSet,
     VaultSlimPolicy,
@@ -1468,6 +1469,7 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultAuthorityClockRepair,
         Self::VaultWireHealthThresholdsGet,
         Self::VaultWireHealthThresholdsSet,
         Self::VaultSlimPolicy,
@@ -2655,6 +2657,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultAuthorityClockRepair => "vault.authority.clock.repair",
             Self::VaultWireHealthThresholdsGet => "vault.wire_health.thresholds.get",
             Self::VaultWireHealthThresholdsSet => "vault.wire_health.thresholds.set",
             Self::VaultSlimPolicy => "vault.slim.policy",
@@ -3869,6 +3872,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -5082,6 +5086,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -6421,6 +6426,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -7424,6 +7430,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
@@ -8287,6 +8294,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultAuthorityClockRepair => &["spec"],
             Self::VaultWireHealthThresholdsGet => &["spec"],
             Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
@@ -9472,6 +9480,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultAuthorityClockRepair => &["spec"],
             Self::VaultWireHealthThresholdsGet => &["spec"],
             Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
@@ -11207,6 +11216,9 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultAuthorityClockRepair => {
+                "Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so."
             }
             Self::VaultWireHealthThresholdsGet => {
                 "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."

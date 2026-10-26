@@ -8,7 +8,7 @@
 
 use std::time::Instant;
 
-use crate::error::Error;
+use crate::error::{Error, RecordError};
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::StoreCore;
 
@@ -114,6 +114,34 @@ struct AuthorityClockAnchor {
 }
 
 impl AuthorityLocalClock {
+    /// This handle's anchored reading at `now`, when it holds an anchor: the
+    /// clock it has measured since it seeded from a floor it read whole. It
+    /// seeds none and rebases none.
+    fn anchored_secs(&self, now: Instant) -> Option<u64> {
+        self.anchor.as_ref().map(|anchor| {
+            anchor.anchor_secs.saturating_add(
+                now.saturating_duration_since(anchor.anchor_instant)
+                    .as_secs(),
+            )
+        })
+    }
+
+    /// The anchor as it stands, for [`Self::restore_anchor`].
+    pub(super) fn anchor_state(&self) -> Option<(Instant, u64)> {
+        self.anchor
+            .as_ref()
+            .map(|anchor| (anchor.anchor_instant, anchor.anchor_secs))
+    }
+
+    /// Puts back an anchor [`Self::anchor_state`] read, undoing a seed a
+    /// write that did not commit took.
+    pub(super) fn restore_anchor(&mut self, state: Option<(Instant, u64)>) {
+        self.anchor = state.map(|(anchor_instant, anchor_secs)| AuthorityClockAnchor {
+            anchor_instant,
+            anchor_secs,
+        });
+    }
+
     /// The monotone observation this vault reports for `candidate_wall_secs`,
     /// measured from `now` on the monotonic clock. Reachable from `authority`
     /// only: the store path goes through `authority_observation_secs`, and the
@@ -176,22 +204,103 @@ pub(crate) fn authority_observation_secs(
         .observation_secs_at(previous_floor, candidate_wall_secs, Instant::now())
 }
 
+/// This handle's anchored reading now, when it holds one.
+pub(super) fn authority_anchored_secs(store: &StoreCore) -> Option<u64> {
+    store
+        .authority_local_clock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .anchored_secs(Instant::now())
+}
+
+/// The verdict on a present authority clock floor that does not decode (FIX
+/// 10106).
+pub(crate) fn authority_clock_corrupt() -> Error {
+    Error::Record(RecordError::AuthorityClockCorrupt)
+}
+
+/// The persisted authority clock floor, read strictly in `txn` (FIX 10106):
+/// None only when no floor row exists, a vault that has observed nothing
+/// yet. A present row that does not decode is
+/// [`RecordError::AuthorityClockCorrupt`], never zero; a storage error stays
+/// one.
+pub(crate) fn read_authority_clock_floor_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::error::Result<Option<u64>> {
+    match AUTHORITY_FIRST_SEEN.get_bytes(store, txn, &authority_first_seen_clock_key())? {
+        None => Ok(None),
+        Some(bytes) => AUTHORITY_FIRST_SEEN
+            .decode_value(&bytes)
+            .map(Some)
+            .map_err(|_| authority_clock_corrupt()),
+    }
+}
+
+/// The authority clock's reading for `candidate_wall_secs` in `txn`: the
+/// floor read strictly ([`read_authority_clock_floor_in_txn`]), raised
+/// through [`authority_observation_secs`]. Over a damaged floor it is this
+/// handle's anchored reading, a clock it measured from a floor it read whole,
+/// and with no anchor it is [`RecordError::AuthorityClockCorrupt`] (CALLS
+/// `FIX 10106 authority clock corrupt policy`). Pure: it writes nothing.
+pub(crate) fn authority_clock_reading_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    candidate_wall_secs: u64,
+) -> crate::error::Result<u64> {
+    match read_authority_clock_floor_in_txn(store, txn) {
+        Ok(floor) => Ok(authority_observation_secs(
+            store,
+            floor.unwrap_or(0),
+            candidate_wall_secs,
+        )),
+        Err(error) if is_authority_clock_corrupt(&error) => {
+            authority_anchored_secs(store).ok_or(error)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// [`authority_clock_reading_in_txn`] for a writer that commits the reading
+/// as the floor, as every authority write path does, so a reopen never reads
+/// below it. A damaged floor is never overwritten here: over one the reading
+/// is the anchored one, written nowhere, and only the owner's repair
+/// replaces the row (`clock_repair`).
+pub(crate) fn advance_authority_clock_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    candidate_wall_secs: u64,
+) -> crate::error::Result<u64> {
+    let floor = match read_authority_clock_floor_in_txn(store, wtxn) {
+        Ok(floor) => floor.unwrap_or(0),
+        Err(error) if is_authority_clock_corrupt(&error) => {
+            return authority_anchored_secs(store).ok_or(error);
+        }
+        Err(error) => return Err(error),
+    };
+    let observed = authority_observation_secs(store, floor, candidate_wall_secs);
+    if observed != floor {
+        AUTHORITY_FIRST_SEEN.put(store, wtxn, &authority_first_seen_clock_key(), &observed)?;
+    }
+    Ok(observed)
+}
+
+/// Whether `error` is the damaged-floor verdict
+/// ([`authority_clock_corrupt`]).
+pub(crate) fn is_authority_clock_corrupt(error: &Error) -> bool {
+    matches!(error, Error::Record(RecordError::AuthorityClockCorrupt))
+}
+
 /// `Vault::instant_in_txn`'s reading, in unix seconds, for a reader that
 /// holds a `Store` and no `Vault` (FIX 7461): the persisted floor read
-/// through `txn`, raised through [`authority_observation_secs`]. Pure, as
-/// that reading is: it writes nothing back.
+/// through `txn`, raised through [`authority_observation_secs`]
+/// ([`authority_clock_reading_in_txn`]). Pure, as that reading is: it writes
+/// nothing back.
 pub(crate) fn authority_instant_secs_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> crate::error::Result<u64> {
-    let persisted_floor = AUTHORITY_FIRST_SEEN
-        .get_lenient(store, txn, &authority_first_seen_clock_key())?
-        .unwrap_or(0);
-    Ok(authority_observation_secs(
-        store,
-        persisted_floor,
-        store.clock.now_recorded_at(),
-    ))
+    authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())
 }
 
 /// Production writes go through [`AUTHORITY_FIRST_SEEN`]'s typed door (`u64`'s
