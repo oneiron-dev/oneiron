@@ -22,14 +22,15 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use oneiron::MemoryError;
 use oneiron_remote::{InProcessReply, InProcessRequest, InProcessStream, InProcessTransport};
 use oneiron_server::embedded::{
-    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, ProcessHost,
-    embedded_serve_config, engine_memory_error, host_limits,
+    BlockingConnection, BlockingEngine, EmbeddedReply, EmbeddedRequest, EngineErrorKind,
+    ProcessHost, embedded_serve_config, engine_error_kind, engine_memory_error, host_limits,
 };
 
 use super::super::numeric::dimensions_to_engine;
@@ -60,6 +61,9 @@ pub struct NativeEngine {
     /// The options a local handle attaches to the engine's vault under: the
     /// ones it was started with.
     options: oneiron_remote::OpenOptions,
+    /// Set once `close` begins: every local handle refuses its next call
+    /// (FIX 4895).
+    closed: Arc<AtomicBool>,
 }
 
 /// One header of a request to the engine or of its reply.
@@ -136,6 +140,7 @@ impl NativeEngine {
                 dimensions,
                 device_class: None,
             },
+            closed: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -157,12 +162,25 @@ impl NativeEngine {
     /// itself, not the server, so the host-door rows only a server answers
     /// refuse on it (use `client` for those). It and every handle rebound
     /// from it keep the engine alive; each call attaches anew, and none
-    /// reopens the path.
+    /// reopens the path. Once the engine closes, each refuses
+    /// `ENGINE_CLOSED`; a call already running finishes.
     #[napi]
     pub fn local_client(&self) -> napi::Result<NativeClient> {
         let vault = engine_result(self.engine.vault(), engine_memory_error)?;
-        let inner = oneiron_remote::OneironClient::attach(self.engine.path(), vault, &self.options)
-            .map_err(facade_error)?;
+        let closed = Arc::clone(&self.closed);
+        let host_open: oneiron_remote::HostOpenCheck = Arc::new(move || {
+            if closed.load(Ordering::Acquire) {
+                return Err(engine_closed());
+            }
+            Ok(())
+        });
+        let attached = oneiron_remote::OneironClient::attach_while_open(
+            self.engine.path(),
+            vault,
+            &self.options,
+            host_open,
+        );
+        let inner = attached.map_err(facade_error)?;
         Ok(NativeClient {
             inner,
             keep: Some(Arc::clone(&self.engine) as Arc<dyn std::any::Any + Send + Sync>),
@@ -227,7 +245,15 @@ impl NativeEngine {
     /// served refuses `ENGINE_CLOSED` from then on.
     #[napi]
     pub fn close(&self) -> napi::Result<()> {
-        engine_result(self.engine.close(), engine_memory_error)
+        self.closed.store(true, Ordering::Release);
+        let closed = self.engine.close();
+        // A close refused before it began (off an app thread) closes nothing.
+        if let Err(error) = &closed
+            && matches!(engine_error_kind(error), EngineErrorKind::WrongThread)
+        {
+            self.closed.store(false, Ordering::Release);
+        }
+        engine_result(closed, engine_memory_error)
     }
 }
 
@@ -261,6 +287,13 @@ impl NativeEngineConnection {
     pub fn close(&self) -> napi::Result<()> {
         engine_result(self.connection.close(), engine_memory_error)
     }
+}
+
+/// The refusal a closed engine's handles raise, as `engine_memory_error`
+/// words the engine's own.
+fn engine_closed() -> MemoryError {
+    let kind = EngineErrorKind::Closed;
+    MemoryError::new(kind.code(), "the embedded engine is closed", &[kind.suggestion()])
 }
 
 /// An engine call's result, its failure as the facade's typed error

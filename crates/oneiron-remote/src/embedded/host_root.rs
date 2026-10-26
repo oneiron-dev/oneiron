@@ -66,6 +66,7 @@ impl EmbeddedClient {
             actor_class: EdgeActorClass::Human,
             room_turn: None,
             off_record_session: None,
+            host_open: None,
         };
         Ok((client, HostRootProfile::from_core(profile)))
     }
