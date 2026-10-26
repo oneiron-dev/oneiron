@@ -382,7 +382,15 @@ impl Vault {
                 generation: 0,
                 pending: 0,
             };
-            persist(self, txn, entity, &mut h, &doc, None)
+            persist(self, txn, entity, &mut h, &doc, None)?;
+            // A MESSAGE's quotes taken of its atomic text are pinned at the
+            // birth frontier, as a stream or quote birth pins them (FIX 4840).
+            if header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+                crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
+                    self, txn, entity, &initial, birth_actor,
+                )?;
+            }
+            Ok(())
         })?;
         registry.remove(entity);
         Ok(())

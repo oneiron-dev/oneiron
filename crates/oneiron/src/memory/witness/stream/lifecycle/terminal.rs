@@ -251,14 +251,8 @@ fn terminal_write(
                         retry
                     },
                     |txn| -> MemoryResult<()> {
-                        #[cfg(feature = "sync")]
-                        crate::entity_doc::birth_message_stream_in_txn(
-                            vault,
-                            txn,
-                            &seed.message_id,
-                            crate::write_envelope::WriteActor::new(seed.actor, seed.class()?),
-                            seed.occurred_at,
-                        )?;
+                        // The new MESSAGE keeps its words inline: its document
+                        // is born at its first later edit (FIX 4840).
                         if let Some(source) = seed.regenerates {
                             // The kind's creation is this stream's alone (FIX
                             // 5972), its pair proven above in this transaction:
