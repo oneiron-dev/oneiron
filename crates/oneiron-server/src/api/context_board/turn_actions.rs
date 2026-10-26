@@ -7,12 +7,13 @@
 //! verifies, a credential that is not the requester's or reads nothing, a
 //! refused assembly, an empty frame or a hold leaves the action as it always
 //! ran, logged without content. A native action, asked in-process with no
-//! slip, reads none.
+//! slip, reads none. A managed vault's attested owner's reads as the owner
+//! the vault records as live now (FIX 11090).
 use std::sync::Arc;
 
 use oneiron::authority::PeerMachine;
 use oneiron::claim::CallerLocality;
-use oneiron::conversation::TurnActionAttempt;
+use oneiron::conversation::{TurnActionAttempt, TurnActionAuthority};
 use oneiron::settings::ReadDestination;
 use oneiron::{EntityId, ModelLocality};
 
@@ -79,11 +80,31 @@ pub(crate) async fn action_board(
 /// kept slip verified again in a snapshot of its own, then projected with
 /// the fingerprint of the exact token the request presented, at no invitee
 /// door. It must still name the requester at its class and grant a read.
-/// `None`, logged, for a native action or one whose slip no longer does.
+/// An attested owner's is the owner the vault records as live now. `None`,
+/// logged, for a native action or one whose credential no longer does.
 fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<CoreAuth> {
-    let (Some(binding), false) = (&action.invocation_slip, action.native) else {
-        tracing::debug!("a native turn action reads no context board; it runs as it always did");
-        return None;
+    let binding = match &action.authority {
+        TurnActionAuthority::Slip { binding } => binding,
+        // The owner the vault records as live now, when he is the requester
+        // as a human ([`CoreAuth::for_attested_owner`]).
+        TurnActionAuthority::AttestedOwner { holder } => {
+            let (actor, class) = action.requester().ok()?;
+            let auth = (actor == *holder && class == oneiron::EdgeActorClass::Human)
+                .then(|| CoreAuth::for_attested_owner(*holder, server).ok())
+                .flatten();
+            if auth.is_none() {
+                tracing::info!(
+                    "a turn action's owner does not stand for its context board; the action runs without it"
+                );
+            }
+            return auth;
+        }
+        TurnActionAuthority::Native => {
+            tracing::debug!(
+                "a native turn action reads no context board; it runs as it always did"
+            );
+            return None;
+        }
     };
     let (actor, class) = action.requester().ok()?;
     let vault = server.vault();

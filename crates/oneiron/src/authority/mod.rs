@@ -102,6 +102,7 @@ mod machine_identity;
 mod machine_profile;
 mod machine_standing;
 mod machine_write;
+mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
@@ -275,6 +276,8 @@ pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
+pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
+pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
     MeshMachineBinding,

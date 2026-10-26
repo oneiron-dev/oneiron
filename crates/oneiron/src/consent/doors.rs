@@ -153,6 +153,12 @@ impl AuthenticatedOwner {
         Ok(())
     }
 
+    /// Whether this proof was authenticated by `vault`'s own open, the
+    /// first thing every revalidation asks.
+    pub(crate) fn belongs_to(&self, vault: &Vault) -> bool {
+        self.check_vault(vault).is_ok()
+    }
+
     /// The Gate decision this AUTHENTICATION is bound to.
     ///
     /// This is the authentication's own decision, not the decision of any act

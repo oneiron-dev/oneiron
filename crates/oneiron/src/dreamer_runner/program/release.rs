@@ -247,6 +247,9 @@ fn resume_in_txn(
     let binding = match vault.bind_turn_program_in_txn(&*wtxn, attempt)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return Err(not_resumed(held.reason())),
+        TurnProgramBound::OwnerNotLive => {
+            return Err(not_resumed(crate::authority::OWNER_NOT_LIVE));
+        }
     };
     if let Some(why) = vault.validate_program_resume_checkpoint_in_txn(
         &*wtxn,

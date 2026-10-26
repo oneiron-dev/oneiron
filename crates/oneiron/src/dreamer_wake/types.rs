@@ -139,6 +139,14 @@ pub enum DreamerAttemptExecution {
     Completed {
         completed_units: u64,
     },
+    /// The try ends Failed with `reason`, terminal and resumed by nothing:
+    /// a turn program whose attested owner is no longer the vault's live
+    /// owner (FIX 11090). The driver settles its spend, fails it on the
+    /// queue and counts it failed; the pass goes on.
+    Failed {
+        reason: String,
+        completed_units: u64,
+    },
     Park {
         reason: String,
         cause: DreamerParkCause,

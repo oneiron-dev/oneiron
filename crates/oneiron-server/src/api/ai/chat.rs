@@ -28,6 +28,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::ManifestEntry;
+use oneiron::authority::ManagedOwnerCheckError;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::conversation::{OutputMark, TurnActionAttempt};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
@@ -220,10 +221,61 @@ impl TurnCredential {
             Self::Action { action, vault } => action.requester_live_in(vault, txn),
         }
     }
+
+    /// Why this credential lapsed: a queued action's attested owner is his
+    /// own refusal, or an owner check that could not judge him (FIX 11090),
+    /// never a revoked slip; any other lapse is a revoked credential.
+    fn lapse(&self) -> Lapse {
+        let Self::Action { action, vault } = self else {
+            return Lapse::Revoked;
+        };
+        match action.owner_lapse(vault) {
+            Some(ManagedOwnerCheckError::OwnerNotLive) => Lapse::OwnerNotLive,
+            Some(ManagedOwnerCheckError::Unavailable) => Lapse::OwnerUnavailable,
+            None => Lapse::Revoked,
+        }
+    }
+}
+
+/// Why a turn's credential stopped holding, as its MESSAGE and the turn's
+/// reason keep it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lapse {
+    /// The credential was revoked: [`REVOKED`].
+    Revoked,
+    /// A queued action's attested owner is no longer the vault's live owner
+    /// (FIX 11090): [`OWNER_NOT_LIVE`].
+    OwnerNotLive,
+    /// A queued action's owner check could not judge him: the operational
+    /// failure a failed call ends on, no refusal of his.
+    OwnerUnavailable,
+}
+
+impl Lapse {
+    /// What the MESSAGE is cancelled with.
+    fn cancel_reason(self) -> StreamCancelReason {
+        match self {
+            Self::Revoked => StreamCancelReason::Custom(REVOKED.into()),
+            Self::OwnerNotLive => StreamCancelReason::Custom(OWNER_NOT_LIVE.into()),
+            Self::OwnerUnavailable => StreamCancelReason::AgentAborted,
+        }
+    }
+
+    /// The turn's reason, which a queued action records as its error.
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Revoked => "the turn's credential was revoked",
+            Self::OwnerNotLive => "the attested owner is not this vault's live owner",
+            Self::OwnerUnavailable => "the attested owner's standing could not be checked",
+        }
+    }
 }
 
 /// Recorded on the assistant MESSAGE a revoked credential's turn leaves.
 const REVOKED: &str = "credential_revoked";
+/// Recorded on the assistant MESSAGE a queued action leaves once its
+/// attested owner is no longer the vault's live owner (FIX 11090).
+const OWNER_NOT_LIVE: &str = "owner_not_live";
 /// Recorded on the assistant MESSAGE the newcomer barrier stopped: an
 /// attendee entered its conversation while it was being written.
 const NEWCOMER: &str = "attendee_entered";

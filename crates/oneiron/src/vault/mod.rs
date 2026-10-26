@@ -201,6 +201,12 @@ pub struct Vault {
     /// ([`Vault::install_code_consent_effect_host`]). In memory only.
     pub(crate) code_consent_host:
         std::sync::OnceLock<std::sync::Arc<dyn crate::code_run::CodeConsentEffectHost>>,
+    /// The served host's check that a managed vault's attested owner is its
+    /// live owner, which his queued work runs under (FIX 11090), installed
+    /// once per open vault ([`Vault::install_managed_owner_check`]). In
+    /// memory only.
+    pub(crate) managed_owner_check:
+        std::sync::OnceLock<std::sync::Arc<dyn crate::authority::ManagedOwnerCheck>>,
     /// A host Coach serving this vault drafts its digest settings steps (FIX
     /// 5609, 6165, 7211; [`Vault::set_coach_weave_digest_host_ready`]): when
     /// its last round completed and its own expected round interval, `None`
