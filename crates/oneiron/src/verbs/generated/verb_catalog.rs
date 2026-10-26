@@ -696,6 +696,7 @@ pub enum AgentVerb {
     VaultAgentsGrantsRevoke,
     VaultRepoGitPushMint,
     VaultRepoGitPushRevoke,
+    VaultConnectorsReadGrantsRevoke,
     VaultRepoAnchorBind,
     VaultRepoSnapshotsGet,
     VaultRepoSnapshotsRead,
@@ -1878,6 +1879,7 @@ impl AgentVerb {
         Self::VaultAgentsGrantsRevoke,
         Self::VaultRepoGitPushMint,
         Self::VaultRepoGitPushRevoke,
+        Self::VaultConnectorsReadGrantsRevoke,
         Self::VaultRepoAnchorBind,
         Self::VaultRepoSnapshotsGet,
         Self::VaultRepoSnapshotsRead,
@@ -3081,6 +3083,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => "vault.agents.grants.revoke",
             Self::VaultRepoGitPushMint => "vault.repo.git_push.mint",
             Self::VaultRepoGitPushRevoke => "vault.repo.git_push.revoke",
+            Self::VaultConnectorsReadGrantsRevoke => "vault.connectors.read_grants.revoke",
             Self::VaultRepoAnchorBind => "vault.repo.anchor.bind",
             Self::VaultRepoSnapshotsGet => "vault.repo.snapshots.get",
             Self::VaultRepoSnapshotsRead => "vault.repo.snapshots.read",
@@ -4275,6 +4278,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
@@ -5486,6 +5490,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsGet
                 | Self::VaultRepoSnapshotsRead
@@ -6807,6 +6812,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultAgentsBase
                 | Self::VaultStandingBlocksConfigure
@@ -7665,6 +7671,7 @@ impl AgentVerb {
                 | Self::VaultAgentsGrantsRevoke
                 | Self::VaultRepoGitPushMint
                 | Self::VaultRepoGitPushRevoke
+                | Self::VaultConnectorsReadGrantsRevoke
                 | Self::VaultRepoAnchorBind
                 | Self::VaultRepoSnapshotsIngest
                 | Self::VaultRepoWorkOpen
@@ -8685,6 +8692,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
@@ -9868,6 +9876,7 @@ impl AgentVerb {
             Self::VaultAgentsGrantsRevoke => &["spec"],
             Self::VaultRepoGitPushMint => &["spec"],
             Self::VaultRepoGitPushRevoke => &["spec"],
+            Self::VaultConnectorsReadGrantsRevoke => &["spec"],
             Self::VaultRepoAnchorBind => &["spec"],
             Self::VaultRepoSnapshotsGet => &["spec"],
             Self::VaultRepoSnapshotsRead => &["spec"],
@@ -12403,6 +12412,9 @@ impl AgentVerb {
             }
             Self::VaultRepoGitPushRevoke => {
                 "The owner revokes one git_push Grant by its id; its holder's next push is refused at once, and a repeat changes nothing."
+            }
+            Self::VaultConnectorsReadGrantsRevoke => {
+                "The owner revokes one agent's witness-read grant over a connector conversation by its id; the agent stops reading the conversation's messages at once, no later witness issues the grant again, and a repeat changes nothing."
             }
             Self::VaultRepoAnchorBind => {
                 "The owner binds one served repo to its CODE anchor in a live PROJECT he names, the anchor a git_push Grant, a run's repo bounds and a publish name it by; a repeat changes nothing."

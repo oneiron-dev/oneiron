@@ -7,14 +7,17 @@
 //! The exchange is the agent's memory (FIX 2404): the message, and the kept
 //! reply once it reaches the channel, are witnessed into their conversation,
 //! and the call reads that conversation's whole history as the agent's own
-//! read lane admits it. A witness that fails is named in the result, a
-//! history read that fails is logged, and the reply goes on either way; the
-//! context is read whole, and past its `[limits]` row it asks.
+//! read lane admits it, by the read grant the agent's first witness of the
+//! conversation issues (FIX 10895). A witness or a read grant that fails is
+//! named in the result, a history read that fails is logged, and the reply
+//! goes on either way; the context is read whole, and past its `[limits]`
+//! row it asks.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::ingest::ConnectorWitness;
 use oneiron::limit_ask::EngineLimit;
 use oneiron::memory::TranscriptMessage;
 use oneiron::outbound::{
@@ -320,19 +323,23 @@ fn inbound_text(
 }
 
 /// Witnesses one side of the exchange: the rows it landed at join
-/// `result.witness_refs`, and a refusal is owed a repair while the reply
-/// goes on.
+/// `result.witness_refs`, and a refusal, or a read grant the witness did
+/// not issue (FIX 10895), is owed a repair while the reply goes on.
 fn witness(
     result: &mut ConnectorReplyJobResult,
     side: &str,
-    land: impl FnOnce() -> oneiron::memory::MemoryResult<Vec<String>>,
+    land: impl FnOnce() -> oneiron::memory::MemoryResult<ConnectorWitness>,
 ) {
     match land() {
-        Ok(refs) => {
-            for landed in refs {
+        Ok(witnessed) => {
+            for landed in witnessed.refs {
                 if !result.witness_refs.contains(&landed) {
                     result.witness_refs.push(landed);
                 }
+            }
+            if let Some(error) = witnessed.read_grant_repair {
+                tracing::warn!(%error, side, "connector witness read grant was not issued; the reply goes on");
+                owe(result, format!("{side} read grant: {error}"));
             }
         }
         Err(error) => owe_repair(result, side, &error),
@@ -343,7 +350,11 @@ fn witness(
 /// reply goes on.
 fn owe_repair(result: &mut ConnectorReplyJobResult, side: &str, error: &dyn std::fmt::Display) {
     tracing::warn!(%error, side, "connector reply witness did not land; the reply goes on");
-    let owed = format!("{side}: {error}");
+    owe(result, format!("{side}: {error}"));
+}
+
+/// Adds `owed` to the result's witness repairs.
+fn owe(result: &mut ConnectorReplyJobResult, owed: String) {
     result.witness_repair = Some(match result.witness_repair.take() {
         Some(earlier) => format!("{earlier}; {owed}"),
         None => owed,

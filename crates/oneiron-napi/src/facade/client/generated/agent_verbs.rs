@@ -6040,6 +6040,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_connectors_read_grants_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.read_grants.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_repo_anchor_bind(
         &self,
         input: serde_json::Value,
