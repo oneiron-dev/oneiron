@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/access_grant/record.rs` | src | m | 2 struct · 3 enum · 19 fn | AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus, CalendarAccessGrantRow | AccessGrant record and scope, capability, and status enums |
 | `src/access_grant/request.rs` | src | m | 1 struct · 1 enum · 5 fn | AccessRequest, AccessRequestStatus | Durable request/response lifecycle |
 | `src/access_grant/tests.rs` | test | m | — | — | — |
-| `src/access_grant/vault_doors.rs` | src | s | 7 fn · 2 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
+| `src/access_grant/vault_doors.rs` | src | m | 7 fn · 3 crate-vis | — | Vault doors for AccessGrant put, create, revoke, read, and calendar registry |
 | `src/actor_claims/archive.rs` | src | s | 3 crate-vis | — | Domain-owned inert restore of learned actor rows |
 | `src/actor_claims/archive_references.rs` | src | s | 2 crate-vis | — | Typed actor evidence references for credential-safe archive serialization |
 | `src/actor_claims/candidate.rs` | src | m | 5 struct · 1 enum · 2 fn · 6 crate-vis | CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView, CraftVerdict, CraftVerdictView | The resident-dreaming candidate inlet (OF-490): a resident's own dreaming proposes craft notes about itself… |
@@ -2873,8 +2873,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/audience.rs` | src | m | 2 struct · 2 enum · 5 fn · 3 const · 2 crate-vis | ImportAudience, ImportAudienceCluster, ImportAudienceOption, ImportAudienceState | Import audience topics (OF-492) |
 | `src/ingest/bulk_review.rs` | src | s | 3 struct · 4 fn | ImportedClaimBatch, ImportedClaimBatchEntry, ImportedClaimBatchReceipt | One import-time human act for the exact set of imported claim candidates |
 | `src/ingest/bulk_review_tests.rs` | test | s | — | — | — |
-| `src/ingest/connector_conversation.rs` | src | s | 1 struct · 3 fn | ConnectorWitness | A served connector conversation as the answering agent's memory (FIX 2404) |
-| `src/ingest/connector_witness_grant.rs` | src | s | 8 crate-vis | — | The witness-read grant (FIX 10895, owner ruling WITNESS-READ) |
+| `src/ingest/connector_conversation.rs` | src | m | 1 struct · 3 fn · 1 crate-vis | ConnectorWitness | A served connector conversation as the answering agent's memory (FIX 2404) |
+| `src/ingest/connector_witness_grant.rs` | src | m | 9 crate-vis | — | The witness-read grant (FIX 10895, owner ruling WITNESS-READ) |
 | `src/ingest/docs.rs` | src | s | 4 struct · 3 fn · 1 const | DocsExport, DocsExportSource, DocsPage, DocsSegment | Export-seam docs normalization |
 | `src/ingest/docs_deep.rs` | src | m | 2 struct · 1 enum · 1 trait · 1 fn · 6 crate-vis | DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger | On-demand docs NER: only a named trigger crosses the thin-star boundary |
 | `src/ingest/docs_import.rs` | src | m | 3 struct · 2 trait · 3 fn · 1 crate-vis | DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier, DocsSummaryModel | Atomic bulk consent and thin-star docs membership |
@@ -5662,7 +5662,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/connector_pack.rs` | src | s | 13 struct | ConnectorPackAcceptRequest, ConnectorPackAdvisory, ConnectorPackBasis, ConnectorPackDelta, ConnectorPackGetRequest, ConnectorPackGrantRow, ConnectorPackGrants, ConnectorPackGrantsGetRequest +5 | Typed, source-bound connector-pack admission and delta re-consent |
 | `src/verbs/connector_slate.rs` | src | s | 3 struct · 1 enum · 5 fn · 1 const | ConnectorSlateNarrowRequest, ConnectorSlateNarrowView, ConnectorSlateRedraftReply, ConnectorSlateRedraftRequest | FIX 987: `vault.connectors.slates.redraft` and `vault.connectors.slates.narrow` (ARCH-0072 "re-draft", and… |
 | `src/verbs/connector_slate_revision.rs` | src | m | 13 struct · 2 enum · 7 fn | ConnectorBindingDependentView, ConnectorCredentialBindingView, ConnectorIssuerReaskRequest, ConnectorRevisionGrantView, ConnectorRevisionSnoozeView, ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorScopeSignalView +7 | FIX 988: the owner's doors onto proposed connector slate revisions (ARCH-0072 door 3, and the issuer-change… |
-| `src/verbs/connector_witness_read_grant.rs` | src | s | 2 struct · 1 fn | ConnectorWitnessReadGrantRevokeRequest, ConnectorWitnessReadGrantRevoked | `vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a… |
+| `src/verbs/connector_witness_read_grant.rs` | src | s | 4 struct · 2 fn | ConnectorWitnessReadGrantRequest, ConnectorWitnessReadGrantRevokeRequest, ConnectorWitnessReadGrantRevoked, ConnectorWitnessReadGranted | `vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a… |
 | `src/verbs/coreference.rs` | src | s | 6 struct · 5 fn | CoreferenceLinkReceipt, CoreferenceLinkRequest, CoreferencePairRequest, CoreferenceShareConsentReceipt, CoreferenceShareConsentRequest, CoreferenceUnlinkReceipt | Typed cross-vault identity links |
 | `src/verbs/courtesy_delete.rs` | src | m | 8 struct · 7 fn | CourtesyDeleteAnswerRequest, CourtesyDeleteAskedWorld, CourtesyDeleteChoice, CourtesyDeleteHold, CourtesyDeleteIncoming, CourtesyDeleteRecordProgress, CourtesyDeleteSendRequest, CourtesyDeleteSent | The inputs and answers of the owner's courtesy delete rows (OF-273, ARCH-0043 #relationship-lifecycle)… |
 | `src/verbs/credential.rs` | src | s | 4 struct · 1 fn | CredentialAttenuated, CredentialAttenuationRequest, CredentialCaveat, CredentialPactCeiling | Holder-owned attenuation of the credential a transport admitted |
@@ -5679,7 +5679,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/files.rs` | src | m | 16 struct · 1 enum · 9 fn | FilesFileState, FilesFileView, FilesLimitCrossed, FilesRescanAnswer, FilesRescanCounts, FilesRescanView, FilesSourceAttachAnswer, FilesSourceAttachRequest +9 | The inputs and answers of the Files world's source rows (FIX 6942): `vault.files.sources.attach`, `.rescan`… |
 | `src/verbs/generated/catalog_fragment_revision.rs` | src | generated | 1 const | — | — |
 | `src/verbs/generated/run_verb_catalog.rs` | src | generated | 1 enum · 4 fn · 1 const | RunVerb | — |
-| `src/verbs/generated/sdk_generated.rs` | src | generated | 1190 fn · 4 const | — | — |
+| `src/verbs/generated/sdk_generated.rs` | src | generated | 1191 fn · 4 const | — | — |
 | `src/verbs/generated/verb_catalog.rs` | src | generated | 1 enum · 17 fn · 1 const | AgentVerb | — |
 | `src/verbs/git_push_grant.rs` | src | s | 7 struct · 3 fn | GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput, GitPushGrantRevokeOutput, GitPushGrantView, RepoAnchorBindInput, RepoAnchorBindOutput | The inputs and answers of the owner's `git_push` Grant rows (FIX 6867, G1-PUSH): `vault.repo.git_push.mint`… |
 | `src/verbs/goal_optimize.rs` | src | m | 15 struct · 14 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |

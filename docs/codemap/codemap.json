@@ -147,13 +147,13 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/access_grant/vault_doors.rs",
      "purpose": "Vault doors for AccessGrant put, create, revoke, read, and calendar registry",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7
      }
     },
@@ -36306,7 +36306,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ConnectorWitness"
@@ -36314,18 +36314,19 @@
      "path": "src/ingest/connector_conversation.rs",
      "purpose": "A served connector conversation as the answering agent's memory (FIX 2404)",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ingest/connector_witness_grant.rs",
      "purpose": "The witness-read grant (FIX 10895, owner ruling WITNESS-READ)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -71306,14 +71307,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
-      "ConnectorWitnessReadGrantRevoked"
+      "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted"
      ],
      "path": "src/verbs/connector_witness_read_grant.rs",
      "purpose": "`vault.connectors.read_grants.revoke` (FIX 10895): the owner revokes an agent's witness-read grant over a…",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -71623,7 +71626,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 1190
+      "fn": 1191
      }
     },
     {
@@ -90152,7 +90155,7 @@
      "path": "src/facade/client/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1158
+      "fn": 1159
      }
     },
     {
@@ -91524,7 +91527,7 @@
      "path": "src/generated/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 1159
+      "fn": 1160
      }
     },
     {
@@ -95642,9 +95645,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/connector_witness_read_doors.rs",
-     "purpose": "The host door of an agent's witness-read grant over a connector conversation (FIX 10895)…",
+     "purpose": "The host doors of an agent's witness-read grant over a connector conversation…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -109958,8 +109961,10 @@
       "ConnectorSlateView",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConnectorWitnessReadGrantRequest",
       "ConnectorWitnessReadGrantRevokeRequest",
       "ConnectorWitnessReadGrantRevoked",
+      "ConnectorWitnessReadGranted",
       "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
@@ -113196,7 +113201,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1013,
-      "struct": 3119
+      "struct": 3121
      }
     },
     {
