@@ -3457,7 +3457,7 @@ export type CleanupReviewContent = { record?: ScopedReadResult<EntityView | null
 /** `oneiron::vault_cleanup::review_types::CleanupAcceptEffect` */
 export type CleanupAcceptEffect = "archive" | "skip" | "nothing" | "fails"
 /** `oneiron::vault_cleanup::review_types::CleanupReviewItem` */
-export type CleanupReviewItem = { slot: number; state: CleanupItemState; entity?: EntityId | null; kind?: CleanupKind | null; revision?: string | null; evidence?: CleanupReviewEvidence | null; content?: CleanupReviewContent | null; accept: CleanupAcceptEffect }
+export type CleanupReviewItem = { slot: number; state: CleanupItemState; entity?: EntityId | null; kind?: CleanupKind | null; revision?: string | null; evidence?: CleanupReviewEvidence | null; content?: CleanupReviewContent | null; accept: CleanupAcceptEffect; changed_during_review?: boolean | null }
 /** `oneiron::vault_cleanup::review_types::CleanupReviewView` */
 export type CleanupReviewView = { proposal: EntityId; attempt: string; created_at: number; read_at: number; revision: string; task_retention_days: number; counts: CleanupReviewCounts; items: CleanupReviewItem[] }
 /** `oneiron::vault_cleanup::review_types::CleanupItemDecision` */

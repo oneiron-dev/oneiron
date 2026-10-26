@@ -6,6 +6,7 @@ mod routing;
 mod store;
 
 pub use crate::edit_distance::publisher::IssueCategory;
+pub(crate) use delivery::received_issue_signature;
 pub use delivery::{
     COACH_FEEDBACK_DELIVERY_FACET, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, ReportDeliveryHold, ReportDeliveryKey, ReportDeliveryOutcome,

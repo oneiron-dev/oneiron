@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::metadata::received_stacks;
 use super::{
     REPORT_SIGNATURE_SCHEMA, REPORT_SIGNATURE_VERB, ReportDeliveryKey, ReportFrozenSend,
     ReportFrozenSignature, ReportPublisherEndpoint, ReportSignatureTransport,
@@ -19,7 +20,7 @@ use crate::outbound::{
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
     PublisherSignatureAuthorization,
 };
-use crate::settings::default_model_stack_registry;
+use crate::settings::ModelStackRegistry;
 use crate::{EntityId, Error, Result};
 
 /// The wire shape of `oneiron.issue_signature.v1`: ED-08's fields and the
@@ -132,27 +133,53 @@ pub(super) fn wire_body(signature: &IssueSignature) -> Result<String> {
         .ok_or(Error::InvariantViolation("issue signature wire encode"))
 }
 
-/// The ED-08 signature a frozen body still is, checked again through its
-/// only constructor; `None` unless it is one byte for byte.
-pub(super) fn wire_signature(body: &str) -> Option<IssueSignature> {
-    let wire: WireSignature = serde_json::from_str(body).ok()?;
+/// The ED-08 signature a body still is, checked again through its only
+/// constructor against the stacks `stacks` names for the body's model id;
+/// `None` unless it is one byte for byte.
+///
+/// # Errors
+///
+/// What `stacks` answers.
+pub(super) fn wire_signature(
+    body: &str,
+    stacks: impl FnOnce(&str) -> Result<ModelStackRegistry>,
+) -> Result<Option<IssueSignature>> {
+    let Ok(wire) = serde_json::from_str::<WireSignature>(body) else {
+        return Ok(None);
+    };
     if wire.schema != REPORT_SIGNATURE_SCHEMA {
-        return None;
+        return Ok(None);
     }
+    let registry = stacks(&wire.model_id)?;
+    Ok(signature_of(&wire, &registry)
+        .filter(|signature| wire_body(signature).is_ok_and(|canonical| canonical == body)))
+}
+
+/// A received `oneiron.issue_signature.v1` body read back typed: its model
+/// id names a compiled stack or spells one host model's own stack (FIX
+/// 7684, FIX 7686). `None` unless it is one byte for byte.
+pub(crate) fn received_issue_signature(body: &str) -> Option<IssueSignature> {
+    wire_signature(body, |model_id| Ok(received_stacks(model_id)))
+        .ok()
+        .flatten()
+}
+
+/// The signature `wire`'s fields make through the constructor, checked
+/// against `registry`.
+fn signature_of(wire: &WireSignature, registry: &ModelStackRegistry) -> Option<IssueSignature> {
     let counts = wire
         .counts
         .iter()
         .map(|(key, value)| Some((CountKey::parse(key)?, *value)))
         .collect::<Option<Vec<_>>>()?;
-    let signature = IssueSignature::new(
+    IssueSignature::new(
         IssueCategory::parse(&wire.category)?,
         EntityId::from_hex(&wire.artifact).ok()?,
         wire.version,
-        &default_model_stack_registry(),
+        registry,
         &wire.model_id,
         &counts,
         &wire.content_hash,
     )
-    .ok()?;
-    (wire_body(&signature).ok()? == body).then_some(signature)
+    .ok()
 }
