@@ -313,7 +313,9 @@ pub(super) fn channel_identity_lifecycle_receipts(
             b"channel_identity_lifecycle",
         )?
     };
-    let records = vault.store.channel_identity_lifecycle_receipts(usize::MAX)?;
+    let records = vault
+        .store
+        .channel_identity_lifecycle_receipts(usize::MAX)?;
     count.rows(records.len());
     count.finish(vault);
     let mut receipts = Vec::new();
