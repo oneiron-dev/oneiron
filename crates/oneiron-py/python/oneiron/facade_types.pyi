@@ -5619,12 +5619,25 @@ class PluginSectionProposeRequest(TypedDict):
     manifest: SectionManifestEnvelope
     target: PluginSectionTargetInput
     turn_ref: str
-class PluginSectionProposal(TypedDict):
+class PluginSectionInstallOutcomeInstalled(TypedDict):
+    outcome: Literal["installed"]
+    claim_ref: str
+    section_id: str
+    skill_ref: str
+    manifest_digest: str
+    permissions: list[str]
+    undo_verb: str
+    manifest: SectionManifestEnvelope
+class PluginSectionInstallOutcomePermissionAsk(TypedDict):
+    outcome: Literal["permission_ask"]
     claim_ref: str
     pending_ref: str
     manifest_digest: str
     section_id: str
+    analysis: str
+    permissions: list[str]
     manifest: SectionManifestEnvelope
+PluginSectionInstallOutcome = PluginSectionInstallOutcomeInstalled | PluginSectionInstallOutcomePermissionAsk
 class PluginSectionListRequest(TypedDict):
     limit: NotRequired[int | None]
     cursor: NotRequired[str | None]
@@ -5635,6 +5648,8 @@ class PluginSectionPendingRow(TypedDict):
     label: str
     origin: str
     awaiting_owner_consent: bool
+    analysis: NotRequired[str | None]
+    permissions: NotRequired[list[str]]
 class PluginSectionAdmittedRow(TypedDict):
     claim_ref: str
     section_id: str

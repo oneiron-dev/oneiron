@@ -11,17 +11,18 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
-    MemoryResult, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionListRequest,
-    PluginSectionProposal, PluginSectionProposeRequest, PluginSectionRevokeRequest,
+    MemoryResult, PluginSectionGrant, PluginSectionGrantRequest, PluginSectionInstallOutcome,
+    PluginSectionListRequest, PluginSectionProposeRequest, PluginSectionRevokeRequest,
     PluginSectionRevoked, PluginSectionSuggestRequest, PluginSectionSuggestion, PluginSectionsView,
     PluginSuggestionsSetRequest, PluginSuggestionsView,
 };
 use oneiron::runtime_hooks::InvocationId;
+use oneiron::skill_hub::CallerPermissions;
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing, refused};
-use crate::auth::CoreAuth;
+use crate::auth::{CoreAuth, CoreScope};
 use crate::server::SyncServer;
 
 /// The vault owner's proof from the request, as `/v1/owner` takes it.
@@ -29,18 +30,43 @@ fn owner(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Authe
     super::owner_binding::facade_owner(server, auth, verb)
 }
 
+/// What the calling credential already holds, as this host judges it (FIX
+/// 9752): an advertised section verb its scope may call, the `read` lane on
+/// a read scope, and its own `actor.private` lane on an unrestricted write
+/// scope. A skill's bin, env, MCP or tool request is never held here, so it
+/// always reaches the owner. The engine adds the caller's own standing for
+/// each verb.
+struct CredentialPermissions<'a> {
+    auth: &'a CoreAuth,
+}
+
+impl CallerPermissions for CredentialPermissions<'_> {
+    fn holds(&self, permission: &str) -> bool {
+        if let Some(verb) = permission.strip_prefix("verb:") {
+            return super::action_routes::require_action_scope(self.auth, verb).is_ok();
+        }
+        match permission {
+            "lane:read" => self.auth.has_scope(CoreScope::Read),
+            "lane:actor.private" => self.auth.require(CoreScope::Write).is_ok(),
+            _ => false,
+        }
+    }
+}
+
 /// `vault.packs.sections.propose`: the caller offers one typed section
-/// manifest; it waits as a proposed install claim and registers nothing.
+/// manifest. A code-free section whose requests the credential already
+/// holds installs at once (the owner's revoke undoes it); anything else
+/// waits as a proposed install claim for the owner.
 pub(crate) async fn vault_packs_sections_propose(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     _invocation: Option<InvocationId>,
     input: PluginSectionProposeRequest,
-) -> Listed<PluginSectionProposal> {
+) -> Listed<PluginSectionInstallOutcome> {
     const VERB: &str = "vault.packs.sections.propose";
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.plugin_section_propose(&input)
+    credential_listing(server, auth, caller, VERB, move |_, auth, memory| {
+        memory.plugin_section_propose_holding(&input, &CredentialPermissions { auth })
     })
     .await
 }

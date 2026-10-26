@@ -17038,19 +17038,44 @@ pub struct PluginSectionProposeRequest {
     pub turn_ref: String,
 }
 
-/// `oneiron::memory::plugin_sections::PluginSectionProposal`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct PluginSectionProposal {
-    #[serde(rename = "claim_ref")]
-    pub claim_ref: String,
-    #[serde(rename = "pending_ref")]
-    pub pending_ref: String,
-    #[serde(rename = "manifest_digest")]
-    pub manifest_digest: String,
-    #[serde(rename = "section_id")]
-    pub section_id: String,
-    #[serde(rename = "manifest")]
-    pub manifest: SectionManifestEnvelope,
+/// `oneiron::memory::plugin_sections::install::PluginSectionInstallOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum PluginSectionInstallOutcome {
+    #[serde(rename = "installed")]
+    Installed {
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+        #[serde(rename = "section_id")]
+        section_id: String,
+        #[serde(rename = "skill_ref")]
+        skill_ref: String,
+        #[serde(rename = "manifest_digest")]
+        manifest_digest: String,
+        #[serde(rename = "permissions")]
+        permissions: Vec<String>,
+        #[serde(rename = "undo_verb")]
+        undo_verb: String,
+        #[serde(rename = "manifest")]
+        manifest: SectionManifestEnvelope,
+    },
+    #[serde(rename = "permission_ask")]
+    PermissionAsk {
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+        #[serde(rename = "pending_ref")]
+        pending_ref: String,
+        #[serde(rename = "manifest_digest")]
+        manifest_digest: String,
+        #[serde(rename = "section_id")]
+        section_id: String,
+        #[serde(rename = "analysis")]
+        analysis: String,
+        #[serde(rename = "permissions")]
+        permissions: Vec<String>,
+        #[serde(rename = "manifest")]
+        manifest: SectionManifestEnvelope,
+    },
 }
 
 /// `oneiron::memory::plugin_sections::PluginSectionListRequest`.
@@ -17078,6 +17103,14 @@ pub struct PluginSectionPendingRow {
     pub origin: String,
     #[serde(rename = "awaiting_owner_consent")]
     pub awaiting_owner_consent: bool,
+    #[serde(rename = "analysis", default, skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<String>,
+    #[serde(
+        rename = "permissions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub permissions: Option<Vec<String>>,
 }
 
 /// `oneiron::memory::plugin_sections::PluginSectionAdmittedRow`.
