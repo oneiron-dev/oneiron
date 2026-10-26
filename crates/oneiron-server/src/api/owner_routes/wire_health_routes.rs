@@ -32,6 +32,8 @@ struct HealthChecks {
     checks: Vec<HealthCheck>,
     /// The shared connection pool's live pressure check (FIX 7656).
     connection_pool_pressure: ConnectionPoolPressure,
+    /// The mesh listener's sync streams' own check (FIX 7737).
+    mesh_pool: ConnectionPoolPressure,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +60,7 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
                 .wire_telemetry
                 .limit_questions()
                 .connection_pool_pressure(),
+            mesh_pool: server.mesh_pressure.snapshot(),
         })
     })
     .await?;

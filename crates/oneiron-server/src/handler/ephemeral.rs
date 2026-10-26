@@ -3,12 +3,18 @@
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use oneiron::authority::PeerMachine;
+use oneiron::claim::CallerLocality;
 use oneiron::sync::{
     EphemeralStore, EphemeralWireState, decode_ephemeral_states, encode_ephemeral_states,
 };
 
 use crate::protocol::{self, ProtocolError};
 use crate::server::SyncServer;
+
+mod message_scope;
+
+pub(super) use message_scope::releases_frame;
 
 /// Clock skew tolerated for Loro `EphemeralStore` LWW timestamps from clients.
 const MAX_EPHEMERAL_FUTURE_SKEW_MS: i64 = 60_000;
@@ -19,11 +25,16 @@ const MAX_EPHEMERAL_KEY_BYTES: usize = 256;
 /// The hub's live presence for a socket that just joined, one frame of at
 /// most `max_ephemeral_snapshot_bytes` per `next()`: a hub larger than that
 /// is sent in parts, never skipped, and no part is built before the last one
-/// is sent (rule 5, row 19).
+/// is sent (rule 5, row 19). A message partial goes only where its
+/// conversation may be read now, by the socket's `locality` and the
+/// `machine` it proved (FIX 9537).
 pub(super) fn late_join_presence(
     server: &SyncServer,
     conn_id: u32,
+    locality: CallerLocality,
+    machine: PeerMachine,
 ) -> impl Iterator<Item = Vec<u8>> + '_ {
+    let destination = message_scope::joining(server, locality, machine);
     // `keys()` leaves out deletes; a late joiner needs their tombstones too.
     let mut keys = {
         let mut presence = server.presence.lock();
@@ -50,6 +61,9 @@ pub(super) fn late_join_presence(
             let mut part = std::mem::take(&mut carry);
             let mut part_bytes = std::mem::take(&mut carry_bytes);
             for key in keys.by_ref() {
+                if !message_scope::releases_key(server, &key, &destination) {
+                    continue;
+                }
                 let canonical = server.ephemeral_store.encode(&key);
                 let states = match decode_ephemeral_states(&canonical) {
                     Ok(states) => states,

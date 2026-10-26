@@ -24,6 +24,7 @@ use crate::error::HostError;
 use crate::handlers::{Answered, AskHandlers, AskRequest, HandlerScope};
 use crate::outcome::{Leased, OrganOutcome, OrganOutput, OutputBytes};
 use crate::resource_memory::{FloorRefusal, SharedFloor};
+use crate::shutdown;
 use crate::spec::{FetchGrant, LentInput, OrganCall, OrganInput};
 
 /// Why a node did not return an outcome.
@@ -148,7 +149,9 @@ async fn take(conn: &dyn MeshConnection, carried: Carried) -> Result<Vec<u8>, Me
 /// read or was lent, vault inputs first, each with the version it read.
 /// The organ's asks are answered here by `asks`, and every ask's receipt
 /// line lands in `asks` as a local call's would. What comes back leases
-/// `floor`, this machine's, before it is allocated.
+/// `floor`, this machine's, before it is allocated. Under a mesh stop's
+/// cancel the call is dropped there once the cancel comes, and it says
+/// [`HostError::Interrupted`] (FIX 4756).
 pub(crate) async fn call_on(
     conn: &dyn MeshConnection,
     machine: EntityId,
@@ -162,6 +165,8 @@ pub(crate) async fn call_on(
         floor,
         deadline: Instant::now() + call.deadline.min(longest),
     };
+    // Read on the blocking thread the router drives this call from.
+    let cancel = shutdown::current();
     let mut sent = HashSet::new();
     let mut wire = Vec::with_capacity(inputs.len());
     for (read, input) in inputs {
@@ -199,6 +204,9 @@ pub(crate) async fn call_on(
         loop {
             tokio::select! {
                 got = &mut reply => break got,
+                () = shutdown::cancelled(cancel.as_ref()) => {
+                    return Err(PeerError::Failed(HostError::Interrupted));
+                }
                 incoming = conn.accept_stream() => match incoming {
                     // An ask this side failed to answer leaves the organ
                     // a refusal from its own host; the call goes on.

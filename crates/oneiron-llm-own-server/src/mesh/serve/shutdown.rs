@@ -1,0 +1,86 @@
+//! A connection's drain at its host's mesh stop (FIX 4756). Once the stop
+//! begins, the service admits no new model call, and each connection serves
+//! on until the calls it admitted have ended, the streams they started
+//! included, or until the stop's one deadline comes; then what still runs
+//! is cancelled. Each task keeps its staging charge until it ends.
+
+use std::future::Future;
+use std::pin::pin;
+use std::task::Poll;
+use std::time::Instant;
+
+use oneiron_mesh_transport::{MeshConnection, MeshError, MeshStream};
+use tokio::sync::watch;
+use tokio::task::JoinSet;
+
+/// What a stopping node answers a new call.
+pub(super) const STOPPING: &str = "this node is stopping";
+
+/// Whether the host's stop has begun.
+pub(super) fn stopping(stop: Option<&watch::Receiver<Option<Instant>>>) -> bool {
+    stop.is_some_and(|stop| stop.borrow().is_some())
+}
+
+/// One connection's place in its service's stop: none while the service
+/// serves; once its host stops, the deadline its admitted calls drain by.
+pub(super) struct Stop(Option<watch::Receiver<Option<Instant>>>);
+
+impl Stop {
+    pub(super) fn new(stop: Option<watch::Receiver<Option<Instant>>>) -> Self {
+        Self(stop)
+    }
+
+    /// Whether the connection ends now: the stop has begun, and it is
+    /// `idle`, every call it admitted ended, or the deadline has come.
+    pub(super) fn ends(&self, idle: bool) -> bool {
+        let deadline = self.0.as_ref().and_then(|stop| *stop.borrow());
+        deadline.is_some_and(|deadline| idle || Instant::now() >= deadline)
+    }
+
+    /// Returns once the stop moves on: it begins, or its deadline comes.
+    /// Never, for a service no host stops.
+    async fn moved(&mut self) {
+        let Some(stop) = &mut self.0 else {
+            return std::future::pending().await;
+        };
+        let begun = *stop.borrow_and_update();
+        match begun {
+            Some(deadline) => tokio::time::sleep_until(deadline.into()).await,
+            // A host gone without a stop never stops this one.
+            None => {
+                if stop.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+        }
+    }
+}
+
+/// What a connection's loop goes on with.
+pub(super) enum Next {
+    /// The peer opened a stream, or the connection closed.
+    Stream(Result<Box<dyn MeshStream>, MeshError>),
+    /// A task ended, or the stop moved on.
+    Again,
+}
+
+/// Waits for the next of: the stop moving on, a task ending, the peer
+/// opening a stream. The first two come first when they are ready at once.
+pub(super) async fn next(
+    conn: &dyn MeshConnection,
+    tasks: &mut JoinSet<()>,
+    stop: &mut Stop,
+) -> Next {
+    let mut moved = pin!(stop.moved());
+    let mut accepted = pin!(conn.accept_stream());
+    std::future::poll_fn(|cx| {
+        if moved.as_mut().poll(cx).is_ready() {
+            return Poll::Ready(Next::Again);
+        }
+        if !tasks.is_empty() && matches!(tasks.poll_join_next(cx), Poll::Ready(Some(_))) {
+            return Poll::Ready(Next::Again);
+        }
+        accepted.as_mut().poll(cx).map(Next::Stream)
+    })
+    .await
+}

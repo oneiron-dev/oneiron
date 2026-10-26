@@ -108,7 +108,7 @@ pub(super) async fn handle_connection(
     }
 
     // Late-join/reconnect snapshot for the Loro-native ephemeral lane.
-    for msg in late_join_presence(&server, conn_id) {
+    for msg in late_join_presence(&server, conn_id, locality, machine) {
         if !transport.send_binary(msg).await {
             tracing::warn!(conn_id, "failed to send ephemeral snapshot");
             return;

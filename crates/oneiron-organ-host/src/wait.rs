@@ -15,6 +15,7 @@ use crate::error::HostError;
 use crate::handlers::AskHandlers;
 use crate::landing::propose_organ_outputs;
 use crate::route::{OrganRouter, RanOn, Routed};
+use crate::shutdown;
 use crate::spec::{CallClass, LentInput, OrganCall, OrganInput, SightedInput};
 
 /// One organ call whose export files are for an artifact's proposal
@@ -59,6 +60,12 @@ pub enum Redrive {
     /// A node ran it and it failed there, or its landing was refused; the
     /// row keeps the failure until released.
     Failed(String),
+    /// The host's mesh stop cut it short (FIX 4755): its row stays held, as
+    /// it was, for the next start.
+    Interrupted,
+    /// The host's mesh stop came before it was tried: its row stays held,
+    /// as it was.
+    Deferred,
 }
 
 /// A call as a held row keeps it: the engine stores the bytes, this crate
@@ -218,7 +225,9 @@ impl OrganRouter {
     /// files land as proposals made by the actor who asked, and its hold is
     /// released; one no node can take notes why; one that fails keeps its
     /// failure on its row. Run it when a node may have come back (a peer
-    /// connected, a tick), from a blocking thread.
+    /// connected, a tick), from a blocking thread. Under a mesh stop
+    /// ([`crate::MeshCancel::scope`]) no held call starts once the stop has
+    /// begun, and one its cancel cuts short stays held.
     ///
     /// # Errors
     /// The held calls could not be read or a row could not be written.
@@ -231,7 +240,11 @@ impl OrganRouter {
         for (wait, _) in vault.waiting_organ_calls()? {
             let artifact = wait.artifact_id;
             let run_ref = wait.run_ref.clone();
-            let state = self.redrive_one(vault, wait, asks)?;
+            let state = if shutdown::stopping() {
+                Redrive::Deferred
+            } else {
+                self.redrive_one(vault, wait, asks)?
+            };
             redriven.push(Redriven {
                 artifact,
                 run_ref,
@@ -280,6 +293,7 @@ impl OrganRouter {
                 vault.note_organ_wait(&artifact, &wait.run_ref, &still.reason, now)?;
                 Ok(Redrive::Waiting(still.reason))
             }
+            Err(HostError::Interrupted) => Ok(Redrive::Interrupted),
             Err(err) => failed(err.to_string()),
         }
     }

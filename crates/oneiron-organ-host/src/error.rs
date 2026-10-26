@@ -74,6 +74,10 @@ pub enum HostError {
     DeadlineExceeded,
     #[error("organ call was revoked")]
     Revoked,
+    /// The host's mesh stop cancelled the call before it ended (FIX 4756):
+    /// cut short, never a clean end. A held call stays held.
+    #[error("organ call was interrupted by the host's stop")]
+    Interrupted,
     #[error("the organ budget could not admit the call before its deadline")]
     BudgetTimeout,
     #[error("the call asks more than the whole organ budget")]

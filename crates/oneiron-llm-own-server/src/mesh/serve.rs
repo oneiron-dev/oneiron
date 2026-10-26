@@ -10,12 +10,14 @@
 //! stream is read. A full budget pauses the work that waits on it, in
 //! arrival order; nothing made is dropped, and the connection's end drops
 //! what it held.
+//!
+//! At its host's mesh stop a connection drains ([`shutdown`], FIX 4756).
 
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_core::Stream;
 use oneiron::{
@@ -25,9 +27,14 @@ use oneiron_mesh_transport::{
     MachineId, MeshConnection, MeshError, MeshFuture, MeshService, MeshStream,
 };
 use serde::Serialize;
+use tokio::sync::watch;
+use tokio::task::JoinSet;
 
+use self::shutdown::{Next, STOPPING, Stop};
 use super::staging::{BookedBody, Booking, OUTGOING_ENTRY, Staging, StagingBudget};
 use super::{Batch, LLM_ALPN, Reply, Request, encode, lock, seal, unseal};
+
+mod shutdown;
 
 /// How long a pull waits for the first event before it answers with none.
 const PULL_WAIT: Duration = Duration::from_secs(20);
@@ -60,6 +67,9 @@ pub struct LlmMeshService {
     handler: Arc<dyn LlmMeshHandler>,
     /// The bytes every connection's calls hold at once.
     budget: StagingBudget,
+    /// Its host's mesh stop, if a host stops it: `None` while it serves,
+    /// then the deadline its admitted calls drain by.
+    stop: Option<watch::Receiver<Option<Instant>>>,
 }
 
 impl std::fmt::Debug for LlmMeshService {
@@ -99,11 +109,26 @@ impl LlmMeshService {
     /// `budget`'s bytes at once: the host's, or [`StagingBudget::default`].
     #[must_use]
     pub fn new(handler: Arc<dyn LlmMeshHandler>, budget: StagingBudget) -> Self {
-        Self { handler, budget }
+        Self {
+            handler,
+            budget,
+            stop: None,
+        }
     }
 
-    /// Serves one admitted connection until it closes. A connection on
-    /// another ALPN is closed at once.
+    /// The service under its host's mesh stop (FIX 4756): `None` while the
+    /// host serves, then the one deadline the calls it admitted drain by.
+    /// Once the stop begins it admits no new model call; at the deadline
+    /// what still runs is cancelled.
+    #[must_use]
+    pub fn with_stop(mut self, stop: watch::Receiver<Option<Instant>>) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    /// Serves one admitted connection until it closes, or, once its host
+    /// stops, until the calls it admitted end or the stop's deadline comes.
+    /// A connection on another ALPN is closed at once.
     pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != LLM_ALPN {
             conn.close();
@@ -112,8 +137,17 @@ impl LlmMeshService {
         let peer = conn.machine();
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
         let session = Arc::new(Session::new(self.budget.clone()));
-        let mut tasks = Vec::new();
-        while let Ok(stream) = conn.accept_stream().await {
+        let mut tasks = JoinSet::new();
+        let mut stop = Stop::new(self.stop.clone());
+        loop {
+            if stop.ends(tasks.is_empty() && lock(&session.streams).is_empty()) {
+                break;
+            }
+            let stream = match shutdown::next(&*conn, &mut tasks, &mut stop).await {
+                Next::Stream(Ok(stream)) => stream,
+                Next::Stream(Err(_)) => break,
+                Next::Again => continue,
+            };
             let service = self.clone();
             let task_session = Arc::clone(&session);
             let serve = async move {
@@ -129,15 +163,13 @@ impl LlmMeshService {
                 .staging
                 .budget
                 .charged(size_of_val(&serve).saturating_add(TASK_ENTRY));
-            tasks.push(tokio::spawn(async move {
+            tasks.spawn(async move {
                 let _entry = entry;
                 serve.await;
-            }));
-            tasks.retain(|task| !task.is_finished());
+            });
         }
-        for task in tasks {
-            task.abort();
-        }
+        // What still runs is cancelled, each task's charge going with it.
+        tasks.shutdown().await;
         conn.close();
     }
 
@@ -162,6 +194,13 @@ impl LlmMeshService {
     ) -> (Reply, Option<Booking>) {
         let refused = |why: String| (Reply::Refused(why), None);
         match request {
+            // A stopping node starts no new model call: the asking node
+            // tries another.
+            Request::Generate { .. } | Request::Stream { .. }
+                if shutdown::stopping(self.stop.as_ref()) =>
+            {
+                refused(STOPPING.to_owned())
+            }
             Request::Put {
                 hash,
                 total,
@@ -260,7 +299,7 @@ impl MeshService for LlmMeshService {
 const STREAM_ENTRY: usize = 2 * (size_of::<u64>() + size_of::<Held>());
 
 /// What an accepted stream's task costs past its future: its handle and its
-/// slot in the connection's list.
+/// slot in the connection's set.
 const TASK_ENTRY: usize = 2 * size_of::<tokio::task::JoinHandle<()>>();
 
 /// `value`, an answer the model already made, as JSON on `booking`, which

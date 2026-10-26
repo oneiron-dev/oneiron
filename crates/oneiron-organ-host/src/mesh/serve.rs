@@ -9,6 +9,7 @@ use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal};
 use tokio::runtime::Handle;
+use tokio::task::JoinSet;
 
 use super::{
     Carried, FailureKind, ORGAN_ALPN, Offer, PeerAnswer, PeerAsk, PeerCall, PeerFailure,
@@ -21,16 +22,23 @@ use crate::host::OrganHost;
 use crate::outcome::OrganOutcome;
 use crate::receipt::AskReceipt;
 use crate::resource_memory::MemoryGrow;
+use crate::shutdown::MeshCancel;
 use crate::spec::{LentInput, OrganCall, OrganInput};
 
 /// Serves `oneiron/organ/1`: the owner's other nodes run organ calls on this
 /// node's host. The transport has already admitted the peer (its MACHINE
 /// row and its grant for this ALPN), and that node read every input under
 /// its own actor's authority before it sent the bytes.
+///
+/// Its host's mesh stop ([`Self::with_cancel`], FIX 4756): once it begins,
+/// no new call is admitted, and the calls admitted run on, their outputs
+/// still there to take; at its deadline each call still running is
+/// cancelled, and its thread is awaited before the connection ends.
 #[derive(Clone)]
 pub struct OrganService {
     host: Arc<OrganHost>,
     vault: Arc<Vault>,
+    cancel: MeshCancel,
 }
 
 impl std::fmt::Debug for OrganService {
@@ -44,12 +52,26 @@ impl std::fmt::Debug for OrganService {
 impl OrganService {
     #[must_use]
     pub fn new(host: Arc<OrganHost>, vault: Arc<Vault>) -> Self {
-        Self { host, vault }
+        Self {
+            host,
+            vault,
+            cancel: MeshCancel::new(),
+        }
     }
 
-    /// Serves one admitted connection until it closes. Each stream the peer
-    /// opens is one request; a call's asks go back on streams this side
-    /// opens. A connection on another ALPN is closed at once.
+    /// The service under its host's mesh stop.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: MeshCancel) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Serves one admitted connection until it closes, or until the stop
+    /// cancels its work. Each stream the peer opens is one request, a task
+    /// of the connection's own set; a call's asks go back on streams this
+    /// side opens. Every request it took is awaited before it returns, its
+    /// call's thread included. A connection on another ALPN is closed at
+    /// once.
     pub async fn serve_connection(&self, conn: Box<dyn MeshConnection>) {
         if conn.alpn() != ORGAN_ALPN {
             conn.close();
@@ -57,16 +79,29 @@ impl OrganService {
         }
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
         let staging = Arc::new(Staging::default());
-        while let Ok(stream) = conn.accept_stream().await {
+        let mut streams = JoinSet::new();
+        loop {
+            let stream = tokio::select! {
+                biased;
+                () = self.cancel.cancelled() => break,
+                Some(_) = streams.join_next(), if !streams.is_empty() => continue,
+                accepted = conn.accept_stream() => match accepted {
+                    Ok(stream) => stream,
+                    Err(_) => break,
+                },
+            };
             let service = self.clone();
             let conn = Arc::clone(&conn);
             let staging = Arc::clone(&staging);
-            tokio::spawn(async move {
+            streams.spawn(async move {
                 // A stream that breaks leaves the peer without a reply; it
                 // retries or tries another node.
                 drop(service.serve_stream(conn, staging, stream).await);
             });
         }
+        // Never aborted: a call the cancel cut short ends on its thread, and
+        // its reply says so.
+        while streams.join_next().await.is_some() {}
         conn.close();
     }
 
@@ -78,6 +113,11 @@ impl OrganService {
     ) -> Result<(), MeshError> {
         let request: Request = decode(&stream.recv().await?)?;
         let reply = match request {
+            // A stopping host admits no new call: the asking node tries
+            // another, or holds the call.
+            Request::Offers | Request::Call { .. } if self.cancel.is_stopping() => {
+                Reply::Refused("this node is stopping".into())
+            }
             // What this host can start now, never an install it refuses.
             Request::Offers => Reply::Offers(
                 self.host
@@ -161,7 +201,9 @@ impl OrganService {
             conn,
             staging: Arc::clone(staging),
             runtime: Handle::current(),
+            cancel: self.cancel.clone(),
         };
+        let cancel = self.cancel.clone();
         let answers = peer.answers;
         let (outcome, asked) = tokio::task::spawn_blocking(move || {
             let fetch = GuardedFetch;
@@ -181,7 +223,7 @@ impl OrganService {
                 };
                 handlers = handlers.with(verb, handler);
             }
-            let outcome = host.call_for_peer(&vault, call, inputs, &handlers);
+            let outcome = host.call_for_peer(&vault, call, inputs, &handlers, &cancel);
             (outcome, handlers.asked())
         })
         .await
@@ -235,7 +277,9 @@ fn failure(err: HostError, asks: Vec<AskReceipt>) -> PeerFailure {
         | HostError::BudgetTimeout
         | HostError::OverBudget
         | HostError::MediaTypeNotGranted(_)
-        | HostError::KindNotGranted(_) => FailureKind::Absent,
+        | HostError::KindNotGranted(_)
+        // This node's stop cut it short (FIX 4756): another node may run it.
+        | HostError::Interrupted => FailureKind::Absent,
         HostError::Organ(_) => FailureKind::Organ,
         HostError::DeadlineExceeded => FailureKind::Deadline,
         HostError::Revoked => FailureKind::Revoked,
@@ -259,6 +303,8 @@ struct Forward {
     conn: Arc<dyn MeshConnection>,
     staging: Arc<Staging>,
     runtime: Handle,
+    /// The stop's cancel ends a wait for the asking node.
+    cancel: MeshCancel,
 }
 
 impl Forward {
@@ -282,13 +328,17 @@ impl AskHandler for Forward {
             max_bytes: ask.max_bytes,
         };
         let failed = |detail: String| AskRefusal::new(AskCode::Failed, detail).retryable();
-        let answer = match self
-            .runtime
-            .block_on(tokio::time::timeout(remaining, self.ask(&peer)))
-        {
-            Ok(Ok(answer)) => answer,
-            Ok(Err(err)) => return Err(failed(format!("the asking node: {err}"))),
-            Err(_) => return Err(failed("the asking node did not answer in time".into())),
+        let asked = async {
+            tokio::select! {
+                answered = tokio::time::timeout(remaining, self.ask(&peer)) => Some(answered),
+                () = self.cancel.cancelled() => None,
+            }
+        };
+        let answer = match self.runtime.block_on(asked) {
+            Some(Ok(Ok(answer))) => answer,
+            Some(Ok(Err(err))) => return Err(failed(format!("the asking node: {err}"))),
+            Some(Err(_)) => return Err(failed("the asking node did not answer in time".into())),
+            None => return Err(failed("this node is stopping".into())),
         };
         if let Some(signed) = answer.signed {
             ask.record_signing(signed);

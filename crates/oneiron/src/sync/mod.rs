@@ -135,4 +135,4 @@ pub use transport::{
     encode_bulk_transfer_done, encode_ephemeral, encode_ephemeral_states,
     encode_legacy_full_window_protocol_hello, encode_protocol_hello, encode_window_sync,
 };
-pub use types::{SyncConfig, WindowKey};
+pub use types::{MessagePresenceScope, ScopedPresenceFrame, SyncConfig, WindowKey};

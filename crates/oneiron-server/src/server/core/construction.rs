@@ -141,10 +141,12 @@ impl SyncServer {
             Arc::clone(wire_telemetry.limit_questions()),
         ));
         let ephemeral_store = Arc::new(EphemeralStore::new(config.ephemeral_timeout_ms));
+        let message_scopes = Arc::new(super::message_stream::MessageScopes::default());
         super::message_stream::spawn_message_stream_producer(
             &vault,
             &ephemeral_store,
             &presence,
+            &message_scopes,
             &broadcast_tx,
             &config,
         );
@@ -250,9 +252,11 @@ impl SyncServer {
             memory: memory.clone(),
             renderer_turns,
             wire_telemetry,
+            mesh_pressure: crate::wire_telemetry::PoolPressure::mesh(),
             vault,
             root_doc,
             ephemeral_store,
+            message_scopes,
             broadcast_tx,
             next_conn_id: AtomicU32::new(1),
             lease_registrar: Mutex::new(()),

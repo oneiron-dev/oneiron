@@ -54,6 +54,10 @@ mod route;
 mod sandbox;
 #[cfg(unix)]
 pub mod seal;
+// The mesh's stop as its organ work sees it (FIX 4755, 4756). It builds
+// everywhere, as the router and the mesh client that read it do.
+#[path = "host/shutdown.rs"]
+mod shutdown;
 #[cfg(unix)]
 mod slot;
 mod spec;
@@ -82,6 +86,7 @@ pub use route::{
 };
 #[cfg(unix)]
 pub use sandbox::{DescendantFence, NamespaceFact, OrganIsolation};
+pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{

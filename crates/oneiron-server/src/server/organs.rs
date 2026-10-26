@@ -22,6 +22,8 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 #[cfg(feature = "mesh")]
 use oneiron::skill_hub::pack_catalog::PackInstallReceipt;
 use oneiron::skill_hub::pack_catalog::{PackOrgan, PackOrganBuild, host_platform};
+#[cfg(feature = "mesh")]
+use oneiron_organ_host::MeshCancel;
 use oneiron_organ_host::seal::SEAL_ORGAN;
 use oneiron_organ_host::{HostError, OrganSpec, OrganTier, pack_spec};
 
@@ -131,13 +133,15 @@ impl SyncServer {
     /// written is logged and skipped, and an unread catalog changes nothing.
     /// Blocking: it reads the vault and writes the builds.
     pub(crate) fn install_pack_organs(&self) {
-        let _ = self.reconcile_pack_organs();
+        let _ = self.reconcile_pack_organs(&|| false);
     }
 
     /// [`Self::install_pack_organs`]. The organs an Active pack declares a
     /// build of for this platform that the vault does not hold yet, as (pack,
-    /// organ); `None` when the catalog could not be read.
-    fn reconcile_pack_organs(&self) -> Option<Vec<(String, String)>> {
+    /// organ); `None` when the catalog could not be read, or when `stopped`
+    /// ended the pass before its next organ (FIX 4755): what it installed
+    /// stays, nothing is uninstalled, and the next pass starts over.
+    fn reconcile_pack_organs(&self, stopped: &dyn Fn() -> bool) -> Option<Vec<(String, String)>> {
         let _pass = lock(&PASS);
         let entries = match self.vault.pack_organs() {
             Ok(entries) => entries,
@@ -151,6 +155,9 @@ impl SyncServer {
         let mut carried = BTreeSet::new();
         let mut unbuilt = Vec::new();
         for entry in &entries {
+            if stopped() {
+                return None;
+            }
             let name = entry.organ.name.as_str();
             if name == SEAL_ORGAN || carried.contains(name) {
                 continue;
@@ -217,19 +224,22 @@ impl SyncServer {
     /// with the vault while the listener runs. Each tick reads the vault's
     /// install receipts, and passes over the organs again when they changed
     /// (a pack installed, updated or removed) or when a build the last pass
-    /// waited on is now held. It runs on a blocking thread.
+    /// waited on is now held. It runs on a blocking thread, and once the
+    /// listener's `stop` begins it starts no next organ (FIX 4755).
     #[cfg(feature = "mesh")]
-    pub(crate) fn pack_organ_tick(self: &Arc<Self>) -> PackOrganTick {
+    pub(crate) fn pack_organ_tick(self: &Arc<Self>, stop: MeshCancel) -> PackOrganTick {
         let server = Arc::clone(self);
         let watch = Arc::new(Mutex::new(PackOrganWatch::default()));
         Arc::new(
             move || -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
                 let server = Arc::clone(&server);
                 let watch = Arc::clone(&watch);
+                let stop = stop.clone();
                 Box::pin(async move {
-                    let rescanned =
-                        tokio::task::spawn_blocking(move || server.rescan_pack_organs(&watch))
-                            .await;
+                    let rescanned = tokio::task::spawn_blocking(move || {
+                        server.rescan_pack_organs(&watch, &|| stop.is_stopping())
+                    })
+                    .await;
                     if let Err(error) = rescanned {
                         tracing::warn!(%error, "pack organ rescan");
                     }
@@ -238,9 +248,9 @@ impl SyncServer {
         )
     }
 
-    /// One tick of [`Self::pack_organ_tick`].
+    /// One tick of [`Self::pack_organ_tick`], until `stopped`.
     #[cfg(feature = "mesh")]
-    fn rescan_pack_organs(&self, watch: &Mutex<PackOrganWatch>) {
+    fn rescan_pack_organs(&self, watch: &Mutex<PackOrganWatch>, stopped: &dyn Fn() -> bool) {
         let mut watch = lock(watch);
         let installs = match self.vault.installed_packs() {
             Ok(installs) => installs,
@@ -257,7 +267,7 @@ impl SyncServer {
         if watch.installs.as_ref() == Some(&installs) && !built {
             return;
         }
-        if let Some(unbuilt) = self.reconcile_pack_organs() {
+        if let Some(unbuilt) = self.reconcile_pack_organs(stopped) {
             watch.installs = Some(installs);
             watch.unbuilt = unbuilt;
         }
