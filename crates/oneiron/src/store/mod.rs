@@ -133,6 +133,7 @@ mod diagnostics;
 mod gate_decision;
 mod group_commit;
 mod handle;
+mod host_issuer_custody;
 mod key_custody;
 mod key_encoding;
 mod known_history;

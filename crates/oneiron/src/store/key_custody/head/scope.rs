@@ -12,6 +12,15 @@ use crate::error::Result;
 use super::super::identity::{CustodyId, CustodyKind, CustodySubject};
 use super::pad_scope::{PadRecipients, WORLD_PAD_COMPARTMENTS, WorldPadScope, world_of};
 
+/// The compartment a host issuer seed's escrow rides (FIX-LIST 10770; CALLS
+/// "L02 FIX 10770 issuer-seed custody scope (D1)"): host-readable, so a
+/// managed host that unlocked a backup with the data key takes the seed back
+/// without the owner's kit, as the managed data key credential already roots
+/// the host issuer. `OwnerOnly` wraps it to the recovery root alone; that
+/// flip also needs [`CustodyRecipients::keeps_local`] to leave the seed out
+/// while no root is pinned, as it does a credential's keys.
+const HOST_ISSUER_SEED_CUSTODY_SCOPE: CompartmentScope = CompartmentScope::HostReadable;
+
 /// Who may read one kind's entries, which fixes the recipients of the
 /// compartment they are sealed in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,6 +66,7 @@ impl CompartmentScope {
             | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
             | CustodyKind::TrainingLink => Self::HostReadable,
+            CustodyKind::HostIssuerSeed => HOST_ISSUER_SEED_CUSTODY_SCOPE,
             // A credential's value and its carriers' keys (KS-6, CALLS
             // `KS-6 entry eligibility`): only the owner's kit opens them; a
             // head carries one only where [`CustodyRecipients::keeps_local`]

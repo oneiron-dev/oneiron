@@ -125,8 +125,8 @@ impl Store {
     /// restore plans the same way and decides per row (FIX 5686 part 2).
     /// Nor is a credential's value or carrier key (KS-6): each is planned by
     /// the row or carrier that names it, never by the whole census. Nor is
-    /// a connector call's resume key (FIX 9157): each is required by its
-    /// call row when one names it, never by the whole census.
+    /// a connector call's resume key (FIX 9157), required by its call row
+    /// alone, or the host issuer seed's escrow (FIX-LIST 10770), optional.
     pub(crate) fn custody_requirement(&self) -> Result<Option<CustodyRequirement>> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(None);
@@ -152,6 +152,7 @@ impl Store {
                                 | CustodyKind::CustodyTransition
                                 | CustodyKind::CustodyRequestInput
                                 | CustodyKind::ConnectorResume
+                                | CustodyKind::HostIssuerSeed
                         )
                 })
                 .map(|(id, _)| RequiredId {
