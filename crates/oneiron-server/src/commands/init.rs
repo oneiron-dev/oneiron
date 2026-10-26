@@ -265,7 +265,7 @@ fn open_vault(answers: &InitArgs, config: &ServeConfig) -> anyhow::Result<oneiro
     // This install's own machine profile (FIX 4648), only on a vault the
     // configured host root already roots: a new vault's first serving start
     // roots it and profiles this install then. Init never mints a root.
-    if let Some(issuer) = super::owner::configured_host_issuer(config, &vault)
+    if let Some(issuer) = super::owner::configured_host_issuer(config, &vault, false)
         && vault
             .authority_fold()
             .is_ok_and(|fold| fold.vault_id.is_some())
@@ -300,7 +300,7 @@ fn turn_on_learning(
     config: &ServeConfig,
     output: &mut impl Write,
 ) -> anyhow::Result<()> {
-    let Some(issuer) = super::owner::configured_host_issuer(config, vault) else {
+    let Some(issuer) = super::owner::configured_host_issuer(config, vault, true) else {
         writeln!(output, "{CONVERSATION_LEARNING_NEEDS_ROOT}")?;
         return Ok(());
     };
