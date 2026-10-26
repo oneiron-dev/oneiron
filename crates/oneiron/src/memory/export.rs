@@ -94,6 +94,19 @@ pub struct ExportTransfer {
     pub digest: String,
 }
 
+/// What `vault.export` answers (FIX 3676): the archive inline, or the
+/// transfer naming it kept on the server, as its `delivery` asked. Untagged,
+/// so an inline answer keeps its wire shape; the two never decode as each
+/// other (an inline answer has no `transfer_ref`, a transfer no `archive`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ExportAnswer {
+    /// The archive in the reply.
+    Inline(MemoryExport),
+    /// The archive kept on the server, read through its transfer.
+    Transfer(ExportTransfer),
+}
+
 /// The BLAKE3 and length a client checks a transferred export against, fed
 /// as its bytes arrive (FIX 3676).
 #[derive(Default)]

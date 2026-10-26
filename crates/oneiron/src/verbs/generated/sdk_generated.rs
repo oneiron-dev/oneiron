@@ -25801,8 +25801,8 @@ pub fn vault_retrieval_policy_update(
 pub fn vault_export(
     memory: &Memory<'_>,
     input: crate::memory::ExportOptions,
-) -> MemoryResult<crate::memory::MemoryExport> {
-    memory.export(&input)
+) -> MemoryResult<crate::memory::ExportAnswer> {
+    Ok(crate::memory::ExportAnswer::Inline(memory.export(&input)?))
 }
 pub fn self_credential_attenuate(
     memory: &Memory<'_>,

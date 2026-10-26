@@ -2249,10 +2249,10 @@
     },
     {
       "name": "vault.export",
-      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref that GET /v1/core/export-transfers/{transfer_ref} reads.",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline.",
       "input": "crate::memory::ExportOptions",
-      "output": "crate::memory::MemoryExport",
-      "call": "memory.export(&input)?",
+      "output": "crate::memory::ExportAnswer",
+      "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,

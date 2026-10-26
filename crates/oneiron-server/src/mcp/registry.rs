@@ -724,7 +724,8 @@ fn normalize_credential(credential: &str) -> Option<&str> {
 }
 
 /// The JSON-encoded size of one retained producer snapshot's output and the
-/// row ids beside it, counted without building the encoding.
+/// board keyframe it retains, and the row ids beside them, counted without
+/// building the encoding.
 fn retained_snapshot_bytes(snapshot: &McpPageSnapshot) -> u64 {
     struct Count(u64);
     impl std::io::Write for Count {
@@ -739,6 +740,9 @@ fn retained_snapshot_bytes(snapshot: &McpPageSnapshot) -> u64 {
     let mut count = Count(0);
     // A value that cannot encode was never sent; it counts as nothing.
     let _ = serde_json::to_writer(&mut count, &snapshot.output);
+    if let Some(keyframe) = &snapshot.keyframe {
+        let _ = serde_json::to_writer(&mut count, keyframe);
+    }
     let rows = snapshot.rows.as_ref().map_or(0, Vec::len) as u64;
     let id_bytes = std::mem::size_of::<oneiron::EntityId>() as u64;
     count.0.saturating_add(rows.saturating_mul(id_bytes))

@@ -451,7 +451,7 @@ impl OneironClient {
                     oneiron::task_verb::sdk::RetrievalPolicyUpdateReceipt,
                 >(client, verb, &input),
                 "vault.export" => {
-                    remote_agent_verb_output::<oneiron::memory::MemoryExport>(client, verb, &input)
+                    remote_agent_verb_output::<oneiron::memory::ExportAnswer>(client, verb, &input)
                 }
                 "self.credential.attenuate" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CredentialAttenuated,
@@ -5355,7 +5355,7 @@ impl OneironClient {
     pub fn vault_export(
         &self,
         format: Option<&str>,
-    ) -> Result<oneiron::memory::MemoryExport, MemoryError> {
+    ) -> Result<oneiron::memory::ExportAnswer, MemoryError> {
         let input = oneiron::memory::ExportOptions {
             format: format.map(str::to_owned),
             ..Default::default()

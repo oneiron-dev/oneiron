@@ -46,13 +46,23 @@ impl OneironClient {
                 })?;
                 oneiron::task_verb::sdk::validate_input("vault.export", &value)?;
                 let transfer: ExportTransfer = remote.call("vault.export", &input)?;
-                remote.read_export_transfer(&transfer, &mut sink)?;
-                remote.release_export_transfer(&transfer.transfer_ref)?;
-                Ok(MemoryExportReceipt {
-                    format: transfer.format,
-                    bytes: transfer.bytes,
-                    digest: transfer.digest,
-                })
+                // The transfer is this call's own: it is let go whether the
+                // read finished or failed, and the read's error is the one
+                // returned. One that cannot be let go is named in the error.
+                let read = remote.read_export_transfer(&transfer, &mut sink);
+                let released = remote.release_export_transfer(&transfer.transfer_ref);
+                match (read, released) {
+                    (Ok(()), Ok(())) => Ok(MemoryExportReceipt {
+                        format: transfer.format,
+                        bytes: transfer.bytes,
+                        digest: transfer.digest,
+                    }),
+                    (Err(error), Ok(())) => Err(error),
+                    (Ok(()), Err(kept)) => Err(still_kept(None, &transfer.transfer_ref, kept)),
+                    (Err(error), Err(kept)) => {
+                        Err(still_kept(Some(error), &transfer.transfer_ref, kept))
+                    }
+                }
             }
             Backend::Embedded(embedded) => {
                 let memory = embedded.memory();
@@ -65,4 +75,33 @@ impl OneironClient {
             }
         }
     }
+}
+
+/// The error a call returns when its transfer `transfer_ref` could not be
+/// let go (`release`): the read's own error when the read failed, else
+/// `release`, each naming the transfer still kept on the server.
+fn still_kept(read: Option<MemoryError>, transfer_ref: &str, release: MemoryError) -> MemoryError {
+    let mut error = match read {
+        Some(mut read) => {
+            read.message = format!(
+                "{} (the export transfer {transfer_ref} is still kept on the server: letting it \
+                 go failed: {})",
+                read.message, release.message
+            );
+            read
+        }
+        None => {
+            let mut release = release;
+            release.message = format!(
+                "the export is whole in the sink, but its transfer {transfer_ref} is still kept \
+                 on the server: {}",
+                release.message
+            );
+            release
+        }
+    };
+    error.suggestions.push(format!(
+        "Let the transfer go with DELETE /v1/core/export-transfers/{transfer_ref}."
+    ));
+    error
 }
