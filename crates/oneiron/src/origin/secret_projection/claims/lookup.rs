@@ -10,9 +10,10 @@ use heed::RoTxn;
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionClaim,
-    RepoProjectionIngressStore, RepoProjectionPlace, RepoProjectionRecord, checkout_key, corrupt,
-    decode_graph, decode_place, derive_id, entity, field, git_oid, ingress_store_key, text,
+    REPO_SECRET_PROJECTION_PREDICATE, RepoProjectionCheckout, RepoProjectionCheckoutRecipient,
+    RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionPlace, RepoProjectionRecord,
+    RepoProjectionRevealBinding, checkout_key, checkout_recipient_key, corrupt, decode_graph,
+    decode_place, derive_id, entity, field, git_oid, ingress_store_key, text,
 };
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
@@ -136,6 +137,41 @@ impl RepoProjectionClaim {
         };
         rebuilt(graph, RepoProjectionRecord::Checkout(record.clone()), &body)?;
         Ok(Some((graph, record)))
+    }
+
+    /// The recipient the lease `checkout` at `epoch` was bound for, with
+    /// the graph its checkout binding names (FIX 10271); `None` when its
+    /// run bound none.
+    ///
+    /// # Errors
+    /// A store failure, or a record that does not decode.
+    pub(crate) fn load_checkout_recipient_in_txn(
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        checkout: &str,
+        epoch: u64,
+    ) -> Result<Option<(EntityId, RepoProjectionRevealBinding)>> {
+        let id = derive_id(None, &checkout_recipient_key(checkout, epoch))?;
+        let Some(body) = standing(vault, txn, &id)? else {
+            return Ok(None);
+        };
+        let graph = about_graph(&body)?;
+        let map = body.value.as_map().ok_or_else(corrupt)?;
+        if text(field(map, "kind")?)? != "checkout_recipient" {
+            return Err(corrupt());
+        }
+        let record = RepoProjectionCheckoutRecipient {
+            checkout: checkout.to_owned(),
+            epoch,
+            reveal: RepoProjectionRevealBinding::decode(field(map, "reveal")?)?,
+        };
+        let reveal = record.reveal.clone();
+        rebuilt(
+            graph,
+            RepoProjectionRecord::CheckoutRecipient(record),
+            &body,
+        )?;
+        Ok(Some((graph, reveal)))
     }
 
     /// The ingress store record of the private ingress `ingress_store`,

@@ -168,6 +168,12 @@ pub(super) fn record_fields(record: &RepoProjectionRecord) -> Vec<(&'static str,
             ("original", oid(&checkout.original)),
             ("copy", oid(&checkout.copy)),
         ],
+        RepoProjectionRecord::CheckoutRecipient(recipient) => vec![
+            ("kind", Value::from("checkout_recipient")),
+            ("checkout", Value::from(recipient.checkout.as_str())),
+            ("epoch", Value::from(recipient.epoch)),
+            ("reveal", recipient.reveal.value()),
+        ],
         RepoProjectionRecord::IngressStore(ingress) => vec![
             ("kind", Value::from("ingress_store")),
             ("ingress_store", Value::from(ingress.ingress_store.as_str())),

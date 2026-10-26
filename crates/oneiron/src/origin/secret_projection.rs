@@ -24,6 +24,7 @@ use std::collections::BTreeMap;
 use heed::RoTxn;
 
 pub(crate) mod checkout;
+pub(crate) mod checkout_recipient;
 pub(crate) mod claims;
 pub(crate) mod clearance;
 pub(crate) mod disposal;

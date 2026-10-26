@@ -132,6 +132,22 @@ pub(crate) enum RepoProjectionRecord {
     Checkout(RepoProjectionCheckout),
     /// The private ingress seeded from this copy (FIX 7608 2b-ii-B2).
     IngressStore(RepoProjectionIngressStore),
+    /// The recipient a run's checkout lease on this copy was bound for
+    /// (FIX 7608 pre-flip, FIX 10271): a companion of its checkout
+    /// binding, never a change of it.
+    CheckoutRecipient(RepoProjectionCheckoutRecipient),
+}
+
+/// The recipient a run's checkout lease was bound for: the lease's
+/// checkout and epoch, and the agent, CODE anchor, PROJECT and run its
+/// host admitted. Its id is derived from the checkout and epoch alone, so
+/// the lease finds it; it is about the graph, so the graph's erasure
+/// reaches it. Ids only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RepoProjectionCheckoutRecipient {
+    pub(crate) checkout: String,
+    pub(crate) epoch: u64,
+    pub(crate) reveal: RepoProjectionRevealBinding,
 }
 
 /// Who a masked copy serves (FIX 7608 pre-flip, FIX 9328, CALL
@@ -265,7 +281,9 @@ impl RepoProjectionClaim {
         match self.record {
             RepoProjectionRecord::Graph { .. } => Ok(self.graph),
             // Found from the lease or the ingress alone, never the graph.
-            RepoProjectionRecord::Checkout(_) | RepoProjectionRecord::IngressStore(_) => {
+            RepoProjectionRecord::Checkout(_)
+            | RepoProjectionRecord::IngressStore(_)
+            | RepoProjectionRecord::CheckoutRecipient(_) => {
                 derive_id(None, &identity_part(&self.record))
             }
             _ => derive_id(Some(&self.graph), &identity_part(&self.record)),
@@ -497,7 +515,19 @@ fn identity_part(record: &RepoProjectionRecord) -> Value {
             checkout_key(&checkout.checkout, checkout.epoch)
         }
         RepoProjectionRecord::IngressStore(ingress) => ingress_store_key(&ingress.ingress_store),
+        RepoProjectionRecord::CheckoutRecipient(recipient) => {
+            checkout_recipient_key(&recipient.checkout, recipient.epoch)
+        }
     }
+}
+
+/// The identity a checkout recipient's id is derived from.
+fn checkout_recipient_key(checkout: &str, epoch: u64) -> Value {
+    Value::Array(vec![
+        Value::from("checkout_recipient"),
+        Value::from(checkout),
+        Value::from(epoch),
+    ])
 }
 
 /// The identity a checkout binding's id is derived from.

@@ -34,6 +34,7 @@ use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_projection::RepoRevealRecipient;
 use crate::origin::secret_projection::checkout::retained_projected_checkout;
+use crate::origin::secret_projection::checkout_recipient::projected_checkout_recipient;
 use crate::origin::secret_projection::claims::{
     RepoProjectionClaim, RepoProjectionIngressStore, RepoProjectionRecord,
 };
@@ -61,15 +62,20 @@ pub(super) struct ProjectedIngress {
     root: PathBuf,
     identity: String,
     recipient: Option<RepoRevealRecipient>,
+    bound: Option<RepoProjectionRevealBinding>,
 }
 
 impl ProjectedIngress {
     /// The recipient binding the push's ingress record keeps (FIX 10271):
-    /// the host-proved recipient, reading the CODE anchor its admission
-    /// named, in that anchor's PROJECT when the recipient named none. No
-    /// recipient, or no anchor, keeps none: its held files then clear only
-    /// by the owner's settlement or an exact or rebased push, as today.
+    /// the one its lease's run was bound for, or else the host-proved
+    /// recipient reading the CODE anchor its admission named, in that
+    /// anchor's PROJECT when the recipient named none. No recipient, or no
+    /// anchor, keeps none: its held files then clear only by the owner's
+    /// settlement or an exact or rebased push, as today.
     fn reveal(&self, stamp: &DoorAdmissionStamp) -> Option<RepoProjectionRevealBinding> {
+        if let Some(bound) = &self.bound {
+            return Some(bound.clone());
+        }
         let recipient = self.recipient.as_ref()?;
         let code = stamp.push.as_ref()?.code_repo()?;
         let mut binding = RepoProjectionRevealBinding::of(code.repo, recipient);
@@ -163,13 +169,20 @@ pub(super) fn select_projected_exchange(
     }
     let canonical = wire.open_repo(unpinned_repo_ref(repo_dir), repo_dir)?;
     let lease = admitted_lease(vault, request, repo_dir)?;
+    let mut bound_for = None;
     let projection = match &lease {
         Some(lease) => match retained_projected_checkout(vault, store, lease)? {
-            Some(bound) => Some(
-                reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(|| {
-                    serve_failed("the checkout's masked copy no longer stands; bind it again")
-                })?,
-            ),
+            Some(bound) => {
+                if let Some(actual) = read.actual() {
+                    bound_for =
+                        projected_checkout_recipient(vault, lease, &bound.graph, actual.agent())?;
+                }
+                Some(
+                    reopen_repo_git_projection(vault, &wire, &bound.graph)?.ok_or_else(|| {
+                        serve_failed("the checkout's masked copy no longer stands; bind it again")
+                    })?,
+                )
+            }
             None => current_projection(vault, &wire, &canonical, store, Some(lease_pin(lease)?))?,
         },
         None => current_projection(vault, &wire, &canonical, store, None)?,
@@ -179,9 +192,12 @@ pub(super) fn select_projected_exchange(
     };
     if request.is_push() {
         let recipient = read.actual().cloned();
-        return receive_into_ingress(vault, &wire, projection, store, recipient).map(Some);
+        return receive_into_ingress(vault, &wire, projection, store, recipient, bound_for)
+            .map(Some);
     }
-    let projection = granted_variant(vault, &wire, &canonical, projection, request, read)?;
+    let projection = granted_variant(
+        vault, &wire, &canonical, projection, request, read, bound_for,
+    )?;
     match prepare_recipient_read_backend(vault, &wire, &canonical, &projection, project_root, read)?
     {
         Some(backend) => Ok(Some(ProjectedExchange::Read(backend))),
@@ -192,11 +208,12 @@ pub(super) fn select_projected_exchange(
 }
 
 /// CALL GIT-REVEAL-OPT-IN (FIX 9328): the copy a masked read is served.
-/// A proven recipient in a PROJECT with a CODE anchor, its own valid
-/// reason and a live grant on some of its marked files reads the granted
-/// sibling of `masked`, each released file delivered afresh before an
-/// upload-pack exchange sends anything; every other read is `masked`, as
-/// today, with no ask and no refusal.
+/// A proven recipient (the one its lease's run was bound for, `bound`, or
+/// one in a PROJECT with a CODE anchor), its own valid reason and a live
+/// grant on some of its marked files reads the granted sibling of
+/// `masked`, each released file delivered afresh before an upload-pack
+/// exchange sends anything; every other read is `masked`, as today, with
+/// no ask and no refusal.
 ///
 /// # Errors
 /// A store or git failure, or the file check's own.
@@ -207,6 +224,7 @@ fn granted_variant(
     masked: RepoGitProjection,
     request: &ServeRequest,
     read: &RepoGitReadContext,
+    bound: Option<RepoProjectionRevealBinding>,
 ) -> Result<RepoGitProjection> {
     let (Some(actual), Some(why)) = (read.actual(), read.reveal_why()) else {
         return Ok(masked);
@@ -217,10 +235,13 @@ fn granted_variant(
     else {
         return Ok(masked);
     };
-    let Some(repo) = recipient_repo_anchor(vault, canonical, actual.project())? else {
-        return Ok(masked);
+    let binding = match bound {
+        Some(bound) => bound,
+        None => match recipient_repo_anchor(vault, canonical, actual.project())? {
+            Some(repo) => RepoProjectionRevealBinding::of(repo, actual),
+            None => return Ok(masked),
+        },
     };
-    let binding = RepoProjectionRevealBinding::of(repo, actual);
     let Some(mut plan) = plan_repo_git_release(vault, &masked, binding)? else {
         return Ok(masked);
     };
@@ -299,6 +320,7 @@ fn receive_into_ingress(
     projection: RepoGitProjection,
     store: EntityId,
     recipient: Option<RepoRevealRecipient>,
+    bound: Option<RepoProjectionRevealBinding>,
 ) -> Result<ProjectedExchange> {
     let dir = projection_ingress_dir(vault, store, projection.graph_id())?;
     let refs: Vec<(GitRefName, GitOid)> = projection
@@ -330,5 +352,6 @@ fn receive_into_ingress(
         root: ingress.repo_root().to_path_buf(),
         identity,
         recipient,
+        bound,
     }))
 }
