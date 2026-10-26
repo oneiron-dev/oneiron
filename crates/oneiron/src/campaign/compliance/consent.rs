@@ -41,6 +41,12 @@ pub enum ConsentFact {
         /// The legal forms this basis admits. Never empty.
         tokens: Vec<String>,
     },
+    /// The recipient's legal form is recorded and is none of `tokens`,
+    /// compared as normalized tokens. An unknown legal form fails it.
+    LegalFormNotIn {
+        /// The legal forms this basis does not admit. Never empty.
+        tokens: Vec<String>,
+    },
     /// The recipient's legal form is recorded at all; which treatment it gets
     /// is another row's to say.
     LegalFormRecorded,
@@ -129,7 +135,8 @@ impl ConsentRequirement {
                 return Some("consent branch names no fact");
             }
             for fact in &branch.all_of {
-                if let ConsentFact::LegalFormIn { tokens } = fact
+                if let ConsentFact::LegalFormIn { tokens } | ConsentFact::LegalFormNotIn { tokens } =
+                    fact
                     && (tokens.is_empty() || tokens.iter().any(|token| token.trim().is_empty()))
                 {
                     return Some("legal-form fact needs non-blank tokens");
@@ -152,10 +159,14 @@ impl ConsentFact {
         let consent = &facts.consent;
         match self {
             Self::ExplicitOptIn => consent.explicit_opt_in,
-            Self::LegalFormIn { tokens } => facts.legal_form.as_deref().is_some_and(|form| {
-                let form = normalize_token(form);
-                tokens.iter().any(|token| normalize_token(token) == form)
-            }),
+            Self::LegalFormIn { tokens } => facts
+                .legal_form
+                .as_deref()
+                .is_some_and(|form| names_legal_form(tokens, form)),
+            Self::LegalFormNotIn { tokens } => facts
+                .legal_form
+                .as_deref()
+                .is_some_and(|form| !names_legal_form(tokens, form)),
             Self::LegalFormRecorded => facts.legal_form.is_some(),
             Self::ObtainedInSale => consent.obtained_in_sale,
             Self::ObtainedInSaleOrNegotiation => {
@@ -176,17 +187,27 @@ impl ConsentFact {
     /// Whether this fact holding proves `need` holds.
     fn proves(&self, need: &Self) -> bool {
         match (self, need) {
+            // Every form this one admits, `need` admits too.
             (Self::LegalFormIn { tokens }, Self::LegalFormIn { tokens: admitted }) => {
-                tokens.iter().all(|token| {
-                    let token = normalize_token(token);
-                    admitted
-                        .iter()
-                        .any(|candidate| normalize_token(candidate) == token)
-                })
+                tokens.iter().all(|token| names_legal_form(admitted, token))
             }
-            (Self::LegalFormIn { .. }, Self::LegalFormRecorded)
+            // No form this one admits is one `need` refuses.
+            (Self::LegalFormIn { tokens }, Self::LegalFormNotIn { tokens: refused }) => {
+                !tokens.iter().any(|token| names_legal_form(refused, token))
+            }
+            // Every form `need` refuses, this one refuses too.
+            (Self::LegalFormNotIn { tokens }, Self::LegalFormNotIn { tokens: refused }) => {
+                refused.iter().all(|token| names_legal_form(tokens, token))
+            }
+            (Self::LegalFormIn { .. } | Self::LegalFormNotIn { .. }, Self::LegalFormRecorded)
             | (Self::ObtainedInSale, Self::ObtainedInSaleOrNegotiation) => true,
             _ => self == need,
         }
     }
+}
+
+/// Whether `form` is one of `tokens`, compared as normalized tokens.
+fn names_legal_form(tokens: &[String], form: &str) -> bool {
+    let form = normalize_token(form);
+    tokens.iter().any(|token| normalize_token(token) == form)
 }

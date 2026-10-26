@@ -746,7 +746,7 @@ declare namespace Sdk {
   type ConditionalExemptionEvidence = { jurisdiction: string; evidence: ComplianceExemptionEvidence };
   type ComplianceRuleKind = "consent_class" | "sender_id" | "physical_address" | "optout_mechanism" | "optout_deadline" | "content_marking" | "records" | "source_hygiene";
   type B2bExemption = "yes" | "no" | "conditional";
-  type ConsentFact = { fact: "explicit_opt_in" } | { fact: "legal_form_in"; tokens: string[] } | { fact: "legal_form_recorded" } | { fact: "obtained_in_sale" } | { fact: "obtained_in_sale_or_negotiation" } | { fact: "similar_offering" } | { fact: "no_objection" } | { fact: "opt_out_offered_at_collection" } | { fact: "opt_out_in_message" } | { fact: "charitable_purpose" } | { fact: "expressed_support" } | { fact: "publication_context" };
+  type ConsentFact = { fact: "explicit_opt_in" } | { fact: "legal_form_in"; tokens: string[] } | { fact: "legal_form_not_in"; tokens: string[] } | { fact: "legal_form_recorded" } | { fact: "obtained_in_sale" } | { fact: "obtained_in_sale_or_negotiation" } | { fact: "similar_offering" } | { fact: "no_objection" } | { fact: "opt_out_offered_at_collection" } | { fact: "opt_out_in_message" } | { fact: "charitable_purpose" } | { fact: "expressed_support" } | { fact: "publication_context" };
   type ConsentBranch = { all_of: ConsentFact[] };
   type ConsentRequirement = { any_of: ConsentBranch[] };
   type ComplianceSource = { citation: string; url: string };

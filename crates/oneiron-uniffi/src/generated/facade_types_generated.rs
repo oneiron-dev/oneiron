@@ -11352,6 +11352,11 @@ pub enum ConsentFact {
         #[serde(rename = "tokens")]
         tokens: Vec<String>,
     },
+    #[serde(rename = "legal_form_not_in")]
+    LegalFormNotIn {
+        #[serde(rename = "tokens")]
+        tokens: Vec<String>,
+    },
     #[serde(rename = "legal_form_recorded")]
     LegalFormRecorded,
     #[serde(rename = "obtained_in_sale")]

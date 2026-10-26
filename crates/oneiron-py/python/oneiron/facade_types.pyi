@@ -3729,6 +3729,9 @@ class ConsentFactExplicitOptIn(TypedDict):
 class ConsentFactLegalFormIn(TypedDict):
     fact: Literal["legal_form_in"]
     tokens: list[str]
+class ConsentFactLegalFormNotIn(TypedDict):
+    fact: Literal["legal_form_not_in"]
+    tokens: list[str]
 class ConsentFactLegalFormRecorded(TypedDict):
     fact: Literal["legal_form_recorded"]
 class ConsentFactObtainedInSale(TypedDict):
@@ -3749,7 +3752,7 @@ class ConsentFactExpressedSupport(TypedDict):
     fact: Literal["expressed_support"]
 class ConsentFactPublicationContext(TypedDict):
     fact: Literal["publication_context"]
-ConsentFact = ConsentFactExplicitOptIn | ConsentFactLegalFormIn | ConsentFactLegalFormRecorded | ConsentFactObtainedInSale | ConsentFactObtainedInSaleOrNegotiation | ConsentFactSimilarOffering | ConsentFactNoObjection | ConsentFactOptOutOfferedAtCollection | ConsentFactOptOutInMessage | ConsentFactCharitablePurpose | ConsentFactExpressedSupport | ConsentFactPublicationContext
+ConsentFact = ConsentFactExplicitOptIn | ConsentFactLegalFormIn | ConsentFactLegalFormNotIn | ConsentFactLegalFormRecorded | ConsentFactObtainedInSale | ConsentFactObtainedInSaleOrNegotiation | ConsentFactSimilarOffering | ConsentFactNoObjection | ConsentFactOptOutOfferedAtCollection | ConsentFactOptOutInMessage | ConsentFactCharitablePurpose | ConsentFactExpressedSupport | ConsentFactPublicationContext
 class ConsentBranch(TypedDict):
     all_of: list[ConsentFact]
 class ConsentRequirement(TypedDict):

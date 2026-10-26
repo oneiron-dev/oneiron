@@ -21,7 +21,7 @@
       "b2b_exemption": "conditional",
       "consent": {
         "any_of": [
-          { "all_of": [{ "fact": "legal_form_in", "tokens": ["company", "limited_company", "ltd", "public_limited_company", "plc", "limited_liability_partnership", "llp", "chartered_body", "scottish_partnership", "corporation_sole", "body_corporate"] }] },
+          { "all_of": [{ "fact": "legal_form_not_in", "tokens": ["individual", "natural_person", "consumer", "sole_trader", "sole_proprietor", "partnership", "unincorporated_partnership", "general_partnership", "limited_partnership"] }] },
           { "all_of": [{ "fact": "explicit_opt_in" }] },
           { "all_of": [{ "fact": "obtained_in_sale_or_negotiation" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] },
           { "all_of": [{ "fact": "charitable_purpose" }, { "fact": "expressed_support" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
@@ -43,7 +43,7 @@
       "b2b_exemption": "conditional",
       "consent": {
         "any_of": [
-          { "all_of": [{ "fact": "legal_form_in", "tokens": ["company", "limited_company", "ltd", "public_limited_company", "plc", "limited_liability_partnership", "llp", "chartered_body", "scottish_partnership", "corporation_sole", "body_corporate"] }] },
+          { "all_of": [{ "fact": "legal_form_not_in", "tokens": ["individual", "natural_person", "consumer", "sole_trader", "sole_proprietor", "partnership", "unincorporated_partnership", "general_partnership", "limited_partnership"] }] },
           { "all_of": [{ "fact": "explicit_opt_in" }] },
           { "all_of": [{ "fact": "obtained_in_sale_or_negotiation" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] },
           { "all_of": [{ "fact": "charitable_purpose" }, { "fact": "expressed_support" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
@@ -308,20 +308,14 @@
       "jurisdiction": "EU/DE",
       "channel": "linkedin",
       "rule_kind": "consent_class",
-      "requirement": "UWG §7(1) covers unzumutbare Belästigung by any advertising channel, so a platform direct message carries the same requirement as email: prior express consent, or the §7(3) existing-customer conditions. No business-recipient exemption is available.",
+      "requirement": "UWG §7(1) covers unzumutbare Belästigung by any advertising channel, so a platform direct message carries the same prior-opt-in requirement as email. No business-recipient exemption is available.",
       "b2b_exemption": "no",
-      "consent": {
-        "any_of": [
-          { "all_of": [{ "fact": "explicit_opt_in" }] },
-          { "all_of": [{ "fact": "obtained_in_sale" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
-        ]
-      },
       "source": {
         "citation": "Gesetz gegen den unlauteren Wettbewerb §7(1)",
         "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
       },
-      "verified_at": 1792972800,
-      "version": 2,
+      "verified_at": 1784505600,
+      "version": 1,
       "penalty_note": "Private Abmahnung enforcement makes a single unlawful send actionable by competitors, independent of any supervisory fine."
     },
     {

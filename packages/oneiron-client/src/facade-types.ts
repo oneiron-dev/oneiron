@@ -1457,7 +1457,7 @@ export type ComplianceRuleKind = "consent_class" | "sender_id" | "physical_addre
 /** `oneiron::campaign::compliance::rules::B2bExemption` */
 export type B2bExemption = "yes" | "no" | "conditional"
 /** `oneiron::campaign::compliance::consent::ConsentFact` */
-export type ConsentFact = { fact: "explicit_opt_in" } | { fact: "legal_form_in"; tokens: string[] } | { fact: "legal_form_recorded" } | { fact: "obtained_in_sale" } | { fact: "obtained_in_sale_or_negotiation" } | { fact: "similar_offering" } | { fact: "no_objection" } | { fact: "opt_out_offered_at_collection" } | { fact: "opt_out_in_message" } | { fact: "charitable_purpose" } | { fact: "expressed_support" } | { fact: "publication_context" }
+export type ConsentFact = { fact: "explicit_opt_in" } | { fact: "legal_form_in"; tokens: string[] } | { fact: "legal_form_not_in"; tokens: string[] } | { fact: "legal_form_recorded" } | { fact: "obtained_in_sale" } | { fact: "obtained_in_sale_or_negotiation" } | { fact: "similar_offering" } | { fact: "no_objection" } | { fact: "opt_out_offered_at_collection" } | { fact: "opt_out_in_message" } | { fact: "charitable_purpose" } | { fact: "expressed_support" } | { fact: "publication_context" }
 /** `oneiron::campaign::compliance::consent::ConsentBranch` */
 export type ConsentBranch = { all_of: ConsentFact[] }
 /** `oneiron::campaign::compliance::consent::ConsentRequirement` */
