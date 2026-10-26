@@ -57,6 +57,45 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
     })
 }
 
+/// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
+/// STORE = A, FIX 10799): an erased item's cached body, text document,
+/// opened marker, touch row and thin index rows go in the erase's own
+/// transaction, under its id and its masked copy's alike. Absent-ok key
+/// deletes only: nothing is decoded, no mark is read, and an item with no
+/// cache erases as before.
+pub(crate) fn erase_item_caches_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    items: &[EntityId],
+) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let hexes: Vec<String> = items.iter().map(EntityId::to_hex).collect();
+    for hex in &hexes {
+        for family in ["ri:b:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+            store.sync_state.delete(txn, &format!("{family}{hex}"))?;
+        }
+    }
+    // A thin index row is keyed `ri:w:{window}:{item}`, in whichever window
+    // listed the item.
+    let listed: Vec<String> = store
+        .sync_state
+        .prefix_iter(txn, "ri:w:")?
+        .map(|row| row.map(|(key, _)| key.to_string()))
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|key| {
+            key.rsplit_once(':')
+                .is_some_and(|(_, item)| hexes.iter().any(|hex| hex == item))
+        })
+        .collect();
+    for key in &listed {
+        store.sync_state.delete(txn, key)?;
+    }
+    Ok(())
+}
+
 /// Drop the read caches of unpromoted items last touched before `before`
 /// (recorded-clock seconds); `u64::MAX` drops every one. An item opened
 /// before touches were recorded counts as touched at zero. Returns how many

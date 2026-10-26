@@ -54,7 +54,7 @@ pub(super) fn place(row: &CapturedSyncRow<'_>, owners: &dyn SyncPayloadOwners) -
             Placement::unclassified(None, SyncUnclassified::PendingLoroProjection)
         }
         SyncCarrier::ResidenceItem => residence_item(row.key, row.value, owners),
-        SyncCarrier::PendingEdit => pending_edit(row.key, row.value),
+        SyncCarrier::PendingEdit => pending_edit(row.key, row.value, owners),
         SyncCarrier::PendingNoteOperation => pending_note(row.key, row.value),
         SyncCarrier::SyncQueue => crate::sync::queue::checkpoint::place(row.key, row.value),
     }
@@ -65,7 +65,7 @@ pub(super) fn place(row: &CapturedSyncRow<'_>, owners: &dyn SyncPayloadOwners) -
 /// entity's document, which must name the item.
 fn residence_item(key: &[u8], value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     if let Some(id) = id_after(key, SYNC_RESIDENCE_ITEM_BLOB.prefix) {
-        return super::owners::entity_row(id, value, owners);
+        return super::owners::entity_row(owners.owner_entity(id), value, owners);
     }
     let Some(id) = id_after(key, SYNC_RESIDENCE_ITEM_DOCUMENT.prefix) else {
         return Placement::unclassified(None, SyncUnclassified::Undecodable);
@@ -77,19 +77,19 @@ fn residence_item(key: &[u8], value: &[u8], owners: &dyn SyncPayloadOwners) -> P
                 document_sub_tags::STATE | document_sub_tags::UPDATE
             )
     });
-    document_row(id, names_item)
+    document_row(owners.owner_entity(id), names_item)
 }
 
 /// A pending edit: an update frame of the entity its key names, at the
 /// sequence its key names (eight lowercase hex digits).
-fn pending_edit(key: &[u8], value: &[u8]) -> Placement {
+fn pending_edit(key: &[u8], value: &[u8], owners: &dyn SyncPayloadOwners) -> Placement {
     let Some((id, seq)) = pair_after(key, SYNC_QD_E.prefix) else {
         return Placement::unclassified(None, SyncUnclassified::Undecodable);
     };
     let sequenced = u32::from_str_radix(seq, 16).is_ok_and(|seq_no| format!("{seq_no:08x}") == seq);
     let names_entity = frame(value)
         .is_some_and(|frame| frame.entity == id && frame.kind == document_sub_tags::UPDATE);
-    document_row(id, sequenced && names_entity)
+    document_row(owners.owner_entity(id), sequenced && names_entity)
 }
 
 /// An entity document's row, named with its entity: its Loro history goes

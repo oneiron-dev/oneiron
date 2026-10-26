@@ -26,6 +26,7 @@ use heed::RoTxn;
 pub(crate) mod checkout;
 pub(crate) mod claims;
 pub(crate) mod clearance;
+pub(crate) mod copy_id;
 pub(crate) mod disposal;
 pub(crate) mod edit;
 pub(crate) mod git;

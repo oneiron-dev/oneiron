@@ -94,9 +94,11 @@ impl SyncClient {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
         // FIX 7608 slice 4: the home gets a marked repo item's masked copy,
         // made before any pad is; one that cannot be masked fails this send
-        // and stays in the window, owed to the next exchange.
-        let masked = crate::sync::selector::prepare_repo_sync_frame(&self.vault, payload, context)
-            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        // and stays in the window, owed to the next exchange. A copy the home
+        // may hold an older one of is re-authored with it (FIX 10729).
+        let masked =
+            crate::sync::selector::prepare_repo_sync_frame_for_home(&self.vault, payload, context)
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
         let payload = masked.as_deref().unwrap_or(payload);
         if self.window_pad_ledger().carrier.contains(window_key) {
             return Ok(carrier_window_pads(&self.vault, &key, payload, context));
