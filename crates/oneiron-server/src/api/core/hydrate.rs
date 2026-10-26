@@ -3,6 +3,7 @@
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
+use super::write_shape::CORE_MAX_HYDRATE_REFS;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -20,9 +21,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
-
-/// The most refs one short-id hydrate names.
-const CORE_MAX_HYDRATE_REFS: usize = 256;
 
 mod use_restricted;
 
