@@ -351,7 +351,7 @@ impl Vault {
         request.decided_at = Some(now);
         if approve {
             self.check_companion_profile_target(txn, &request.grant)?;
-            if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
+            if crate::ports::EntityStoreRead::port_entity_present(&self.store, &**txn, &id)? {
                 return Err(invalid_grant());
             }
             self.apply_access_grant_body(txn, &id, now, encode_access_grant_body(&request.grant)?)?;
