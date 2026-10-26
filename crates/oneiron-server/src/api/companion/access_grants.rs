@@ -131,7 +131,7 @@ pub(crate) struct CompanionAccessRequestPendingResponse {
 }
 
 /// A companion grant write's answer: the active grant, or the pending request.
-#[derive(Clone, Debug, Serialize, ToSchema)]
+#[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
 pub(crate) enum CompanionAccessGrantCreated {
     Grant(CompanionAccessGrantResponse),
