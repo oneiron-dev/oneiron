@@ -65,6 +65,8 @@ impl Vault {
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
+        // Its scope outlives the row, for the tombstone's export (FIX 10161).
+        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
         // An erased pack source halts the catalog routes bound to it (FIX 6034).
         if erase {
             self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
@@ -192,6 +194,8 @@ impl Vault {
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
+        // Its scope outlives the body (see the purge); its tombstone's capture binds it.
+        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
         // An erased pack source halts the catalog routes bound to it (FIX 6034).
         // An erased custody record is fenced before its body is scrubbed (KS-6
         // part 2).
