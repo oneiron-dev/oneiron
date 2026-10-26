@@ -31074,7 +31074,7 @@
      "path": "src/failure_ladder/oversight.rs",
      "purpose": "Per-vault signed oversight over healer proposals and review decisions",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 5,
       "struct": 2
