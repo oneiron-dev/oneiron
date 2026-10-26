@@ -24,6 +24,10 @@ side_tables! {
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
+    /// The reply assertions a MESSAGE born whole (not streamed) kept from its witness write
+    /// (FIX 10260): its turn, conversation and writer, and the ids and types its turn asserted.
+    /// Key: id16(message).
+    MESSAGE_REPLY_ASSERTIONS: VaultMeta b"message_reply_assertions:v1:" Named Engine;
     /// In-flight streamed message recovery seed. Key: id16.
     MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named;
     /// Vault default message-streaming policy. Key: ().

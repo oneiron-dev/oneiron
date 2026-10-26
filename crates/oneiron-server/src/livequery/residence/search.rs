@@ -60,6 +60,8 @@ pub(super) fn search(
     let mut selected_by_window = std::collections::HashMap::new();
     let mut hits = Vec::new();
     let mut rows = Vec::new();
+    let aliases = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+        .map_err(|_| AppError::internal_server_error("search aliases unavailable"))?;
     for (id, score, window) in candidates {
         if !current_windows.contains(&window) {
             continue;
@@ -95,7 +97,9 @@ pub(super) fn search(
             .allows_item(id)
             .map_err(|_| AppError::internal_server_error("search admission unavailable"))?
         {
-            hits.push(json!({"entityId": id.to_hex(), "score": score, "window": window.as_str()}));
+            // FIX 7608 slice 4: a marked repo item is shown by its copy id.
+            let shown = aliases.shown(&id).to_hex();
+            hits.push(json!({"entityId": shown, "score": score, "window": window.as_str()}));
             rows.push(id);
             if hits.len() == input.limit {
                 break;

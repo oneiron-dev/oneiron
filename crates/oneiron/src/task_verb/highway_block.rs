@@ -97,6 +97,80 @@ pub(super) fn selected_task_ask_option(result: &TaskAskResult) -> Option<&TaskAs
     }
 }
 
+/// How an ask a TASK blocks on stands to the Done it would answer (FIX
+/// 10183).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum DoneAskBinding {
+    /// An engine block opened it for exactly this Done.
+    Bound,
+    /// Anything else: an ask for another TASK, try, result or brief
+    /// revision, or one no engine block opened.
+    Unbound,
+}
+
+impl DoneAskBinding {
+    /// The binding as its lifecycle field records it.
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bound => "match",
+            Self::Unbound => "mismatch",
+        }
+    }
+}
+
+/// Whether `found`, the continuation an engine block wrote beside its ask,
+/// is the Done `expected` names: the same TASK, try and attempt count,
+/// result and brief revision. The one check a report's verdict, a runner's
+/// question and the ask's own continuation share (FIX 10183).
+pub(super) fn done_continuation_binding(
+    found: &BlockContinuation,
+    expected: &BlockContinuation,
+) -> DoneAskBinding {
+    if matches!(found.purpose, BlockPurpose::Done { .. }) && found == expected {
+        DoneAskBinding::Bound
+    } else {
+        DoneAskBinding::Unbound
+    }
+}
+
+/// [`done_continuation_binding`] of the ask `group_ref`, read in `txn`: the
+/// continuation its question CLAIM carries, as its asker wrote it and its
+/// group's task link names the same TASK. An ask no engine block opened is
+/// unbound.
+pub(super) fn done_ask_binding_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    group_ref: EntityId,
+    expected: &BlockContinuation,
+) -> Result<DoneAskBinding> {
+    let Some(claim) = vault.get_claim_in_txn(txn, &block_question_id(group_ref)?)? else {
+        return Ok(DoneAskBinding::Unbound);
+    };
+    if claim.predicate != TASK_BLOCK_QUESTION_PREDICATE {
+        return Ok(DoneAskBinding::Unbound);
+    }
+    let Some(continuation) = decode_continuation(&claim.value) else {
+        return Ok(DoneAskBinding::Unbound);
+    };
+    let Some(group) = ask_record::read_group(vault, txn, group_ref)? else {
+        return Ok(DoneAskBinding::Unbound);
+    };
+    if crate::claim::session_claim_producer(&claim) != Some(ask_record::entity(&group.owner)?)
+        || group
+            .class_tasks()
+            .next()
+            .is_some_and(|task| task != continuation.task)
+    {
+        return Ok(DoneAskBinding::Unbound);
+    }
+    Ok(done_continuation_binding(&continuation, expected))
+}
+
+/// Whether `brief` turns strict verified reuse on (FIX 10183).
+pub(super) fn strict_done_reuse(brief: Option<&StoredBrief>) -> bool {
+    brief.is_some_and(|stored| stored.brief.success.strict_verified_reuse)
+}
+
 /// The question a block's owner ask puts.
 pub(super) fn block_question_label(
     brief: &StoredBrief,
@@ -383,7 +457,33 @@ pub(super) fn continue_blocked_task_in(
         .as_ref()
         .filter(|record| record.kind == TASK_EXTERNAL_ATTEMPT_KIND)
         .and_then(|record| record.lease_owner.as_deref().map(|owner| (record, owner)));
+    // Under strict verified reuse (FIX 10183) a done-means answer counts
+    // only for the Done it was asked about: a brief revised since, or a try
+    // that no longer holds the TASK, sends the TASK back to ask its own
+    // question rather than land or fail on this one.
+    let reask = match continuation.purpose {
+        BlockPurpose::Done { result_ref, .. } if strict_done_reuse(body.brief.as_ref()) => {
+            let current = BlockContinuation {
+                purpose: BlockPurpose::Done {
+                    result_ref,
+                    brief_rev: body.brief.as_ref().map_or(0, |brief| brief.rev),
+                },
+                ..continuation
+            };
+            (continuation.attempt.is_some() && held.is_none())
+                || done_continuation_binding(&continuation, &current) == DoneAskBinding::Unbound
+        }
+        BlockPurpose::Done { .. } | BlockPurpose::Blocked => false,
+    };
     let moved = match (continuation.purpose, option.as_str()) {
+        (BlockPurpose::Done { .. }, DONE_MET_OPTION | DONE_UNMET_OPTION) if reask => {
+            if held.is_some() {
+                body.state = Some(TaskExecutionState::Working { started_at: now });
+            } else {
+                requeue(&mut body);
+            }
+            Ok(())
+        }
         (BlockPurpose::Done { result_ref, .. }, DONE_MET_OPTION) => {
             land_done_in(&queue, txn, &mut body, external, result_ref, now)
         }

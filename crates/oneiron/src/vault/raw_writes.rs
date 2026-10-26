@@ -13,7 +13,11 @@
 //!   does: its stored type admits its class, and a shared vault grants it
 //!   content writes. It commits below owner grade, as an embedded handle's
 //!   `vault.batch` does ([`Memory::core_batch_write`]), and its gate
-//!   decisions are receipted as any batch's are.
+//!   decisions are receipted as any batch's are. It is held to the caller's
+//!   own read (OF-063, FIX 1223, 6068): a put over a stored row it does not
+//!   read refuses as missing, and a CLAIM's typed record refs must resolve
+//!   for it. A caller whose credential grants no read puts only fresh rows,
+//!   and no CLAIM.
 //! - A delete is the `vault.delete` row: its target is admitted as a record
 //!   ref, so an id naming no record is refused `INVENTED_REFERENCE` with a
 //!   reference-refusal receipt, none inside an anonymous off-record session
@@ -25,10 +29,13 @@
 //! a body is not read for links.
 
 use crate::batch::BatchBuilder;
+use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult, SafeDeleteReason};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::task_verb::sdk::{SafeDeleteRequest, vault_delete};
 use crate::temporal::TimeRange;
 
@@ -78,7 +85,7 @@ impl Memory<'_> {
                 put.data,
             );
         }
-        self.commit_raw_batch(batch)
+        self.commit_raw_batch(batch, puts)
     }
 
     /// Puts a directed edge as this surface's caller.
@@ -93,7 +100,7 @@ impl Memory<'_> {
         tgt: &EntityId,
         weight: f32,
     ) -> MemoryResult<()> {
-        self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight))
+        self.commit_raw_batch(self.vault().batch().edge(src, kind, tgt, weight), &[])
     }
 
     /// Puts an entity's vector as this surface's caller.
@@ -102,7 +109,7 @@ impl Memory<'_> {
     ///
     /// As [`Self::raw_put_entities`], and the vector's own refusal.
     pub fn raw_put_vector(&self, id: &EntityId, vector: &[f32]) -> MemoryResult<()> {
-        self.commit_raw_batch(self.vault().batch().vector(id, vector))
+        self.commit_raw_batch(self.vault().batch().vector(id, vector), &[])
     }
 
     /// Deletes `id` as this surface's caller through the `vault.delete` row
@@ -123,16 +130,46 @@ impl Memory<'_> {
         .map(|receipt| receipt.existed)
     }
 
-    /// Commits `batch` below owner grade once its writer snapshot proves this
-    /// surface's actor, keeping that proof's typed refusal.
-    fn commit_raw_batch(&self, batch: BatchBuilder<'_>) -> MemoryResult<()> {
+    /// Commits `batch`, which puts `puts`, below owner grade once its writer
+    /// snapshot proves this surface's actor, keeping that proof's typed
+    /// refusal. It is held to this surface's own read lane (FIX 1223, 6068);
+    /// a lane its credential refuses keeps that refusal for a CLAIM or a put
+    /// over a stored row.
+    fn commit_raw_batch(
+        &self,
+        batch: BatchBuilder<'_>,
+        puts: &[RawEntityPut<'_>],
+    ) -> MemoryResult<()> {
+        let lane = match self.read_lane(ClaimReadStatus::Recorded) {
+            Ok(lane) => Ok(lane),
+            Err(unread) if puts.iter().any(|put| put.entity_type == ENTITY_TYPE_CLAIM) => {
+                return Err(unread);
+            }
+            Err(unread) => Err(unread),
+        };
         let mut refusal = None;
-        let committed = batch.commit_below_owner_with_guard(|txn| {
-            self.verify_actor_write_in_txn(txn).map_err(|error| {
+        let guard = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
+            if let Err(error) = self.verify_actor_write_in_txn(txn) {
                 refusal = Some(error);
-                Error::InvariantViolation("a bound raw write's actor was refused")
-            })
-        });
+                return Err(Error::InvariantViolation(
+                    "a bound raw write's actor was refused",
+                ));
+            }
+            if let Err(unread) = &lane {
+                let store = &self.vault().store;
+                for put in puts {
+                    if store.port_entity_present(txn, &put.id)? {
+                        refusal = Some(unread.clone());
+                        return Err(Error::EntityNotFound);
+                    }
+                }
+            }
+            Ok(())
+        };
+        let committed = match &lane {
+            Ok(lane) => batch.commit_below_owner_read_by(lane, guard),
+            Err(_) => batch.commit_below_owner_with_guard(guard),
+        };
         committed.map_err(|error| refusal.take().unwrap_or_else(|| error.into()))
     }
 }

@@ -248,8 +248,11 @@ const fn entry_cost<V>() -> usize {
     2 * (size_of::<[u8; 32]>() + size_of::<V>())
 }
 
-/// A body coming in, piece by piece, with its whole room booked at its
-/// first piece: a body never waits for room while it holds some.
+/// A body coming in, piece by piece (FIX 9323): its first piece waits its
+/// turn for its own bytes and its entry, and each later piece's growth is
+/// charged as it arrives, so a body never waits while it holds some and
+/// never books bytes a peer only advertised. Its total, offsets and hash
+/// are checked as it grows and once it is whole.
 struct Incoming {
     total: u64,
     body: BookedBody,
@@ -273,8 +276,10 @@ impl Staging {
     }
 
     /// Takes one piece of a body a later message names. Its first piece
-    /// books the whole body's room and its entry, empty or not, waiting its
-    /// turn when the budget is full; no lock is held while it waits.
+    /// books its own bytes and the body's entry, empty or not, waiting its
+    /// turn when the budget is full; no lock is held while it waits. Each
+    /// later piece grows the body by what it carries, charged at once,
+    /// never waited for (FIX 9323).
     pub(super) async fn put(
         &self,
         named: [u8; 32],
@@ -283,9 +288,8 @@ impl Staging {
         bytes: &[u8],
     ) -> Result<(), String> {
         if offset == 0 && !lock(&self.incoming).contains_key(&named) {
-            let len = usize::try_from(total)
-                .map_err(|_| "a staged body too long for this node".to_owned())?;
-            let body = BookedBody::room(&self.budget, len, entry_cost::<Incoming>()).await?;
+            let body =
+                BookedBody::room(&self.budget, bytes.len(), entry_cost::<Incoming>()).await?;
             let mut incoming = lock(&self.incoming);
             if incoming.contains_key(&named) {
                 return Err("a staged piece out of order".into());
@@ -302,7 +306,18 @@ impl Staging {
         {
             return Err("a staged piece out of order".into());
         }
-        held.body.bytes.extend_from_slice(bytes);
+        let body = &mut held.body;
+        if body.bytes.capacity() - body.bytes.len() < bytes.len() {
+            body.bytes
+                .try_reserve(bytes.len())
+                .map_err(|_| "this node has no memory for the body".to_owned())?;
+            let room = body
+                .bytes
+                .capacity()
+                .saturating_add(entry_cost::<Incoming>());
+            self.budget.charge(&mut body.booking, room);
+        }
+        body.bytes.extend_from_slice(bytes);
         Ok(())
     }
 

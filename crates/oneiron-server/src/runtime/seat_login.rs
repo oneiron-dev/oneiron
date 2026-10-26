@@ -80,6 +80,9 @@ pub struct OfficialCliSeatExecutor {
     /// past memory (the server's `DiskFloor`): a write that would go below it
     /// stops the run with [`ByoaError::SpoolAtDiskFloor`]. `None` keeps none.
     pub floor: Option<Arc<dyn SpillFloor>>,
+    /// Raised by the host when the run's claim is lost under it (FIX 9320):
+    /// the run's process is to stop. `None` watches nothing.
+    pub stop: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl std::fmt::Debug for OfficialCliSeatExecutor {
@@ -201,6 +204,20 @@ impl ByoaCliExecutor for OfficialCliSeatExecutor {
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
+                // The host's claim on the run ended under it (FIX 9320): its
+                // process stops, and nothing it would still print is kept.
+                Ok(None)
+                    if self
+                        .stop
+                        .as_ref()
+                        .is_some_and(|stop| stop.load(std::sync::atomic::Ordering::SeqCst)) =>
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ByoaError::Backend(
+                        "official seat stopped: its claim ended".to_owned(),
+                    ));
+                }
                 Ok(None) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(25));
                 }
