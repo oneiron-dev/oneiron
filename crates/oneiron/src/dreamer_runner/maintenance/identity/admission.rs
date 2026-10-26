@@ -42,8 +42,7 @@ pub fn maintenance_reader(vault: &Vault) -> Result<Option<ScopedRead<'_>>> {
 }
 
 /// The Dreamer's relationship-granted lane, whether or not an ask is open:
-/// the nightly re-check reads the hints it settles by through it (FIX
-/// 10374).
+/// the nightly re-check settles a mention only as it reads it (FIX 10374).
 ///
 /// # Errors
 ///

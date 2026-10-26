@@ -393,7 +393,7 @@ pub(crate) fn mention_unsettled_in_txn(
     else {
         return Ok(None);
     };
-    if hinted_in_txn(vault, txn, &ask, None)?.is_some() {
+    if hinted_in_txn(vault, txn, &ask)?.is_some() {
         return Ok(None);
     }
     Ok(Some(name))

@@ -262,18 +262,19 @@ fn pieces_named(
 
 /// Applies one verified receipt to its piece: only a strictly newer
 /// revision (or the first receipt the piece takes), by the state mapping,
-/// or an `Unknown` signed after what the piece holds. It never touches the
-/// withdrawal intent.
+/// or an `Unknown` signed no earlier than what the piece holds. It never
+/// touches the withdrawal intent.
 fn apply_receipt(piece: &mut AnonymousPiece, body: &PieceReceiptBodyV1) -> Outcome {
     // An intake that lost the piece's row answers `Unknown` at a lower
-    // revision, signed later than what the piece holds: the upload resumes
-    // from its start, and the revision stays the highest one taken
-    // (FIX 7469).
+    // revision, signed no earlier than what the piece holds (the same second
+    // too): the upload resumes from its start, and that revision is the
+    // baseline the restarted upload's receipts rise from (FIX 7469).
     if piece.state.is_some()
         && body.revision < piece.revision
         && matches!(body.state, PieceStateV1::Unknown)
-        && piece.at.is_some_and(|at| body.at > at)
+        && piece.at.is_some_and(|at| body.at >= at)
     {
+        piece.revision = body.revision;
         piece.state = Some(TrainingPieceState::of(&body.state));
         piece.reason = None;
         piece.at = Some(body.at);

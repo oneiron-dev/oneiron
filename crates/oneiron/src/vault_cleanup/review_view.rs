@@ -7,9 +7,10 @@
 //! one read snapshot under the owner's proof. A completed attempt's whole
 //! stored row is read in that snapshot too. A record's content is read after
 //! it, through the owner's own `vault.get` and `vault.notes.read` reads; the
-//! review answers once its `revision` reads the same after those reads as in
-//! the snapshot, so the content beside each fact is what the revision binds,
-//! and else reads again, up to [`CLEANUP_REVIEW_READ_ATTEMPTS`] times; past that it answers
+//! review answers once its `revision` (a NOTE's live document version
+//! included) reads the same after those reads as in the snapshot, so the
+//! content beside each fact is what the revision binds, and else reads
+//! again, up to [`CLEANUP_REVIEW_READ_ATTEMPTS`] times; past that it answers
 //! its latest read with each slot that changed under it marked (FIX 10502).
 //! Nothing is copied into a store and nothing is cut short. An erased, gone
 //! or unreadable slot keeps its place as a typed fact.
@@ -416,9 +417,11 @@ fn refusal(error: &MemoryError) -> String {
     format!("{}: {}", error.code, error.message)
 }
 
-/// The revision of a slot's stored bytes now: the encoded record, or the
-/// attempt's queue row. None for an erased slot, one with nothing stored, or
-/// a record that does not read.
+/// The revision of a slot's stored bytes now: the encoded record, with a
+/// NOTE's live document version after it (FIX 10502: an edit stores the
+/// document and leaves the record as it was), or the attempt's queue row.
+/// None for an erased slot, one with nothing stored, or a record that does
+/// not read.
 fn slot_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -434,8 +437,27 @@ fn slot_revision_in_txn(
         );
     }
     match vault.store.port_entity_record(txn, &candidate.entity) {
-        Ok(record) => Ok(record.map(|row| marks::revision_of(&row.encode()))),
+        Ok(Some(row)) => {
+            let mut bytes = row.encode();
+            if candidate.kind == CleanupKind::RetainedNote {
+                bytes.extend(note_version_in_txn(vault, txn, candidate.entity)?);
+            }
+            Ok(Some(marks::revision_of(&bytes)))
+        }
+        Ok(None) => Ok(None),
         Err(error) => unreadable(error).map(|()| None),
+    }
+}
+
+/// The live document version of `note` as `txn` reads it, encoded: its
+/// head and frontier. Empty with no stored document, or one that does not
+/// read: the content read names that on its slot.
+fn note_version_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId) -> Result<Vec<u8>> {
+    match crate::note::documents::load_doc(vault, txn, note) {
+        Ok(Some(doc)) => rmp_serde::to_vec(&doc.version())
+            .map_err(|_| Error::InvariantViolation("NOTE version encoding")),
+        Ok(None) => Ok(Vec::new()),
+        Err(error) => unreadable(error).map(|()| Vec::new()),
     }
 }
 
