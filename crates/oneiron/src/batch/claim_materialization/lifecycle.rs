@@ -13,6 +13,8 @@ use crate::write_envelope::WriteActor;
 impl ClaimMaterialization {
     /// Only closing the current active row is admitted. No actor or evidence
     /// argument exists. The body must be identical except for life and valid_to.
+    /// The doors close through [`Self::verified_lifecycle_closed_by`].
+    #[cfg(test)]
     pub(crate) fn lifecycle(
         store: &Store,
         txn: &heed::RoTxn<'_>,
@@ -97,6 +99,7 @@ impl ClaimMaterialization {
     /// Canonical lifecycle validator supplies both an optional author binding
     /// and a sealed confidence-transition proof. Raw claims need no author
     /// binding, but still carry the proof of their exact closure operation.
+    #[cfg(test)]
     pub(crate) fn verified_lifecycle(
         store: &Store,
         txn: &heed::RoTxn<'_>,
