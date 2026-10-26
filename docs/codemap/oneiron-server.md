@@ -695,6 +695,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/auth/body_credential.rs` | src | s | 2 crate-vis | — | A request's credential in the owner's connection-pool pressure check (FIX 7656) |
 | `src/auth/client_address.rs` | src | s | 2 crate-vis | — | The address a request's client is charged under: the key booking admission counts per-address quotas by |
 | `src/auth/left_notices.rs` | src | s | 2 crate-vis | — | `POST /v1/shared/left-notices` (OF-158 client leave): a device whose person left or was removed from this… |
+| `src/auth/left_notices/delivery.rs` | src | s | 5 crate-vis | — | `POST /v1/shared/removal-delivery` and `POST /v1/shared/removal-delivery/ack` (FIX 3215, 3396): the host… |
 | `src/auth/locality.rs` | src | s | 6 crate-vis | — | Where the caller of a request sits (DEC-0005): on this device or off it |
 | `src/auth/machine_proof.rs` | src | s | 6 crate-vis | — | The machine a request names |
 | `src/auth/managed_request.rs` | src | m | 22 crate-vis | — | The caller of one request a managed vault serves (WILL-PLAN L14 row 01, Engine ruling 10-19) |
@@ -894,6 +895,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/device_sync.rs` | src | m | 7 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `src/device_sync/dial.rs` | src | s | 2 crate-vis | — | What a device dials ([`Dial`]): the home its `[device_sync]` section names by hand, else the one `oneiron… |
 | `src/device_sync/enrolment.rs` | src | m | 7 crate-vis | — | A device's enrolment with its home (ARCH-0023b: "a device connects the moment it is enrolled") |
+| `src/device_sync/removal_delivery.rs` | src | s | 6 crate-vis | — | The device's receiver of the archives its person's removals kept for it (FIX 3215, 3396) |
 | `src/device_sync/renewal.rs` | src | m | 7 crate-vis | — | FIX 3377: the device renews its paired owner credential at its home (`POST /v1/core/slips/renew`), with the… |
 | `src/device_sync/route.rs` | src | s | 5 crate-vis | — | FIX 3131: the home device sync dials over the mesh |
 | `src/document_memory.rs` | src | s | 1 crate-vis | — | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
@@ -1381,7 +1383,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/message_stream.rs` | src | s | 2 crate-vis | — | Host-owned stream timer and local presence relay |
 | `src/server/message_stream/scoped.rs` | src | s | 5 crate-vis | — | The trusted scope of each message partial in the presence hub (FIX 9537), kept apart from what clients write… |
 | `src/server/mirror_pushes.rs` | src | s | 1 crate-vis | — | The host's half of the origin mirror pushes (ARCH-0068 RA8; FIX 6866) |
-| `src/server/mod.rs` | src | s | 5 re-export · 20 crate-vis | — | Sync server state and maintenance jobs, split by concern |
+| `src/server/mod.rs` | src | s | 5 re-export · 21 crate-vis | — | Sync server state and maintenance jobs, split by concern |
 | `src/server/note_editors.rs` | src | s | 6 crate-vis | — | Explicit NOTE editor handles, owned by the principal that opened them |
 | `src/server/organs.rs` | src | s | 5 crate-vis | — | The organs on the server's one host ([`SyncServer::organs`]): every organ an Active pack carries a build of… |
 | `src/server/oversight.rs` | src | s | 1 enum · 5 crate-vis | OversightStartError | The healer oversight receipts (ARCH-0066 §8): each vault signs three counts about review work, coverage… |
@@ -1396,6 +1398,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/recall.rs` | src | m | 6 crate-vis | — | The recall verb as every server transport runs it |
 | `src/server/recall_hyde.rs` | src | m | 9 crate-vis | — | A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction |
 | `src/server/recall_rerank.rs` | src | m | 6 crate-vis | — | The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)… |
+| `src/server/removal_delivery.rs` | src | s | 6 crate-vis | — | The host's side of removal-archive delivery (FIX 3215, 3396): the wakes that end a removed holder's held… |
 | `src/server/resident_pump.rs` | src | m | 5 crate-vis | — | The agent run pump (OF-533): runs each agent-def dispatch bound to its own leased attempt, so a run's… |
 | `src/server/resident_pump/attribution.rs` | src | s | 2 crate-vis | — | The executor a seatless, unplanned run records (FIX 1876, OF-540), and the run's attribution bound before… |
 | `src/server/resident_pump/browser_workflow.rs` | src | m | 4 crate-vis | — | A TASK bound to a library program (CUA E4, FIX 7603; DESIGN-2 §2): its try runs the program its first lease… |
