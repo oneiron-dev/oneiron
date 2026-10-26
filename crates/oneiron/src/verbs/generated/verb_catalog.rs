@@ -6233,7 +6233,6 @@ impl AgentVerb {
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
-                | Self::TasksRedo
                 | Self::VaultCommitMessage
                 | Self::VaultBeginMessageStream
                 | Self::VaultAppendToStream
@@ -7256,7 +7255,7 @@ impl AgentVerb {
         )
     }
     pub const fn born_in_scope(self) -> bool {
-        matches!(self, Self::TasksCreate)
+        matches!(self, Self::TasksCreate | Self::TasksRedo)
     }
     pub const fn writes(self) -> bool {
         matches!(

@@ -628,6 +628,7 @@ fn plan_from_quotes(
         team_shape: None,
         rung_skill: None,
         rung_providers: Vec::new(),
+        asker_ref: None,
     };
     receipt.validate()?;
     Ok(receipt)

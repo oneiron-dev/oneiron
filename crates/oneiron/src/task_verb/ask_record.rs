@@ -129,6 +129,15 @@ struct AskAnswerFact {
     #[serde(default)]
     delegation_grant_ref: Option<String>,
     at: u64,
+    /// The verified credential chains the owner proof the writer's surface
+    /// carried held at admission (FIX 10693), so a consult consent case can
+    /// tell a word from its opener's own lineage; empty without a proof.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    credential_lineage: Vec<[u8; 32]>,
+    /// The proof's chains did not read at admission: the word was kept, and
+    /// its lineage is unknown.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    lineage_unread: bool,
 }
 
 pub(super) fn invalid() -> Error {
@@ -190,13 +199,35 @@ pub(super) fn owns_revision(
         TASK_ASK_ORIGIN,
         &[origin.as_bytes(), entity(&group.owner)?.as_bytes()],
     )?;
-    Ok(EntityId::derive(
-        TASK_ASK_INTENT,
-        &[
-            actor_origin.as_bytes(),
-            group.requested.intent_key.as_bytes(),
-        ],
-    )? == id)
+    let node_id = |intent_key: &str| {
+        EntityId::derive(
+            TASK_ASK_INTENT,
+            &[actor_origin.as_bytes(), intent_key.as_bytes()],
+        )
+    };
+    if node_id(&group.requested.intent_key)? == id {
+        return Ok(true);
+    }
+    // A consult consent case's ask is kept under its case ref (FIX 10692);
+    // its intent names the id this node derives for the case, which only the
+    // node that admitted it derives.
+    match super::consult_ladder_facade::case_ask_anchor(&group.requested.intent_key, id) {
+        Some((case_intent, anchor)) => Ok(node_id(&case_intent)? == anchor),
+        None => Ok(false),
+    }
+}
+
+/// The credential chains the word `word_ref` was admitted under (FIX
+/// 10693), read in `txn`: `None` when no word reads there or its chains
+/// were not read at admission.
+pub(super) fn answer_lineage_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    word_ref: EntityId,
+) -> Result<Option<Vec<[u8; 32]>>> {
+    Ok(read_answer(vault, txn, word_ref)?
+        .filter(|fact| !fact.lineage_unread)
+        .map(|fact| fact.credential_lineage))
 }
 
 fn value<T: Serialize>(subkind: &str, record: &T) -> Result<Vec<u8>> {

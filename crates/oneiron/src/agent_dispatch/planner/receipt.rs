@@ -21,6 +21,12 @@ pub struct SpawnPlanReceipt {
     /// The executors that read the rung's question, at revision.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rung_providers: Vec<ProviderPin>,
+    /// The asker the host authenticated, stamped on a spawn it planned
+    /// outside a planned intent (FIX 9181): its erase takes this receipt's
+    /// ask out of every row that carries it. A planned intent's launches are
+    /// linked to their intent by their dedupe keys instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asker_ref: Option<EntityId>,
 }
 
 impl SpawnPlanReceipt {
