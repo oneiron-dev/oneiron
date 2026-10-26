@@ -372,7 +372,13 @@ impl Memory<'_> {
         if delta.is_empty() {
             stage(&*state, &text)?;
             let txn = self.vault.store.env.read_txn()?;
-            authorize(self.vault, &txn, &state.seed, &text, !state.pending.is_empty())?;
+            authorize(
+                self.vault,
+                &txn,
+                &state.seed,
+                &text,
+                !state.pending.is_empty(),
+            )?;
         } else {
             let raw = format!("{}{}", state.raw, delta);
             let mut lifted = state.lifted.clone();
@@ -437,7 +443,13 @@ impl Memory<'_> {
         }
         let text = state.text();
         let txn = self.vault.store.env.read_txn()?;
-        authorize(self.vault, &txn, &state.seed, &text, !state.pending.is_empty())?;
+        authorize(
+            self.vault,
+            &txn,
+            &state.seed,
+            &text,
+            !state.pending.is_empty(),
+        )?;
         drop(txn);
         // Every accepted delta is already checkpointed, so this text is saved.
         #[cfg(feature = "sync")]
