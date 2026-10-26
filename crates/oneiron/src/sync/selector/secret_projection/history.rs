@@ -85,7 +85,11 @@ impl SyncSecretProjection {
                             .flatten()
                             .zip(row_of(value));
                         match row.map(|(id, bytes)| (id, self.project_row(&id, &bytes))) {
-                            Some((id, CopyRow::Copy { key: copy, row })) => {
+                            Some((
+                                id,
+                                CopyRow::Copy { key: copy, row }
+                                | CopyRow::Sealed { key: copy, row },
+                            )) => {
                                 out.sources.insert(self.source_for(&id));
                                 *key = copy.to_hex();
                                 *value = LoroValue::from(row);
@@ -201,9 +205,13 @@ impl SyncSecretProjection {
         *key = resolved;
     }
 
-    /// Whether a non-register payload holds a marked blob's whole bytes.
+    /// Whether a non-register payload holds a marked blob's whole bytes, read
+    /// or unread.
     fn payload_carries_marked(&self, content: &JsonOpContent) -> bool {
-        let marked = |bytes: &[u8]| self.blobs.contains_key(blake3::hash(bytes).as_bytes());
+        let marked = |bytes: &[u8]| {
+            let hash = blake3::hash(bytes);
+            self.blobs.contains_key(hash.as_bytes()) || self.unread.contains_key(hash.as_bytes())
+        };
         let values_marked = |values: &[LoroValue]| {
             values
                 .iter()

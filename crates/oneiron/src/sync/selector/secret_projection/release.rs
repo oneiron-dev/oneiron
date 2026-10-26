@@ -13,8 +13,8 @@ use std::borrow::Cow;
 
 use loro::LoroDoc;
 
+use super::SyncSecretProjection;
 use super::frames::WindowAdmission;
-use super::{CopyRow, SyncSecretProjection};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -113,10 +113,10 @@ where
 {
     let projection = SyncSecretProjection::read(vault)?;
     let source = projection.source_of_copy(&item).unwrap_or(item);
-    Ok(
-        read(source)?.map(|raw| match projection.project_row(&source, &raw) {
-            CopyRow::Copy { row, .. } => row,
-            CopyRow::Keep => raw,
-        }),
-    )
+    Ok(read(source)?.map(|raw| {
+        projection
+            .project_row(&source, &raw)
+            .released(source, raw)
+            .1
+    }))
 }

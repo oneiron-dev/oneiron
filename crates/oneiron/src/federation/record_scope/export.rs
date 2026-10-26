@@ -45,7 +45,7 @@ impl Vault {
         };
         let txn = self.store.env.read_txn()?;
         // FIX 7608 slice 4: a marked repo row leaves as its masked copy.
-        let copies = super::secret_projection::ExportProjection::read_in_txn(self, &txn);
+        let copies = super::secret_projection::ExportProjection::read_in_txn(self, &txn)?;
         let device_only = crate::settings::device_local_worlds_for(self, &txn, &recipient)?;
         let withheld = |source: &crate::EntityId| {
             crate::settings::device_only_withholds(&self.store, &txn, &device_only, source)

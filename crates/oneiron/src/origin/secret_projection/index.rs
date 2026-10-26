@@ -42,6 +42,14 @@ pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 /// The domain of a copy stamp's fingerprint.
 const REPO_INDEX_STAMP_CONTEXT: &str = "oneiron.repo-index-projection.stamp.v1";
 
+/// What a sync release does with a mark failure no blob is tied to (a mark
+/// claim that does not decode and names no blob, or a store failure in the
+/// mark walk), when no item is then provably unmarked (CALL
+/// S4FIX-UNKNOWN-MARK; review F4 rule, ruling A3): `true` fails that pass
+/// closed with the error, never raw; `false` would go on without the mark
+/// and report it. A mark tied to its blob fails only that blob's items.
+pub(crate) const UNATTRIBUTABLE_MARK_FAILS_CLOSED: bool = true;
+
 /// The rules an index copy is made by (CALL 3-I, ruling (d), Engine 10-22
 /// 07:20): part of every copy's stamp, so a change to them rebuilds only the
 /// copies it changes.
@@ -164,6 +172,10 @@ pub(crate) struct RepoIndexMarks {
     facts: RepoMarkFacts,
     hashes: BTreeSet<[u8; 32]>,
     sources: BTreeMap<EntityId, [u8; 32]>,
+    /// Marked blobs a mark of which does not decode: their copy is unknown,
+    /// so every projection of them fails (FIX 10793). Empty for
+    /// [`Self::read_in_txn`].
+    unreadable: BTreeSet<[u8; 32]>,
 }
 
 impl RepoIndexMarks {
@@ -173,7 +185,29 @@ impl RepoIndexMarks {
     /// A store failure, or a mark that does not decode.
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
         let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
-        let hashes = facts.raw_hashes();
+        Self::of(facts, BTreeSet::new())
+    }
+
+    /// The marks `txn` reads, scoped per blob for a sync release (FIX 7608
+    /// slice 4, FIX 10793): a mark that does not decode fails only the
+    /// projections of the blob it names, which stays marked (its source and
+    /// copy ids derive as any other's). Every other blob reads as before. A
+    /// mark failure no blob is tied to takes
+    /// [`UNATTRIBUTABLE_MARK_FAILS_CLOSED`]: every sync release (window
+    /// frames, documents, residence, scoped export) reads its marks here.
+    ///
+    /// # Errors
+    /// A store failure, or a mark that does not decode and names no blob,
+    /// while the policy fails closed.
+    pub(crate) fn read_scoped_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
+        let (facts, unreadable) =
+            RepoMarkFacts::read_scoped_in_txn(vault, txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
+        Self::of(facts, unreadable)
+    }
+
+    fn of(facts: RepoMarkFacts, unreadable: BTreeSet<[u8; 32]>) -> Result<Self> {
+        let mut hashes = facts.raw_hashes();
+        hashes.extend(unreadable.iter().copied());
         let sources = hashes
             .iter()
             .map(|hash| Ok((snapshot_asset_entity_id(hash)?, *hash)))
@@ -182,7 +216,19 @@ impl RepoIndexMarks {
             facts,
             hashes,
             sources,
+            unreadable,
         })
+    }
+
+    /// The failure every projection of a blob [`Self::read_scoped_in_txn`]
+    /// found an undecodable mark of answers.
+    fn readable(&self, source: &[u8; 32]) -> Result<()> {
+        if self.unreadable.contains(source) {
+            return Err(crate::error::Error::CorruptedIndex(
+                "a repo secret mark does not decode",
+            ));
+        }
+        Ok(())
     }
 
     /// No mark anywhere: every input is its stored bytes.
@@ -219,6 +265,7 @@ impl RepoIndexMarks {
         txn: &RoTxn<'_>,
         source: &[u8; 32],
     ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+        self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() || marks.opaque() {
             return Ok(None);
@@ -294,6 +341,7 @@ impl RepoIndexMarks {
         source: &[u8; 32],
         bytes: Vec<u8>,
     ) -> Result<RepoIndexInput> {
+        self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() {
             return Ok(RepoIndexInput::stored(bytes));
