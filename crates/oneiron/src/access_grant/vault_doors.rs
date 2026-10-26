@@ -71,14 +71,52 @@ impl Vault {
     /// Public generic entity puts for `ENTITY_TYPE_ACCESS_GRANT` remain
     /// rejected with `MaintenanceKindNotWritable`; this method validates the
     /// pinned AccessGrant body before using the maintenance write path.
+    /// A revoked or expired grant stays so under its id (FIX 8639): a put
+    /// that would make it active again is refused, and renewed access takes
+    /// a new grant id. Active edits and terminal re-puts land as before.
     pub fn put_access_grant(&self, id: &EntityId, grant: &AccessGrant) -> Result<()> {
         let data = encode_access_grant_body(grant)?;
+        let now = self.store.authorization_now().ok();
         let mut wtxn = self.store.env.write_txn()?;
+        self.check_terminal_grant_revival(&wtxn, id, grant, now)?;
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
         self.check_companion_profile_target(&wtxn, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
         self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
         wtxn.commit()?;
+        Ok(())
+    }
+
+    /// Refuses `grant` at `id` when the live grant there is terminal at the
+    /// authorization clock `now` and `grant` is active at it. A clock, row
+    /// or body that cannot be read leaves the put as it was.
+    fn check_terminal_grant_revival(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        grant: &AccessGrant,
+        now: Option<u64>,
+    ) -> Result<()> {
+        use super::record::AccessGrantStatus;
+        use crate::vault::LiveEntityRow;
+        let Some(now) = now else {
+            return Ok(());
+        };
+        let standing = match crate::vault::live_entity_row_in_txn(&self.store, txn, id) {
+            Ok(LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                body,
+            }) => decode_access_grant_body(&body).ok(),
+            _ => None,
+        };
+        if standing.is_some_and(|standing| {
+            standing.effective_status_at(now) != AccessGrantStatus::Active
+                && grant.effective_status_at(now) == AccessGrantStatus::Active
+        }) {
+            return Err(Error::Record(RecordError::InvalidAccessGrantBody(
+                "a revoked or expired grant is renewed under a new grant id",
+            )));
+        }
         Ok(())
     }
 
@@ -162,6 +200,43 @@ impl Vault {
         Ok(revoked)
     }
 
+    /// Writes the grant `admit` makes of the record that the write
+    /// transaction itself reads at `id`: an AccessGrant, or none. `admit`
+    /// answers the grant as it is to stand and whether to write it, so the
+    /// admission and the write share one write transaction, as a revoke's
+    /// do. The write passes every check [`Vault::put_access_grant`] runs and
+    /// lands at `learned_at`. A deleted grant is no grant to write over.
+    pub(crate) fn put_admitted_access_grant(
+        &self,
+        id: &EntityId,
+        learned_at: u64,
+        admit: impl FnOnce(&heed::RoTxn<'_>, Option<AccessGrant>) -> Result<(AccessGrant, bool)>,
+    ) -> Result<(AccessGrant, bool)> {
+        use crate::vault::LiveEntityRow;
+        let mut wtxn = self.store.env.write_txn()?;
+        let standing = match crate::vault::live_entity_row_in_txn(&self.store, &wtxn, id)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_ACCESS_GRANT,
+                body,
+            } => Some(decode_access_grant_body(&body)?),
+            LiveEntityRow::Live { entity_type, .. } => {
+                return Err(Error::InvalidEntityType(entity_type));
+            }
+            LiveEntityRow::Absent => None,
+            LiveEntityRow::DeletedShell => return Err(Error::EntityNotFound),
+        };
+        let (grant, write) = admit(&wtxn, standing)?;
+        if write {
+            let data = encode_access_grant_body(&grant)?;
+            self.check_channel_identity_access_write(&wtxn, id, &grant)?;
+            self.check_companion_profile_target(&wtxn, &grant)?;
+            crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
+            self.apply_access_grant_body(&mut wtxn, id, learned_at, data)?;
+            wtxn.commit()?;
+        }
+        Ok((grant, write))
+    }
+
     /// Reads and decodes an AccessGrant record.
     pub fn get_access_grant(&self, id: &EntityId) -> Result<Option<AccessGrant>> {
         let rtxn = self.store.env.read_txn()?;
@@ -193,14 +268,27 @@ impl Vault {
             .port_entity_ids_by_type(&rtxn, ENTITY_TYPE_ACCESS_GRANT, None)?
         {
             let grant_ref = entry?;
-            let Some(raw) = self.store.port_entity_record(&rtxn, &grant_ref)? else {
-                return Err(Error::CorruptedIndex("access grant entity row"));
-            };
-
-            if raw.entity_type != ENTITY_TYPE_ACCESS_GRANT {
+            // A deleted grant is no registry row (FIX 8640); a live revoked
+            // one still is. A row the live resolver cannot read is read raw,
+            // as before it.
+            let (entity_type, body) =
+                match crate::vault::live_entity_row_in_txn(&self.store, &rtxn, &grant_ref) {
+                    Ok(crate::vault::LiveEntityRow::Absent)
+                    | Ok(crate::vault::LiveEntityRow::DeletedShell) => continue,
+                    Ok(crate::vault::LiveEntityRow::Live { entity_type, body }) => {
+                        (entity_type, body)
+                    }
+                    Err(_) => {
+                        let Some(raw) = self.store.port_entity_record(&rtxn, &grant_ref)? else {
+                            return Err(Error::CorruptedIndex("access grant entity row"));
+                        };
+                        (raw.entity_type, raw.body)
+                    }
+                };
+            if entity_type != ENTITY_TYPE_ACCESS_GRANT {
                 return Err(Error::CorruptedIndex("access grant entity type"));
             }
-            let Some(grant) = super::codec::decode_live_access_grant_body(&raw.body)? else {
+            let Some(grant) = super::codec::decode_live_access_grant_body(&body)? else {
                 continue;
             };
             if grant.scope.calendar_rung(calendar_ref).is_some() {

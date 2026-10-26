@@ -243,10 +243,10 @@ pub(super) fn read_granted_in_txn(
 }
 
 /// `run`, the failure `source`'s, as the write `txn` that keeps it may keep
-/// it (FIX 8704): a judged engine pair while the Grant it read under still
-/// admits the capture alone, an instruction's replay of the kept request
-/// while one Grant does. Otherwise its verdict is dropped unsent, and a pair
-/// is kept not run: its Grant lapsed. Any other run is kept as it is.
+/// it (FIX 8704): a judged engine pair, or an instruction's replay of the
+/// kept request, while the Grant it read under still admits the capture
+/// alone (FIX 9448). Otherwise its verdict is dropped unsent, and a pair is
+/// kept not run: its Grant lapsed. Any other run is kept as it is.
 ///
 /// # Errors
 ///
@@ -258,18 +258,21 @@ pub(super) fn settle_in_txn(
     coach: EntityId,
     (mut run, sealed): SealedRun,
 ) -> Result<SealedRun> {
-    let only = match &run.engine {
-        Some(engine) if matches!(engine.state, EnginePairState::Judged) => engine.grant,
+    let (only, instruction) = match &run.engine {
+        Some(engine) if matches!(engine.state, EnginePairState::Judged) => (engine.grant, false),
         None if matches!(
             run.replay,
             Some(ReplayFidelity::Exact | ReplayFidelity::ExactMasked)
         ) =>
         {
-            None
+            (run.grant, true)
         }
         _ => return Ok((run, sealed)),
     };
     let admits = match capture_refs_in(vault, txn, source)? {
+        // An instruction's replay that names no Grant read under none this
+        // recheck can hold it to.
+        Some(_) if instruction && only.is_none() => Err(EngineAdmission::Lapsed),
         Some(refs) => admitting_grant_in(vault, txn, coach, &refs, only)?,
         None => Err(EngineAdmission::Lapsed),
     };
@@ -280,6 +283,7 @@ pub(super) fn settle_in_txn(
     };
     run.outcome = None;
     run.replay = None;
+    run.grant = None;
     run.export = CodeFixVerdict::Withheld {
         reason: CodeFixWithheld::ReplayUnavailable,
     };

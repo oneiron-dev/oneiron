@@ -33,6 +33,8 @@
 //! commits go out through `origin::publish` instead. Every automatic push
 //! freezes a reviewed plan before egress, leases each ref on the tip it
 //! read and reconciles before any resend (`mirror_run`, `origin::publish`).
+//! A mirror whose audience is public or unstated never takes history that
+//! holds a marked live key (FIX 7608 slice 9, `secret_publication`).
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +46,9 @@ use super::mirror_strategy::{
 };
 use super::publication::OriginPublicationStatus;
 use super::residence::OriginHostAuthority;
+use super::secret_publication::{
+    RepoDestinationAudience, RepoDestinationVisibility, configured_audience,
+};
 use super::smart_http::origin_repo_dir;
 use crate::Vault;
 use crate::codebase::RepoRef;
@@ -111,6 +116,10 @@ pub struct OriginMirrorTarget {
     /// failing, and full-auto heads waiting for checks.
     #[serde(default)]
     pub automation: Option<OriginMirrorAutomation>,
+    /// Who can read the mirror, as the owner stated it (C3): `unknown` when
+    /// unstated, held as public. A public or unknown mirror never takes
+    /// history that holds a marked live key (`secret_publication`).
+    pub audience: RepoDestinationAudience,
 }
 
 /// One push to a mirror.
@@ -187,6 +196,9 @@ pub struct OriginMirrorTargetInput {
     /// The strategy; when absent the same URL keeps its own and a new one
     /// starts at `ask_me`.
     pub sync_strategy: Option<OriginMirrorSyncStrategy>,
+    /// Who can read the mirror, as the owner states it; when absent the
+    /// same URL keeps its own and a new one is `unknown`, held as public.
+    pub visibility: Option<RepoDestinationVisibility>,
 }
 
 /// What one scheduled pass over the mirror targets did.
@@ -253,6 +265,7 @@ impl Vault {
             row.strategy_revision != configured.revision
                 || row.target_generation != configured.generation
         });
+        let audience = configured_audience(input.visibility, previous.as_ref(), &input.url);
         let (last, pushed, automation) = match previous {
             Some(row) if row.url == input.url => (row.last, row.pushed, row.automation),
             _ => (None, Vec::new(), None),
@@ -269,6 +282,7 @@ impl Vault {
             strategy_revision: configured.revision,
             target_generation: configured.generation,
             automation,
+            audience,
         };
         TARGETS.put(&self.store, txn, &repo_id, &row)?;
         if moved {

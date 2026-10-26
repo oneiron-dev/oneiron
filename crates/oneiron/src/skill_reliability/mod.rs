@@ -21,6 +21,7 @@ mod projector;
 mod provenance;
 mod read;
 mod resident;
+mod rule_outcome;
 
 pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
@@ -57,6 +58,9 @@ pub(crate) use self::read::{
     selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
 };
 pub use self::resident::rank_resident_skill_versions;
+pub(crate) use self::rule_outcome::{
+    RuleOutcomeSource, record_rule_outcome_in_txn, withdraw_rule_outcome_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

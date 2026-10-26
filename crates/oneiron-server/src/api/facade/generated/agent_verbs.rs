@@ -51,6 +51,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.companions.access_requests.answer",
             post(facade_route),
         )
+        .route("/self.grants.answer", post(facade_route))
         .route("/vault.personas.preview", post(facade_route))
         .route("/vault.personas.export", post(facade_route))
         .route("/vault.personas.edit", post(facade_route))
@@ -775,6 +776,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.agents.grants.revoke", post(facade_route))
         .route("/vault.repo.git_push.mint", post(facade_route))
         .route("/vault.repo.git_push.revoke", post(facade_route))
+        .route("/vault.connectors.read_grants.grant", post(facade_route))
+        .route("/vault.connectors.read_grants.revoke", post(facade_route))
         .route("/vault.repo.anchor.bind", post(facade_route))
         .route("/vault.repo.snapshots.get", post(facade_route))
         .route("/vault.repo.snapshots.read", post(facade_route))

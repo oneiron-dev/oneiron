@@ -189,7 +189,28 @@ impl Memory<'_> {
         decisions: Option<&TaskDecisions<'_>>,
         continuation: &BlockContinuation,
     ) -> MemoryResult<DoneVerdict> {
+        let strict = highway_block::strict_done_reuse(current.brief.as_ref());
         for wait in blocked_on(current) {
+            // Whether the ask was opened for this very Done is recorded
+            // either way (FIX 10183); under strict reuse an ask bound to
+            // anything else is passed over for the TASK's own question.
+            let binding = self
+                .report_read(rt, |txn| {
+                    Ok(highway_block::done_ask_binding_in(
+                        self.vault(),
+                        txn,
+                        wait,
+                        continuation,
+                    )?)
+                })
+                .unwrap_or(highway_block::DoneAskBinding::Unbound);
+            rt.note_decision(
+                &format!("done_ask_binding.{}", wait.to_hex()),
+                binding.as_str().to_owned(),
+            );
+            if strict && binding == highway_block::DoneAskBinding::Unbound {
+                continue;
+            }
             let Ok(status) = self.report_ask_status(rt, wait) else {
                 continue;
             };
@@ -230,7 +251,7 @@ impl Memory<'_> {
         {
             answer.record_judge_in_txn(self.vault(), wtxn);
         }
-        match judged.unwrap_or_else(|| {
+        let decision = judged.unwrap_or_else(|| {
             ask(
                 decisions,
                 TaskQuestion::DoneMet,
@@ -239,7 +260,12 @@ impl Memory<'_> {
                 &state,
                 brief.brief.escalation.reversibility,
             )
-        }) {
+        });
+        // The ladder's receipt rides with the verdict it decided (FIX 10179).
+        if let Some(receipt) = decision.receipt_field() {
+            rt.note_decision("done_decision_receipt", receipt);
+        }
+        match decision.answer {
             PortAnswer::Yes => Ok(DoneVerdict::Met),
             PortAnswer::No => Ok(DoneVerdict::Unmet),
             PortAnswer::AskUp => {
@@ -294,14 +320,20 @@ impl Memory<'_> {
             "objective": brief.brief.objective,
             "need": brief.brief.intent.need,
         });
-        match ask(
+        let decision = ask(
             decisions,
             TaskQuestion::AskUp,
             self.actor(),
             &cited,
             &state,
             brief.brief.escalation.reversibility,
-        ) {
+        );
+        // The ladder's receipt rides with the escalation it decided (FIX
+        // 10179).
+        if let Some(receipt) = decision.receipt_field() {
+            rt.note_decision("ask_up_decision_receipt", receipt);
+        }
+        match decision.answer {
             PortAnswer::No => Ok(Escalation::Declined),
             PortAnswer::Yes | PortAnswer::AskUp => Ok(
                 match self.open_escalation_ask(

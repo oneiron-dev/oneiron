@@ -7,6 +7,10 @@ mod report;
 use super::{
     FeedbackCategory, FeedbackEncoding, decode_feedback_bundle_as, feedback_bundle_digest_as,
 };
+pub(crate) use report::{
+    forget_report_cluster_member_in_txn, forget_report_cluster_source_in_txn,
+    report_cluster_carriage, report_cluster_owners,
+};
 
 /// One review item, keyed by its own id.
 const QUEUE_ITEMS: SideTable<EntityId, FeedbackReviewItem, Named> =

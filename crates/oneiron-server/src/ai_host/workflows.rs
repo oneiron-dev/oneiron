@@ -124,8 +124,7 @@ impl WorkflowPump {
                     }
                 };
                 pump(
-                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed,
-                    stopped,
+                    &runtime, &vault, &runner, &status, &questions, &decisions, &installed, stopped,
                 );
             })?;
         Ok(Self {
@@ -413,6 +412,15 @@ fn pump_once(
             }
             match progress {
                 Ok(WorkflowProgress::Advanced(_)) => continue,
+                // A successor whose release was refused (FIX 10602) waits on
+                // a definition change no commit signals: looked at again on
+                // the recheck, for as long as it waits.
+                Ok(WorkflowProgress::Waiting(_)) => {
+                    recheck |= !dispatcher
+                        .workflow_status(*root)
+                        .is_ok_and(|status| status.release_refusal.is_none());
+                    break;
+                }
                 Ok(_) => break,
                 Err(error) => {
                     tracing::warn!(kind = ?error.kind(), ?root, "workflow step did not complete");

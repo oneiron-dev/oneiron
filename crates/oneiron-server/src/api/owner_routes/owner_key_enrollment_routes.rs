@@ -26,20 +26,19 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::{
-    ActAuthority, EnrolledOwnerKey, HostSlipIssuer, OWNER_KEY_POSSESSION_PROOF_LEN,
-    OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    ActAuthority, EnrolledOwnerKey, OWNER_KEY_POSSESSION_PROOF_LEN, OwnerKeyEnrollment,
+    OwnerKeyEnrollmentReceipt,
 };
 use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -173,27 +172,17 @@ fn no_root_signer() -> OwnerError {
 }
 
 /// Enrols `input` as `authority`, with this host's root as the predecessor:
-/// the managed issuer, else the one the configured retained secret derives.
+/// the managed issuer, else this install's own self-host root issuer
+/// (FIX-LIST 3018).
 fn enrol_as_host(
     server: &SyncServer,
     authority: &ActAuthority,
     input: OwnerKeyEnrollment,
 ) -> OwnerResult<OwnerKeyEnrollmentReceipt> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return server
-            .vault()
-            .enrol_owner_signing_key_as_host(authority, input, issuer)
-            .map_err(refusal);
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(no_root_signer)?;
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| no_root_signer())?;
+    let issuer = server.host_issuer().ok_or_else(no_root_signer)?;
     server
         .vault()
-        .enrol_owner_signing_key_as_host(authority, input, &issuer)
+        .enrol_owner_signing_key_as_host(authority, input, issuer)
         .map_err(refusal)
 }
 
@@ -230,11 +219,11 @@ async fn challenge(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ChallengeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ChallengeRequest>,
 ) -> OwnerReply<ChallengeReply> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ChallengeReply> {
         let machine = entity_id("machine", &body.machine)?;
         let public_key = parse_revision("public_key", &body.public_key)?;
@@ -257,11 +246,11 @@ async fn enroll(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EnrollRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EnrollRequest>,
 ) -> OwnerReply<ReceiptReply> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReceiptReply> {
         let input = OwnerKeyEnrollment {
             machine: entity_id("machine", &body.machine)?,

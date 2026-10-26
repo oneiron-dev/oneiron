@@ -17,11 +17,10 @@ use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, SecretKey,
     address_lookup::{AddressLookup, EndpointInfo, Error as LookupError, Item},
     endpoint::{Accepting, Connection, Incoming, PathEvent, presets},
-    protocol::{AcceptError, ProtocolHandler},
+    protocol::AcceptError,
 };
 use n0_future::{boxed::BoxStream, task::AbortOnDropHandle};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinSet;
 
 use crate::{
@@ -30,7 +29,11 @@ use crate::{
     PathReceipts, transport_key::TransportKey,
 };
 
+// Fair dispatch of authenticated admissions, and their receipts (FIX 8620, 8621).
+mod admission;
 mod dial;
+
+pub use dial::{OwnerMachineLookup, owner_machine_lookup};
 
 const MAX_MESSAGE: usize = 1024 * 1024;
 
@@ -308,7 +311,7 @@ impl AddressLookup for RosterLookup {
 struct GateHandler {
     policy: AcceptPolicy,
     alpn: Vec<u8>,
-    accepted: mpsc::Sender<(MachineId, Vec<u8>, Connection)>,
+    admissions: Arc<admission::Admissions>,
     receipts: Option<PathRecorder>,
 }
 impl GateHandler {
@@ -334,8 +337,6 @@ impl GateHandler {
         );
         receipts.refused(receipt, machine, Some(connection));
     }
-}
-impl ProtocolHandler for GateHandler {
     async fn on_accepting(&self, accepting: Accepting) -> Result<Connection, AcceptError> {
         // Await the authenticated TLS identity before permitting any application streams.
         // Never use 0-RTT/0.5-RTT: grants must be checked before data is served.
@@ -356,40 +357,17 @@ impl ProtocolHandler for GateHandler {
         }
         Ok(connection)
     }
-    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        // Recheck: revocation can race the completed handshake before dispatch.
-        let key = *connection.remote_id().as_bytes();
-        let machine = match self.policy.inbound(key, &self.alpn) {
-            Ok(machine) => machine,
-            Err(error) => {
-                self.refused(&connection, key, &error);
-                return Err(n0_error::e!(AcceptError::NotAllowed));
-            }
-        };
-        let mut acknowledgement = connection.open_uni().await.map_err(AcceptError::from_err)?;
-        acknowledgement
-            .write_all(dial::ADMISSION)
-            .await
-            .map_err(AcceptError::from_err)?;
-        acknowledgement.finish().map_err(AcceptError::from_err)?;
-        if let Some(receipts) = &self.receipts {
-            let receipt = admission(MeshPathDirection::Inbound, &self.alpn, machine, key);
-            receipts.admitted(receipt, &connection);
-        }
-        self.accepted
-            .send((machine, self.alpn.clone(), connection))
-            .await
-            .map_err(AcceptError::from_err)
-    }
 }
 
 /// Takes each inbound attempt on `endpoint` to the gate for its ALPN, as
 /// iroh's router does, until the endpoint closes. Unlike the router, it
-/// leaves a receipt for an attempt that fails before a gate sees it.
+/// leaves a receipt for an attempt that fails before a gate sees it. The
+/// queue of admissions closes as it ends (`_closing`).
 async fn accept_loop(
     endpoint: Endpoint,
     gates: Arc<BTreeMap<Vec<u8>, GateHandler>>,
     receipts: Option<PathRecorder>,
+    _closing: admission::Closing,
 ) {
     let mut attempts = JoinSet::new();
     while let Some(incoming) = endpoint.accept().await {
@@ -426,9 +404,10 @@ async fn gate_attempt(
         }
         return;
     };
-    // A gate's own refusal or failure left its receipt.
+    // A gate's own refusal or failure left its receipt, and its admission
+    // leaves one on every exit after its proof (FIX 8621).
     if let Ok(connection) = gate.on_accepting(accepting).await {
-        let _ = gate.accept(connection).await;
+        gate.admit(connection).await;
     }
 }
 
@@ -456,7 +435,7 @@ pub struct IrohTransport {
     accepting: AbortOnDropHandle<()>,
     policy: AcceptPolicy,
     allowed_relays: RelayMap,
-    accepted: Mutex<mpsc::Receiver<(MachineId, Vec<u8>, Connection)>>,
+    admissions: Arc<admission::Admissions>,
     alpns: Vec<Vec<u8>>,
     receipts: Option<PathRecorder>,
 }
@@ -510,14 +489,14 @@ impl IrohTransport {
             .bind()
             .await
             .map_err(|e| MeshError::Io(e.to_string()))?;
-        let (tx, rx) = mpsc::channel(64);
+        let admissions = Arc::new(admission::Admissions::default());
         let gates = alpns
             .iter()
             .map(|alpn| {
                 let gate = GateHandler {
                     policy: policy.clone(),
                     alpn: alpn.clone(),
-                    accepted: tx.clone(),
+                    admissions: Arc::clone(&admissions),
                     receipts: receipts.clone(),
                 };
                 (alpn.clone(), gate)
@@ -528,13 +507,14 @@ impl IrohTransport {
             endpoint.clone(),
             Arc::new(gates),
             receipts.clone(),
+            admission::Closing(Arc::clone(&admissions)),
         ));
         Ok(Self {
             endpoint,
             accepting: AbortOnDropHandle::new(accepting),
             policy,
             allowed_relays,
-            accepted: Mutex::new(rx),
+            admissions,
             alpns,
             receipts,
         })
@@ -580,6 +560,7 @@ impl IrohTransport {
     /// Stops accepting and closes the endpoint, then writes the refusals
     /// still folded into a window.
     pub async fn shutdown(&self) -> Result<(), MeshError> {
+        self.admissions.close();
         self.accepting.abort();
         self.endpoint.close().await;
         if let Some(receipts) = &self.receipts {

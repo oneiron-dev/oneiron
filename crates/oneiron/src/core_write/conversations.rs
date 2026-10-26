@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::batch::CoreWriteLane;
 use super::shape::{
     AnnouncementAuthority, CoreWriteTextField, core_body_for_write, core_text_pairs,
     core_write_times, entity_id, stage_core_put, text_pairs, write_id,
@@ -84,21 +85,34 @@ impl CoreEntityWriteReceipt {
 }
 
 impl Vault {
-    /// Creates a conversation. One naming members is authored by `actor`
-    /// in one transaction with its membership ledger, text, creator and
-    /// role grants; one naming none is a plain put, which no actor needs.
+    /// Creates a conversation, held to `lane` (FIX 10781): an id a stored
+    /// row holds is judged against that row in the write's own transaction
+    /// first, so the caller puts over only a row its lane admits
+    /// ([`CoreWriteLane::admits_puts_in`]); an unbound lane puts as before.
+    /// One naming members is authored by `actor` in one transaction with its
+    /// membership ledger, text, creator and role grants; one naming none is
+    /// a plain put, which no actor needs.
     /// # Errors
     /// A body that is no conversation, a bad id or interval, a memberful
-    /// create with no actor, or the vault's refusal.
+    /// create with no actor, a named stored row outside `lane` as missing,
+    /// or the vault's refusal.
     pub fn write_core_conversation(
         &self,
         input: &ConversationCreateInput,
         actor: Option<WriteActor>,
+        lane: &CoreWriteLane<'_>,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let body: ConversationBody = serde_json::from_value(input.body.clone())
             .map_err(|_| MemoryError::bad_request("invalid conversation body"))?;
         let id = write_id(input.id.as_deref())?;
         let times = core_write_times(input.occurred_start, input.occurred_end, input.learned_at)?;
+        let admitted = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
+            if lane.admits_puts_in(txn, &[id])? {
+                return Ok(());
+            }
+            // As missing: the row's kind, body and scope stay unsaid.
+            Err(crate::Error::EntityNotFound)
+        };
         if !body.member_ids.is_empty() {
             let actor = actor.ok_or_else(|| {
                 MemoryError::bad_request("a conversation with members is created by an actor")
@@ -108,14 +122,21 @@ impl Vault {
                 .iter()
                 .map(|(field, value)| (field.as_str(), value.as_str()))
                 .collect();
-            self.create_conversation_with_text(
-                id,
-                &body,
-                actor,
-                times.occurred,
-                times.learned_at,
-                &fields,
-            )?;
+            // `Vault::create_conversation_with_text`, its id judged first in
+            // the same transaction.
+            self.with_write_txn_grouped(|txn| {
+                admitted(txn)?;
+                crate::conversation::create_in_txn(
+                    self,
+                    txn,
+                    id,
+                    &body,
+                    actor,
+                    times.occurred,
+                    times.learned_at,
+                    &fields,
+                )
+            })?;
             return Ok(CoreEntityWriteReceipt::new(
                 id,
                 ENTITY_TYPE_CONVERSATION,
@@ -133,7 +154,7 @@ impl Vault {
             AnnouncementAuthority::Writer,
             input.text.as_deref().map(text_pairs),
         )?
-        .commit()?;
+        .commit_with_target_guard(admitted)?;
         Ok(CoreEntityWriteReceipt::new(
             id,
             ENTITY_TYPE_CONVERSATION,
@@ -151,20 +172,31 @@ impl Vault {
     /// its own lane reads, judged in the batch's own writer (FIX 5939); the
     /// owner writes as before. Such a TURN sits in no private thread: its
     /// thread keys are refused here, and its one edge is to the
-    /// conversation, which no thread holds.
+    /// conversation, which no thread holds. Nor does it put over a row its
+    /// lane does not read: an id it names that a stored row holds is judged
+    /// against that row first, in the same writer, before the put or its
+    /// ChildOf lands (FIX 6068).
     /// # Errors
     /// A target that is no conversation, a bad id, interval or body, a
-    /// conversation outside `writer`'s read, or the batch's ChildOf refusal.
+    /// conversation or a named stored row outside `writer`'s read, or the
+    /// batch's ChildOf refusal.
     pub fn write_core_conversation_turn(
         &self,
         input: &ConversationTurnCreateInput,
         writer: &ScopedRead<'_>,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
-        self.write_core_conversation_turn_admitted(input, announcement, |txn, conversation| {
-            Ok(self.turn_doors_owner_in(writer, txn)?
-                || writer.is_entity_readable_in(txn, conversation)?)
-        })?
+        self.write_core_conversation_turn_admitted(
+            input,
+            announcement,
+            |txn, conversation, turn| {
+                if self.turn_doors_owner_in(writer, txn)? {
+                    return Ok(true);
+                }
+                Ok(writer.is_entity_readable_in(txn, conversation)?
+                    && crate::batch::put_target_admitted_in(writer, txn, turn)?)
+            },
+        )?
         .ok_or_else(|| {
             MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -186,7 +218,7 @@ impl Vault {
         proof: &VerifiedSlip,
         announcement: AnnouncementAuthority,
     ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
-        self.write_core_conversation_turn_admitted(input, announcement, |txn, _| {
+        self.write_core_conversation_turn_admitted(input, announcement, |txn, _, _| {
             self.slip_is_owner_in(txn, proof)
         })
     }
@@ -215,13 +247,13 @@ impl Vault {
     }
 
     /// One TURN under a conversation, written only when `admits` passes the
-    /// conversation in the batch's own writer; `None`, nothing written,
-    /// when it does not.
+    /// conversation and the TURN's id in the batch's own writer; `None`,
+    /// nothing written, when it does not.
     fn write_core_conversation_turn_admitted(
         &self,
         input: &ConversationTurnCreateInput,
         announcement: AnnouncementAuthority,
-        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId) -> crate::Result<bool>,
+        admits: impl FnOnce(&heed::RoTxn<'_>, &EntityId, &EntityId) -> crate::Result<bool>,
     ) -> MemoryResult<Option<CoreEntityWriteReceipt>> {
         let conversation = entity_id(&input.conversation, "conversation")?;
         match self.get_entity_type(&conversation)? {
@@ -260,7 +292,7 @@ impl Vault {
         )?
         .edge_checked(&id, &conversation, 1.0)
         .commit_with_target_guard(|txn| {
-            if admits(txn, &conversation)? {
+            if admits(txn, &conversation, &id)? {
                 return Ok(());
             }
             outside.set(true);
@@ -281,15 +313,19 @@ impl Vault {
 
 impl Memory<'_> {
     /// `vault.conversations.create`: a conversation, its membership
-    /// authored as the bound actor.
+    /// authored as the bound actor, held to this handle's write lane (FIX
+    /// 10781): its read, or the bounds of what a credential that grants no
+    /// read may write to.
     /// # Errors
-    /// As [`Vault::write_core_conversation`].
+    /// As [`Vault::write_core_conversation`], and the write lane's refusal.
     pub fn conversations_create(
         &self,
         input: &ConversationCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let actor = WriteActor::new(self.actor(), self.actor_class());
-        self.vault().write_core_conversation(input, Some(actor))
+        let lane = self.core_write_lane()?;
+        self.vault()
+            .write_core_conversation(input, Some(actor), &lane)
     }
 
     /// `vault.conversations.turns.create`: one TURN under a conversation,

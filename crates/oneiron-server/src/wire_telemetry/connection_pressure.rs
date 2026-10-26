@@ -17,6 +17,17 @@
 //! permit, the owner's one reserve beside the floor, or a place parked
 //! beside it while the floor's line is awaited (FIX 8274). A connection
 //! counts there with or without a request body open.
+//!
+//! A managed relay locker keeps the same check over its own connections
+//! (FIX 7739, [`PoolPressure::relay_locker`]). It has no floor to wait for
+//! and no owner reserve: its check is raised while its open connections are
+//! as many as the public listener's floor would hold, and names its own
+//! remedy.
+//!
+//! The mesh listener's sync streams keep one of their own (FIX 7737,
+//! [`PoolPressure::mesh`]): raised while a stream waits for a place under
+//! the mesh's connection floor, each stream counted under `floor` and its
+//! bytes under the MACHINE its connection proved. It has no owner reserve.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -36,6 +47,14 @@ const MAX_PRESSURE_CREDENTIALS: usize = 16;
 /// Connections the owner's reserve keeps beside the floor (FIX 8274). They
 /// are never counted in the floor's bound.
 const OWNER_RESERVE_CONNECTIONS: u64 = 1;
+
+/// What a relay locker's operator can do, and what its check does not
+/// promise (FIX 7739).
+const RELAY_LOCKER_REMEDY: &str = "Is everything okay? This relay locker holds as many open connections as a vault's public listener holds at its descriptor floor. Its open request bodies are uploads under the room's one access token. If they are not the room's own devices, rotate the room's access token file and restart the room. This check does not cut an upload or refuse a connection.";
+
+/// What the owner can do about the mesh's streams, and what its check does
+/// not promise (FIX 7737).
+const MESH_REMEDY: &str = r#"Is everything okay? A mesh sync stream waits for a place. The listed machines hold the most open streams; each counts every byte its peer sent on them, requests and upgraded sockets alike. Pause the sync client on a listed machine, or remove the machine with POST /v1/owner/machines/remove, passing {"machine":"<machine_id>","seen":"<revision from GET /v1/owner/machines/answer>"}. This check does not cut a stream or refuse a connection."#;
 
 /// What the owner can do, and what the check does not promise.
 const REMEDY: &str = r#"Is everything okay? This connection pool has a waiter. The listed credential keys hold the most open request bodies. Pause the client using a listed key, or revoke its credential. For a slip key, revoke with POST /v1/core/slips/revoke, passing {"slip_id":[32 bytes decoded from the listed hex ID]}. For an engine-run client, its existing pause door is POST /v1/core/facade/vault.runs.pause with {"branch":"<attempt-id>"}; that pauses a run branch, not a credential. Account-key pause/revoke belongs to the host control plane. This check does not cut a body or guarantee that revocation releases an already-open body."#;
@@ -149,11 +168,17 @@ pub(crate) enum PressureCredentialKey {
     Slip { slip_id: String },
     /// An account API key the host's control plane verified, by its key id.
     AccountKey { key_id: String },
+    /// A paired machine on the mesh listener, by its MACHINE id: 32
+    /// lowercase hex (FIX 7737).
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))] // Only the mesh listener names one.
+    Machine { machine_id: String },
 }
 
 /// The check one pool keeps: the episode on show and every open body.
 #[derive(Default)]
 pub(crate) struct PoolPressure {
+    /// Whose connections it counts.
+    pool: PoolKind,
     episodes: Mutex<Episodes>,
     /// Each open body, by its socket's id and its own.
     bodies: Mutex<BTreeMap<(u64, u64), Arc<BodyRecord>>>,
@@ -161,6 +186,22 @@ pub(crate) struct PoolPressure {
     connections: Mutex<PoolConnections>,
     /// The next socket or body id.
     next: AtomicU64,
+}
+
+/// Whose connections a check counts.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum PoolKind {
+    /// A vault server's listeners: raised while a socket waits for the
+    /// floor, with the owner's reserve beside it.
+    #[default]
+    Listener,
+    /// A relay locker's: raised while its open connections are as many as
+    /// the listener's floor, each counted under `floor`; it has no floor
+    /// and no reserve (FIX 7739).
+    RelayLocker,
+    /// The mesh listener's sync streams: raised while one waits for a place
+    /// under its floor, each counted under `floor`; no reserve (FIX 7737).
+    Mesh,
 }
 
 #[derive(Default)]
@@ -189,6 +230,22 @@ struct BodyRecord {
 }
 
 impl PoolPressure {
+    /// A relay locker's check (FIX 7739).
+    pub(crate) fn relay_locker() -> Arc<Self> {
+        Arc::new(Self {
+            pool: PoolKind::RelayLocker,
+            ..Self::default()
+        })
+    }
+
+    /// The mesh listener's sync streams' check (FIX 7737).
+    pub(crate) fn mesh() -> Arc<Self> {
+        Arc::new(Self {
+            pool: PoolKind::Mesh,
+            ..Self::default()
+        })
+    }
+
     /// A socket waits for the pool in the floor's crossing `epoch`, the
     /// floor set to `bound`: the check is raised, once for the crossing. A
     /// crossing already over, or older than the one on show, raises nothing.
@@ -204,11 +261,18 @@ impl PoolPressure {
             bound,
         });
         drop(episodes);
+        let said = match self.pool {
+            PoolKind::Listener => "a connection waits for the connection pool; is everything okay?",
+            PoolKind::RelayLocker => {
+                "the relay locker holds as many connections as a descriptor floor; is everything okay?"
+            }
+            PoolKind::Mesh => "a mesh sync stream waits for a place; is everything okay?",
+        };
         tracing::warn!(
             kind = "connection_pool_pressure",
             episode = epoch,
             bound,
-            "a connection waits for the connection pool; is everything okay?"
+            "{said}"
         );
     }
 
@@ -272,6 +336,11 @@ impl PoolPressure {
             .sum();
         credentials.truncate(MAX_PRESSURE_CREDENTIALS);
         let connections = lock(&self.connections).clone();
+        let (reserve_bound, parking_bound, remedy) = match self.pool {
+            PoolKind::Listener => (OWNER_RESERVE_CONNECTIONS, episode.bound, REMEDY),
+            PoolKind::RelayLocker => (0, 0, RELAY_LOCKER_REMEDY),
+            PoolKind::Mesh => (0, 0, MESH_REMEDY),
+        };
         ConnectionPoolPressure::Active {
             check: ConnectionPoolPressureCheck {
                 kind: WireQuestionKind::InspectConnectionPoolPressure,
@@ -284,9 +353,9 @@ impl PoolPressure {
                 other_credential_open_body_permits: other,
                 unattributed_open_body_permits: unattributed,
                 connections,
-                reserve_bound: OWNER_RESERVE_CONNECTIONS,
-                parking_bound: episode.bound,
-                remedy: REMEDY.to_owned(),
+                reserve_bound,
+                parking_bound,
+                remedy: remedy.to_owned(),
             },
         }
     }

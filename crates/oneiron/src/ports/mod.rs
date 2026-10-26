@@ -41,6 +41,7 @@ pub(crate) use dependent_walk::{
 };
 mod integrity;
 mod lmdb_aux;
+pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
@@ -56,6 +57,7 @@ pub(crate) use mutation::{
 mod regeneration;
 mod safe_read;
 mod time;
+mod vault_read;
 pub(crate) use safe_read::{
     BodyStale, body_readable_in_txn, raw_readable_apart_from_use_in_txn, raw_readable_in_txn,
     withdrawn_in_txn,

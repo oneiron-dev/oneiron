@@ -60,7 +60,18 @@ impl RepoProposal {
             RepoProposalOperation::CommitFile => "commit_file",
             RepoProposalOperation::ResolveConflictFile { .. } => "resolve_conflict_file",
             RepoProposalOperation::ReceivedFiles { .. } => "received_files",
+            RepoProposalOperation::CommitFiles => "commit_files",
         }
+    }
+
+    /// Whether it is a file bundle, received or native: many files, each
+    /// with its exact state change, landed as one commit by its queue.
+    #[must_use]
+    pub fn is_file_bundle(&self) -> bool {
+        matches!(
+            self.operation,
+            RepoProposalOperation::ReceivedFiles { .. } | RepoProposalOperation::CommitFiles
+        )
     }
 
     /// The received candidate a bundle carries, if this is one.
@@ -78,12 +89,15 @@ impl RepoProposal {
         self.files.iter().map(|file| file.path.as_str()).collect()
     }
 
-    /// The oplog subject it lands under: an ordinary file's path, or a
-    /// received bundle's candidate id.
+    /// The oplog subject it lands under: an ordinary file's path, a
+    /// received bundle's candidate id, or a native bundle's message.
     #[must_use]
     pub(crate) fn operation_subject(&self) -> String {
         match (&self.operation, self.files.as_slice()) {
             (RepoProposalOperation::ReceivedFiles { candidate }, _) => candidate.to_hex(),
+            (RepoProposalOperation::CommitFiles, _) => {
+                crate::repo_mutation::bundle::bundle_operation_subject(&self.message)
+            }
             (_, [file]) => file.path.clone(),
             _ => String::new(),
         }
@@ -96,6 +110,26 @@ pub(in crate::repo_mutation) fn received_bundle_queue_only() -> Error {
     Error::Refused(
         "received_bundle_queue_only: a received push bundle lands through its repository's \
          merge queue; enqueue it with vault.code.merge_queue.enqueue, then land it with \
+         vault.code.merge_queue.land_reviewed"
+            .to_owned(),
+    )
+}
+
+/// The typed refusal of a file bundle outside its queue: a received
+/// bundle's own, or a native bundle's.
+pub(super) fn bundle_queue_only(row: &RepoProposal) -> Error {
+    if row.received_candidate().is_some() {
+        return received_bundle_queue_only();
+    }
+    native_bundle_queue_only()
+}
+
+/// The typed refusal of a native file bundle outside its queue: it names
+/// how the bundle lands.
+pub(in crate::repo_mutation) fn native_bundle_queue_only() -> Error {
+    Error::Refused(
+        "file_bundle_queue_only: a reviewed file bundle lands through its repository's merge \
+         queue; enqueue it with vault.code.merge_queue.enqueue, then land it with \
          vault.code.merge_queue.land_reviewed"
             .to_owned(),
     )

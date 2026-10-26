@@ -58,13 +58,19 @@ impl Memory<'_> {
     /// [`ShapePlanCard::generated_ui`] puts it on the envelope.
     pub fn shape_plan_card(&self, input: &ShapePlanRequest) -> MemoryResult<ShapePlanCard> {
         let plan = self.shape_plan(input)?;
-        let apply = self.vault.shape_apply(&plan.frontier)?;
+        // The open apply reads as `vault.shape.read` lists it (FIX 9960).
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let apply = self
+            .vault
+            .shape_apply_visible(&plan.frontier, &mut |id| read.is_entity_readable(id))?;
         Ok(ShapePlanCard::of(&plan, apply.as_ref()))
     }
 
     /// `vault.shape.apply`: lands a plan. On an embedded handle the vault's
-    /// owner lands it through the owner's doors; any other caller's apply
-    /// stores the seed and leaves each item waiting for the owner's word.
+    /// owner lands it through the owner's doors, from where his request
+    /// reached this install (`with_owner_surface`, this install's own
+    /// unless a host bound another); any other caller's apply stores the
+    /// seed and leaves each item waiting for the owner's word.
     pub fn shape_apply(&self, input: &ShapeApplyRequest) -> MemoryResult<ShapeApplyReceipt> {
         let now = crate::unix_seconds_now();
         if let Ok(owner) = self.embedded_owner("vault.shape.apply") {
@@ -72,6 +78,7 @@ impl Memory<'_> {
                 ShapeApplier::Owner {
                     owner: &owner,
                     slips: None,
+                    surface: self.owner_surface(),
                 },
                 input,
                 now,

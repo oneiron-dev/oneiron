@@ -324,6 +324,7 @@ impl Store {
             grant_ref: None,
             diff_handle: id.as_bytes().to_vec(),
             read_frontier_hash,
+            context: Default::default(),
             redacted_at: None,
         };
         self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;

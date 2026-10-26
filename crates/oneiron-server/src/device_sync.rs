@@ -54,8 +54,11 @@ type Admission = Box<dyn Send>;
 
 mod dial;
 mod enrolment;
+mod removal_delivery;
 #[cfg(feature = "mesh")]
 mod renewal;
+#[cfg(feature = "mesh")]
+mod route;
 use dial::Dial;
 use enrolment::EnrolmentSource;
 pub(crate) use enrolment::{EnrolmentFiles, enrol};
@@ -65,6 +68,8 @@ pub(crate) use enrolment::{EnrolmentFiles, enrol};
 pub(crate) struct DeviceSyncHost {
     stop: oneshot::Sender<()>,
     task: JoinHandle<()>,
+    /// The archive receiver, kept after membership loss (FIX 3396).
+    removal: Option<removal_delivery::Receiver>,
 }
 
 impl DeviceSyncHost {
@@ -114,19 +119,21 @@ impl DeviceSyncHost {
         }
     }
 
-    /// The connection to `dial`'s home, or `None` with the line that says
-    /// why. `admission`, when given, ends with the connection's task.
+    /// The connection to `dial`'s home and its archive receiver, or, with the
+    /// line that says why, the receiver alone or `None`. `admission` ends with the task.
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,
         mesh: Option<&MeshHost>,
         admission: Option<Admission>,
     ) -> Option<Self> {
+        // The receiver runs whether or not the link opens (FIX 3396).
+        let removal = removal_delivery::Receiver::start(&dial);
         match open(server, dial, mesh, admission).await {
-            Ok(host) => Some(host),
+            Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
-                None
+                removal.map(Self::receiving)
             }
         }
     }
@@ -138,6 +145,9 @@ impl DeviceSyncHost {
         let _ = self.stop.send(());
         if let Err(error) = self.task.await {
             tracing::warn!(%error, "device sync task");
+        }
+        if let Some(removal) = self.removal {
+            removal.stop().await;
         }
     }
 }
@@ -216,13 +226,23 @@ async fn open(
     }
     let credential =
         crate::commands::credential_file::PairedCredentialFile::read(&credential_file)?;
+    // Each mesh dial targets the home the last committed election routes to
+    // (FIX 3131); a move of it rebuilds the link, as a renewal does.
+    let topology = home_node.map(|node| home_topology(node, &url));
+    let routes = || {
+        topology
+            .as_ref()
+            .map(oneiron::sync::HomeNodeTopology::home_route)
+    };
+    let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
+    let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
     let link = Link {
         windows: Arc::clone(&server.reassert_manager),
-        topology: home_node.map(|node| home_topology(node, &url)),
+        topology,
         url,
         worlds,
         mesh_dialer: mesh.map(|mesh| {
-            Arc::new(MeshSyncDialer::new(mesh.transport(), home)) as Arc<dyn SyncDialer>
+            Arc::new(MeshSyncDialer::resolving(mesh.transport(), resolve)) as Arc<dyn SyncDialer>
         }),
         pin,
         machine,
@@ -236,6 +256,7 @@ async fn open(
         credential_file,
         Arc::clone(&server.vault),
         link.mesh_dialer.clone(),
+        moves,
     );
     let (stop, stop_rx) = oneshot::channel();
     let home = home.to_hex();
@@ -248,6 +269,7 @@ async fn open(
             .ai
             .models()
             .mesh_routes(&server.vault, mesh.transport()),
+        staging: server.model_budgets.mesh_staging(),
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
@@ -267,7 +289,11 @@ async fn open(
         };
         tokio::join!(catalog, dialing);
     });
-    Ok(DeviceSyncHost { stop, task })
+    Ok(DeviceSyncHost {
+        stop,
+        task,
+        removal: None,
+    })
 }
 
 /// What each connection to the home is built from, but its credential.
@@ -520,6 +546,8 @@ struct MeshCatalog {
     /// The router's routes to those models (FIX 3229), published after each
     /// refresh.
     routes: crate::models::MeshRoutes,
+    /// The vault's one mesh budget its transport's calls hold bytes on.
+    staging: oneiron_llm_own_server::StagingBudget,
 }
 
 #[cfg(feature = "mesh")]
@@ -560,8 +588,8 @@ impl MeshCatalog {
                 Arc::clone(&self.transport),
                 Arc::new(VaultLlmNodes(Arc::clone(&self.vault))),
                 tokio::runtime::Handle::current(),
-                // What its calls hold at once (FIX 8619).
-                oneiron_llm_own_server::StagingBudget::default(),
+                // What its calls hold at once (FIX 8619, FIX 9323).
+                self.staging.clone(),
             );
             match OwnServerBackend::from_registry(&self.vault, transport) {
                 Ok(backend) => self.backend = Some(backend),

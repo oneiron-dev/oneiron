@@ -39,6 +39,7 @@ use crate::error::GateError;
 
 // One proposed claim settled by its id (DOOR-115), with these members' mechanics.
 mod claim_settle;
+mod decision_context;
 // The Coach's proposals waiting in the tray, for the healer's residue read (OF-418 L4).
 mod pending_heal;
 
@@ -586,9 +587,10 @@ impl Vault {
                 grant_ref: None,
                 diff_handle: bundle_id.to_vec(),
                 read_frontier_hash: frontier.finalize().into(),
+                context: decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids),
                 redacted_at: None,
             };
-            self.store.append_gate_decision_in_txn(wtxn, &record)?;
+            decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
             Ok((
                 GateConsentBundleReceipt {

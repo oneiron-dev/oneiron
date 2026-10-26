@@ -166,18 +166,36 @@ pub(super) fn handle_document(
             // and live entity selection, and the Write credential's liveness;
             // an earlier export is not authority.
             let auth = require_bound_app_auth(server, state)?;
-            let document = open_for(server, entity, &request.selector.member_ref)?;
-            document
-                .import_from_peer(
+            // FIX 7608 slice 4: an update under a marked source's copy id edits
+            // its copy lineage; one under the source id takes today's path.
+            let source = copy_source(server, entity)?;
+            let document = open_for(
+                server,
+                source.unwrap_or(entity),
+                &request.selector.member_ref,
+            )?;
+            // FIX 10829: one under a whole-text copy's or a re-released copy
+            // id's own row id that builds on its copy lineage edits it too.
+            let source = source.or_else(|| lineage_edit(server, &document, entity, payload));
+            match source {
+                Some(_) => document.import_copy_from_peer(
+                    payload,
+                    selector_grant_scope(),
+                    &request.selector,
+                    peer,
+                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                ),
+                None => document.import_from_peer(
                     kind,
                     payload,
                     selector_grant_scope(),
                     &request.selector,
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
-                )
-                .map_err(storage_error)?;
-            let vv = document.version_vector().map_err(storage_error)?;
+                ),
+            }
+            .map_err(storage_error)?;
+            let vv = ack_vector(server, &document, source)?;
             drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
@@ -461,15 +479,19 @@ pub(super) fn document_delivery_retrying(
                             .map_err(|_| ProtocolError::InvalidPayload("invalid NOTE receipt"))?,
                     );
                 } else if doc.kind == document_sub_tags::ACK {
-                    let document = match open_for(server, doc.entity, &request.selector.member_ref)
-                    {
+                    let source = copy_source(server, doc.entity)?;
+                    let document = match open_for(
+                        server,
+                        source.unwrap_or(doc.entity),
+                        &request.selector.member_ref,
+                    ) {
                         Err(ProtocolError::WaitedOut) => {
                             retry.extend(notice(&doc));
                             continue;
                         }
                         document => document?,
                     };
-                    let vv = document.version_vector().map_err(storage_error)?;
+                    let vv = ack_vector(server, &document, source)?;
                     out.push(
                         transport::encode_document(doc.entity, document_sub_tags::ACK, &vv)
                             .into_result()
@@ -545,6 +567,54 @@ fn open_for(
             .documents()
             .open_for(entity, member.as_bytes())
     })
+    .map_err(storage_error)
+}
+
+/// The marked source `entity` stands for when it is a copy id whose source
+/// is held here (FIX 7608 slice 4): its frames are the copy lineage's.
+fn copy_source(server: &SyncServer, entity: EntityId) -> Result<Option<EntityId>, ProtocolError> {
+    let source = crate::server::blocking(|| {
+        oneiron::sync::selector::repo_document_source(server.vault.as_ref(), entity)
+    })
+    .map_err(storage_error)?;
+    Ok((source != entity).then_some(source))
+}
+
+/// `entity` itself when `payload` edits the copy lineage kept for the
+/// document held under `entity` (FIX 10829); `None` (today's path) otherwise,
+/// and whenever the document's version does not read.
+fn lineage_edit(
+    server: &SyncServer,
+    document: &oneiron::sync::documents::EntityDocument,
+    entity: EntityId,
+    payload: &[u8],
+) -> Option<EntityId> {
+    let edits = crate::server::blocking(|| {
+        document.version_vector().is_ok_and(|resident| {
+            oneiron::sync::selector::repo_document_lineage_edit(
+                server.vault.as_ref(),
+                entity,
+                &resident,
+                payload,
+            )
+        })
+    });
+    edits.then_some(entity)
+}
+
+/// What an update is acknowledged with: the copy lineage's vector for a copy
+/// frame (copy delivery only), else the document's own.
+fn ack_vector(
+    server: &SyncServer,
+    document: &oneiron::sync::documents::EntityDocument,
+    source: Option<EntityId>,
+) -> Result<Vec<u8>, ProtocolError> {
+    match source {
+        Some(source) => {
+            oneiron::sync::selector::repo_document_copy_vector(server.vault.as_ref(), source)
+        }
+        None => document.version_vector(),
+    }
     .map_err(storage_error)
 }
 

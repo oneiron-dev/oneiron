@@ -163,6 +163,7 @@ fn record(
         grant_ref: Some(format!("policy_manifest:{}", manifest.to_hex())),
         diff_handle: blake3::hash(body).as_bytes().to_vec(),
         read_frontier_hash: resolve_policy_manifest(&vault.store, txn)?.read_frontier_hash()?,
+        context: Default::default(),
         redacted_at: None,
     };
     vault

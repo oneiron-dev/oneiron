@@ -35,18 +35,35 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
+/// A refusal's wire code and its other wire field (empty for a code-only
+/// body), kept on the response for the OpenAI proxy's call receipt
+/// (FIX 3389) and never written to the wire.
+#[derive(Clone, Debug)]
+pub(super) struct RefusalCode {
+    pub(super) code: String,
+    pub(super) message: String,
+}
+fn coded(mut response: Response, code: &str, message: &str) -> Response {
+    response.extensions_mut().insert(RefusalCode {
+        code: code.to_owned(),
+        message: message.to_owned(),
+    });
+    response
+}
 fn refusal(status: StatusCode, code: &str) -> Response {
-    (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
+    let response = (status, Json(serde_json::json!({"error":{"code":code}}))).into_response();
+    coded(response, code, "")
 }
 /// A param or provider option that would pick the model or the route
 /// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
 /// with `*` for a namespace no adapter reads.
 fn route_selector_refusal(key: &str) -> Response {
-    (
+    let response = (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({"error":{"code":"route_selector_forbidden","key":key}})),
     )
-        .into_response()
+        .into_response();
+    coded(response, "route_selector_forbidden", key)
 }
 fn failure(error: LlmError) -> Response {
     let (status, body) = failure_body(error);

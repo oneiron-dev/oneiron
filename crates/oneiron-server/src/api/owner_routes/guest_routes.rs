@@ -13,7 +13,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::receipt::{GuestRevokeResponse, project_guest_revoke};
@@ -21,7 +20,7 @@ use oneiron::task_verb::sdk::GuestRevokeRequest;
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, guest_revoke, hooked_row};
 use crate::server::SyncServer;
@@ -40,10 +39,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<GuestRevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<GuestRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         guest_revoke::check_peer(request.peer.as_deref())?;
         hooked_row(

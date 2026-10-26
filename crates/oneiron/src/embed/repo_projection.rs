@@ -20,6 +20,19 @@ use std::collections::BTreeSet;
 
 use heed::{RoTxn, RwTxn};
 
+mod derived;
+mod session;
+pub use derived::{RepoDerivedIndexReport, RepoDerivedIndexTextAuthor};
+pub(super) use derived::{
+    RepoDerivedOwner, RepoDerivedReady, copy_in, delete_in_txn, is_storage_error, pending_in,
+    put_pending_in_txn, put_ready_in_txn,
+};
+pub(crate) use derived::{
+    finalize_repo_derived_index_copies_in_txn, repo_derived_batch, repo_derived_fields,
+    repo_derived_index_text_in, retire_repo_derived_index_copies_in_txn,
+};
+pub(crate) use session::apply_ops_session_projected;
+
 use super::PendingEmbeddingPayload;
 use super::media::{MediaEmbedReport, PendingMedia, TEXT_MEDIA_TYPE, asset_document_in};
 use super::space::{InputKind, delete_media_vectors_in_txn};
@@ -44,7 +57,11 @@ pub(super) fn asset_payload_in_txn(
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
-    let Some(text) = super::media::asset_text(body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some(text) = super::media::asset_text(body, |blob| {
+        Ok(vault.store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     let copy = masked_repo_index_input_in_txn(vault, txn, text.into_bytes())?.into_text();
@@ -162,7 +179,11 @@ pub(super) fn media_copy_hash_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some((_, bytes)) = super::media::asset_media(&row.body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((_, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     let input = masked_repo_index_input_in_txn(vault, txn, bytes)?;
@@ -174,8 +195,63 @@ pub(super) fn media_copy_hash_in(
     }))
 }
 
-/// Every inline ASSET whose media bytes are, by their own whole BLAKE3, a
-/// blob in `sources`: the envelope copies a mask change reaches.
+/// The media bytes an ASSET body names, the bytes a mark joins it by: the
+/// blob it holds by reference (FIX 9949), `read` reading one stored row's
+/// body by id in the caller's own snapshot. `None` for a body naming none.
+///
+/// # Errors
+/// A failure of `read`.
+pub(crate) fn repo_media_bytes(
+    body: &[u8],
+    read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
+) -> Result<Option<Vec<u8>>> {
+    Ok(crate::memory::asset_media_in(body, read)?.map(|(_, bytes)| bytes))
+}
+
+/// What a mask change on the blobs `sources` reaches beyond the records
+/// `entities` that hold them (FIX 7608 S3F), in `wtxn`, the writer that
+/// changed the marks, each with the same affected set: the texts a model
+/// derived from them (FIX 10405), every room's cached media vectors of them
+/// (FIX 10407), and the probe queries written from them (FIX 10408). Each
+/// step fails only with `wtxn`'s storage error; any other is logged and
+/// left to the next derivation, as the slice-3 invalidation is.
+///
+/// # Errors
+/// A storage error of `wtxn`.
+pub(crate) fn refresh_repo_derived_projection_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    marks: &RepoIndexMarks,
+    sources: &BTreeSet<[u8; 32]>,
+    entities: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let derived = derived::refresh_repo_derived_index_copies_in_txn(vault, wtxn, marks, entities);
+    let mut affected = kept(derived)?.unwrap_or_default();
+    affected.extend(entities.iter().copied());
+    let rooms =
+        session::refresh_repo_session_index_projection_in_txn(vault, wtxn, sources, &affected);
+    kept(rooms)?;
+    let probes =
+        super::space_probe::refresh_repo_probe_queries_in_txn(vault, wtxn, marks, &affected);
+    kept(probes)?;
+    Ok(())
+}
+
+/// `result`, a storage error passed on and any other logged.
+fn kept<T>(result: Result<T>) -> Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if is_storage_error(&error) => Err(error),
+        Err(error) => {
+            tracing::warn!(error = %error, "repo index copies are left for their next derivation");
+            Ok(None)
+        }
+    }
+}
+
+/// Every ASSET whose media bytes, the blob it holds read in `txn`, are by
+/// their own whole BLAKE3 a blob in `sources`: the envelope copies a mask
+/// change reaches.
 ///
 /// # Errors
 /// A store failure.
@@ -193,9 +269,10 @@ pub(crate) fn repo_envelope_copies_in_txn(
         if row.entity_type != ENTITY_TYPE_ASSET {
             continue;
         }
-        if let Some((_, bytes)) = super::media::asset_media(&row.body)
-            && sources.contains(blake3::hash(&bytes).as_bytes())
-        {
+        let bytes = repo_media_bytes(&row.body, |blob| {
+            Ok(vault.store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+        })?;
+        if bytes.is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes())) {
             copies.push(id);
         }
     }
@@ -217,7 +294,7 @@ pub(crate) fn requeue_repo_embedding_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, entity)? else {
         return Ok(());
     };
-    if super::embeddable_payload(record.entity_type, &record.body).is_none() {
+    if !super::eligibility::is_embeddable_in_txn(vault, wtxn, record.entity_type, &record.body)? {
         return Ok(());
     }
     let owed = vault

@@ -115,7 +115,8 @@ impl DocumentRegistry {
     }
 
     /// The one text-plane export door. Authorization and entity selection use
-    /// the same ledger selector; the text doc itself is never made synthetic.
+    /// the same ledger selector; the text doc itself is never made synthetic,
+    /// except that a marked repo item's leaves as its copy lineage (FIX 7608).
     pub(super) fn export_selected(
         &self,
         id: EntityId,
@@ -397,6 +398,49 @@ impl EntityDocument {
         })
     }
 
+    /// [`Self::import_from_peer`] for an update a peer made on this marked
+    /// repo item's copy lineage, sent under its copy id (FIX 7608 slice 4):
+    /// the same admission in the same writer, then the lineage takes the
+    /// peer's operations and the visible diff lands their text here, all
+    /// before any acknowledgement. A ruled hold lands and keeps nothing.
+    pub fn import_copy_from_peer(
+        &self,
+        bytes: &[u8],
+        scope: crate::FederationGrantScope,
+        selector: &super::selector::SyncSelector,
+        peer: crate::authority::PeerMachine,
+        session_is_live: impl FnOnce(&heed::RwTxn<'_>) -> bool,
+    ) -> Result<()> {
+        self.refuse_raw_note()?;
+        let mut resident = self.lock()?;
+        let landed = super::selector::secret_projection::import_document_copy(
+            &self.vault,
+            self.id,
+            &resident,
+            bytes,
+            |txn| {
+                eligible(&self.vault, txn, self.id)?;
+                if !session_is_live(txn) {
+                    return Err(Error::sync_protocol(
+                        SyncProtocolValidation::DocumentAdmissionDenied,
+                    ));
+                }
+                admit_document_destination_in_txn(&self.vault, txn, self.id, peer)?;
+                super::selector::admit_document_write_in_txn(
+                    &self.vault,
+                    txn,
+                    self.id,
+                    scope,
+                    selector,
+                )
+            },
+        )?;
+        if let Some(staged) = landed {
+            *resident = staged;
+        }
+        Ok(())
+    }
+
     fn import_admitted(
         &self,
         kind: u8,
@@ -524,6 +568,15 @@ impl EntityDocument {
             } else {
                 &*resident
             };
+            // FIX 7608 slice 4: a marked repo item's document leaves only as
+            // its copy lineage, under its copy id, its floor naming its stamp.
+            let copy = super::selector::secret_projection::document_copy_in_txn(
+                &self.vault,
+                txn,
+                self.id,
+                doc,
+            )?;
+            let doc = copy.as_ref().map_or(doc, |copy| &copy.doc);
             // A NOTE's floor names its head, so a head move reaches every
             // peer as a state-only copy.
             let key = match note_head {
@@ -540,12 +593,16 @@ impl EntityDocument {
                 ),
             }
             .into_bytes();
+            let key = copy
+                .as_ref()
+                .map_or(key, |copy| copy.floor_key(admission_key));
             let admitted = AD_E.get(&self.vault.store, txn, &key)?;
             let mut state_copy = match admitted {
                 Some(bytes) => !covers(&peer, &storage::decode_vv(&bytes)?),
                 None => true,
             };
             let slot = note_head.map_or(self.id, |(head, _)| head);
+            let slot = copy.as_ref().map_or(slot, |copy| copy.id);
             if let Some(bytes) = self.vault.store.port_document_row(
                 txn,
                 DocumentSlot::of(slot),
@@ -572,9 +629,13 @@ impl EntityDocument {
                 }
                 None => bytes,
             };
-            encode_document(self.id, kind, &payload)
-                .into_result()
-                .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
+            encode_document(
+                copy.as_ref().map_or(self.id, |copy| copy.key),
+                kind,
+                &payload,
+            )
+            .into_result()
+            .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"))
         })
     }
 

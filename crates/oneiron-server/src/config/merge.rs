@@ -221,31 +221,44 @@ pub(crate) fn settle_embedder_section(
 
 /// A managed vault's settings file, which managed mode has already refused
 /// leaf by leaf (`managed::settings`), settled once over the `config` it
-/// built from argv: read in the config file's schema, its `[models]`
-/// resolved beside the file (`dir`), applied as the vault file's layer, its
-/// `[embedder]` settled as [`settle_embedder_section`] settles one, and the
-/// result refused as serve refuses a config that cannot serve. No other
-/// layer is read: no environment, no default config path.
+/// built from argv: `table`, what it kept of the file at `path` whose text
+/// is `raw`, read in the config file's schema, its `[models]` resolved
+/// beside the file, applied as the vault file's layer, its `[embedder]`
+/// settled as [`settle_embedder_section`] settles one, and the result
+/// refused as serve refuses a config that cannot serve. No other layer is
+/// read: no environment, no default config path. A table that does not read
+/// names only the place in `raw` where it fails, and a `[models]` or
+/// `[embedder]` that does not settle only where its table starts, never the
+/// value refused (FIX 9477, 10687, 10925); the caller names the file.
 pub(crate) fn settle_managed_settings(
     config: &mut ServeConfig,
     table: toml::Table,
-    dir: Option<&Path>,
+    path: &Path,
+    raw: &str,
 ) -> anyhow::Result<()> {
+    // The deserializer's error names the value it refused, and the table
+    // keeps no place in the file: it is dropped unread, and the file's own
+    // text read again for the place.
     let mut file: FileServeConfig = toml::Value::Table(table)
         .try_into()
-        .context("parse the settings file")?;
+        .map_err(|_| super::locate_toml_failure::<FileServeConfig>(raw))?;
+    // A section that does not settle names only where its table starts in
+    // `raw`: its own error may name the value it refused (FIX 10925).
     let models = file
         .models
         .take()
-        .map(|models| models.resolve(dir))
+        .map(|models| models.resolve(path.parent()))
         .transpose()
+        .map_err(|_| super::locate_toml_section(raw, "models"))
         .context("the settings file's [models]")?;
     let embedder = file.embedder.take();
     let mut values = PartialServeConfig::from(file);
     values.models = models;
     values.apply_to(config, ConfigLayer::Vault)?;
     if let Some(section) = embedder {
-        settle_embedder_section(config, section).context("the settings file's [embedder]")?;
+        settle_embedder_section(config, section)
+            .map_err(|_| super::locate_toml_section(raw, "embedder"))
+            .context("the settings file's [embedder]")?;
     }
     validate_serve_config(config)
 }
@@ -419,6 +432,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
+            cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: None,
             publisher_training_intake_origin: None,
@@ -508,6 +522,9 @@ struct PartialServeConfig {
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
+    /// no env, no owner setting (G7).
+    cloud_registration_pins: Option<PathBuf>,
     /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
     publisher_training_outbox_dir: Option<PathBuf>,
     /// `--publisher-training-self-host-shipper` is argv-only, as the outbox.
@@ -597,6 +614,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
@@ -693,6 +711,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
+            cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
             publisher_training_self_host_shipper: value
                 .publisher_training_self_host_shipper

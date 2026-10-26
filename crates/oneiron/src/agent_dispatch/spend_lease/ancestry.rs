@@ -145,18 +145,46 @@ impl AgentDispatcher<'_> {
         Ok(open?.map_or(row, |hop| hop.host))
     }
 
-    /// The scope that books for `scope`'s parent: its nearest open ancestor;
-    /// when every ancestor is closed, the direct parent keeps the books.
-    pub(in crate::agent_dispatch) fn open_parent_in_txn(
+    /// The scope that books for `scope` itself, with the closed hard scopes
+    /// its units pass through on the way (FIX 10541), lowest first: `scope`
+    /// alone while it is open; once closed, its nearest open ancestor, with
+    /// `scope` among the boundaries when it is hard; with nothing above open
+    /// either, `scope` keeps its own books.
+    pub(super) fn booking_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        scope: &SpendScope,
-    ) -> Result<SpendScope> {
-        Ok(self.host_in_txn(txn, scope)?.host)
+        scope: &SpendScopeId,
+    ) -> Result<Host> {
+        let store = &self.vault.store;
+        let row = SCOPE
+            .get(store, txn, &scope.0)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        if row.state == SpendState::Open {
+            return Ok(Host {
+                host: row,
+                boundaries: Vec::new(),
+            });
+        }
+        let mut walk = ScopeWalk::default();
+        let open = self.nearest_open_in_walk(txn, &row, &mut walk);
+        walk.finish(store, txn, &row.scope);
+        Ok(match open? {
+            Some(mut hop) => {
+                if row.hard {
+                    hop.boundaries.insert(0, row);
+                }
+                hop
+            }
+            None => Host {
+                host: row,
+                boundaries: Vec::new(),
+            },
+        })
     }
 
-    /// [`Self::open_parent_in_txn`] with the closed hard scopes passed on
-    /// the way up to it.
+    /// The scope that books for `scope`'s parent: its nearest open ancestor;
+    /// when every ancestor is closed, the direct parent keeps the books. With
+    /// it, the closed hard scopes passed on the way up to it.
     pub(super) fn host_in_txn(&self, txn: &heed::RoTxn<'_>, scope: &SpendScope) -> Result<Host> {
         let mut walk = ScopeWalk::default();
         let host = self.host_in_walk(txn, scope, &mut walk);

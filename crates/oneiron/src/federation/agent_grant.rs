@@ -256,6 +256,8 @@ impl Vault {
                 surface,
                 AgentGrantAct::Revoke { grant: grant_ref },
             )?;
+            // The withdrawal stays known here, in this writer (FIX-LIST 5107).
+            crate::authority::mark_withdrawn_grant_in_txn(&self.store, txn, grant_ref)?;
             self.apply_agent_grant_op_in_txn(txn, BatchOp::Delete { id: grant_ref })?;
             Ok(AgentGrantRevokeOutcome {
                 agent: Some(grant.member_ref),
@@ -391,7 +393,8 @@ impl Vault {
 
 /// [`Vault::agent_grants_in_txn`] for a reader that holds a `Store` and no
 /// `Vault` (FIX 7461): the same live agent grants, in id order. A row that
-/// does not decode is no agent grant here.
+/// does not decode is no agent grant here, and neither is one positively
+/// known withdrawn, whatever row stands at its id now (FIX-LIST 5107).
 pub(crate) fn agent_grants_for_store_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -415,6 +418,9 @@ fn agent_grants_reporting_for_store_in_txn(
         else {
             continue;
         };
+        if crate::authority::grant_known_withdrawn_in_txn(store, txn, id) {
+            continue;
+        }
         let Ok(grant) = decode_federation_grant_body(&body) else {
             undecoded.push(id);
             continue;

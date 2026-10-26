@@ -56,7 +56,10 @@ impl CompartmentScope {
             | CustodyKind::KnownValueEntry
             | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
-            | CustodyKind::TrainingLink => Self::HostReadable,
+            | CustodyKind::TrainingLink
+            // An erasable key (FIX 8875) is one the host engine reads, as a
+            // claim key is (HostReadable, Engine 10-23).
+            | CustodyKind::ErasableKey => Self::HostReadable,
             // An inference snapshot's key is one the host engine opens in
             // its own process to import the snapshot into its worker, as a
             // body instance's is, and no owner kit is present at that point.

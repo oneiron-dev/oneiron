@@ -37,6 +37,7 @@ mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod residence_mode;
 mod session;
 mod steady;
 mod topology;
@@ -50,7 +51,7 @@ pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
 pub(crate) use home_search::HomeSearchSlot;
 pub use home_search::{DeviceResidence, HomeSearch};
-pub use topology::HomeNodeTopology;
+pub use topology::{HomeNodeTopology, HomeRoute};
 
 /// Configuration for the connection manager.
 #[derive(Debug, Clone)]
@@ -132,6 +133,7 @@ impl SyncConnection {
             )?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
+        crate::sync::shared_leave::collect_left_env_bodies_at_open(manager.vault());
         // The topology moves residence reads to the elected home when the
         // host names the candidates' endpoints.
         if config.client_config.home_node_topology.is_some()
@@ -663,6 +665,9 @@ enum LoopExit {
     Shutdown,
     /// WebSocket disconnected (with error description).
     Disconnected(String),
+    /// The residence mode changed (FIX 8869): what was buffered is queued,
+    /// and the next connect sends the new mode's hello.
+    Renegotiate,
 }
 
 #[cfg(test)]

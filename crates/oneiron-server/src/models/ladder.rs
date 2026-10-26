@@ -278,6 +278,14 @@ impl OfferLadder {
         self
     }
 
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order.
+    pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
+        self.rungs
+            .iter()
+            .map(|rung| (&rung.model, rung.prompt.as_deref()))
+    }
+
     /// The offers of the rungs that could serve `request` (FIX 3194): each
     /// rung whose row serves it that holds its banked voice, or for a stock
     /// or raw voice the first such rung alone, as the walk sends it.
@@ -1478,7 +1486,7 @@ impl OfferLadder {
                 }
             };
         }
-        let answered = gate.run(bound, permit.lease()).await;
+        let answered = gate.run_progress(bound, permit.lease()).await;
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1492,9 +1500,21 @@ impl OfferLadder {
                 }
                 Ok(Some(MediaAnswer::Done(response)))
             }
-            Err(error) => {
+            // FIX 9517: what answered before the stop is settled once, on
+            // its usage and receipts, never lost behind the error.
+            Err(stopped) if !stopped.progress.is_empty() => {
+                let sent = permit.dispatched();
+                if let Err(denied) =
+                    permit.settle_interrupted_media(&stopped.progress, operation, &media.caps)
+                {
+                    tracing::error!(%denied, "an interrupted media call's settlement was refused");
+                }
+                self.failed(index, stopped.error, sent, walk)?;
+                Ok(None)
+            }
+            Err(stopped) => {
                 let sent = settle_failed(permit);
-                self.failed(index, error, sent, walk)?;
+                self.failed(index, stopped.error, sent, walk)?;
                 Ok(None)
             }
         }

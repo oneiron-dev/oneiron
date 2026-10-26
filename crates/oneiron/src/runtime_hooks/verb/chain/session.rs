@@ -218,7 +218,7 @@ fn state(run: &RunRecord<'_>) -> SessionHookState {
             reason: SESSION_HOOK_UNAVAILABLE.to_owned(),
             consequence: work.to_owned(),
         },
-        (None, "refused" | "failed" | "timed_out") => SessionHookState::Refused {
+        (None, "refused" | "failed") => SessionHookState::Refused {
             outcome: run.token.clone(),
             reason: run.reason.clone(),
             fail_safe: run.fail_safe.map(str::to_owned),

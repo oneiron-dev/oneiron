@@ -50,6 +50,8 @@ mod facade_types_generated;
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
 mod pairing;
+// FIX 10186: `vault.receipts`'s page record.
+mod receipt_page;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
@@ -78,6 +80,7 @@ pub use pairing::{
     CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite,
     CheckpointPinTier,
 };
+pub use receipt_page::FacadeReceiptPage;
 
 use std::sync::Arc;
 

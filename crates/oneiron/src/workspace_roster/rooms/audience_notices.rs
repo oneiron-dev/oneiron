@@ -458,10 +458,11 @@ fn thread_members_now_in(
 /// only a live off-record stretch's published overlay holds (Engine
 /// 10-20 17:4x): the stretch is found by the registry's lock-free lookup,
 /// the root read strictly in its overlay composed with base, and its
-/// audience folded on base, where every edit is. No one when it is no
-/// private root there. A root no live stretch holds, its stretch closed,
-/// is read from `lost` ([`lost_root_members_in`]). Read only: nothing is
-/// staged in the overlay.
+/// audience folded on base, where every edit is. No one when it is a public
+/// root there. A root no live stretch holds, its stretch closed, is read
+/// from `lost` ([`lost_root_members_in`]), and so is one the stretch no
+/// longer holds when its view is read, closed since the lookup found it
+/// (FIX 9114). Read only: nothing is staged in the overlay.
 fn overlay_thread_members_now_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -478,7 +479,8 @@ fn overlay_thread_members_now_in(
             audience: Some(seed),
             ..
         }) => Ok(fold_audience_in(vault, txn, room, root, &seed)?.current()),
-        _ => Ok(BTreeSet::new()),
+        Some(_) => Ok(BTreeSet::new()),
+        None => lost_root_members_in(vault, txn, root, lost),
     }
 }
 

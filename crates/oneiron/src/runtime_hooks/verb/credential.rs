@@ -10,6 +10,11 @@
 //! whose own admission runs again. The answer is never the credential: any
 //! failure ends the call refused, with one receipt, and a renewed credential
 //! starts a new invocation.
+//!
+//! A managed vault's attested owner presents no slip (FIX 11063): his
+//! reference names the person, and the host checks at settlement that the
+//! vault records him as its live owner then. Nothing is minted or kept for
+//! him, so nothing of his expires or is revoked.
 
 use std::cell::RefCell;
 use std::marker::PhantomData;
@@ -19,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::authority::InvocationSlipBinding;
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError, MemoryResult};
 use crate::receipt::{CallOutcome, CallReceiptInput, CallTransport};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, Result, Vault};
@@ -34,16 +39,26 @@ const WITNESSES: SideTable<[u8; 16], VerbAskWitness, Named> =
 thread_local! {
     /// The witness of the credential call whose pre chain runs on this
     /// thread: its ask pins it.
-    static WITNESS: RefCell<Option<InvocationSlipBinding>> = const { RefCell::new(None) };
+    static WITNESS: RefCell<Option<VerbAskCredentialWitness>> = const { RefCell::new(None) };
 }
 
-/// Where a credential came from. Only a logged slip has a reference its host
-/// verifies again; any other caller resumes on its own retry.
+/// Where a credential came from. A logged slip has a reference its host
+/// verifies again, and a managed vault's attested owner one whose standing
+/// it checks again; any other caller resumes on its own retry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerbAskCredentialSource {
     /// A logged capability slip, admitted with its holder's proof.
-    Slip,
+    Slip {
+        /// The logged slip's id.
+        slip: [u8; 32],
+        /// BLAKE3 of the token presented: a caveated copy is not its mint.
+        fingerprint: [u8; 32],
+    },
+    /// The vault's owner `holder`, whom its supervisor attested with no slip
+    /// (FIX 11063): the call runs again only while the vault records him as
+    /// its live owner at settlement.
+    AttestedOwner { holder: EntityId },
 }
 
 /// The exact instrument a credential caller presented, as its host binds it
@@ -52,15 +67,61 @@ pub enum VerbAskCredentialSource {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerbAskInstrument {
     pub source: VerbAskCredentialSource,
-    /// The vault the slip was minted for.
+    /// The vault the credential stands in: the one a slip was minted for, or
+    /// the one whose authority the attested owner was admitted in.
     pub vault: [u8; 32],
-    /// The logged slip's id.
-    pub slip: [u8; 32],
-    /// BLAKE3 of the token presented: a caveated copy is not its mint.
-    pub fingerprint: [u8; 32],
     /// BLAKE3 of the authority the host projected from it, its principal and
-    /// scopes: the ceiling the call was admitted under.
+    /// scopes: the ceiling the call was admitted under. The attested owner's
+    /// is a record only; his live standing decides at settlement.
     pub ceiling: [u8; 32],
+}
+
+impl VerbAskInstrument {
+    /// The logged slip's id, when a slip is this instrument's source.
+    #[must_use]
+    pub const fn slip(&self) -> Option<[u8; 32]> {
+        match self.source {
+            VerbAskCredentialSource::Slip { slip, .. } => Some(slip),
+            VerbAskCredentialSource::AttestedOwner { .. } => None,
+        }
+    }
+}
+
+/// The instrument a credential call's request was admitted on, pinned beside
+/// its stopped call: a slip's signed binding, or the attested owner's person
+/// alone, which is provenance and grants nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerbAskCredentialWitness {
+    /// The slip, its holder's challenge and that signature.
+    Slip(InvocationSlipBinding),
+    /// The attested owner the call was admitted for.
+    AttestedOwner { holder: EntityId },
+}
+
+impl VerbAskCredentialWitness {
+    /// Whether this witness backs `source`: a slip's binding a slip, the
+    /// same person an attested owner.
+    #[must_use]
+    pub fn backs(&self, source: &VerbAskCredentialSource) -> bool {
+        match (self, source) {
+            (Self::Slip(_), VerbAskCredentialSource::Slip { .. }) => true,
+            (
+                Self::AttestedOwner { holder },
+                VerbAskCredentialSource::AttestedOwner { holder: named },
+            ) => holder == named,
+            _ => false,
+        }
+    }
+
+    /// The slip's signed binding, if this witness is a slip's.
+    #[must_use]
+    pub const fn slip(&self) -> Option<&InvocationSlipBinding> {
+        match self {
+            Self::Slip(binding) => Some(binding),
+            Self::AttestedOwner { .. } => None,
+        }
+    }
 }
 
 /// The door a credential call came in by, and what it carried beside the
@@ -77,6 +138,10 @@ pub enum VerbAskDoor {
         connection: String,
         ceiling: [u8; 32],
     },
+    /// A tool-first MCP row the managed vault's console owner called on his
+    /// own STREAM `connection`, which no connector registration stands
+    /// behind (FIX 5204): one per person, derived from him alone.
+    McpOwner { connection: String },
 }
 
 /// What a credential call's ask saves to run it again: the exact instrument
@@ -89,18 +154,35 @@ pub struct VerbAskCredentialRef {
     pub on_device: bool,
 }
 
+impl VerbAskCredentialRef {
+    /// Whether a call presenting `call` is the caller this reference was
+    /// saved for: the very same reference, or for the attested owner the
+    /// same person in the same vault, by whichever door and from wherever
+    /// his retry comes (FIX 11063), as any retry of his call was before his
+    /// calls saved a reference.
+    pub(super) fn same_caller(&self, call: &Self) -> bool {
+        match (&self.instrument.source, &call.instrument.source) {
+            (
+                VerbAskCredentialSource::AttestedOwner { holder: saved },
+                VerbAskCredentialSource::AttestedOwner { holder },
+            ) => saved == holder && self.instrument.vault == call.instrument.vault,
+            _ => self == call,
+        }
+    }
+}
+
 /// A credential call's reference, with the instrument its request was
 /// admitted on (`Memory::verb_ask_credential`).
 #[derive(Debug, Clone)]
 pub struct VerbAskCredential {
     reference: VerbAskCredentialRef,
-    witness: InvocationSlipBinding,
+    witness: VerbAskCredentialWitness,
 }
 
 impl VerbAskCredential {
     pub(crate) const fn new(
         reference: VerbAskCredentialRef,
-        witness: InvocationSlipBinding,
+        witness: VerbAskCredentialWitness,
     ) -> Self {
         Self { reference, witness }
     }
@@ -110,7 +192,7 @@ impl VerbAskCredential {
         &self.reference
     }
 
-    pub(super) fn into_witness(self) -> InvocationSlipBinding {
+    pub(super) fn into_witness(self) -> VerbAskCredentialWitness {
         self.witness
     }
 }
@@ -135,10 +217,14 @@ pub enum VerbAskRefusal {
     ScopeRefused,
     /// The door the call came in by cannot be rebuilt.
     ContextUnavailable,
+    /// The attested owner the call was admitted for is no longer the vault's
+    /// live owner (FIX 11063). Standing the host could not read is
+    /// `CredentialUnavailable`, never this.
+    OwnerNotLive,
 }
 
 impl VerbAskRefusal {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 8] = [
         Self::CredentialMissing,
         Self::CredentialRevoked,
         Self::CredentialExpired,
@@ -146,6 +232,7 @@ impl VerbAskRefusal {
         Self::CredentialUnavailable,
         Self::ScopeRefused,
         Self::ContextUnavailable,
+        Self::OwnerNotLive,
     ];
 
     /// The stable code a retry's `CompletedWithError` carries.
@@ -159,6 +246,9 @@ impl VerbAskRefusal {
             Self::CredentialUnavailable => "CREDENTIAL_UNAVAILABLE",
             Self::ScopeRefused => "SCOPE_REFUSED",
             Self::ContextUnavailable => "CONTEXT_UNAVAILABLE",
+            // The owner door's own refusal: the authority log no longer
+            // binds this person as the vault's owner.
+            Self::OwnerNotLive => MEMORY_CODE_OWNER_BINDING_REQUIRED,
         }
     }
 
@@ -186,6 +276,16 @@ impl VerbAskRefusal {
             Self::CredentialUnavailable => "this host could not verify the call's credential again",
             Self::ScopeRefused => "the credential's scope no longer admits this call",
             Self::ContextUnavailable => "the door this call came in by cannot run it again",
+            Self::OwnerNotLive => "the attested owner is not this vault's live owner",
+        }
+    }
+
+    const fn guidance(self) -> &'static str {
+        match self {
+            Self::OwnerNotLive => {
+                "Sign in again as this vault's owner, then call again with a new invocation."
+            }
+            _ => "Call again with a new invocation, on a credential that holds now.",
         }
     }
 
@@ -195,7 +295,7 @@ impl VerbAskRefusal {
         MemoryError::new(
             self.code(),
             format!("settlement did not run this call: {}", self.message()),
-            &["Call again with a new invocation, on a credential that holds now."],
+            &[self.guidance()],
         )
     }
 }
@@ -212,7 +312,7 @@ pub struct VerbAskSavedCall {
     pub reference: VerbAskCredentialRef,
     /// The instrument the caller's request was admitted on. Verify it again
     /// before anything runs; it grants nothing as it is.
-    pub witness: InvocationSlipBinding,
+    pub witness: VerbAskCredentialWitness,
 }
 
 /// What the host's check did with a saved call.
@@ -236,7 +336,7 @@ pub trait VerbAskCredentialCheck: Send + Sync {
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         reference: &VerbAskCredentialRef,
-        witness: &InvocationSlipBinding,
+        witness: &VerbAskCredentialWitness,
     ) -> bool;
 
     /// Runs `call` again through the door it came in by, as its credential
@@ -283,10 +383,10 @@ pub struct VerbAskDrainScope {
 }
 
 /// The witness the pre chain on this thread pins if its call asks, while held.
-pub(super) struct WitnessScope(Option<InvocationSlipBinding>, PhantomData<*const ()>);
+pub(super) struct WitnessScope(Option<VerbAskCredentialWitness>, PhantomData<*const ()>);
 
 impl WitnessScope {
-    pub(super) fn enter(witness: Option<InvocationSlipBinding>) -> Self {
+    pub(super) fn enter(witness: Option<VerbAskCredentialWitness>) -> Self {
         Self(WITNESS.with(|held| held.replace(witness)), PhantomData)
     }
 }
@@ -299,19 +399,19 @@ impl Drop for WitnessScope {
 }
 
 /// The witness of the credential call whose pre chain runs on this thread.
-pub(super) fn witness_on_thread() -> Option<InvocationSlipBinding> {
+pub(super) fn witness_on_thread() -> Option<VerbAskCredentialWitness> {
     WITNESS.with(|held| held.borrow().clone())
 }
 
 /// One credential call's pinned witness: the ask it waits on, the reference
 /// it backs and the instrument itself. No secret: a slip, its holder's
-/// challenge and that signature.
+/// challenge and that signature, or the attested owner's person.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct VerbAskWitness {
     #[serde(with = "crate::serialize::entity_ref")]
     ask: EntityId,
     reference: VerbAskCredentialRef,
-    binding: InvocationSlipBinding,
+    binding: VerbAskCredentialWitness,
 }
 
 /// The target ask `ask` saves under `key`, in its own write: a credential
@@ -325,7 +425,7 @@ pub(super) fn retain_in_txn(
     key: [u8; 16],
     ask: EntityId,
     resume: Option<&VerbResume>,
-    witness: Option<&InvocationSlipBinding>,
+    witness: Option<&VerbAskCredentialWitness>,
 ) -> Result<Option<VerbResume>> {
     let Some(VerbResume::Credential { reference }) = resume else {
         forget_in_txn(vault, txn, key)?;
@@ -400,13 +500,15 @@ pub(super) fn resume(
 }
 
 /// What one ended credential call's refusal receipt names: the call, its
-/// caller and its credential's id, never a secret or a body.
+/// caller and its credential's id, never a secret or a body. The attested
+/// owner's call names no credential id: he presented none, and its actor is
+/// the person.
 pub(super) struct RefusalReceipt {
     transport: CallTransport,
     verb: String,
     actor_ref: String,
     actor_class: String,
-    credential_ref: String,
+    credential_ref: Option<String>,
     request_digest: String,
 }
 
@@ -421,12 +523,15 @@ impl RefusalReceipt {
         Self {
             transport: match reference.door {
                 VerbAskDoor::Facade { .. } => CallTransport::HttpFacade,
-                VerbAskDoor::Mcp { .. } => CallTransport::Mcp,
+                VerbAskDoor::Mcp { .. } | VerbAskDoor::McpOwner { .. } => CallTransport::Mcp,
             },
             verb: verb.to_owned(),
             actor_ref: actor.to_hex(),
             actor_class: class.gate_actor_class().to_owned(),
-            credential_ref: crate::receipt::hex_lower(&reference.instrument.slip),
+            credential_ref: match &reference.instrument.source {
+                VerbAskCredentialSource::Slip { slip, .. } => Some(crate::receipt::hex_lower(slip)),
+                VerbAskCredentialSource::AttestedOwner { .. } => None,
+            },
             request_digest: crate::receipt::call_json_digest(args),
         }
     }
@@ -438,7 +543,7 @@ impl RefusalReceipt {
             verb: self.verb,
             actor_ref: self.actor_ref,
             actor_class: self.actor_class,
-            credential_ref: Some(self.credential_ref),
+            credential_ref: self.credential_ref,
             outcome: CallOutcome::Refused {
                 code: code.to_owned(),
             },

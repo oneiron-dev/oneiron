@@ -36,11 +36,24 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 
+mod derived;
 mod invalidate;
+pub(crate) use derived::{
+    RepoDerivedIndexSources, repo_derived_dependents_in, repo_derived_index_sources_in,
+    repo_source_identity_in,
+};
 pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 
 /// The domain of a copy stamp's fingerprint.
 const REPO_INDEX_STAMP_CONTEXT: &str = "oneiron.repo-index-projection.stamp.v1";
+
+/// What a sync release does with a mark failure no blob is tied to (a mark
+/// claim that does not decode and names no blob, or a store failure in the
+/// mark walk), when no item is then provably unmarked (CALL
+/// S4FIX-UNKNOWN-MARK; review F4 rule, ruling A3): `true` fails that pass
+/// closed with the error, never raw; `false` would go on without the mark
+/// and report it. A mark tied to its blob fails only that blob's items.
+pub(crate) const UNATTRIBUTABLE_MARK_FAILS_CLOSED: bool = true;
 
 /// The rules an index copy is made by (CALL 3-I, ruling (d), Engine 10-22
 /// 07:20): part of every copy's stamp, so a change to them rebuilds only the
@@ -164,6 +177,10 @@ pub(crate) struct RepoIndexMarks {
     facts: RepoMarkFacts,
     hashes: BTreeSet<[u8; 32]>,
     sources: BTreeMap<EntityId, [u8; 32]>,
+    /// Marked blobs a mark of which does not decode: their copy is unknown,
+    /// so every projection of them fails (FIX 10793). Empty for
+    /// [`Self::read_in_txn`].
+    unreadable: BTreeSet<[u8; 32]>,
 }
 
 impl RepoIndexMarks {
@@ -173,7 +190,29 @@ impl RepoIndexMarks {
     /// A store failure, or a mark that does not decode.
     pub(crate) fn read_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
         let facts = RepoMarkFacts::read_in_txn(vault, txn, RepoSecretMarkLookup::ReadableClaims)?;
-        let hashes = facts.raw_hashes();
+        Self::of(facts, BTreeSet::new())
+    }
+
+    /// The marks `txn` reads, scoped per blob for a sync release (FIX 7608
+    /// slice 4, FIX 10793): a mark that does not decode fails only the
+    /// projections of the blob it names, which stays marked (its source and
+    /// copy ids derive as any other's). Every other blob reads as before. A
+    /// mark failure no blob is tied to takes
+    /// [`UNATTRIBUTABLE_MARK_FAILS_CLOSED`]: every sync release (window
+    /// frames, documents, residence, scoped export) reads its marks here.
+    ///
+    /// # Errors
+    /// A store failure, or a mark that does not decode and names no blob,
+    /// while the policy fails closed.
+    pub(crate) fn read_scoped_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<Self> {
+        let (facts, unreadable) =
+            RepoMarkFacts::read_scoped_in_txn(vault, txn, UNATTRIBUTABLE_MARK_FAILS_CLOSED)?;
+        Self::of(facts, unreadable)
+    }
+
+    fn of(facts: RepoMarkFacts, unreadable: BTreeSet<[u8; 32]>) -> Result<Self> {
+        let mut hashes = facts.raw_hashes();
+        hashes.extend(unreadable.iter().copied());
         let sources = hashes
             .iter()
             .map(|hash| Ok((snapshot_asset_entity_id(hash)?, *hash)))
@@ -182,7 +221,19 @@ impl RepoIndexMarks {
             facts,
             hashes,
             sources,
+            unreadable,
         })
+    }
+
+    /// The failure every projection of a blob [`Self::read_scoped_in_txn`]
+    /// found an undecodable mark of answers.
+    fn readable(&self, source: &[u8; 32]) -> Result<()> {
+        if self.unreadable.contains(source) {
+            return Err(crate::error::Error::CorruptedIndex(
+                "a repo secret mark does not decode",
+            ));
+        }
+        Ok(())
     }
 
     /// No mark anywhere: every input is its stored bytes.
@@ -200,6 +251,41 @@ impl RepoIndexMarks {
         self.sources.get(entity).copied()
     }
 
+    /// Every marked blob's snapshot ASSET id with its whole BLAKE3 (FIX
+    /// 7608 slice 4: the sync copy is made once per marked blob per pass).
+    pub(crate) fn marked_sources(&self) -> Vec<(EntityId, [u8; 32])> {
+        self.sources.iter().map(|(id, hash)| (*id, *hash)).collect()
+    }
+
+    /// The spans the masked copy of the marked blob `source` overwrites,
+    /// unioned as the whole-byte projector unions them; `None` when its copy
+    /// is the placeholder. An incoming edit of the copy is translated over
+    /// exactly these.
+    ///
+    /// # Errors
+    /// A store failure reading the blob's mask row.
+    pub(crate) fn copy_places_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        source: &[u8; 32],
+    ) -> Result<Option<crate::secret_custody::KeyPlaces>> {
+        self.readable(source)?;
+        let marks = self.facts.for_hash(source);
+        if marks.is_empty() || marks.opaque() {
+            return Ok(None);
+        }
+        let mut places = marks.places();
+        if let Some(row) = crate::secret_custody::masked_file_in_txn(&vault.store, txn, source)? {
+            for (member, spans) in row.places() {
+                for span in spans {
+                    crate::origin::secret_marks::add_place(&mut places, &member, span);
+                }
+            }
+        }
+        Ok(Some(places))
+    }
+
     /// Whether any of record `entity`'s index inputs is a copy: it is a
     /// marked blob's snapshot ASSET, or its body or a field is a marked
     /// blob's whole bytes.
@@ -215,6 +301,27 @@ impl RepoIndexMarks {
                 || fields
                     .iter()
                     .any(|(_, value)| self.is_marked(blake3::hash(value.as_bytes()).as_bytes())))
+    }
+
+    /// [`Self::touches`], or record `entity` is a text a model derived from
+    /// a marked blob (FIX 10405), which indexes only its safe copy.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn touches_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        body: &[u8],
+        fields: &[(String, String)],
+    ) -> Result<bool> {
+        if self.touches(entity, body, fields) {
+            return Ok(true);
+        }
+        Ok(!self.is_empty()
+            && crate::embed::repo_derived_index_text_in(vault, &vault.store, txn, self, entity)?
+                .is_some())
     }
 
     /// `bytes` as an index reads them, joined by their own whole BLAKE3.
@@ -260,6 +367,7 @@ impl RepoIndexMarks {
         source: &[u8; 32],
         bytes: Vec<u8>,
     ) -> Result<RepoIndexInput> {
+        self.readable(source)?;
         let marks = self.facts.for_hash(source);
         if marks.is_empty() {
             return Ok(RepoIndexInput::stored(bytes));
@@ -304,7 +412,8 @@ impl RepoIndexMarks {
     }
 
     /// The body record `entity` indexes from: a marked blob's snapshot ASSET
-    /// reads its copy, any other body by its own whole BLAKE3.
+    /// reads its copy, a text a model derived from a marked blob its safe
+    /// copy (FIX 10405), any other body by its own whole BLAKE3.
     ///
     /// # Errors
     /// As [`Self::input_in_txn`].
@@ -320,7 +429,18 @@ impl RepoIndexMarks {
         }
         Ok(match self.source_of(entity) {
             Some(source) => self.source_input_in_txn(vault, txn, &source, body)?,
-            None => self.input_in_txn(vault, txn, body)?,
+            None => {
+                if let Some(text) = crate::embed::repo_derived_index_text_in(
+                    vault,
+                    &vault.store,
+                    txn,
+                    self,
+                    entity,
+                )? {
+                    return Ok(text.into_bytes());
+                }
+                self.input_in_txn(vault, txn, body)?
+            }
         }
         .into_bytes())
     }
@@ -331,8 +451,10 @@ impl RepoIndexMarks {
     /// bytes, else the placeholder. Its other fields keep their text unless
     /// they are a marked blob's bytes, and an opaque blob's record reads the
     /// placeholder in every field, never its old title or tags. Any other
-    /// record's field is a copy only when it is a marked blob's whole bytes.
-    /// Every field stays, so the record stays searchable.
+    /// record's field is a copy only when it is a marked blob's whole bytes,
+    /// except a text a model derived from a marked blob, whose first field is
+    /// its safe copy and every other the placeholder (FIX 10405). Every field
+    /// stays, so the record stays searchable.
     ///
     /// # Errors
     /// As [`Self::input_in_txn`].
@@ -347,6 +469,11 @@ impl RepoIndexMarks {
             return Ok(fields);
         }
         let Some(source) = self.source_of(entity) else {
+            if let Some(text) =
+                crate::embed::repo_derived_index_text_in(vault, &vault.store, txn, self, entity)?
+            {
+                return Ok(crate::embed::repo_derived_fields(fields, text));
+            }
             return fields
                 .into_iter()
                 .map(|(name, value)| Ok((name, self.text_in_txn(vault, txn, value)?)))

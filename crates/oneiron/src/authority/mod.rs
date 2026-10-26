@@ -102,6 +102,7 @@ mod machine_identity;
 mod machine_profile;
 mod machine_standing;
 mod machine_write;
+mod managed_owner_check;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
@@ -133,6 +134,7 @@ mod support_receipt;
 mod task_actor;
 mod vault_api;
 mod weave_admin;
+mod withdrawn_grant;
 mod world_key_fold;
 mod world_key_support;
 mod world_privacy;
@@ -274,6 +276,8 @@ pub use machine_profile::{
     FoldedMachine, MachineAdmitter, MachineRevision, PinnedRoot, SignerClass, TrustedMachine,
 };
 pub use machine_write::machine_claim_transcript;
+pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
+pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub use mesh_machine::{
     MeshAlpnGrant, MeshBindingIdentity, MeshMachineAddress, MeshMachineAddressEnvelope,
     MeshMachineBinding,
@@ -306,7 +310,10 @@ pub use slip_renewal::{
 pub(crate) use slip_replay::refuse_moved_proof_freshness;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};
-pub use slip_vault::{ConnectOffer, ConnectRescopeOffer, HostSlipIssuer};
+pub use slip_vault::{
+    ConnectOffer, ConnectRescopeOffer, HOST_ISSUER_SEED_BYTES, HOST_ISSUER_SIGNING_CONTEXT,
+    HostSlipIssuer,
+};
 pub use support_grant::{
     SUPPORT_GRANT_REVOKE_COMMAND, SupportGrantMinted, SupportGrantQuery, SupportGrantRequest,
     SupportGrantRevoked, SupportGrantRow, SupportGrantStatus, SupportHolderClass,
@@ -316,6 +323,10 @@ pub(crate) use task_actor::{RunnerLease, TaskActorProof, TaskActorVerb};
 pub use vault_api::AuthorityEntryStatus;
 pub use weave_admin::{
     AdminStepUp, AuthenticatedWeaveAdmin, WEAVE_ADMIN_MFA_REQUIRED, WEAVE_ADMIN_NOT_CURRENT,
+};
+pub(crate) use withdrawn_grant::{
+    ISOLATION_NEW_CHECK_ERROR_MODE, NewCheckErrorMode, grant_known_withdrawn_in_txn,
+    mark_if_withdrawn_grant_in_txn, mark_withdrawn_grant_in_txn,
 };
 
 // Crate-internal doors (first-seen sidecars and the observation clock) consumed by

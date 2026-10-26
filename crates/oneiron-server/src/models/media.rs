@@ -37,6 +37,7 @@ use super::broker_media::broker_media_backend;
 use super::catalog::{catalog_entry, engine_model_id};
 use super::cooldown::{FallbackRung, OfferCooldowns, ProbePermit};
 use super::gemini_media::gemini_backend;
+use super::host_budgets::ModelHostBudgets;
 use super::hosted_speech::{CARTESIA_VERSION, HostedCloner, HostedSpeech, HostedWire};
 use super::http::{KeyStyle, MediaSend, ProviderHttp};
 use super::ladder::{LadderRung, OfferLadder, PendingReceipt, SeatScope, Wire};
@@ -56,8 +57,11 @@ mod construction;
 mod fit;
 mod jobs;
 mod options;
+// FIX 9517: every reference upload under the bank's current reference.
+mod voice_reference;
 
 use jobs::{JobRow, JobStore, KeptJob, erased_poll, submit_stamps};
+pub(in crate::models) use voice_reference::{AdmittedReference, VoiceReferenceUploadGuard};
 
 /// The run every media call is admitted under, one run per call.
 const MEDIA_RUN: &str = "ai-media";
@@ -261,6 +265,9 @@ pub struct MediaRuntime {
     cloners: BTreeMap<String, Arc<HostedCloner>>,
     /// The transcribe rungs that hear live (soniox), by engine id.
     live_asr: BTreeMap<String, Arc<SonioxRung>>,
+    /// The guard each reference-rendering backend asks before an upload,
+    /// bound to the runtime's vault (FIX 9517).
+    voice_refs: VoiceReferenceUploadGuard,
 }
 
 impl MediaRuntime {
@@ -484,6 +491,7 @@ fn media_backends(
     config: &ModelsConfig,
     site: Option<&Result<BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
+    voice_refs: &VoiceReferenceUploadGuard,
 ) -> BTreeMap<String, Arc<dyn MediaBackend>> {
     let mut models: BTreeMap<&str, BTreeMap<ModelId, String>> = BTreeMap::new();
     for model in config.media.seats.values().flat_map(|seat| &seat.rungs) {
@@ -534,6 +542,9 @@ fn media_backends(
                         Arc::new(VoxCpm2Speech {
                             http,
                             models: wire_models,
+                            target: name.to_owned(),
+                            locality: provider.locality,
+                            voice_refs: voice_refs.clone(),
                         }) as Arc<dyn MediaBackend>
                     })
                 }
@@ -577,8 +588,12 @@ fn cartesia(provider: &ProviderConfig) -> ProviderConfig {
     provider
 }
 
-/// The clone wire of each configured hosted speech provider, by name.
-fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
+/// The clone wire of each configured hosted speech provider, by name, its
+/// replies holding their bytes on `budgets` (FIX 9321).
+fn voice_cloners(
+    config: &ModelsConfig,
+    budgets: &ModelHostBudgets,
+) -> BTreeMap<String, Arc<HostedCloner>> {
     let mut cloners = BTreeMap::new();
     for (name, provider) in &config.providers {
         let built = match provider.kind {
@@ -607,6 +622,7 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
                         wire,
                         locality: provider.locality,
                         connector,
+                        budgets: budgets.clone(),
                     }),
                 );
             }
@@ -618,7 +634,8 @@ fn voice_cloners(config: &ModelsConfig) -> BTreeMap<String, Arc<HostedCloner>> {
     cloners
 }
 
-/// `model` on `provider` as a media rung at `position` for `operation`.
+/// `model` on `provider` as a media rung at `position` for `operation`, its
+/// calls' replies holding their bytes on `budgets` (FIX 9321).
 fn media_rung(
     provider: &ProviderConfig,
     backend: &Arc<dyn MediaBackend>,
@@ -626,6 +643,7 @@ fn media_rung(
     position: usize,
     operation: AiOperation,
     caps: &MediaCaps,
+    budgets: &ModelHostBudgets,
 ) -> Option<LadderRung> {
     let row = catalog_entry(model, provider).ok()?.with_media(caps);
     let binding = match media_offer(provider, row.model.clone(), operation) {
@@ -648,8 +666,8 @@ fn media_rung(
         },
         media: Some(MediaRung {
             // Its calls hold their replies' bytes until each answer leaves
-            // the adapter (FIX 8615).
-            backend: Arc::new(booked::BookedReplies(Arc::clone(backend))),
+            // the adapter (FIX 8615), on the vault's line (FIX 9321).
+            backend: Arc::new(booked::BookedReplies(Arc::clone(backend), budgets.clone())),
             row,
             caps: caps.clone(),
         }),

@@ -234,10 +234,16 @@ pub(super) fn qualified_key(via: &TaskVia, key: &str, what: &str) -> MemoryResul
             "{what} must be at most {MAX_HIGHWAY_KEY_LEN} bytes"
         )));
     }
-    Ok(match via {
+    Ok(qualify(via, key))
+}
+
+/// `key` qualified by the host's parent attempt, as [`qualified_key`]
+/// qualifies it; a wire key as it is.
+pub(super) fn qualify(via: &TaskVia, key: &str) -> String {
+    match via {
         TaskVia::Wire => key.to_owned(),
         TaskVia::Host(binding) => format!("{}/{key}", attempt_hex(binding.parent())),
-    })
+    }
 }
 
 pub(super) fn attempt_hex(id: AttemptId) -> String {

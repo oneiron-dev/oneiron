@@ -160,6 +160,7 @@ pub(super) fn run_bound(
     if model_seat.is_none() && planned.is_none() {
         super::attribution::stamp_seatless_executor(vault, &status.attempt, &config);
     }
+    super::attribution::bind_before_entry(vault, &status.attempt);
     // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
     // pack its launch froze, its SKILL.md before any other skill's body; a
     // continued run's task, its source's fork, already holds it there.
@@ -254,19 +255,8 @@ pub(super) fn run_bound(
         None => provider.compaction(caller, key, metered.as_ref()),
     };
     // The host's root key signs a leader's subproject spawn (OF-389): the
-    // managed issuer, else the one the configured host secret derives.
-    let derived = match server.managed_issuer {
-        Some(_) => None,
-        None => server
-            .config
-            .auth_secret
-            .as_deref()
-            .filter(|secret| !secret.is_empty())
-            .map(|secret| oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes()))
-            .transpose()
-            .map_err(text)?,
-    };
-    let issuer = server.managed_issuer.as_ref().or(derived.as_ref());
+    // managed issuer, else this install's own self-host root (FIX-LIST 3018).
+    let issuer = server.host_issuer();
     let mut full = 0;
     loop {
         let outcome = enter_run(

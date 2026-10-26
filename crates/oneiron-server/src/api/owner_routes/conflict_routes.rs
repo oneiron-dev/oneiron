@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -28,7 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -267,10 +268,10 @@ async fn list(
 async fn settle(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SettleConflict>, JsonRejection>,
+    payload: OwnerJsonBody<SettleConflict>,
 ) -> OwnerReply<ConflictSettled> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let settled = blocking(move || -> OwnerResult<ConflictSettled> {
         let marker = entity_id("marker", &request.marker)?;
@@ -380,10 +381,10 @@ async fn settled(
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertSettlement>, JsonRejection>,
+    payload: OwnerJsonBody<RevertSettlement>,
 ) -> OwnerReply<SettlementReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<SettlementReverted> {
         let resolved = entity_id("resolved", &request.resolved)?;
@@ -440,10 +441,10 @@ fn review_scope(request: &ReviewScope) -> OwnerResult<ConflictReviewScope> {
 async fn resume_review(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReviewScope>, JsonRejection>,
+    payload: OwnerJsonBody<ReviewScope>,
 ) -> OwnerReply<ReviewResumed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let resumed = blocking(move || -> OwnerResult<ReviewResumed> {
         let scope = review_scope(&request)?;
@@ -466,10 +467,10 @@ async fn resume_review(
 async fn hold_review(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReviewScope>, JsonRejection>,
+    payload: OwnerJsonBody<ReviewScope>,
 ) -> OwnerReply<ReviewHeld> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let held = blocking(move || -> OwnerResult<ReviewHeld> {
         let scope = review_scope(&request)?;

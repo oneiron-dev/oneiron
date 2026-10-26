@@ -210,6 +210,7 @@ impl Memory<'_> {
             Some(self.read_lane(ClaimReadStatus::Recorded)?)
         };
         let refused = Cell::new(None);
+        let unproven = Cell::new(Vec::new());
         let plan = self.plan_witness(turn, &landing, door, admit)?;
         let held = match &landing {
             Landing::Base { held, .. } => *held,
@@ -258,6 +259,7 @@ impl Memory<'_> {
                     let assertions = assertion_lane.as_ref().map(|lane| AssertionRead {
                         lane,
                         refused: &refused,
+                        unproven: &unproven,
                     });
                     self.admit_witness_in_txn(
                         &plan,
@@ -302,6 +304,7 @@ impl Memory<'_> {
                     let assertions = session_lane.as_ref().map(|lane| AssertionRead {
                         lane,
                         refused: &refused,
+                        unproven: &unproven,
                     });
                     self.admit_witness_in_txn(
                         &plan,
@@ -319,6 +322,13 @@ impl Memory<'_> {
                 .iter()
                 .map(|exists| !exists)
                 .collect();
+            // An exact retry lands nothing new, so its assertions earn no
+            // creation status again (FIX 1211).
+            let lands_nothing = !matches!(admission.turn, AdmittedTurn::Mint { .. })
+                && !admission.has_new_messages();
+            if lands_nothing {
+                unproven.take();
+            }
             let landed = match &sink {
                 WitnessSink::Base(base) => {
                     self.stage_in_base(
@@ -397,6 +407,32 @@ impl Memory<'_> {
                 }
             };
             effect(wtxn)?;
+            // FIX 10260: a reply born whole keeps the set its turn asserted,
+            // as admitted above, beside each MESSAGE this write landed new; a
+            // streamed birth's receipt, which `effect` saved, keeps it there.
+            if matches!(&sink, WitnessSink::Base(_)) && !silent {
+                let assertions = super::super::reply_assertions::admitted_reply_assertions_in_txn(
+                    &self.vault.store,
+                    wtxn,
+                    &[&plan.turn.assertions],
+                )?;
+                let landed: Vec<EntityId> = plan
+                    .messages
+                    .iter()
+                    .zip(&lands_new)
+                    .filter(|(_, new)| **new)
+                    .map(|(planned, _)| planned.id)
+                    .collect();
+                super::super::reply_assertions::keep_birth_reply_assertions_in_txn(
+                    self.vault,
+                    wtxn,
+                    plan.conversation_id,
+                    plan.turn_id,
+                    (self.actor, self.actor_class as u8),
+                    &assertions,
+                    &landed,
+                )?;
+            }
             // DOOR-141: a turn that lands new words at base owes each program
             // its actor armed a wake, recorded in this commit so a crash after
             // it cannot lose one. An import is a source's words and a host
@@ -494,6 +530,11 @@ impl Memory<'_> {
             let landed_prose =
                 crate::gate::record_references::landed_witness_prose(unlinked_prose, &lands_new);
             crate::gate::record_references::receipt_landed_prose(self, &landed_prose);
+            crate::receipt::receipt_creations_not_proven(
+                self,
+                crate::gate::record_references::WITNESS_PROSE_ROW,
+                &unproven.take(),
+            );
         }
         answer
     }

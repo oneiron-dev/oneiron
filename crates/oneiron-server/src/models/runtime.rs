@@ -21,6 +21,7 @@ impl ModelRuntime {
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
             training: Default::default(),
+            budgets: ModelHostBudgets::unhosted(),
         }
     }
 
@@ -148,10 +149,25 @@ impl ModelRuntime {
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
     ) -> Self {
+        Self::build_hosted_on(config, broker, rests, &ModelHostBudgets::unhosted())
+    }
+
+    /// [`build_hosted`](Self::build_hosted), its media rungs, clone wires
+    /// and mesh routes holding their bytes on `budgets`, the vault's own
+    /// (FIX 9321, FIX 9323). [`build_hosted`](Self::build_hosted) gives the
+    /// runtime budgets of its own, at the rows' defaults.
+    #[must_use]
+    pub(crate) fn build_hosted_on(
+        config: Option<&ModelsConfig>,
+        broker: Option<&BrokerContext>,
+        rests: Arc<OfferCooldowns>,
+        budgets: &ModelHostBudgets,
+    ) -> Self {
         let Some(config) = config else {
             // A discovered model's rest outlives a restart here too.
             return Self {
                 rests,
+                budgets: budgets.clone(),
                 ..Self::unconfigured()
             };
         };
@@ -320,7 +336,7 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
-        let media = MediaRuntime::build(config, &rests, &mut status.seats, site, keys);
+        let media = MediaRuntime::build(config, &rests, &mut status.seats, site, keys, budgets);
         // Each chat model the router serves, and each media seat's rung, is
         // one a parked offer's calls may fall back to once the owner names
         // it (`use_fallback`).
@@ -357,6 +373,7 @@ impl ModelRuntime {
             rests,
             token_ratios,
             training: config.training.clone(),
+            budgets: budgets.clone(),
         }
     }
 
@@ -439,7 +456,13 @@ impl ModelRuntime {
         vault: &Arc<oneiron::Vault>,
         mesh: Arc<dyn oneiron_mesh_transport::MeshTransport>,
     ) -> MeshRoutes {
-        MeshRoutes::new(self.raw_router(), Arc::clone(&self.rests), vault, mesh)
+        MeshRoutes::new(
+            self.raw_router(),
+            Arc::clone(&self.rests),
+            vault,
+            mesh,
+            self.budgets.mesh_staging(),
+        )
     }
 
     #[must_use]

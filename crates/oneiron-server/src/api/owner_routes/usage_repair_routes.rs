@@ -1,35 +1,37 @@
 //! `/v1/owner/usage/events/undecodable`: the stored usage events of this
-//! server's metering scope that no longer decode, and `/remove` to remove
-//! one the owner reviewed, by the hash of its bytes (FIX 6476). One such row
-//! holds every offer check of the vault at unclassified; every other one
-//! stays counted as before. Each route runs its `vault.usage.events.*` row's
-//! verb hooks once around the engine writer the SDK and MCP doors reach,
-//! which revalidates the owner's proof in the write itself. A removal's
-//! receipt records where his request reached this install
+//! server's metering scope, every billing owner's rows in its vault (FIX
+//! 7035), that no longer decode, and `/remove` to remove one the owner
+//! reviewed, by the hash of its bytes (FIX 6476). One such row holds every
+//! offer check of the vault at unclassified; every other one stays counted
+//! as before. Each route runs its `vault.usage.events.*` row's verb hooks
+//! once around the engine writer the SDK and MCP doors reach, which
+//! revalidates the owner's proof in the write itself; the writer's refusal
+//! of his authority answers 403, and a reviewed row that changed or decodes
+//! now names which in the conflict's `state` (FIX 7038). A removal's receipt
+//! records where his request reached this install
 //! (`machine_routes::act_surface`).
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::edge::EdgeActorClass;
-use oneiron::memory::MemoryError;
 use oneiron::memory::usage_repair::{
     UsageRepairListRequest, UsageRepairRemoveRequest, UsageRepairVerb,
 };
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use super::{OwnerReply, blocking, hooked_owner, owner_error};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::owner::{OwnerError, hooked_row, memory_refusal};
 use crate::server::SyncServer;
-use crate::usage::UsageScope;
+use crate::usage::{UsageScope, removal_conflict_reason};
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -46,7 +48,8 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
     let response = blocking(move || {
         let vault = server.vault();
         let memory = vault.memory(actor, EdgeActorClass::Human);
-        hooked_row(
+        let mut answered = None;
+        let listed = hooked_row(
             vault,
             actor,
             UsageRepairVerb::List.name(),
@@ -55,11 +58,15 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
                 server
                     .usage_ledger
                     .list_undecodable_events(&memory, Some(&owner), Some(&scope))
-                    .map_err(memory_refusal)
+                    .map_err(|error| {
+                        answered = Answered::of(&error);
+                        memory_refusal(error)
+                    })
             },
-        )
+        );
+        Ok(listed.map_err(|error| repair_error(error, answered)))
     })
-    .await?;
+    .await??;
     Ok(Json(response))
 }
 
@@ -72,16 +79,17 @@ async fn remove(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<UsageRepairRemoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<UsageRepairRemoveRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let scope = metered(&server)?;
     let response = blocking(move || {
         let vault = server.vault();
         let memory = vault.memory(actor, EdgeActorClass::Human);
-        hooked_row(
+        let mut answered = None;
+        let removed = hooked_row(
             vault,
             actor,
             UsageRepairVerb::Remove.name(),
@@ -96,11 +104,15 @@ async fn remove(
                         surface,
                         &request,
                     )
-                    .map_err(|error| refusal(error, &request.row_ref))
+                    .map_err(|error| {
+                        answered = Answered::of(&error);
+                        refusal(error, &request.row_ref)
+                    })
             },
-        )
+        );
+        Ok(removed.map_err(|error| repair_error(error, answered)))
     })
-    .await?;
+    .await??;
     Ok(Json(response))
 }
 
@@ -126,5 +138,47 @@ fn refusal(error: MemoryError, row_ref: &str) -> OwnerError {
         }
         oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
         _ => memory_refusal(error),
+    }
+}
+
+/// What a repair's refusal answers beyond the owner routes' own (FIX 7038).
+#[derive(Clone, Copy)]
+enum Answered {
+    /// The writer refused the caller's authority for the verb.
+    Forbidden,
+    /// A reviewed row changed or decodes now: the reason that names which.
+    Conflict(&'static str),
+}
+
+impl Answered {
+    fn of(error: &MemoryError) -> Option<Self> {
+        if error.code == MEMORY_CODE_FORBIDDEN {
+            return Some(Self::Forbidden);
+        }
+        removal_conflict_reason(error).map(Self::Conflict)
+    }
+}
+
+/// A repair's refusal on the wire: the writer's refusal of the caller's
+/// authority is 403, and a reviewed row that changed or decodes now is the
+/// 409 whose `state` is `usage_event_changed` or `usage_event_decodable`;
+/// every other refusal is the owner routes' own.
+fn repair_error(error: OwnerError, answered: Option<Answered>) -> ApiError {
+    match (answered, error) {
+        (Some(Answered::Forbidden), OwnerError::Refused(message)) => ApiError::new(
+            message,
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Act with the owner's own proof, or under a Grant that names this verb."],
+        ),
+        (Some(Answered::Conflict(reason)), OwnerError::Changed(message)) => ApiError::new(
+            message,
+            ApiErrorDetails::InvalidState {
+                state: Some(reason.to_owned()),
+            },
+            ["List the undecodable usage events again, and remove what that list shows."],
+        ),
+        (_, error) => owner_error(error),
     }
 }

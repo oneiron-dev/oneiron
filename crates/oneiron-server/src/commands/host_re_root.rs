@@ -1,11 +1,15 @@
 //! `oneiron host re-root`: moves a stopped self-host vault's root to a new
-//! host secret, in-chain (OF-455). The current secret signs one ReRoot for
-//! the new secret's key, so the vault keeps its id, and the engine carries
-//! its writers and its MACHINE claim histories to the new root in the same
-//! transaction (`Vault::re_root_host`). Every slip the old secret minted
-//! stops verifying; this command says so and lists them.
+//! issuer seed, in-chain (OF-455), and the operator's host secret to a new
+//! one. The root signs with this install's own independent issuer seed for
+//! the vault, never a key the host secret derives (FIX-LIST 3018): the
+//! current seed signs one ReRoot for a successor seed this command draws
+//! and keeps in the same keystore slot, so the vault keeps its id, and the
+//! engine carries its writers and its MACHINE claim histories to the new
+//! root in the same transaction (`Vault::re_root_host_to_new_seed`). Every
+//! slip the old root minted stops verifying; this command says so and lists
+//! them. The current and new host secrets admit the move and the next start.
 //!
-//! A lost secret has no path here: a re-root needs the current root's
+//! A lost seed has no path here: a re-root needs the current root's
 //! signature, and a second Genesis would change the vault id (OF-455).
 
 use std::io::{self, Read, Write};
@@ -71,13 +75,11 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
     if next.len() < MIN_RECOMMENDED_AUTH_SECRET_BYTES {
         writeln!(
             io::stderr().lock(),
-            "warning: the new host secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; every key this host signs with derives from it"
+            "warning: the new host secret is shorter than {MIN_RECOMMENDED_AUTH_SECRET_BYTES} bytes; it is what admits this host's commands"
         )?;
     }
-    let current = oneiron::authority::HostSlipIssuer::from_secret(current.as_bytes())?;
-    let next = oneiron::authority::HostSlipIssuer::from_secret(next.as_bytes())?;
     anyhow::ensure!(
-        current.public_key() != next.public_key(),
+        current.as_bytes() != next.as_bytes(),
         "the new host secret is the current one"
     );
     let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config()).map_err(
@@ -95,14 +97,17 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
         "vault {} has no host root yet, so no secret is bound to it; use the new secret from now on",
         config.vault_path.display()
     );
+    // The current root's issuer is this install's own seed for the vault,
+    // loaded only after the vault and its keystore are open.
+    let current = super::owner::host_issuer(&config, &vault, false)?;
     match fold.roster.get(&current.public_key()) {
         Some(root) if !root.revoked && root.roles & oneiron::authority::ROLE_OWNER != 0 => {}
         Some(_) => anyhow::bail!(
-            "the current host secret's key was this vault's root once, and a re-root retired it; use the secret the last re-root moved to"
+            "this install's host issuer was this vault's root once, and a re-root retired it; re-root from the install the last re-root moved to"
         ),
-        None => anyhow::bail!("the current host secret is not this vault's host secret"),
+        None => anyhow::bail!("this install's host issuer is not this vault's root"),
     }
-    let moved = vault.re_root_host(&current, &next)?;
+    let moved = vault.re_root_host_to_new_seed(&current)?;
     let mut steps = vec![
         "Set ONEIRON_AUTH_SECRET (or the config's auth_secret) to the new secret before the next `oneiron serve`; the old secret is refused from now on.".to_owned(),
     ];

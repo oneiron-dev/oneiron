@@ -9,7 +9,8 @@ use crate::server::SyncServer;
 use axum::extract::{Query, State, rejection::QueryRejection};
 use axum::response::Json;
 use oneiron::access_grant::AccessGrantScope;
-use oneiron::psych_profile::{PsychProfileKey, psych_profile_entity_id};
+use oneiron::companion::CompanionProfileAdmission;
+use oneiron::psych_profile::{PsychProfileKey, PsychProfileState, psych_profile_entity_id};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
@@ -32,6 +33,8 @@ pub(crate) struct ProfileListRow {
     /// PSYCH_PROFILE id derived from PERSON x FACET, with no WORLD.
     profile_ref: String,
     /// Persisted PsychProfile compact tier; no generation on list reads.
+    /// Null as well when the owner's recipient choice keeps the profile from
+    /// where this read goes (FIX 8141).
     #[serde(rename = "personalityCompact", default)]
     personality_compact: Option<String>,
 }
@@ -65,22 +68,33 @@ pub(crate) async fn list_profiles(
         .vault
         .authorized_companion_profile_facets(&principal, &person)
         .map_err(|e| companion_engine_error("profile grant list failed", e))?;
+    let destination = auth.destination();
     let mut items = Vec::with_capacity(facets.len());
     for facet in facets {
-        let profile_ref = psych_profile_entity_id(&PsychProfileKey {
+        let key = PsychProfileKey {
             person,
             facet,
             world: None,
-        });
-        let profile = server
+        };
+        let profile_ref = psych_profile_entity_id(&key);
+        // The compact tier is read through the profile read's own admission:
+        // a profile kept from this destination lists with no tier.
+        let admission = server
             .vault
-            .get_live_psych_profile(&profile_ref)
+            .companion_profile_snapshot_admitted(&principal, &key, &destination, None)
             .map_err(|error| companion_engine_error("profile read failed", error))?;
+        let compact = match admission {
+            CompanionProfileAdmission::Admitted {
+                state: PsychProfileState::Fresh(profile) | PsychProfileState::Stale { profile, .. },
+                ..
+            } => Some(profile.compact),
+            _ => None,
+        };
         items.push(ProfileListRow {
             person_ref: person.to_hex(),
             facet_ref: facet.map(|facet| facet.to_hex()),
             profile_ref: profile_ref.to_hex(),
-            personality_compact: profile.map(|p| p.compact),
+            personality_compact: compact,
         });
     }
     Ok(Json(ProfilesListResponse { items }))
@@ -94,6 +108,9 @@ pub(crate) struct AccessRequestListRow {
     /// Exact scope description from the persisted requested grant, not a read of protected content.
     #[serde(rename = "grantContentPreview", default)]
     grant_content_preview: Option<String>,
+    /// The person or agent the request asks (FIX 1379), when it asks one.
+    #[serde(default)]
+    addressed_to: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -147,6 +164,7 @@ pub(crate) async fn list_access_requests(
                 principal_ref: request.grant.principal_ref.to_hex(),
                 capability: request.grant.capability.as_str().to_owned(),
                 grant_content_preview: grant_content_preview(&request.grant.scope),
+                addressed_to: request.addressed_to.map(|id| id.to_hex()),
             })
             .collect(),
     }))

@@ -390,6 +390,9 @@ fn decide_component(
                 let Some(decided) = reader.decide(project)? else {
                     return Ok(Step::Decided((Vec::new(), false, Vec::new())));
                 };
+                // The joint solver decides every component in full, so no
+                // decision carries CYCLE_BOUND and `dark` stays false: the
+                // comparison only clears rows (FIX 11050).
                 let dark = matches!(&decided.frontier.disposition,
                     ProjectDisposition::Unauthorized { reason } if reason.as_str() == super::fold::reason::CYCLE_BOUND);
                 let mut plans = Vec::new();
@@ -498,7 +501,8 @@ fn write(
 
 /// The owner's question about a cycle past its bound (OF-520), kept under
 /// each member: raised for a dark component, and removed, with every row of
-/// its former component, once a member's component is lit or changed.
+/// its former component, once a member's component is lit or changed. No
+/// component is dark under the current solver, so it only removes rows.
 fn ask_owner(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -601,14 +605,15 @@ fn drain(
     Ok(drained)
 }
 
-/// Every parent project named along `node`'s held lineage: a verdict that
-/// waits on a parent project may come from an ancestor's bounds, so the
-/// retry waits on each of them.
+/// Every parent project named along `node`'s held lineage, however long it
+/// is (rule 5, FIX 9436): a verdict that waits on a parent project may come
+/// from an ancestor's bounds, so the retry waits on each of them.
 fn lineage_parents(cx: &FoldCx<'_, '_, '_>, node: ProjectRevisionHash) -> BTreeSet<EntityId> {
     let mut parents = BTreeSet::new();
+    let mut seen = BTreeSet::new();
     let mut next = Some(node);
-    for _ in 0..=MAX_PROJECT_ANCHORS {
-        let Some(row) = next.and_then(|at| cx.row(&at)) else {
+    while let Some(at) = next.filter(|at| seen.insert(*at)) {
+        let Some(row) = cx.row(&at) else {
             break;
         };
         if let Some(authority) = row.authority() {
