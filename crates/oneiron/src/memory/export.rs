@@ -31,6 +31,27 @@ pub struct ExportOptions {
     /// missing secrets to re-enter.
     #[serde(default)]
     pub include_secrets: Option<bool>,
+    /// How a server hands the export over (FIX 3676): absent or `inline`
+    /// answers with the archive in the reply, as before; `transfer` keeps the
+    /// built archive on the server and answers with an [`ExportTransfer`]
+    /// naming it, read whole or in byte ranges. An embedded caller writes its
+    /// own file through [`Memory::export_to`].
+    #[serde(default)]
+    pub delivery: Option<ExportDelivery>,
+}
+
+/// How a server hands one export over: in its reply, or as a transfer the
+/// caller reads after it (FIX 3676).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportDelivery {
+    /// The archive in the reply, base64 (the default).
+    #[default]
+    Inline,
+    /// The archive kept on the server, named by an [`ExportTransfer`].
+    Transfer,
 }
 
 /// The `format` that names the whole-vault archive.
@@ -59,6 +80,40 @@ pub struct MemoryExportReceipt {
     pub bytes: u64,
     /// BLAKE3 of the archive, lowercase hex.
     pub digest: String,
+}
+
+/// One export kept on the server for its caller to read (FIX 3676): the
+/// handle the transfer routes name, and the archive's format, length and
+/// BLAKE3 (lowercase hex), as its receipt records them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportTransfer {
+    pub transfer_ref: String,
+    /// The archive manifest's `format`.
+    pub format: String,
+    pub bytes: u64,
+    pub digest: String,
+}
+
+/// The BLAKE3 and length a client checks a transferred export against, fed
+/// as its bytes arrive (FIX 3676).
+#[derive(Default)]
+pub struct ExportDigest {
+    hasher: blake3::Hasher,
+    bytes: u64,
+}
+
+impl ExportDigest {
+    /// Feeds the next bytes of the archive.
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.hasher.update(bytes);
+        self.bytes = self.bytes.saturating_add(bytes.len() as u64);
+    }
+
+    /// Whether the bytes fed are exactly the archive `transfer` names.
+    #[must_use]
+    pub fn matches(&self, transfer: &ExportTransfer) -> bool {
+        self.bytes == transfer.bytes && self.hasher.finalize().to_hex().as_str() == transfer.digest
+    }
 }
 
 mod archive_base64 {
@@ -101,6 +156,33 @@ impl Memory<'_> {
     ) -> MemoryResult<MemoryExport> {
         let act = export_act(self.actor, surface)?;
         self.export_routed(opts, Some(proof), Some(act))
+    }
+
+    /// [`Self::export_with_verified_owner`] written to `sink` as it is built
+    /// (FIX 3676), its source rows listed as that export lists them; the
+    /// archive is never held whole.
+    pub fn export_with_verified_owner_to<W: Read + Write + Seek>(
+        &self,
+        opts: &ExportOptions,
+        proof: &VerifiedSlip,
+        surface: ActSurface,
+        sink: W,
+    ) -> MemoryResult<MemoryExportReceipt> {
+        let name = self.actor.to_hex();
+        let (receipt, sources) = render_export_to(
+            self.vault,
+            opts,
+            ExportBy {
+                name: &name,
+                act: Some(export_act(self.actor, surface)?),
+            },
+            &self.destination,
+            WriteActor::new(self.actor, EdgeActorClass::Human),
+            |txn| self.export_admitted_in_txn(txn, Some(proof)),
+            sink,
+        )?;
+        self.produced_from(sources);
+        Ok(receipt)
     }
 
     /// [`Self::export`] written to `sink` as it is built (FIX 2766): a vault
@@ -245,6 +327,27 @@ impl Vault {
         surface: ActSurface,
         destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
+        let mut spool = self.archive_spool_file()?;
+        let (receipt, rows) = self.export_with_verified_host_owner_listing_to(
+            opts,
+            proof,
+            surface,
+            destination,
+            &mut spool,
+        )?;
+        Ok((read_back(receipt, &mut spool)?, rows))
+    }
+
+    /// [`Self::export_with_verified_host_owner_listing`] written to `sink` as
+    /// it is built (FIX 3676), beside the same rows.
+    pub fn export_with_verified_host_owner_listing_to<W: Read + Write + Seek>(
+        &self,
+        opts: &ExportOptions,
+        proof: &VerifiedSlip,
+        surface: ActSurface,
+        destination: impl Into<ReadDestination>,
+        sink: W,
+    ) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
         // A host-root export reads diaries as the owner the root acts as
         // (OF-490, FIX 2222), resolved by the rule every host action takes.
         let owner = self.admit_host_owner(proof)?;
@@ -255,13 +358,21 @@ impl Vault {
             name: "host",
             act: Some(export_act(owner, surface)?),
         };
-        render_export(self, opts, by, destination, reader, |txn| {
-            if host_owner_export_admitted(self, txn, proof)? == owner {
-                Ok(())
-            } else {
-                Err(export_forbidden())
-            }
-        })
+        render_export_to(
+            self,
+            opts,
+            by,
+            destination,
+            reader,
+            |txn| {
+                if host_owner_export_admitted(self, txn, proof)? == owner {
+                    Ok(())
+                } else {
+                    Err(export_forbidden())
+                }
+            },
+            sink,
+        )
     }
 
     /// [`Self::export_with_verified_host_owner_listing`] for a host action
@@ -283,23 +394,56 @@ impl Vault {
         surface: ActSurface,
         destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
-        {
-            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
-            action
-                .guard()
-                .holds_in(self, &txn)
-                .map_err(MemoryError::from)?;
-        }
+        let mut spool = self.archive_spool_file()?;
+        let (receipt, rows) = self.export_with_host_action_listing_to(
+            opts,
+            action,
+            surface,
+            destination,
+            &mut spool,
+        )?;
+        Ok((read_back(receipt, &mut spool)?, rows))
+    }
+
+    /// [`Self::export_with_host_action_listing`] written to `sink` as it is
+    /// built (FIX 3676), beside the same rows.
+    pub fn export_with_host_action_listing_to<W: Read + Write + Seek>(
+        &self,
+        opts: &ExportOptions,
+        action: &HostActionAuthority,
+        surface: ActSurface,
+        destination: impl Into<ReadDestination>,
+        sink: W,
+    ) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
+        self.admit_host_action_export(action)?;
         let by = ExportBy {
             name: "host",
             act: Some(export_act(action.actor().entity_ref(), surface)?),
         };
-        render_export(self, opts, by, destination, action.actor(), |txn| {
-            action
-                .guard()
-                .holds_in(self, txn)
-                .map_err(MemoryError::from)
-        })
+        render_export_to(
+            self,
+            opts,
+            by,
+            destination,
+            action.actor(),
+            |txn| {
+                action
+                    .guard()
+                    .holds_in(self, txn)
+                    .map_err(MemoryError::from)
+            },
+            sink,
+        )
+    }
+
+    /// Whether [`Self::export_with_host_action_listing`] admits `action` now,
+    /// in a read snapshot of its own; the export asks again in its own.
+    pub fn admit_host_action_export(&self, action: &HostActionAuthority) -> MemoryResult<()> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        action
+            .guard()
+            .holds_in(self, &txn)
+            .map_err(MemoryError::from)
     }
 
     /// Full-vault export for an owner the request itself authenticated: a
@@ -320,6 +464,27 @@ impl Vault {
         surface: ActSurface,
         destination: impl Into<ReadDestination>,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
+        let mut spool = self.archive_spool_file()?;
+        let (receipt, rows) = self.export_with_authenticated_owner_listing_to(
+            opts,
+            owner,
+            surface,
+            destination,
+            &mut spool,
+        )?;
+        Ok((read_back(receipt, &mut spool)?, rows))
+    }
+
+    /// [`Self::export_with_authenticated_owner_listing`] written to `sink`
+    /// as it is built (FIX 3676), beside the same rows.
+    pub fn export_with_authenticated_owner_listing_to<W: Read + Write + Seek>(
+        &self,
+        opts: &ExportOptions,
+        owner: &AuthenticatedOwner,
+        surface: ActSurface,
+        destination: impl Into<ReadDestination>,
+        sink: W,
+    ) -> MemoryResult<(MemoryExportReceipt, Vec<EntityId>)> {
         let actor = self.admit_authenticated_owner(owner)?;
         let reader = WriteActor::new(actor, EdgeActorClass::Human);
         // The act names the owner the export's own snapshot revalidates
@@ -329,13 +494,21 @@ impl Vault {
             name: &name,
             act: Some(export_act(actor, surface)?),
         };
-        render_export(self, opts, by, destination, reader, |txn| {
-            if authenticated_owner_export_admitted(self, txn, owner)? == actor {
-                Ok(())
-            } else {
-                Err(export_forbidden())
-            }
-        })
+        render_export_to(
+            self,
+            opts,
+            by,
+            destination,
+            reader,
+            |txn| {
+                if authenticated_owner_export_admitted(self, txn, owner)? == actor {
+                    Ok(())
+                } else {
+                    Err(export_forbidden())
+                }
+            },
+            sink,
+        )
     }
 
     /// Whether [`Self::export_with_authenticated_owner_listing`] admits
@@ -467,19 +640,25 @@ fn render_export(
     let mut spool = vault.archive_spool_file()?;
     let (receipt, sources) =
         render_export_to(vault, opts, by, destination, reader, admit, &mut spool)?;
+    Ok((read_back(receipt, &mut spool)?, sources))
+}
+
+/// The export `spool` holds, read back whole for a door that answers in one
+/// frame, under its receipt's format and digest.
+fn read_back(
+    receipt: MemoryExportReceipt,
+    spool: &mut std::fs::File,
+) -> MemoryResult<MemoryExport> {
     spool.seek(SeekFrom::Start(0)).map_err(crate::Error::from)?;
     let mut archive = Vec::new();
     spool
         .read_to_end(&mut archive)
         .map_err(crate::Error::from)?;
-    Ok((
-        MemoryExport {
-            format: receipt.format,
-            archive,
-            digest: receipt.digest,
-        },
-        sources,
-    ))
+    Ok(MemoryExport {
+        format: receipt.format,
+        archive,
+        digest: receipt.digest,
+    })
 }
 
 /// One export written to `sink` as it is built (FIX 2766): the archive is

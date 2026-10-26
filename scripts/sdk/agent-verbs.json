@@ -2249,7 +2249,7 @@
     },
     {
       "name": "vault.export",
-      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref that GET /v1/core/export-transfers/{transfer_ref} reads.",
       "input": "crate::memory::ExportOptions",
       "output": "crate::memory::MemoryExport",
       "call": "memory.export(&input)?",

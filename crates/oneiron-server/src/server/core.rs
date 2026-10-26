@@ -132,6 +132,8 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) model_streams: crate::api::ModelStreams,
+    /// Whole-vault exports kept for their callers to read (FIX 3676).
+    pub(crate) export_transfers: crate::api::ExportTransfers,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.

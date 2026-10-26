@@ -10778,7 +10778,7 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref that GET /v1/core/export-transfers/{transfer_ref} reads."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."

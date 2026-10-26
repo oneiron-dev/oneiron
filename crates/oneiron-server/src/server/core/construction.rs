@@ -237,6 +237,7 @@ impl SyncServer {
             live_voice: Default::default(),
             asr_sessions: Default::default(),
             model_streams: Default::default(),
+            export_transfers: Default::default(),
             lens_frames,
             retained,
             presence,

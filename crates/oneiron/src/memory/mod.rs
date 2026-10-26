@@ -201,7 +201,8 @@ pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
 pub use export::{
-    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, MemoryExport, MemoryExportReceipt,
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportDelivery, ExportDigest, ExportOptions,
+    ExportTransfer, MemoryExport, MemoryExportReceipt,
 };
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{

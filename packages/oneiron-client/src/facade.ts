@@ -2482,7 +2482,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.retrieval.policy.evaluate": { description: "The owner judges candidate blend weights against the active weights on the same held-out runs the tuner never trains on.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.retrieval.policy.admit": { description: "The owner admits candidate blend weights judged on the named evidence manifest; owner pins and held-out regressions refuse admission.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.retrieval.policy.update": { description: "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.export": { description: "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.", scope: "Read", proposes: false, hostDoor: false, section: false },
+  "vault.export": { description: "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref that GET /v1/core/export-transfers/{transfer_ref} reads.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "self.credential.attenuate": { description: "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.scope.position": { description: "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.", scope: "Read", proposes: false, hostDoor: false, section: false },
   "vault.scope.ceiling": { description: "Reads the caller credential ceiling as a typed ceiling, never as a record position.", scope: "Read", proposes: false, hostDoor: false, section: false },
@@ -3926,7 +3926,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
         /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
         resolve_proposal: (input: Facade.ClusterResolveRequest, options?: O): FacadeReturns<"vault.cluster.resolve_proposal">[K] => invoke("vault.cluster.resolve_proposal", input, options, newInvocation()),
       }),
-      /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. */
+      /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref that GET /v1/core/export-transfers/{transfer_ref} reads. */
       export: Object.assign((input: Facade.ExportOptions, options?: O): FacadeReturns<"vault.export">[K] => invoke("vault.export", input, options, newInvocation()), {
         /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
         scoped: (input: Facade.ScopedExportRequest, options?: O): FacadeReturns<"vault.export.scoped">[K] => invoke("vault.export.scoped", input, options, newInvocation()),
