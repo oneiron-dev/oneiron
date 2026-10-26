@@ -2,6 +2,7 @@
 //! The mutation request type is `RepoMutationRequest`.
 //! Child modules own the types, proposal actors and provenance helpers re-exported here.
 
+mod bundle;
 mod conflict;
 mod conflict_doors;
 pub(crate) use conflict_doors::conflict_proposals;

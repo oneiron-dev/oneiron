@@ -393,28 +393,6 @@ impl Vault {
         }
     }
 
-    /// A received bundle's ONE staged commit: its stored files' exact tree
-    /// change under its own message, prepared on the checkout's HEAD.
-    fn prepare_received_files_execution(
-        &self,
-        repo_root: &Path,
-        request: &RepoMutationRequest,
-        proposal: Option<EntityId>,
-    ) -> Result<PreparedRepoMutationExecution> {
-        let RepoMutationOperation::ReceivedFiles { message, .. } = &request.operation else {
-            return Err(Error::InvariantViolation("not a received push bundle"));
-        };
-        let row = self
-            .repo_proposal(proposal.ok_or(Error::InvariantViolation(
-                "a received bundle lands under its proposal",
-            ))?)?
-            .ok_or(Error::EntityNotFound)?;
-        let edits = super::received_file::tree::received_tree_edits(&row.files)?;
-        let commit =
-            super::received_file::tree::prepare_received_files_commit(repo_root, &edits, message)?;
-        Ok(PreparedRepoMutationExecution::ReceivedFiles { commit, edits })
-    }
-
     fn record_failed_repo_mutation_preparation(
         &self,
         repo_ref: &RepoRef,
