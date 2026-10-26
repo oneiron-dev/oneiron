@@ -22835,7 +22835,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "re-export": 12
      }
     },
@@ -22979,6 +22979,16 @@
       "enum": 2,
       "fn": 7,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/tombstone_scope.rs",
+     "purpose": "The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -67456,6 +67466,26 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/tombstones.rs",
+     "purpose": "Which window tombstones a selector export carries beside the rows it keeps (FIX 10161)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/selector/validators.rs",
+     "purpose": "Federation admission validators for AUTHORITY_LOG and pack-instance rows",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -78436,7 +78466,7 @@
      "purpose": "Multi-critic review node primitives"
     },
     "deletion": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79325,7 +79355,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 272,
+     "files": 274,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79530,7 +79560,7 @@
    },
    "over_bar": 123,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5261,
+   "source_files": 5264,
    "test_files": 902
   },
   "oneiron-android": {
