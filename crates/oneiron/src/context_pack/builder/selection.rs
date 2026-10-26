@@ -47,10 +47,10 @@ impl PackCriticalAccounting {
     /// it carries is eligible and not omitted; an eligible id it neither
     /// carries nor lost to a budget was refused by a gate after selection,
     /// and no longer counts. Every omitted id stays eligible.
-    pub(crate) fn settle(&mut self, rows: impl IntoIterator<Item = &ContextEntity>) {
+    pub(crate) fn settle(&mut self, results: &[ContextEntity], neighbors: &[ContextEntity]) {
         let mut carried = BTreeSet::new();
         let mut carried_critical = BTreeSet::new();
-        for row in rows {
+        for row in results.iter().chain(neighbors) {
             carried.insert(row.id);
             if row.critical {
                 carried_critical.insert(row.id);

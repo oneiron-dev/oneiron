@@ -635,7 +635,7 @@ impl<'a> ContextPackBuilder<'a> {
             };
             let mut signals_used = self.signals_used;
             signals_used.extend(pipeline_signals.into_iter().map(pack_signal_from_retrieval));
-            critical.settle(results.iter().chain(&neighbors));
+            critical.settle(&results, &neighbors);
             let mut stats = PackStats {
                 critical_over_budget: false,
                 critical_count: 0,
@@ -664,7 +664,8 @@ impl<'a> ContextPackBuilder<'a> {
                 &self.read,
                 self.l2_summary_reader,
                 &rtxn,
-                results.iter().chain(&neighbors),
+                &results,
+                &neighbors,
                 clamp,
                 device_local.as_ref(),
             )?;

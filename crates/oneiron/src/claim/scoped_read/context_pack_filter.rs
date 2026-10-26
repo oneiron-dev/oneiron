@@ -131,7 +131,7 @@ impl ScopedRead<'_> {
                     admitted.budget_omitted_ids.insert(*id);
                 }
             }
-            admitted.settle(pack.results.iter().chain(&pack.neighbors));
+            admitted.settle(&pack.results, &pack.neighbors);
             admitted.report(&mut pack.stats);
 
             if (previous_count > 0 || had_capabilities || had_l2_base)
