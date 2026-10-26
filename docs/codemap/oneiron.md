@@ -3664,7 +3664,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/mirror_status.rs` | src | s | 5 crate-vis | — | What every automatic mirror push run shows on its mirror row, and the hold of a run that failed before… |
 | `src/origin/mirror_strategy.rs` | src | s | 1 struct · 1 enum · 4 fn · 2 const · 3 crate-vis | OriginMirrorSyncStrategy, PublishRequestRequired | Each origin mirror's sync strategy (FIX 6866; owner ruling 10-21 06:3x) |
 | `src/origin/mirror_wake.rs` | src | s | 4 fn · 6 crate-vis | — | The vault-owned wake of the origin mirror pushes (FIX 6866 part 2; CALLS "FIX 6866 full-auto trigger" and… |
-| `src/origin/mod.rs` | src | s | 15 mod · 4 re-export · 7 crate-vis | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
+| `src/origin/mod.rs` | src | s | 16 mod · 4 re-export · 7 crate-vis | — | Vault-as-origin serving plane (ARCH-0068 Phase A) |
 | `src/origin/publication/mod.rs` | src | s | 2 re-export · 2 crate-vis | — | The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910) |
 | `src/origin/publication/publication_codec.rs` | src | m | 5 fn · 19 crate-vis | — | Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders |
 | `src/origin/publication/publication_journal.rs` | src | m | 17 crate-vis | — | Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers |
@@ -3680,16 +3680,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/publish/inputs.rs` | src | s | 5 struct | OriginPublishApproveRequest, OriginPublishIdRequest, OriginPublishRequestInput, OriginPublishReviewRequest, OriginPublishReviewView | The inputs of the exact publish verbs (FIX 6866), and the one answer that is not a request: a review page |
 | `src/origin/publish/lifecycle.rs` | src | s | 4 fn · 2 crate-vis | — | Reading, approving and cancelling an exact publish request (FIX 6866) |
 | `src/origin/publish/mirror_plan.rs` | src | s | 5 crate-vis | — | Freezing one automatic mirror push plan (FIX 6866 part 2; CALLS "FIX 6866 automatic review record" and "FIX… |
-| `src/origin/publish/mirror_plan_dispatch.rs` | src | s | 7 crate-vis | — | Sending one frozen automatic mirror push plan (FIX 6866 part 2; CALLS "FIX 6866 automatic retry") |
+| `src/origin/publish/mirror_plan_dispatch.rs` | src | m | 7 crate-vis | — | Sending one frozen automatic mirror push plan (FIX 6866 part 2; CALLS "FIX 6866 automatic retry") |
 | `src/origin/publish/mirror_plan_reconcile.rs` | src | s | 2 const · 2 crate-vis | — | Reconciling an automatic mirror push plan before any resend (FIX 6866 part 2; CALLS "FIX 6866 automatic… |
 | `src/origin/publish/mirror_plan_remote.rs` | src | s | 4 crate-vis | — | The remote half of an automatic mirror push plan (FIX 6866 part 2): the authenticated read of what the… |
 | `src/origin/publish/mirror_plan_run.rs` | src | s | 7 crate-vis | — | One automatic run over a mirror's plans (FIX 6866 part 2): the mirror's open plan settles first, and only a… |
 | `src/origin/publish/mirror_plan_store.rs` | src | s | 11 crate-vis | — | The one store of automatic mirror push work (`ORIGIN_MIRROR_WORK`, LIVE; FIX 6866 part 2) |
-| `src/origin/publish/mirror_plan_types.rs` | src | s | 14 crate-vis | — | The shapes of one automatic mirror push plan (FIX 6866 part 2; CALLS "FIX 6866 automatic review record")… |
+| `src/origin/publish/mirror_plan_types.rs` | src | s | 15 crate-vis | — | The shapes of one automatic mirror push plan (FIX 6866 part 2; CALLS "FIX 6866 automatic review record")… |
 | `src/origin/publish/mirror_review.rs` | src | s | 4 crate-vis | — | The review section of one whole ref an automatic mirror plan pushes (FIX 6866 part 2; CALLS "FIX 6866… |
 | `src/origin/publish/mod.rs` | src | m | 1 fn · 6 re-export · 10 crate-vis | — | Exact-commit publication to a repository's mirror (FIX 6866, part 1): a public mirror changes only when we… |
 | `src/origin/publish/reconcile.rs` | src | s | 1 const · 10 crate-vis | — | An exact publish's outbound IO and its settlement (FIX 6866; CALLS "FIX 6866 retry" and "FIX 6866 unknown… |
 | `src/origin/publish/review.rs` | src | s | 1 const · 6 crate-vis | — | The full-ancestry review of one exact publish (FIX 6866; CALLS "FIX 6866 review scope"): what the push would… |
+| `src/origin/publish/secret_hold.rs` | src | s | 6 crate-vis | — | The publication gate at both kinds of send (FIX 7608 slice 9, A1): an exact request's one push and each… |
 | `src/origin/publish/store.rs` | src | s | 10 crate-vis | — | The one store of exact publish requests (`ORIGIN_PUBLISH_REQUEST`, LIVE): each request's row and, beside it… |
 | `src/origin/publish/types.rs` | src | s | 6 struct · 8 enum · 1 fn | OriginPublishAct, OriginPublishActorClass, OriginPublishAuthority, OriginPublishDestination, OriginPublishForce, OriginPublishLfsBytes, OriginPublishRefusal, OriginPublishRefusalReason +6 | The shapes of one exact publish request (FIX 6866): what it names, the review it carries, where it stands… |
 | `src/origin/registration.rs` | src | s | 1 fn | — | Owner registration of a new, empty served origin |
@@ -3697,7 +3698,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/residence.rs` | src | m | 2 struct · 2 enum · 7 fn · 1 const · 17 crate-vis | OriginAuthority, OriginAuthorityLease, OriginHostAuthority, OriginResidence | Explicit owner-controlled origin epochs |
 | `src/origin/secret_manifest.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | OriginSecretManifest | The repo secret manifest, read from a repository the vault serves as origin (ARCH-0069 S2; ARCH-0068 RC4 and… |
 | `src/origin/secret_marks.rs` | src | m | 9 crate-vis | — | A pushed key's mark (FIX 7608, owner ruling SECRETS-IN-REPOS = A): the immutable `repo.secret_mark` facts an… |
-| `src/origin/secret_marks/read.rs` | src | m | 23 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
+| `src/origin/secret_marks/read.rs` | src | m | 24 crate-vis | — | The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033 option d): the readable… |
 | `src/origin/secret_projection.rs` | src | s | 27 crate-vis | — | Who reads a marked repo blob's real bytes (FIX 7608 slice 2a, owner ruling SECRETS-IN-REPOS = A, ASK 1) |
 | `src/origin/secret_projection/checkout.rs` | src | s | 3 crate-vis | — | A checkout lease's masked copy (FIX 7608 slice 2b-ii-B2) |
 | `src/origin/secret_projection/checkout_recipient.rs` | src | s | 3 crate-vis | — | The recipient a run's checkout of a masked copy was bound for (FIX 7608 pre-flip, FIX 10271 and 9328) |
@@ -3719,6 +3720,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/origin/secret_projection/recipient/binding.rs` | src | s | 5 crate-vis | — | A proven recipient as a masked copy's records keep it (FIX 7608 pre-flip, FIX 9328 and 10271): the repo its… |
 | `src/origin/secret_projection/reveal.rs` | src | s | 6 crate-vis | — | A real-byte read of one marked repo file through the shipped file reveal (FIX 7608 slice 2b-ii-A, GAP-B /… |
 | `src/origin/secret_projection/types.rs` | src | s | 1 struct · 1 enum · 9 crate-vis | RepoFileProjectionKind, RepoFileProjectionView | The value-free shapes a projected repo read carries (FIX 7608 slice 2a, CALL P1): the opaque placeholder's… |
+| `src/origin/secret_publication.rs` | src | m | 1 struct · 3 enum · 5 fn · 2 const · 6 crate-vis | RepoDestinationAudience, RepoDestinationRole, RepoDestinationVisibility, RepoSecretLiveness | The publication gate (FIX 7608 slice 9, owner ruling SECRETS-IN-REPOS = A; A1, A2, C2, C3): a send to a… |
 | `src/origin/smart_http/advertise.rs` | src | m | 7 crate-vis | — | The publication-gated ref-advertisement rewrite: pkt-line state machine and keep policy |
 | `src/origin/smart_http/advertise_tests.rs` | test | m | — | — | Advertisement gate and stock-client roundtrip tests, plus the LFS attach/detach landing tests and the room… |
 | `src/origin/smart_http/bounds.rs` | src | s | 2 struct · 5 fn · 1 const | ExchangeBounds, ScanBounds | What one served exchange may cost the machine: how long it may sit idle, how long a push waits for its… |
