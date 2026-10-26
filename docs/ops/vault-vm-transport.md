@@ -59,7 +59,11 @@ credential.
   only for an image at revision 1, each naming the descriptor's guest-local
   CLI, never a host path. The bootstrap prepares the runtime for the vault UID
   and passes the engine one `--guest-runtime-fact` on every serving boot; no
-  fact stops the vault.
+  fact stops the vault. Each serving boot that prepares the runtime empties
+  `/vault/storage/container/runtime`, the container CLI's `XDG_RUNTIME_DIR`,
+  and keeps the directory itself (FIX 8936): the CLI's pause process id,
+  locks and sockets are that boot's own, never an earlier boot's.
+  `/vault/storage/container/home` and the image store in it are kept.
 - The trusted organ builds file (FIX 7889) adds a required manifest field,
   `vm_trusted_organ_builds_revision: 1`, which the rootfs receipt carries into
   the manifest. Its floor is the engine commit that merged FIX 7889. An image

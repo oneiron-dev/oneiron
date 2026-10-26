@@ -212,7 +212,8 @@ pub(super) async fn serve_anchored(
         return Err(error);
     }
     // Ready and bound: a client on this host can find it now. The file goes
-    // when this returns, a clean stop or a late startup error alike.
+    // when serving stops and this returns; a startup error returned above,
+    // before it was written.
     #[cfg(unix)]
     let _registered =
         super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());
