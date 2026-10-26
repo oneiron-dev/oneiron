@@ -122,13 +122,10 @@ pub(crate) fn validate_project_body(id: EntityId, bytes: &[u8]) -> Result<Vec<En
         return Err(invalid());
     }
     slice_refs(&body.slice, &mut ids);
+    // Every anchor is read, however many (rule 5, FIX 9436): the read fold
+    // counts the chain's depth against its threshold row.
     let mut proof = body.write_proof.as_ref();
-    let mut anchors = 0;
     while let Some(signed) = proof {
-        anchors += 1;
-        if anchors > MAX_PROJECT_ANCHORS {
-            return Err(invalid());
-        }
         let slip = crate::authority::CapabilitySlip::from_token(&signed.slip_wire)
             .map_err(|_| invalid())?;
         if let Some(org) = &slip.claims.org_ref {

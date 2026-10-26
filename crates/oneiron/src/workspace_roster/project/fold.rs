@@ -53,6 +53,8 @@ pub(super) mod reason {
     pub(crate) const STALE_RECORD: &str =
         "project history over budget and its frozen frontier no longer verifies";
     pub(crate) const UNRESOLVED: &str = "project authority unresolved";
+    /// A parent cycle's decision past its world bound. The joint solver now
+    /// decides every component in full, so it gives no decision this reason.
     pub(crate) const CYCLE_BOUND: &str = "project parent cycle past its world bound";
     pub(crate) const SEALED_OFF: &str = "project revision lies outside the owner's seal";
     pub(crate) const PARENT_HEAD_PENDING: &str = "witnessed parent revision not yet received";

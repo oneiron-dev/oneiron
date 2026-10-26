@@ -40,6 +40,10 @@ pub(super) struct Head {
     pub field: TextField,
     pub generation: u64,
     pub pending: u64,
+    /// The frontier of the document's birth here from its record's own text
+    /// (FIX 8942); `None` for a document carried from another machine,
+    /// rebuilt or born of anything else.
+    pub birth_frontier: Option<Vec<u8>>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -381,6 +385,7 @@ impl Vault {
                 field: field.clone(),
                 generation: 0,
                 pending: 0,
+                birth_frontier: Some(doc.frontier()),
             };
             persist(self, txn, entity, &mut h, &doc, None)?;
             // A MESSAGE's quotes taken of its atomic text are pinned at the

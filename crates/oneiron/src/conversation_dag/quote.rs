@@ -20,7 +20,9 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 use std::collections::BTreeMap;
 
+mod body_pins;
 mod reply_target;
+pub(crate) use body_pins::{pin_arrived_body_quotes_in_txn, turn_body_quotes};
 pub(crate) use reply_target::QuotedReply;
 pub(super) use reply_target::{
     MESSAGE_REPLY_KEY, append_target_in_txn, message_text, reply_pointer_in_txn, stored_target,

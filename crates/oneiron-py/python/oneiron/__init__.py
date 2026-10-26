@@ -4360,13 +4360,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def add(self, spec):
-            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."""
+            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_add(json.dumps(spec))))
         def open_full_history(self, spec):
             """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_open_full_history(json.dumps(spec))))
         def remove(self, spec):
-            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record."""
             return json.loads(_translate(lambda: self._client.vault_rooms_thread_audience_remove(json.dumps(spec))))
     class _VaultRoomsThreadJoinVerbs:
         def __init__(self, client: _NativeClient) -> None:

@@ -289,3 +289,60 @@ pub(super) fn room_upkeep_host_in_txn(
     };
     Ok(room_host_in(vault, txn, room, &present)?.host)
 }
+
+/// The Dreamer's read under its relationship gate: the reach the Coach reads
+/// rooms through and picks a nudge's host from (OF-417), and the one the
+/// host's upkeep voice picks the host from as well (FIX 7399). Only refs and
+/// turn times come out of it here, never a turn's words, and it grants
+/// nothing.
+pub(crate) fn room_upkeep_reach(vault: &Vault) -> Result<ScopedRead<'_>> {
+    let dreamer = vault.dreamer_authority()?;
+    let key = crate::claim::ScopedReadActorKey::with_actor_class(
+        dreamer.entity_ref().to_hex(),
+        dreamer.actor_class().gate_actor_class(),
+    )
+    .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
+    .require_relationship_grants(Some(dreamer.entity_ref()));
+    Ok(vault.scoped_read(key))
+}
+
+/// [`room_upkeep_reach`] for a door about to take its snapshot, its grant
+/// clock persisted first; `None` when either fails, and the door selects the
+/// host through its caller's own reach alone, as before.
+pub(super) fn room_upkeep_reach_now(vault: &Vault) -> Option<ScopedRead<'_>> {
+    let reach = room_upkeep_reach(vault).ok()?;
+    reach.persist_grant_clock().ok()?;
+    Some(reach)
+}
+
+/// Whether `caller` hosts `room` for its upkeep now, in `txn` at `now`: the
+/// host the engine selects from `newest`, the newest turn the caller's own
+/// reach reads there, as before, or the one it selects from the newest turn
+/// `upkeep` reads, the Coach's reach ([`room_upkeep_reach`], FIX 7399). A
+/// stored pin or handoff is the host either way; only a presence-chosen host
+/// can differ, and either selection admits the caller. A room `upkeep` does
+/// not read, or whose read fails, adds nothing.
+pub(super) fn room_upkeep_hosts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    upkeep: Option<&ScopedRead<'_>>,
+    (room, newest): (EntityId, Option<EntityId>),
+    caller: EntityId,
+    now: u64,
+) -> Result<bool> {
+    if room_upkeep_host_in_txn(vault, txn, room, newest)? == Some(caller) {
+        return Ok(true);
+    }
+    let Some(upkeep) = upkeep else {
+        return Ok(false);
+    };
+    let last = match room_upkeep_fold_in_txn(upkeep, txn, room, now) {
+        Ok(fold) => fold.finish(vault).0.source_refs.last().copied(),
+        Err(Error::EntityNotFound) => return Ok(false),
+        Err(error) => {
+            tracing::warn!(kind = ?error.kind(), "room upkeep did not read the Coach's reach");
+            return Ok(false);
+        }
+    };
+    Ok(last != newest && room_upkeep_host_in_txn(vault, txn, room, last)? == Some(caller))
+}

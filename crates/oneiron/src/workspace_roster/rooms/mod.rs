@@ -138,7 +138,7 @@ pub use thread_join::{
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
-pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
+pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };

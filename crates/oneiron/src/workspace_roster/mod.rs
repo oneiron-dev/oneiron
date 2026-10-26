@@ -235,7 +235,7 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub use rooms::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };
-pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
+pub(crate) use rooms::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
 #[cfg(feature = "sync")]

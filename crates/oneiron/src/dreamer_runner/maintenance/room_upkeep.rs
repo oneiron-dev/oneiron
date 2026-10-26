@@ -22,14 +22,14 @@ use std::collections::BTreeSet;
 
 use super::coach::{COACH_ROOM_NUDGE_PREDICATE, COACH_ROOM_UPKEEP_FACET};
 use super::proposals;
-use crate::claim::{ScopedRead, ScopedReadActorKey};
+use crate::claim::ScopedRead;
 use crate::conversation_dag::{ScopePath, ScopeSelector};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use crate::side_table::{self, Raw, SideTable};
 use crate::workspace_roster::{
     RoomUpkeepInput, RoomUpkeepNudge, RoomUpkeepThread, room_upkeep_host, room_upkeep_input,
-    upkeep_rooms,
+    room_upkeep_reach, upkeep_rooms,
 };
 use crate::{
     ClaimApprovalStatus, ClaimSubject, EntityId, Error, Result, Vault, WriteActor, WriteEnvelope,
@@ -56,14 +56,7 @@ struct RoomReach<'v>(ScopedRead<'v>);
 impl<'v> RoomReach<'v> {
     fn for_attempt(vault: &'v Vault, attempt: &DreamerAdmittedAttempt) -> Result<Self> {
         vault.require_coach_attempt(attempt, COACH_ROOM_UPKEEP_FACET)?;
-        let dreamer = vault.dreamer_authority()?;
-        let key = ScopedReadActorKey::with_actor_class(
-            dreamer.entity_ref().to_hex(),
-            dreamer.actor_class().gate_actor_class(),
-        )
-        .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
-        .require_relationship_grants(Some(dreamer.entity_ref()));
-        Ok(Self(vault.scoped_read(key)))
+        Ok(Self(room_upkeep_reach(vault)?))
     }
 
     /// `room`'s refs and times. A room the Dreamer does not read is a

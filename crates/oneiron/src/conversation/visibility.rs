@@ -11,6 +11,7 @@ use crate::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+mod covers;
 mod private_sources;
 pub(crate) use private_sources::{
     private_thread_word_turns_in, private_threads_readable_raw_in,
@@ -37,7 +38,12 @@ impl AudienceCache {
         id: EntityId,
         audience: &[EntityId],
     ) -> Result<bool> {
-        self.readable_at_depth(vault, txn, id, audience, None, 0)
+        let Some(raw) = Self::live_raw(vault, txn, id)? else {
+            return Ok(false);
+        };
+        // `readable` meets each private thread turn by turn; a cover walks
+        // none ([`covers`]).
+        self.readable_with_covers(vault, txn, id, &raw, audience, false, None)
     }
     /// [`Self::readable`] over the exact revision being served, which for a
     /// pinned or indexed read may be older than the current row. With
@@ -64,7 +70,7 @@ impl AudienceCache {
         {
             return Ok(false);
         }
-        self.readable_raw_at_depth(vault, txn, id, raw, audience, current, personal, 0)
+        self.readable_with_covers(vault, txn, id, raw, audience, current, personal)
     }
     /// Whether `reader`, an unbound agent or the system, reads the revision
     /// `raw` of `id` by its own entry alone, as a person's own read does
@@ -135,60 +141,9 @@ impl AudienceCache {
         }
         Ok(true)
     }
-    fn covers_readable(
-        &mut self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        covers: Result<Option<Vec<EntityId>>>,
-        audience: &[EntityId],
-        personal: Option<EntityId>,
-        depth: usize,
-    ) -> Result<bool> {
-        let covers = match covers {
-            Ok(None) => return Ok(true),
-            Ok(Some(covers)) => covers,
-            Err(
-                Error::EntityNotFound
-                | Error::Record(
-                    RecordError::InvalidScopeSummary(_) | RecordError::InvalidConversationDag(_),
-                ),
-            ) => return Ok(false),
-            Err(error) => return Err(error),
-        };
-        if covers.is_empty() {
-            return Ok(false);
-        }
-        for id in covers {
-            if !self.readable_at_depth(vault, txn, id, audience, personal, depth + 1)? {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-    fn readable_at_depth(
-        &mut self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        id: EntityId,
-        audience: &[EntityId],
-        personal: Option<EntityId>,
-        depth: usize,
-    ) -> Result<bool> {
-        if depth > 64
-            || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?.is_live()
-            || vault.archive_tombstone_in_txn(txn, &id)?.is_some()
-        {
-            return Ok(false);
-        }
-        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
-        else {
-            return Ok(false);
-        };
-        // `readable` meets each private thread turn by turn; a cover, at a
-        // later depth, walks none. A cover meets its room's windows as the
-        // row it covers does.
-        self.readable_raw_at_depth(vault, txn, id, &raw, audience, false, personal, depth)
-    }
+    /// The row's own rules at `depth` under the row asked about, its covers
+    /// aside: they are walked on the heap ([`covers`], FIX 9113). A cover
+    /// meets its room's windows as the row it covers does.
     #[expect(clippy::too_many_arguments)]
     fn readable_raw_at_depth(
         &mut self,
@@ -312,62 +267,6 @@ impl AudienceCache {
                     {
                         return Ok(false);
                     }
-                }
-            }
-        }
-        let body = raw
-            .get(ENTITY_METADATA_HEADER_LEN..)
-            .ok_or(Error::CorruptedIndex("audience body"))?;
-        let covers = crate::scope_summary::body_covers_in_txn(vault, txn, &id, h.entity_type, body);
-        if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
-            return Ok(false);
-        }
-        if h.entity_type == ENTITY_TYPE_CLAIM {
-            let claim = crate::claim::decode_claim_body(body, true)?;
-            let covers = crate::scope_summary::merge_word_sources_in_txn(vault, txn, &claim);
-            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
-                return Ok(false);
-            }
-            let covers = conversation_summary_covers(&claim);
-            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
-                return Ok(false);
-            }
-            let covers = reaction_covers(&claim);
-            if !self.covers_readable(vault, txn, covers, audience, personal, depth)? {
-                return Ok(false);
-            }
-            if let Some(relationship) = claim.rel {
-                if audience.is_empty() {
-                    return Ok(false);
-                }
-                let rel = match require_kind(vault, txn, relationship, ENTITY_TYPE_RELATIONSHIP) {
-                    Ok(rel) => rel,
-                    Err(
-                        Error::EntityNotFound
-                        | Error::Record(RecordError::InvalidConversationBody(_)),
-                    ) => {
-                        return Ok(false);
-                    }
-                    Err(error) => return Err(error),
-                };
-                let mut participants = counted_edge_ids(
-                    &vault.store,
-                    txn,
-                    &relationship,
-                    EdgeKind::ParticipatesIn,
-                    true,
-                )?;
-                // Relationship participant ids are a read-path feed, not a
-                // replacement for scope/tier authorization or room windows.
-                if let Ok(value) = decode::<serde_json::Value>(&rel[ENTITY_METADATA_HEADER_LEN..])
-                    && let Some(ids) = value.get("participant_ids")
-                {
-                    let body_ids: Vec<EntityId> = serde_json::from_value(ids.clone())
-                        .map_err(|_| invalid("relationship participants"))?;
-                    participants.extend(body_ids);
-                }
-                if audience.iter().any(|person| !participants.contains(person)) {
-                    return Ok(false);
                 }
             }
         }

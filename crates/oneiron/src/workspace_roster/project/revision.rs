@@ -211,8 +211,8 @@ pub(crate) fn decode_revision(
     Ok((hash, revision))
 }
 
-/// The revisions a v2/v3 anchor chain holds, bottom first. A chain deeper
-/// than the fold follows holds none: no revision of it can verify.
+/// The revisions a v2/v3 anchor chain holds, bottom first, however long it
+/// is (rule 5, FIX 9436).
 pub(crate) fn revisions_of(
     project: EntityId,
     anchor: &ProjectAnchor,
@@ -220,9 +220,6 @@ pub(crate) fn revisions_of(
     let mut chain = Vec::new();
     let mut next = Some(anchor);
     while let Some(state) = next {
-        if chain.len() > MAX_PROJECT_ANCHORS {
-            return Ok(Vec::new());
-        }
         chain.push(state);
         next = state
             .proof
@@ -459,32 +456,15 @@ pub(crate) fn held_in_txn(
 }
 
 /// Rebuilds the exact nested `ProjectAnchor` of a held revision, the value
-/// its children's unchanged `write_challenge` signs over. `None` when a link
-/// is missing or the chain is deeper than the fold follows.
-/// How many signed states the held lineage of `hash` holds, itself
-/// included; `None` when a link is not held or the lineage holds more signed
-/// states than one PROJECT row carries.
-pub(crate) fn signed_depth(held: &HeldRevisions, hash: ProjectRevisionHash) -> Option<usize> {
-    let mut signed = 0;
-    let mut next = Some(hash);
-    while let Some(at) = next {
-        let row = &held.get(&at)?.revision;
-        if matches!(row, ProjectRevision::Signed { .. }) {
-            signed += 1;
-            if signed > MAX_PROJECT_ANCHORS {
-                return None;
-            }
-        }
-        next = row.parent();
-    }
-    Some(signed)
-}
-
+/// its children's unchanged `write_challenge` signs over, however long its
+/// lineage is (rule 5, FIX 9436). `None` when a link is missing, or met
+/// twice, which only a malformed set can hold.
 pub(crate) fn anchor_of(held: &HeldRevisions, hash: ProjectRevisionHash) -> Option<ProjectAnchor> {
     let mut chain = Vec::new();
+    let mut seen = BTreeSet::new();
     let mut next = Some(hash);
     while let Some(at) = next {
-        if chain.len() > MAX_PROJECT_ANCHORS {
+        if !seen.insert(at) {
             return None;
         }
         let row = &held.get(&at)?.revision;

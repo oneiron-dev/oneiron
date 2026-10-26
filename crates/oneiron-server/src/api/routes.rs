@@ -67,6 +67,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
+        .route("/linear/push", post(linear_push::core_linear_push))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,

@@ -221,9 +221,12 @@ impl Solver<'_, '_, '_> {
             if matches!(row.revision, ProjectRevision::Signed { .. })
                 && *verdict == ProjectVerdict::Visible
             {
+                // Its whole lineage, however deep (rule 5, FIX 9436); the
+                // fold that judged it counted that depth.
                 let mut depth = 0;
+                let mut seen = BTreeSet::new();
                 let mut at = row.revision.parent();
-                while let Some(prior) = at.filter(|_| depth <= 4 * MAX_PROJECT_ANCHORS) {
+                while let Some(prior) = at.filter(|prior| seen.insert(*prior)) {
                     depth += 1;
                     at = facts.held.get(&prior).and_then(|row| row.revision.parent());
                 }

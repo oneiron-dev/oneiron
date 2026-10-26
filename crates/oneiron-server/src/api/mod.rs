@@ -139,6 +139,8 @@ mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
+// FIX 9382: a caller's own push of one TASK to Linear now.
+mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;

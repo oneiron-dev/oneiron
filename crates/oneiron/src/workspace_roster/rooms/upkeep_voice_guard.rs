@@ -9,7 +9,7 @@
 //! its bound; none counts, sizes or rates anything (rule 5). The witness
 //! guard that follows is unchanged and keeps the final word.
 use super::participation::{agent_standing_in_txn, turn_root_in_txn};
-use super::upkeep::{room_upkeep_fold_in_txn, room_upkeep_host_in_txn};
+use super::upkeep::{room_upkeep_fold_in_txn, room_upkeep_hosts_in_txn};
 use super::upkeep_voice::{RoomUpkeepNudge, RoomUpkeepVoiceReceipt};
 use super::*;
 use crate::claim::ScopedRead;
@@ -96,10 +96,13 @@ impl VoiceRefusal {
 }
 
 /// The caller's lanes, taken before any snapshot: Recorded for the nudge,
-/// the room and its turns, Surfaceable for the room's posture rules.
+/// the room and its turns, Surfaceable for the room's posture rules. Beside
+/// them the Coach's reach, which selects the host as the Coach did (FIX
+/// 7399); `None` when it cannot be read, and the caller's reach selects alone.
 pub(super) struct VoiceLanes<'m> {
     pub(super) recorded: ScopedRead<'m>,
     pub(super) surfaceable: ScopedRead<'m>,
+    pub(super) upkeep: Option<ScopedRead<'m>>,
 }
 
 /// One voice as planned before its write: the nudge, the turn it answers
@@ -129,9 +132,7 @@ impl Memory<'_> {
         let caller = self.actor();
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         let ids = (plan.turn, plan.message);
-        if let Some(receipt) =
-            self.voice_replay_in_txn(txn, &lanes.recorded, plan.nudge.finding, ids, now)?
-        {
+        if let Some(receipt) = self.voice_replay_in_txn(txn, lanes, plan.nudge.finding, ids, now)? {
             *replay = Some(receipt);
             return Err(VoiceRefusal::Identity.error());
         }
@@ -158,8 +159,8 @@ impl Memory<'_> {
                 Err(Error::EntityNotFound) => return Err(VoiceRefusal::Scope.error()),
                 Err(error) => return Err(error.into()),
             };
-            let last = input.source_refs.last().copied();
-            if room_upkeep_host_in_txn(vault, txn, room, last)? != Some(caller) {
+            let last = (room, input.source_refs.last().copied());
+            if !room_upkeep_hosts_in_txn(vault, txn, lanes.upkeep.as_ref(), last, caller, now)? {
                 return Err(VoiceRefusal::Host.error());
             }
             if !thread_audience_allows_in(vault, txn, room, thread, caller)?
@@ -217,22 +218,23 @@ impl Memory<'_> {
     }
 
     /// The voice `finding` already has in `txn`, when its ids are taken:
-    /// its recorded TURN and MESSAGE, each only when `lane` reads it, or
-    /// neither for a voice whose rows an erase took. `None` while both ids
-    /// are free. A replay still needs the nudge, its host and the room's
-    /// current host to be the caller, as a first voice does, and never
-    /// writes or takes new words. An id taken by anything but this nudge's
-    /// voice is refused.
+    /// its recorded TURN and MESSAGE, each only when the Recorded lane reads
+    /// it, or neither for a voice whose rows an erase took. `None` while
+    /// both ids are free. A replay still needs the nudge, its host and the
+    /// room's current host to be the caller, as a first voice does, and
+    /// never writes or takes new words. An id taken by anything but this
+    /// nudge's voice is refused.
     pub(super) fn voice_replay_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        lane: &ScopedRead<'_>,
+        lanes: &VoiceLanes<'_>,
         finding: EntityId,
         (turn, message): (EntityId, EntityId),
         now: u64,
     ) -> MemoryResult<Option<RoomUpkeepVoiceReceipt>> {
         let vault = self.vault();
         let caller = self.actor();
+        let lane = &lanes.recorded;
         if !super::upkeep_voice::voiced_in(vault, txn, (turn, message))? {
             return Ok(None);
         }
@@ -249,8 +251,8 @@ impl Memory<'_> {
             Err(Error::EntityNotFound) => return Err(VoiceRefusal::Scope.error()),
             Err(error) => return Err(error.into()),
         };
-        let last = input.source_refs.last().copied();
-        if room_upkeep_host_in_txn(vault, txn, nudge.room, last)? != Some(caller) {
+        let last = (nudge.room, input.source_refs.last().copied());
+        if !room_upkeep_hosts_in_txn(vault, txn, lanes.upkeep.as_ref(), last, caller, now)? {
             return Err(VoiceRefusal::Host.error());
         }
         let receipt_ref = format!("witness:{}", turn.to_hex());

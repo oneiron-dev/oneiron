@@ -125,6 +125,17 @@ pub(crate) fn import_note_from_authority(
             _ => return Err(invalid("invalid NOTE authority frame")),
         };
         crate::sync::documents::storage::import_complete(&staged, bytes)?;
+        // The imported document is measured as a load is (rule 5, FIX
+        // 10342): a crossing raises a check and the import goes on.
+        if let Err(error) = super::scan::measure_document(
+            &vault.store,
+            txn,
+            id,
+            &staged,
+            &vault.store.pending_scan_checks,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "NOTE import was not measured");
+        }
         if new_head {
             // A STATE for a new head replaces the document; the checks below
             // compare documents of one head.

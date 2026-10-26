@@ -18,7 +18,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::linear_sync::ServedLinearEgress;
+use oneiron::linear_sync::{LinearEffectRequest, ServedLinearEgress};
 use oneiron::{
     EntityId, LinearChangePage, LinearChangeSource, LinearEgress, LinearIssueChange,
     LinearIssueRef, LinearSyncAdapter, LinearSyncError, LinearSyncResult, MirroredTaskFields,
@@ -34,8 +34,10 @@ use oneiron_linear::LinearTrackerConfig;
 
 mod body_line;
 mod direct;
+mod push;
 mod webhook;
 
+pub(crate) use push::{LinearPushError, push_body_line, push_task_now};
 pub(crate) use webhook::routes as webhook_routes;
 
 /// The tracker mapping the Linear webhook applies under (OF-427 C11): the
@@ -57,6 +59,9 @@ struct LinearBridge {
     base: reqwest::Url,
     credential: reqwest::header::HeaderValue,
     request_timeout: Duration,
+    /// How long an admission waits for a full Rate window (FIX 8788): none
+    /// for a background pass, the caller's own for its push (FIX 9382).
+    rate_wait: Duration,
 }
 
 impl LinearBridge {
@@ -80,7 +85,15 @@ impl LinearBridge {
             base,
             credential,
             request_timeout,
+            rate_wait: Duration::ZERO,
         })
+    }
+
+    /// This bridge, its admissions waiting up to `wait` for a full Rate
+    /// window at their fair turn (FIX 8788).
+    fn with_rate_wait(mut self, wait: Duration) -> Self {
+        self.rate_wait = wait;
+        self
     }
 
     fn request(
@@ -166,6 +179,32 @@ impl LinearChangeSource for LinearBridge {
 }
 
 impl LinearEgress for LinearBridge {
+    /// The default admission, waiting up to the bridge's Rate wait (none
+    /// unless a caller's push asked for one); then the bridge's create.
+    fn create_issue_admitted(
+        &mut self,
+        vault: &oneiron::Vault,
+        effect: &LinearEffectRequest,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        vault.authorize_linear_effect_within(effect, self.rate_wait)?;
+        self.create_issue(effect.operation_id, effect.task_ref, &effect.fields)
+    }
+
+    /// As [`Self::create_issue_admitted`], for the conditional update.
+    fn update_issue_conditional_admitted(
+        &mut self,
+        vault: &oneiron::Vault,
+        effect: &LinearEffectRequest,
+        expected_remote: &BTreeMap<String, [u8; 32]>,
+    ) -> LinearSyncResult<LinearIssueChange> {
+        let issue = effect
+            .issue
+            .as_ref()
+            .ok_or(LinearSyncError::AuthorizationDenied)?;
+        vault.authorize_linear_effect_within(effect, self.rate_wait)?;
+        self.update_issue_conditional(effect.operation_id, issue, expected_remote, &effect.fields)
+    }
+
     fn create_issue(
         &mut self,
         operation_id: [u8; 32],

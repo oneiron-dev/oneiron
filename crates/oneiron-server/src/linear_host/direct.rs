@@ -1,10 +1,11 @@
 //! The server's direct Linear GraphQL mirror, using the production adapter.
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::linear_sync::{LinearWait, ServedLinearEgress};
 use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchPolicyRisk};
-use oneiron::{EntityId, LinearSyncError};
+use oneiron::{EntityId, LinearSyncError, LinearSyncResult, Vault};
 use oneiron_linear::{
     HttpLinearClient, LinearBodyLine, LinearHostChangeSource, LinearHostEgress,
     LinearTrackerConfig, VaultLinearOutboundDoor,
@@ -14,9 +15,94 @@ use super::PassCredential;
 use crate::config::LinearConfig;
 use crate::server::{HousekeepingAdmission, SyncServer};
 
-/// The direct mirror the checked `settings` name. The response directory
-/// keeps the host's content-free delivery state, outside the replicated vault
-/// graph; the request and response bytes are the TASK's body custody.
+/// What the direct mirror's door is built from, as its settings name it:
+/// the tracker mapping, the GraphQL endpoint, the response directory and the
+/// scheduler actor. The response directory keeps the host's content-free
+/// delivery state, outside the replicated vault graph; the request and
+/// response bytes are the TASK's body custody.
+#[derive(Clone)]
+pub(super) struct DirectSetup {
+    tracker: LinearTrackerConfig,
+    endpoint: reqwest::Url,
+    responses: PathBuf,
+    scheduler: EntityId,
+}
+
+/// One direct pass's, or one caller's push's, inbound source and egress.
+type DirectPorts<'v> = (
+    LinearHostChangeSource<HttpLinearClient>,
+    ServedLinearEgress<'v, LinearHostEgress<VaultLinearOutboundDoor<'v, HttpLinearClient>>>,
+);
+
+impl DirectSetup {
+    /// The setup the checked `settings` name, with `tracker`, their mapping.
+    /// It reads the response directory, so it runs off the async runtime.
+    pub(super) fn checked(
+        settings: &LinearConfig,
+        tracker: Option<LinearTrackerConfig>,
+        scheduler: EntityId,
+    ) -> anyhow::Result<Self> {
+        let tracker =
+            tracker.ok_or_else(|| anyhow::anyhow!("a direct Linear mirror maps linear.team_id"))?;
+        let endpoint = settings.graphql_endpoint()?;
+        let responses = (settings.response_dir.clone())
+            .filter(|dir| dir.is_absolute() && dir.is_dir())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Linear response_dir must name an existing absolute host-private directory"
+                )
+            })?;
+        Ok(Self {
+            tracker,
+            endpoint,
+            responses,
+            scheduler,
+        })
+    }
+
+    /// The mirror's inbound source and outbound egress over the credential
+    /// `key`, at `now`, its door decoding on `body_line` and waiting up to
+    /// `rate_wait` for a full Rate window (FIX 8788): none for a background
+    /// pass, whose full window leaves the TASK dirty for a later pass; a
+    /// caller's own for its push (FIX 9382).
+    pub(super) fn ports<'v>(
+        &self,
+        vault: &'v Vault,
+        key: &str,
+        body_line: &Arc<dyn LinearBodyLine>,
+        (timeout, now, rate_wait): (Duration, u64, Duration),
+    ) -> LinearSyncResult<DirectPorts<'v>> {
+        let client = HttpLinearClient::with_endpoint(key, self.endpoint.clone(), timeout)?
+            .with_body_line(Arc::clone(body_line));
+        let inbound = LinearHostChangeSource::new(client.clone(), self.tracker.clone())?;
+        let door = VaultLinearOutboundDoor::new(
+            vault,
+            client,
+            self.responses.clone(),
+            OutboundDispatchActor {
+                actor_class: "system".to_owned(),
+                actor_ref: Some(self.scheduler.to_hex()),
+                actor_entity_ref: Some(self.scheduler),
+            },
+            OutboundDispatchGate {
+                has_opted_in: false,
+                has_permission: true,
+                policy_risk: OutboundDispatchPolicyRisk::Normal,
+            },
+            now,
+        )?
+        .with_body_line(Arc::clone(body_line))
+        .with_rate_wait(rate_wait);
+        let outbound = ServedLinearEgress::new(
+            vault,
+            self.scheduler,
+            LinearHostEgress::new(door, self.tracker.clone())?,
+        );
+        Ok((inbound, outbound))
+    }
+}
+
+/// The direct mirror the checked `settings` name ([`DirectSetup`]).
 pub(super) async fn spawn(
     server: Arc<SyncServer>,
     settings: &LinearConfig,
@@ -25,18 +111,9 @@ pub(super) async fn spawn(
     credential: PassCredential,
     admit: HousekeepingAdmission,
 ) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
-    let tracker =
-        tracker.ok_or_else(|| anyhow::anyhow!("a direct Linear mirror maps linear.team_id"))?;
-    let endpoint = settings.graphql_endpoint()?;
-    let response_dir = settings.response_dir.clone();
-    let responses = crate::logging::off_runtime("Linear direct setup", move || {
-        response_dir
-            .filter(|dir| dir.is_absolute() && dir.is_dir())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Linear response_dir must name an existing absolute host-private directory"
-                )
-            })
+    let checked = settings.clone();
+    let setup = crate::logging::off_runtime("Linear direct setup", move || {
+        DirectSetup::checked(&checked, tracker, scheduler)
     })
     .await??;
     let policy = server.vault().linear_mirror_policy()?;
@@ -44,7 +121,7 @@ pub(super) async fn spawn(
     // async runtime before start. A vault secret is read at each pass.
     let timeout = Duration::from_secs(policy.request_timeout_secs);
     if let PassCredential::Held(key) = &credential {
-        let (key, setup_endpoint) = (Arc::clone(key), endpoint.clone());
+        let (key, setup_endpoint) = (Arc::clone(key), setup.endpoint.clone());
         crate::logging::off_runtime("Linear direct client", move || {
             HttpLinearClient::with_endpoint(key.as_str(), setup_endpoint, timeout).map(|_| ())
         })
@@ -66,9 +143,7 @@ pub(super) async fn spawn(
             };
             let vault = Arc::clone(server.vault());
             let credential = credential.clone();
-            let tracker = tracker.clone();
-            let responses = responses.clone();
-            let endpoint = endpoint.clone();
+            let setup = setup.clone();
             let body_line = Arc::clone(&body_line);
             let outcome = tokio::task::spawn_blocking(move || {
                 // Held through the policy and budget reads, every Linear
@@ -80,41 +155,14 @@ pub(super) async fn spawn(
                     .map_err(LinearSyncError::Store)?;
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
                 let result = credential.with(&vault, |key| {
-                    let client = HttpLinearClient::with_endpoint(
-                        key,
-                        endpoint,
-                        Duration::from_secs(policy.request_timeout_secs),
-                    )?
-                    .with_body_line(Arc::clone(&body_line));
-                    let inbound = LinearHostChangeSource::new(client.clone(), tracker.clone())?;
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map_or(0, |time| time.as_secs());
-                    let door = VaultLinearOutboundDoor::new(
-                        &vault,
-                        client,
-                        responses,
-                        OutboundDispatchActor {
-                            actor_class: "system".to_owned(),
-                            actor_ref: Some(scheduler.to_hex()),
-                            actor_entity_ref: Some(scheduler),
-                        },
-                        OutboundDispatchGate {
-                            has_opted_in: false,
-                            has_permission: true,
-                            policy_risk: OutboundDispatchPolicyRisk::Normal,
-                        },
-                        now,
-                    )?
-                    // It decodes on the same line, and as a background pass
-                    // waits for no Rate window (FIX 8788): a full one leaves
-                    // the TASK dirty for a later pass.
-                    .with_body_line(body_line);
-                    let outbound = ServedLinearEgress::new(
-                        &vault,
-                        scheduler,
-                        LinearHostEgress::new(door, tracker)?,
-                    );
+                    // A background pass waits for no Rate window (FIX 8788):
+                    // a full one leaves the TASK dirty for a later pass.
+                    let timeout = Duration::from_secs(policy.request_timeout_secs);
+                    let (inbound, outbound) =
+                        setup.ports(&vault, key, &body_line, (timeout, now, Duration::ZERO))?;
                     super::synchronize_once(
                         &vault,
                         inbound,

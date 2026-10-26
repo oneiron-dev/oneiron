@@ -524,6 +524,7 @@ pub(crate) fn load_retained_head(
     {
         let canonical = super::document::NoteDocument::load(note, &raw)?;
         super::citation_erase::validate_pins(vault, txn, &canonical.pins()?)?;
+        measure_retained(vault, txn, note, &canonical.doc);
         return Ok(Some(canonical.doc));
     }
     if head != note {
@@ -550,7 +551,23 @@ pub(crate) fn load_retained_head(
         }
         super::storage::import_complete(&doc, &update.bytes)?;
     }
+    measure_retained(vault, txn, note, &doc);
     Ok(Some(doc))
+}
+
+/// Counts a retained head's document `doc` of NOTE `note` against the NOTE
+/// scan rows, as a load is (rule 5, FIX 10361); a failed count warns and
+/// the head serves.
+fn measure_retained(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId, doc: &LoroDoc) {
+    if let Err(error) = super::scan::measure_document(
+        &vault.store,
+        txn,
+        note,
+        doc,
+        &vault.store.pending_scan_checks,
+    ) {
+        tracing::warn!(kind = ?error.kind(), "retained NOTE head was not measured");
+    }
 }
 
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses

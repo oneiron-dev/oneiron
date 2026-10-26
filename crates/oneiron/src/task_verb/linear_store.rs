@@ -325,6 +325,59 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         now: u64,
         max_pull_pages_per_pass: usize,
     ) -> LinearSyncResult<(Vec<LinearMirrorReceipt>, LinearPullReceipt)> {
+        let pulled = self.pull_pass(now, max_pull_pages_per_pass)?;
+        let mut pushed = Vec::new();
+        let mut first_failure = None;
+        for (task, revision) in self.tasks().dirty_tasks()? {
+            if let Some(receipt) = self.push_dirty(task, revision, now, &mut first_failure) {
+                pushed.push(receipt);
+            }
+        }
+        if let Some(error) = first_failure {
+            return Err(error);
+        }
+        Ok((pushed, pulled))
+    }
+
+    /// A caller's own push of the one TASK `task` (FIX 8788, FIX 9382), as a
+    /// pass sends it: every available inbound page is reconciled first, then
+    /// `task` is pushed when it owes the mirror its dirty revision and no
+    /// held push skips it, with the row and acknowledgement a pass keeps.
+    /// `None` when it owes nothing or its push is held. Its egress decides
+    /// how long a full Rate window is waited for.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::synchronize`].
+    pub fn push_dirty_task(
+        &mut self,
+        task: EntityId,
+        now: u64,
+        max_pull_pages_per_pass: usize,
+    ) -> LinearSyncResult<(Option<LinearMirrorReceipt>, LinearPullReceipt)> {
+        let pulled = self.pull_pass(now, max_pull_pages_per_pass)?;
+        let revision = {
+            let vault = self.tasks().vault;
+            let txn = vault.store.env.read_txn().map_err(Error::from)?;
+            DIRTY.get(&vault.store, &txn, &task)?
+        };
+        let Some(revision) = revision else {
+            return Ok((None, pulled));
+        };
+        let mut failure = None;
+        let receipt = self.push_dirty(task, revision, now, &mut failure);
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok((receipt, pulled))
+    }
+
+    /// Every available inbound page, its cursor durable after each.
+    fn pull_pass(
+        &mut self,
+        now: u64,
+        max_pull_pages_per_pass: usize,
+    ) -> LinearSyncResult<LinearPullReceipt> {
         if !(1..=1024).contains(&max_pull_pages_per_pass) {
             return Err(
                 Error::InvalidConfig("linear pull page policy is out of bounds".into()).into(),
@@ -376,53 +429,59 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         if !caught_up {
             return Err(Error::InvalidConfig("linear source page bound exceeded".into()).into());
         }
+        Ok(pulled)
+    }
 
-        let mut pushed = Vec::new();
-        let mut first_failure = None;
-        for (task, revision) in self.tasks().dirty_tasks()? {
-            match self.tasks().holds_push(task) {
-                Ok(false) => {}
-                Ok(true) => continue,
-                Err(error) => {
-                    first_failure.get_or_insert(error.into());
-                    continue;
-                }
-            }
-            // Evidence for the push's row only; the effect door re-proves it.
-            let writer = self.tasks().dirty_writer(task).ok().flatten();
-            match self.push_task(task, now) {
-                Ok(receipt) => {
-                    // Each push this pass sent keeps its row (OF-427 C9).
-                    if matches!(
-                        receipt.status,
-                        LinearMirrorStatus::Linked | LinearMirrorStatus::Applied
-                    ) && let Err(error) = record_outbound(self.tasks().vault, &receipt, writer)
-                    {
-                        first_failure.get_or_insert_with(|| error.into());
-                    }
-                    if receipt.status != LinearMirrorStatus::Conflict
-                        && let Err(error) = self.tasks().acknowledge_push(task, revision)
-                    {
-                        first_failure.get_or_insert_with(|| error.into());
-                    }
-                    pushed.push(receipt);
-                }
-                Err(error) => {
-                    // A push that waits for its Rate window (FIX 8788) keeps
-                    // its dirty revision and yields to a later real failure.
-                    if first_failure
-                        .as_ref()
-                        .is_none_or(|first| matches!(first, LinearSyncError::Waiting(_)))
-                    {
-                        first_failure = Some(error);
-                    }
-                }
+    /// One dirty TASK's push at `revision`, as a pass sends it: a held push
+    /// is skipped, a sent push keeps its row, and the revision is
+    /// acknowledged unless the push met a conflict. A failure goes to
+    /// `first_failure` as a pass keeps it: a push that waits for its Rate
+    /// window (FIX 8788) keeps its dirty revision and yields to a later real
+    /// failure.
+    fn push_dirty(
+        &mut self,
+        task: EntityId,
+        revision: u64,
+        now: u64,
+        first_failure: &mut Option<LinearSyncError>,
+    ) -> Option<LinearMirrorReceipt> {
+        match self.tasks().holds_push(task) {
+            Ok(false) => {}
+            Ok(true) => return None,
+            Err(error) => {
+                first_failure.get_or_insert(error.into());
+                return None;
             }
         }
-        if let Some(error) = first_failure {
-            return Err(error);
+        // Evidence for the push's row only; the effect door re-proves it.
+        let writer = self.tasks().dirty_writer(task).ok().flatten();
+        match self.push_task(task, now) {
+            Ok(receipt) => {
+                // Each push this pass sent keeps its row (OF-427 C9).
+                if matches!(
+                    receipt.status,
+                    LinearMirrorStatus::Linked | LinearMirrorStatus::Applied
+                ) && let Err(error) = record_outbound(self.tasks().vault, &receipt, writer)
+                {
+                    first_failure.get_or_insert_with(|| error.into());
+                }
+                if receipt.status != LinearMirrorStatus::Conflict
+                    && let Err(error) = self.tasks().acknowledge_push(task, revision)
+                {
+                    first_failure.get_or_insert_with(|| error.into());
+                }
+                Some(receipt)
+            }
+            Err(error) => {
+                if first_failure
+                    .as_ref()
+                    .is_none_or(|first| matches!(first, LinearSyncError::Waiting(_)))
+                {
+                    *first_failure = Some(error);
+                }
+                None
+            }
         }
-        Ok((pushed, pulled))
     }
 }
 

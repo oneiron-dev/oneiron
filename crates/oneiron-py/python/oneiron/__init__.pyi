@@ -2782,11 +2782,11 @@ class Oneiron:
             """A room's effective sharing scope and why it is clamped, for a member of the room."""
     class _VaultRoomsThreadAudienceVerbs:
         def add(self, spec: Facade.ThreadAudienceAddRequest) -> Facade.ThreadAudienceReceipt:
-            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told."""
+            """Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record."""
         def open_full_history(self, spec: Facade.ThreadAudienceOpenFullHistoryRequest) -> Facade.ThreadAudienceReceipt:
             """Opens a private thread's whole history, turns before the caller's add included, to the vault's Owner inside its audience: a logged audience edit, every member told. The Owner alone may call it."""
         def remove(self, spec: Facade.ThreadAudienceRemoveRequest) -> Facade.ThreadAudienceReceipt:
-            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it."""
+            """Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record."""
     class _VaultRoomsThreadJoinVerbs:
         def request(self, spec: Facade.ThreadJoinRequest) -> Facade.ThreadJoinRequestView:
             """Asks to join a private thread by its exact root, for the caller itself; every member is asked, and a pending request is answered again. The vault's Owner or an Admin, as a person, or an agent may call it."""
