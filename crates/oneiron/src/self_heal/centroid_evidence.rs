@@ -94,7 +94,8 @@ pub(crate) fn snapshot_live_in_txn(
     let Some(raw) = EVIDENCE.get_bytes(store, txn, hash)? else {
         return Ok(false);
     };
-    // A snapshot an erase retired from an image lands as its erased marker.
+    // A snapshot a source's erase reached holds its erased marker, live or
+    // restored from an image.
     let ResponseRead::Present(raw) = ResponseRead::of(
         ResponseFamily::CentroidEvidence,
         &EVIDENCE.key_bytes(hash),
@@ -372,7 +373,8 @@ impl Vault {
     /// today's vectors. This cannot sign or authorize a T1 detector run. A
     /// source erased since the snapshot makes the replay unavailable
     /// (FIX 10094): `EntityNotFound`, the erased inputs never read, whether
-    /// the erase already dropped the snapshot or not.
+    /// the erase already left the snapshot its erased marker or not. The
+    /// marker answers the erase with no copy of the run (FIX 10822).
     pub fn replay_centroid_finding(&self, event_id: &EntityId) -> Result<CentroidReplay> {
         let event = self.reviewed_diagnostic(event_id)?;
         if event.source != DiagnosticSourceKind::RetrievalTelemetry
@@ -382,7 +384,8 @@ impl Vault {
         }
         let txn = self.store.env.read_txn()?;
         let Some(raw) = EVIDENCE.get_bytes(&self.store, &txn, &event.replay.content_hash)? else {
-            // Dropped by a source's erase, or never kept.
+            // Never kept, or gone with no erased marker: an erased source
+            // the finding's refs name, or its run's while that is kept.
             let mut sources: std::collections::BTreeSet<[u8; 16]> = event
                 .evidence_refs
                 .iter()
@@ -402,8 +405,8 @@ impl Vault {
                 },
             );
         };
-        // A snapshot an erase retired from an image lands as its erased
-        // marker: unavailable, as a dropped one is.
+        // A snapshot a source's erase reached holds its erased marker, live
+        // or restored from an image: unavailable.
         let key = EVIDENCE.key_bytes(&event.replay.content_hash);
         let ResponseRead::Present(raw) =
             ResponseRead::of(ResponseFamily::CentroidEvidence, &key, &raw)
