@@ -6,9 +6,9 @@
 //! is version 2 with `g` (u64be) after the nonce, inside the AAD. A
 //! claim-free policy row (FIX 7806) is version 3, sealed in the same custody
 //! under [`POLICY_PARTITION`] where a claim's id would stand, generation 0:
-//! it names no claim, so no claim's erase or retirement reads it as one of
-//! that claim's rows. The dictionary consists only of fixed field markers and
-//! closed enum tokens; no live value can train it.
+//! an id no CLAIM can carry, so no claim's erase or retirement reads it as
+//! one of that claim's rows or retires its key. The dictionary consists only
+//! of fixed field markers and closed enum tokens; no live value can train it.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -24,9 +24,10 @@ const MAGIC: &[u8; 4] = b"ORCB";
 const VERSION: u8 = 1;
 const ROTATED_VERSION: u8 = 2;
 const POLICY_VERSION: u8 = 3;
-/// The custody item claim-free policy rows are sealed under: a fixed id in
-/// the `ClaimDecision` kind's item space, which no claim's random id is.
-const POLICY_PARTITION: [u8; 16] = *b"policy.receipts\0";
+/// The custody item claim-free policy rows are sealed under: the all-0xFF
+/// id, which `EntityId` reserves (`EntityId::from_bytes` refuses it), so no
+/// CLAIM's id is it and no claim's erase retires its key.
+const POLICY_PARTITION: [u8; 16] = [0xFF; 16];
 const HEADER_LEN: usize = 4 + 1 + 16 + 16 + 12;
 const ROTATED_HEADER_LEN: usize = HEADER_LEN + 8;
 const MAX_PLAINTEXT: usize = 16 * 1024 * 1024;
@@ -246,6 +247,24 @@ pub(super) fn raw_claim_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
         _ => return None,
     };
     Some((claim, generation))
+}
+
+/// The custody item and key generation any sealed ORCB header names, read
+/// without a key: a v1 or v2 row's claim and generation, a v3 policy row's
+/// [`POLICY_PARTITION`] at generation 0. Checkpoint admission and custody
+/// planning read rows through this; claim discovery reads
+/// [`raw_claim_generation`].
+pub(super) fn raw_custody_item_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
+    if !is_policy_sealed(raw) {
+        return raw_claim_generation(raw);
+    }
+    (raw.len() >= HEADER_LEN + 16 && raw[5..21] == POLICY_PARTITION)
+        .then_some((POLICY_PARTITION, 0))
+}
+
+/// Whether custody item `item` is the policy partition, which names no claim.
+pub(super) fn is_policy_partition(item: &[u8; 16]) -> bool {
+    *item == POLICY_PARTITION
 }
 
 pub(super) fn is_orcb(raw: &[u8]) -> bool {
