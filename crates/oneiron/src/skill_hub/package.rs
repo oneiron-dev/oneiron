@@ -13,7 +13,6 @@ use crate::error::ArtifactError;
 const MAX_CAPABILITY_ENTRIES: usize = 256;
 pub(super) const MAX_CAPABILITY_TEXT_BYTES: usize = 512;
 pub(crate) const MAX_HUB_FILE_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MAX_HUB_PACKAGE_FILES: usize = 4096;
 pub(crate) const MAX_HUB_PACKAGE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 /// One file in a fetched, exportable skill package.
@@ -137,11 +136,6 @@ impl HubPackage {
     /// Recomputes canonical identity from the package tree.
     pub fn content_hash(&self) -> Result<SkillContentHash> {
         self.capabilities.validate()?;
-        if self.files.len() > MAX_HUB_PACKAGE_FILES {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "hub package has too many files",
-            )));
-        }
         let mut total_bytes = 0_usize;
         for file in &self.files {
             if file.content.len() > MAX_HUB_FILE_BYTES {

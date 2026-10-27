@@ -76,6 +76,7 @@ mod found_keys;
 mod known_values;
 mod masked_files;
 mod owner_door;
+mod pending_restore;
 mod reveal;
 mod run_bound;
 mod sighted_file;
@@ -130,8 +131,8 @@ pub(crate) use self::doors::{
 pub(crate) use self::floor::{PolicyManifestWalkError, policy_manifest_bodies_strict};
 // KS-6: the stored schema-2 form, its value sealed under its custody key.
 pub use self::found_keys::{
-    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyNotice, FoundKeySettled,
-    NOTIFICATION_PRODUCER_FOUND_KEY,
+    FOUND_KEY_REASON_NOT_A_SECRET, FoundKeyAction, FoundKeyCard, FoundKeyCursor, FoundKeyNotice,
+    FoundKeyNoticePage, FoundKeySettled, NOTIFICATION_PRODUCER_FOUND_KEY,
 };
 pub(crate) use self::found_keys::{
     FoundNote, KeptValues, erase_found_key_actor_in_txn, found_key_actions_in_txn,
@@ -148,6 +149,13 @@ pub(crate) use self::masked_files::{
 pub use self::owner_door::{
     ManifestSource, OwnerSecretRegistration, RequestedBinding, SecretRegistered,
 };
+// FIX-LIST 10671: a restore's credentials pending on their source's evidence.
+pub use self::pending_restore::{
+    PENDING_CREDENTIAL_RELEASE_NOTE, PendingCredentialBatch, PendingCredentialCard,
+    PendingCredentialConfirmation, PendingCredentialOutcome, PendingCredentialReleaseReceipt,
+    PendingCredentialResult,
+};
+pub(crate) use self::pending_restore::{PendingRestoreStage, erase_pending_restore_actor_in_txn};
 pub use self::reveal::{
     ACTOR_ERASE_REVEAL_ASK, HandleReveal, NO_PROJECT_SELECTOR, OwnerSecretReveal,
     REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEAL_TEXT_MAX_BYTES, RepoFileRevealScope,

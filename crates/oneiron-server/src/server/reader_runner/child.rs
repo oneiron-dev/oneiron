@@ -488,9 +488,11 @@ impl Child {
                 EngineExecutorError::HostRefused { code } if code == READER_CHILD_READ_ONLY => {
                     ReaderRunEnd::Completed
                 }
-                EngineExecutorError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)) => {
-                    ReaderRunEnd::SpendExhausted
-                }
+                // A host check holds new host-paid work as a spent line
+                // stops it (FIX 9924).
+                EngineExecutorError::Llm(LlmError::BudgetDenied(
+                    BudgetDenied::Exhausted | BudgetDenied::HostCheck,
+                )) => ReaderRunEnd::SpendExhausted,
                 _ if guard.read().remaining_units == 0 => ReaderRunEnd::SpendExhausted,
                 _ => {
                     tracing::warn!(task = %job.task.to_hex(), "a reader child's run failed");
@@ -662,7 +664,7 @@ impl Child {
         });
         let response = match generated {
             Err(_) => return ReaderRunEnd::Cutoff,
-            Ok(Err(LlmError::BudgetDenied(BudgetDenied::Exhausted))) => {
+            Ok(Err(LlmError::BudgetDenied(BudgetDenied::Exhausted | BudgetDenied::HostCheck))) => {
                 return ReaderRunEnd::SpendExhausted;
             }
             Ok(Err(_)) => {

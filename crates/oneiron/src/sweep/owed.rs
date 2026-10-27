@@ -139,6 +139,33 @@ pub(super) fn owed_compactions(vault: &Vault) -> Result<Vec<OwedCompaction>> {
     Ok(owed)
 }
 
+/// The erase receipts the owed compactions in `txn` name (FIX 11082): each
+/// completes when its row settles, so the sweep's audit counts it owed, not
+/// dropped. A row that names no window never settles and covers none, as an
+/// undecodable `h:` row covers none.
+pub(super) fn receipts_owed_compaction_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut receipts = BTreeSet::new();
+    for row in vault
+        .store
+        .sync_queue
+        .prefix_iter(txn, OWED_COMPACTION_PREFIX)?
+    {
+        let (key, value) = row?;
+        let names_window = key
+            .strip_prefix(OWED_COMPACTION_PREFIX)
+            .and_then(|label| std::str::from_utf8(label).ok())
+            .and_then(WindowKey::try_new)
+            .is_some();
+        if names_window {
+            receipts.extend(waiting_receipts(&value));
+        }
+    }
+    Ok(receipts)
+}
+
 /// Settles what this pass owed. A pass that compacted every window settles
 /// each row. A pass no obligation started compacts each owed window on its
 /// own and settles the ones it compacted or found without state. Any other
@@ -169,7 +196,16 @@ pub(super) fn settle_owed_compactions(
             }
             let settled = vault.with_write_txn_grouped(|wtxn| {
                 let current = vault.store.sync_queue.get(&*wtxn, &owed.key)?;
-                if current.is_some_and(|raise| *raise == *owed.raise) {
+                // A retained copy of an erased row, kept again since the
+                // sweep scrubbed it, keeps the row for the next pass (FIX
+                // 7998).
+                if current.is_some_and(|raise| *raise == *owed.raise)
+                    && !crate::sync::federation_burst::retained_copies_in(
+                        &vault.store,
+                        wtxn,
+                        erased,
+                    )?
+                {
                     vault.store.sync_queue.delete(wtxn, &owed.key)?;
                     complete_receipts_in_txn(vault, wtxn, &receipts)?;
                 }
@@ -269,7 +305,7 @@ fn compact_owed_window(
         }
         // Nothing was written: the row stays until a cut is proved.
         Some(Ok(CompactOutcome::UnprovedDefer)) => {
-            run.windows_deferred_raced += 1;
+            run.windows_deferred_unproved += 1;
             false
         }
         Some(Err(err)) => {

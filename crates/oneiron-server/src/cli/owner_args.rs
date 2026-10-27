@@ -196,6 +196,19 @@ pub struct RestoreArgs {
     #[arg(long, conflicts_with_all = ["activate", "rehearse"])]
     pub inspect: bool,
 
+    /// Restore nothing: open the worlds the configured vault's latest restore
+    /// of this backup left Locked, from the custody head beside it, with the
+    /// recovery kit (`--unlock kit`) or `--pad-machine`, and install their
+    /// pads into the vault's custody.
+    #[arg(long, conflicts_with_all = ["activate", "rehearse", "inspect"])]
+    pub open_pads: bool,
+
+    /// With `--open-pads`: the id of one of the owner's machines, 32 hex
+    /// digits, whose key this install's keystore still holds; it opens the
+    /// worlds that admit it. No key is made for it.
+    #[arg(long, value_name = "ID", requires = "open_pads")]
+    pub pad_machine: Option<String>,
+
     #[command(flatten)]
     pub secret: SecretSourceArgs,
 

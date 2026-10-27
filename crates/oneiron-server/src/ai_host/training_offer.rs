@@ -439,6 +439,8 @@ impl Brief {
                 "checks": checks.iter().map(|check| serde_json::json!({
                     "held": check.held,
                     "observed_monthly_cost": check.observed_monthly_cost,
+                    // Why a check could not judge, e.g. unverifiable_unpriced_cache (FIX 6318).
+                    "note": check.note,
                 })).collect::<Vec<_>>(),
             }));
         }

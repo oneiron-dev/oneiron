@@ -13,14 +13,17 @@
 //! PendingCustody, never a refusal: a restore cannot tell a key lost since
 //! the image from a row its source already could not read. A head landed
 //! on a new host carries an eligible credential's keys only in its owner-only
-//! compartment: one it lacks is Withheld, any other's LocalOnlyReenter, and a
-//! restore with no custody and no head names every one LocalOnlyReenter
-//! (CALLS `KS-6 device-only recovery`, K29). A custody fault planning or
-//! reading back one value is that value's alone: its row rests sealed,
-//! PendingCustody, warned (CALLS `KS-6 credential fork fault`). A row an
-//! image carried in the clear never lands as a value: it lands withheld,
-//! PendingCustody; a credential row neither form validates never lands at
-//! all, PendingCustody; the rest restores (CALLS `KS-6 image value form`).
+//! compartment: one it lacks is Withheld while the restore left that
+//! compartment unopened, PendingCustody once it opened it or the head holds
+//! none (CALLS `CUSTODY_LANDED_MISSING_NOTE`); any other's LocalOnlyReenter,
+//! and a restore with no custody and no head names every one
+//! LocalOnlyReenter (CALLS `KS-6 device-only recovery`, K29). A custody
+//! fault planning or reading back one value is that value's alone: its row
+//! rests sealed, PendingCustody, warned (CALLS `KS-6 credential fork
+//! fault`). A row an image carried in the clear never lands as a value: it
+//! lands withheld, PendingCustody; a credential row neither form validates
+//! never lands at all, PendingCustody; the rest restores (CALLS `KS-6 image
+//! value form`).
 //! A landed value is read back by opening it under its exact leaf.
 //!
 //! A credential an erase fenced never comes back (KS-6 part 2, CALLS `KS-6
@@ -32,14 +35,20 @@
 //! rows never land. Each handle is looked up alone. A fenced row lands with
 //! its value withheld, ErasedUnavailable, and no fork copies its key; one
 //! whose own evidence did not read lands withheld, PendingCustody, warned,
-//! with a retry. The restored vault takes each fence, its discovery owed,
+//! with a retry. Where a kept restore's source did not read, its row as the
+//! image carried it lands beside, saved, and lands in its place once that
+//! source reads again or the owner keeps the batch without it (FIX-LIST
+//! 10671, `crate::secret_custody` `pending_restore`); a copy beside its
+//! source drops each saved row of a cloud registration slot an image
+//! carried. The restored vault takes each fence, its discovery owed,
 //! so its own finisher retires every key the id names in the custody it
 //! holds now.
 
 use super::{CheckpointImage, Custody, Rejected, codec_error};
 use crate::Vault;
 use crate::secret_custody::{
-    CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
+    CredentialDisposition, CredentialRoute, ImageCredentialRow, PendingRestoreStage,
+    PlannedCredentials,
 };
 use crate::store::{CredentialFences, CustodyPlan, Store};
 
@@ -59,7 +68,8 @@ pub enum CredentialRestoreNote {
     LocalOnlyReenter { handle: String, generation: u32 },
     /// Its keys ride only the custody head's owner-only compartment, which
     /// this restore did not open: restore with the recovery root, or
-    /// re-enter it.
+    /// re-enter it. A restore that opened that compartment, or whose head
+    /// holds none, names a key still missing PendingCustody instead.
     Withheld { handle: String, generation: u32 },
     /// A carrier this host only relays: its key is with the request's
     /// executor or recipient. None is named while the carrier wire ships
@@ -144,6 +154,59 @@ impl std::fmt::Display for CredentialRestoreNote {
     }
 }
 
+/// What a landed head's opener reached of its owner-only compartment, the
+/// one compartment an eligible credential's keys ride (FIX-LIST 9246 item
+/// 4): diagnostic only, never a refusal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CredentialRecoveryAccess {
+    /// The head holds an owner-only compartment this restore did not open:
+    /// a key missing from what it landed may ride there.
+    OwnerCompartmentUnopened,
+    /// This restore opened the head's owner-only compartment, or the head
+    /// holds none: a key still missing is in no compartment it could open.
+    OwnerCompartmentReached,
+}
+
+/// What a landed restore names a credential whose key its head did not
+/// land (CALLS `CUSTODY_LANDED_MISSING_NOTE`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CustodyLandedMissingNote {
+    /// By the access the restore actually had: Withheld only while it left
+    /// the head's owner-only compartment unopened, else PendingCustody.
+    ActualOwnerCompartmentAccess,
+}
+
+const CUSTODY_LANDED_MISSING_NOTE: CustodyLandedMissingNote =
+    CustodyLandedMissingNote::ActualOwnerCompartmentAccess;
+
+/// Names each credential of `notes` a landed head did not land by the
+/// access its restore had (CALLS `CUSTODY_LANDED_MISSING_NOTE`): Withheld
+/// stays Withheld only when `owner_unopened`, the restore having left the
+/// head's owner-only compartment unopened; else it reads PendingCustody.
+pub(super) fn note_landed_access(notes: &mut [CredentialRestoreNote], owner_unopened: bool) {
+    let access = if owner_unopened {
+        CredentialRecoveryAccess::OwnerCompartmentUnopened
+    } else {
+        CredentialRecoveryAccess::OwnerCompartmentReached
+    };
+    match (CUSTODY_LANDED_MISSING_NOTE, access) {
+        (_, CredentialRecoveryAccess::OwnerCompartmentUnopened) => {}
+        (
+            CustodyLandedMissingNote::ActualOwnerCompartmentAccess,
+            CredentialRecoveryAccess::OwnerCompartmentReached,
+        ) => {
+            for note in notes {
+                if let CredentialRestoreNote::Withheld { handle, generation } = note {
+                    *note = CredentialRestoreNote::PendingCustody {
+                        handle: std::mem::take(handle),
+                        generation: *generation,
+                    };
+                }
+            }
+        }
+    }
+}
+
 /// The credential values a restore owes once its rows landed.
 pub(super) struct CredentialLanding(PlannedCredentials);
 
@@ -184,7 +247,9 @@ fn route_fences(
 /// own evidence did not read, which is never planned. An image's own fence
 /// and credential intent rows never land, but where a restore carries its
 /// live source's rows; each fence the route's evidence names lands with the
-/// rows instead. Never refuses for a value.
+/// rows instead, and, where a kept restore's source did not read, each row
+/// it withholds on that alone, saved (FIX-LIST 10671 (a)). Never refuses
+/// for a value.
 pub(super) fn require(
     image: &mut CheckpointImage,
     plan: &mut crate::store::CustodyPlan,
@@ -196,6 +261,10 @@ pub(super) fn require(
         Custody::NewHost => CredentialRoute::Absent,
     };
     let mut fences = route_fences(image, plan, custody);
+    let mut staged = PendingRestoreStage::keeping(match custody {
+        Custody::Keep if fences.source_unread() => plan.source(),
+        _ => None,
+    });
     let rows = image
         .databases
         .get_mut("entities")
@@ -212,7 +281,12 @@ pub(super) fn require(
             {
                 // Its value never opens here, whatever key custody holds.
                 match crate::secret_custody::withheld_credential_row(raw) {
-                    Some(row) => *raw = row,
+                    Some(row) => {
+                        if fenced.named_pending(&credential.id) {
+                            staged.keep(&credential.id, credential.generation, raw, &row);
+                        }
+                        *raw = row;
+                    }
                     None => {
                         malformed.insert(key.clone());
                     }
@@ -264,8 +338,14 @@ pub(super) fn require(
     if !matches!(custody, Custody::Fork(None) | Custody::Replace(..)) {
         vault_meta.retain(|(key, _)| !CredentialFences::image_owned(key));
     }
-    // The restored vault keeps every fence, its discovery owed.
-    for (key, value) in fences.rows()? {
+    // A copy never lands a cloud registration slot its fork withholds
+    // (CALLS G7_COPY_RECOVERY), from a saved row either.
+    if matches!(custody, Custody::Fork(_)) {
+        vault_meta.retain(|(key, value)| !PendingRestoreStage::copy_withholds(key, value));
+    }
+    // The restored vault keeps every fence, its discovery owed, and every
+    // row it saved.
+    for (key, value) in fences.rows()?.into_iter().chain(staged.into_rows()) {
         match vault_meta.binary_search_by(|(held, _)| held.as_slice().cmp(key.as_slice())) {
             Ok(at) => vault_meta[at].1 = value,
             Err(at) => vault_meta.insert(at, (key, value)),

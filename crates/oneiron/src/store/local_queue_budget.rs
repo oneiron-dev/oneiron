@@ -3,7 +3,8 @@ use crate::Result;
 use crate::overlay_db::OverlayDb;
 
 /// Bound keys plus encoded values. An existing key is replaced, not double-counted.
-/// Refusal keeps the caller's transaction unchanged; no accepted work is evicted.
+/// Passing `budget` is a threshold observation, counted and logged, never a refusal:
+/// accepted work is kept, and the write itself meets the store's real floor (FIX 8852).
 pub(crate) fn check_queue_capacity(
     db: &OverlayDb,
     txn: &heed::RoTxn<'_>,
@@ -25,11 +26,12 @@ pub(crate) fn check_queue_capacity(
         }
     }
     if used > budget {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::StorageFull,
-            "local queue byte budget exhausted",
-        )
-        .into());
+        tracing::warn!(
+            prefix = %String::from_utf8_lossy(prefix),
+            used,
+            threshold = budget,
+            "local queue passed its byte threshold; the work is kept"
+        );
     }
     Ok(())
 }

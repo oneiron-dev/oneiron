@@ -28,6 +28,8 @@ use crate::Vault;
 use crate::error::{Error, RecordError, Result};
 use crate::side_table::{self, Named, SideTable};
 
+mod policy_match;
+
 /// The crypto epoch a certified checkpoint key signs at: a binding names it,
 /// and a hash-based record below it is refused.
 pub const CHECKPOINT_KEY_EPOCH: u64 = 1;
@@ -597,7 +599,9 @@ impl Vault {
     /// the root's classical signature over the transcript it is handed; this
     /// install makes the hash-based one. Stores the attestation; when the
     /// image's stored attestations first reach this vault's policy, it becomes
-    /// the newest attested image.
+    /// the newest attested image. A kept image built under another policy is
+    /// refused before the root signs and again before the attestation is
+    /// stored (FIX 2994).
     pub fn attest_authority_checkpoint(
         &self,
         image: [u8; 32],
@@ -605,15 +609,22 @@ impl Vault {
         sign: impl FnOnce(&[u8]) -> Result<Vec<u8>>,
     ) -> Result<AuthorityCheckpointAttestation> {
         let signer = self.checkpoint_signer()?;
-        let (context, binding) = {
+        let (context, binding, built) = {
             let txn = self.store.env.read_txn()?;
             let context = self.checkpoint_context_in_txn(&txn)?;
             let binding = KEY_BINDINGS
                 .get(&self.store, &txn, &root_row_key(root))?
                 .ok_or_else(|| attest_refused("the root has certified no checkpoint key"))?;
-            (context, binding)
+            let built = policy_match::image_policy_in_txn(
+                &self.store,
+                &txn,
+                &image,
+                &context.policy.digest()?,
+            );
+            (context, binding, built)
         };
         context.eligible(root)?;
+        built.admit(&image)?;
         if binding.install != signer.install
             || binding.slhdsa != signer.slhdsa
             || binding.vault_id != context.vault_id
@@ -642,6 +653,7 @@ impl Vault {
                 "the root policy or key binding changed while the root signed; attest again".into(),
             ));
         }
+        policy_match::image_policy_in_txn(&self.store, &txn, &image, &policy).admit(&image)?;
         let before = self.image_attested_in_txn(&txn, &context, image)?;
         ATTESTATIONS.put(
             &self.store,

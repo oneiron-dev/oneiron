@@ -12,7 +12,9 @@
 //! ([`custody`]), and an erase of an owner leaves its erased form: the job's
 //! skeleton with its request scrubbed and its end terminal, and no clips.
 //! An erased job is never written again ([`JobStore::put`]), taken up,
-//! resumed or resubmitted; every poll answers its erased end.
+//! resumed or resubmitted; every poll answers its erased end. A deleted job
+//! is gone with its clips in one write, and a late end never writes it back
+//! ([`JobStore::update`], FIX 9511).
 use std::sync::Arc;
 
 use oneiron::llm::media::{AiOperation, MediaJobState, MediaPart, MediaRequest};
@@ -21,6 +23,7 @@ use oneiron::store::ResponseStamps;
 use oneiron::{ModelId, Vault};
 use serde::{Deserialize, Serialize};
 
+use super::job_lifecycle::JobWrite;
 use crate::models::ladder::PendingReceipt;
 
 mod custody;
@@ -104,19 +107,28 @@ impl JobStore {
     /// and its clips in one write, so a refused write keeps none of them.
     /// `false` when an erase took the job first: nothing is written, so no
     /// end puts erased content back (KS-2B2).
-    pub(super) fn put(&self, ticket: &str, mut row: JobRow) -> Result<bool, String> {
-        let mut parts = Vec::new();
-        if let Some(MediaJobState::Done { response }) = &mut row.ended {
-            for (index, part) in response.parts.iter_mut().enumerate() {
-                if let Some(bytes) = part_bytes(part).filter(|bytes| !bytes.is_empty()) {
-                    parts.push((part_key(ticket, index), std::mem::take(bytes)));
-                }
-            }
-        }
-        let kept = rmp_serde::to_vec_named(&row).map_err(|error| error.to_string())?;
+    pub(super) fn put(&self, ticket: &str, row: JobRow) -> Result<bool, String> {
+        let (kept, parts) = encoded(ticket, row)?;
         self.vault
             .media_job_put(&row_key(ticket), &kept, &parts)
             .map_err(|error| error.to_string())
+    }
+
+    /// Keeps `row` over job `ticket`'s kept row, as [`Self::put`] keeps
+    /// one, and only while that row is there (FIX 9511): a job a delete
+    /// dropped meanwhile is not written back, and neither are its clips.
+    pub(super) fn update(&self, ticket: &str, row: JobRow) -> Result<JobWrite, String> {
+        let (kept, parts) = encoded(ticket, row)?;
+        let written = self
+            .vault
+            .media_job_update(&row_key(ticket), &kept, &parts)
+            .map_err(|error| error.to_string())?;
+        // Nothing was written: an erase took the job, or a delete dropped it.
+        Ok(match written {
+            true => JobWrite::Kept,
+            false if self.get(ticket).is_some_and(|kept| kept.erased()) => JobWrite::Erased,
+            false => JobWrite::Deleted,
+        })
     }
 
     /// Job `ticket`'s row, its clips' bytes back in place; the erased
@@ -173,21 +185,43 @@ impl JobStore {
         }
     }
 
-    /// Drops job `ticket`'s row and its clips: a delete, which keeps every
-    /// key, never an erase (KS-2B2).
-    pub(super) fn remove(&self, ticket: &str) {
+    /// Drops job `ticket`'s row and its clips in one write (FIX 9511): a
+    /// delete, which keeps every custody key, never an erase (KS-2B2). A
+    /// write the vault refuses drops nothing, and says so.
+    pub(super) fn delete(&self, ticket: &str) -> Result<(), String> {
         let row = row_key(ticket);
-        let mut keys = self
-            .vault
-            .sync_state_keys_with_prefix(&format!("{row}:"))
-            .unwrap_or_default();
-        keys.push(row);
-        for key in keys {
-            if let Err(error) = self.vault.sync_state_delete(&key) {
-                tracing::error!(%error, ticket, "a media job's row was not dropped");
+        let clips = format!("{row}:");
+        self.vault
+            .try_with_write_txn_grouped(|txn| {
+                let mut keys = Vec::new();
+                self.vault
+                    .sync_state_visit_prefix_in_write_txn(txn, &clips, |key, _| {
+                        keys.push(key.to_owned());
+                        Ok::<_, oneiron::Error>(())
+                    })?;
+                keys.push(row.clone());
+                for key in &keys {
+                    self.vault.sync_state_delete_in_write_txn(txn, key)?;
+                }
+                Ok::<_, oneiron::Error>(())
+            })
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// `row` as job `ticket`'s kept bytes, and its end's clips, each under its
+/// own key, taken out of the row.
+fn encoded(ticket: &str, mut row: JobRow) -> Result<(Vec<u8>, Vec<(String, Vec<u8>)>), String> {
+    let mut parts = Vec::new();
+    if let Some(MediaJobState::Done { response }) = &mut row.ended {
+        for (index, part) in response.parts.iter_mut().enumerate() {
+            if let Some(bytes) = part_bytes(part).filter(|bytes| !bytes.is_empty()) {
+                parts.push((part_key(ticket, index), std::mem::take(bytes)));
             }
         }
     }
+    let kept = rmp_serde::to_vec_named(&row).map_err(|error| error.to_string())?;
+    Ok((kept, parts))
 }
 
 fn row_key(ticket: &str) -> String {
