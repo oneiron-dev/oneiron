@@ -81,7 +81,28 @@ impl Vault {
         parts: &[(String, Vec<u8>)],
     ) -> Result<bool> {
         self.with_write_txn_grouped(|wtxn| {
-            crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts)
+            crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts, false)
+        })
+    }
+
+    /// [`Self::media_job_put`] over the job row already kept at `key`, as a
+    /// job's end is written (FIX 9511): a row a delete dropped is not
+    /// written back, and neither are its clips; `false` comes back for it,
+    /// as for a row an erase took.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; a key that is not a job's row, or a part key that is
+    /// not one of its clips.
+    #[doc(hidden)]
+    pub fn media_job_update(
+        &self,
+        key: &str,
+        row: &[u8],
+        parts: &[(String, Vec<u8>)],
+    ) -> Result<bool> {
+        self.with_write_txn_grouped(|wtxn| {
+            crate::store::media_job_put_fenced_in_txn(self, wtxn, key, row, parts, true)
         })
     }
 }

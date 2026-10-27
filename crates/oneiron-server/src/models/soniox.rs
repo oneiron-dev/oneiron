@@ -53,6 +53,8 @@ use crate::config::models::{LiveAsrOptions, ModelsConfig, ProviderConfig};
 
 // A live hearing's rate and quota limits, waited out (FIX 9515).
 mod quota;
+// The providers' one limit vocabulary, as every offer rest reads it.
+pub(in crate::models) use quota::limit_refusal_of;
 
 /// A segment that has sent nothing for this long sends a keepalive, so a
 /// silence gap does not end it.

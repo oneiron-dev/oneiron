@@ -55,9 +55,14 @@ impl From<RunDenied> for LlmError {
     fn from(denied: RunDenied) -> Self {
         match denied {
             RunDenied::Budget { denied } => Self::BudgetDenied(denied),
-            RunDenied::NoAllocation
-            | RunDenied::AllocationExhausted
-            | RunDenied::AllocationRefused { .. } => Self::BudgetDenied(BudgetDenied::Exhausted),
+            RunDenied::NoAllocation | RunDenied::AllocationExhausted => {
+                Self::BudgetDenied(BudgetDenied::Exhausted)
+            }
+            // The account owner's question holds the work: never a spent
+            // budget (FIX 9924).
+            RunDenied::AllocationRefused {
+                reason: AllocationRefusal::HostCheck,
+            } => Self::BudgetDenied(BudgetDenied::HostCheck),
             RunDenied::Dispatch { refused } => Self::BudgetDenied(refused.into()),
             // A privacy hold stays one: never a budget refusal.
             RunDenied::KeptOnDevice { reason } => {

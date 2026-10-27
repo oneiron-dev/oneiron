@@ -300,6 +300,7 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         LlmError::BudgetDenied(BudgetDenied::Exhausted) => "budget_exhausted",
         LlmError::BudgetDenied(BudgetDenied::LeaseInvalid) => "lease_invalid",
         LlmError::BudgetDenied(BudgetDenied::AdmissionDenied) => "admission_denied",
+        LlmError::BudgetDenied(BudgetDenied::HostCheck) => "host_check",
     }
 }
 

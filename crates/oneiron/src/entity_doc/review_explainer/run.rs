@@ -137,7 +137,7 @@ pub async fn explain_review_bundle(
                 receipt.escalation = ReviewExplainerEscalation::Completed;
             }
             Err(ReviewExplainerError::Budget(
-                BudgetDenied::Exhausted | BudgetDenied::AdmissionDenied,
+                BudgetDenied::Exhausted | BudgetDenied::AdmissionDenied | BudgetDenied::HostCheck,
             )) => {
                 receipt.escalation = ReviewExplainerEscalation::BudgetLimited;
                 break;

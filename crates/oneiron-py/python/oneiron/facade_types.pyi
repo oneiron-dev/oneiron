@@ -15321,7 +15321,7 @@ class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
 class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
-BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied"]
+BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
 class LlmErrorFatal(TypedDict):

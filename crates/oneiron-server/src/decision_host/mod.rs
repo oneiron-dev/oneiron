@@ -30,10 +30,10 @@ use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
-    DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadGate,
-    DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
-    ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, SeatPhase, SeatRequest,
+    DecisionDial, DecisionLadder, DecisionPack, DecisionProvider, DecisionQuestion,
+    DecisionReadGate, DecisionReadProvider, DecisionRung, GatedRead, HeldLadder,
+    HostRuleProvider, ModelDecisionProvider, PersonThreshold, ProviderCapability,
+    ProviderDecision, ProviderPin, RemoteDecisionSeat, SeatPhase, SeatRequest,
 };
 use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
@@ -181,6 +181,10 @@ pub struct DecisionHost {
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
     big_model: Option<Arc<crate::big_rung::BigModel>>,
+    /// The Big rung for a question whose posture keeps unit text on the
+    /// host: the same big model, sent only where its route keeps the text
+    /// (FIX 9525, [`Self::under_posture`]).
+    big_on_host: Option<Arc<dyn DecisionProvider>>,
     /// Each caller's `ai.verdict` spend this window, for its check (FIX 1123).
     verdict_spend: Arc<crate::decision_verdict::VerdictSpend>,
     /// The vault's credential-broker context, which a `key_secret` System
@@ -220,6 +224,7 @@ impl DecisionHost {
             wire_health: None,
             remote_opt_in: false,
             big_model: None,
+            big_on_host: None,
             verdict_spend: Arc::default(),
             broker: None,
         }
@@ -389,6 +394,7 @@ impl DecisionHost {
     ) -> Self {
         self.ladder.big = None;
         self.big_model = None;
+        self.big_on_host = None;
         let Some(settings) = settings else {
             return self;
         };
@@ -409,6 +415,10 @@ impl DecisionHost {
         match bound {
             Ok((model, rung)) => {
                 self.ladder.big = Some(Arc::new(rung));
+                self.big_on_host =
+                    ModelDecisionProvider::new(model.pin(), Arc::new(model.kept_on_host()))
+                        .ok()
+                        .map(|rung| Arc::new(rung) as Arc<dyn DecisionProvider>);
                 self.big_model = Some(model);
             }
             Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),

@@ -674,9 +674,11 @@ impl OfferCooldowns {
     /// and the choices. `use_fallback` is among them while a model on a
     /// provider outside the call's ladder (`own`) has usage left and `fits`
     /// the call: it speaks the seat's wire, keeps a role's work on the device
-    /// when it must stay there, and accepts the request. A question already
-    /// open stays as it was asked. Nothing when the rest spent nothing or no
-    /// vault keeps rests.
+    /// when it must stay there, and accepts the request. A question still
+    /// open stays as it was asked; one whose window has reset answered
+    /// itself, so a later spent window of the same offer asks again (FIX
+    /// 9512), read and replaced in one write. Nothing when the rest spent
+    /// nothing or no vault keeps rests.
     pub(super) fn ask(
         &self,
         offer: &OfferBinding,
@@ -691,7 +693,14 @@ impl OfferCooldowns {
         let id = key(offer, asked.wire_model)
             .trim_start_matches(PREFIX)
             .to_owned();
-        if matches!(vault.sync_state_get(&question_key(&id)), Ok(Some(_))) {
+        let row = question_key(&id);
+        let now = vault.now_recorded_at();
+        let open = |bytes: Option<Vec<u8>>| {
+            bytes
+                .and_then(|bytes| rmp_serde::from_slice::<QuotaQuestion>(&bytes).ok())
+                .is_some_and(|asked| asked.resets_at.is_none_or(|reset| reset > now))
+        };
+        if open(vault.sync_state_get(&row).ok().flatten()) {
             return;
         }
         let fallbacks = self.usage_left(own, fits);
@@ -708,7 +717,7 @@ impl OfferCooldowns {
         }
         let question = QuotaQuestion {
             id,
-            asked_at: vault.now_recorded_at(),
+            asked_at: now,
             provider: asked.provider.to_owned(),
             model: asked.wire_model.to_owned(),
             route: format!("{}@{}", offer.route.adapter(), offer.route.origin()),
@@ -717,9 +726,15 @@ impl OfferCooldowns {
             choices,
             fallbacks,
         };
-        let kept = rmp_serde::to_vec_named(&question)
-            .ok()
-            .map(|bytes| vault.sync_state_put(&question_key(&question.id), &bytes));
+        let kept = rmp_serde::to_vec_named(&question).ok().map(|bytes| {
+            vault.try_with_write_txn_grouped(|txn| {
+                // A question another call opened meanwhile stays.
+                if !open(vault.sync_state_get_in_write_txn(txn, &row)?) {
+                    vault.sync_state_put_in_write_txn(txn, &row, &bytes)?;
+                }
+                Ok::<_, oneiron::Error>(())
+            })
+        });
         if !matches!(kept, Some(Ok(()))) {
             tracing::warn!(
                 reason = "quota_question_unwritable",

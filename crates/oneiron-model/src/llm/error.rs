@@ -240,6 +240,11 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[error("admission denied")]
     AdmissionDenied,
+    /// The host asked the account owner a question and holds new host-paid
+    /// allocations until it is answered (FIX 9924): nothing is spent, and
+    /// the work waits for the owner's answer, never for a top-up.
+    #[error("held for the account owner's answer")]
+    HostCheck,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

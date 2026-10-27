@@ -54,9 +54,15 @@ async fn put(
         server
             .vault()
             .set_responses_store(&owner, settings.responses_store)?;
+        // Only this server's providers read it (FIX 9516), once its vault
+        // kept it.
+        server
+            .ai
+            .models()
+            .responses_context()
+            .set_store(settings.responses_store);
         Ok(settings)
     })
     .await?;
-    crate::models::set_responses_store(settings.responses_store);
     Ok(Json(settings))
 }

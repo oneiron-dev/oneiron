@@ -373,12 +373,17 @@ async fn durable_step(
         // rung) found the budget spent before any response was answered: the
         // same trap as this step's own admission, never a model failure. Once
         // a response was answered, a spent budget fails the step as a spent
-        // correction admission does.
-        Err(DurableStepError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)))
-            if !answered =>
-        {
+        // correction admission does. A host check holding new host-paid work
+        // parks the step the same way, and is no budget hit (FIX 9924).
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(
+            denied @ (BudgetDenied::Exhausted | BudgetDenied::HostCheck),
+        ))) if !answered => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
-            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
+            return budget_trap(ctx, step_hash).inspect(|_| {
+                if denied == BudgetDenied::Exhausted {
+                    step_budget_hit(ctx, guard, &request);
+                }
+            });
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
