@@ -40947,6 +40947,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/llm/run_admission/media_job.rs",
+     "purpose": "A media job's polls and its cancel, bound to the call that started the job (FIX 9923)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/llm/run_admission/mod.rs",
      "purpose": "The run admission (ARCH-0053 `#run-admission`): one door every paid call of a run passes, to a model through…",
      "surface": {
@@ -72027,7 +72037,7 @@
      "path": "src/vault/response_bodies.rs",
      "purpose": "The host's typed writes of its row-held responses (KS-2B2, FIX 5683 part B2): an HTTP idempotency entry and…",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -79479,7 +79489,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 134,
+     "files": 135,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80188,7 +80198,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5318,
+   "source_files": 5319,
    "test_files": 902
   },
   "oneiron-android": {
@@ -95030,7 +95040,7 @@
      "path": "src/admission.rs",
      "purpose": "Admission for work a remote caller can start",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -101925,6 +101935,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/big_rung/route.rs",
+     "purpose": "The route a Big-rung call takes (FIX 9525)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/bin/oneiron-broker.rs",
      "purpose": "`oneiron-broker serve`: the credential broker, run as its own OS user",
      "surface": {}
@@ -104180,7 +104200,7 @@
      "path": "src/decision_host/doors.rs",
      "purpose": "Decision host doors: the ladder, dials and the hooks built on them",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 13
      }
     },
@@ -107408,6 +107428,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/decision_posture.rs",
+     "purpose": "A decision call whose question's posture keeps its unit text on the host (FIX 9525): it goes down only the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/ladder/live_fork.rs",
      "purpose": "The live fork's rung (FIX 4465 C): the one rung a run's live request is bound to at a compaction breakpoint…",
      "surface": {
@@ -107432,6 +107462,16 @@
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/ladder/step_quota.rs",
+     "purpose": "A durable attempt's offer under the state every call shares (FIX 9510)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -107536,10 +107576,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/media/job_lifecycle.rs",
+     "purpose": "A kept job's end and its delete, in one order (FIX 9511, FIX 9513)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/media/jobs.rs",
      "purpose": "The `ai.video` jobs a restart keeps (FIX-LIST 465)",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -107720,13 +107770,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/rerank/batches.rs",
+     "purpose": "A rerank call over more documents than one provider request carries (FIX 9514)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/responses_socket.rs",
      "purpose": "Responses over a held socket (ARCH-0081 §5)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/responses_socket/context.rs",
+     "purpose": "One server's Responses state (FIX 9516): the vault its stored chains are kept in and the owner's `store`…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -107801,7 +107871,7 @@
      "path": "src/models/soniox.rs",
      "purpose": "Soniox's real-time speech-to-text socket (OF-410): a live `[models.media.transcribe]` rung",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -110860,10 +110930,10 @@
      "purpose": "HTTP authentication for log-backed version-two capability slips"
     },
     "big_rung": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "m",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)"
     },
     "broadcast": {
@@ -111189,7 +111259,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 82,
+     "files": 87,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111331,7 +111401,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1323,
+   "source_files": 1329,
    "test_files": 182
   },
   "oneiron-spawn": {
