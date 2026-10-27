@@ -225,6 +225,11 @@ impl Store {
             if custody.first_unretired(&subject)? <= through {
                 return Ok(false);
             }
+            // A world pad's erase stands once no carried copy of it is left
+            // here either (PAD-3).
+            if custody.carries(&subject)? {
+                return Ok(false);
+            }
             // An erasable key another machine holds a copy of stays pending
             // until that holder's retirement is verified (FIX 8875):
             // `custody_remote_retirement_pending(<holder>)`.
