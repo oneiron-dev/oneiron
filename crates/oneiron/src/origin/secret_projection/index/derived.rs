@@ -227,7 +227,14 @@ pub(crate) fn repo_source_copy_stamp_in(
             .stamp()
             .cloned());
     }
-    let Some(bytes) = crate::embed::repo_media_bytes(body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some(bytes) = crate::embed::repo_media_bytes(body, |blob| {
+        Ok(vault
+            .store
+            .port_entity_record(txn, blob)?
+            .map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     Ok(marks.input_in_txn(vault, txn, bytes)?.stamp().cloned())

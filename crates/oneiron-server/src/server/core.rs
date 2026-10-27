@@ -63,6 +63,8 @@ pub struct SyncServer {
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
     pub(crate) ephemeral_store: Arc<EphemeralStore>,
+    /// Each message partial's trusted scope in the hub (FIX 9537).
+    pub(crate) message_scopes: Arc<super::message_stream::MessageScopes>,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Node-local compiled standing blocks; rebuilt from claims, never synced.
@@ -118,11 +120,15 @@ pub struct SyncServer {
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The mesh listener's sync streams in their own pressure check (FIX 7737).
+    pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// The wakes of removed holders' archive delivery sessions (FIX 3396).
+    pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
@@ -132,6 +138,8 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) model_streams: crate::api::ModelStreams,
+    /// Whole-vault exports kept for their callers to read (FIX 3676).
+    pub(crate) export_transfers: crate::api::ExportTransfers,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.

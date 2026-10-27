@@ -71,6 +71,7 @@ mod livequery;
 pub mod logging;
 mod machine;
 pub mod managed;
+mod managed_owner_check;
 pub mod mcp;
 mod model_artifacts;
 pub mod models;
@@ -137,9 +138,13 @@ pub fn build_app_for_position(
     server: Arc<SyncServer>,
     position: web_client::DeploymentPosition,
 ) -> Router {
-    // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
-    models::set_responses_store(server.vault().responses_store().unwrap_or(false));
-    models::set_responses_chain_vault(server.vault());
+    // This server's Responses state (FIX 9516): its vault keeps its stored
+    // chains, and its owner's `store` switch (OF-602) is read now;
+    // unreadable leaves it off.
+    server.ai.models().responses_context().bind(
+        server.vault(),
+        server.vault().responses_store().unwrap_or(false),
+    );
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {

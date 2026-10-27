@@ -237,6 +237,8 @@ pub(crate) async fn vault_shared_execute(
     })
     .await;
     let answer = ran.unwrap_or_else(|refusal| (Err(refusal), Some(Vec::new())));
+    // A removed holder's held delivery session is woken (FIX 3396).
+    server.removal_deliveries.wake_after(&answer.0);
     crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
 }
 

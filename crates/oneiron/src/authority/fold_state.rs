@@ -257,6 +257,15 @@ pub fn actor_binding_is_active(
 }
 
 impl AuthorityFold {
+    /// The entries this install holds back (FIX 1104): each machine revision
+    /// that landed restriction only, and each world edit, grant travel choice
+    /// or owner choice that never counts at full strength here. A read for
+    /// the audit's diagnostics; no authorization reads it from here.
+    #[must_use]
+    pub(crate) fn held_back_entries(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.install.held_back
+    }
+
     /// Whether anything this fold projects rests on how this install counts
     /// machines: an edited world, a chosen grant, a checkpoint policy choice,
     /// a home pick or a person's conversation training choice. With none,

@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -24,7 +24,8 @@ use oneiron::dreamer_runner::maintenance::{
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -222,10 +223,10 @@ async fn applied(
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertMaintenance>, JsonRejection>,
+    payload: OwnerJsonBody<RevertMaintenance>,
 ) -> OwnerReply<RevertView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reverted = blocking(move || -> OwnerResult<RevertView> {
         let target = match (
             &request.finding,
@@ -268,10 +269,10 @@ async fn revert(
 async fn apply_action_mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ApplyActionMode>, JsonRejection>,
+    payload: OwnerJsonBody<ApplyActionMode>,
 ) -> OwnerReply<AppliedView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let applied = blocking(move || -> OwnerResult<AppliedView> {
         let finding = entity_id("finding", &request.finding)?;
         let approved = ActionModeEffect {

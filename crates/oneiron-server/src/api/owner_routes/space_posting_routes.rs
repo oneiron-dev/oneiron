@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::get;
@@ -15,7 +15,8 @@ use oneiron::channel_identity_autonomy::GroupPostingPreset;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -100,10 +101,10 @@ async fn read(
 async fn set(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetSpacePosting>, JsonRejection>,
+    payload: OwnerJsonBody<SetSpacePosting>,
 ) -> OwnerReply<SpacePosting> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SpacePosting> {
         let identity = entity_id("identity", &request.identity)?;
         let now = std::time::SystemTime::now()

@@ -161,7 +161,7 @@ impl MediaRuntime {
     pub async fn poll(&self, id: &str) -> LlmResult<MediaJobState> {
         let job = match self.held(id)? {
             Held::Running(job) => job,
-            Held::Unkept(state) => return Ok(self.keep_end(id, &state)),
+            Held::Unkept(state) => return self.complete_kept_job(id, &state),
             Held::Ended(state) => return Ok(state),
         };
         let mut held = job.lock().await;
@@ -174,33 +174,28 @@ impl MediaRuntime {
         if let Ok(ended) = &state
             && ended.ended()
         {
-            return Ok(self.keep_end(id, ended));
+            return self.complete_kept_job(id, ended);
         }
         state
     }
 
-    /// Stops job `id` at its provider and drops it, its kept row with it.
-    /// A job that ended is only dropped.
+    /// Stops job `id` at its provider and drops it, its kept row and clips
+    /// with it, once its provider confirmed the stop; a stop that failed
+    /// keeps the job, to poll or stop again (FIX 9513). A job that ended is
+    /// only dropped. A drop the vault refuses is an error, never a success.
     pub async fn cancel(&self, id: &str) -> LlmResult<()> {
-        let held = self.held(id);
-        self.lock_jobs().remove(id);
-        if let Some(store) = &self.store {
-            store.remove(id);
-        }
-        let job = match held? {
-            Held::Running(job) => job,
-            Held::Unkept(_) | Held::Ended(_) => return Ok(()),
-        };
-        let stopped = job.lock().await.cancel().await;
-        stopped
+        self.cancel_kept_job(id).await
     }
 }
 
 impl crate::models::ModelRuntime {
     /// This runtime with its `ai.video` jobs kept in `vault`, so a restart
-    /// loses none and an ended job answers every poll (FIX-LIST 465).
+    /// loses none and an ended job answers every poll (FIX-LIST 465), and
+    /// its voice reference uploads checked against `vault`'s bank before
+    /// each one (FIX 9517).
     #[must_use]
     pub fn with_media_vault(mut self, vault: Arc<Vault>) -> Self {
+        self.media.voice_refs.bind(Arc::clone(&vault));
         self.media.store = Some(JobStore::new(vault));
         self
     }

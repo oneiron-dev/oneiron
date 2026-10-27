@@ -5,9 +5,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use crate::authority::{
-    AUTHORITY_FIRST_SEEN, authority_first_seen_clock_key, authority_observation_secs,
-};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::CustodyTier;
@@ -79,7 +76,7 @@ impl Vault {
     /// against. It is deliberately NOT the raw wall clock: it is the authority
     /// plane's monotone observation clock — the persisted first-seen clock
     /// floor read through `txn`, raised through
-    /// [`authority_observation_secs`] — i.e. the same reading
+    /// [`crate::authority::authority_observation_secs`] — i.e. the same reading
     /// [`Vault::authority_fold`] and [`Vault::authority_fold_readonly_in_txn`]
     /// already make widen-maturity decisions on. Two vault answers that both
     /// turn on "has this window closed" therefore cannot disagree about what
@@ -95,14 +92,12 @@ impl Vault {
     /// write paths that already own it, which is why this can run inside a
     /// caller's read transaction at all.
     pub(crate) fn instant_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<VaultInstant> {
-        let persisted_floor = AUTHORITY_FIRST_SEEN
-            .get_lenient(&self.store, txn, &authority_first_seen_clock_key())?
-            .unwrap_or(0);
-        Ok(VaultInstant(authority_observation_secs(
+        crate::authority::authority_clock_reading_in_txn(
             &self.store,
-            persisted_floor,
+            txn,
             self.store.clock.now_recorded_at(),
-        )))
+        )
+        .map(VaultInstant)
     }
 
     /// [`Self::instant_in_txn`] for a write that stamps the reading into a
@@ -110,16 +105,12 @@ impl Vault {
     /// the floor, as [`Vault::authority_fold`] does, because a reopen resumes
     /// the clock from that floor and must never read below the stamp.
     pub(crate) fn instant_in_write_txn(&self, wtxn: &mut heed::RwTxn<'_>) -> Result<VaultInstant> {
-        let floor_key = authority_first_seen_clock_key();
-        let floor = AUTHORITY_FIRST_SEEN
-            .get_lenient(&self.store, wtxn, &floor_key)?
-            .unwrap_or(0);
-        let now =
-            authority_observation_secs(&self.store, floor, self.store.clock.now_recorded_at());
-        if now != floor {
-            AUTHORITY_FIRST_SEEN.put(&self.store, wtxn, &floor_key, &now)?;
-        }
-        Ok(VaultInstant(now))
+        crate::authority::advance_authority_clock_in_txn(
+            &self.store,
+            wtxn,
+            self.store.clock.now_recorded_at(),
+        )
+        .map(VaultInstant)
     }
 }
 

@@ -4,10 +4,13 @@
 //! markers. A defer retains the actual request/update, its grant and principal.
 //! Transport payload, fabricated-window, and malformed-record bounds still apply.
 
+pub(crate) mod erase;
 mod import_guard;
 mod ledger;
 mod observations;
 mod policy;
+pub(crate) mod schedule;
+pub(crate) use erase::{erase_retained_copies_in_txn, retained_copies_in, scrub_retained_copies};
 pub(crate) use import_guard::check_active_in_txn;
 pub(in crate::sync) use import_guard::with_import_guard;
 mod review_doors;
@@ -17,6 +20,10 @@ mod peer_health;
 mod queue;
 mod review_bundle;
 pub use review_bundle::{FederationBurstReviewBundle, FederationIsolatedUpdate};
+pub use schedule::{
+    FACET_STAMP_WAIT_SECS, FEDERATION_BURST_WAIT_SECS, MAINTENANCE_INGEST_WAIT_SECS,
+    RetainedWorkQueue,
+};
 mod selector;
 
 pub use selector::{PreparedSelectorFetch, prepare_selector_fetch, replay_selector_fetch};
@@ -26,6 +33,7 @@ use crate::llm::NormalizedBurstInputs;
 use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 
+pub(crate) use queue::expire_retained_work;
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 
 /// An admitted update as review evidence: each part it lands as, with the
@@ -202,14 +210,15 @@ pub enum FederationBurstDecision {
 /// Observes the request `payload` in `key` from `peer`, and decides whether
 /// it runs now, defers, or is isolated for review. Isolation keeps
 /// `admitted_update`, every part, as the review's evidence; the work, its
-/// debit and its replay stay the original request's.
+/// debit and its replay stay the original request's. `carried` names the
+/// rows whose bytes the work carries, which an erase of any scrubs.
 pub(in crate::sync) fn admit_work(
     vault: &Vault,
     peer: &FederationPeer,
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
-    writes: u64,
+    (writes, carried): (u64, &[EntityId]),
     admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
     admit_work_at(
@@ -218,7 +227,7 @@ pub(in crate::sync) fn admit_work(
         key,
         kind,
         payload,
-        (writes, vault.now_recorded_at()),
+        (writes, vault.now_recorded_at(), carried),
         admitted_update,
     )
 }
@@ -229,18 +238,31 @@ fn admit_work_at(
     key: &WindowKey,
     kind: WorkKind,
     payload: &[u8],
-    sample: (u64, u64),
+    sample: (u64, u64, &[EntityId]),
     admitted_update: Option<AdmittedParts<'_>>,
 ) -> Result<(FederationBurstDecision, Option<DeferredWork>)> {
-    let (writes, now) = sample;
+    let (writes, now, carried) = sample;
     peer.revalidate(vault)?;
     let mut work = DeferredWork::new(peer, key, kind, payload)?;
+    work.carried = carried.to_vec();
     vault.with_write_txn_grouped(|txn| {
         work.authority_digest = peer.authority_digest_in_txn(vault, txn)?;
         // Duplicate/reconnected requests replay the exact durable item. They
         // neither add a debit nor go through the burst policy a second time.
-        if let Some(saved) = work.load_in_txn(vault, txn)? {
-            saved.revalidate_authority_in_txn(vault, txn, peer)?;
+        // One held under an older grant or pact scope, or past its wait, ends
+        // alone with its typed receipt, and this delivery is admitted afresh
+        // under the current authority (FIX 7997, 7999).
+        let saved = match work.load_in_txn(vault, txn)? {
+            Some(saved) => match saved.ended_in_txn(vault, txn, peer, now)? {
+                Some(state) => {
+                    saved.retire_in_txn(&vault.store, txn, state)?;
+                    None
+                }
+                None => Some(saved),
+            },
+            None => None,
+        };
+        if let Some(saved) = saved {
             let decision = if saved.isolated_update.is_some()
                 && !observations::replay_ready_in_txn(vault, txn, peer, now)?
             {
@@ -254,7 +276,9 @@ fn admit_work_at(
             };
             return Ok((decision, Some(saved)));
         }
-        if let Some(receipt) = ledger::load(vault, txn, peer, &work.id)? {
+        if let Some(receipt) = ledger::load(vault, txn, peer, &work.id)?
+            && receipt.state.is_settled()
+        {
             let inputs = NormalizedBurstInputs {
                 rate_ratio: receipt.baseline.rate_ratio,
                 streak: receipt.baseline.streak,
@@ -266,6 +290,7 @@ fn admit_work_at(
         }
         let health = observations::observe_in_txn(vault, txn, peer, writes, now)?;
         let mut work = work.with_inputs(health.inputs);
+        work.arrive_in_txn(vault, txn, now)?;
         let decision = match health.outcome() {
             FederationBurstOutcome::Allow => FederationBurstDecision::Allow(health.inputs),
             FederationBurstOutcome::IsolateAndPropose if admitted_update.is_some() => {

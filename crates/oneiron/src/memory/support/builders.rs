@@ -362,6 +362,27 @@ impl Memory<'_> {
         Some(VerbAskCredential::new(reference, witness))
     }
 
+    /// The managed vault's attested owner this surface's caller is, as the
+    /// host bound his credential's source (FIX 11063): the holder it names,
+    /// when he is this surface's actor, as a human, and no slip rides it.
+    /// Work he queues carries his person alone and runs while the vault
+    /// records him as its live owner then (FIX 11090). `None` for any other
+    /// caller.
+    pub(crate) fn attested_owner_holder(&self) -> Option<EntityId> {
+        use crate::runtime_hooks::verb::VerbAskCredentialSource;
+        match self.credential_instrument.as_ref()?.source {
+            VerbAskCredentialSource::AttestedOwner { holder }
+                if self.credential
+                    && self.invocation_slip.is_none()
+                    && holder == self.actor
+                    && self.actor_class == crate::EdgeActorClass::Human =>
+            {
+                Some(holder)
+            }
+            _ => None,
+        }
+    }
+
     /// Binds the door's admission of a hook's rewritten args: a rewrite the
     /// door would refuse from the caller is refused from a hook too. A room
     /// turn opened on this surface keeps it.

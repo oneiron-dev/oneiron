@@ -790,7 +790,7 @@ class Oneiron:
         def esign(self) -> "Oneiron._VaultEsignVerbs":
             return Oneiron._VaultEsignVerbs(self._client)
         def batch(self, spec):
-            """Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
+            """Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."""
             return json.loads(_translate(lambda: self._client.vault_batch(json.dumps(spec))))
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
@@ -1416,9 +1416,9 @@ class Oneiron:
     class _VaultReceiptsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[dict[str, Any]]:
-            """Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."""
-            return json.loads(_translate(lambda: self._client.vault_receipts(limit, kinds)))
+        def __call__(self, limit: int = 100, kinds: list[str] | None = None, after: str | None = None) -> dict[str, Any]:
+            """Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. ``after`` takes the page before's ``next_after``."""
+            return json.loads(_translate(lambda: self._client.vault_receipts(json.dumps({"limit": limit, "kinds": kinds, "after": after}))))
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
@@ -2203,6 +2203,9 @@ class Oneiron:
         def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs":
             return Oneiron._VaultAuthorityHistoryVerbs(self._client)
         @property
+        def clock(self) -> "Oneiron._VaultAuthorityClockVerbs":
+            return Oneiron._VaultAuthorityClockVerbs(self._client)
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
             return Oneiron._VaultAuthorityHandoffAlarmsVerbs(self._client)
     class _VaultAuthorityHistoryVerbs:
@@ -2214,6 +2217,12 @@ class Oneiron:
         def import_(self, spec):
             """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
             return json.loads(_translate(lambda: self._client.vault_authority_history_import(json.dumps(spec))))
+    class _VaultAuthorityClockVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def repair(self, spec=None):
+            """Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so."""
+            return json.loads(_translate(lambda: self._client.vault_authority_clock_repair(json.dumps({} if spec is None else spec))))
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3337,7 +3346,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def replay(self, spec):
-            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
+            """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
         @property
         def regen(self) -> "Oneiron._VaultHooksRegenVerbs":
@@ -5461,6 +5470,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+        def answer(self, spec):
+            """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
+            return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))
     class _SelfBudgetVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
