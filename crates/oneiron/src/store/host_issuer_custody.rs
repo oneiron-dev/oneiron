@@ -28,6 +28,13 @@ use crate::store::key_custody::{
     LocalCustody, custody_present,
 };
 
+/// Hook (CALLS "L02 FIX 10770 side-restore copy carries the issuer seed",
+/// open): a side restore plans the seed's live generations, optional, so
+/// its copy's install may take the same seed back and sign as the vault's
+/// live root, as a restore in the vault's place does. `false` leaves every
+/// seed in its source's custody, and the copy serves rootless.
+const SIDE_RESTORE_CARRIES_HOST_ISSUER_SEED: bool = true;
+
 /// The seed's subject in `binding`'s custody: a singleton, its item empty.
 pub(in crate::store) fn issuer_seed_subject(binding: &CustodyBinding) -> Result<CustodySubject> {
     binding.subject(CustodyKind::HostIssuerSeed, &[])
@@ -42,6 +49,9 @@ pub(in crate::store) fn plan_host_issuer_seed_custody(
     plan: &mut CustodyPlan,
     bound: &CustodyBinding,
 ) {
+    if !SIDE_RESTORE_CARRIES_HOST_ISSUER_SEED {
+        return;
+    }
     if let Err(error) = plan_live_seeds(plan, bound) {
         tracing::warn!(
             kind = ?error.kind(),
