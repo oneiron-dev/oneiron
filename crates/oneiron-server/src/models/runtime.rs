@@ -22,6 +22,7 @@ impl ModelRuntime {
             token_ratios: None,
             training: Default::default(),
             budgets: ModelHostBudgets::unhosted(),
+            responses: ResponsesContext::default(),
         }
     }
 
@@ -184,8 +185,9 @@ impl ModelRuntime {
         // One cache of house llama.cpp launch manifests, for the chat routes
         // and the decision read alike (FIX 7895).
         let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
+        let responses = ResponsesContext::default();
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys, &identities) {
+            match build_provider(name, provider, config, site, keys, &identities, &responses) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -372,6 +374,7 @@ impl ModelRuntime {
             token_ratios,
             training: config.training.clone(),
             budgets: budgets.clone(),
+            responses,
         }
     }
 

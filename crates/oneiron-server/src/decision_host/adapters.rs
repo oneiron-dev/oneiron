@@ -11,14 +11,22 @@ use super::{
 };
 
 impl DecisionReadGate for HouseGate {
-    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> oneiron::Result<GatedRead> {
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> oneiron::Result<GatedRead> {
         let refused = |what: &str| oneiron::Error::InvalidConfig(format!("decision read: {what}"));
-        // The host's own work: its turn comes while no caller waits for one.
-        let _turn = self
+        // The host's own work: its turn comes while no caller waits for one,
+        // and the wait ends with the caller's work time (FIX 9526). A turn
+        // that never came admits nothing and pays nothing.
+        let Ok(_turn) = self
             .admission
             .turns
-            .admit_background_blocking()
-            .map_err(|_| refused("waited out its turn"))?;
+            .admit_background_blocking_for(deadline.decision_time_left())
+        else {
+            return Ok(GatedRead::NotStarted);
+        };
         // Inside a verdict, the caller's own line (FIX 1123), billing the
         // payer its run binds (FIX 3574).
         let meter = crate::decision_verdict::rung_meter(&self.meter);

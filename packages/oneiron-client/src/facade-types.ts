@@ -2679,7 +2679,7 @@ export type ConnectDelivery = { body: ConnectWindow; signature: string }
 /** `oneiron::sync::federation_burst::types::FederationBurstDisposition` */
 export type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string }
 /** `oneiron::sync::federation_burst::types::FederationBurstWorkState` */
-export type FederationBurstWorkState = "pending" | "imported" | "rejected"
+export type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased"
 /** `oneiron::sync::federation_burst::types::FederationBurstReceipt` */
 export type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState }
 /** `oneiron::sync::federation_burst::types::FederationBurstReplayRequest` */
@@ -6089,7 +6089,7 @@ export type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "s
 /** `oneiron_model::llm::error::RetryableLlmError` */
 export type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[]; reason?: string | null } } | "ServerError" | "Timeout" | "StreamCut"
 /** `oneiron_model::llm::error::BudgetDenied` */
-export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied"
+export type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied" | "HostCheck"
 /** `oneiron_model::llm::error::LlmError` */
 export type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied }
 /** `oneiron::llm::step::public::ModelStepFailure` */

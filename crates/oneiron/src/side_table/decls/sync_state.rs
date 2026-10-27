@@ -144,6 +144,11 @@ side_tables! {
     /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
     /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
     FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
+    /// The content-free receipt of a held `FacetOf` stamp that retired (FIX 8890): why (1 past its
+    /// wait, 2 its grant or staged receipt ended), when it was held and when it retired (u64
+    /// big-endian each), then the grant it was held under (a flag byte, then its 16 raw bytes when
+    /// set). Key: as `FEDERATION_PARKED_FACET_STAMP`.
+    FEDERATION_PARKED_FACET_RECEIPT: SyncState b"fedparkreceipt:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
@@ -367,6 +372,19 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
+    /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
+    SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
+    /// The caller one retained-work queue served last, so its next pass starts after it (FIX
+    /// 7997). Value: the caller's fair key. Key: string (the queue's code).
+    SYNC_RETAINED_WORK_CURSOR: SyncState b"retained:cursor:" Raw;
+    /// A signed maintenance operation kept for its turn instead of refused (FIX 8565, 8858): its
+    /// arrival, deadline, window, lease vault and exact bytes, then a content-free receipt once it
+    /// expires, is refused or is erased. Key: hex64 (signer key) then hex32 (entity id).
+    SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named;
+    /// The owner's wait for one retained-work queue (u64 big-endian seconds). Key: string (the
+    /// queue's code).
+    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw;
     /// A room's host pin or platform handle this device changed while no open window carried the
     /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
     /// mirrored as that window opens. Key: string (the row's `room_facts` map key).

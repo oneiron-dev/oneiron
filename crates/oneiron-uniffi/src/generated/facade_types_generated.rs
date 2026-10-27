@@ -20664,6 +20664,12 @@ pub enum FederationBurstWorkState {
     Imported,
     #[serde(rename = "rejected")]
     Rejected,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "stale_authority")]
+    StaleAuthority,
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::sync::federation_burst::types::FederationBurstReceipt`.
@@ -47921,6 +47927,8 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[serde(rename = "AdmissionDenied")]
     AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
 }
 
 /// `oneiron_model::llm::error::LlmError`.
