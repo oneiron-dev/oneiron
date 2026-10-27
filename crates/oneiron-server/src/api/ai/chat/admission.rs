@@ -373,16 +373,28 @@ pub(in crate::api::ai::chat) fn start_turn(
     sources.add(written.as_deref());
     // FIX 8132: the reply is placed where the user's turn was witnessed,
     // bound before generation, so its newcomer wakes and every publication
-    // check read that conversation. A placement that cannot be read refuses
-    // the turn before any model is called, never publishing it unplaced; a
-    // turn that lies in no conversation answers standalone, as before.
-    let placed = written
+    // check read that conversation; a witnessed MESSAGE in no container
+    // answers standalone, as before. One whose placement was not read takes
+    // the conversation its ref names, where its stream is written anyway;
+    // only a turn whose ref names none is refused, before any model is
+    // called: no conversation would hold its reply.
+    let witnessed = written
         .as_deref()
         .and_then(|rows| rows.first().copied())
-        .or_else(|| resolve_entity_ref(&vault, &request.conversation_ref).ok())
-        .ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
-    let conversation = crate::server::blocking(|| vault.record_container(placed))
-        .map_err(|error| engine(&error))?;
+        .map(|message| crate::server::blocking(|| vault.record_container(message)));
+    let conversation = match witnessed {
+        Some(Ok(container)) => container,
+        _ => {
+            let named = resolve_entity_ref(&vault, &request.conversation_ref)
+                .map_err(|_| engine(&"the reply's conversation was not placed"))?;
+            Some(
+                crate::server::blocking(|| vault.record_container(named))
+                    .ok()
+                    .flatten()
+                    .unwrap_or(named),
+            )
+        }
+    };
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")

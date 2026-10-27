@@ -134,11 +134,14 @@ pub(super) fn decode_hot(
     decision_id: GateDecisionId,
     raw: &[u8],
 ) -> Result<GateDecisionRecord> {
+    if is_policy_sealed(raw) {
+        return decode_policy(custody, decision_id, raw);
+    }
     if !raw.starts_with(MAGIC) || raw.len() < HEADER_LEN + 16 {
         return Err(corrupt());
     }
     let (generation, header_len) = match raw[4] {
-        VERSION | POLICY_VERSION => (0, HEADER_LEN),
+        VERSION => (0, HEADER_LEN),
         ROTATED_VERSION if raw.len() >= ROTATED_HEADER_LEN + 16 => {
             let generation = u64::from_be_bytes(
                 raw[HEADER_LEN..ROTATED_HEADER_LEN]
@@ -152,17 +155,11 @@ pub(super) fn decode_hot(
         }
         _ => return Err(corrupt()),
     };
-    let item: [u8; 16] = raw[5..21].try_into().map_err(|_| corrupt())?;
+    let claim_id: [u8; 16] = raw[5..21].try_into().map_err(|_| corrupt())?;
     if raw[21..37] != decision_id.as_bytes() {
         return Err(corrupt());
     }
-    // A policy row names the policy partition and no claim; any other names
-    // the claim it is sealed to.
-    let policy = raw[4] == POLICY_VERSION;
-    if policy && item != POLICY_PARTITION {
-        return Err(corrupt());
-    }
-    let key = custody.read(&claim_subject(custody, &item)?.at(generation))?;
+    let key = custody.read(&claim_subject(custody, &claim_id)?.at(generation))?;
     let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
     let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
     let compressed = cipher
@@ -180,8 +177,44 @@ pub(super) fn decode_hot(
         .decompress(&compressed, MAX_PLAINTEXT)
         .map_err(|_| corrupt())?;
     let record = decode_gate_decision(&plain)?;
-    let sealed_to = (!policy).then_some(item);
-    if record.claim_id != sealed_to || record.decision_id != decision_id {
+    if record.claim_id != Some(claim_id) || record.decision_id != decision_id {
+        return Err(corrupt());
+    }
+    Ok(record)
+}
+
+/// Opens a claim-free policy row (FIX 7806): its header names the policy
+/// partition at generation 0, and its record names no claim.
+fn decode_policy(
+    custody: LocalCustody<'_>,
+    decision_id: GateDecisionId,
+    raw: &[u8],
+) -> Result<GateDecisionRecord> {
+    if raw.len() < HEADER_LEN + 16
+        || raw[5..21] != POLICY_PARTITION
+        || raw[21..37] != decision_id.as_bytes()
+    {
+        return Err(corrupt());
+    }
+    let key = custody.read(&claim_subject(custody, &POLICY_PARTITION)?.at(0))?;
+    let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
+    let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
+    let compressed = cipher
+        .decrypt(
+            &Nonce::from(nonce),
+            Payload {
+                msg: &raw[HEADER_LEN..],
+                aad: &raw[..HEADER_LEN],
+            },
+        )
+        .map_err(|_| corrupt())?;
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
+    let plain = decompressor
+        .decompress(&compressed, MAX_PLAINTEXT)
+        .map_err(|_| corrupt())?;
+    let record = decode_gate_decision(&plain)?;
+    if record.claim_id.is_some() || record.decision_id != decision_id {
         return Err(corrupt());
     }
     Ok(record)
