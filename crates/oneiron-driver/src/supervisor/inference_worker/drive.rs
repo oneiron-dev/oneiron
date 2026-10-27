@@ -199,7 +199,12 @@ impl Inner {
             let since = used_at.map_or(*since, |used| used.max(*since));
             if now.duration_since(since) >= span && self.close_if_idle() {
                 tracing::info!(worker = %self.spec.worker_id, "model worker idle; stopping it");
-                let _ = running.terminate(self.policy.stop_grace).await;
+                // An abort asked during the drain reaches the worker there.
+                tokio::select! {
+                    biased;
+                    () = self.abort_wanted() => return self.abort(running).await,
+                    _ = running.terminate(self.policy.stop_grace) => {}
+                }
                 return Ended::Stopped(Phase::IdleStopped);
             }
         }
@@ -316,7 +321,12 @@ impl Inner {
                 () = tokio::time::sleep(self.policy.liveness_poll) => {}
             }
         }
-        let _ = running.terminate(self.policy.stop_grace).await;
+        // An abort asked during the drain reaches the worker there.
+        tokio::select! {
+            biased;
+            () = self.abort_wanted() => return self.abort(running).await,
+            _ = running.terminate(self.policy.stop_grace) => {}
+        }
         Ended::Stopped(next)
     }
 
