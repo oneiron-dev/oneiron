@@ -13,8 +13,8 @@ use crate::store::Store;
 
 use super::codec_records::decode_print_record;
 use super::math_keys::{
-    corrupt_voice_row, digest16, invalid_voice, l2_normalize, require_non_empty, require_session_key,
-    voice_cosine_in_space,
+    corrupt_voice_row, digest16, invalid_voice, l2_normalize, require_non_empty,
+    require_session_key, voice_cosine_in_space,
 };
 use super::types::{
     VOICE_CALIBRATION_MIN_LANGUAGES, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentOrigin,

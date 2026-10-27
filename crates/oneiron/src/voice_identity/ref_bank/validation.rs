@@ -88,10 +88,9 @@ pub(super) struct VoicePackIntake {
 /// paces new intake, and never refuses valid work (Rule 5).
 pub(super) fn measure_pack_intake(pack: &VoiceRefPack, limits: VoiceRefLimits) -> VoicePackIntake {
     let clips = pack.clips.len() as u64;
-    let audio_bytes = pack
-        .clips
-        .iter()
-        .fold(0u64, |total, clip| total.saturating_add(clip.audio.len() as u64));
+    let audio_bytes = pack.clips.iter().fold(0u64, |total, clip| {
+        total.saturating_add(clip.audio.len() as u64)
+    });
     let mut crossed = Vec::new();
     if clips > limits.max_clips_per_pack {
         crossed.push("max_clips_per_pack");

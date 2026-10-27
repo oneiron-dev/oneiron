@@ -144,7 +144,10 @@ pub(super) fn is_embeddable_in_txn(
         return Ok(embeddable_payload(entity_type, body).is_some());
     }
     Ok(super::media::asset_text(body, |blob| {
-        Ok(vault.store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+        Ok(vault
+            .store
+            .port_entity_record(txn, blob)?
+            .map(|blob| blob.body))
     })?
     .is_some())
 }

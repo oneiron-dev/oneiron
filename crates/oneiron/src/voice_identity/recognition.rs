@@ -68,7 +68,9 @@ pub(super) fn resolve_print_world_in(
     for id in sources {
         let Some(raw) = vault.store.port_entity_raw(txn, &id)? else {
             if vault.store.port_deletion_state(txn, &id)?.deleted {
-                return Err(invalid_voice("a voice enrollment source's world cannot be proven"));
+                return Err(invalid_voice(
+                    "a voice enrollment source's world cannot be proven",
+                ));
             }
             continue;
         };
@@ -89,7 +91,9 @@ pub(super) fn resolve_print_world_in(
             (None, Some(placed)) => world = Some(placed),
             (Some(held), Some(placed)) if held == placed => {}
             (Some(_), Some(_)) => {
-                return Err(invalid_voice("voice enrollment sources sit in different worlds"));
+                return Err(invalid_voice(
+                    "voice enrollment sources sit in different worlds",
+                ));
             }
         }
     }
@@ -156,12 +160,8 @@ pub(super) fn admit_recognition_candidate_in(
         return Ok(false);
     }
     let raw = vault.store.port_entity_raw(txn, &record.subject_ref)?;
-    if crate::deletion::row_deletion_marked(
-        &vault.store,
-        txn,
-        &record.subject_ref,
-        raw.as_deref(),
-    )? {
+    if crate::deletion::row_deletion_marked(&vault.store, txn, &record.subject_ref, raw.as_deref())?
+    {
         return Ok(false);
     }
     Ok(consent_live_for_in(
