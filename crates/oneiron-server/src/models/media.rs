@@ -55,6 +55,8 @@ mod booked;
 mod calls;
 mod construction;
 mod fit;
+// FIX 9511, 9513: a job's end and its delete, in one order.
+mod job_lifecycle;
 mod jobs;
 mod options;
 // FIX 9517: every reference upload under the bank's current reference.
@@ -142,18 +144,20 @@ impl HeldJob {
         Ok(state)
     }
 
-    /// Stops the job at its provider. It went out, so it pays its
-    /// reservation.
+    /// Stops the job at its provider. A stop the provider confirmed
+    /// settles its permit: the job went out, so it pays its reservation. A
+    /// stop that failed, or whose outcome is unknown, keeps the permit and
+    /// the probation slot (FIX 9513): the job may still run and bill, and
+    /// stays this permit's to poll or stop again.
     async fn cancel(&mut self) -> LlmResult<()> {
         let Some(permit) = &self.permit else {
             return Ok(());
         };
-        let stopped = self
-            .gate
+        self.gate
             .cancel(&self.model, &self.provider_job, permit.lease())
-            .await;
+            .await?;
         self.settle_failed();
-        stopped
+        Ok(())
     }
 
     fn settle_failed(&mut self) {
@@ -322,53 +326,13 @@ impl MediaRuntime {
         self.run_admitted(&run, request, voices).await
     }
 
-    /// Keeps job `id`'s end `state` in its row, the row and its clips in one
-    /// write, and lets the job go from here. An end the vault refuses, or a
-    /// job whose row was never kept, stays held here with its end, for the
-    /// next poll to answer and write again. A job dropped meanwhile stays
-    /// dropped. A job an erase took keeps nothing of its end, which goes
-    /// from here unanswered: the answer is its erased end (KS-2B2). Returns
-    /// what the poll answers.
-    fn keep_end(&self, id: &str, state: &MediaJobState) -> MediaJobState {
-        let kept = self
-            .store
-            .as_ref()
-            .map_or(Ok(true), |store| -> Result<bool, String> {
-                let kept = store
-                    .get(id)
-                    .ok_or_else(|| "its row is not kept".to_owned())?;
-                let Some(mut row) = kept.live() else {
-                    return Ok(false);
-                };
-                row.ended = Some(state.clone());
-                store.put(id, row)
-            });
-        let mut jobs = self.lock_jobs();
-        match kept {
-            Ok(true) => {
-                jobs.remove(id);
-            }
-            Ok(false) => {
-                jobs.remove(id);
-                return erased_poll(id);
-            }
-            Err(error) => {
-                tracing::error!(%error, ticket = id, "a media job's end is held, not kept");
-                if let Some(held) = jobs.get_mut(id)
-                    && matches!(held, Held::Running(_))
-                {
-                    *held = Held::Unkept(state.clone());
-                }
-            }
-        }
-        state.clone()
-    }
-
     /// Job `id`, held here or kept in the vault. A kept job that has not
     /// ended is taken up again here, once: a poll racing this one finds it
-    /// held.
+    /// held. Its row is read while no delete drops it (FIX 9511), so a job
+    /// a delete dropped is never taken up again.
     fn held(&self, id: &str) -> LlmResult<Held> {
-        if let Some(held) = self.lock_jobs().get(id) {
+        let mut jobs = self.lock_jobs();
+        if let Some(held) = jobs.get(id) {
             return Ok(held.clone());
         }
         let kept = self
@@ -382,10 +346,6 @@ impl MediaRuntime {
         };
         if let Some(state) = row.ended {
             return Ok(Held::Ended(state));
-        }
-        let mut jobs = self.lock_jobs();
-        if let Some(held) = jobs.get(id) {
-            return Ok(held.clone());
         }
         let job = Held::Running(Arc::new(tokio::sync::Mutex::new(self.take_up(&row)?)));
         jobs.insert(id.to_owned(), job.clone());
@@ -443,7 +403,7 @@ impl MediaRuntime {
         let selector = Some(row.request.model.as_str());
         let permit = run.admit_media(selector, &bound, &rung.offer.binding)?;
         let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
-        gate.resume(&bound, permit.lease())?;
+        gate.resume(&bound, &row.provider_job, permit.lease())?;
         // A resting offer, or one whose probation request is out, takes no
         // report from it.
         let probe = self
