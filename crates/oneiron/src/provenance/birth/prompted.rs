@@ -70,7 +70,10 @@ pub(crate) fn prompt_input_held_in_txn(
     txn: &RoTxn<'_>,
     row: &EntityId,
 ) -> Result<bool> {
-    if !matches!(live_entity_row_in_txn(store, txn, row)?, LiveEntityRow::Absent) {
+    if !matches!(
+        live_entity_row_in_txn(store, txn, row)?,
+        LiveEntityRow::Absent
+    ) {
         return Ok(true);
     }
     Ok(crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, row)?.deleted)
