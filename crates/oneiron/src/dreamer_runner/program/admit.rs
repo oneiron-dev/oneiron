@@ -61,6 +61,7 @@ fn admit_in_txn(
     now: u64,
 ) -> Result<TurnProgramAdmissionReceipt> {
     let admission = wake.admission_id();
+    let wake = &erased_actor_form_in_txn(vault, &*txn, wake)?;
     if let Some(existing) = ADMISSION.get(vault, &*txn, &admission)? {
         if existing.wake != *wake {
             return Err(Error::ConcurrentWrite(
@@ -91,6 +92,25 @@ fn admit_in_txn(
     }
     WAKE.delete(vault, txn, &wake.key())?;
     Ok(record.receipt(true))
+}
+
+/// `wake` as an erase of its waking actor leaves it (FIX 10668): without
+/// its slip's instrument once the actor bears the local hard-delete marker.
+/// The drain reads a wake before its admission's writer opens, so an erase
+/// that commits between them, whose sweep found no admission yet, leaves
+/// no instrument in the one written after it, and an admission it already
+/// scrubbed still matches its wake on replay.
+fn erased_actor_form_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<TurnProgramWake> {
+    let mut wake = wake.clone();
+    let actor = wake.authority.actor();
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &actor)? {
+        wake.authority.scrub_instrument_of(&actor);
+    }
+    Ok(wake)
 }
 
 /// The live vault's judgment of `wake`: the pinned definition it admits,

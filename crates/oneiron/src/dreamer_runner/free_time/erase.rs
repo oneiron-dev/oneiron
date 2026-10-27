@@ -22,10 +22,13 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use super::actor_content::{scrub_cycle_note, scrub_policy_attribution};
+use super::cycle::FreeTimeCycle;
 use super::{CLOCK, CYCLE, ITEM, POLICY, RECEIPT};
 use crate::attempt_queue::AttemptId;
-use crate::side_table::SideKey;
+use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
 
 /// The erase hook of the five free-time families (`side_table::decls`): it
@@ -89,10 +92,40 @@ fn scrub_other_rows_in_txn(
         }
     }
     for (key, cycle) in cycles {
-        CYCLE.put(&vault.store, txn, &key, &cycle)?;
+        let erased = Erased::of(NoteErased {
+            cycle,
+            author: Some(*actor),
+        })?;
+        ERASED_CYCLE.put_erased(&vault.store, txn, &key, erased)?;
     }
     Ok(())
 }
+
+/// A stored cycle with one erased actor's note to drop (FIX 8875). It
+/// encodes as the cycle itself; the actor rides along, never encoded.
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+struct NoteErased {
+    cycle: FreeTimeCycle,
+    #[serde(skip)]
+    author: Option<EntityId>,
+}
+
+/// Its erased form drops that actor's note and nothing else, so the erase
+/// writes it past the side-row wall (FIX 5718): the cycle's other fields
+/// were admitted as they stand, and no wall fails an erase.
+impl ErasedForm for NoteErased {
+    fn into_erased(mut self) -> Result<Self> {
+        if let Some(author) = self.author {
+            scrub_cycle_note(&mut self.cycle, &author);
+        }
+        Ok(self)
+    }
+}
+
+/// [`CYCLE`]'s rows as an erase writes them.
+const ERASED_CYCLE: SideTable<(EntityId, u64), NoteErased, Named> =
+    SideTable::new(&side_table::DREAMER_FREE_TIME_CYCLE);
 
 /// Whether an erase removed `agent` (FIX 5661): a home move lands none of an
 /// erased agent's free-time rows, as no writer after its erase does. A move
