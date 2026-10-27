@@ -13,7 +13,9 @@ use serde::Serialize;
 use serde_json::Value;
 use utoipa::ToSchema;
 
-pub(crate) use oneiron::core_write::shape::CORE_MAX_BATCH_ENTITIES;
+/// The most refs one short-id hydrate names.
+pub(crate) const CORE_MAX_HYDRATE_REFS: usize = 256;
+
 #[cfg(test)]
 pub(crate) use oneiron::core_write::shape::{
     PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE, PLATFORM_ANNOUNCEMENT_VOICE,

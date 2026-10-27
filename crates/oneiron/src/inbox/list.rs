@@ -30,7 +30,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// Rows a page serves when its caller names no limit.
 pub const INBOX_PAGE_DEFAULT: usize = 100;
 
-/// The most rows one page serves.
+/// The most rows one page serves: a larger limit is served a page at a time
+/// through `next_after` (Rule 5).
 pub const INBOX_PAGE_MAX: usize = 1_000;
 
 /// Type-index rows one admission round reads.
@@ -75,6 +76,14 @@ pub struct NotificationPage {
     pub rows: Vec<NotificationRow>,
     /// Explicit end marker: `None` means no further delivered row exists.
     pub next_after: Option<String>,
+    /// The rows this page could hold: the caller's limit, or
+    /// [`INBOX_PAGE_MAX`] when it asked for more.
+    #[serde(default)]
+    pub effective_limit: usize,
+    /// The caller's limit was past [`INBOX_PAGE_MAX`] and this page was
+    /// served at it; `next_after` continues to the rest.
+    #[serde(default)]
+    pub limit_clamped: bool,
 }
 
 /// `body` as `caller` reads it.
@@ -190,14 +199,17 @@ impl InboxMarkWriteScope {
 impl Memory<'_> {
     /// One page of the notifications delivered to this actor, in entity-ID
     /// order after the exclusive `after` cursor. A short page or an absent
-    /// `next_after` means the inbox ended.
+    /// `next_after` means the inbox ended. A limit past [`INBOX_PAGE_MAX`] is
+    /// served a page of that many at a time.
     pub fn inbox_list(&self, after: Option<&str>, limit: usize) -> MemoryResult<NotificationPage> {
-        if limit == 0 || limit > INBOX_PAGE_MAX {
+        if limit == 0 {
             return Err(MemoryError::bad_request_with(
-                format!("limit must be between 1 and {INBOX_PAGE_MAX}"),
-                &["Request a smaller page and continue from next_after."],
+                "limit must be at least 1",
+                &["Request one row or more and continue from next_after."],
             ));
         }
+        let limit_clamped = limit > INBOX_PAGE_MAX;
+        let limit = limit.min(INBOX_PAGE_MAX);
         let mut start = after
             .map(EntityId::from_hex)
             .transpose()
@@ -240,7 +252,12 @@ impl Memory<'_> {
         } else {
             None
         };
-        Ok(NotificationPage { rows, next_after })
+        Ok(NotificationPage {
+            rows,
+            next_after,
+            effective_limit: limit,
+            limit_clamped,
+        })
     }
 
     /// Marks one notification delivered to this actor seen or acknowledged,

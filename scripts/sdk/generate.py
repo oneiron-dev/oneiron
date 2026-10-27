@@ -333,7 +333,7 @@ ARGUMENTS = {
     # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
     # is the gate decision ledger.
     'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
-        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': '{name}.to_vec()'},
+        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': 'Some({name}.to_vec())'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
 RESULTS = {
@@ -905,7 +905,14 @@ def mcp_input_dispatch(row):
                   f'usize::from(output.{page["cursor"]}.is_some()), true).rows_at({json.dumps(page["rows"])})')
         if 'resume' in page:
             assert page['resume'] in row['mcp_fields'], f'{name}: page.resume names no MCP argument'
-            source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
+            if 'within' in page:
+                # The cursor goes back inside the argument that carries the
+                # whole input, as its `within` key (FIX 9175, FIX 10186).
+                assert row['mcp_fields'][page['resume']] == '$', f'{name}: page.within needs page.resume to carry the whole input'
+                source += (f'.resumed_within({json.dumps(page["cursor"])}, {json.dumps(page["resume"])}, '
+                           f'{json.dumps(page["within"])})')
+            else:
+                source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
         body += f'let source = {source};\n'
     else:
         count = 'output.len()' if row['output'].startswith('Vec<') else '1'
@@ -1403,38 +1410,13 @@ def facade_dispatch(facade_rows):
                 let args = hooks.args.clone();
                 let ran = async {{
                 let input: oneiron::memory::ExportOptions = facade_input(args)?;
-                // Beside the archive, the rows its snapshot read past where
+                // Beside the answer, the rows its snapshot read past where
                 // the caller's rows go (its locality, with the machine its
                 // connection proved; FIX 4937): every owner path lists them.
-                // A slip keeps its own path; a host action with no slip (the
-                // dev mode) takes the engine's host-action export; the
-                // attested owner takes the engine's request-proof export,
-                // toward its own destination. Each arm's receipt records the
-                // owner's act, with where he spoke from as this request proved
-                // it (audit only; FIX 4625, 4626).
-                let surface = call.surface();
-                let (output, rows) = match (proof, action, owner) {{
-                    (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?
-                    }}
-                    (Some(proof), _, _) => {{
-                        let (actor, class) = facade_actor(server, auth)?;
-                        let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).for_destination(&auth.destination()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
-                        (output, producers.take())
-                    }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.destination())?,
-                    (None, None, Some(owner)) => {{
-                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.destination())?
-                    }}
-                    (None, None, None) => {{
-                        return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
-                    }}
-                }};
-                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
-                    "export result encoding failed", ["Report this SDK response mismatch."]
-                ))?;
+                // The answer is the archive inline, or kept on the server and
+                // named by a transfer, as the caller's `delivery` asks (FIX
+                // 3676); the leaf runs all four owner paths for both.
+                let (output, rows) = super::export_transfer::vault_export_answer(server, call, &input, proof, action, owner)?;
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
                 let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};

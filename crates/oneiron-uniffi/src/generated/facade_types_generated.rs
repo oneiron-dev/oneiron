@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1159 facade rows, 4144 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1111.
+// UniFFI census: 1161 facade rows, 4153 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -1375,6 +1375,18 @@ pub struct NotificationPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+    #[serde(
+        rename = "effective_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub effective_limit: Option<u64>,
+    #[serde(
+        rename = "limit_clamped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub limit_clamped: Option<bool>,
 }
 
 /// `oneiron::inbox::list::NotificationMark`.
@@ -3900,6 +3912,95 @@ pub struct CompanionAccessRequestAnswered {
     pub status: AccessRequestStatus,
     #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
+    #[serde(
+        rename = "decided_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decided_by: Option<String>,
+    #[serde(
+        rename = "decided_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub decided_at: Option<u64>,
+}
+
+/// `oneiron::verbs::grants::GrantAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GrantAnswer {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+/// `oneiron::verbs::grants::GrantAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GrantAnswerRequest {
+    #[serde(rename = "request")]
+    pub request: String,
+    #[serde(rename = "answer")]
+    pub answer: GrantAnswer,
+}
+
+/// `oneiron::verbs::grants::GrantRequestedScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum GrantRequestedScope {
+    #[serde(rename = "messages")]
+    Messages {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "summaries")]
+    Summaries {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "relationship_claims")]
+    RelationshipClaims {
+        #[serde(rename = "space_ref")]
+        space_ref: String,
+    },
+    #[serde(rename = "companion_profile")]
+    CompanionProfile {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+        #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
+        facet_ref: Option<String>,
+    },
+}
+
+/// `oneiron::verbs::grants::GrantAnswered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GrantAnswered {
+    #[serde(rename = "request")]
+    pub request: String,
+    #[serde(rename = "principal_ref")]
+    pub principal_ref: String,
+    #[serde(rename = "capability")]
+    pub capability: String,
+    #[serde(rename = "scope")]
+    pub scope: GrantRequestedScope,
+    #[serde(rename = "status")]
+    pub status: AccessRequestStatus,
+    #[serde(
+        rename = "addressed_to",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub addressed_to: Option<String>,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(
+        rename = "excess_request",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub excess_request: Option<String>,
     #[serde(
         rename = "decided_by",
         default,
@@ -10199,6 +10300,27 @@ pub struct MemoryExport {
     pub digest: String,
 }
 
+/// `oneiron::memory::export::ExportTransfer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ExportTransfer {
+    #[serde(rename = "transfer_ref")]
+    pub transfer_ref: String,
+    #[serde(rename = "format")]
+    pub format: String,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "digest")]
+    pub digest: String,
+}
+
+/// `oneiron::memory::export::ExportAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ExportAnswer {
+    Inline(MemoryExport),
+    Transfer(ExportTransfer),
+}
+
 /// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `ScopeId`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "values")]
@@ -10248,13 +10370,15 @@ pub enum Sensitivity {
     Restricted,
 }
 
-/// `oneiron_authority::federation::scope::SensitivityCeiling`.
+/// `oneiron_authority::federation::scope::SensitivityCeilingWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "value")]
 #[serde(deny_unknown_fields)]
-pub enum SensitivityCeiling {
+pub enum SensitivityCeilingWire {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(Sensitivity),
 }
@@ -10278,7 +10402,7 @@ pub struct Scope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub sensitivity: Option<SensitivityCeiling>,
+    pub sensitivity: Option<SensitivityCeilingWire>,
 }
 
 /// `oneiron::memory::scoped_export::CredentialCeiling`.
@@ -10521,6 +10645,8 @@ pub enum ScopeSensitivityBand {
 pub enum ScopeSensitivityInput {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(ScopeSensitivityBand),
 }
@@ -16301,7 +16427,7 @@ pub enum HookReplayCompare {
     Incomplete,
 }
 
-/// `oneiron::verbs::host::HookReplayOutcome`.
+/// `oneiron::verbs::host::hooks_replay::HookReplayOutcome`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "status")]
 pub enum HookReplayOutcome {
@@ -16339,7 +16465,7 @@ pub enum HookReplayOutcome {
     },
 }
 
-/// `oneiron::verbs::host::HookReplayRow`.
+/// `oneiron::verbs::host::hooks_replay::HookReplayRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HookReplayRow {
     #[serde(rename = "case")]
@@ -18550,6 +18676,12 @@ pub struct ColdAuthorityAuditRow {
     pub parents: Vec<String>,
     #[serde(rename = "fold_valid")]
     pub fold_valid: bool,
+    #[serde(
+        rename = "issue_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_codes: Option<Vec<String>>,
 }
 
 /// `oneiron::receipt::authority_audit::AuthorityAuditPage`.
@@ -18589,6 +18721,31 @@ pub struct SignedAuthorityHistory {
 pub struct AuthorityHistoryImported {
     #[serde(rename = "entry_refs")]
     pub entry_refs: Vec<String>,
+}
+
+/// `oneiron::authority::clock_repair::AuthorityClockRepairOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AuthorityClockRepairOutcome {
+    #[serde(rename = "sound")]
+    Sound,
+    #[serde(rename = "repaired")]
+    Repaired,
+    #[serde(rename = "unproven")]
+    Unproven,
+}
+
+/// `oneiron::authority::clock_repair::AuthorityClockRepair`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityClockRepair {
+    #[serde(rename = "outcome")]
+    pub outcome: AuthorityClockRepairOutcome,
+    #[serde(rename = "floor", default, skip_serializing_if = "Option::is_none")]
+    pub floor: Option<u64>,
+    #[serde(rename = "observations")]
+    pub observations: u64,
+    #[serde(rename = "anchored", default, skip_serializing_if = "Option::is_none")]
+    pub anchored: Option<u64>,
 }
 
 /// `oneiron::verbs::wire_health::WireThresholds`.
@@ -20501,6 +20658,12 @@ pub enum FederationBurstWorkState {
     Imported,
     #[serde(rename = "rejected")]
     Rejected,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "stale_authority")]
+    StaleAuthority,
+    #[serde(rename = "erased")]
+    Erased,
 }
 
 /// `oneiron::sync::federation_burst::types::FederationBurstReceipt`.
@@ -27835,6 +27998,18 @@ pub struct SpaceProbe {
     pub query_media: Option<String>,
     #[serde(rename = "family")]
     pub family: String,
+    #[serde(
+        rename = "written_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub written_from: Option<String>,
+    #[serde(
+        rename = "source_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_refs: Option<Vec<String>>,
     #[serde(rename = "targets")]
     pub targets: Vec<String>,
     #[serde(rename = "author")]
@@ -27879,6 +28054,12 @@ pub struct EmbeddingSpaceProbePutRequest {
     pub family: String,
     #[serde(rename = "targets", default, skip_serializing_if = "Option::is_none")]
     pub targets: Option<Vec<String>>,
+    #[serde(
+        rename = "source_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_refs: Option<Vec<String>>,
     #[serde(rename = "author")]
     pub author: String,
 }
@@ -32463,7 +32644,7 @@ pub struct HostBudgetHitResult {
     pub accounting: HostBudgetAccounting,
 }
 
-/// `oneiron::verbs::host::HooksReplayRequest`.
+/// `oneiron::verbs::host::hooks_replay::HooksReplayRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HooksReplayRequest {
@@ -32473,6 +32654,31 @@ pub struct HooksReplayRequest {
     pub since: Option<String>,
     #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u64>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// `oneiron::verbs::host::hooks_replay::HooksReplayPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HooksReplayPage {
+    #[serde(rename = "rows")]
+    pub rows: Vec<HookReplayRow>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "done")]
+    pub done: bool,
+    #[serde(rename = "effective_limit")]
+    pub effective_limit: u64,
+    #[serde(
+        rename = "limit_clamped",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub limit_clamped: Option<bool>,
 }
 
 /// `oneiron::memory::hook_regen_doors::types::HookRegenBindingRequest`.
@@ -47715,6 +47921,8 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[serde(rename = "AdmissionDenied")]
     AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
 }
 
 /// `oneiron_model::llm::error::LlmError`.

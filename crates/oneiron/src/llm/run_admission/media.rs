@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use super::super::media::{
-    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaUsage,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaCallProgress, MediaCaps, MediaJobState,
+    MediaRequest, MediaResponse, MediaUsage,
 };
 use super::super::{
     BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError,
@@ -15,6 +16,7 @@ use super::super::{
 };
 use super::admission::{RunDenied, RunInner};
 use super::gate::Dispatch;
+use super::media_job::MediaJobBindings;
 use super::permit::RunPermit;
 use super::receipt::RunStreamUsage;
 use super::settle::CallOutcome;
@@ -28,11 +30,13 @@ const SERVED_MODEL_KEYS: [&str; 2] = ["reported_model", "served_model"];
 /// that names another model, route or offer than its permit, and a call
 /// that picks its model or route through a param. One permit buys one
 /// physical call; a job's polls and its cancel ride the permit its submit
-/// started.
+/// started, for that job alone (FIX 9923).
 pub struct MediaGate {
     run: Arc<RunInner>,
     inner: Arc<dyn MediaBackend>,
     offer: DispatchBinding,
+    /// The jobs this gate started or took up, each on its permit.
+    jobs: MediaJobBindings,
 }
 
 impl MediaGate {
@@ -41,7 +45,12 @@ impl MediaGate {
         inner: Arc<dyn MediaBackend>,
         offer: DispatchBinding,
     ) -> Self {
-        Self { run, inner, offer }
+        Self {
+            run,
+            inner,
+            offer,
+            jobs: MediaJobBindings::default(),
+        }
     }
 
     /// Checks and starts the call's permit; the started call, for its
@@ -96,6 +105,22 @@ impl MediaGate {
         answer
     }
 
+    /// [`Self::run`] keeping what a call stopped part way completed (FIX
+    /// 9517): the answer, or the stop with the usage of the requests that
+    /// answered, for the permit's holder to settle once
+    /// ([`RunPermit::settle_interrupted_media`]).
+    pub async fn run_progress(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+    ) -> Result<MediaResponse, InterruptedMediaCall> {
+        let mut opened = self.open(&request, lease)?;
+        let answer = self.inner.run_progress(request, lease).await;
+        let served = answer.as_ref().ok().and_then(served_model);
+        opened.finish(served, answer.is_ok());
+        answer
+    }
+
     /// Sends one call on the host's own wire ([`WireSeat`](super::WireSeat)):
     /// its permit is checked and started as [`Self::run`] starts one, `send`
     /// runs only then, and the dispatch receipt is written when it ends. A
@@ -113,21 +138,28 @@ impl MediaGate {
     }
 
     /// Starts one long call as a provider job; its permit stays open for
-    /// the job's polls and is settled when the job ends.
+    /// the job's polls and is settled when the job ends. The job the
+    /// provider started is bound to this permit (FIX 9923).
     pub async fn submit(&self, request: MediaRequest, lease: &BudgetLease) -> LlmResult<String> {
         let mut opened = self.open(&request, lease)?;
+        let model = request.model.clone();
         let job = self.inner.submit(request, lease).await;
         opened.finish(None, job.is_ok());
+        if let Ok(job) = &job {
+            self.jobs.bind_media_job(lease, &model, job);
+        }
         job
     }
 
-    /// Takes up a job that an earlier run's submit started, as a restart
+    /// Takes up `job`, which an earlier run's submit started, as a restart
     /// leaves one: starts this permit under the checks a submit takes, and
-    /// sends nothing, so the job's polls and its cancel ride this permit.
-    /// Its dispatch receipt stands for the job going on here.
-    pub fn resume(&self, request: &MediaRequest, lease: &BudgetLease) -> LlmResult<()> {
+    /// sends nothing, so the job's polls and its cancel ride this permit,
+    /// bound to that job (FIX 9923). Its dispatch receipt stands for the job
+    /// going on here.
+    pub fn resume(&self, request: &MediaRequest, job: &str, lease: &BudgetLease) -> LlmResult<()> {
         let mut opened = self.open(request, lease)?;
         opened.finish(None, true);
+        self.jobs.bind_media_job(lease, &request.model, job);
         Ok(())
     }
 
@@ -138,28 +170,16 @@ impl MediaGate {
         job: &str,
         lease: &BudgetLease,
     ) -> LlmResult<MediaJobState> {
-        self.started(lease)?;
+        self.jobs
+            .check_media_job_continuation(&self.run, lease, model, job)?;
         self.inner.poll(model, job, lease).await
     }
 
     /// Asks the provider to stop the job a submit through this gate started.
     pub async fn cancel(&self, model: &ModelId, job: &str, lease: &BudgetLease) -> LlmResult<()> {
-        self.started(lease)?;
+        self.jobs
+            .check_media_job_continuation(&self.run, lease, model, job)?;
         self.inner.cancel(model, job, lease).await
-    }
-
-    /// A poll or a cancel continues a started call: its lease is this run's,
-    /// open, and already sent once.
-    fn started(&self, lease: &BudgetLease) -> LlmResult<()> {
-        let ours = self.run.lock_calls().contains_key(lease.id());
-        let started = ours
-            && self.run.guard.lease_open(lease) == Some(true)
-            && self.run.guard.dispatched(lease) == Some(true);
-        if started {
-            Ok(())
-        } else {
-            Err(FatalLlmError::InvalidRequest.into())
-        }
     }
 }
 
@@ -402,6 +422,26 @@ impl RunPermit {
             Some(units) => self.settle_with(CallOutcome::Used(units), inference_calls),
             None => self.settle_with(CallOutcome::Answered(&LlmUsage::zero()), inference_calls),
         }
+    }
+
+    /// Settles, once, a media call stopped part way (FIX 9517): what its
+    /// answered requests counted, with their inference receipts, as
+    /// [`Self::settle_media`] settles an answer, never the whole call's
+    /// reservation as a failure. A call that completed nothing settles as
+    /// failed, as any failed call does.
+    pub fn settle_interrupted_media(
+        self,
+        progress: &MediaCallProgress,
+        operation: AiOperation,
+        caps: &MediaCaps,
+    ) -> Result<BudgetSettlement, RunDenied> {
+        if progress.is_empty() {
+            return self.settle(CallOutcome::Failed);
+        }
+        self.settle_media(
+            progress.usage.token_units(operation, caps),
+            progress.usage.inference_calls(),
+        )
     }
 
     /// Ends a kept media job's permit at a stop without a charge

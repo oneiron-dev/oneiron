@@ -139,6 +139,16 @@ impl Vault {
             if let Some(relationship_ref) = request.relationship_ref.as_ref() {
                 require_relationship_entity(store, wtxn, relationship_ref)?;
             }
+            // Its world from where its sources sit (FIX 10215), and the law it
+            // is made under, never a refusal (FIX 10218).
+            let world_ref = super::recognition::resolve_print_world_in(self, wtxn, request)?;
+            let third_party = is_contact_enrollment
+                || !crate::policy_model::owners_in_txn(self, wtxn)?.contains(&subject);
+            let legal = super::enrollment_law::admit_enrollment_law(
+                &request.legal,
+                &request.consent_event_ref,
+                third_party,
+            );
 
             let previous = read_active_print(store, wtxn, &subject)?;
             delete_voice_prints_in_txn(store, wtxn, &subject)?;
@@ -148,6 +158,10 @@ impl Vault {
                 contact_ref: request.contact_ref,
                 relationship_ref: request.relationship_ref,
                 consent_event_ref: request.consent_event_ref.clone(),
+                world_ref,
+                // The enrolled purpose alone (FIX 10217).
+                consented_purposes: vec![request.purpose.clone()],
+                legal,
                 space: request.space.clone(),
                 centroid: centroid.clone(),
                 sample_ids: sample_ids.clone(),
@@ -189,9 +203,10 @@ impl Vault {
 
         let rtxn = self.store.env.read_txn()?;
         let candidates = load_match_candidates(
-            &self.store,
+            self,
             &rtxn,
             &request.space_id,
+            &request.purpose,
             self.now_recorded_at(),
         )?;
         drop(rtxn);
@@ -303,8 +318,22 @@ impl Vault {
         // two runs never mint the same revision for different placements.
         self.with_write_txn_grouped(|wtxn| {
             let mut roster = roster;
-            if let Some(prior) = ROSTER.get(&self.store, wtxn, &digest)? {
-                carry_unheard_speakers(&mut roster, &prior);
+            let heard = roster.segments.len();
+            let prior = ROSTER.get(&self.store, wtxn, &digest)?;
+            if let Some(prior) = &prior {
+                carry_unheard_speakers(&mut roster, prior);
+            }
+            // Every print the roster places a speaker by, this run's and the
+            // carried ones, checked again in the write under this request's
+            // purpose: a stale result is never kept (FIX 10217, FIX 10219).
+            super::recognition::recheck_roster_evidence_in(
+                self,
+                wtxn,
+                &mut roster,
+                heard,
+                &request.purpose,
+            )?;
+            if let Some(prior) = prior {
                 roster.roster_revision = if placements(&roster) == placements(&prior) {
                     prior.roster_revision
                 } else {

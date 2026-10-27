@@ -36,8 +36,8 @@ pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::{RoomHost, room_host_in_txn};
 pub use session::{SessionMode, SessionPresence};
 pub use turn_actions::{
-    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionContext, TurnActionLine,
-    TurnActionReceipt, TurnActionRequest,
+    TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt, TurnActionAuthority,
+    TurnActionContext, TurnActionLine, TurnActionReceipt, TurnActionRequest,
 };
 pub(crate) use visibility::{
     AudienceCache, conversation_summary_covers, private_thread_word_turns_in,

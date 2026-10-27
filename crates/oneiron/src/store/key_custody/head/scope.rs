@@ -56,7 +56,10 @@ impl CompartmentScope {
             | CustodyKind::KnownValueEntry
             | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
-            | CustodyKind::TrainingLink => Self::HostReadable,
+            | CustodyKind::TrainingLink
+            // An erasable key (FIX 8875) is one the host engine reads, as a
+            // claim key is (HostReadable, Engine 10-23).
+            | CustodyKind::ErasableKey => Self::HostReadable,
             // A credential's value and its carriers' keys (KS-6, CALLS
             // `KS-6 entry eligibility`): only the owner's kit opens them; a
             // head carries one only where [`CustodyRecipients::keeps_local`]
