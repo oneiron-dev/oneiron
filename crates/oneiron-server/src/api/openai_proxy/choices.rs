@@ -69,7 +69,8 @@ impl CallerClock {
 
     /// Whether the caller's deadline has passed.
     pub(super) fn ran_out(&self) -> bool {
-        self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        self.deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
     }
 
     /// The recall's own `deadline_ms`: what is left of the caller's, when it
