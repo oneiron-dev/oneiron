@@ -241,7 +241,7 @@ impl SnapshotLedger<'_> {
     }
 
     /// A hold on `bytes`, in flight from now on.
-    fn hold(&self, bytes: u64) -> SnapshotReservation {
+    fn take_hold(&self, bytes: u64) -> SnapshotReservation {
         let mut state = self.ledger().lock();
         let id = state.next;
         state.next = state.next.wrapping_add(1);
@@ -340,7 +340,7 @@ impl SnapshotLedger<'_> {
             kept = kept.saturating_sub(victim.bytes);
         }
         let fitted = fits(kept);
-        let reservation = (hold && fitted).then(|| self.hold(need));
+        let reservation = (hold && fitted).then(|| self.take_hold(need));
         if let Err(error) = wtxn.commit() {
             if let Some(reservation) = reservation {
                 self.release(reservation);
