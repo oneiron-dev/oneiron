@@ -32372,8 +32372,18 @@
      "path": "src/federation/facet_read.rs",
      "purpose": "The one facet rule (owner ruling FACET-READ = A)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 11,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/facet_read/pending.rs",
+     "purpose": "Held facet stamps as retained work (FIX 8890, 8566, 8731)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -36468,9 +36478,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/housekeeping/sync_work.rs",
-     "purpose": "The sync lane's work a housekeeping pass carries: a left shared env's owed body collection (FIX 2413)",
+     "purpose": "The sync lane's work a housekeeping pass carries: a left shared env's owed body collection (FIX 2413), and…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -66352,6 +66362,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/federation_burst/erase.rs",
+     "purpose": "Retained copies an entity's erase owns (FIX 7998)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/federation_burst/import_guard.rs",
      "purpose": "Revalidate the retained batch and its acting proof in every import writer",
      "surface": {
@@ -66365,7 +66385,7 @@
      "path": "src/sync/federation_burst/ledger.rs",
      "purpose": "Payload-free batch receipts, kept after durable work completes",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -66379,10 +66399,10 @@
      "path": "src/sync/federation_burst/mod.rs",
      "purpose": "Peer-relative federation admission with durable, automatically replayable work",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 1,
-      "re-export": 3,
+      "re-export": 4,
       "struct": 1
      }
     },
@@ -66424,7 +66444,7 @@
      "path": "src/sync/federation_burst/queue.rs",
      "purpose": "Actual deferred payloads and their identity-bound, idempotent completion",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 21
      }
     },
     {
@@ -66449,8 +66469,23 @@
      "path": "src/sync/federation_burst/review_doors.rs",
      "purpose": "Retained coalesced review evidence and owner release/reject acts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RetainedWorkQueue"
+     ],
+     "path": "src/sync/federation_burst/schedule.rs",
+     "purpose": "One fair schedule for retained peer work (FIX 7996, 7997, 8565, 8890)",
+     "surface": {
+      "const": 3,
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 4
      }
     },
     {
@@ -66500,7 +66535,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 5,
-      "fn": 1,
+      "fn": 2,
       "struct": 9
      }
     },
@@ -67165,12 +67200,30 @@
       "MaintenanceIngestQuotaSnapshot"
      ],
      "path": "src/sync/quota.rs",
-     "purpose": "Device-local maintenance ingest security bounds",
+     "purpose": "Device-local maintenance ingest shares and their fair admission",
      "surface": {
       "const": 2,
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 3,
+      "re-export": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "MaintenanceRetainedReceipt",
+      "MaintenanceWorkState"
+     ],
+     "path": "src/sync/quota/work.rs",
+     "purpose": "Signed maintenance operations kept for their turn instead of refused (FIX 8565, 8858)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 1,
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -67793,7 +67846,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/sync/selector/held_retire.rs",
-     "purpose": "Retirement of the facet stamps federation admission holds ahead of their rows (Astra-b F2 on #1432): by age…",
+     "purpose": "Retirement of the facet stamps federation admission holds ahead of their rows (Astra-b F2 on #1432): past…",
      "surface": {
       "crate-vis": 1
      }
@@ -79216,7 +79269,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 63,
+     "files": 64,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79930,7 +79983,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 275,
+     "files": 278,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80135,7 +80188,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5314,
+   "source_files": 5318,
    "test_files": 902
   },
   "oneiron-android": {
