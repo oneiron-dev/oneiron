@@ -233,12 +233,12 @@ pub(super) fn checkpoint(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &Seed) -
     let erased = stored
         .action
         .as_ref()
-        .is_some_and(|action| action.invocation_slip.is_none());
+        .is_some_and(|action| action.slip_erased());
     if erased
         && row
             .action
             .as_ref()
-            .is_some_and(|action| action.invocation_slip.is_some())
+            .is_some_and(|action| action.holds_slip())
     {
         let mut row = row.clone();
         if let Some(action) = row.action.as_mut() {

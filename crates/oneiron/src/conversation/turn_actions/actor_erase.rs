@@ -22,4 +22,9 @@ impl TurnActionAttempt {
     pub(crate) fn holds_slip(&self) -> bool {
         matches!(self.authority, TurnActionAuthority::Slip { .. })
     }
+
+    /// Whether its requester's erase took this action's slip out.
+    pub(crate) fn slip_erased(&self) -> bool {
+        matches!(self.authority, TurnActionAuthority::SlipErased)
+    }
 }
