@@ -586,7 +586,7 @@ fn covered_endpoint_stands(image: &super::AuthorityCheckpointV2, hash: &[u8; 32]
     image.rows.contains_key(hash) && image.fold().valid_entries.contains(hash)
 }
 
-/// One current, fold-verified authority head for scoped history signatures.
+/// One exact, fold-verified causal authority anchor for scoped history signatures.
 /// Fail closed if the root is absent, conflicted or its signer is revoked.
 pub(crate) fn machine_history_host_context(
     store: &Store,
@@ -625,7 +625,7 @@ pub(crate) fn machine_history_host_context(
     // predecessor-signed ReRoot, not an arbitrary lexicographically maximal
     // concurrent head. Pin that exact causal ancestor for history handoff.
     let mut re_roots = Vec::new();
-    let mut authored_heads = Vec::new();
+    let mut authored_entries = Vec::new();
     for id in
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
     {
@@ -643,15 +643,16 @@ pub(crate) fn machine_history_host_context(
         if matches!(&entry.op, AuthorityOp::ReRoot { new_device } if new_device.key == *signer) {
             re_roots.push(hash);
         }
-        if fold.append_heads.contains(&hash) && entry.signer_key() == signer {
-            authored_heads.push(hash);
+        if entry.signer_key() == signer {
+            authored_entries.push(hash);
         }
     }
     // On a vault that adopted a checkpoint image, the covered rows count as
     // well (OF-469, slice E): a covered ReRoot to `signer` by the body the
-    // image carries, a covered head `signer` authored by the row's summary,
-    // each only while the current fold holds it valid, and each once, stored
-    // or not. Never the image's frontier or its latest sequence.
+    // image carries, an entry `signer` authored by the row's summary, each
+    // only while the current fold holds it valid, and each once, stored or
+    // not. The signed parent paths below, never a sequence or image frontier,
+    // decide which authored entry is the causal anchor.
     if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
         for (hash, row) in evidence.rows() {
             if !fold.valid_entries.contains(hash) {
@@ -664,23 +665,59 @@ pub(crate) fn machine_history_host_context(
             {
                 re_roots.push(*hash);
             }
-            if !authored_heads.contains(hash)
-                && fold.append_heads.contains(hash)
-                && row.signer == *signer
-            {
-                authored_heads.push(*hash);
+            if !authored_entries.contains(hash) && row.signer == *signer {
+                authored_entries.push(*hash);
+            }
+        }
+    }
+    let mut common_ancestors = Vec::new();
+    let mut latest_ancestors = Vec::new();
+    if re_roots.is_empty() && !fold.append_heads.is_empty() {
+        // A different authorized signer can advance every append head without
+        // retiring this host. Keep only exact host-authored rows beneath ALL
+        // current heads; equality preserves the one-head case.
+        for candidate in &authored_entries {
+            let mut common = true;
+            for head in &fold.append_heads {
+                if candidate != head
+                    && !machine_history_authority_descends(store, txn, candidate, head)?
+                {
+                    common = false;
+                    break;
+                }
+            }
+            if common {
+                common_ancestors.push(*candidate);
+            }
+        }
+        // "Latest" means a causal greatest element, not the largest sequence,
+        // timestamp or hash. Incomparable candidates never select themselves.
+        for candidate in &common_ancestors {
+            let mut latest = true;
+            for other in &common_ancestors {
+                if other != candidate
+                    && !machine_history_authority_descends(store, txn, other, candidate)?
+                {
+                    latest = false;
+                    break;
+                }
+            }
+            if latest {
+                latest_ancestors.push(*candidate);
             }
         }
     }
     let head = match re_roots.as_slice() {
         [head] => *head,
-        [] => match authored_heads.as_slice() {
+        [] => match latest_ancestors.as_slice() {
             [head] => *head,
             _ => {
                 tracing::warn!(
-                    stage = "history_context_host_head_not_unique",
+                    stage = "history_context_host_anchor_not_unique",
                     re_root_count = re_roots.len(),
-                    authored_head_count = authored_heads.len(),
+                    authored_entry_count = authored_entries.len(),
+                    common_anchor_count = common_ancestors.len(),
+                    latest_anchor_count = latest_ancestors.len(),
                     append_head_count = fold.append_heads.len(),
                     "machine claim write refused"
                 );
@@ -691,7 +728,7 @@ pub(crate) fn machine_history_host_context(
             tracing::warn!(
                 stage = "history_context_reroot_not_unique",
                 re_root_count = re_roots.len(),
-                authored_head_count = authored_heads.len(),
+                authored_entry_count = authored_entries.len(),
                 append_head_count = fold.append_heads.len(),
                 "machine claim write refused"
             );
