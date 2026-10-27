@@ -6,7 +6,7 @@
 //! Each seed the vault's root signs with takes one generation: 0 for the
 //! first, one more for each seed after it (a re-root's successor, a
 //! validated replacement); a seed the newest live generation already holds
-//! is not published again. It is published with the bytes its caller
+//! keeps that generation. It is published with the bytes its caller
 //! supplies, never minted here, in a writer of its own that pins the
 //! binding, after the act that made the seed stand: an escrow that fails
 //! undoes nothing. It rides the custody head's compartment the head's
@@ -94,11 +94,11 @@ impl Store {
     /// vault, as the newest generation of its custody subject, in a writer
     /// of its own that pins the binding: the entry synced and its Mint
     /// journaled before the writer commits. A seed the newest live
-    /// generation already holds is not published again; any other takes the
-    /// generation past every one the subject has. The bytes are the
-    /// caller's, never minted. True when it published one; false for one
-    /// already held, or an archived vault, whose custody is its
-    /// replacement's.
+    /// generation already holds keeps that generation, its Mint journaled
+    /// there if no frame holds it yet; any other takes the generation past
+    /// every one the subject has. The bytes are the caller's, never minted.
+    /// True when it published a new generation; false for a seed already
+    /// held, or an archived vault, whose custody is its replacement's.
     ///
     /// # Errors
     ///
@@ -116,17 +116,18 @@ impl Store {
         let custody = self.core.key_custody.bind_in_txn(self, &wtxn)?;
         let subject = issuer_seed_subject(custody.binding())?;
         let newest = custody.newest_generation(&subject)?;
-        if let Some(newest) = newest {
-            let id = subject.at(newest);
-            if custody.state(&id)? == EntryState::Live
-                && custody
-                    .read(&id)
-                    .is_ok_and(|held| held.expose() == seed.as_slice())
-            {
-                return Ok(false);
+        let held = match newest {
+            Some(newest) => {
+                let id = subject.at(newest);
+                custody.state(&id)? == EntryState::Live
+                    && custody
+                        .read(&id)
+                        .is_ok_and(|held| held.expose() == seed.as_slice())
             }
-        }
+            None => false,
+        };
         let generation = match newest {
+            Some(newest) if held => newest,
             None => 0,
             Some(newest) => newest.checked_add(1).ok_or(Error::ArithmeticOverflow(
                 "host issuer seed custody generation",
@@ -135,7 +136,7 @@ impl Store {
         let secret = CustodySecret::from_bytes(Zeroizing::new(seed.to_vec()));
         custody.publish_minted(&subject.at(generation), &secret)?;
         wtxn.commit()?;
-        Ok(true)
+        Ok(!held)
     }
 
     /// Every live host issuer seed this vault's custody holds, newest
