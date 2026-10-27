@@ -15,10 +15,10 @@ use super::pad_scope::{PadRecipients, WORLD_PAD_COMPARTMENTS, WorldPadScope, wor
 /// The compartment a host issuer seed's escrow rides (FIX-LIST 10770; CALLS
 /// "L02 FIX 10770 issuer-seed custody scope (D1)"): host-readable, so a
 /// managed host that unlocked a backup with the data key takes the seed back
-/// without the owner's kit, as the managed data key credential already roots
-/// the host issuer. `OwnerOnly` wraps it to the recovery root alone; that
-/// flip also needs [`CustodyRecipients::keeps_local`] to leave the seed out
-/// while no root is pinned, as it does a credential's keys.
+/// without the owner's kit (Engine 10-27). `OwnerOnly` wraps it to the
+/// recovery root alone; that flip also needs
+/// [`CustodyRecipients::keeps_local`] to leave the seed out while no root is
+/// pinned, as it does a credential's keys.
 const HOST_ISSUER_SEED_CUSTODY_SCOPE: CompartmentScope = CompartmentScope::HostReadable;
 
 /// Who may read one kind's entries, which fixes the recipients of the
