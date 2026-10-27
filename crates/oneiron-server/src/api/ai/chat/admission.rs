@@ -371,30 +371,19 @@ pub(in crate::api::ai::chat) fn start_turn(
     .map_err(|stop| hook_stopped(&stop))?;
     // FIX 7004: the MESSAGE row the user's words were witnessed into.
     sources.add(written.as_deref());
-    // FIX 8132: the reply is placed where the user's turn was witnessed,
-    // bound before generation, so its newcomer wakes and every publication
-    // check read that conversation; a witnessed MESSAGE in no container
-    // answers standalone, as before. One whose placement was not read takes
-    // the conversation its ref names, where its stream is written anyway;
-    // only a turn whose ref names none is refused, before any model is
-    // called: no conversation would hold its reply.
-    let witnessed = written
-        .as_deref()
-        .and_then(|rows| rows.first().copied())
-        .map(|message| crate::server::blocking(|| vault.record_container(message)));
-    let conversation = match witnessed {
-        Some(Ok(container)) => container,
-        _ => {
-            let named = resolve_entity_ref(&vault, &request.conversation_ref)
-                .map_err(|_| engine(&"the reply's conversation was not placed"))?;
-            Some(
-                crate::server::blocking(|| vault.record_container(named))
-                    .ok()
-                    .flatten()
-                    .unwrap_or(named),
-            )
-        }
-    };
+    // FIX 8132: the reply is bound, before generation, to the conversation
+    // its own turn is written into, so its newcomer wakes and every
+    // publication check read the conversation that receives its text: the
+    // destination the assistant's turn below writes to, the request's ref,
+    // resolved once above (`origin`), never the user's witnessed MESSAGE,
+    // which a pre-hook may have moved. A destination in no conversation
+    // answers standalone, as before; one whose placement was not read binds
+    // the destination itself, where its stream is written anyway. Only a
+    // ref that names nothing is refused, before any model is called: no
+    // conversation would hold its reply.
+    let destination = origin.ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
+    let conversation = crate::server::blocking(|| vault.record_container(destination))
+        .unwrap_or(Some(destination));
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")
