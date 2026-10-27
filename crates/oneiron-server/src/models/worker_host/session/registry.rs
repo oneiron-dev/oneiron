@@ -49,11 +49,19 @@ pub(super) struct Worker {
     pub(super) sessions: BTreeMap<SessionBinding, Session>,
     /// Sessions dropped whose release the worker has not yet answered:
     /// their bytes stay charged until it does.
-    releasing: BTreeMap<SessionHandle, SessionResidency>,
+    releasing: BTreeMap<SessionHandle, Owed>,
     /// FIX 10632: the bindings whose history window slid, each with the
     /// canonical path (message stamps) its last turn read. Their turns run
     /// plain until a turn's path extends the one marked.
     pub(super) sliding: BTreeMap<SessionBinding, Vec<MessageStamp>>,
+}
+
+/// A session whose release is owed: its vault, the target its release
+/// names, and the bytes it holds until the worker answers.
+struct Owed {
+    vault: VaultRef,
+    target: SessionTarget,
+    residency: SessionResidency,
 }
 
 /// One session: its key, its handle on the incarnation, the generation the
@@ -68,9 +76,10 @@ pub(super) struct Session {
     /// Why its published checkpoint stopped serving, seen at a fork: it is
     /// dropped instead of advanced.
     pub(super) stale: Option<SessionInvalidation>,
-    /// The canonical path (message stamps) of the turn its published
-    /// checkpoint succeeded: a later turn's path attaches only when it
-    /// starts with it (FIX 10632).
+    /// The path (message stamps) its published checkpoint holds: the
+    /// canonical messages, the newest user message and the reply of the
+    /// turn it succeeded. A later turn's canonical path attaches only when
+    /// it starts with it (FIX 10632).
     pub(super) path: Vec<MessageStamp>,
 }
 
@@ -89,8 +98,6 @@ impl Session {
 pub(super) struct PendingTurn {
     pub(super) manifest: ManifestDigest,
     pub(super) canonical: Vec<JsonValue>,
-    /// The canonical messages' stamps, the published path's once it is.
-    pub(super) path: Vec<MessageStamp>,
     pub(super) newest: JsonValue,
     pub(super) tools: Option<JsonValue>,
     pub(super) base: Option<CanonicalCheckpointRef>,
@@ -149,8 +156,31 @@ impl Worker {
     /// again, and its release is owed until [`release`] hears the worker.
     pub(super) fn retire(&mut self, binding: &SessionBinding) -> Option<(SessionTarget, Place)> {
         let session = self.sessions.remove(binding)?;
-        self.releasing.insert(session.handle, session.residency);
-        Some((session.target(), self.place.clone()))
+        Some(self.owe(
+            session.key.anchor.vault,
+            session.target(),
+            session.residency,
+        ))
+    }
+
+    /// Owes the release of `target`, a handle of `vault` holding
+    /// `residency`, whether or not a session of it was registered: its
+    /// target and place, for that release.
+    pub(super) fn owe(
+        &mut self,
+        vault: VaultRef,
+        target: SessionTarget,
+        residency: SessionResidency,
+    ) -> (SessionTarget, Place) {
+        self.releasing.insert(
+            target.handle,
+            Owed {
+                vault,
+                target: target.clone(),
+                residency,
+            },
+        );
+        (target, self.place.clone())
     }
 
     /// The bindings of every other session on `key`'s conversation: one
@@ -173,7 +203,7 @@ impl Worker {
         self.sessions
             .values()
             .map(|session| session.residency)
-            .chain(self.releasing.values().copied())
+            .chain(self.releasing.values().map(|owed| owed.residency))
             .try_fold(0_u64, |total, residency| {
                 residency
                     .unique_bytes
@@ -234,8 +264,9 @@ pub(super) async fn release_acked(
     true
 }
 
-/// Takes every session of `vault`, on every worker, out of service: each
-/// one's target and place, for its release, which is owed from now on.
+/// Takes every session of `vault`, on every worker, out of service, its
+/// release owed from now on: the target and place of each release `vault`
+/// owes, those owed before this among them, so each is sent again.
 pub(super) fn retire_vault(vault: &VaultRef) -> Vec<(SessionTarget, Place)> {
     let mut workers = lock();
     let mut retired = Vec::new();
@@ -247,8 +278,15 @@ pub(super) fn retire_vault(vault: &VaultRef) -> Vec<(SessionTarget, Place)> {
             .map(|(binding, _)| *binding)
             .collect();
         for binding in bindings {
-            retired.extend(worker.retire(&binding));
+            worker.retire(&binding);
         }
+        retired.extend(
+            worker
+                .releasing
+                .values()
+                .filter(|owed| owed.vault == *vault)
+                .map(|owed| (owed.target.clone(), worker.place.clone())),
+        );
     }
     retired
 }

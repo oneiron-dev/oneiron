@@ -14,22 +14,29 @@
 //! hang. The sealed catalog stays. The receipt names worker ids, epochs and
 //! outcomes only, and claims no zeroisation.
 //!
+//! A session created, forked or committed while a lock ran is not kept: its
+//! work registers only under the admission it was granted, rechecked under
+//! the registry's lock, and a handle that missed it is released at once.
+//!
 //! An erase drops every session of its vault: no session's dependency set
-//! is kept here, so the whole epoch goes.
+//! is kept here, so the whole epoch goes. Its releases run on the caller's
+//! runtime or the one this port was installed on; a worker that does not
+//! acknowledge one is aborted, as a lock aborts it.
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use oneiron::inference_snapshot::{
-    SnapshotFuture, SnapshotRelease, SnapshotRuntime, SnapshotWorkerAbort,
+    SnapshotAdmission, SnapshotFuture, SnapshotRelease, SnapshotRuntime, SnapshotWorkerAbort,
 };
-use oneiron::llm::{SessionInvalidation, VaultRef};
+use oneiron::llm::{SessionInvalidation, SessionTarget, VaultRef};
 use oneiron::{EntityId, Vault};
 use oneiron_driver::InferenceWorker;
+use tokio::runtime::Handle;
 use tokio::task::JoinSet;
 
-use super::registry;
+use super::registry::{self, Place};
 use crate::config::models::snapshots::SnapshotPolicy;
 use crate::models::{SnapshotReceipt, SnapshotStatus};
 
@@ -44,6 +51,9 @@ struct Snapshots {
     lock_restarts: AtomicU64,
     erase_owed: AtomicU64,
     last_lock: Mutex<Option<SnapshotReceipt>>,
+    /// The runtime the port was first installed on: an erase's releases
+    /// run there when its caller is on none.
+    runtime: OnceLock<Handle>,
 }
 
 static SNAPSHOTS: OnceLock<Snapshots> = OnceLock::new();
@@ -105,19 +115,36 @@ impl SnapshotRuntime for HostPort {
 /// Attaches the host's port to `vault`: its lock waits for this process's
 /// release, and its erases drop its sessions here.
 pub(in crate::models::worker_host) fn install(vault: &Arc<Vault>) {
+    if let Ok(runtime) = Handle::try_current() {
+        let _ = snapshots().runtime.set(runtime);
+    }
     let id = VaultRef(vault.vault_key_vault_id());
     guard(&snapshots().vaults).insert(id, Arc::downgrade(vault));
     vault.attach_snapshot_runtime(Arc::new(HostPort));
 }
 
-/// Whether `vault` admits session work now: `false` once a lock closed its
-/// snapshot admission, until an unlock opens it again. A vault that never
-/// attached the port admits as before.
-pub(super) fn admits(vault: &VaultRef) -> bool {
+/// What session work on a vault was admitted under.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Admitted {
+    /// A vault that never attached the port: it admits as before.
+    Unattached,
+    /// The vault's snapshot admission: its lock generation and its erase
+    /// generation.
+    Granted(SnapshotAdmission),
+}
+
+/// What `vault` admits session work under now; `None` once a lock closed
+/// its snapshot admission, until an unlock opens a new one. Work admitted
+/// under one registers only while it is still the same: the caller reads
+/// it again under the registry's lock.
+pub(super) fn admission(vault: &VaultRef) -> Option<Admitted> {
     let attached = guard(&snapshots().vaults)
         .get(vault)
         .and_then(Weak::upgrade);
-    attached.is_none_or(|vault| vault.snapshot_admission().is_some())
+    match attached {
+        None => Some(Admitted::Unattached),
+        Some(vault) => vault.snapshot_admission().map(Admitted::Granted),
+    }
 }
 
 /// Releases every session of `vault` under one total `bound`, then aborts
@@ -160,21 +187,33 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
         }
     }
     releases.abort_all();
+    // Every abort starts at once, each on a task of its own that also does
+    // its cleanup, so it finishes even when the engine stops waiting.
+    let aborts: Vec<_> = owed
+        .into_iter()
+        .map(|((worker_id, epoch), (worker, _))| {
+            tokio::spawn(async move {
+                let reaped = worker.abort_incarnation(&epoch).await;
+                registry::forget(&worker_id, &epoch);
+                snapshots().lock_restarts.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!(
+                    worker = %worker_id,
+                    reaped,
+                    "a vault lock aborted a model worker that did not release its sessions"
+                );
+                SnapshotWorkerAbort {
+                    worker_id,
+                    epoch,
+                    reaped,
+                }
+            })
+        })
+        .collect();
     let mut aborted = Vec::new();
-    for ((worker_id, epoch), (worker, _)) in owed {
-        let reaped = worker.abort_incarnation(&epoch).await;
-        registry::forget(&worker_id, &epoch);
-        snapshots().lock_restarts.fetch_add(1, Ordering::Relaxed);
-        tracing::warn!(
-            worker = %worker_id,
-            reaped,
-            "a vault lock aborted a model worker that did not release its sessions"
-        );
-        aborted.push(SnapshotWorkerAbort {
-            worker_id,
-            epoch,
-            reaped,
-        });
+    for abort in aborts {
+        if let Ok(abort) = abort.await {
+            aborted.push(abort);
+        }
     }
     SnapshotRelease {
         released,
@@ -184,22 +223,51 @@ async fn lock_vault(vault: VaultRef, bound: Duration) -> SnapshotRelease {
     }
 }
 
-/// An erase committed in `vault`: every session of it goes, its releases
-/// on tasks of their own.
+/// An erase committed in `vault`: every session of it goes at once, its
+/// releases on tasks of their own, on the caller's runtime or else the one
+/// the port was installed on. With neither, they stay owed and counted.
 fn invalidate(vault: VaultRef, ids: &[EntityId]) {
     if ids.is_empty() {
         return;
     }
-    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+    let retired = registry::retire_vault(&vault);
+    if retired.is_empty() {
+        return;
+    }
+    snapshots()
+        .erase_owed
+        .fetch_add(retired.len() as u64, Ordering::Relaxed);
+    let runtime = Handle::try_current()
+        .ok()
+        .or_else(|| snapshots().runtime.get().cloned());
+    let Some(runtime) = runtime else {
+        tracing::warn!(
+            owed = retired.len(),
+            "an erase's model session releases have no runtime to run on; they stay owed"
+        );
         return;
     };
-    for (target, place) in registry::retire_vault(&vault) {
-        snapshots().erase_owed.fetch_add(1, Ordering::Relaxed);
-        runtime.spawn(async move {
-            registry::release_acked(target, place, SessionInvalidation::SourceWithdrawn).await;
-            snapshots().erase_owed.fetch_sub(1, Ordering::Relaxed);
-        });
+    for (target, place) in retired {
+        runtime.spawn(erase_release(target, place));
     }
+}
+
+/// One erase release: sent and answered, or else its worker's incarnation
+/// aborted and forgotten, as a lock does. Only then is it no longer owed.
+async fn erase_release(target: SessionTarget, place: Place) {
+    let worker = place.worker.clone();
+    let worker_id = worker.spec().worker_id.clone();
+    let epoch = place.epoch.clone();
+    if !registry::release_acked(target, place, SessionInvalidation::SourceWithdrawn).await {
+        let reaped = worker.abort_incarnation(&epoch).await;
+        registry::forget(&worker_id, &epoch);
+        tracing::warn!(
+            worker = %worker_id,
+            reaped,
+            "an erase aborted a model worker that did not release its sessions"
+        );
+    }
+    snapshots().erase_owed.fetch_sub(1, Ordering::Relaxed);
 }
 
 /// Sealed snapshot parking as this process stands, over the vaults it

@@ -9,7 +9,9 @@
 //! generate, with no create, fork or suffix commit, and so does every next
 //! turn on that binding until one's path extends the last one's: a cached
 //! turn never costs more than a plain one there (FIX 10632). A vault whose
-//! snapshot admission a lock closed gets no session at all.
+//! snapshot admission a lock closed gets no session at all, and a session
+//! created or forked while a lock ran is not registered: the turn runs
+//! plain, and a handle created for it is released.
 use std::path::Path;
 
 use oneiron::llm::{
@@ -20,6 +22,7 @@ use oneiron::llm::{
 };
 use serde_json::Value as JsonValue;
 
+use super::lifecycle::{self, Admitted};
 use super::policy;
 use super::registry::{self, PendingTurn, Place, Serves, Session, send};
 use crate::models::native_exl3::session_capability;
@@ -50,9 +53,7 @@ pub(in crate::models) async fn open_turn(
 ) -> Option<JsonValue> {
     let messages = conversation.get("messages")?.as_array()?;
     let anchor = manifest.anchor()?;
-    if !super::lifecycle::admits(&anchor.vault) {
-        return None;
-    }
+    let admitted = lifecycle::admission(&anchor.vault)?;
     let cut = policy::canonical_cut(manifest)?;
     let newest = policy::newest_user(manifest).filter(|index| *index >= cut)?;
     if !policy::describes(manifest, messages) {
@@ -71,11 +72,11 @@ pub(in crate::models) async fn open_turn(
         worker: route.worker.clone(),
     };
     let restore = serves(&worker_id, &place).await?;
-    let path = manifest.messages().get(..cut)?.to_vec();
-    if !attaches(&worker_id, &place, &key, &path) {
+    let path = manifest.messages().get(..cut)?;
+    if !attaches(&worker_id, &place, &key, path) {
         return None;
     }
-    let opened = session(&worker_id, &place, &key, restore).await?;
+    let opened = session(&worker_id, &place, &key, restore, admitted).await?;
     let binding = key.binding();
     let fork = SessionFork {
         target: opened.target.clone(),
@@ -97,6 +98,11 @@ pub(in crate::models) async fn open_turn(
     let stale = policy::stale_after_fork(opened.published.as_ref(), anchor.head, &forked);
     {
         let mut workers = registry::lock();
+        // A lock since the admission keeps the fork unregistered: the lock
+        // retires the session, or already has.
+        if lifecycle::admission(&anchor.vault) != Some(admitted) {
+            return None;
+        }
         let session = registry::current(&mut workers, &worker_id, &place)?
             .sessions
             .get_mut(&binding)
@@ -106,7 +112,6 @@ pub(in crate::models) async fn open_turn(
         session.pending = Some(PendingTurn {
             manifest: *manifest.digest(),
             canonical: messages[..cut].to_vec(),
-            path,
             newest: messages.get(newest)?.clone(),
             tools,
             base: opened.published,
@@ -191,6 +196,7 @@ async fn session(
     place: &Place,
     key: &SessionKey,
     restore: bool,
+    admitted: Admitted,
 ) -> Option<Opened> {
     let binding = key.binding();
     let (found, retired) = {
@@ -234,7 +240,7 @@ async fn session(
         Some((opened, residency)) => {
             resident(worker_id, place, &binding, opened, residency, restore).await
         }
-        None => create(worker_id, place, key).await,
+        None => create(worker_id, place, key, admitted).await,
     }
 }
 
@@ -295,8 +301,14 @@ async fn resident(
 }
 
 /// A new session for `key` on `place`: not warm until a checkpoint is
-/// published.
-async fn create(worker_id: &str, place: &Place, key: &SessionKey) -> Option<Opened> {
+/// published. It registers only while its vault admits under `admitted`,
+/// read under the registry's lock; otherwise its handle is released.
+async fn create(
+    worker_id: &str,
+    place: &Place,
+    key: &SessionKey,
+    admitted: Admitted,
+) -> Option<Opened> {
     let body = SessionCreate {
         binding: key.binding(),
         op_id: policy::next_op_id(),
@@ -317,9 +329,19 @@ async fn create(worker_id: &str, place: &Place, key: &SessionKey) -> Option<Open
         generation: session.generation,
         published: None,
     };
-    let mut workers = registry::lock();
-    registry::current(&mut workers, worker_id, place)?
-        .sessions
-        .insert(key.binding(), session);
+    let refused = {
+        let mut workers = registry::lock();
+        let worker = registry::current(&mut workers, worker_id, place)?;
+        if lifecycle::admission(&key.anchor.vault) == Some(admitted) {
+            worker.sessions.insert(key.binding(), session);
+            None
+        } else {
+            Some(worker.owe(key.anchor.vault, session.target(), session.residency))
+        }
+    };
+    if let Some((target, at)) = refused {
+        registry::release_later(target, at, SessionInvalidation::Evicted);
+        return None;
+    }
     Some(opened)
 }

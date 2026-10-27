@@ -5,15 +5,19 @@
 //! published by compare-and-swap on the base checkpoint's token digest and
 //! HEAD, all on a task of its own. Any step that does not hold drops the
 //! session; the next turn then starts cold, never from unverified state.
+//! A commit runs under the snapshot admission its claim read: a lock since
+//! then publishes nothing, and a successor the worker published anyway is
+//! released.
 use std::sync::Arc;
 
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, SegmentManifest, SessionAppend, SessionAppended,
     SessionBinding, SessionCheckpoint, SessionCheckpointed, SessionInvalidation, SessionOp,
-    SessionOpStamp, SessionSuffixCommit, SessionSuffixStaged, SessionTarget,
+    SessionOpStamp, SessionSuffixCommit, SessionSuffixStaged, SessionTarget, VaultRef,
 };
 use serde_json::{Value as JsonValue, json};
 
+use super::lifecycle::{self, Admitted};
 use super::policy::{self, SuffixPlan};
 use super::registry::{self, PendingTurn, Place, send};
 use super::{AuthorityVerdict, CheckpointAuthority, ReplyCommit};
@@ -28,7 +32,7 @@ pub(super) fn reply_committed(
     // A vault a lock closed advances nothing: its sessions are going.
     if manifest
         .anchor()
-        .is_some_and(|anchor| !super::lifecycle::admits(&anchor.vault))
+        .is_some_and(|anchor| lifecycle::admission(&anchor.vault).is_none())
     {
         return;
     }
@@ -40,7 +44,8 @@ pub(super) fn reply_committed(
     }
 }
 
-/// A session's pending turn, taken for its commit.
+/// A session's pending turn, taken for its commit, with its vault and the
+/// snapshot admission the claim read.
 struct Claimed {
     worker_id: String,
     place: Place,
@@ -48,10 +53,13 @@ struct Claimed {
     target: SessionTarget,
     generation: u64,
     pending: PendingTurn,
+    vault: VaultRef,
+    admitted: Admitted,
 }
 
-/// Takes the pending turn `digest` names from its session. A session whose
-/// fork showed it stale is dropped instead.
+/// Takes the pending turn `digest` names from its session, under the
+/// admission its vault grants now. A session whose fork showed it stale is
+/// dropped instead.
 fn claim(digest: &ManifestDigest) -> Option<Claimed> {
     let mut stale = None;
     let claimed = {
@@ -64,6 +72,8 @@ fn claim(digest: &ManifestDigest) -> Option<Claimed> {
                     .is_some_and(|pending| pending.manifest == *digest)
             })?;
             let binding = *binding;
+            let vault = session.key.anchor.vault;
+            let admitted = lifecycle::admission(&vault)?;
             let pending = session.pending.take()?;
             if let Some(reason) = session.stale {
                 stale = worker
@@ -78,6 +88,8 @@ fn claim(digest: &ManifestDigest) -> Option<Claimed> {
                 target: session.target(),
                 generation: session.generation,
                 pending,
+                vault,
+                admitted,
             })
         })
     };
@@ -88,7 +100,8 @@ fn claim(digest: &ManifestDigest) -> Option<Claimed> {
 }
 
 /// The successor's path: the canonical messages the turn forked at, its
-/// newest user message, then the reply as the log will read it.
+/// newest user message, then the reply as the log will read it. Its
+/// messages' stamps are the path the published checkpoint holds.
 fn successor(pending: PendingTurn, text: &str) -> JsonValue {
     let mut messages = pending.canonical;
     messages.push(pending.newest);
@@ -108,10 +121,21 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
         target,
         generation,
         pending,
+        vault,
+        admitted,
     } = claimed;
     let base = pending.base.clone();
-    let path = pending.path.clone();
-    let outcome = stage(&place, &target, generation, base.as_ref(), &commit, pending).await;
+    let conversation = successor(pending, &commit.text);
+    let path = policy::stamps(&conversation);
+    let outcome = stage(
+        &place,
+        &target,
+        generation,
+        base.as_ref(),
+        &commit,
+        &conversation,
+    )
+    .await;
     let staged = match outcome {
         Ok(Some(staged)) => staged,
         Ok(None) => return,
@@ -130,17 +154,19 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
     }
     let swappable = {
         let mut workers = registry::lock();
-        registry::current(&mut workers, &worker_id, &place)
-            .and_then(|worker| worker.sessions.get(&binding))
-            .is_some_and(|session| {
-                session.handle == target.handle
-                    && session.generation == generation
-                    && match (&session.published, &base) {
-                        (Some(published), Some(base)) => published.same_point(base),
-                        (None, None) => true,
-                        _ => false,
-                    }
-            })
+        let admits = lifecycle::admission(&vault) == Some(admitted);
+        admits
+            && registry::current(&mut workers, &worker_id, &place)
+                .and_then(|worker| worker.sessions.get(&binding))
+                .is_some_and(|session| {
+                    session.handle == target.handle
+                        && session.generation == generation
+                        && match (&session.published, &base) {
+                            (Some(published), Some(base)) => published.same_point(base),
+                            (None, None) => true,
+                            _ => false,
+                        }
+                })
     };
     if !swappable {
         registry::drop_session(
@@ -180,15 +206,32 @@ async fn advance(claimed: Claimed, commit: ReplyCommit, authority: Arc<dyn Check
             return;
         }
     };
-    let mut workers = registry::lock();
-    if let Some(session) = registry::current(&mut workers, &worker_id, &place)
-        .and_then(|worker| worker.sessions.get_mut(&binding))
-        .filter(|session| session.handle == target.handle)
-    {
-        session.published = published.checkpoint;
-        session.generation = published.generation;
-        session.residency = published.residency;
-        session.path = path;
+    // The successor is kept only where its session is still registered
+    // under the admission the claim read; otherwise its handle is released.
+    let unkept = {
+        let mut workers = registry::lock();
+        let admits = lifecycle::admission(&vault) == Some(admitted);
+        let Some(worker) = registry::current(&mut workers, &worker_id, &place) else {
+            return;
+        };
+        match worker
+            .sessions
+            .get_mut(&binding)
+            .filter(|session| session.handle == target.handle)
+        {
+            Some(session) if admits => {
+                session.published = published.checkpoint;
+                session.generation = published.generation;
+                session.residency = published.residency;
+                session.path = path;
+                None
+            }
+            Some(_) => worker.retire(&binding),
+            None => Some(worker.owe(vault, target, published.residency)),
+        }
+    };
+    if let Some((target, at)) = unkept {
+        registry::release_later(target, at, SessionInvalidation::Evicted);
     }
 }
 
@@ -200,9 +243,8 @@ async fn stage(
     generation: u64,
     base: Option<&CanonicalCheckpointRef>,
     commit: &ReplyCommit,
-    pending: PendingTurn,
+    path: &JsonValue,
 ) -> Result<Option<CanonicalCheckpointRef>, SessionInvalidation> {
-    let path = successor(pending, &commit.text);
     let append = SessionAppend {
         target: target.clone(),
         stamp: SessionOpStamp {
@@ -212,7 +254,7 @@ async fn stage(
         base: base.cloned(),
         head: Some(commit.head),
     };
-    let appended: SessionAppended = send(place, SessionOp::Append, &append, Some(&path)).await?;
+    let appended: SessionAppended = send(place, SessionOp::Append, &append, Some(path)).await?;
     match policy::suffix_plan(base, &appended) {
         SuffixPlan::Compute => {}
         SuffixPlan::Nothing => return Ok(None),
