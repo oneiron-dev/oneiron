@@ -521,7 +521,7 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
             return;
         };
         let requester = action.actor;
-        if action.invocation_slip.is_none() {
+        if !action.holds_slip() {
             return;
         }
         match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &requester) {
