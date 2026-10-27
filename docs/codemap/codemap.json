@@ -42134,6 +42134,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/claims/prompted.rs",
+     "purpose": "FIX 8192: a proposal whose words a model wrote from recalled rows",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -52978,7 +52989,7 @@
      "path": "src/provenance/birth.rs",
      "purpose": "Rule A at row birth: one immutable `made_by` envelope per born row, written beside the row in the…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 9,
       "struct": 5
@@ -52990,6 +53001,16 @@
      "notable": [],
      "path": "src/provenance/birth/checkpoint.rs",
      "purpose": "The checkpoint getter of row births (KS7-2): each birth envelope under its born row's entity tree, and each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/provenance/birth/prompted.rs",
+     "purpose": "A row a model wrote from a prompt that carried other rows (FIX 8192): its birth names each of them as a…",
      "surface": {
       "crate-vis": 3
      }
@@ -79510,7 +79531,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 284,
+     "files": 285,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79678,7 +79699,7 @@
      "purpose": "—"
     },
     "provenance": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -80198,7 +80219,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5319,
+   "source_files": 5321,
    "test_files": 902
   },
   "oneiron-android": {
@@ -100040,13 +100061,33 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/choices.rs",
+     "purpose": "FIX 8188, 8189: every choice a call asks for, on the caller's own clock",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/exchange.rs",
+     "purpose": "The exchange a call proposes back (FIX 8188, 8192): the newest user text, every answer the caller got and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/openai_proxy/mod.rs",
      "purpose": "OF-445: the OpenAI-compatible memory-injection proxy, the integration lane for already-shipped apps…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -100063,10 +100104,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/openai_proxy/release.rs",
+     "purpose": "FIX 8191: the completed answer, judged right before it is released",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openai_proxy/timing.rs",
+     "purpose": "FIX 8190: when a refused model call may be sent again, as its source error said it",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/openai_proxy/wire.rs",
      "purpose": "OpenAI memory-proxy response conversion and refusal mapping (OF-445)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -110916,7 +110977,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 585,
+     "files": 589,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111401,7 +111462,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1329,
+   "source_files": 1333,
    "test_files": 182
   },
   "oneiron-spawn": {
