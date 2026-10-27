@@ -313,7 +313,8 @@ pub(super) fn handle_app_message_with_connection(
             .flatten();
         // FIX 10344: a refused call that serves a room NOTE, or rides an
         // anonymous session its principal is verified in, keeps no receipt,
-        // as its answered twin keeps none (FIX 4280).
+        // as its answered twin keeps none (FIX 4280). An editor's close is
+        // judged by the room hold this host still keeps for the principal.
         let anonymous = call.as_ref().is_some_and(|(request, context)| {
             let session = context
                 .as_ref()
@@ -323,12 +324,12 @@ pub(super) fn handle_app_message_with_connection(
                 .as_ref()
                 .and_then(call_receipt::request_principal);
             call_receipt::session_is_anonymous_for(server, session, principal)
-                || server.vault().room_note_call_for(
+                || call_receipt::room_notes::room_note_call(
+                    server,
                     session,
                     principal,
                     &request.method,
                     Some(&request.params),
-                    None,
                 )
         });
         let method = call.map(|(request, _)| request.method);
