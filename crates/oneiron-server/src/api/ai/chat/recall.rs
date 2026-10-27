@@ -12,7 +12,6 @@ use oneiron::claim::CallerLocality;
 use oneiron::conversation::OutputMark;
 use oneiron::memory::resolve_entity_ref;
 use oneiron::{LlmMessage, LlmMessageRole, ModelLocality, Vault};
-
 use serde::Serialize;
 
 use super::{ChatTurnRequest, assistant, chat_request, text_message};
