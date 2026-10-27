@@ -47921,6 +47921,8 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[serde(rename = "AdmissionDenied")]
     AdmissionDenied,
+    #[serde(rename = "HostCheck")]
+    HostCheck,
 }
 
 /// `oneiron_model::llm::error::LlmError`.

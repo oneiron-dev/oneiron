@@ -11,15 +11,18 @@
 //!
 //! Each call is still one gated call: a socket open is no admission, and a
 //! dropped call drops its socket, which ends the response on it.
+//!
+//! The vault the chains are kept in and the `store` switch are the server's
+//! own ([`ResponsesContext`], FIX 9516), never the process's.
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
 use futures_util::{FutureExt, SinkExt, StreamExt};
 use oneiron::llm::SingleRouteBackend;
 use oneiron::{
     BudgetLease, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmResult, LlmStream,
-    LlmStreamResult, ModelId, Vault,
+    LlmStreamResult, ModelId,
 };
 use oneiron_llm_openai::{
     OpenAiCompatBackend, OpenAiCompatProviderStream, OpenAiCompatStreamFrame,
@@ -53,21 +56,8 @@ const IDLE_SOCKETS: usize = 8;
 /// response, by provider. Never replicated, and runtime to a checkpoint.
 const CHAIN_PREFIX: &str = "models:responses-chain:v1:";
 
-/// The vault the stored chains are kept in, set at start-up.
-static CHAIN_VAULT: RwLock<Option<Weak<Vault>>> = RwLock::new(None);
-
-/// Keeps every provider's stored chains in `vault`.
-pub(crate) fn set_responses_chain_vault(vault: &Arc<Vault>) {
-    *CHAIN_VAULT.write().unwrap_or_else(PoisonError::into_inner) = Some(Arc::downgrade(vault));
-}
-
-fn chain_vault() -> Option<Arc<Vault>> {
-    CHAIN_VAULT
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .as_ref()?
-        .upgrade()
-}
+mod context;
+pub(crate) use context::ResponsesContext;
 
 /// One conversation's stored chain, as its row keeps it.
 #[derive(Serialize, Deserialize)]
@@ -75,16 +65,6 @@ struct ChainRow {
     response_id: String,
     /// When the row was written, on the vault's recorded-at clock.
     updated: u64,
-}
-
-/// The owner's Responses `store` switch (OF-602), off by default: read from
-/// the vault at start-up and set again when the owner changes it.
-static STORE: AtomicBool = AtomicBool::new(false);
-
-/// Sets whether each Responses turn from here on asks its provider to keep
-/// the response.
-pub(crate) fn set_responses_store(on: bool) {
-    STORE.store(on, Ordering::Relaxed);
 }
 
 /// One socket and the chain of responses it holds.
@@ -123,16 +103,21 @@ pub(super) struct ResponsesSockets {
     /// Whose stored chains these are: hex16 of the socket URL and the key
     /// binding.
     provider_key: String,
+    /// This server's vault for its stored chains, and its owner's `store`
+    /// switch (FIX 9516).
+    context: ResponsesContext,
 }
 
 impl ResponsesSockets {
     /// The sockets for `provider`, at `url` (its `/v1/responses`, as the
-    /// HTTP client joins it). A configured `key_env` that is unset is a
-    /// refusal here, as it is for the HTTP client.
+    /// HTTP client joins it), under `context`, the server's Responses state.
+    /// A configured `key_env` that is unset is a refusal here, as it is for
+    /// the HTTP client.
     pub(super) fn new(
         provider: &ProviderConfig,
         url: &str,
         max_age_secs: u64,
+        context: ResponsesContext,
     ) -> anyhow::Result<Self> {
         let url = if let Some(rest) = url.strip_prefix("https://") {
             format!("wss://{rest}")
@@ -172,6 +157,7 @@ impl ResponsesSockets {
             idle: Mutex::new(Vec::new()),
             refused: AtomicBool::new(false),
             provider_key,
+            context,
         })
     }
 
@@ -241,7 +227,7 @@ impl ResponsesSockets {
         if !turn.stored() || session.chain.extended_by(&turn.items) {
             return session;
         }
-        let Some(vault) = chain_vault() else {
+        let Some(vault) = self.context.chain_vault() else {
             return session;
         };
         let digests = responses_item_digests(&turn.items);
@@ -279,7 +265,8 @@ impl ResponsesSockets {
     /// Writes `chain` as its conversation's stored chain, and drops the row
     /// at `continued`, the chain it extended.
     fn keep(&self, chain: &OpenAiResponsesChain, continued: Option<String>) {
-        let (Some(vault), Some(response_id)) = (chain_vault(), chain.response_id()) else {
+        let (Some(vault), Some(response_id)) = (self.context.chain_vault(), chain.response_id())
+        else {
             return;
         };
         let key = self.chain_key(chain.digests());
@@ -306,7 +293,7 @@ impl ResponsesSockets {
 
     /// Drops the stored chain row at `key`: the provider no longer has it.
     fn forget(&self, key: String) {
-        let Some(vault) = chain_vault() else {
+        let Some(vault) = self.context.chain_vault() else {
             return;
         };
         tokio::task::spawn_blocking(move || {
@@ -503,7 +490,7 @@ impl OpenAiSessions {
         if self.response_format == ResponseFormatWire::Omitted {
             turn.head.remove("text");
         }
-        if STORE.load(Ordering::Relaxed) {
+        if self.sockets.context.store() {
             turn.head.insert("store".into(), JsonValue::Bool(true));
         }
         Ok(turn)
