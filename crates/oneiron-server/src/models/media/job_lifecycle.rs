@@ -35,19 +35,19 @@ impl MediaRuntime {
         id: &str,
         state: &MediaJobState,
     ) -> LlmResult<MediaJobState> {
-        let written = self
-            .store
-            .as_ref()
-            .map_or(Ok(JobWrite::Kept), |store| -> Result<JobWrite, String> {
-                let kept = store
-                    .get(id)
-                    .ok_or_else(|| "its row is not kept".to_owned())?;
-                let Some(mut row) = kept.live() else {
-                    return Ok(JobWrite::Erased);
-                };
-                row.ended = Some(state.clone());
-                store.update(id, row)
-            });
+        let written =
+            self.store
+                .as_ref()
+                .map_or(Ok(JobWrite::Kept), |store| -> Result<JobWrite, String> {
+                    let kept = store
+                        .get(id)
+                        .ok_or_else(|| "its row is not kept".to_owned())?;
+                    let Some(mut row) = kept.live() else {
+                        return Ok(JobWrite::Erased);
+                    };
+                    row.ended = Some(state.clone());
+                    store.update(id, row)
+                });
         let mut jobs = self.lock_jobs();
         match written {
             Ok(JobWrite::Kept) => {

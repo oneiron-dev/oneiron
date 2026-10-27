@@ -11,12 +11,12 @@ use super::{
     DecisionDial, DecisionHost, DecisionLadder, DecisionProvider, DecisionRung, EntityId,
     FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, LadderNotes,
     MembershipDecisions, PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING,
-    PlacementDecisions, PolicyDecisions, REVIEW_DIAL,
-    REVIEW_HARD_CHECK_WORDING, REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING,
-    REVIEW_SEVERITY_WORDING, REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions,
-    ReviewWording, SeatDecisions, SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET,
-    TASK_DONE_MET_WORDING, TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions,
-    Vault, WAVE_FANOUT_WORDING,
+    PlacementDecisions, PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING,
+    REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING,
+    REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions,
+    SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING,
+    TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault,
+    WAVE_FANOUT_WORDING,
 };
 
 impl DecisionHost {
@@ -51,9 +51,7 @@ impl DecisionHost {
         let leaves = (posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
             && posture != HostingPrivacyPosture::Relay;
         let held = self.ladder.big.as_deref();
-        let ours = |big: &dyn DecisionProvider| {
-            held.is_some_and(|own| std::ptr::addr_eq(own, big))
-        };
+        let ours = |big: &dyn DecisionProvider| held.is_some_and(|own| std::ptr::addr_eq(own, big));
         if !leaves
             && ladder.big.is_some_and(ours)
             && let Some(on_host) = self.big_on_host.as_deref()
