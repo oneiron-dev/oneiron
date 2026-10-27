@@ -448,6 +448,12 @@ impl VoiceCascadeSession {
 
     /// Sentence boundaries belong to the audio/text host, not a second parser
     /// here. TTS and safeguard share exactly the same completed sentence bytes.
+    /// A vault whose owner turned their policy on classifies every sentence
+    /// here, whatever its source (FIX 7856): the owner's own row is enforced
+    /// on their own brain's words, which is their act and not a narrowing.
+    /// Source taint stays the host's advisory mark on the request and keeps
+    /// the request it already chose, so a vault with the plane off classifies
+    /// exactly what it did before.
     pub fn complete_sentence(
         &mut self,
         generation: GenerationEpoch,
@@ -456,6 +462,7 @@ impl VoiceCascadeSession {
         if !self.accepts_pcm(generation) {
             return Ok(None);
         }
+        let owner_policy_on = self.owner_policy_enabled();
         let active = self
             .generation
             .as_mut()
@@ -467,7 +474,11 @@ impl VoiceCascadeSession {
             .sentence
             .checked_add(1)
             .ok_or_else(|| invalid("sentence id exhausted"))?;
-        let safeguard = if active.request.externally_tainted {
+        // The owner's own plane asks for a verdict on every sentence, whatever
+        // its source (FIX 7856); taint keeps the work it already chose, and
+        // rides the request as the host's advisory mark. A vault with the
+        // plane off and no taint classifies nothing, as before.
+        let safeguard = if owner_policy_on || active.request.externally_tainted {
             active.pending_safeguards.insert(active.sentence);
             Some(SafeguardRequest {
                 vault: Arc::clone(&self.vault),
@@ -795,6 +806,28 @@ impl VoiceCascadeSession {
             active.pending_safeguards.clear();
         }
         OutputStop::new(generation, reason, cancel_llm)
+    }
+
+    /// Whether the vault owner turned their own policy plane on, read from
+    /// the manifest in force now: the same question every other output door
+    /// asks before it classifies content (FIX 7856), and the one that decides
+    /// whether an owner row can act at all. A manifest this session could not
+    /// read answers no, as the sovereign plane's own fail-open does; the
+    /// sentence is not refused for it.
+    fn owner_policy_enabled(&self) -> bool {
+        let store = &self.vault.store;
+        let policy = store
+            .env
+            .read_txn()
+            .map_err(Error::from)
+            .and_then(|rtxn| crate::gate::resolve_policy_manifest(store, &rtxn));
+        match policy {
+            Ok(policy) => policy.owner_policy_enabled(),
+            Err(error) => {
+                tracing::warn!(%error, "voice: the owner policy was not read");
+                false
+            }
+        }
     }
 
     fn require_open(&self) -> Result<()> {
