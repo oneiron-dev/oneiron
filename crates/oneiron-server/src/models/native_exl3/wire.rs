@@ -9,6 +9,14 @@
 //! advertises them in its hello as `capabilities.sessions` `{minor, ops}`; a
 //! host sends one only to a worker whose hello names that minor and that op
 //! (`session_ops.rs`), and a v1.0 worker never sees one.
+//!
+//! Codec v1.2 (`oneiron::llm::SNAPSHOT_SCHEMA_MINOR`) adds `session.export`
+//! and `session.import`, asked only of a worker whose hello names minor 2
+//! and the snapshot format this side speaks. A region's description names
+//! its encoding: `chat_json` for a conversation, `snapshot_v1` for a
+//! snapshot. An export's answer passes the worker's sealed snapshot region
+//! on its own frame's first byte (`transport.rs` reads it with its
+//! descriptor), and an import's input is one as any input region is.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
@@ -46,6 +54,9 @@ pub(super) struct Incoming {
     pub(super) v: u64,
     pub(super) op: String,
     pub(super) request_id: u64,
+    /// The incarnation that sent it: every frame the worker sends names it.
+    #[serde(default)]
+    pub(super) epoch: Option<String>,
     #[serde(default)]
     pub(super) body: JsonValue,
 }
@@ -103,12 +114,18 @@ pub(super) fn generate_body(
 /// An input region's description: one `chat_json` region, the first
 /// descriptor of its frame, whole. `buffer_id` names it on its connection.
 pub(super) fn input(buffer_id: u64, length: u64) -> JsonValue {
+    region(buffer_id, length, CHAT_JSON)
+}
+
+/// A region's description: one region in `encoding`, the first descriptor
+/// of its frame, whole. `buffer_id` names it on its connection.
+pub(super) fn region(buffer_id: u64, length: u64, encoding: &str) -> JsonValue {
     json!({
         "buffer_id": buffer_id,
         "fd_index": 0,
         "offset": 0,
         "length": length,
-        "encoding": CHAT_JSON,
+        "encoding": encoding,
     })
 }
 
