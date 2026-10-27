@@ -22,11 +22,11 @@ pub const MAX_CRITERION_BYTES: usize = 512;
 pub struct QuestionCriteria<Line = String> {
     // `Vec::new`, not a bare default: serde would otherwise bound `Line:
     // Default`, which a done-means `Criterion` is not.
-    #[serde(default = "Vec::new")]
+    #[serde(default = "Vec::<Line>::new")]
     pub yes_if_all: Vec<Line>,
-    #[serde(default = "Vec::new")]
+    #[serde(default = "Vec::<Line>::new")]
     pub no_if_any: Vec<Line>,
-    #[serde(default = "Vec::new")]
+    #[serde(default = "Vec::<Line>::new")]
     pub not_a_reason_to_say_no: Vec<Line>,
 }
 
