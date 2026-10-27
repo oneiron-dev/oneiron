@@ -26,14 +26,17 @@ use super::dispatch_types::{
     OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink,
 };
 use super::intent::OutboundIntentSource;
-use super::reply_content::CONNECTOR_REPLY_BODY_PREFIX;
 use crate::channel_identity_provider::{
-    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, SLACK_CHANNEL,
+    DEFAULT_LINE_PUSH_MONTHLY_ALLOWANCE, LINE_CHANNEL, LineChat, LineChatKind, SLACK_CHANNEL,
+    line_source_audience_key,
 };
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
+use crate::outbound_intent_ledger::ProviderWaitKind;
 use crate::surface_event::SurfaceConnectorPayload;
 use crate::{EntityId, Vault};
+
+mod content;
 
 const SLACK_POST_MESSAGE: &str = "https://slack.com/api/chat.postMessage";
 /// The built-in Slack pack connection whose checked credential posts.
@@ -75,25 +78,6 @@ const LINE_INVALID_REPLY_TOKEN: &str = "Invalid reply token";
 const LINE_MONTHLY_LIMIT: &str = "monthly limit";
 /// How long the month-usage read before a push may take.
 const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// The check-in line a trusted contact's notice (OF-527) reads, the same
-/// every time: the fact of concern, never a word of the conversation.
-const TRUSTED_CONTACT_CHECK_IN_TEXT: &str = "Having a hard night, please check in.";
-
-impl Vault {
-    /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: an agent's connector reply body, a commitment
-    /// reminder, or a trusted contact's fixed check-in line.
-    pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
-        if content_ref == crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF {
-            return Ok(Some(TRUSTED_CONTACT_CHECK_IN_TEXT.to_owned()));
-        }
-        if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
-            return self.connector_reply_body_text(content_ref);
-        }
-        self.commitment_reminder_text(content_ref)
-    }
-}
 
 /// The served sink: one bounded HTTPS client and the vault its credentials
 /// and content are read from.
@@ -260,7 +244,9 @@ impl<'a> ServedChannelSink<'a> {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned);
         if status == 429 {
-            let failed = OutboundExecutionOutcome::failed("slack_rate_limited");
+            // FIX 8818: a rate limit keeps the send queued for the wait.
+            let failed = OutboundExecutionOutcome::failed("slack_rate_limited")
+                .with_provider_wait(ProviderWaitKind::RateLimit);
             return match retry_after {
                 Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
                 None => failed,
@@ -315,8 +301,17 @@ impl<'a> ServedChannelSink<'a> {
             Ok(secret) => secret,
             Err(_) => return OutboundExecutionOutcome::failed("line_connection_unchecked"),
         };
-        // Read before the door opens: the door holds the vault's writer.
-        let answered = self.answered_provider_event(request, LINE_CHANNEL);
+        // Read before the door opens: the door holds the vault's writer. The
+        // archived event answers only the audience the reply was admitted
+        // on: its token never carries a reply into another group, room or
+        // user (FIX 2838). An event written in another chat, or one whose
+        // archive does not read, answers nothing: the send pushes to its
+        // own target, the audience the Gate admitted (FIX 10809).
+        let answered = self
+            .answered_provider_event(request, LINE_CHANNEL)
+            .filter(|body| {
+                line_archived_audience(body).as_deref() == Some(request.intent.target.as_str())
+            });
         let reply_token = match mode {
             LineMode::Push => None,
             LineMode::Reply | LineMode::ReplyOrPush => answered
@@ -326,7 +321,7 @@ impl<'a> ServedChannelSink<'a> {
         if mode == LineMode::Reply && reply_token.is_none() {
             return OutboundExecutionOutcome::failed("line_reply_token_unavailable");
         }
-        let destination = line_destination(answered.as_ref(), &request.intent.target);
+        let destination = line_destination(&request.intent.target);
         let mut outcome = None;
         let _door = self.vault.inject_secret_at_door(
             &secret.name,
@@ -411,7 +406,7 @@ impl<'a> ServedChannelSink<'a> {
             }
         };
         let origin = SurfaceConnectorPayload::from_connector_event(&event).ok()?;
-        if origin.channel != channel || origin.source.user_ref != intent.target {
+        if origin.channel != channel || origin.reply_target() != intent.target {
             return None;
         }
         let body = match self
@@ -529,11 +524,19 @@ impl<'a> ServedChannelSink<'a> {
                 accepted_id.unwrap_or_else(|| "unknown".to_owned())
             )),
             400 if message == LINE_INVALID_REPLY_TOKEN => return LineAnswer::TokenInvalid,
+            // FIX 8818: a spent quota or a rate limit keeps the send queued
+            // for the provider's wait, and its stated seconds ride along.
             429 if message.contains(LINE_MONTHLY_LIMIT) => {
-                OutboundExecutionOutcome::failed("line_monthly_limit")
+                let failed = OutboundExecutionOutcome::failed("line_monthly_limit")
+                    .with_provider_wait(ProviderWaitKind::Quota);
+                match retry_after {
+                    Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
+                    None => failed,
+                }
             }
             429 => {
-                let failed = OutboundExecutionOutcome::failed("line_rate_limited");
+                let failed = OutboundExecutionOutcome::failed("line_rate_limited")
+                    .with_provider_wait(ProviderWaitKind::RateLimit);
                 match retry_after {
                     Some(secs) => failed.with_receipt_field(RETRY_AFTER_FIELD, secs),
                     None => failed,
@@ -587,35 +590,39 @@ fn slack_reply_thread(body: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// The reply token an archived LINE event carries, while the event is
-/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
-/// Where a LINE push goes: the group or room the answered message came
-/// from, as a Slack reply goes to its channel, else the target's user
-/// (`line:user:<id>`), group (`line:group:<id>`), room (`line:room:<id>`)
-/// or bare LINE id. `None` for a target LINE cannot address. A fresh reply
-/// token already answers in the message's own chat.
-fn line_destination(answered: Option<&serde_json::Value>, target: &str) -> Option<String> {
-    let chat = answered
-        .and_then(|body| body.pointer("/event/source"))
-        .and_then(|source| match source.get("type")?.as_str()? {
-            "group" => source.get("groupId")?.as_str(),
-            "room" => source.get("roomId")?.as_str(),
-            _ => None,
-        });
-    let to = match chat {
-        Some(chat) => chat,
-        None => [
-            LINE_USER_TARGET_PREFIX,
-            LINE_GROUP_TARGET_PREFIX,
-            LINE_ROOM_TARGET_PREFIX,
-        ]
-        .iter()
-        .find_map(|prefix| target.strip_prefix(prefix))
-        .unwrap_or(target),
-    };
+/// Where a LINE push goes: the target's user (`line:user:<id>`), group
+/// (`line:group:<id>`), room (`line:room:<id>`) or bare LINE id. `None` for
+/// a target LINE cannot address. A push never takes its chat from an
+/// answered event: that event answers only the audience that is the target
+/// (FIX 10809), and a fresh reply token already answers in its chat.
+fn line_destination(target: &str) -> Option<String> {
+    let to = [
+        LINE_USER_TARGET_PREFIX,
+        LINE_GROUP_TARGET_PREFIX,
+        LINE_ROOM_TARGET_PREFIX,
+    ]
+    .iter()
+    .find_map(|prefix| target.strip_prefix(prefix))
+    .unwrap_or(target);
     (!to.is_empty() && !to.contains(':')).then(|| to.to_owned())
 }
 
+/// The audience of an archived LINE event, normalized and spelled by
+/// [`line_source_audience_key`] as intake spelled the reply target: the
+/// group or room it was written in, else its sender.
+fn line_archived_audience(answered: &serde_json::Value) -> Option<String> {
+    let source = answered.pointer("/event/source")?;
+    let chat = source
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .and_then(LineChatKind::parse)
+        .and_then(|kind| Some(LineChat::new(kind, source.get(kind.id_field())?.as_str()?)));
+    let user = source.get("userId").and_then(serde_json::Value::as_str);
+    line_source_audience_key(chat.as_ref(), user)
+}
+
+/// The reply token an archived LINE event carries, while the event is
+/// younger than [`LINE_REPLY_TOKEN_FRESH_SECS`] by its own `timestamp` (ms).
 fn fresh_line_reply_token(value: &serde_json::Value, now: u64) -> Option<String> {
     let token = value.pointer("/event/replyToken")?.as_str()?.trim();
     let at = value.pointer("/event/timestamp")?.as_u64()? / 1000;

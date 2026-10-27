@@ -489,6 +489,24 @@ impl Memory<'_> {
                     now,
                 );
                 record.read_frontier_hash = reviewed.frontier;
+                // FIX 7499, 7500: the reviewed candidate's read context, and
+                // the loop links of the pending decision it answers.
+                let pending = reviewed.pending.as_ref().and_then(|pending| {
+                    let store = &self.vault.store;
+                    store
+                        .gate_decision_in_txn(&*wtxn, pending.decision_id)
+                        .ok()
+                        .flatten()
+                });
+                record.context = crate::store::GateDecisionContext {
+                    read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
+                        .into_iter()
+                        .collect(),
+                    ..pending
+                        .as_ref()
+                        .map(crate::store::GateDecisionContext::answering)
+                        .unwrap_or_default()
+                };
                 self.vault
                     .store
                     .append_gate_decision_in_txn(wtxn, &record)?;

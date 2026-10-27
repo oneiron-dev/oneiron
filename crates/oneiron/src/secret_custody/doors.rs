@@ -1,9 +1,8 @@
 //! Name index, borrowing admission projection, sealed put, and Vault doors.
 
-use crate::ports::EntityStoreRead;
-use rmpv::ValueRef;
+mod admission;
 
-use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
+use crate::batch::{BatchOp, apply_ops};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result, SideTableRowProblem};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
@@ -14,11 +13,12 @@ use crate::vault::Vault;
 
 use super::codec::invalid_body;
 use super::types::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
-    SECRET_NAME_MAX_BYTES, SecretBinding, SecretCustodyFloor, SecretCustodyMetadata,
-    SecretCustodyRecord, SecretCustodyStatus, TierBand,
+    CustodyClass, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_NAME_MAX_BYTES, SecretBinding,
+    SecretCustodyFloor, SecretCustodyMetadata, SecretCustodyRecord, SecretCustodyStatus, TierBand,
 };
 use crate::error::SecretError;
+
+pub(crate) use self::admission::{SecretCustodyAdmission, read_secret_custody_admission_in_txn};
 
 // ---------------------------------------------------------------------------
 // Name index
@@ -94,221 +94,6 @@ pub(crate) fn read_secret_custody_in_txn(
     id: &EntityId,
 ) -> Result<Option<SecretCustodyRecord>> {
     super::storage_seal::read_opened_in_txn(store, txn, id)
-}
-
-// ---------------------------------------------------------------------------
-// Admission projection (SECRET-02, SOL-1920-04)
-// ---------------------------------------------------------------------------
-
-/// The admission projection of a custody record: every field SECRET-02's
-/// lease doors need to ADMIT and to drive T2, and nothing else. Has no
-/// value field by construction — admission never heap-copies plaintext;
-/// the ONE value decode is the bound door [`Vault::get_secret_value_in_txn`]
-/// itself (its caller wraps the bytes in `Zeroizing`). Raw-record access is
-/// not broadened: the full decode stays behind
-/// [`read_secret_custody_in_txn`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SecretCustodyAdmission {
-    /// The secret name.
-    pub(crate) name: String,
-    /// The custody class.
-    pub(crate) class: CustodyClass,
-    /// Lifecycle status.
-    pub(crate) status: SecretCustodyStatus,
-    /// Rotation generation counter (the S6 staleness signal leases stamp).
-    pub(crate) rotation_generation: u32,
-    /// Effector bindings.
-    pub(crate) bindings: Vec<SecretBinding>,
-    /// Manifest-declared local paths (the T2 target set).
-    pub(crate) declared_paths: Vec<String>,
-}
-
-impl SecretCustodyAdmission {
-    /// Looks up the binding covering `effector` — mirrors
-    /// [`SecretCustodyRecord::binding_for`], drives tier admission.
-    #[must_use]
-    pub(crate) fn binding_for(&self, effector: &str) -> Option<&SecretBinding> {
-        self.bindings.iter().find(|b| b.effector == effector)
-    }
-}
-
-/// The borrowing half of [`required_value`]: a MISSING or DUPLICATED key
-/// both yield `None`, over [`ValueRef`] entries.
-fn required_value_ref<'a, 'b>(
-    entries: &'b [(ValueRef<'a>, ValueRef<'a>)],
-    key: &str,
-) -> Option<&'b ValueRef<'a>> {
-    let mut found = None;
-    for (k, v) in entries {
-        if let ValueRef::String(s) = k
-            && s.as_str() == Some(key)
-        {
-            if found.is_some() {
-                return None;
-            }
-            found = Some(v);
-        }
-    }
-    found
-}
-
-/// A string field out of a borrowing value, tied to the body buffer.
-fn str_ref<'a>(value: &ValueRef<'a>, reason: &'static str) -> Result<&'a str> {
-    match value {
-        ValueRef::String(s) => s.into_str().ok_or(invalid_body(reason)),
-        _ => Err(invalid_body(reason)),
-    }
-}
-
-/// An integer field out of a borrowing value (the owned codec's `as_u64`
-/// discipline: u64 direct, else a non-negative i64).
-fn u64_ref(value: &ValueRef<'_>, reason: &'static str) -> Result<u64> {
-    match value {
-        ValueRef::Integer(n) => n
-            .as_u64()
-            .or_else(|| n.as_i64().and_then(|v| u64::try_from(v).ok()))
-            .ok_or(invalid_body(reason)),
-        _ => Err(invalid_body(reason)),
-    }
-}
-
-/// The borrowing half of [`binding_from_value`].
-fn binding_from_value_ref(value: &ValueRef<'_>) -> Result<SecretBinding> {
-    let ValueRef::Map(entries) = value else {
-        return Err(invalid_body("binding must be a map"));
-    };
-    let effector = str_ref(
-        required_value_ref(entries, "effector").ok_or(invalid_body("binding effector"))?,
-        "binding effector",
-    )?
-    .to_owned();
-    let tier_raw = u64_ref(
-        required_value_ref(entries, "tier_ceiling").ok_or(invalid_body("binding tier_ceiling"))?,
-        "binding tier_ceiling",
-    )?;
-    let tier_ceiling = CustodyTier::from_u8(
-        u8::try_from(tier_raw).map_err(|_| invalid_body("binding tier_ceiling"))?,
-    )
-    .ok_or(invalid_body("binding tier_ceiling"))?;
-    let scopes = match required_value_ref(entries, "scopes") {
-        Some(ValueRef::Array(items)) => {
-            let mut scopes = Vec::with_capacity(items.len());
-            for item in items {
-                scopes.push(str_ref(item, "binding scope")?.to_owned());
-            }
-            scopes
-        }
-        Some(_) => return Err(invalid_body("binding scopes must be an array")),
-        None => Vec::new(),
-    };
-    Ok(SecretBinding {
-        effector,
-        tier_ceiling,
-        scopes,
-    })
-}
-
-/// Decodes the admission projection from a custody body WITHOUT
-/// materializing the value: the borrowing MessagePack reader leaves
-/// `value_bytes` a slice of the LMDB-resident page, so the admission path
-/// holds no heap copy of the plaintext at all (SOL-1920-04). The keys the
-/// doors consume plus the presence/shape of `value_bytes` validate with
-/// the same missing-or-duplicated reject discipline as
-/// [`decode_secret_custody_body`]; keys the doors never read stay the full
-/// codec's affair (registration already ran it).
-pub(crate) fn decode_secret_custody_admission_body(bytes: &[u8]) -> Result<SecretCustodyAdmission> {
-    use std::io::Cursor;
-
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value_ref(&mut cursor)
-        .map_err(|_| invalid_body("decode secret custody body"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid_body("trailing bytes after secret custody body"));
-    }
-    let ValueRef::Map(entries) = value else {
-        return Err(invalid_body("secret custody body must be a map"));
-    };
-    // Present and byte-shaped, never copied: the value, sealed at rest or a
-    // restored image's carrier (KS-6), stays a borrow of the store page.
-    match (
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[4]),
-        required_value_ref(&entries, super::codec::SECRET_CUSTODY_SEALED_VALUE_KEY),
-    ) {
-        (Some(ValueRef::Binary(_) | ValueRef::String(_)), None)
-        | (None, Some(ValueRef::Binary(_))) => {}
-        _ => return Err(invalid_body("value_bytes")),
-    }
-    let name = str_ref(
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[1]).ok_or(invalid_body("name"))?,
-        "name",
-    )?
-    .to_owned();
-    let class = CustodyClass::parse(str_ref(
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[2]).ok_or(invalid_body("class"))?,
-        "class",
-    )?)
-    .ok_or(invalid_body("class"))?;
-    let status = SecretCustodyStatus::parse(str_ref(
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[5]).ok_or(invalid_body("status"))?,
-        "status",
-    )?)
-    .ok_or(invalid_body("status"))?;
-    let rotation_generation = u32::try_from(u64_ref(
-        required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[8])
-            .ok_or(invalid_body("rotation_generation"))?,
-        "rotation_generation",
-    )?)
-    .map_err(|_| invalid_body("rotation_generation"))?;
-    let bindings = match required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[9]) {
-        Some(ValueRef::Array(items)) => {
-            let mut bindings = Vec::with_capacity(items.len());
-            for item in items {
-                bindings.push(binding_from_value_ref(item)?);
-            }
-            bindings
-        }
-        Some(_) => return Err(invalid_body("bindings must be an array")),
-        None => return Err(invalid_body("bindings")),
-    };
-    let declared_paths = match required_value_ref(&entries, SECRET_CUSTODY_BODY_KEYS[11]) {
-        Some(ValueRef::Array(items)) => {
-            let mut paths = Vec::with_capacity(items.len());
-            for item in items {
-                paths.push(str_ref(item, "declared_path")?.to_owned());
-            }
-            paths
-        }
-        Some(_) => return Err(invalid_body("declared_paths must be an array")),
-        None => return Err(invalid_body("declared_paths")),
-    };
-    Ok(SecretCustodyAdmission {
-        name,
-        class,
-        status,
-        rotation_generation,
-        bindings,
-        declared_paths,
-    })
-}
-
-/// Reads the admission projection under either txn kind — the doors of
-/// SECRET-02 resolve this instead of the full record (SOL-1920-04). It
-/// decodes the record where the transaction holds it, so the value bytes are
-/// never copied out.
-pub(crate) fn read_secret_custody_admission_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<Option<SecretCustodyAdmission>> {
-    store.port_entity_with_raw(txn, id, |raw| {
-        let Some(header) = EntityMetadataHeader::parse(raw) else {
-            return Err(Error::CorruptedIndex("secret custody entity header"));
-        };
-        if header.entity_type != ENTITY_TYPE_SECRET_CUSTODY {
-            return Err(Error::CorruptedIndex("secret custody entity type"));
-        }
-        decode_secret_custody_admission_body(&raw[ENTITY_METADATA_HEADER_LEN..])
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -459,7 +244,8 @@ pub(super) fn apply_custody_body_in_txn(
     // marks them, in the writer that made it known (FIX 2781). A run-bound
     // record's value is its run's alone and is never keyed (FIX 8028): a
     // short code one run's browser found masks nothing else in the vault.
-    if !super::run_bound::is_run_bound_name(&rec.name)
+    // Nor is a cloud registration slot's (`known_values::never_keyed`).
+    if !super::known_values::never_keyed(&rec.name)
         && super::known_values::remember_in_txn(write.store, wtxn, id, rec)?
     {
         crate::batch::secret_scan::enqueue_known_remark_in_txn(write.store, wtxn, occurred_at)?;
@@ -542,7 +328,7 @@ impl Vault {
     }
 
     /// Door/lease paths only (SECRET-02). Reads the raw value bytes for a
-    /// record within a write txn, requiring a binding that covers `effector`
+    /// record within a read or write txn, requiring a binding that covers `effector`
     /// AND declares the [`SECRET_SCOPE_READ`] grant: anything else ⇒
     /// [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied). Naming the effector is not by itself a
     /// read grant — the binding's declared scope is what admits plaintext, and
@@ -553,7 +339,7 @@ impl Vault {
     /// [`crate::secret_lease`] (ONE-1920).
     pub(crate) fn get_secret_value_in_txn(
         &self,
-        txn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         id: &EntityId,
         effector: &str,
     ) -> Result<Option<Vec<u8>>> {

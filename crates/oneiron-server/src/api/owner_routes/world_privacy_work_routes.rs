@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
@@ -25,7 +25,8 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface, revision_hex};
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -109,11 +110,11 @@ async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyWork> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let input = json_payload(payload)?;
+    let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         let (world, settings, seen) = input.parse()?;
         Ok(server
@@ -132,11 +133,11 @@ async fn reassert(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyWork> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface(&server, &auth, &headers);
-    let input = json_payload(payload)?;
+    let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         let (world, settings, seen) = input.parse()?;
         let expected = seen.ok_or_else(|| {

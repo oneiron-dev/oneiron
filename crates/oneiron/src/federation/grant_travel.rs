@@ -124,6 +124,7 @@ impl GrantTravelAct<'_> {
             grant_ref: Some(self.grant.to_hex()),
             diff_handle: after.to_vec(),
             read_frontier_hash: self.frontier,
+            context: Default::default(),
             redacted_at: None,
         };
         vault

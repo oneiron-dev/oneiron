@@ -46,6 +46,7 @@ mod fallback_tests;
 mod family;
 mod forward;
 mod gemini_media;
+mod host_budgets;
 mod hosted_speech;
 mod http;
 #[cfg(test)]
@@ -90,10 +91,9 @@ pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
+pub(crate) use host_budgets::ModelHostBudgets;
 pub use hosted_speech::HostedCloner;
-pub(crate) use http::{
-    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
-};
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
 pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
@@ -102,7 +102,7 @@ pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
-pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store};
+pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
@@ -138,6 +138,15 @@ impl Seat {
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
     }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order: every model a call on the seat may be served on.
+    pub(crate) fn rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder
+            .rung_models()
+            .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned)))
+            .collect()
+    }
 }
 
 /// Every seat the config fills, plus a router over every configured model,
@@ -164,6 +173,11 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// The vault's model byte budgets its media rungs and mesh routes hold
+    /// their bytes on (FIX 9321, FIX 9323).
+    budgets: ModelHostBudgets,
+    /// This server's Responses state, which its socket pools hold (FIX 9516).
+    responses: ResponsesContext,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
@@ -192,6 +206,7 @@ fn build_provider(
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
     identities: &Arc<llama_identity::LlamaIdentityResolver>,
+    responses: &ResponsesContext,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -220,6 +235,7 @@ fn build_provider(
                         provider,
                         &http.url("/v1/responses"),
                         socket.max_age_secs,
+                        responses.clone(),
                     )
                 })
                 .transpose()?;

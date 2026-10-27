@@ -143,7 +143,6 @@ impl Memory<'_> {
             }
             let (receipts, next_after_generation) =
                 storage::receipt_history(self.vault, txn, message, after, limit)?;
-            #[cfg(feature = "sync")]
             let (document_exists, document_history) = {
                 let raw = self
                     .vault
@@ -155,7 +154,7 @@ impl Memory<'_> {
                     txn,
                     &message,
                     body,
-                    limit,
+                    Some(limit),
                 )?;
                 let exists = states.is_some();
                 let history = states
@@ -179,8 +178,6 @@ impl Memory<'_> {
                     .collect::<MemoryResult<Vec<_>>>()?;
                 (exists, history)
             };
-            #[cfg(not(feature = "sync"))]
-            let (document_exists, document_history) = (false, Vec::new());
             Ok(Some(MessageDurability {
                 message_id: message.to_hex(),
                 completion: message_completion_in_txn(self.vault, txn, &message)?,
@@ -189,6 +186,11 @@ impl Memory<'_> {
                 next_after_generation,
                 document_exists,
                 document_history,
+                birth_assertions: super::super::reply_assertions::birth_reply_assertions_in_txn(
+                    &self.vault.store,
+                    txn,
+                    &message,
+                )?,
             }))
         })?;
         if result.value.is_some() {

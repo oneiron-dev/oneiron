@@ -113,6 +113,7 @@ impl Share {
             created_at: self.created_at,
             revoked_at: self.revoked_at,
             expires_at: self.expires_at,
+            companion_bounds: None,
         }
     }
 

@@ -2,9 +2,11 @@
 //! base (`base`) or in an off-record session overlay (`session`), plus the
 //! turn-speaker wire helpers. Surface re-exported by [`super`].
 
+mod assertions;
 mod base;
 mod codec;
 mod program;
+mod reply_assertions;
 mod session;
 mod stream;
 mod turn_program;
@@ -16,6 +18,10 @@ pub(crate) use stream::{
 };
 mod validation;
 
+pub use self::reply_assertions::MessageReplyAssertions;
+pub(crate) use self::reply_assertions::{
+    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+};
 pub use self::types::{
     WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };

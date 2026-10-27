@@ -426,7 +426,7 @@ public final class Vault {
         try OneironStorageError.check(status)
     }
 
-    /// The `limit` (at most 1000) entities nearest `query`, best first; `query`'s length must be
+    /// The `limit` entities nearest `query`, however many, best first; `query`'s length must be
     /// the vault's dimensions.
     public func searchVector(_ query: [Double], limit: UInt32 = 10) throws -> [ScoredEntity] {
         var array = OneironScoredEntityArray(ptr: nil, len: 0, cap: 0)
@@ -444,7 +444,7 @@ public final class Vault {
 
     /// A context pack over `text` and `vector` as UTF-8 in `format` (`json` when nil or
     /// unknown; `yaml`, `toon`, `markdown`, `plaintext`), at most `limit` items (10 when nil,
-    /// at most 1000). A pack naming `media` is refused `modelUnavailable` once every input
+    /// any count). A pack naming `media` is refused `modelUnavailable` once every input
     /// validates: this library serves no `ai.embed` rung, and never packs without the media.
     public func contextPack(
         text: String? = nil,

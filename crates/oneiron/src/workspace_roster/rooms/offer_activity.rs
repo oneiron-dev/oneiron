@@ -25,7 +25,6 @@ use super::offers::{
 use crate::conversation_dag::AppendRecord;
 use crate::edge::EdgeKind;
 use crate::error::{ClaimError, Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
 use crate::memory::{Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessTurn};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
@@ -205,8 +204,8 @@ fn open_card_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, room: EntityId) -> Res
 /// The ids the nearest turn up a reply chain names, from `parent`, the turn a
 /// new one answers. Each step is one reply link `up` reads, never a thread's
 /// trunk anchor, a `Parent` or a recipient. The walk ends at a turn outside
-/// `room`, at the chain's start and at the shared ancestor bound, past which
-/// a reply engages no card.
+/// `room`, at the chain's start and at a cycle. The whole chain is read,
+/// however long (rule 5).
 fn inherited_refs_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -214,19 +213,31 @@ fn inherited_refs_in_txn(
     parent: EntityId,
     up: impl Fn(EntityId) -> Result<Option<EntityId>>,
 ) -> Result<BTreeSet<String>> {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::RoomRetryLineageRows,
+        parent.as_bytes(),
+    )?;
     let mut cursor = Some(parent);
     let mut seen = BTreeSet::new();
+    let mut inherited = BTreeSet::new();
     while let Some(id) = cursor {
-        if !seen.insert(id) || seen.len() > MAX_ANCESTOR_DEPTH {
+        if !seen.insert(id) {
             break;
         }
+        count.row();
         match stored_refs_in_txn(vault, txn, room, id)? {
             None => break,
-            Some(named) if !named.is_empty() => return Ok(named),
+            Some(named) if !named.is_empty() => {
+                inherited = named;
+                break;
+            }
             Some(_) => cursor = up(id)?,
         }
     }
-    Ok(BTreeSet::new())
+    count.defer(&vault.store);
+    Ok(inherited)
 }
 
 /// Engages, in one write by `actor`, the room-wide cards of `room` it names

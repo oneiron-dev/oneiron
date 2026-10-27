@@ -35,6 +35,7 @@ mod marker;
 use std::fmt;
 use std::path::Path;
 
+use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
 use oneiron_vault_contract::backup_handoff::write_private_file;
 use serde::{Deserialize, Serialize};
@@ -245,7 +246,18 @@ impl BackupMarker {
 /// as well as what it covered. `None` as there, and when the marker's time
 /// does not read.
 pub fn backup_marker(dir: &Path, label: &str) -> Option<BackupMarker> {
-    let marker = marker::read_bound_marker(dir, label)?;
+    backup_marker_with_pins(dir, label, None)
+}
+
+/// [`backup_marker`], and when `pins` are given, `None` too for a backup
+/// whose commitment none of them signed (FIX 10712). It checks the signer of
+/// the backup's tail; [`BackupMarker::held`] stays the strong check.
+pub fn backup_marker_with_pins(
+    dir: &Path,
+    label: &str,
+    pins: Option<&[CheckpointSigner]>,
+) -> Option<BackupMarker> {
+    let marker = marker::read_bound_marker_with_pins(dir, label, pins)?;
     let landed = std::fs::symlink_metadata(dir.join(marker_name(label)))
         .and_then(|metadata| std::fs::Metadata::modified(&metadata))
         .ok()?

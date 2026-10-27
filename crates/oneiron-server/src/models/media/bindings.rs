@@ -4,8 +4,8 @@
 
 use super::{
     Arc, AtomicUsize, BankVoiceBinding, FatalLlmError, HostedCloner, LlmResult, MEDIA_RUN,
-    MediaRuntime, MediaVoice, ModelId, Ordering, PROVIDER_UNAVAILABLE_RETRY_SECS, RetryHint,
-    RunAdmission, RungVoices, SonioxRung, Vault, undeclared_run,
+    MediaRuntime, MediaVoice, ModelId, OfferCooldowns, Ordering, PROVIDER_UNAVAILABLE_RETRY_SECS,
+    PayerPerson, RetryHint, RunAdmission, RungVoices, SonioxRung, Vault, undeclared_run,
 };
 
 impl RungVoices {
@@ -78,6 +78,12 @@ impl MediaRuntime {
         self.live_asr.get(model).cloned()
     }
 
+    /// Where the media offers' rests are kept, when a vault keeps them: a
+    /// live hearing's limit rests its offer there too (FIX 9515).
+    pub(in crate::models) fn rests(&self) -> Option<Arc<OfferCooldowns>> {
+        self.rests.clone()
+    }
+
     /// The clone wire of hosted render target `target`, when it is one.
     #[must_use]
     pub fn voice_cloner(&self, target: &str) -> Option<Arc<HostedCloner>> {
@@ -94,6 +100,19 @@ impl MediaRuntime {
             self.host.clone(),
             Arc::clone(&self.receipts),
         ))
+    }
+
+    /// [`Self::clone_run`], billed to `payer` when an acting payer's own
+    /// account or consent explicitly funds the clone (FIX 9421): each permit
+    /// binds that PERSON and account, as a room-funded media call's does.
+    /// `None` is [`Self::clone_run`] itself, the vault's run as before; the
+    /// creator stays the run's initiator either way, never its payer by
+    /// having made the voice.
+    pub fn clone_run_funded(&self, payer: Option<PayerPerson>) -> LlmResult<RunAdmission> {
+        match payer {
+            None => self.clone_run(),
+            Some(payer) => self.media_run(Some(payer)),
+        }
     }
 
     /// Whether `target` renders from a banked identity's reference clip on

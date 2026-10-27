@@ -70,6 +70,9 @@ mod authority_checkpoint;
 mod blob_artifacts;
 // OF-604: zstd and gzip request bodies, and compressed JSON replies.
 mod body_codec;
+// FIX 8195, FIX 7917: owner request bodies, read after the route's door and
+// spooled whatever their length.
+mod body_spool;
 // ONE-1819 [BK-08]: the agent-readable booking surface. Its shared executor is
 // the sole consumer of the ONE-1817 guards below and the sole door into the
 // merged booking solver and lifecycle.
@@ -124,10 +127,10 @@ pub(crate) mod host_action;
 // generated dispatch, under the credential its connection bound, and claims
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
-    AsrSessions, DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
-    ModelStreams, admission_observer, ai_speech_for_run, call_verb as facade_call_verb,
-    claim_door_invocation, connector_answer_as, connector_call_listing_as, invocation_body,
-    self_use_as,
+    AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
+    INVOCATION_IN_FLIGHT, ModelStreams, admission_observer, ai_speech_for_run,
+    call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
+    connector_call_listing_as, invocation_body, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
@@ -139,6 +142,8 @@ mod git_lfs;
 mod transfer;
 pub(crate) use self::transfer::{LFS_MEMORY_ROOM, Transfers};
 mod lease;
+// FIX 9382: a caller's own push of one TASK to Linear now.
+mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;

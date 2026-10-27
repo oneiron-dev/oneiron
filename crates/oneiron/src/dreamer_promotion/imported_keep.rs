@@ -186,12 +186,7 @@ pub(super) fn stage_kept_alternative_in_txn(
         )
         .made_by(&candidate.claim_id, birth)
         .apply_recording_gate_decisions(txn)?;
-    crate::entity_doc::retain_promotion_evidence_in_txn(
-        vault,
-        txn,
-        &candidate.claim_id,
-        public_refs,
-    )?;
+    crate::entity_doc::verify_promotion_evidence_in_txn(vault, txn, public_refs)?;
     // Re-read inside the write: never Auto, and never Proposed where no
     // owner review holds it.
     let staged =

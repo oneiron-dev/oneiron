@@ -13,18 +13,18 @@ use serde::de::DeserializeOwned;
 /// its text.
 #[derive(Debug)]
 pub(crate) struct ConfigParseError {
-    path: PathBuf,
+    /// The file, unless the caller's own context names it.
+    path: Option<PathBuf>,
     /// One-based line and column of the parser's span, when it gave one.
     location: Option<(usize, usize)>,
 }
 
 impl fmt::Display for ConfigParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "parse config file {}: invalid configuration",
-            self.path.display()
-        )?;
+        if let Some(path) = &self.path {
+            write!(f, "parse config file {}: ", path.display())?;
+        }
+        write!(f, "invalid configuration")?;
         match self.location {
             Some((line, column)) => write!(f, " at line {line}, column {column}"),
             None => write!(f, " (location unavailable)"),
@@ -42,11 +42,47 @@ pub(crate) fn parse_toml<T: DeserializeOwned>(
     raw: &str,
 ) -> Result<T, ConfigParseError> {
     toml::from_str(raw).map_err(|error: toml::de::Error| ConfigParseError {
-        path: path.to_path_buf(),
-        location: error
-            .span()
-            .and_then(|span| line_and_column(raw, span.start)),
+        path: Some(path.to_path_buf()),
+        location: located(raw, &error),
     })
+}
+
+/// Where `raw`, the text of a config file the caller's context names, fails
+/// to read as `T`: for a failure met in a table settled from that text,
+/// whose own error names the value it refused and no place, and is dropped
+/// unread (FIX 10687). A text that reads clean gives the failure with no
+/// place.
+pub(crate) fn locate_toml_failure<T: DeserializeOwned>(raw: &str) -> ConfigParseError {
+    ConfigParseError {
+        path: None,
+        location: toml::from_str::<T>(raw)
+            .err()
+            .and_then(|error| located(raw, &error)),
+    }
+}
+
+/// Where the `[section]` table starts in `raw`, the text of a config file
+/// the caller's context names: what a failure met settling that table names
+/// in place of its own error, which may name a value it refused (FIX 10925).
+/// The table's first header line, column 1; no place when `raw` names none.
+pub(crate) fn locate_toml_section(raw: &str, section: &str) -> ConfigParseError {
+    let line = raw.lines().position(|line| {
+        line.trim_start()
+            .strip_prefix('[')
+            .and_then(|header| header.trim_start().strip_prefix(section))
+            .is_some_and(|rest| rest.trim_start().starts_with([']', '.']))
+    });
+    ConfigParseError {
+        path: None,
+        location: line.map(|line| (line + 1, 1)),
+    }
+}
+
+/// The one-based line and column in `raw` of the span `error` gives.
+fn located(raw: &str, error: &toml::de::Error) -> Option<(usize, usize)> {
+    error
+        .span()
+        .and_then(|span| line_and_column(raw, span.start))
 }
 
 /// The one-based line and column (in characters) of byte `offset` in `raw`.

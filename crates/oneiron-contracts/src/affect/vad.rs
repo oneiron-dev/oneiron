@@ -85,12 +85,27 @@ impl VadAnnotationSource {
         }
     }
 }
+/// How current a derived value is beside the source it was read from: the
+/// source changed since (`stale`), and a pass that derives it again is owed
+/// and has not settled (`pending_retag`). Both false is current.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+pub struct DerivationFreshness {
+    pub stale: bool,
+    pub pending_retag: bool,
+}
 /// Persisted VAD metadata attached to a TURN or MESSAGE entity.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct VadAnnotation {
     pub vad: Vad,
     pub source: VadAnnotationSource,
     pub annotated_at: u64,
+    /// How current a mood derived from a turn's tags is; `None` for an
+    /// annotation written on the turn, which is not derived and is its own
+    /// source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness: Option<DerivationFreshness>,
 }
 impl VadAnnotation {
     pub fn new(
@@ -103,6 +118,7 @@ impl VadAnnotation {
             vad,
             source,
             annotated_at,
+            freshness: None,
         })
     }
 }

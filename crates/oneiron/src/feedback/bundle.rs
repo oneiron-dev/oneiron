@@ -7,8 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::VaultConfig;
 use crate::edge::EdgeKind;
+use crate::limit_ask::EngineLimit;
 
-use super::error::{FeedbackError, bounded, checked_embedding_model, checked_note, checked_token};
+use super::error::{FeedbackError, checked_embedding_model, checked_note, checked_token};
 
 /// Stable encoding token for the v1 feedback bundle wire contract.
 pub const FEEDBACK_BUNDLE_ENCODING: &str = "oneiron.feedback.bundle.v1";
@@ -34,12 +35,6 @@ pub const FEEDBACK_EMBEDDING_MODEL_MAX_BYTES: usize = 128;
 
 /// Maximum accepted length of any single reference token in bytes.
 pub const FEEDBACK_REF_MAX_BYTES: usize = 256;
-
-/// Maximum number of hops carried by one healer diagnosis DAG.
-pub const FEEDBACK_DAG_MAX_HOPS: usize = 64;
-
-/// Maximum number of subject references carried by one healer diagnosis.
-pub const FEEDBACK_MAX_SUBJECT_REFS: usize = 64;
 
 /// Domain separator for the bundle digest preimage.
 const FEEDBACK_DIGEST_DOMAIN: &[u8] = b"oneiron.feedback.bundle.v1\0";
@@ -327,15 +322,9 @@ impl FeedbackHealerDiagnosis {
             &self.diagnosis_ref,
             FEEDBACK_REF_MAX_BYTES,
         )?;
-        bounded(
-            "healer subject_refs",
-            self.subject_refs.len(),
-            FEEDBACK_MAX_SUBJECT_REFS,
-        )?;
         for subject in &self.subject_refs {
             checked_token("healer subject_ref", subject, FEEDBACK_REF_MAX_BYTES)?;
         }
-        bounded("healer dag", self.dag.len(), FEEDBACK_DAG_MAX_HOPS)?;
         for hop in &self.dag {
             hop.validate()?;
         }
@@ -482,6 +471,21 @@ impl FeedbackBundle {
             .map(String::len)
             .max()
             .unwrap_or_default()
+    }
+
+    /// Measures the healer diagnosis's subject references and its hops, each
+    /// against the engine's maintenance row-items row (FIX 9854): past it,
+    /// the vault's limit port is asked. It never refuses: the diagnosis is
+    /// carried whole, every subject and every hop, whatever its counts.
+    pub fn measure_diagnosis_counts(&self, vault: &crate::Vault) {
+        let Some(diagnosis) = &self.healer_diagnosis else {
+            return;
+        };
+        let _ = vault.measure_limit(
+            EngineLimit::MaintenanceRowItems,
+            diagnosis.subject_refs.len() as u64,
+        );
+        let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, diagnosis.dag.len() as u64);
     }
 
     /// Checks every field constraint the wire contract promises. Free text

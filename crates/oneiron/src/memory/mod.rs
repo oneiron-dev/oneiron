@@ -147,7 +147,9 @@ pub use asset_resolve::{
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,
     pull_image, resolve_audio_ref, resolve_image_ref,
 };
-pub(crate) use asset_resolve::{asset_audio_in_lane, asset_image_in_lane};
+pub(crate) use asset_resolve::{
+    asset_audio_in_lane, asset_image_in_lane, asset_media_in, release_asset_blob_in_txn,
+};
 pub use authorship::MemoryAuthoringAction;
 pub(crate) use authorship::{
     claim_author, explicit_claim_override_in_txn, guard_existing_claim_in_txn,
@@ -201,7 +203,8 @@ pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
 pub use export::{
-    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportOptions, MemoryExport, MemoryExportReceipt,
+    EXPORT_TARGET_ARCHIVE, EXPORT_TARGET_OKF, ExportAnswer, ExportDelivery, ExportDigest,
+    ExportOptions, ExportTransfer, MemoryExport, MemoryExportReceipt,
 };
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
@@ -231,8 +234,8 @@ pub use people_verbs::{
 };
 pub use plugin_sections::{
     PluginSectionAdmittedRow, PluginSectionGrant, PluginSectionGrantRequest,
-    PluginSectionGrantState, PluginSectionListRequest, PluginSectionPackRow,
-    PluginSectionPendingRow, PluginSectionProposal, PluginSectionProposeRequest,
+    PluginSectionGrantState, PluginSectionInstallOutcome, PluginSectionListRequest,
+    PluginSectionPackRow, PluginSectionPendingRow, PluginSectionProposeRequest,
     PluginSectionRevokeRequest, PluginSectionRevoked, PluginSectionSuggestRequest,
     PluginSectionSuggestion, PluginSectionSuggestionState, PluginSectionTargetInput,
     PluginSectionsView, PluginSuggestionsSetRequest, PluginSuggestionsView,
@@ -314,6 +317,7 @@ pub use support::{HostWriteOrigin, Memory, RewriteAdmit, parse_actor_key, resolv
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
+pub use witness::MessageReplyAssertions;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -331,6 +335,9 @@ pub(crate) use witness::{
     message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
+pub(crate) use witness::{
+    erase_reply_assertions_in_txn, reply_assertions_owners, reply_assertions_stub,
+};
 
 pub(crate) use booking_publication::verify_public_booking_owner_in_txn;
 pub(crate) use credential_key::{actor_is_vault_owner_in_txn, owner_exemption_holds_in_txn};

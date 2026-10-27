@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -31,7 +31,8 @@ use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
 use oneiron::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::builtin_host::{
     HostConnectionChecks, ProviderSetup, public_origin, slack_app_manifest, start_slack_install,
@@ -39,11 +40,7 @@ use crate::builtin_host::{
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
-/// A folder read from disk stops here; the pack source applies its own,
-/// tighter bounds after.
-const MAX_FOLDER_FILES: usize = 1024;
-/// Organ builds ride in the folder and leave the source as blob assets.
-const MAX_FOLDER_BYTES: u64 = 256 * 1024 * 1024;
+mod line_chats;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
@@ -85,6 +82,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/packs/skills/{entity}/activation/approve",
             post(approve_skill_activation),
         )
+        .merge(line_chats::routes())
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,10 +123,10 @@ async fn installed(
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PutPack>, JsonRejection>,
+    payload: OwnerJsonBody<PutPack>,
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let put = blocking(move || {
         let files = match (request.path, request.files) {
             (Some(path), None) => read_folder(&path)?,
@@ -167,10 +165,10 @@ struct InstallFromHub {
 async fn install_from_hub(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<InstallFromHub>, JsonRejection>,
+    payload: OwnerJsonBody<InstallFromHub>,
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let put = blocking(move || {
         let hub = oneiron::EntityId::from_hex(&request.hub)
             .map_err(|_| OwnerError::Invalid("hub is not an entity id".to_owned()))?;
@@ -210,7 +208,8 @@ impl From<PackInstallDisposition> for PackPut {
     }
 }
 
-/// A pack folder's files, relative and `/`-separated. Dot entries such as
+/// A pack folder's files, relative and `/`-separated, every one of them
+/// whatever the folder's size (FIX 8202, Rule 5). Dot entries such as
 /// `.git` are skipped.
 pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
     if !root.is_absolute() {
@@ -219,7 +218,6 @@ pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
         ));
     }
     let mut files = Vec::new();
-    let mut total = 0_u64;
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
         let entries = std::fs::read_dir(&dir).map_err(|error| OwnerError::Host(error.into()))?;
@@ -239,15 +237,6 @@ pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
             if !kind.is_file() {
                 return Err(OwnerError::Invalid(
                     "a pack folder holds plain files only".to_owned(),
-                ));
-            }
-            total += entry
-                .metadata()
-                .map_err(|error| OwnerError::Host(error.into()))?
-                .len();
-            if files.len() >= MAX_FOLDER_FILES || total > MAX_FOLDER_BYTES {
-                return Err(OwnerError::Invalid(
-                    "the pack folder is too large".to_owned(),
                 ));
             }
             let relative = path
@@ -294,10 +283,10 @@ struct BindHooks {
 async fn bind_hooks(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindHooks>, JsonRejection>,
+    payload: OwnerJsonBody<BindHooks>,
 ) -> OwnerReply<Vec<String>> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let bound = blocking(move || {
         Ok(server
             .vault()
@@ -330,10 +319,10 @@ struct HookQualification {
 async fn qualify_hooks(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<QualifyHooks>, JsonRejection>,
+    payload: OwnerJsonBody<QualifyHooks>,
 ) -> OwnerReply<HookQualification> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let qualified = blocking(move || {
         // The one sandbox, taken here when no runner took it: `--no-hooks`
         // stops the runner, not an explicit qualification (FIX 1122).
@@ -371,10 +360,10 @@ struct AgentWorld {
 async fn place_agent_world(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AgentWorld>, JsonRejection>,
+    payload: OwnerJsonBody<AgentWorld>,
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let placed = blocking(move || {
         let id = |hex: &str, what: &str| {
             EntityId::from_hex(hex)
@@ -408,10 +397,10 @@ struct HookEnabled {
 async fn set_hook_enabled(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HookEnabled>, JsonRejection>,
+    payload: OwnerJsonBody<HookEnabled>,
 ) -> OwnerReply<()> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     blocking(move || {
         let binding = oneiron::EntityId::from_hex(&request.binding)
             .map_err(|_| OwnerError::Invalid("binding is not an entity id".to_owned()))?;
@@ -429,10 +418,10 @@ async fn set_hook_enabled(
 async fn remove_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindHooks>, JsonRejection>,
+    payload: OwnerJsonBody<BindHooks>,
 ) -> OwnerReply<PackInstallReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let removed = blocking(move || Ok(server.vault().remove_pack(&owner, &request.pack)?)).await?;
     Ok(Json(removed))
 }
@@ -464,10 +453,10 @@ struct PutOrganBuild {
 async fn put_organ_build(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PutOrganBuild>, JsonRejection>,
+    payload: OwnerJsonBody<PutOrganBuild>,
 ) -> OwnerReply<PackOrganBuild> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let build = blocking(move || {
         let source = entity_id(&request.source, "source")?;
         if !request.path.is_absolute() {
@@ -580,10 +569,10 @@ struct SetRefSync {
 async fn set_ref_sync(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetRefSync>, JsonRejection>,
+    payload: OwnerJsonBody<SetRefSync>,
 ) -> OwnerReply<RefSyncView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let hub = entity_id(&request.hub, "hub")?;
         let policy = HubSyncPolicy::parse(&request.sync_policy)
@@ -610,10 +599,10 @@ struct SyncPack {
 async fn sync_pack(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SyncPack>, JsonRejection>,
+    payload: OwnerJsonBody<SyncPack>,
 ) -> OwnerReply<PackPut> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let put = blocking(move || {
         Ok(PackPut::from(
             server.vault().sync_pack_from_hub(&owner, &request.name)?,
@@ -660,10 +649,10 @@ fn skill_row(entity: EntityId) -> SkillRow {
 async fn import_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ImportSkill>, JsonRejection>,
+    payload: OwnerJsonBody<ImportSkill>,
 ) -> OwnerReply<SkillRow> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
         let at = vault.now_recorded_at();
@@ -714,10 +703,10 @@ struct RestoreSkill {
 async fn restore_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RestoreSkill>, JsonRejection>,
+    payload: OwnerJsonBody<RestoreSkill>,
 ) -> OwnerReply<SkillRow> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         let at = server.vault().now_recorded_at();
         let occurred = oneiron::TimeRange { start: at, end: at };
@@ -929,10 +918,10 @@ async fn prepare_skill_activation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     UrlPath(entity): UrlPath<String>,
-    payload: Result<Json<ActivationRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ActivationRequest>,
 ) -> OwnerReply<ActivationAskView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let ask = prepare_activation(&server, &owner, &entity, &request)?;
         Ok(ActivationAskView {
@@ -957,10 +946,10 @@ async fn approve_skill_activation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     UrlPath(entity): UrlPath<String>,
-    payload: Result<Json<ActivationRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ActivationRequest>,
 ) -> OwnerReply<ConsentRow> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         let shown = request
             .effect_digest
@@ -1089,10 +1078,10 @@ async fn setup_view(
 async fn setup_prepare(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PackSetupKey>, JsonRejection>,
+    payload: OwnerJsonBody<PackSetupKey>,
 ) -> OwnerReply<PackSetupReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || {
         PackSetupReply::new(
             server
@@ -1111,10 +1100,10 @@ async fn setup_prepare(
 async fn setup_answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PackSetupAnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<PackSetupAnswerRequest>,
 ) -> OwnerReply<PackSetupReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || {
         let vault = server.vault();
         let source = request.source.as_deref();
@@ -1174,10 +1163,10 @@ async fn setup_answer(
 async fn setup_verify(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PackSetupVerifyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<PackSetupVerifyRequest>,
 ) -> OwnerReply<PackSetupReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || {
         let checks = HostConnectionChecks::new(&server)?;
         PackSetupReply::new(
@@ -1233,11 +1222,11 @@ async fn slack_install(
     auth: CoreAuth,
     headers: axum::http::HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SlackInstallRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SlackInstallRequest>,
 ) -> OwnerReply<crate::builtin_host::SlackInstallLink> {
     let owner = owner(&auth, &server)?;
     let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let link =
         blocking(move || start_slack_install(&server, owner, surface, request.source)).await?;
     Ok(Json(link))

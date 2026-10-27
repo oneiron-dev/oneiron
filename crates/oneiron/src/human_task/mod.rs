@@ -46,7 +46,8 @@ pub use self::open_asks::{
     UNCOVERED_HUMAN_ASK_FAMILIES, UncoveredHumanAskFamily, open_asks_for,
 };
 pub use self::wait::{
-    bind_human_wait, human_wait_binding, release_human_wait, signal_human_response,
+    bind_human_wait, human_wait_binding, human_wait_bindings, release_human_wait_trap,
+    signal_human_response,
 };
 
 /// [`human_followup_record`] in the caller's read snapshot, for a reader

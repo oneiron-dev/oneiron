@@ -31,8 +31,9 @@ use oneiron_crypto::HybridSecretKey;
 
 pub use self::status::{
     CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
-    CUSTODY_RETIREMENT_COMPLETE, CUSTODY_RETIREMENT_PENDING, CUSTODY_TARGET_PENDING,
-    CustodyPendingStep, CustodyRetirement, CustodyStatus, CustodyTargetState, DeclaredTarget,
+    CUSTODY_REMOTE_RETIREMENT_PENDING, CUSTODY_RETIREMENT_COMPLETE, CUSTODY_RETIREMENT_PENDING,
+    CUSTODY_TARGET_PENDING, CustodyPendingStep, CustodyRetirement, CustodyStatus,
+    CustodyTargetState, DeclaredTarget,
 };
 use super::{
     CheckpointKey, Custody, RestoreReason, RestoreReport, codec_error, read_image_required,
@@ -377,8 +378,13 @@ impl Vault {
 
     fn custody_status_of(&self, publication: Publication) -> Result<CustodyStatus> {
         let standing = standing_retirements_in_txn(&self.store, &self.store.env.read_txn()?)?;
-        let retirement =
-            status::retirement(self.store.custody_retirement()?, standing, &publication);
+        let remote = self.store.erasable_holders_pending()?;
+        let retirement = status::retirement(
+            self.store.custody_retirement()?,
+            standing,
+            remote,
+            &publication,
+        );
         Ok(CustodyStatus::of(publication, retirement))
     }
 
@@ -473,6 +479,16 @@ impl Vault {
             };
             owed.subject(&self.store, txn, &subject)?;
             owed.credential(&self.store, txn, record);
+            // An erased actor's erasable keys (FIX 8875): each one's
+            // retirement, then each holder whose copy is not verified
+            // retired. The erase never waits on them.
+            for (key, holders) in self.store.erasable_holders_of(record)? {
+                owed.subject(&self.store, txn, &key)?;
+                owed.found = true;
+                for holder in holders {
+                    owed.remote(holder.to_hex());
+                }
+            }
             if let Some(history) = self
                 .store
                 .custody_subject(CustodyKind::KnownValueEntry, record)?
@@ -602,6 +618,10 @@ impl Vault {
         if let Some(landing) = &landing {
             landing.fence(anchor)?;
             report.custody_note = landing.note().map(str::to_owned);
+            super::credential_custody::note_landed_access(
+                &mut report.credential_notes,
+                landing.owner_compartment_unopened(),
+            );
         }
         forked.keep();
         made.keep(&mut vault);
@@ -668,6 +688,16 @@ struct EraseOwed {
 }
 
 impl EraseOwed {
+    /// Notes `holder`'s copy owed once (FIX 8875).
+    fn remote(&mut self, holder: String) {
+        if !self.steps.iter().any(|step| {
+            step.state == CUSTODY_REMOTE_RETIREMENT_PENDING
+                && step.target_id.as_deref() == Some(holder.as_str())
+        }) {
+            self.steps.push(status::remote_step(holder));
+        }
+    }
+
     /// Notes `state` once.
     fn step(&mut self, state: &'static str) {
         if self.steps.iter().all(|step| step.state != state) {

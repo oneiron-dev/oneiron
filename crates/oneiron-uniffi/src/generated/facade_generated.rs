@@ -230,6 +230,11 @@ export_facade! {
     let output = client.vault_companions_access_requests_answer(&input)?;
     crate::codec::lift_record("vault.companions.access_requests.answer", &output)
 };
+"self.grants.answer" => fn self_grants_answer(&self, input: GrantAnswerRequest) -> GrantAnswered = |client| {
+    let input: oneiron::task_verb::sdk::GrantAnswerRequest = crate::codec::lower_record("self.grants.answer", input)?;
+    let output = client.self_grants_answer(&input)?;
+    crate::codec::lift_record("self.grants.answer", &output)
+};
 "vault.personas.preview" => fn vault_personas_preview(&self, input: PersonaSnapshotPreviewRequest) -> PersonaSnapshotPreview = |client| {
     let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest = crate::codec::lower_record("vault.personas.preview", input)?;
     let output = client.vault_personas_preview(&input)?;
@@ -512,22 +517,22 @@ export_facade! {
     let output = client.vault_affect_annotations_put(&input)?;
     Lift::lift(output)
 };
-"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> TaggingStatusView = |client| {
+"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingStatusView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.status", input)?;
     let output = client.vault_tagging_status(&input)?;
     crate::codec::lift_record("vault.tagging.status", &output)
 };
-"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> TaggingTagsView = |client| {
+"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingTagsView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.tags", input)?;
     let output = client.vault_tagging_tags(&input)?;
     crate::codec::lift_record("vault.tagging.tags", &output)
 };
-"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> TaggingHistoryView = |client| {
+"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> ScopedReadResultTaggingHistoryView = |client| {
     let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.history", input)?;
     let output = client.vault_tagging_history(&input)?;
     crate::codec::lift_record("vault.tagging.history", &output)
 };
-"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> TaggingMentionsView = |client| {
+"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> ScopedReadResultTaggingMentionsView = |client| {
     let input: oneiron::tagging::TaggingMentionsRequest = crate::codec::lower_record("vault.tagging.mentions", input)?;
     let output = client.vault_tagging_mentions(&input)?;
     crate::codec::lift_record("vault.tagging.mentions", &output)
@@ -677,7 +682,7 @@ export_facade! {
     let output = client.vault_retrieval_policy_update(&input)?;
     crate::codec::lift_record("vault.retrieval.policy.update", &output)
 };
-"vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
+"vault.export" => fn vault_export(&self, format: Option<String>) -> ExportAnswer = |client| {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
@@ -701,9 +706,9 @@ export_facade! {
     let output = client.vault_export_scoped(&input)?;
     crate::codec::lift_record("vault.export.scoped", &output)
 };
-"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
+"vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>, after: Option<String>) -> FacadeReceiptPage = |client| {
     let limit: usize = limit.lower()?;
-    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
+    let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default(), after.as_deref())?;
     Lift::lift(output)
 };
 "vault.assets.ingest" => fn vault_assets_ingest(&self, input: AssetIngestRequest) -> AssetIngestReceipt = |client| {
@@ -1266,7 +1271,7 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
-"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionProposal = |client| {
+"vault.packs.sections.propose" => fn vault_packs_sections_propose(&self, input: PluginSectionProposeRequest) -> PluginSectionInstallOutcome = |client| {
     let input: oneiron::memory::PluginSectionProposeRequest = crate::codec::lower_record("vault.packs.sections.propose", input)?;
     let output = client.vault_packs_sections_propose(&input)?;
     crate::codec::lift_record("vault.packs.sections.propose", &output)
@@ -1400,6 +1405,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SignedAuthorityHistory = crate::codec::lower_record("vault.authority.history.import", input)?;
     let output = client.vault_authority_history_import(&input)?;
     crate::codec::lift_record("vault.authority.history.import", &output)
+};
+"vault.authority.clock.repair" => fn vault_authority_clock_repair(&self) -> AuthorityClockRepair = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.clock.repair")?;
+    let output = client.vault_authority_clock_repair(&input)?;
+    crate::codec::lift_record("vault.authority.clock.repair", &output)
 };
 "vault.wire_health.thresholds.get" => fn vault_wire_health_thresholds_get(&self) -> WireThresholds = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.wire_health.thresholds.get")?;
@@ -2816,7 +2826,7 @@ export_facade! {
     let output = client.host_budget_hit(&input)?;
     crate::codec::lift_record("host.budget.hit", &output)
 };
-"vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> Vec<HookReplayRow> = |client| {
+"vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> HooksReplayPage = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
     crate::codec::lift_record("vault.hooks.replay", &output)
@@ -3460,6 +3470,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::GitPushGrantRevokeInput = crate::codec::lower_record("vault.repo.git_push.revoke", input)?;
     let output = client.vault_repo_git_push_revoke(&input)?;
     crate::codec::lift_record("vault.repo.git_push.revoke", &output)
+};
+"vault.connectors.read_grants.grant" => fn vault_connectors_read_grants_grant(&self, input: ConnectorWitnessReadGrantRequest) -> ConnectorWitnessReadGranted = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest = crate::codec::lower_record("vault.connectors.read_grants.grant", input)?;
+    let output = client.vault_connectors_read_grants_grant(&input)?;
+    crate::codec::lift_record("vault.connectors.read_grants.grant", &output)
+};
+"vault.connectors.read_grants.revoke" => fn vault_connectors_read_grants_revoke(&self, input: ConnectorWitnessReadGrantRevokeRequest) -> ConnectorWitnessReadGrantRevoked = |client| {
+    let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest = crate::codec::lower_record("vault.connectors.read_grants.revoke", input)?;
+    let output = client.vault_connectors_read_grants_revoke(&input)?;
+    crate::codec::lift_record("vault.connectors.read_grants.revoke", &output)
 };
 "vault.repo.anchor.bind" => fn vault_repo_anchor_bind(&self, input: RepoAnchorBindInput) -> RepoAnchorBindOutput = |client| {
     let input: oneiron::task_verb::sdk::RepoAnchorBindInput = crate::codec::lower_record("vault.repo.anchor.bind", input)?;

@@ -476,7 +476,7 @@ pub(crate) use pending_request::{PendingNoteRequest, admit_note_operation_in_txn
 #[cfg(test)]
 mod erasure_tests;
 mod live_body;
-pub(crate) use live_body::live_body_in_txn;
+pub(crate) use live_body::{live_body_from_in_txn, live_body_in_txn};
 mod brief_doors;
 pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod kind_contract;

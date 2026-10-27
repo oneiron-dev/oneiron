@@ -20,6 +20,14 @@ use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 use std::collections::BTreeMap;
 
+mod body_pins;
+mod reply_target;
+pub(crate) use body_pins::{pin_arrived_body_quotes_in_txn, turn_body_quotes};
+pub(crate) use reply_target::QuotedReply;
+pub(super) use reply_target::{
+    MESSAGE_REPLY_KEY, append_target_in_txn, message_text, reply_pointer_in_txn, stored_target,
+};
+
 /// The anchor a quote reply's pointer records. Neither variant copies the
 /// quoted text into the reply. Engine-issued only: a caller names a
 /// [`QuoteSpan`], never an anchor.
@@ -405,143 +413,6 @@ pub(crate) fn pin_body_quotes_at_message_birth_in_txn(
     Ok(())
 }
 
-/// The reply target of an append: the caller's, or the quoted message's
-/// TURN. A quote answers exactly the TURN that holds its message.
-pub(super) fn reply_target(
-    asked: Option<EntityId>,
-    quote: Option<&ProvenQuote>,
-) -> Result<Option<EntityId>> {
-    match (asked, quote) {
-        (Some(asked), Some(quote)) if asked != quote.turn => {
-            Err(invalid("a quote answers the turn that holds its message"))
-        }
-        (asked, quote) => Ok(asked.or(quote.map(|quote| quote.turn))),
-    }
-}
-
-/// The reply pointer for `target` at `revision`, carrying the quote anchor.
-pub(super) fn reply_pointer(
-    target: EntityId,
-    revision: String,
-    quote: Option<&ProvenQuote>,
-) -> Value {
-    let mut pointer = vec![
-        (Value::from("record"), Value::from(target.to_hex())),
-        (Value::from("revision"), Value::from(revision)),
-    ];
-    if let Some(quote) = quote {
-        pointer.push((Value::from("quote"), quote.anchor.to_value()));
-    }
-    Value::Map(pointer)
-}
-
-/// A quoted room turn's reply topology, fixed in the room witness's
-/// transaction before its TURN is minted (OF-460, FIX 2028). The quotes are
-/// its messages' own ([`ProvenRoomQuote`]); the witness mints the TURN once,
-/// with the reply mode, a pointer answering `target`, the TURN of its first
-/// quoted message, at the revision captured in this transaction, and
-/// `RepliesTo` in its first body and write; nothing patches it later. A
-/// project room's thread reply is also a DAG thread record whose chain
-/// continues `parent`, the reply's own. An ordinary room's quoted turn (FIX
-/// 2027) has no `parent`, so it stays an opaque turn, classified as no thread
-/// and chained to nothing, and it has no room row, so its first body keeps
-/// its messages' quotes by citing MESSAGE.
-pub(crate) struct QuotedReply {
-    parent: Option<EntityId>,
-    target: EntityId,
-    revision: String,
-    quotes: BTreeMap<EntityId, RoomQuote>,
-}
-
-impl QuotedReply {
-    /// The topology of a project room thread reply that continues the thread
-    /// chain at `parent` in `conversation` and answers `target`, its first
-    /// quoted message's TURN.
-    pub(crate) fn thread_in_txn(
-        vault: &Vault,
-        txn: &RoTxn<'_>,
-        conversation: EntityId,
-        parent: EntityId,
-        target: EntityId,
-    ) -> Result<Self> {
-        require_member(&vault.store, txn, &conversation, &parent)?;
-        require_type(&vault.store, txn, &parent, ENTITY_TYPE_TURN)?;
-        Ok(Self {
-            parent: Some(parent),
-            target,
-            revision: revision_in_txn(vault, txn, target)?,
-            quotes: BTreeMap::new(),
-        })
-    }
-
-    /// The topology of an ordinary room's quoted turn (FIX 2027) answering
-    /// `target`, its first quoted message's TURN, whose first body keeps
-    /// `quotes`, its messages' by citing MESSAGE.
-    pub(crate) fn ordinary_in_txn(
-        vault: &Vault,
-        txn: &RoTxn<'_>,
-        target: EntityId,
-        quotes: BTreeMap<EntityId, RoomQuote>,
-    ) -> Result<Self> {
-        Ok(Self {
-            parent: None,
-            target,
-            revision: revision_in_txn(vault, txn, target)?,
-            quotes,
-        })
-    }
-
-    /// The door-owned fields the reply's first TURN body carries: a reply
-    /// answering `target` at its revision, on a project thread reply the
-    /// thread record kind, and on an ordinary room's turn its messages'
-    /// quotes.
-    pub(crate) fn body_fields(&self) -> Vec<(Value, Value)> {
-        let mut fields = vec![
-            (Value::from("addr"), Value::from("reply")),
-            (
-                Value::from("reply_to"),
-                reply_pointer(self.target, self.revision.clone(), None),
-            ),
-        ];
-        if self.parent.is_some() {
-            fields.insert(
-                0,
-                (
-                    Value::from("dag_kind"),
-                    Value::from(super::topology::RecordKind::Thread.as_str()),
-                ),
-            );
-        }
-        if !self.quotes.is_empty() {
-            let quotes = quotes_value(&self.quotes);
-            fields.push((Value::from(WITNESS_QUOTES_KEY), quotes));
-        }
-        fields
-    }
-
-    /// Stages the minted reply's `RepliesTo` edge and, on a project thread
-    /// reply, its `Parent`.
-    pub(crate) fn edges<'v>(
-        &self,
-        mut batch: crate::BatchBuilder<'v>,
-        record: &EntityId,
-        learned_at: u64,
-    ) -> crate::BatchBuilder<'v> {
-        let value = super::writes::value;
-        if let Some(parent) = self.parent {
-            batch =
-                batch.edge_with_value_fields(record, EdgeKind::Parent, &parent, value(learned_at));
-        }
-        batch.edge_with_value_fields(record, EdgeKind::RepliesTo, &self.target, value(learned_at))
-    }
-}
-
-/// The revision a reply pointer captures of the TURN `target` it answers.
-fn revision_in_txn(vault: &Vault, txn: &RoTxn<'_>, target: EntityId) -> Result<String> {
-    let body = require_type(&vault.store, txn, &target, ENTITY_TYPE_TURN)?;
-    Ok(blake3::hash(&body).to_hex().to_string())
-}
-
 /// One witnessed message's quote, proven in the room witness's transaction
 /// and cited by that MESSAGE (OF-460, FIX 2028). Its anchor is kept against
 /// the message's id ([`RoomQuote`]): in the turn's room row, or an ordinary
@@ -589,6 +460,11 @@ impl ProvenRoomQuote {
     /// The TURN holding the quoted MESSAGE.
     pub(crate) fn target_turn(&self) -> EntityId {
         self.proven.turn
+    }
+
+    /// The quoted MESSAGE.
+    pub(crate) fn message(&self) -> EntityId {
+        self.proven.anchor.message()
     }
 
     /// The kept quote: target and anchor, no excerpt.

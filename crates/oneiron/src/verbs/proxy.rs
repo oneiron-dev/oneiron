@@ -39,6 +39,13 @@ pub struct ChatCompletionRequest {
     /// Read and ignored: the credential names who calls, never a body field.
     #[serde(default)]
     pub user: Option<String>,
+    /// The caller's own deadline, in milliseconds from when the call
+    /// arrives (FIX 8189). One clock for the whole call, never renewed: its
+    /// recall, every choice and each wait for a resting offer end by then,
+    /// and a call it cuts answers `timeout`. Omitted, a choice waits for an
+    /// offer as long as the vault's longest wait allows, as before.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

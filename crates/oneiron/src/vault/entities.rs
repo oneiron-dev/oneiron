@@ -183,24 +183,8 @@ impl Vault {
     /// `Vault::get_secret_value_in_txn`. The value-less projection is
     /// [`Vault::get_secret_metadata`].
     pub fn get(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
-        let txn = self.store.env.read_txn()?;
-        if let Some(body) = crate::ports::safe_read_text(self, &txn, id)? {
-            return Ok(Some(body));
-        }
-        // The blob facade preserves a soft-erased shell as Some(empty). This
-        // is not live text: safe hydration still excludes it, and stale or
-        // archived rows stay absent. Never expose a tombstoned body awaiting scrub.
-        let Some(row) = self.store.port_entity_record(&txn, id)? else {
-            return Ok(None);
-        };
-        let visibility = crate::ports::TombstoneStoreRead::port_deletion_state(self, &txn, id)?;
-        Ok(
-            (row.body.is_empty()
-                && visibility.deleted
-                && !visibility.archived
-                && !visibility.stale)
-                .then(Vec::new),
-        )
+        // One snapshot, read as `get_in_txn` reads a caller's (FIX 5870).
+        self.get_in_txn(&self.store.env.read_txn()?, id)
     }
 
     pub(crate) fn read_entity_header(&self, id: &EntityId) -> Result<Option<EntityMetadataHeader>> {
@@ -309,7 +293,18 @@ impl Vault {
     /// a soft-erased header-only shell still reads, since it carries no words.
     pub fn get_raw(&self, id: &EntityId) -> Result<Option<Vec<u8>>> {
         let rtxn = self.store.env.read_txn()?;
-        let Some(bytes) = self.get_raw_in(&rtxn, id)? else {
+        self.get_raw_sealed_in_txn(&rtxn, id)
+    }
+
+    /// [`Vault::get_raw`] in the caller's transaction, under the same custody
+    /// seal and the same absent rules, for a read that runs inside a writer
+    /// or a snapshot it already holds.
+    pub(crate) fn get_raw_sealed_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        let Some(bytes) = self.get_raw_in(rtxn, id)? else {
             return Ok(None);
         };
         let Some(header) = EntityMetadataHeader::parse(&bytes) else {
@@ -320,20 +315,20 @@ impl Vault {
         }
         if crate::origin::lfs::unpublished_lfs_chunk_in_txn(
             &self.store,
-            &rtxn,
+            rtxn,
             id,
             header.entity_type,
         )? {
             return Ok(None);
         }
         if bytes.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
-            && !crate::ports::raw_readable_in_txn(&self.store, &rtxn, id, &bytes)?
+            && !crate::ports::raw_readable_in_txn(&self.store, rtxn, id, &bytes)?
         {
             return Ok(None);
         }
         // The public raw read hands an ASSET's body, never the manifest a
         // file-plane row keeps in its place (FIX 3677).
-        Ok(Some(self.materialized_row_in_txn(&rtxn, id, bytes)?))
+        Ok(Some(self.materialized_row_in_txn(rtxn, id, bytes)?))
     }
 
     /// Raw entity bytes WITHOUT the custody seal.
@@ -578,18 +573,30 @@ impl Vault {
         limit: usize,
         scan_limit: usize,
     ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
+        let txn = self.store.env.read_txn()?;
+        self.latest_entity_bodies_by_type_in_txn(&txn, entity_type, limit, scan_limit)
+    }
+
+    /// [`Vault::latest_entity_bodies_by_type`] in the caller's transaction,
+    /// under the same refusal and the same scan.
+    pub(crate) fn latest_entity_bodies_by_type_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        limit: usize,
+        scan_limit: usize,
+    ) -> Result<Vec<(EntityId, u64, Vec<u8>)>> {
         if entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY {
             return Err(crate::secret_custody::reject_secret_custody_byte());
         }
         if limit == 0 || scan_limit == 0 {
             return Ok(Vec::new());
         }
-        let txn = self.store.env.read_txn()?;
         let mut rows = Vec::with_capacity(limit.min(1024));
         for entry in self
             .store
             .port_entity_timeline(
-                &txn,
+                txn,
                 crate::ports::TimelineQuery {
                     reverse: true,
                     ..Default::default()
@@ -597,7 +604,7 @@ impl Vault {
             )?
             .take(scan_limit)
         {
-            rows.extend(self.latest_body_in_txn(&txn, entity_type, entry?)?);
+            rows.extend(self.latest_body_in_txn(txn, entity_type, entry?)?);
             if rows.len() >= limit {
                 break;
             }

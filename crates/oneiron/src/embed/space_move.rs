@@ -31,7 +31,7 @@ use super::space::{
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
 use super::space_card::{ProbeRetest, probe_versions, read_cards, record_space_retests};
-use super::space_probe::{ProbeCohortLedger, SpaceProbe, space_probes_in_txn};
+use super::space_probe::{ProbeCohortLedger, SpaceProbe, projected_space_probes_in_txn};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -39,6 +39,8 @@ use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::skill_optimize::SufficiencyCard;
+
+mod cutover;
 
 /// Ranks a probe reads: a target found below this depth scores as missed.
 pub const SPACE_PROBE_DEPTH: usize = 10;
@@ -213,7 +215,8 @@ pub struct SpaceMove {
 /// What [`Vault::check_space_move`] did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SpaceMoveOutcome {
-    /// The candidate still lacks a vector of some moving document; no probe ran.
+    /// The candidate still lacks a vector of some moving document: no probe ran, or one
+    /// arrived while they ran and the swap waits for it (FIX 9833).
     Filling,
     /// Every kind read not worse: the candidate serves now.
     SwappedIn(SpaceMoveCheck),
@@ -757,7 +760,8 @@ impl Vault {
     }
 
     /// [`Self::check_space_move`], beside the rows its reading stands on: each live probe's
-    /// family, media query and targets, and every hit up to and including the first target in
+    /// family, the rows its query was written from, its media query among them (FIX 9829), and
+    /// its targets, and every hit up to and including the first target in
     /// each run (the documents a reciprocal rank stands on). While the candidate is still
     /// filling, the pending document its backlog scan found.
     ///
@@ -831,7 +835,7 @@ impl Vault {
                         Error::InvalidConfig(format!("embedding space {id} is not declared"))
                     })?,
             };
-            let stored = space_probes_in_txn(&self.store, &rtxn)?;
+            let stored = projected_space_probes_in_txn(self, &rtxn)?;
             let mut probes: Vec<([u8; 16], SpaceProbe, Option<PendingMedia>)> = Vec::new();
             for (id, probe) in &stored {
                 if !moving.kinds.contains(&probe.kind) {
@@ -873,7 +877,7 @@ impl Vault {
             .iter()
             .flat_map(|(_, probe, _)| {
                 std::iter::once(probe.family)
-                    .chain(probe.query_media)
+                    .chain(probe.query_sources())
                     .chain(probe.targets.iter().copied())
             })
             .collect();
@@ -1004,7 +1008,8 @@ impl Vault {
         let checked_at = check.checked_at;
         rows.sort_unstable();
         rows.dedup();
-        let outcome = self.conclude_space_move(candidate, Some(check), by)?;
+        let (outcome, witness) =
+            self.conclude_space_move(candidate, Some(check), by, encoder.candidate_egress())?;
         let retests: Vec<ProbeRetest> = runs
             .iter()
             .map(|run| ProbeRetest {
@@ -1018,7 +1023,7 @@ impl Vault {
         if matches!(outcome, SpaceMoveOutcome::SwappedIn(_)) {
             ledger.promoted(self, runs.iter().map(|run| run.probe));
         }
-        Ok((outcome, Some(rows)))
+        Ok((outcome, Some(witness.map_or(rows, |witness| vec![witness]))))
     }
 
     /// The owner's yes to an open move whose check did not read not worse: once the candidate
@@ -1077,11 +1082,18 @@ impl Vault {
             moving.last_check
         };
         // The swap counts on the cohorts the check it acts on ran, after its write committed
-        // and best effort, as a passing check's does (FIX 7040).
-        if let SpaceMoveOutcome::SwappedIn(check) =
-            self.conclude_space_move(candidate, check, SetupDoor::Owner(owner))?
-        {
-            ProbeCohortLedger::promoted_from(self, candidate, &check);
+        // and best effort, as a passing check's does (FIX 7040). A document that arrived since
+        // the read above keeps it filling, as it would have there (FIX 9833).
+        match self.conclude_space_move(candidate, check, SetupDoor::Owner(owner), egress)? {
+            (SpaceMoveOutcome::SwappedIn(check), _) => {
+                ProbeCohortLedger::promoted_from(self, candidate, &check);
+            }
+            (SpaceMoveOutcome::Filling, _) => {
+                return Err(Error::InvalidConfig(format!(
+                    "embedding space {candidate} is still filling"
+                )));
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -1252,13 +1264,17 @@ impl Vault {
     /// drops the candidate's rows; an unknown one leaves the move open. The owner's yes names
     /// the owner on the slot rows it binds, and its proof is checked again in this write
     /// (FIX 8200); a check's rows are a system move's (FIX 6697), with the owner's proof checked
-    /// again here when the owner asked for the check (FIX 8982).
+    /// again here when the owner asked for the check (FIX 8982). Before a swap the writer reads
+    /// the candidate's backlog again through `egress`, the candidate's media egress gate: a
+    /// moving document it still lacks returns [`SpaceMoveOutcome::Filling`] beside that
+    /// document, writes nothing, and leaves the move open (FIX 9833).
     fn conclude_space_move(
         &self,
         candidate: &str,
         check: Option<SpaceMoveCheck>,
         by: SetupDoor<'_>,
-    ) -> Result<SpaceMoveOutcome> {
+        egress: Option<&dyn EgressPredicate>,
+    ) -> Result<(SpaceMoveOutcome, Option<EntityId>)> {
         let by_owner = by.actor() == SetupActor::Owner;
         let mut wtxn = self.store.env.write_txn()?;
         by.admit_in_txn(self, &wtxn)?;
@@ -1270,7 +1286,7 @@ impl Vault {
             Some(check) if !by_owner => Some(read_cards(
                 check,
                 moving.margin,
-                &space_probes_in_txn(&self.store, &wtxn)?,
+                &projected_space_probes_in_txn(self, &wtxn)?,
             )),
             check => check,
         };
@@ -1282,6 +1298,9 @@ impl Vault {
         let approved = by_owner || super::binding_move::approves_move_in_txn(self, &wtxn, &moving)?;
         let at = self.store.clock.now_recorded_at();
         let concluded = if approved || verdict == NotWorse::NotWorse {
+            if let Some(witness) = self.swap_backlog_in_txn(&wtxn, &moving, egress)? {
+                return Ok((SpaceMoveOutcome::Filling, Some(witness)));
+            }
             for kind in &moving.kinds {
                 set_kind_slot_in_txn(&self.store, &mut wtxn, *kind, Some(candidate))?;
             }
@@ -1333,12 +1352,13 @@ impl Vault {
             verdict,
             cohort_check: None,
         });
-        Ok(match moving.state {
+        let outcome = match moving.state {
             SpaceMoveState::SwappedIn { .. } => SpaceMoveOutcome::SwappedIn(check),
             SpaceMoveState::Kept { .. } => SpaceMoveOutcome::Kept(check),
             SpaceMoveState::Open | SpaceMoveState::Undone { .. } => {
                 SpaceMoveOutcome::Undecided(check)
             }
-        })
+        };
+        Ok((outcome, None))
     }
 }

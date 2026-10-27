@@ -21,14 +21,14 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
     pub(super) fn validate_bundles(&mut self) -> Result<()> {
         let mut skills = self.spool.rows(ArchiveRecordKind::Skill);
         while let Some((loc, _)) = skills.next(&self.spool)? {
-            let bundle: ExportSkillBundle = self.hydrated(ArchiveRecordKind::Skill, loc)?;
+            let bundle: ExportSkillBundle = self.hydrated(loc)?;
             if bundle.source_tree.is_some() != bundle.source_format.is_some() {
                 return Err(invalid(
                     "skill source format and tree must be present together",
                 ));
             }
             if let Some(tree) = &bundle.source_tree {
-                tree.validate()?;
+                tree.validate_in(&self.files)?;
                 if let Some(hash) = &tree.content_hash {
                     let body = crate::skill::decode_skill_record(&bundle.entity.body.to_bytes()?)?;
                     if body.content_hash.map(|h| h.to_hex()).as_ref() != Some(hash) {
@@ -36,7 +36,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                     }
                     crate::skill_hub::package_from_source(
                         &body,
-                        tree.import_files()?,
+                        tree.import_files_in(&self.files)?,
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
@@ -46,7 +46,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
         }
         let mut agents = self.spool.rows(ArchiveRecordKind::AgentPack);
         while let Some((loc, _)) = agents.next(&self.spool)? {
-            let bundle: ExportAgentBundle = self.hydrated(ArchiveRecordKind::AgentPack, loc)?;
+            let bundle: ExportAgentBundle = self.hydrated(loc)?;
             let id = document_import::parse_id(&bundle.entity_id)?;
             if !self
                 .index
@@ -58,7 +58,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
                 crate::skill::SkillContentHash::parse_hex(hash)?;
             }
             if let Some(tree) = &bundle.source_tree {
-                tree.validate()?;
+                tree.validate_in(&self.files)?;
             }
         }
         // Recompute every typed facet from the native AGENT_DEF and selected
@@ -90,7 +90,7 @@ impl<R: Read + Seek> IndexedArchive<'_, R> {
             let Some((loc, _)) = bundles.next(&self.spool)? else {
                 return Ok(false);
             };
-            let archived: ExportAgentBundle = self.hydrated(ArchiveRecordKind::AgentPack, loc)?;
+            let archived: ExportAgentBundle = self.hydrated(loc)?;
             let fork_hash = match self.index.get(Tag::Agent, id.as_bytes())? {
                 Some(loc) => {
                     self.spool
@@ -440,17 +440,21 @@ fn agent_omissions(
         }
     }
     if let Some(omission) = omission {
-        reasons.push(match omission {
-            AgentBundleOmission::ForkBindingUnavailable => {
-                BundleOmissionReason::AgentForkBindingUnavailable
-            }
-            AgentBundleOmission::UnresolvedSkill => BundleOmissionReason::AgentUnresolvedSkill,
-            AgentBundleOmission::CredentialRedaction => {
-                BundleOmissionReason::AgentCredentialRedaction
-            }
-        });
+        reasons.push(agent_omission_reason(omission));
     }
     reasons
+}
+
+/// The manifest's reason for an agent bundle's own `omission`, declared after
+/// its birth source's.
+pub(super) fn agent_omission_reason(omission: AgentBundleOmission) -> BundleOmissionReason {
+    match omission {
+        AgentBundleOmission::ForkBindingUnavailable => {
+            BundleOmissionReason::AgentForkBindingUnavailable
+        }
+        AgentBundleOmission::UnresolvedSkill => BundleOmissionReason::AgentUnresolvedSkill,
+        AgentBundleOmission::CredentialRedaction => BundleOmissionReason::AgentCredentialRedaction,
+    }
 }
 
 /// The manifest's import refusals, import omissions and bundle omissions,

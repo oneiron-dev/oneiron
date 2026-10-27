@@ -204,12 +204,3 @@ fn bounded_bytes(label: &str, len: usize, max_bytes: usize) -> Result<(), Feedba
     }
     Ok(())
 }
-
-pub(super) fn bounded(label: &str, len: usize, max_len: usize) -> Result<(), FeedbackError> {
-    if len > max_len {
-        return Err(FeedbackError::InvalidBundle(format!(
-            "{label} carries {len} entries, over the {max_len} limit"
-        )));
-    }
-    Ok(())
-}

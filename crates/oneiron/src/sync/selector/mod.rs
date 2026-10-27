@@ -25,7 +25,19 @@ pub(in crate::sync) use machine_history::machine_history_controls;
 mod note_admission;
 mod peer_confidence;
 mod scope;
+// FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
+pub(crate) mod secret_projection;
+pub use secret_projection::{
+    RepoCopyAliases, RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame,
+    prepare_repo_sync_frame_for_home, repo_copy_generation, repo_document_copy_vector,
+    repo_document_lineage_edit, repo_document_source,
+};
 mod text_egress;
+// FIX 10161: the tombstones a narrower grant's export carries.
+mod tombstones;
+// FIX 10162: the admission validators that read in the caller's txn.
+#[cfg(feature = "sync")]
+mod validators;
 pub(crate) use note_admission::admit_note_in_txn;
 pub(in crate::sync) use text_egress::document_sources_readable_in_txn;
 #[cfg(test)]

@@ -196,6 +196,7 @@ impl Store {
         record.actor_ref = None;
         record.grant_ref = None;
         record.diff_handle.clear();
+        record.context = Default::default();
         // An injected clock at epoch zero must still produce a valid v1 row.
         record.redacted_at = Some(redacted_at.max(1));
         vet_gate_decision_record(&record)?;
@@ -365,12 +366,11 @@ impl Store {
             } else if let Some(redacted_at) = claim {
                 self.redact_gate_decision_in_txn(wtxn, record, redacted_at)?;
             } else {
-                let names_erased = owed.iter().any(|scrub| {
-                    scrub.kind == OwedScrub::Actor
-                        && record.actor_ref.as_deref() == Some(scrub.source.to_hex().as_str())
-                });
+                let mut names_erased = false;
+                for scrub in owed.iter().filter(|scrub| scrub.kind == OwedScrub::Actor) {
+                    names_erased |= record.scrub_actor(&scrub.source);
+                }
                 if names_erased {
-                    record.actor_ref = None;
                     let value = reseal_gate_decision(custody, &raw, &record)?;
                     LEDGER.put(self, wtxn, &decision, &value)?;
                 }

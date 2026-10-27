@@ -109,6 +109,7 @@ pub(crate) fn run_health_trends(vault: &Vault, now: u64) -> u64 {
         failed = ?review.failed,
         unreadable_attempts = review.unreadable_attempts,
         withheld_diagnostics = review.withheld_diagnostics,
+        withheld_calls = review.withheld_calls,
         unjoined_diagnostics = review.unjoined_diagnostics,
         "agent-health trend pass"
     );

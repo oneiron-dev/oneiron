@@ -21,7 +21,12 @@
 //! artifacts go with them. Every other payload member and row field stays.
 //! The same pass drops the library-program pins of the task's tries (CUA
 //! E4), which hold its arguments and goal.
+//!
+//! The ask and its briefing are the asker's too (FIX 9181): an erased
+//! asker's receipts and briefing leave the rows that carry them, its target's
+//! instructions staying (`asker`).
 
+mod asker;
 mod response;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -76,6 +81,17 @@ fn unrewritable() -> Error {
     Error::InvariantViolation(ERR_UNREWRITABLE)
 }
 
+/// Whose text an erase takes out of a dispatch payload.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextOwner {
+    /// The dispatch target's: its definition's instructions, and the ask and
+    /// briefing it was given.
+    Target,
+    /// The asker's (FIX 9181): its ask's receipts and the briefing the ask
+    /// became; the instructions are the target's and stay.
+    Asker,
+}
+
 /// Who owns `record`'s dispatch text: its target AGENT_DEF, the actor the
 /// dispatch runs as. `None` for a row that is no agent dispatch, or whose
 /// input does not decode: it names no owner.
@@ -88,11 +104,12 @@ fn dispatch_payload_actor(record: &AttemptRecord) -> Option<EntityId> {
 
 /// Leaves `record`'s dispatch instructions, briefing, direct spawn receipt
 /// and plan receipt absent, keeping every other input member, the
-/// envelope's parent and every row field. `false` when the row is no agent
-/// dispatch or carries none of them, so an erased row is not written again. The same payload
-/// always comes out the same, so each retry generation of one payload is
-/// rewritten alike. `record` changes only on success.
-fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
+/// envelope's parent and every row field; for an erased asker (`owner`),
+/// all but the instructions. `false` when the row is no agent dispatch or
+/// carries none of them, so an erased row is not written again. The same
+/// payload always comes out the same, so each retry generation of one
+/// payload is rewritten alike. `record` changes only on success.
+fn erase_dispatch_payload_text(record: &mut AttemptRecord, owner: TextOwner) -> Result<bool> {
     if record.kind != DREAMER_RUNNER_ATTEMPT_KIND {
         return Ok(false);
     }
@@ -101,7 +118,7 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
         return Ok(false);
     }
     let input = decode_agent_dispatch_input(&payload.input)?;
-    let instructions = input.definition.instructions.is_some();
+    let instructions = owner == TextOwner::Target && input.definition.instructions.is_some();
     let briefing = input
         .context_spec
         .as_ref()
@@ -131,9 +148,9 @@ fn erase_dispatch_payload_text(record: &mut AttemptRecord) -> Result<bool> {
     // absent it decodes as no plan.
     entries.retain(|(key, _)| !plan || key.as_str() != Some(KEY_PLAN));
     // The strict decoder every reader uses reads the erased input, with
-    // all four absent.
+    // all four absent (the instructions kept for an erased asker).
     let erased = decode_agent_dispatch_input(&payload.input)?;
-    if erased.definition.instructions.is_some()
+    if (owner == TextOwner::Target && erased.definition.instructions.is_some())
         || erased
             .context_spec
             .as_ref()
@@ -197,7 +214,9 @@ pub(crate) fn erase_attempt_payload_actor_in_txn(
 }
 
 /// Leaves every attempt payload whose dispatch target is among `actors`
-/// without its instructions, briefing and ask text, and every BYOA copy of a TASK
+/// without its instructions, briefing and ask text, every one whose asker is
+/// among them, or whose planned intent an asker's erase took, without its
+/// ask and briefing (FIX 9181), and every BYOA copy of a TASK
 /// among them without its task (FIX 7502), in the erase's transaction: one
 /// pass over the whole ledger, every state and retry generation, and an
 /// archived row's marker follows its row when it archived it as it stood,
@@ -225,8 +244,13 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     }
     // A BYOA row's task is the TASK its `task_ref` names, as canonical hex.
     let tasks: BTreeSet<String> = actors.iter().map(EntityId::to_hex).collect();
+    // The planned intents an asker's erase took; the intents' own erase ran
+    // first in this transaction (FIX 9181).
+    let asker_intents =
+        crate::agent_dispatch::AgentDispatcher::asker_erased_intent_keys_in(store, txn)?;
     let mut rewrites = Vec::new();
     let mut byoa = ByoaRows::default();
+    let mut reply_jobs = Vec::new();
     for row in store.attempt_records.iter(txn)? {
         let (key, raw) = row?;
         let Ok(id) = AttemptId::from_bytes(&key) else {
@@ -249,8 +273,20 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
             }
         } else if record.kind == BYOA_ATTEMPT_KIND {
             byoa.gather(&raw, record, &tasks);
+        } else if record.kind == crate::outbound::CONNECTOR_REPLY_JOB_KIND {
+            // A connector reply job carries its event's sender, chat and
+            // receiving identity (FIX 2405): any erased id it names takes
+            // the event's payload, and the job's result, with it.
+            if crate::outbound::erase_connector_reply_job_payload(&mut record, actors)? {
+                reply_jobs.push(record.id);
+                rewrites.push((raw.into_owned(), record));
+            }
         } else if dispatch_payload_actor(&record).is_some_and(|actor| owners.contains(&actor))
-            && erase_dispatch_payload_text(&mut record)?
+            && erase_dispatch_payload_text(&mut record, TextOwner::Target)?
+        {
+            rewrites.push((raw.into_owned(), record));
+        } else if asker::asker_owned(&record, actors, &asker_intents)
+            && erase_dispatch_payload_text(&mut record, TextOwner::Asker)?
         {
             rewrites.push((raw.into_owned(), record));
         }
@@ -259,6 +295,7 @@ pub(crate) fn erase_attempt_payload_actors_in_txn(
     // No row this pass writes pins them now; their jobs' artifacts go by the
     // artifact's own rules (FIX 7502).
     crate::dispatch_byoa::erase_staged_input_in_txn(store, txn, &jobs)?;
+    crate::outbound::erase_connector_reply_results_in_txn(store, txn, &reply_jobs)?;
     // A bound TASK's tries pin its arguments and goal (CUA E4): they go with
     // the TASK, archived tries' too.
     crate::task_verb::erase_task_workflows_in_txn(store, txn, actors)?;
@@ -466,9 +503,10 @@ fn erase_byoa_payload(
 /// A late write's fence (FIX 7076): when `record` is an agent dispatch
 /// whose target bears the permanent hard-delete marker, its instructions,
 /// briefing, direct spawn receipt and plan receipt leave it before it is
-/// encoded, so a copy read before the erase writes back the erased bytes.
-/// Only that marker counts: a soft delete, an archive or a gone actor keeps
-/// the text. Read in the writer's transaction. A marker that cannot be read,
+/// encoded, so a copy read before the erase writes back the erased bytes;
+/// when an erase took its asker instead, all but the instructions do (FIX
+/// 9181). Only that marker counts: a soft delete, an archive or a gone
+/// actor keeps the text. Read in the writer's transaction. A marker that cannot be read,
 /// or a payload that cannot be rewritten, leaves `record` as it was and is
 /// logged without its content: the fence never fails the write it stands in.
 pub(super) fn scrub_hard_erased_payload_in_txn(
@@ -516,9 +554,18 @@ pub(super) fn scrub_hard_erased_payload_in_txn(
         return;
     };
     match store.port_deletion_marked(txn, DeletionMarker::HardDelete, &actor) {
-        Ok(false) => {}
+        Ok(false) => {
+            if asker::asker_erased_in(store, txn, record)
+                && erase_dispatch_payload_text(record, TextOwner::Asker).is_err()
+            {
+                tracing::warn!(
+                    attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                    "attempt payload fence: an erased asker's dispatch text could not be removed"
+                );
+            }
+        }
         Ok(true) => {
-            if erase_dispatch_payload_text(record).is_err() {
+            if erase_dispatch_payload_text(record, TextOwner::Target).is_err() {
                 tracing::warn!(
                     attempt = %crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
                     "attempt payload fence: an erased target's dispatch text could not be removed"

@@ -14,8 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, GateError, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 /// Only the owning archive adapter may select Imported. The public origin
@@ -289,17 +289,21 @@ impl Vault {
         let provenance = WriteProvenance::new(Value::from("expression_preference"))?;
         let envelope = WriteEnvelope::new(*actor, source, provenance, requested);
         crate::memory::guard_existing_claim_in_txn(self, wtxn, *actor, claim_id)?;
-        let mut prior_ids = Vec::new();
-        for (old_id, body) in self.claims_with_predicate_in_txn(wtxn, predicate)? {
+        // Every readable claim of the predicate is judged (FIX 8656); the
+        // override or self-grant each outranked head needs is written once
+        // the walk has ended, never through its open read.
+        let mut outranked = Vec::new();
+        let rtxn: &heed::RoTxn<'_> = wtxn;
+        self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |old_id, body| {
             if old_id == claim_id
                 || body.subject != ClaimSubject::Entity(change.subject)
                 || body.lifecycle != ClaimLifecycleStatus::Active
             {
-                continue;
+                return Ok(());
             }
             let old_learned_at = self
                 .store
-                .port_entity_record(wtxn, &old_id)?
+                .port_entity_record(rtxn, &old_id)?
                 .map(|row| row.encode())
                 .and_then(|raw| EntityMetadataHeader::parse(&raw).map(|h| h.learned_at))
                 .ok_or(Error::CorruptedIndex("expression preference header"))?;
@@ -307,24 +311,29 @@ impl Vault {
                 (Some(source), Some(change.valid_from), learned_at, claim_id),
                 (body.source, body.valid_from, old_learned_at, old_id),
             ) {
-                if change.origin
-                    == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
-                {
-                    crate::memory::explicit_claim_override_in_txn(
-                        self, wtxn, *actor, old_id, &body, learned_at,
-                    )?;
-                } else {
-                    crate::memory::require_claim_self_grant_in_txn(
-                        self,
-                        wtxn,
-                        *actor,
-                        old_id,
-                        &body,
-                        "memory.claim.supersede",
-                    )?;
-                }
-                prior_ids.push(old_id);
+                outranked.push((old_id, body));
             }
+            Ok(())
+        })?;
+        let mut prior_ids = Vec::with_capacity(outranked.len());
+        for (old_id, body) in outranked {
+            if change.origin
+                == ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
+            {
+                crate::memory::explicit_claim_override_in_txn(
+                    self, wtxn, *actor, old_id, &body, learned_at,
+                )?;
+            } else {
+                crate::memory::require_claim_self_grant_in_txn(
+                    self,
+                    wtxn,
+                    *actor,
+                    old_id,
+                    &body,
+                    "memory.claim.supersede",
+                )?;
+            }
+            prior_ids.push(old_id);
         }
 
         apply_ops_with_gate_mode(
@@ -390,7 +399,8 @@ impl Vault {
             PREDICATE_COMPANION_EXPRESSION_KEIGO,
             PREDICATE_COMPANION_EXPRESSION_STYLE,
         ] {
-            for (id, body) in self.claims_with_predicate_in_txn(rtxn, predicate)? {
+            // Every readable claim of the predicate is judged (FIX 8656).
+            self.for_each_readable_claim_with_predicate_in_txn(rtxn, predicate, |id, body| {
                 let learned_at = self
                     .store
                     .port_entity_record(rtxn, &id)?
@@ -404,17 +414,17 @@ impl Vault {
                 // narrower one and so let a Proposed head win the truth read
                 // from ANY route that can mint one, peer sync included.
                 if body.subject != ClaimSubject::Entity(*subject) || !claim_surfaceable(&body) {
-                    continue;
+                    return Ok(());
                 }
                 // A preference shapes what the companion does, not only what
                 // it reads: while its critical confirmation is open it stays
                 // effector-ineligible (ARCH-0026 §G3).
                 if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, rtxn, &id)? {
-                    continue;
+                    return Ok(());
                 }
                 if body.valid_from.is_some_and(|v| v > at) || body.valid_to.is_some_and(|v| v <= at)
                 {
-                    continue;
+                    return Ok(());
                 }
                 let kind = match predicate {
                     PREDICATE_COMPANION_EXPRESSION_LANGUAGE => ExpressionPreferenceKind::Language,
@@ -431,7 +441,8 @@ impl Vault {
                 if replace {
                     best.insert(kind, (id, body, learned_at));
                 }
-            }
+                Ok(())
+            })?;
         }
         let mut out = ExpressionPreferenceSet::default();
         for (kind, (id, body, _learned_at)) in best {
@@ -536,20 +547,23 @@ impl Vault {
             self, &mut wtxn, *actor, *claim_id, &head, now,
         )?;
 
+        // Every direct predecessor is read and judged in this one write
+        // (FIX 8657): the count only feeds the advisory EdgePeerRows check.
+        let direction = EdgeDirection::Out;
+        let kind = EdgeKind::Supersedes;
+        let scope = [
+            &[direction as u8][..],
+            claim_id.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = ScanCount::start(&self.store, &wtxn, EngineScan::EdgePeerRows, &scope)?;
         let mut predecessors = Vec::new();
-        for entry in self.port_edges(
-            &wtxn,
-            claim_id,
-            EdgeDirection::Out,
-            Some(EdgeKind::Supersedes),
-            None,
-        )? {
-            if predecessors.len() >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("expression preference predecessors"));
-            }
-            let id = entry?.target;
-            predecessors.push(id);
+        for entry in self.port_edges(&wtxn, claim_id, direction, Some(kind), None)? {
+            count.row();
+            predecessors.push(entry?.target);
         }
+        count.defer(&self.store);
 
         self.retract_claim_in_txn(&mut wtxn, claim_id, now)?;
         let mut ops = Vec::new();

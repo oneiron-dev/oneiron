@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -23,7 +23,8 @@ use oneiron::memory::MemoryError;
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -79,10 +80,10 @@ struct ConcernOutcome {
 async fn set_outcome(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernOutcome>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernOutcome>,
 ) -> OwnerReply<ConcernCardSummary> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let card = blocking(move || -> OwnerResult<ConcernCardSummary> {
         let outcome = AgentHealthOutcome::from_wire(&request.outcome).ok_or_else(|| {
             OwnerError::Invalid("outcome is confirmed, dismissed or unresolved".to_owned())
@@ -119,18 +120,27 @@ fn move_error(error: MemoryError) -> OwnerError {
 async fn take_move(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernMoveRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernMoveRequest>,
 ) -> OwnerReply<ConcernMoveOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let host = Arc::clone(&server);
     let outcome = blocking(move || -> OwnerResult<ConcernMoveOutcome> {
         let vault = server.vault();
         if !matches!(request.r#move, ConcernMove::AskCoach) {
-            return vault
-                .apply_concern_move(&owner, locality, &request)
-                .map_err(move_error);
+            return match vault.apply_concern_move(&owner, locality, &request) {
+                // Only a card that is gone is not found, as on every other
+                // concern route (FIX 8537); a target the move could not
+                // reach keeps its own words.
+                Err(error)
+                    if error.code == oneiron::memory::MEMORY_CODE_NOT_FOUND
+                        && vault.agent_health_card(&request.card)?.is_none() =>
+                {
+                    Err(OwnerError::NotFound("concern_card", request.card.clone()))
+                }
+                moved => moved.map_err(move_error),
+            };
         }
         let Some(card) = vault.agent_health_card(&request.card)? else {
             return Err(OwnerError::NotFound("concern_card", request.card));
@@ -168,10 +178,10 @@ async fn take_move(
 async fn apply_edit(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConcernApplyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConcernApplyRequest>,
 ) -> OwnerReply<ConcernApplyOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<ConcernApplyOutcome> {
         match server
             .vault()
@@ -198,10 +208,10 @@ async fn apply_edit(
 async fn apply_prompt_inject(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<oneiron::agent_dispatch::ConcernPromptInjectRequest>, JsonRejection>,
+    payload: OwnerJsonBody<oneiron::agent_dispatch::ConcernPromptInjectRequest>,
 ) -> OwnerReply<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let outcome = blocking(
         move || -> OwnerResult<oneiron::agent_dispatch::ConcernPromptInjectOutcome> {
             match server

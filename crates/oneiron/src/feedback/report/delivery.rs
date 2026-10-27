@@ -23,14 +23,16 @@ pub use self::owner::{
     ReportDeliveryRun, ReportDeliveryRunRequest, ReportDeliveryStatus, ReportDeliveryStatusRequest,
     ReportPublisherBinding, ReportPublisherBindingRequest,
 };
+pub(crate) use self::wire::received_issue_signature;
 use self::wire::{SignatureSink, signature_request, wire_body};
 use super::{ReportDisclosure, ReportIssue, ReportRoute, ReportRoutedPayload, ReportStatus};
 use crate::dreamer_runner::DreamerAdmittedAttempt;
-use crate::edit_distance::publisher::{IssueSignature, PublisherError, emit_issue_signature};
+use crate::edit_distance::publisher::{
+    IssueSignature, PublisherError, emit_issue_signature_in_txn,
+};
 use crate::outbound::{
     OutboundDispatchOutcome, OutboundExecutionOutcome, OutboundExecutionRequest, connector_actor_id,
 };
-use crate::settings::default_model_stack_registry;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
@@ -368,10 +370,25 @@ impl Vault {
             return Ok(Some(record));
         }
         record.updated_at = now;
-        record.hold = self.signature_hold(&mut record, &issue, &payload, &*transport)?;
+        let mut built = None;
+        record.hold =
+            self.signature_hold(&mut record, &mut built, &issue, &payload, &*transport)?;
         // The frozen bytes and send are written before they can leave:
-        // admission reads them under the outbound writer.
-        self.with_write_txn_grouped(|txn| DELIVERIES.put(&self.store, txn, &row, &record))?;
+        // admission reads them under the outbound writer. A signature built
+        // now is stored in that same write, so a crash leaves both or
+        // neither, and the next run never stores a second (FIX 7689).
+        self.with_write_txn_grouped(|txn| {
+            if let Some(built) = built {
+                let signature = emit_issue_signature_in_txn(self, txn, &built.signature)
+                    .map_err(engine_error)?;
+                record.signature = Some(ReportFrozenSignature {
+                    signature,
+                    body: built.body,
+                    digest: built.digest,
+                });
+            }
+            DELIVERIES.put(&self.store, txn, &row, &record)
+        })?;
         if record.hold.is_none() {
             self.dispatch_report_signature(&mut record, transport, now)?;
             self.with_write_txn_grouped(|txn| DELIVERIES.put(&self.store, txn, &row, &record))?;
@@ -381,16 +398,19 @@ impl Vault {
 
     /// Freezes what can be frozen, then answers the first thing that holds
     /// the lane: unresolved metadata, then the endpoint, then the switches.
+    /// A lane with no signature yet has one built into `built`, for the
+    /// lane's write to store.
     fn signature_hold<T: ReportSignatureTransport + ?Sized>(
         &self,
         record: &mut ReportDeliveryRecord,
+        built: &mut Option<BuiltSignature>,
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
         transport: &T,
     ) -> Result<Option<ReportDeliveryHold>> {
         if record.signature.is_none() {
-            match self.freeze_report_signature(issue, payload)? {
-                Ok(signature) => record.signature = Some(signature),
+            match self.build_report_signature(issue, payload)? {
+                Ok(signature) => *built = Some(signature),
                 Err(reason) => {
                     return Ok(Some(ReportDeliveryHold::MetadataUnresolved {
                         reason: reason.to_owned(),
@@ -437,23 +457,28 @@ impl Vault {
         Ok(None)
     }
 
-    /// Builds the ED-08 signature through its constructor, stores it, and
-    /// freezes its wire bytes. `Ok(Err(reason))` while metadata is unresolved.
-    fn freeze_report_signature(
+    /// Builds the ED-08 signature through its constructor and freezes its
+    /// wire bytes; the lane's write stores it. `Ok(Err(reason))` while
+    /// metadata is unresolved.
+    fn build_report_signature(
         &self,
         issue: &ReportIssue,
         payload: &ReportRoutedPayload,
-    ) -> Result<std::result::Result<ReportFrozenSignature, &'static str>> {
+    ) -> Result<std::result::Result<BuiltSignature, &'static str>> {
         let metadata = match self.resolve_report_publisher_metadata(issue)? {
             Ok(metadata) => metadata,
             Err(reason) => return Ok(Err(reason)),
         };
         let content_hash = blake3::Hash::from(payload.signature.subject_hash).to_hex();
+        let stacks = {
+            let txn = self.store.env.read_txn()?;
+            self.signature_stacks_in_txn(&txn, &metadata.model_id)?
+        };
         let Ok(signature) = IssueSignature::new(
             payload.signature.category,
             metadata.artifact,
             metadata.version,
-            &default_model_stack_registry(),
+            &stacks,
             &metadata.model_id,
             &metadata.counts,
             content_hash.as_str(),
@@ -462,8 +487,7 @@ impl Vault {
         };
         let body = wire_body(&signature)?;
         let digest = blake3::hash(body.as_bytes()).to_hex().to_string();
-        let signature = emit_issue_signature(self, signature).map_err(engine_error)?;
-        Ok(Ok(ReportFrozenSignature {
+        Ok(Ok(BuiltSignature {
             signature,
             body,
             digest,
@@ -522,6 +546,14 @@ fn publisher_of(issue: &ReportIssue) -> Option<&str> {
         ReportStatus::Duplicate | ReportStatus::Rejected
     ) && issue.disclosure != ReportDisclosure::Denied)
         .then_some(publisher_ref.as_str())
+}
+
+/// A signature built this run and not stored yet: the write that records
+/// its lane stores it (FIX 7689).
+struct BuiltSignature {
+    signature: IssueSignature,
+    body: String,
+    digest: String,
 }
 
 fn engine_error(error: PublisherError) -> Error {

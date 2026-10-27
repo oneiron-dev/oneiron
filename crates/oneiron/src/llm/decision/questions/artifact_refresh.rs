@@ -563,6 +563,11 @@ pub struct ArtifactAskRecord {
     /// (FIX 9174); none for the question's own ask.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_proposal_ref: Option<String>,
+    /// Whether this ask was logged with its ref details left out (FIX 9419): its refs
+    /// did not pass the secret scan, so it names no proposal, and a completed one's
+    /// standing is [`ArtifactAskStanding::DetailsOmitted`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub details_omitted: bool,
 }
 
 /// Where one artifact ask's answers stand, by the same walk the next ask's baseline takes:
@@ -583,6 +588,9 @@ pub enum ArtifactAskStanding {
     /// The ask failed and held nothing (FIX 9177): the record's `failed` names its error's
     /// kind. A completed ask that answered no unit is [`Self::Unanswered`].
     Failed,
+    /// The ask was logged with its ref details left out (FIX 9419): it names no proposal,
+    /// so where its answers stand is not read here.
+    DetailsOmitted,
 }
 
 /// The builder `selection` names, over the readable `files` of a folder ask, asking

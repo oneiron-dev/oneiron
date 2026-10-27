@@ -40,6 +40,7 @@ use serde_json::{Value, json};
 
 use self::authority::*;
 use self::bundles::*;
+pub(super) use self::home_handoff::{machine_method, run_machine};
 use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};

@@ -7,6 +7,7 @@ mod edges;
 mod ops;
 mod preflight;
 mod puts;
+mod reference_read;
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -50,6 +51,10 @@ pub struct BatchBuilder<'a> {
     /// The rows `put_replicated` queued: replay's materialization provenance
     /// (FIX 7925), set by that door alone.
     replicated_puts: std::collections::BTreeSet<EntityId>,
+    /// The verified caller's envelope each raw CLAIM put of a bound handle
+    /// is gated and applied under (FIX 8118); a put with none keeps the
+    /// unbound host's.
+    caller_envelopes: std::collections::HashMap<EntityId, crate::WriteEnvelope>,
     #[cfg(feature = "sync")]
     import_tier: crate::sync::client::ImportTier,
     /// Op indexes of the replicated puts a federated import tier queued; their
@@ -111,6 +116,7 @@ impl<'a> BatchBuilder<'a> {
             births: Vec::new(),
             asset_files: std::collections::HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
+            caller_envelopes: std::collections::HashMap::new(),
             #[cfg(feature = "sync")]
             import_tier: crate::sync::client::ImportTier::OwnDevice,
             #[cfg(feature = "sync")]
@@ -137,6 +143,13 @@ impl<'a> BatchBuilder<'a> {
         if let Some(birth) = birth {
             self.births.push((*id, birth));
         }
+        self
+    }
+
+    /// Gates and applies `id`'s raw CLAIM put under `envelope`, its verified
+    /// caller's (FIX 8118), in this batch's preflight and in its apply.
+    pub(crate) fn caller_envelope(mut self, id: &EntityId, envelope: crate::WriteEnvelope) -> Self {
+        self.caller_envelopes.insert(*id, envelope);
         self
     }
 

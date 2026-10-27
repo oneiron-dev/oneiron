@@ -40,6 +40,10 @@ pub(crate) struct DesktopWorkers {
         tokio::sync::watch::Sender<bool>,
     )>,
     workers: Vec<tokio::task::JoinHandle<()>>,
+    /// Plain serve's owner host, whose scheduled backup pass in flight ends
+    /// before the stop returns (FIX 6732). Embedded serve keeps none: its
+    /// vault and runtime stay up, so a pass in flight finishes there.
+    owner_host: Option<Arc<crate::owner::schedule::OwnerHost>>,
     /// The tagger slot's close, run once every worker has ended (FIX 7383).
     tagger: Option<crate::oneironer::SlotClose>,
 }
@@ -84,6 +88,9 @@ pub(crate) async fn start_desktop_workers(
     let (sync_server, ai) =
         crate::ai_host::AiHost::attach_device(sync_server, config.models.as_ref(), device).await;
     let sync_server = Arc::new(sync_server);
+    // A managed vault's attested owner's queued work is judged by this
+    // server's check, installed before any worker takes it up (FIX 11090).
+    crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -209,6 +216,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
     // Approved sends leave through the connector executor (OF-187).
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
+    // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
+    workers.push(sync_server.spawn_connector_reply_worker(crate::server::admit_every_pass()));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(
         &sync_server,
@@ -275,6 +284,7 @@ pub(crate) async fn start_desktop_workers(
         .tagger
         .as_ref()
         .map(crate::oneironer::TaggerSlot::closer);
+    let owner_host = sync_server.owner_host.clone().filter(|_| drain_tagging);
     Ok(StartedWorkers {
         server: sync_server,
         artifact_app,
@@ -292,6 +302,7 @@ pub(crate) async fn start_desktop_workers(
             linear_handle,
             tagging,
             workers,
+            owner_host,
             tagger,
         },
     })
@@ -337,6 +348,9 @@ impl DesktopWorkers {
         for handle in self.workers {
             handle.abort();
             let _ = handle.await;
+        }
+        if let Some(host) = self.owner_host {
+            host.resident_stopped().await;
         }
         // Tagging has ended on both paths (joined above, or aborted and
         // awaited in the loop): each platform child is shut down and reaped.

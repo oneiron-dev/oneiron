@@ -20,7 +20,9 @@ impl Memory<'_> {
             return Err(not_found());
         }
         next.admit_references(self, "tasks.update")?;
-        let base_rev = {
+        // The first brief is kept beside a revision of it, read in the same
+        // snapshot as its revision number (FIX 9005).
+        let (base_rev, base_brief) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let body = task_body_in_txn(self.vault(), &txn, task_ref)?;
             self.highway_task_actor_in(
@@ -36,7 +38,11 @@ impl Memory<'_> {
                 ));
             }
             next.validate_in(self.vault(), &txn, body.assignee)?;
-            body.brief.as_ref().map_or(0, |brief| brief.rev)
+            match body.brief {
+                Some(held) if held.rev == 1 => (1, Some(held.brief)),
+                Some(held) => (held.rev, None),
+                None => (0, None),
+            }
         };
         let digest = brief_digest(&next);
         let mut lifecycle =
@@ -80,6 +86,7 @@ impl Memory<'_> {
             report_key: key.to_owned(),
             actor_class: self.actor_class() as u8,
             brief: next,
+            base_brief,
         };
         let keep = self.keeps_lifecycle();
         // The revision's lifecycle is kept beside its proposal, in the
@@ -126,7 +133,12 @@ impl Memory<'_> {
 
     /// Lands one approved post inside the approving transaction: the TASK at
     /// the settlement id filed under its parent, its route under the creator
-    /// its proposal witnessed (OF-532), and its Assigned fact.
+    /// its proposal witnessed (OF-532), and its Assigned fact. `copied` lands
+    /// a redo's copy (FIX 9001).
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one landing over its post, its identity, its creator and whether it is a copy"
+    )]
     pub(super) fn land_settled_post_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -135,12 +147,34 @@ impl Memory<'_> {
         provenance: &Value,
         origin: Option<&TaskCreateOrigin>,
         now: u64,
+        copied: bool,
     ) -> MemoryResult<TaskRouteOutcome> {
+        // A redo lands as its post did (FIX 9001): a parent that can no
+        // longer take a Task is left out, never the approval's refusal, and
+        // a pin whose row moved since is no refusal either.
+        let unparented;
+        let post = match post.parent_ref {
+            Some(parent)
+                if copied && task_parent_refusal_in(self.vault(), &*wtxn, parent)?.is_some() =>
+            {
+                unparented = TaskPost {
+                    parent_ref: None,
+                    ..post.clone()
+                };
+                &unparented
+            }
+            _ => post,
+        };
         let type_ref = brief_type_ref_in(self.vault(), &*wtxn, &post.brief)?;
         let spec = create_spec_of(post, self.actor(), type_ref, now);
         let validated = validate_task_create_in(self.vault(), &*wtxn, &spec, now)?;
-        post.brief
-            .validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
+        if copied {
+            post.brief
+                .validate_copy_in(self.vault(), &*wtxn, Some(post.assignee))?;
+        } else {
+            post.brief
+                .validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
+        }
         self.mint_task_with_brief_at_in_txn(
             wtxn,
             (task_ref, self.actor()),

@@ -440,6 +440,10 @@ impl Vault {
                 wtxn,
                 &holder,
             )?);
+            // The cloud registration slots an owner's erase took (G7).
+            ids.extend(crate::secret_custody::cloud_registration_erased_with(
+                &holder,
+            ));
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         // A classified corrupt CLAIM this erase took the audited exception for
@@ -505,5 +509,64 @@ impl Vault {
         let receipt = decode_redaction_audit_receipt(&body)?;
         finish_redaction_erase_in_txn(self, wtxn, receipt_id, &receipt, hard_purge_complete_at)?;
         Ok(sweep_key)
+    }
+
+    /// Records the privacy erase of the thread audience edit `edit` in the
+    /// write that rewrote it in place (FIX 10234): a content-free
+    /// REDACTION_AUDIT receipt naming the edit, with no hard-erase sweep, as
+    /// the edit stays live and made by no one. Where this vault keeps sync
+    /// windows, the erasure sweep is owed a compaction of the window that
+    /// carries the edit's earlier revisions, and the receipt completes when
+    /// that settles (`sweep::owed`); without them no window carries it, and
+    /// the receipt completes now. The device key must already be on the
+    /// handle (P6c).
+    pub(crate) fn record_audience_edit_erase_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        edit: &EntityId,
+        actor_principal: Option<EntityId>,
+        reason: DeleteReason,
+        requested_at: u64,
+    ) -> Result<super::DeleteEntityOutcome> {
+        let receipt_id = self.store.clock.entity_id()?;
+        let now = self.store.clock.now_recorded_at();
+        #[cfg(feature = "sync")]
+        let window = {
+            let raw = self.get_raw_in(wtxn, edit)?.ok_or(Error::EntityNotFound)?;
+            crate::sync::residence::residence_window_for_blob(&raw)?
+        };
+        let input = RedactionReceiptInput {
+            actor_principal,
+            room_authority: None,
+            request_id: uuid::Uuid::from_bytes(self.store.clock.ulid()?).to_string(),
+            scope: RedactionScope::entity(edit),
+            reason,
+            requested_at,
+            soft_complete_at: now,
+            hard_purge_complete_at: now,
+            sweep_queued_at: cfg!(feature = "sync").then_some(now),
+        };
+        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let body =
+            encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
+        self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;
+        #[cfg(feature = "sync")]
+        let sweep_key = crate::sweep::owed::owe_window_compaction_for_receipt_in_txn(
+            self,
+            wtxn,
+            &window,
+            &receipt_id,
+        )?;
+        #[cfg(not(feature = "sync"))]
+        let sweep_key = {
+            let receipt = decode_redaction_audit_receipt(&body)?;
+            finish_redaction_erase_in_txn(self, wtxn, &receipt_id, &receipt, now)?;
+            Vec::new()
+        };
+        Ok(super::DeleteEntityOutcome {
+            existed: true,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+        })
     }
 }

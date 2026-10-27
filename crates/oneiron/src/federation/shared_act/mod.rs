@@ -8,7 +8,10 @@
 //! writes the act's receipt and tells the Owners (OF-150); a Member's or
 //! Admin's ask for one is `erase_ask`.
 mod erase_ask;
+mod execute;
 mod membership;
+mod removal;
+mod removal_archive;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
@@ -43,9 +46,10 @@ pub const DELETED_VAULT_BACKUP_RETENTION_SECS: u64 = 90 * 24 * 60 * 60;
 const SHARED_VAULT_DELETION: SideTable<(), SharedVaultDeletion, LegacyJson> =
     SideTable::new(&side_table::SHARED_VAULT_DELETION);
 
-/// Each export-first removal's archive, bound to the removed Owner. Key:
-/// hex32 (removed Owner) ":" hex32 (receipt id).
-const REMOVAL_EXPORT: SideTable<String, RemovalExportCopy, Named> =
+/// Each export-first removal's archive, bound to the removed Owner, with its
+/// records' frozen positions (FIX-LIST 8224). Key: hex32 (removed Owner)
+/// ":" hex32 (receipt id).
+const REMOVAL_EXPORT: SideTable<String, removal_archive::StoredRemovalExport, Named> =
     SideTable::new(&side_table::SHARED_ACT_REMOVAL_EXPORT);
 
 /// The row key of `member`'s archive from the removal receipt `receipt_id`.
@@ -559,269 +563,6 @@ impl Vault {
         Ok(())
     }
 
-    /// Execute a completed `delete_vault`, `transfer_ownership` or
-    /// `remove_owner` act. Any live Owner may run it once its window has
-    /// passed on the store clock with no live objection, while its starter
-    /// is still a live Owner. The claim, the effect, the receipt and every
-    /// recipient's notice commit in one writer, so the act takes effect at
-    /// most once; running it again returns the same receipt, to a reader
-    /// that receipt told and no one else (FIX 3216). With `slips`,
-    /// the capability slips of anyone who lost a role are revoked with it,
-    /// and the host signs an ownership change into the authority log as an
-    /// `OwnerHandover` naming the act and its receipt.
-    /// An export-first removal, once its executor and starter stand as live
-    /// Owners holding the act's verb (FIX 3217), exports what its target
-    /// could read before the writer opens, records that export's digest in
-    /// the receipt, and delivers the archive to the removed Owner alone,
-    /// retrievable by them for [`REMOVAL_EXPORT_RETAIN_SECS`] (FIX 1300);
-    /// the answer names that delivery, never the archive. A remaining live
-    /// Owner's re-run of an executed export-first removal answers the same
-    /// receipt and delivers the stored archive to the removed Owner again
-    /// for a full term; the removal never runs twice, and an archive already
-    /// purged past its term is not rebuilt.
-    pub fn execute_completed_shared_act(
-        &self,
-        executor: &AuthenticatedOwner,
-        act_id: &str,
-        slips: Option<&HostSlipIssuer>,
-    ) -> Result<SharedActExecution> {
-        let mut export = self
-            .removal_export(executor, act_id)?
-            .map(|(member, records)| {
-                let ids = records.iter().map(|record| record.id).collect();
-                // Its diary reads are the removed owner's, who receives it.
-                let reader = crate::write_envelope::WriteActor::new(
-                    member,
-                    crate::edge::EdgeActorClass::Human,
-                );
-                self.export_records_archive(&ids, reader)
-                    .map(|archive| (member, records.len() as u64, archive, ids))
-            })
-            .transpose()?;
-        let mut txn = self.store.env.write_txn()?;
-        let actor = executor.revalidate_person_in_txn(self, &txn)?;
-        let act = self
-            .pending_authority_act_in_txn(&txn, act_id)?
-            .ok_or_else(invalid)?;
-        let kind = SharedActKind::parse(&act.act).ok_or_else(invalid)?;
-        if kind == SharedActKind::Erase {
-            // A held erase runs through its own door, which binds the record.
-            return Err(invalid());
-        }
-        if let Some(execution) = &act.execution {
-            let receipt = execution
-                .receipt
-                .as_deref()
-                .map(|id| self.shared_act_receipt_in_txn(&txn, id))
-                .transpose()?
-                .flatten()
-                .ok_or(Error::ConcurrentWrite("authority act already executed"))?;
-            if !self.reader_was_told_in_txn(&txn, actor, &receipt.id)? {
-                return Err(invalid());
-            }
-            let delivery = match &receipt.export {
-                Some(summary) => self.redeliver_removal_export_in_txn(
-                    &mut txn,
-                    &act,
-                    actor,
-                    &summary.member,
-                    &receipt.id,
-                )?,
-                None => None,
-            };
-            txn.commit()?;
-            return Ok(SharedActExecution {
-                receipt,
-                delivery,
-                export_records: None,
-            });
-        }
-        let creation = check_vault(self, &txn, act.vault_id)?;
-        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let owners = self.act_executors_in_txn(&txn, &act, actor, now)?;
-        let receipt_id = self.store.clock.entity_id()?.to_hex();
-        let request_id = self.store.clock.entity_id()?.to_hex();
-        self.claim_completed_authority_act_in_txn(
-            &mut txn,
-            &act.id,
-            request_id.clone(),
-            Some(receipt_id.clone()),
-        )?;
-        let effect = match kind {
-            SharedActKind::DeleteVault => {
-                let plan: DeleteVaultPlan = decode(&act.payload)?;
-                if plan.v != PLAN_VERSION {
-                    return Err(invalid());
-                }
-                let deletion = SharedVaultDeletion {
-                    vault_id: creation.vault_id,
-                    act_id: act.id.clone(),
-                    receipt_id: receipt_id.clone(),
-                    deleted_at: now,
-                    backup_retain_until: now
-                        .checked_add(DELETED_VAULT_BACKUP_RETENTION_SECS)
-                        .ok_or_else(invalid)?,
-                };
-                SHARED_VAULT_DELETION.put(&self.store, &mut txn, &(), &deletion)?;
-                Effect {
-                    change: SharedVaultChange::VaultDeleted {
-                        backup_retain_until: deletion.backup_retain_until,
-                    },
-                    grants: Vec::new(),
-                    revoked_slips: Vec::new(),
-                    notify: BTreeSet::new(),
-                }
-            }
-            SharedActKind::TransferOwnership => {
-                let plan: TransferOwnershipPlan = decode(&act.payload)?;
-                let (from, to) = (hex_id(&plan.from)?, hex_id(&plan.to)?);
-                if plan.v != PLAN_VERSION || plan.from != act.starter {
-                    return Err(invalid());
-                }
-                let (grants, revoked_slips) = self.hand_over_in_txn(
-                    &mut txn,
-                    act.vault_id,
-                    &owners,
-                    from,
-                    plan.from_keeps,
-                    Some(to),
-                    slips,
-                    now,
-                )?;
-                Effect {
-                    change: SharedVaultChange::OwnershipTransferred {
-                        from: plan.from,
-                        to: plan.to,
-                        from_keeps: plan.from_keeps,
-                    },
-                    grants,
-                    revoked_slips,
-                    notify: BTreeSet::from([from, to]),
-                }
-            }
-            SharedActKind::RemoveOwner => {
-                let plan: RemoveOwnerPlan = decode(&act.payload)?;
-                let target = hex_id(&plan.target)?;
-                let successor = plan.successor.as_deref().map(hex_id).transpose()?;
-                if plan.v != PLAN_VERSION
-                    || plan.export_first != export.as_ref().is_some_and(|(of, ..)| *of == target)
-                {
-                    return Err(invalid());
-                }
-                let (grants, revoked_slips) = self.hand_over_in_txn(
-                    &mut txn,
-                    act.vault_id,
-                    &owners,
-                    target,
-                    plan.target_keeps,
-                    successor,
-                    slips,
-                    now,
-                )?;
-                Effect {
-                    change: SharedVaultChange::OwnerRemoved {
-                        target: plan.target,
-                        successor: plan.successor,
-                        target_keeps: plan.target_keeps,
-                    },
-                    grants,
-                    revoked_slips,
-                    notify: BTreeSet::from_iter([Some(target), successor].into_iter().flatten()),
-                }
-            }
-            SharedActKind::Erase => return Err(invalid()),
-        };
-        let mut authority_entry = None;
-        if let Some(issuer) = slips {
-            let handover = match &effect.change {
-                SharedVaultChange::OwnershipTransferred {
-                    from,
-                    to,
-                    from_keeps,
-                } => Some((OwnerHandoverCause::Transfer, from, Some(to), from_keeps)),
-                SharedVaultChange::OwnerRemoved {
-                    target,
-                    successor,
-                    target_keeps,
-                } => Some((
-                    OwnerHandoverCause::Removal,
-                    target,
-                    successor.as_ref(),
-                    target_keeps,
-                )),
-                _ => None,
-            };
-            if let Some((cause, from, to, keeps)) = handover {
-                authority_entry = Some(self.append_owner_handover_in_txn(
-                    &mut txn,
-                    issuer,
-                    OwnerHandover {
-                        shared_vault: act.vault_id,
-                        cause,
-                        from: hex_id(from)?,
-                        to: to.map(|to| hex_id(to)).transpose()?,
-                        from_keeps: keeps.map(|role| role.as_str().to_owned()),
-                        act: Some(act.id.clone()),
-                        proof: None,
-                        receipt: receipt_id.clone(),
-                    },
-                )?);
-            }
-        }
-        let mut export_records = None;
-        let export = export.take().map(|(member, records, archive, ids)| {
-            export_records = Some(ids.into_iter().collect());
-            let summary = SharedActExport {
-                member: member.to_hex(),
-                records,
-                digest: blake3::hash(archive.bytes()).to_hex().to_string(),
-                diary_reads: archive.diary_reads().to_vec(),
-            };
-            (summary, archive)
-        });
-        let (summary, archive) = export.unzip();
-        let receipt = self.record_shared_change_in_txn(
-            &mut txn,
-            receipt_id,
-            act.vault_id,
-            Some((act.id.clone(), request_id)),
-            actor,
-            owners,
-            effect,
-            summary,
-            authority_entry,
-            now,
-        )?;
-        let delivery = match (&receipt.export, archive) {
-            (Some(summary), Some(archive)) => {
-                let copy = RemovalExportCopy {
-                    receipt_id: receipt.id.clone(),
-                    vault_id: act.vault_id,
-                    member: summary.member.clone(),
-                    delivered_at: now,
-                    expires_at: now
-                        .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
-                        .ok_or_else(invalid)?,
-                    export: crate::memory::MemoryExport {
-                        format: crate::batch::export::VAULT_ARCHIVE_FORMAT.to_owned(),
-                        archive: archive.bytes,
-                        digest: summary.digest.clone(),
-                    },
-                };
-                let row_key = removal_export_key(&copy.member, &copy.receipt_id);
-                REMOVAL_EXPORT.put(&self.store, &mut txn, &row_key, &copy)?;
-                Some(copy.delivery())
-            }
-            _ => None,
-        };
-        txn.commit()?;
-        Ok(SharedActExecution {
-            receipt,
-            delivery,
-            export_records,
-        })
-    }
-
     /// The live Owners holding `act`'s verb at `now`, refused unless both
     /// `actor` and the act's starter stand among them.
     fn act_executors_in_txn(
@@ -860,140 +601,15 @@ impl Vault {
             return Err(invalid());
         }
         let row_key = removal_export_key(member, receipt_id);
-        let Some(mut copy) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? else {
+        let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? else {
             return Ok(None);
         };
-        copy.delivered_at = now;
-        copy.expires_at = now
+        stored.copy.delivered_at = now;
+        stored.copy.expires_at = now
             .checked_add(REMOVAL_EXPORT_RETAIN_SECS)
             .ok_or_else(invalid)?;
-        REMOVAL_EXPORT.put(&self.store, txn, &row_key, &copy)?;
-        Ok(Some(copy.delivery()))
-    }
-
-    /// The export-first removal archives delivered to `member` that are still
-    /// within their term at `now`.
-    pub(crate) fn removal_exports_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        member: EntityId,
-        now: u64,
-    ) -> Result<Vec<RemovalExportCopy>> {
-        let prefix = removal_export_key(&member.to_hex(), "");
-        Ok(REMOVAL_EXPORT
-            .scan_from(&self.store, txn, prefix.as_bytes())?
-            .into_iter()
-            .map(|(_, copy)| copy)
-            .filter(|copy| now < copy.expires_at)
-            .collect())
-    }
-
-    /// The archive the removal receipt `receipt_id` delivered to `member`,
-    /// while it is within its term at `now`; `None` after it, or when that
-    /// removal delivered `member` none.
-    pub(crate) fn removal_export_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        member: EntityId,
-        receipt_id: EntityId,
-        now: u64,
-    ) -> Result<Option<RemovalExportCopy>> {
-        let row_key = removal_export_key(&member.to_hex(), &receipt_id.to_hex());
-        Ok(REMOVAL_EXPORT
-            .get(&self.store, txn, &row_key)?
-            .filter(|copy| now < copy.expires_at))
-    }
-
-    /// Drops every export-first removal archive past its term. It reads
-    /// first and opens a writer only when one has expired; the writer checks
-    /// each again, so an archive a re-run delivered anew in between stays. It
-    /// answers how many it dropped.
-    pub(crate) fn drop_expired_removal_exports(&self) -> Result<usize> {
-        let expired: Vec<String> = {
-            let txn = self.store.env.read_txn()?;
-            let now = self.store.clock.now_recorded_at();
-            REMOVAL_EXPORT
-                .scan(&self.store, &txn)?
-                .into_iter()
-                .filter(|(_, copy)| now >= copy.expires_at)
-                .map(|(row_key, _)| row_key)
-                .collect()
-        };
-        if expired.is_empty() {
-            return Ok(0);
-        }
-        let mut txn = self.store.env.write_txn()?;
-        let now = self.store.clock.now_recorded_at();
-        let mut dropped = 0;
-        for row_key in &expired {
-            let lapsed = REMOVAL_EXPORT
-                .get(&self.store, &txn, row_key)?
-                .is_some_and(|copy| now >= copy.expires_at);
-            if lapsed && REMOVAL_EXPORT.delete(&self.store, &mut txn, row_key)? {
-                dropped += 1;
-            }
-        }
-        txn.commit()?;
-        Ok(dropped)
-    }
-
-    /// The completion of a held `erase` act (OF-150): once its own executor
-    /// ([`crate::Memory::execute_completed_entity_erase`]) has erased the
-    /// record the act names, its receipt, keyed by the act's own id, and one
-    /// notice to each live Owner and the executor, the act's starter. A
-    /// repeat returns the first receipt. Refused while the act is unclaimed
-    /// or its erase is still under way.
-    pub fn record_erase_completion(
-        &self,
-        executor: &AuthenticatedOwner,
-        act_id: &str,
-    ) -> Result<SharedActExecutionReceipt> {
-        let mut txn = self.store.env.write_txn()?;
-        let actor = executor.revalidate_person_in_txn(self, &txn)?;
-        let act = self
-            .pending_authority_act_in_txn(&txn, act_id)?
-            .ok_or_else(invalid)?;
-        if SharedActKind::parse(&act.act) != Some(SharedActKind::Erase)
-            || act.starter != actor.to_hex()
-        {
-            return Err(invalid());
-        }
-        if let Some(receipt) = self.shared_act_receipt_in_txn(&txn, &act.id)? {
-            return Ok(receipt);
-        }
-        let execution = act.execution.clone().ok_or_else(invalid)?;
-        let record = self.held_erase_record(&act).ok_or_else(invalid)?;
-        if execution.receipt.is_none()
-            && !self.local_hard_delete_marker_exists_in_txn(&txn, &record)?
-        {
-            return Err(Error::ConcurrentWrite("the held erase is still under way"));
-        }
-        check_vault(self, &txn, act.vault_id)?;
-        let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let owners = live_owners(&self.live_act_holders(&txn, act.vault_id, now)?, None);
-        let effect = Effect {
-            change: SharedVaultChange::RecordErased {
-                record: record.to_hex(),
-                redaction: execution.receipt,
-            },
-            grants: Vec::new(),
-            revoked_slips: Vec::new(),
-            notify: BTreeSet::new(),
-        };
-        let receipt = self.record_shared_change_in_txn(
-            &mut txn,
-            act.id.clone(),
-            act.vault_id,
-            Some((act.id, execution.request)),
-            actor,
-            owners,
-            effect,
-            None,
-            None,
-            now,
-        )?;
-        txn.commit()?;
-        Ok(receipt)
+        REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+        Ok(Some(stored.copy.delivery()))
     }
 
     /// Persist the receipt and one notice to each live Owner, the actor and
@@ -1070,23 +686,6 @@ impl Vault {
             .map(|raw| decode(&raw))
             .transpose()
     }
-    /// A receipt its reader was told about: every live Owner at the time,
-    /// the actor and each holder the change concerned. Anyone else is refused.
-    pub fn shared_act_receipt(
-        &self,
-        reader: &AuthenticatedOwner,
-        receipt_id: &str,
-    ) -> Result<SharedActExecutionReceipt> {
-        let txn = self.store.env.read_txn()?;
-        // Person tier: a holder reads the receipts they were told about.
-        let reader = reader.revalidate_person_in_txn(self, &txn)?;
-        let receipt_id = EntityId::from_hex(receipt_id)?.to_hex();
-        if !self.reader_was_told_in_txn(&txn, reader, &receipt_id)? {
-            return Err(invalid());
-        }
-        self.shared_act_receipt_in_txn(&txn, &receipt_id)?
-            .ok_or_else(invalid)
-    }
     /// Whether `reader` holds a notice of the receipt `receipt_id`. The one
     /// rule for who reads a receipt back, here or by re-running its act.
     fn reader_was_told_in_txn(
@@ -1097,92 +696,6 @@ impl Vault {
     ) -> Result<bool> {
         let notice = key(OUTCOME_PREFIX, &format!("{}:{receipt_id}", reader.to_hex()));
         Ok(self.store.vault_meta.get(txn, &notice)?.is_some())
-    }
-    /// The reader's own outcome notices for `vault_id`. A holder a change
-    /// removed still reads the notice of that change.
-    pub fn shared_act_outcomes(
-        &self,
-        reader: &AuthenticatedOwner,
-        vault_id: u64,
-    ) -> Result<Vec<SharedActOutcome>> {
-        let txn = self.store.env.read_txn()?;
-        // Person tier: a holder reads only their own prefix.
-        let reader = reader.revalidate_person_in_txn(self, &txn)?;
-        let prefix = key(OUTCOME_PREFIX, &format!("{}:", reader.to_hex()));
-        let mut outcomes = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (_, bytes) = entry?;
-            let outcome: SharedActOutcome = decode(&bytes)?;
-            if outcome.vault_id == vault_id {
-                outcomes.push(outcome);
-            }
-        }
-        Ok(outcomes)
-    }
-
-    /// `person`'s own notices of losing the vault: their leave, their
-    /// removal, an ownership change that left them no role, and the vault's
-    /// deletion, made for `person` from the stored deletion marker whether or
-    /// not a notice row names them (FIX 2053). Read for the holder a
-    /// home-minted slip proves, whose slips may no longer authenticate
-    /// (`Vault::removed_member_notices_signed`).
-    pub(crate) fn removal_outcomes_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        person: EntityId,
-    ) -> Result<Vec<SharedActOutcome>> {
-        let person = person.to_hex();
-        let prefix = key(OUTCOME_PREFIX, &format!("{person}:"));
-        let mut outcomes = Vec::new();
-        for entry in self.store.vault_meta.prefix_iter(txn, &prefix)? {
-            let (_, bytes) = entry?;
-            let outcome: SharedActOutcome = decode(&bytes)?;
-            let lost = match &outcome.change {
-                SharedVaultChange::MemberLeft { member }
-                | SharedVaultChange::MemberRemoved { member } => *member == person,
-                SharedVaultChange::OwnerRemoved {
-                    target,
-                    target_keeps: None,
-                    ..
-                } => *target == person,
-                SharedVaultChange::OwnershipTransferred {
-                    from,
-                    from_keeps: None,
-                    ..
-                }
-                | SharedVaultChange::OwnerRecovered { from, .. } => *from == person,
-                _ => false,
-            };
-            if lost {
-                outcomes.push(outcome);
-            }
-        }
-        if let Some(deletion) = self.shared_vault_deletion_in_txn(txn)? {
-            outcomes.push(SharedActOutcome {
-                receipt_id: deletion.receipt_id,
-                act_id: Some(deletion.act_id),
-                vault_id: deletion.vault_id,
-                recipient: person,
-                change: SharedVaultChange::VaultDeleted {
-                    backup_retain_until: deletion.backup_retain_until,
-                },
-                completed_at: deletion.deleted_at,
-            });
-        }
-        Ok(outcomes)
-    }
-
-    pub(crate) fn shared_vault_deletion_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> Result<Option<SharedVaultDeletion>> {
-        shared_vault_deletion_for_store_in_txn(&self.store, txn)
-    }
-    /// The executed delete-the-vault act, if any. A host stops serving the
-    /// vault once this is present and keeps backups only until its deadline.
-    pub fn shared_vault_deletion(&self) -> Result<Option<SharedVaultDeletion>> {
-        let txn = self.store.env.read_txn()?;
-        self.shared_vault_deletion_in_txn(&txn)
     }
 }
 

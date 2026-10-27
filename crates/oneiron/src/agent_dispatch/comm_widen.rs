@@ -19,9 +19,10 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
 use super::AgentDispatcher;
-use super::comm::{CommReach, MAX_LINEAGE_HOPS, dispatch_parent_in_txn};
+use super::comm::{CommReach, dispatch_parent_in_txn};
 use super::types::AgentDispatchInput;
 use super::widen_record::invalid;
+use crate::genui::ConsentConfirmOutcome;
 
 /// Child attempt → its comm widening.
 const COMM_WIDEN: SideTable<AttemptId, CommWidenRecord, Named> =
@@ -77,7 +78,7 @@ pub(crate) struct CommWidenQuestion {
     pub(crate) at: u64,
 }
 
-/// Who settled a request, and when.
+/// Who settled a request, when, and what they chose.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CommWidenDecision {
@@ -85,6 +86,12 @@ pub(crate) struct CommWidenDecision {
     pub(crate) at: u64,
     /// The ask whose answer settled it.
     pub(crate) ask: EntityId,
+    /// What the answer chose (FIX 10178): approve once covers the asking
+    /// attempt, as an approval always has; approve and stop asking also
+    /// answers its descendants' asks up to the approved reach, under the
+    /// same clamps, for as long as that attempt's row lives; deny is final
+    /// for the reach. An agent parent's approve is once, its decline a deny.
+    pub(crate) choice: ConsentConfirmOutcome,
 }
 
 /// One request: the child needs `needed` to address someone.
@@ -109,6 +116,20 @@ pub(crate) struct CommWidenRequest {
 pub(crate) struct CommApproval {
     pub(crate) reach: CommReach,
     pub(crate) decision: CommWidenDecision,
+    /// When the owner revoked a stop-asking choice's standing (FIX 10695):
+    /// from then its descendants inherit nothing from it and ask again. The
+    /// choice stays as answered, and the asking run keeps its own reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) standing_revoked_at: Option<u64>,
+}
+
+impl CommApproval {
+    /// Whether descendants inherit this approval's reach: a stop-asking
+    /// choice whose standing the owner has not revoked.
+    fn stands(&self) -> bool {
+        self.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
+            && self.standing_revoked_at.is_none()
+    }
 }
 
 /// One child's comm widening.
@@ -157,12 +178,29 @@ impl CommWidenRecord {
                 self.approved = Some(CommApproval {
                     reach: needed,
                     decision,
+                    standing_revoked_at: None,
                 });
             }
         } else {
             request.state = CommWidenState::Declined;
         }
         true
+    }
+
+    /// Ends the standing of this record's stop-asking choice at `at` (FIX
+    /// 10695): the choice stays as answered and the asking run keeps its own
+    /// reach; only its descendants stop inheriting it. Answers the approval
+    /// and whether this call ended it, or `None` when the record holds no
+    /// stop-asking choice.
+    pub(crate) fn revoke_standing(&mut self, at: u64) -> Option<(CommApproval, bool)> {
+        let approval = self.approved.as_mut().filter(|approval| {
+            approval.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
+        })?;
+        let ended = approval.standing_revoked_at.is_none();
+        if ended {
+            approval.standing_revoked_at = Some(at);
+        }
+        Some((*approval, ended))
     }
 
     /// Takes `actor` out of the record (FIX 3520): a pending request it was
@@ -277,9 +315,12 @@ fn approved_reach(
 }
 
 /// The reach `child` addresses with now (CALLS W4): its frozen dial or the
-/// reach its parent approved, the wider, then never wider than any
-/// ancestor's own live reach. A spawn already froze the child within its
-/// parent's dial, so a child with no approval reads its dial as frozen.
+/// reach its parent approved, the wider, widened by any ancestor's approval
+/// to stop asking (FIX 10178), then never wider than any ancestor's own live
+/// reach. A spawn already froze the child within its parent's dial, so a
+/// child with no approval reads its dial as frozen unless an ancestor
+/// stopped asking; a walk that does not read leaves such a child at its
+/// frozen dial.
 pub(crate) fn effective_comm_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -287,27 +328,77 @@ pub(crate) fn effective_comm_in_txn(
     input: &AgentDispatchInput,
 ) -> Result<CommReach> {
     let Some(approved) = approved_reach(vault, txn, child)? else {
-        return Ok(input.comm);
+        return Ok(match ancestry_in(vault, txn, child) {
+            Ok(Ancestry {
+                clamp,
+                standing: Some(standing),
+            }) => clamped(input.comm.max(standing), clamp),
+            Ok(_) | Err(_) => input.comm,
+        });
     };
+    let ancestry = ancestry_in(vault, txn, child)?;
+    let widened = input.comm.max(approved);
+    let widened = ancestry
+        .standing
+        .map_or(widened, |standing| widened.max(standing));
+    Ok(clamped(widened, ancestry.clamp))
+}
+
+/// What `child`'s real dispatch ancestors give its reach: the narrowest of
+/// their own live reaches, and the widest reach any of them approved and
+/// stopped asking for, while the owner has not revoked that standing (FIX
+/// 10695).
+struct Ancestry {
+    clamp: Option<CommReach>,
+    standing: Option<CommReach>,
+}
+
+/// `reach`, never wider than `clamp`.
+fn clamped(reach: CommReach, clamp: Option<CommReach>) -> CommReach {
+    clamp.map_or(reach, |clamp| reach.min(clamp))
+}
+
+/// Walks `child`'s real dispatch ancestors. A true cycle refuses; the walk's
+/// length is observed against its scan row (FIX 10178), never refused.
+fn ancestry_in(vault: &Vault, txn: &heed::RoTxn<'_>, child: AttemptId) -> Result<Ancestry> {
     let dispatcher = AgentDispatcher::new(vault);
     let queue = AttemptQueue::new(vault);
-    let mut reach = input.comm.max(approved);
+    let mut ancestry = Ancestry {
+        clamp: None,
+        standing: None,
+    };
+    let mut seen = std::collections::HashSet::from([child]);
     let mut cursor = child;
-    let mut hops = 0;
     while let Some(row) = queue.get_in_txn(txn, cursor)? {
         let parent = decode_dreamer_attempt_payload(&row.payload)?.parent_attempt;
         let Some((id, parent_input)) = dispatch_parent_in_txn(&dispatcher, txn, parent)? else {
             break;
         };
-        hops += 1;
-        if hops > MAX_LINEAGE_HOPS || id == child {
-            return Err(invalid("dispatch lineage bound or cycle"));
+        if !seen.insert(id) {
+            return Err(invalid("dispatch lineage cycle"));
         }
-        let own = approved_reach(vault, txn, id)?.map_or(parent_input.comm, |approved| {
-            approved.max(parent_input.comm)
+        let approval = comm_widen_in(vault, txn, id)?.and_then(|record| record.approved);
+        let own = approval.map_or(parent_input.comm, |approval| {
+            approval.reach.max(parent_input.comm)
         });
-        reach = reach.min(own);
+        ancestry.clamp = Some(clamped(own, ancestry.clamp));
+        if let Some(approval) = approval.filter(CommApproval::stands) {
+            ancestry.standing = Some(
+                ancestry
+                    .standing
+                    .map_or(approval.reach, |standing| standing.max(approval.reach)),
+            );
+        }
         cursor = id;
     }
-    Ok(reach)
+    if let Ok(mut count) = crate::scan_check::ScanCount::start(
+        &vault.store,
+        txn,
+        crate::scan_check::EngineScan::CommWidenAncestorRows,
+        child.as_bytes(),
+    ) {
+        count.rows(seen.len().saturating_sub(1));
+        count.defer(&vault.store);
+    }
+    Ok(ancestry)
 }

@@ -48,7 +48,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::edit_distance::escalation::{
     EscalationReceipt, EscalationRuling, EscalationTrigger, StandingPolicy,
-    record_explicit_ruling_in_txn, standing_policy_for,
+    record_explicit_ruling_in_txn, standing_policy_for, standing_policy_for_in,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
@@ -75,9 +75,11 @@ use crate::wave_orchestration::{
 };
 use serde::{Deserialize, Serialize};
 
+mod ask_auto;
 mod checks;
 mod hold;
 mod resume;
+pub(super) use self::ask_auto::AskAutoGate;
 use self::checks::settle_held_attempts_in;
 pub(super) use self::checks::{AskCheck, WaveCheck, record_ask_check_in, record_wave_check_in};
 pub(super) use self::hold::{
@@ -606,7 +608,7 @@ pub(super) fn admit_wave_launch_in(
     let gate = input.gate;
     let scope = wave_scope(input.actor, input.cut.epic_task_ref());
     if policy_in(vault, txn, &ConsultFanOutScope::default())? != gate.governed
-        || standing_policy_for(vault, &scope, EscalationTrigger::Budget)? != gate.standing
+        || standing_policy_for_in(vault, txn, &scope, EscalationTrigger::Budget)? != gate.standing
     {
         return Err(consult_refusal(
             MEMORY_CODE_INVALID_STATE,

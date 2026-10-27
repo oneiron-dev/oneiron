@@ -40,11 +40,11 @@ mod run;
 pub mod settlement;
 mod submit;
 pub use files::RepoProposedFile;
-pub(super) use files::received_bundle_queue_only;
+pub(super) use files::{native_bundle_queue_only, received_bundle_queue_only};
 pub(super) use guards::require_repo_artifact_in_txn;
 use guards::validate_conflict_in_txn;
 pub use queue_review::{QueueReviewAdmission, RepoProposalCritique, RepoProposalReview};
-use submit::ProposalBase;
+pub(super) use submit::ProposalBase;
 
 /// Durable per-operation code proposal. Key: id16.
 pub(super) const PROPOSAL: SideTable<EntityId, RepoProposal, crate::side_table::Named> =
@@ -161,6 +161,9 @@ pub enum RepoProposalOperation {
         #[serde(with = "entity_serde")]
         candidate: EntityId,
     },
+    /// Every file of one native reviewed bundle (FIX 7608 slice 5), each
+    /// with its exact state change: it lands through its merge queue only.
+    CommitFiles,
 }
 
 pub(super) fn invalid(reason: &'static str) -> Error {
@@ -172,7 +175,7 @@ pub(super) fn store(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &RepoProposal
 impl RepoProposal {
     /// File writes preserve the mode committed by the reviewed pre-action fork.
     /// The live checkout and revision metadata are not authority for a mode.
-    /// A received bundle's file takes its reviewed replacement mode.
+    /// A file bundle's file takes its reviewed replacement mode.
     pub(crate) fn reviewed_file_mode(
         &self,
         vault: &Vault,
@@ -181,14 +184,14 @@ impl RepoProposal {
         if super::oplog::repo_mutation_repo_key(&RepoRef::parse(&self.repo)?) != frontier.repo {
             return Err(invalid("reviewed file belongs to another document"));
         }
-        if self.received_candidate().is_some() {
+        if self.is_file_bundle() {
             return self
                 .files
                 .iter()
                 .find(|file| file.path == frontier.path)
                 .and_then(|file| file.metadata_edit.as_ref())
                 .and_then(|edit| edit.replacement.mode)
-                .ok_or(invalid("a received file has no reviewed present mode"));
+                .ok_or(invalid("a bundle file has no reviewed present mode"));
         }
         let (path, _) = self.ordinary_file()?;
         if path != frontier.path {
@@ -259,6 +262,9 @@ impl RepoProposal {
                             .collect::<Result<Vec<_>>>()?,
                         message: self.message.clone(),
                     }
+                }
+                RepoProposalOperation::CommitFiles => {
+                    super::bundle::bundle_request_operation(self)?
                 }
             },
         )
@@ -395,9 +401,9 @@ impl Vault {
         if row.merge_stack.is_some() {
             return Err(invalid("stack-bound proposal requires its merge queue"));
         }
-        // A received push bundle has one route: its owner's merge queue.
-        if row.received_candidate().is_some() {
-            return Err(received_bundle_queue_only());
+        // A file bundle has one route: its repository's merge queue.
+        if row.is_file_bundle() {
+            return Err(files::bundle_queue_only(&row));
         }
         if let Some(seq) = row.operation_seq {
             drop(txn);
@@ -471,7 +477,9 @@ pub(super) fn authorize(
     let attributed = request.actor_id.is_some() || request.session_id.is_some();
     // A received bundle never runs as a trusted unattributed write: it
     // needs its source's pusher and fork, its review and its stack.
-    if let RepoMutationOperation::ReceivedFiles { .. } = request.operation {
+    if let RepoMutationOperation::CommitFiles { .. } = request.operation {
+        super::bundle::require_bundle_route(request, proposal, stack)?;
+    } else if let RepoMutationOperation::ReceivedFiles { .. } = request.operation {
         if request.actor_id.is_none() || request.session_id.is_none() || proposal.is_none() {
             return Err(invalid(
                 "a received push bundle lands under its pusher, fork and review",

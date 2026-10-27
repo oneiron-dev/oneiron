@@ -73,7 +73,7 @@ impl SyncConnection {
         // the new mode's hello. A live lane never changes mode.
         let mut mode_rx = self.mode.subscribe();
         if *mode_rx.borrow_and_update() != client.config.residence_mode {
-            return LoopExit::Disconnected("residence mode changed".into());
+            return LoopExit::Renegotiate;
         }
         let mut left_rx = self.left.subscribe();
 
@@ -465,7 +465,7 @@ impl SyncConnection {
                     if changed.is_ok() {
                         flush_to_queue(&self.queue, &mut debounce_buffer);
                         let _ = write.send(Message::Close(None)).await;
-                        return LoopExit::Disconnected("residence mode changed".into());
+                        return LoopExit::Renegotiate;
                     }
                 }
 

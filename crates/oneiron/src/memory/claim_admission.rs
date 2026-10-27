@@ -91,7 +91,6 @@ impl Memory<'_> {
         claims: &[ScopedClaimInput],
         proposed: bool,
     ) -> MemoryResult<Vec<CommitOutcome>> {
-        super::caps::check_batch_len("claims", claims.len())?;
         let row = if proposed {
             "vault.claims.seed"
         } else {
@@ -182,6 +181,7 @@ impl Memory<'_> {
             occurred_at: input.occurred_at,
             learned_at: input.learned_at,
             salience: input.salience,
+            confidence_details: None,
         };
         super::caps::check_claim_input(&claim)?;
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
