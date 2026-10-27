@@ -302,7 +302,7 @@ pub(in crate::models::worker_host) fn status() -> SnapshotStatus {
         add(&mut status.snapshots, usage.map(|usage| usage.snapshots));
         add(
             &mut status.sealed_bytes,
-            usage.map(|usage| usage.sealed_bytes),
+            usage.and_then(|usage| usage.sealed_bytes),
         );
         add(&mut status.in_flight_bytes, in_flight);
         add(&mut status.evicted, usage.map(|usage| usage.evicted));

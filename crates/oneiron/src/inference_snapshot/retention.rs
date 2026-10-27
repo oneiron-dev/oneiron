@@ -106,11 +106,12 @@ impl SnapshotReservation {
 /// One vault's disk line as it stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SnapshotUsage {
-    /// Catalog rows, and the sealed bytes those that decode name.
+    /// Catalog rows, and the sealed bytes they name: `None` while any of
+    /// them does not decode, its size being unknown.
     pub snapshots: u64,
-    pub sealed_bytes: u64,
-    /// Rows that do not decode: their size is unknown, and the next
-    /// enforcement retires them.
+    pub sealed_bytes: Option<u64>,
+    /// Rows that do not decode: their size is unknown, they may serve no
+    /// restore, and the next enforcement retires them first.
     pub unknown: u64,
     /// Reserved for bodies not yet written.
     pub reserved_bytes: u64,
@@ -184,6 +185,7 @@ impl SnapshotLedger<'_> {
         };
         let state = self.ledger().lock();
         let mut usage = SnapshotUsage {
+            sealed_bytes: Some(0),
             evicted: state.evicted,
             skipped: state.skipped,
             ..SnapshotUsage::default()
@@ -199,10 +201,15 @@ impl SnapshotLedger<'_> {
             usage.snapshots += 1;
             match record {
                 Some(record) => {
-                    usage.sealed_bytes = usage.sealed_bytes.saturating_add(record.sealed_bytes);
+                    usage.sealed_bytes = usage
+                        .sealed_bytes
+                        .map(|bytes| bytes.saturating_add(record.sealed_bytes));
                 }
                 None => usage.unknown += 1,
             }
+        }
+        if usage.unknown != 0 {
+            usage.sealed_bytes = None;
         }
         Ok(usage)
     }
@@ -226,15 +233,20 @@ impl SnapshotLedger<'_> {
             self.ledger().lock().skipped += 1;
             return Ok(None);
         };
-        if !self.enforce_budget(budget, bytes, pinned)? {
+        let reservation = self.enforce(budget, bytes, pinned, true)?.1;
+        if reservation.is_none() {
             self.ledger().lock().skipped += 1;
-            return Ok(None);
         }
+        Ok(reservation)
+    }
+
+    /// A hold on `bytes`, in flight from now on.
+    fn hold(&self, bytes: u64) -> SnapshotReservation {
         let mut state = self.ledger().lock();
         let id = state.next;
         state.next = state.next.wrapping_add(1);
         state.held.insert(id, (bytes, false));
-        Ok(Some(SnapshotReservation { id, bytes }))
+        SnapshotReservation { id, bytes }
     }
 
     /// Charges `reservation` with the body's sealed length, `sealed`. A
@@ -265,8 +277,9 @@ impl SnapshotLedger<'_> {
     /// Retires kept snapshots outside `pinned`, in [`choose_victim`]'s
     /// order, until what is kept, what is in flight and `need` more bytes
     /// fit the budget; rows that do not decode go first, their size being
-    /// unknown. A budget that is off purges every row not pinned. `false`
-    /// when only pinned rows are left and it still does not fit.
+    /// unknown and no restore served by them. A budget that is off purges
+    /// every row not pinned. `false` when only pinned rows are left and it
+    /// still does not fit.
     ///
     /// # Errors
     /// Storage errors.
@@ -276,6 +289,19 @@ impl SnapshotLedger<'_> {
         need: u64,
         pinned: &[SnapshotId],
     ) -> Result<bool> {
+        Ok(self.enforce(budget, need, pinned, false)?.0)
+    }
+
+    /// [`Self::enforce_budget`]; with `hold`, a hold on `need` bytes once
+    /// they fit, taken inside the same writer before it commits, so no
+    /// other enforcement runs between the check and the hold.
+    fn enforce(
+        &self,
+        budget: SnapshotBudget,
+        need: u64,
+        pinned: &[SnapshotId],
+        hold: bool,
+    ) -> Result<(bool, Option<SnapshotReservation>)> {
         let store = &self.vault.store;
         let mut wtxn = store.env.write_txn()?;
         let rows = catalog::rows(store, &wtxn)?;
@@ -284,8 +310,9 @@ impl SnapshotLedger<'_> {
         let mut evicted = 0_u64;
         for (id, record) in rows {
             let Some(record) = record else {
-                super::store::retire_in_txn(store, &mut wtxn, &id)?;
-                evicted += 1;
+                if super::store::retire_in_txn(store, &mut wtxn, &id)? {
+                    evicted += 1;
+                }
                 continue;
             };
             kept = kept.saturating_add(record.sealed_bytes);
@@ -307,16 +334,24 @@ impl SnapshotLedger<'_> {
                 break;
             };
             let victim = candidates.swap_remove(index);
-            super::store::retire_in_txn(store, &mut wtxn, &victim.id)?;
+            if super::store::retire_in_txn(store, &mut wtxn, &victim.id)? {
+                evicted += 1;
+            }
             kept = kept.saturating_sub(victim.bytes);
-            evicted += 1;
         }
-        wtxn.commit()?;
+        let fitted = fits(kept);
+        let reservation = (hold && fitted).then(|| self.hold(need));
+        if let Err(error) = wtxn.commit() {
+            if let Some(reservation) = reservation {
+                self.release(reservation);
+            }
+            return Err(error.into());
+        }
         if evicted > 0 {
             self.ledger().lock().evicted += evicted;
             self.vault
                 .finish_inference_snapshot_retirements_after_commit();
         }
-        Ok(fits(kept))
+        Ok((fitted, reservation))
     }
 }
