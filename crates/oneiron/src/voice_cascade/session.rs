@@ -318,8 +318,10 @@ impl VoiceCascadeSession {
     /// brain context. After `Some(Tool(..))`, pass `brain_context` to
     /// `Brain::update_context` BEFORE resuming the model. No tool is executed here.
     /// Host-side tool results use the same door; a result must have one prior
-    /// call, and may appear only once. Done requires all tool results first.
-    /// Complete any buffered trailing sentence BEFORE reporting Done.
+    /// call, and may appear only once. Done requires all tool results first,
+    /// and only a stop reports it: an answer that ended without one reports
+    /// [`BrainEvent::Incomplete`] instead. Complete any buffered trailing
+    /// sentence BEFORE reporting either.
     pub fn handle_brain(
         &mut self,
         generation: GenerationEpoch,
@@ -336,7 +338,10 @@ impl VoiceCascadeSession {
                 validate_tool(&active.request, tool)?;
                 active.request.tool_events.push(tool.clone());
             }
-            BrainEvent::Done => {
+            // A whole answer, or one whose stream ended without a stop
+            // (FIX 7808): either way no sentence follows it, and neither is
+            // reported while a tool result it asked for is still owed.
+            BrainEvent::Done | BrainEvent::Incomplete => {
                 if outstanding_tools(&active.request) {
                     return Err(invalid("brain done before tool results"));
                 }
