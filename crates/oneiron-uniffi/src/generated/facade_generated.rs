@@ -1406,6 +1406,11 @@ export_facade! {
     let output = client.vault_authority_history_import(&input)?;
     crate::codec::lift_record("vault.authority.history.import", &output)
 };
+"vault.authority.clock.repair" => fn vault_authority_clock_repair(&self) -> AuthorityClockRepair = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.clock.repair")?;
+    let output = client.vault_authority_clock_repair(&input)?;
+    crate::codec::lift_record("vault.authority.clock.repair", &output)
+};
 "vault.wire_health.thresholds.get" => fn vault_wire_health_thresholds_get(&self) -> WireThresholds = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.wire_health.thresholds.get")?;
     let output = client.vault_wire_health_thresholds_get(&input)?;

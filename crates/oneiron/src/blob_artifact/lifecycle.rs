@@ -136,6 +136,39 @@ pub(super) fn release_bytes_of_deleted_artifact(
     Ok(())
 }
 
+/// Releases the reference ASSET `reference` holds on the bytes under
+/// `content_hash` (FIX 9949): its `asset_ref` row goes, and the bytes then go
+/// by the delete rule above, unless another holder keeps them. Runs in the
+/// ASSET's delete or erase transaction. A reference that is not there
+/// releases nothing.
+pub(crate) fn release_asset_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    reference: &EntityId,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<()> {
+    if !ASSET_REF.delete(store, wtxn, &(*content_hash, *reference))? {
+        return Ok(());
+    }
+    release_bytes_of_deleted_artifact(store, wtxn, reference, content_hash)
+}
+
+/// Holds the bytes under `content_hash` again for the ASSET that just landed
+/// them (FIX 9949): a fence an earlier release left on their ASSET is lifted,
+/// as a new artifact holding the same bytes lifts it. A hard delete's marker
+/// and an explicit delete's fence stay.
+pub(crate) fn hold_asset_reference_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    content_hash: &[u8; BLOB_ARTIFACT_CONTENT_HASH_LEN],
+) -> Result<()> {
+    super::references::lift_release_fence(
+        store,
+        wtxn,
+        &blob_artifact_asset_entity_id(content_hash)?,
+    )
+}
+
 /// Releases exactly version `version` of `artifact`, holding `content_hash`,
 /// once the last step claim pinning it as its response let go of it (FIX
 /// 6225). Only that version goes: its record, its born-from rows and its

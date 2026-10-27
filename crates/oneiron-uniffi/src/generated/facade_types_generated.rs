@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1160 facade rows, 4151 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1112.
+// UniFFI census: 1161 facade rows, 4153 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1113.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), ConsolidationReference.byte_range (a tuple), DeckCreationRecord.fit_unverified (a tuple), DeckNodeView.placeholder (a tuple), DeckPlannedSlide.split (a tuple), DeckTraceOutcome.Placed (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10370,13 +10370,15 @@ pub enum Sensitivity {
     Restricted,
 }
 
-/// `oneiron_authority::federation::scope::SensitivityCeiling`.
+/// `oneiron_authority::federation::scope::SensitivityCeilingWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "kind", content = "value")]
 #[serde(deny_unknown_fields)]
-pub enum SensitivityCeiling {
+pub enum SensitivityCeilingWire {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(Sensitivity),
 }
@@ -10400,7 +10402,7 @@ pub struct Scope {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub sensitivity: Option<SensitivityCeiling>,
+    pub sensitivity: Option<SensitivityCeilingWire>,
 }
 
 /// `oneiron::memory::scoped_export::CredentialCeiling`.
@@ -10643,6 +10645,8 @@ pub enum ScopeSensitivityBand {
 pub enum ScopeSensitivityInput {
     #[serde(rename = "bottom")]
     Bottom,
+    #[serde(rename = "all")]
+    All,
     #[serde(rename = "at_most")]
     AtMost(ScopeSensitivityBand),
 }
@@ -18678,6 +18682,12 @@ pub struct ColdAuthorityAuditRow {
     pub parents: Vec<String>,
     #[serde(rename = "fold_valid")]
     pub fold_valid: bool,
+    #[serde(
+        rename = "issue_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_codes: Option<Vec<String>>,
 }
 
 /// `oneiron::receipt::authority_audit::AuthorityAuditPage`.
@@ -18717,6 +18727,31 @@ pub struct SignedAuthorityHistory {
 pub struct AuthorityHistoryImported {
     #[serde(rename = "entry_refs")]
     pub entry_refs: Vec<String>,
+}
+
+/// `oneiron::authority::clock_repair::AuthorityClockRepairOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AuthorityClockRepairOutcome {
+    #[serde(rename = "sound")]
+    Sound,
+    #[serde(rename = "repaired")]
+    Repaired,
+    #[serde(rename = "unproven")]
+    Unproven,
+}
+
+/// `oneiron::authority::clock_repair::AuthorityClockRepair`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorityClockRepair {
+    #[serde(rename = "outcome")]
+    pub outcome: AuthorityClockRepairOutcome,
+    #[serde(rename = "floor", default, skip_serializing_if = "Option::is_none")]
+    pub floor: Option<u64>,
+    #[serde(rename = "observations")]
+    pub observations: u64,
+    #[serde(rename = "anchored", default, skip_serializing_if = "Option::is_none")]
+    pub anchored: Option<u64>,
 }
 
 /// `oneiron::verbs::wire_health::WireThresholds`.

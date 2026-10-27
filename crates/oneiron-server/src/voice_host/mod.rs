@@ -21,6 +21,8 @@ mod entry_barrier;
 mod extraction;
 mod hello_refusal;
 mod media_bridge;
+// Spoken audio gated per chunk on its way to the wire (FIX 9542).
+mod playout_queue;
 mod public;
 mod public_events;
 mod public_hold;

@@ -57,6 +57,7 @@ mod checkpoint_root_intake;
 mod checkpoint_root_stage;
 mod checkpoint_root_status;
 mod claim_write;
+mod clock_repair;
 mod conversation_training;
 mod conversation_training_vault;
 mod critical_confirm_door;
@@ -76,6 +77,7 @@ mod grant_travel;
 mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
+mod handover_evidence;
 mod history_coverage;
 mod history_fetch;
 mod history_repair;
@@ -234,6 +236,10 @@ pub use checkpoint_root_status::{
     ROOT_CHECKPOINT_MISSING_SIGNER, ROOT_CHECKPOINT_POLICY_CHANGE, RootCheckpointMissingSigner,
     RootCheckpointPolicyChange,
 };
+pub use clock_repair::{
+    AUTHORITY_CLOCK_REPAIR_EVIDENCE, AuthorityClockRepair, AuthorityClockRepairEvidence,
+    AuthorityClockRepairOutcome,
+};
 pub use conversation_training::ConversationTrainingView;
 pub use conversation_training_vault::ConversationLearningView;
 pub use fold_engine::*;
@@ -267,7 +273,9 @@ pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use local_host_root::{LocalHostRootContext, LocalHostRootValidated, RetainedHostRootReplace};
 pub use local_open::LocalOpenProfile;
-pub use log_budget::{AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER};
+pub use log_budget::{
+    AUTHORITY_LOG_SIGNER_COUNT_ADVISORY, AuthorityLogCheck, MAX_AUTHORITY_ROWS_PER_SIGNER,
+};
 pub use machine_identity::{
     LocalMachine, MACHINE_PROOF_HEADER, MachineEnrolmentRequest, PeerMachine, RequestCode,
     machine_connection_transcript, machine_proof_header_value,
@@ -344,8 +352,10 @@ pub(crate) use claim_write::{
     check_materialized_claim_causality, claim_causal_admitted, row_causal_admitted,
 };
 pub(crate) use first_seen_clock::*;
+pub use first_seen_clock::{RestrictionOnlyClock, restriction_only_clock};
 pub(crate) use frontier_join::FrontierSigner;
 pub(crate) use handoff_equivocation::{HandoffEquivocations, door_refuses_retired_standing};
+pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;

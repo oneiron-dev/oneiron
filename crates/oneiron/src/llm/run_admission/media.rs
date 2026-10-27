@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use super::super::media::{
-    AiOperation, MediaBackend, MediaCaps, MediaJobState, MediaRequest, MediaResponse, MediaUsage,
+    AiOperation, InterruptedMediaCall, MediaBackend, MediaCallProgress, MediaCaps, MediaJobState,
+    MediaRequest, MediaResponse, MediaUsage,
 };
 use super::super::{
     BudgetLease, BudgetSettlement, DispatchBinding, DispatchRefused, FatalLlmError,
@@ -91,6 +92,22 @@ impl MediaGate {
     ) -> LlmResult<MediaResponse> {
         let mut opened = self.open(&request, lease)?;
         let answer = self.inner.run(request, lease).await;
+        let served = answer.as_ref().ok().and_then(served_model);
+        opened.finish(served, answer.is_ok());
+        answer
+    }
+
+    /// [`Self::run`] keeping what a call stopped part way completed (FIX
+    /// 9517): the answer, or the stop with the usage of the requests that
+    /// answered, for the permit's holder to settle once
+    /// ([`RunPermit::settle_interrupted_media`]).
+    pub async fn run_progress(
+        &self,
+        request: MediaRequest,
+        lease: &BudgetLease,
+    ) -> Result<MediaResponse, InterruptedMediaCall> {
+        let mut opened = self.open(&request, lease)?;
+        let answer = self.inner.run_progress(request, lease).await;
         let served = answer.as_ref().ok().and_then(served_model);
         opened.finish(served, answer.is_ok());
         answer
@@ -402,6 +419,26 @@ impl RunPermit {
             Some(units) => self.settle_with(CallOutcome::Used(units), inference_calls),
             None => self.settle_with(CallOutcome::Answered(&LlmUsage::zero()), inference_calls),
         }
+    }
+
+    /// Settles, once, a media call stopped part way (FIX 9517): what its
+    /// answered requests counted, with their inference receipts, as
+    /// [`Self::settle_media`] settles an answer, never the whole call's
+    /// reservation as a failure. A call that completed nothing settles as
+    /// failed, as any failed call does.
+    pub fn settle_interrupted_media(
+        self,
+        progress: &MediaCallProgress,
+        operation: AiOperation,
+        caps: &MediaCaps,
+    ) -> Result<BudgetSettlement, RunDenied> {
+        if progress.is_empty() {
+            return self.settle(CallOutcome::Failed);
+        }
+        self.settle_media(
+            progress.usage.token_units(operation, caps),
+            progress.usage.inference_calls(),
+        )
     }
 
     /// Ends a kept media job's permit at a stop without a charge
