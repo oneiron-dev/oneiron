@@ -1357,7 +1357,7 @@ declare namespace Sdk {
   type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
   type ConnectDelivery = { body: ConnectWindow; signature: string };
   type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
-  type FederationBurstWorkState = "pending" | "imported" | "rejected";
+  type FederationBurstWorkState = "pending" | "imported" | "rejected" | "expired" | "stale_authority" | "erased";
   type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
   type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
   type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };

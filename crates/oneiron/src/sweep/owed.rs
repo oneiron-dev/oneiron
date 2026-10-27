@@ -196,7 +196,16 @@ pub(super) fn settle_owed_compactions(
             }
             let settled = vault.with_write_txn_grouped(|wtxn| {
                 let current = vault.store.sync_queue.get(&*wtxn, &owed.key)?;
-                if current.is_some_and(|raise| *raise == *owed.raise) {
+                // A retained copy of an erased row, kept again since the
+                // sweep scrubbed it, keeps the row for the next pass (FIX
+                // 7998).
+                if current.is_some_and(|raise| *raise == *owed.raise)
+                    && !crate::sync::federation_burst::retained_copies_in(
+                        &vault.store,
+                        wtxn,
+                        erased,
+                    )?
+                {
                     vault.store.sync_queue.delete(wtxn, &owed.key)?;
                     complete_receipts_in_txn(vault, wtxn, &receipts)?;
                 }

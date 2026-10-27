@@ -98,6 +98,23 @@ pub(super) fn finalize_job(
         if crate::note::any_citation_erase_pending(&vault.store, wtxn)? {
             return Ok(None);
         }
+        // A retained copy of a scoped row, kept again since the sweep
+        // scrubbed it, holds the job for the next pass (FIX 7998).
+        #[cfg(feature = "sync")]
+        {
+            let scoped = job
+                .scope
+                .entity_ids
+                .iter()
+                .filter_map(|hex| EntityId::from_hex(hex).ok());
+            if crate::sync::federation_burst::retained_copies_in(
+                &vault.store,
+                wtxn,
+                &scoped.collect::<Vec<_>>(),
+            )? {
+                return Ok(None);
+            }
+        }
         let mut finalized = 0u64;
         let mut completed = Vec::new();
         for id in vault

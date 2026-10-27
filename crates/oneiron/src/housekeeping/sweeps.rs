@@ -192,10 +192,10 @@ fn confirm_walk_began(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_be_bytes(bytes.try_into().ok()?))
 }
 
-/// Finishes staged key retirements and a left env's owed body collection,
-/// then ages out decisions past the owner's horizon a pass at a time until a
-/// pass removes nothing or the deadline passes. A vault with no horizon
-/// prunes nothing.
+/// Finishes staged key retirements, a left env's owed body collection and
+/// the retained peer work's turns, then ages out decisions past the owner's
+/// horizon a pass at a time until a pass removes nothing or the deadline
+/// passes. A vault with no horizon prunes nothing.
 fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_gate_decision_retirements()?;
     // An erased holder's known-value history (KS-3), retried here.
@@ -215,6 +215,9 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.sweep_body_retention_after_commit();
     // A left shared env's body files its purge left unnamed (FIX 2413).
     super::sync_work::collect_left_env_bodies(vault);
+    // Retained peer work takes its turn or ends with its receipt (FIX 7997,
+    // 8565).
+    super::sync_work::drain_retained_sync_work(vault);
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {

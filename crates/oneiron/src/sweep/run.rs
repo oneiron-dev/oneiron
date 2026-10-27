@@ -316,6 +316,11 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         held: BTreeSet::new(),
     };
 
+    // Retained federation and maintenance copies of an erased row go before
+    // its carriers are compacted (FIX 7998).
+    #[cfg(feature = "sync")]
+    crate::sync::federation_burst::scrub_retained_copies(vault, &erased)?;
+
     // ── 3. Compact the historical carriers ──────────────────────────────
     // A shallow snapshot drops history, which is an erase, so a run no one
     // asked for spends it only for a due obligation (ARCH-0038 carrier-1,

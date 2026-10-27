@@ -30,22 +30,23 @@ use crate::{Error, Result, Vault};
 ///   [`SyncError::IdentityTopologyEventDivergence`](crate::error::SyncError::IdentityTopologyEventDivergence) (equivocation on an
 ///   immutable single-writer record: local bytes win; callers quarantine
 ///   via `remote_rejection_reason`, never abort, never silent-LWW);
-/// * a fresh id → fail-closed D18 body validation, per-stream ingest
-///   quota, the replicated put, then `seq = max(local, incoming)` and
-///   shell-edge reconciliation from the ledger fold — the sync twin of the
-///   local door's atomic record+edges commit (the ruled invariant:
-///   `merged_into` / `split_into` edges only move as a door side-effect of
-///   a validated type-76 event).
+/// * a fresh id → fail-closed D18 body validation, its turn in per-stream
+///   maintenance admission, the replicated put, then `seq = max(local,
+///   incoming)` and shell-edge reconciliation from the ledger fold — the
+///   sync twin of the local door's atomic record+edges commit (the ruled
+///   invariant: `merged_into` / `split_into` edges only move as a door
+///   side-effect of a validated type-76 event). An event past its stream's
+///   share waits as retained work with its exact bytes, window and lease,
+///   and lands nothing now (FIX 8858).
 pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     header: &EntityMetadataHeader,
-    blob: &[u8],
+    (blob, window_key): (&[u8], &str),
     data: &[u8],
     lease_vault_id: u64,
 ) -> Result<bool> {
-    let mutation_recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
     let byte_identical_replay =
         crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &*wtxn, id)?
             .map(|existing| *existing == *blob);
@@ -92,12 +93,12 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
     {
         return Ok(false);
     }
-    let quota_debit = quota::try_accept_maintenance_ingest_peer_in_txn(
-        vault,
-        wtxn,
-        quota::peer_key_from_identity_topology_stream(lease_vault_id),
-        mutation_recorded_at,
-    )?;
+    let op = quota::MaintenanceOp::new(window_key, lease_vault_id, id, blob);
+    let stream = quota::peer_key_from_identity_topology_stream(lease_vault_id);
+    let quota_debit = match quota::admit_maintenance_in_txn(vault, wtxn, stream, op)? {
+        quota::MaintenanceAdmission::Now(debit) => debit,
+        quota::MaintenanceAdmission::Retained => return Ok(false),
+    };
     let apply_result = vault
         .batch_in()
         .put_replicated(
@@ -112,9 +113,7 @@ pub(crate) fn ingest_replicated_identity_topology_event_in_txn(
         )
         .apply(wtxn);
     if let Err(err) = apply_result {
-        if let Some(quota_debit) = quota_debit {
-            quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
-        }
+        quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
         return Err(err);
     }
     vault.advance_identity_topology_seq_in_txn(wtxn, record.seq)?;

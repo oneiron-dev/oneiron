@@ -144,6 +144,24 @@ pub enum FederationBurstWorkState {
     Pending,
     Imported,
     Rejected,
+    /// Its wait ended before its turn came; nothing was imported (FIX 7997).
+    Expired,
+    /// It was held under a grant or pact scope that has changed since. Its
+    /// bytes were never imported, and it counts as no structural failure
+    /// (FIX 7999).
+    StaleAuthority,
+    /// An erase took a row its bytes carried; only this receipt is kept
+    /// (FIX 7998).
+    Erased,
+}
+
+impl FederationBurstWorkState {
+    /// Whether the batch's delivery is settled for good, so a resend of the
+    /// same bytes answers with this receipt. A batch that ended any other
+    /// way may be sent again, and that delivery starts afresh.
+    pub const fn is_settled(self) -> bool {
+        matches!(self, Self::Imported | Self::Rejected)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

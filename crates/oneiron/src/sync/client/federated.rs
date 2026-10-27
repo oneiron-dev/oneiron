@@ -177,12 +177,7 @@ impl SyncClient {
             .map_err(map_federated_admission_err)?;
         let batch_ref = blake3::Hash::from(identity.id).to_hex().to_string();
         match self.vault.federation_burst_disposition(&peer, &batch_ref) {
-            Ok(receipt)
-                if receipt.state
-                    != crate::sync::federation_burst::FederationBurstWorkState::Pending =>
-            {
-                return Ok(receipt);
-            }
+            Ok(receipt) if receipt.state.is_settled() => return Ok(receipt),
             Ok(_) | Err(crate::Error::EntityNotFound) => {}
             Err(error) => return Err(map_federated_admission_err(error)),
         }
@@ -219,13 +214,19 @@ impl SyncClient {
             .parts()
             .map(|part| (part.key().as_str(), part.bytes()))
             .collect::<Vec<_>>();
+        // The rows it brings: an erase of any scrubs the retained bytes (FIX
+        // 7998).
+        let carried = admitted
+            .parts()
+            .flat_map(|part| part.delivered().keys().copied())
+            .collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
             &peer,
             &key,
             kind,
             update,
-            writes,
+            (writes, carried.as_slice()),
             Some(parts.as_slice()),
         )
         .map_err(map_federated_admission_err)?;

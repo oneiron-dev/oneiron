@@ -515,7 +515,9 @@ fn admit(
     }
     let quota_debit = match header.entity_type {
         ENTITY_TYPE_REDACTION_AUDIT => match admit_receipt(ctx, wtxn, &id, blob, data)? {
-            ReceiptAdmission::LocalEcho => return Ok(EntityStep::Skip),
+            ReceiptAdmission::LocalEcho | ReceiptAdmission::Retained => {
+                return Ok(EntityStep::Skip);
+            }
             ReceiptAdmission::New(debit) => debit,
         },
         ENTITY_TYPE_AUTHORITY_LOG => {
@@ -545,7 +547,7 @@ fn admit(
                 wtxn,
                 &id,
                 header,
-                blob,
+                (blob, ctx.window_key),
                 data,
                 ctx.lease_vault_id,
             )?;
@@ -718,8 +720,8 @@ fn withdrawn_generation_here(
 ///    local receipt is an idempotent skip; any other local receipt at this id is a divergence,
 ///    and the local bytes are kept;
 /// 3. a NEW receipt verifies its Ed25519 transcript against the embedded att_pk (OD-6) and
-///    reads its `ls:` lease binding in this same transaction (OD-3/OD-7), then debits the
-///    maintenance-ingest quota.
+///    reads its `ls:` lease binding in this same transaction (OD-3/OD-7), then takes its turn
+///    in maintenance admission: debited now, or kept with its context as retained work.
 ///
 /// A refused receipt's bytes stay in the CRDT map, so a later forward rematerialization re-runs
 /// this door once the lease mirror catches up (OD-10 lazy re-admission).
@@ -747,14 +749,13 @@ fn admit_receipt(
         id,
         blob,
     )?;
-    let recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let debit = quota::try_accept_maintenance_ingest_peer_in_txn(
-        vault,
-        wtxn,
-        quota::peer_key_from_redaction_pubkey(&pubkey),
-        recorded_at,
-    )?;
-    Ok(ReceiptAdmission::New(debit))
+    let op = quota::MaintenanceOp::new(ctx.window_key, ctx.lease_vault_id, id, blob);
+    let signer = quota::peer_key_from_redaction_pubkey(&pubkey);
+    let admission = quota::admit_maintenance_in_txn(vault, wtxn, signer, op)?;
+    Ok(match admission {
+        quota::MaintenanceAdmission::Now(debit) => ReceiptAdmission::New(Some(debit)),
+        quota::MaintenanceAdmission::Retained => ReceiptAdmission::Retained,
+    })
 }
 
 /// The receipt door's verdict when it admits the bytes at all.
@@ -763,6 +764,8 @@ enum ReceiptAdmission {
     LocalEcho,
     /// A new receipt passed its origin predicate; the put rolls back the debit if it fails.
     New(Option<quota::MaintenanceIngestQuotaDebit>),
+    /// A new receipt waits its turn as retained work, Pending, never quarantined (FIX 8858).
+    Retained,
 }
 
 /// A delete-protected engine row never takes delete authority from a tombstone (ONE-1604-D1).

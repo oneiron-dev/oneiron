@@ -1,6 +1,6 @@
 //! Retirement of the facet stamps federation admission holds ahead of their
-//! rows (Astra-b F2 on #1432): by age, and once the grant they were held
-//! under no longer confers.
+//! rows (Astra-b F2 on #1432): past their wait, and once the grant they were
+//! held under no longer confers, each with its typed receipt (FIX 8890).
 
 use std::collections::BTreeSet;
 
@@ -48,8 +48,10 @@ fn grants_conferring_in(
     Ok(conferring)
 }
 
-/// Retires the facet stamps held 30 days or more and those held under a
-/// grant that no longer confers (Astra-b F2 on #1432); returns how many went.
+/// Retires the facet stamps past the owner's wait for held stamps (30 days
+/// unless he sets another) and those held under a grant that no longer
+/// confers, each with its typed receipt (Astra-b F2 on #1432, FIX 8890);
+/// returns how many went.
 pub(crate) fn retire_held_facet_stamps(vault: &Vault) -> Result<u64> {
     let now = vault.store.clock.now_recorded_at();
     crate::federation::facet_read::retire_held_stamps(vault, now, |txn, grants| {
