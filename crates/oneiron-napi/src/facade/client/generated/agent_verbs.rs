@@ -1190,6 +1190,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -1251,6 +1252,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -1273,6 +1275,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -1295,6 +1298,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -1317,6 +1321,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -1339,6 +1344,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5024,6 +5030,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5178,6 +5185,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5200,6 +5208,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5222,6 +5231,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5412,6 +5422,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -5959,6 +5970,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6401,6 +6413,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6423,6 +6436,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6445,6 +6459,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6467,6 +6482,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6489,6 +6505,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6511,6 +6528,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6617,6 +6635,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6639,6 +6658,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6661,6 +6681,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6683,6 +6704,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6705,6 +6727,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -6727,6 +6750,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -6746,6 +6770,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -8571,6 +8596,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8593,6 +8619,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8615,6 +8642,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8637,6 +8665,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8659,6 +8688,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8681,6 +8711,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8703,6 +8734,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8725,6 +8757,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8747,6 +8780,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8769,6 +8803,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8791,6 +8826,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8816,6 +8852,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8838,6 +8875,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8860,6 +8898,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8882,6 +8921,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8904,6 +8944,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8926,6 +8967,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8948,6 +8990,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8970,6 +9013,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -8992,6 +9036,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -9812,6 +9857,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -9834,6 +9880,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -9856,6 +9903,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self
@@ -9878,6 +9926,7 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
             })
         })?;
         let output = self

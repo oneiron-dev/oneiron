@@ -207,6 +207,10 @@ pub struct MemoryError {
     /// Absent on every other refusal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds in the
+    /// order its source said them (FIX 8190); empty where it said none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resets_at: Vec<u64>,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -273,6 +277,7 @@ impl MemoryError {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         }
     }
 

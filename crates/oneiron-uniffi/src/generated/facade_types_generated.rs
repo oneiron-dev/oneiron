@@ -17540,6 +17540,12 @@ pub struct ChatCompletionRequest {
     pub seed: Option<i64>,
     #[serde(rename = "user", default, skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    #[serde(
+        rename = "deadline_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_ms: Option<u64>,
 }
 
 /// `oneiron::verbs::proxy::ChatCompletionObject`.
@@ -54218,6 +54224,8 @@ pub struct MemoryError {
         skip_serializing_if = "Option::is_none"
     )]
     pub retry_after: Option<u64>,
+    #[serde(rename = "resets_at", default, skip_serializing_if = "Option::is_none")]
+    pub resets_at: Option<Vec<u64>>,
     #[serde(flatten)]
     pub memory_wrong_root: Option<MemoryWrongRoot>,
 }

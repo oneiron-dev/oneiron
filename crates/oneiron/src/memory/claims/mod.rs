@@ -361,6 +361,7 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+mod prompted;
 mod settle;
 
 pub use settle::{

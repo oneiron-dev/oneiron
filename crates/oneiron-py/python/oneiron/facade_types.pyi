@@ -5781,6 +5781,7 @@ class ChatCompletionRequest(TypedDict):
     frequency_penalty: NotRequired[float | None]
     seed: NotRequired[int | None]
     user: NotRequired[str | None]
+    deadline_ms: NotRequired[int | None]
 ChatCompletionObject = Literal["chat.completion"]
 ChatCompletionRole = Literal["assistant"]
 class ChatCompletionMessage(TypedDict):
@@ -17445,6 +17446,7 @@ class FacadeMemoryError(TypedDict):
     policy_denial: NotRequired[MemoryPolicyDenial | None]
     hook: NotRequired[VerbHookStop | None]
     retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus

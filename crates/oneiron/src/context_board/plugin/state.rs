@@ -115,6 +115,7 @@ fn refused_block() -> MemoryError {
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     }
 }
 

@@ -137,12 +137,20 @@ impl Memory<'_> {
     /// no axis but the world and facet the claim is born at. A handle bound
     /// to no credential is refused.
     pub fn claim_propose_carried(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
-        self.claim_propose_carried_guarded(input, &|_| Ok(()))
+        self.claim_propose_carried_guarded(input, &|_| Ok(()), None)
     }
 
     /// The proxy's independent Proposed exchange, under its still-live
-    /// read and remember rows, checked in the claim's committing writer.
-    pub fn claim_propose_for_proxy(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
+    /// read and remember rows, checked in the claim's committing writer. Its
+    /// birth names the rows the answer's prompt carried, `producers`, read
+    /// as `read` through `door` (FIX 8192, [`Self::prompted_birth`]).
+    pub fn claim_propose_for_proxy(
+        &self,
+        input: &ClaimInput,
+        door: &str,
+        producers: &[EntityId],
+        read: &[&[u8]],
+    ) -> MemoryResult<CommitReceipt> {
         if input.predicate != "integration.exchange"
             || input.subject_ref != self.actor.to_hex()
             || input.source != "tool_output"
@@ -151,7 +159,8 @@ impl Memory<'_> {
                 "the proxy proposes its own tool-output exchange",
             ));
         }
-        self.claim_propose_carried_guarded(input, &|txn| {
+        let birth = self.prompted_birth(input, door, producers, read)?;
+        let guard = |txn: &heed::RoTxn<'_>| -> Result<(), Error> {
             let registered = self
                 .vault
                 .live_connector_registration_in_txn(
@@ -173,13 +182,15 @@ impl Memory<'_> {
                 ));
             }
             Ok(())
-        })
+        };
+        self.claim_propose_carried_guarded(input, &guard, birth.as_ref())
     }
 
     fn claim_propose_carried_guarded(
         &self,
         input: &ClaimInput,
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+        birth: Option<&crate::provenance::birth::RowBirth>,
     ) -> MemoryResult<CommitReceipt> {
         let Some(proof) = self.read_proof.as_ref() else {
             return Err(MemoryError::new(
@@ -222,7 +233,7 @@ impl Memory<'_> {
             placed.scope = Some(serde_json::Value::Object(scope));
         }
         let actor = self.actor;
-        self.commit_one_guarded(
+        self.commit_one_guarded_with_birth(
             &placed,
             false,
             Some(ClaimApprovalStatus::Proposed),
@@ -231,6 +242,7 @@ impl Memory<'_> {
                 carried_proposal_admitted(self.vault, txn, proof, actor, position)?;
                 in_writer(txn)
             },
+            birth,
         )
     }
 

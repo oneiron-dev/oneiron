@@ -34,6 +34,12 @@ pub enum OneironError {
         /// `pending` to resend the call under that invocation. `None` for
         /// every other failure.
         pending: Option<WireJson>,
+        /// When to call again, in seconds, when the refusal's source said
+        /// (FIX 8190).
+        retry_after: Option<u64>,
+        /// Each time the refused call's limit resets, as Unix seconds in the
+        /// source's order; empty when it said none.
+        resets_at: Vec<u64>,
     },
 }
 
@@ -61,6 +67,8 @@ impl From<oneiron::MemoryError> for OneironError {
             replacement,
             schema_ref,
             pending,
+            retry_after: error.retry_after,
+            resets_at: error.resets_at,
         }
     }
 }

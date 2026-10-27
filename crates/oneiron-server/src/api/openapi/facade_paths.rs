@@ -125,6 +125,11 @@ fn facade_error_schema() -> Value {
                         "type": "integer",
                         "minimum": 0,
                         "description": "When to call again, in seconds, when no provider answered."
+                    },
+                    "resetsAt": {
+                        "type": "array",
+                        "items": {"type": "integer", "minimum": 0},
+                        "description": "Each time the refused call's limit resets, as Unix seconds, when its source said."
                     }
                 }
             },

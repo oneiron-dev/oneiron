@@ -457,6 +457,7 @@ pub(super) fn consult_refusal(code: &str, message: &str, suggestion: &str) -> Me
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     }
 }
 
