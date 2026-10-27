@@ -195,7 +195,7 @@ try:
     store = (out / "store-id").read_text().strip()
     same = receipt.get("image") == kept and store
     print(f"{receipt['cargo_lock_sha256']} {store}" if same else "")
-except (OSError, KeyError, TypeError, ValueError):
+except (AttributeError, OSError, KeyError, TypeError, ValueError):
     print("")
 PY
 )
