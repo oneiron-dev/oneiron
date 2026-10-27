@@ -4,6 +4,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use super::media::MediaCallProgress;
 use super::{LlmCapability, ModelId};
 
 #[derive(
@@ -33,6 +34,46 @@ impl LlmError {
                     | RetryableLlmError::StreamCut
             ) | Self::Fatal(FatalLlmError::EmptyResponse)
         )
+    }
+}
+
+/// A media call that stopped part way (FIX 9517): the error that stopped
+/// it, and what the requests that answered before it completed. Projected
+/// onto [`LlmError`] it is that error alone, so a caller that settles no
+/// call sees the error it always saw; a run that settles the call settles
+/// its progress once, never its whole reservation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InterruptedMediaCall {
+    pub error: LlmError,
+    pub progress: MediaCallProgress,
+}
+
+impl InterruptedMediaCall {
+    /// A call that completed nothing before `error`.
+    #[must_use]
+    pub fn nothing(error: LlmError) -> Self {
+        Self {
+            error,
+            progress: MediaCallProgress::default(),
+        }
+    }
+}
+
+impl From<InterruptedMediaCall> for LlmError {
+    fn from(call: InterruptedMediaCall) -> Self {
+        call.error
+    }
+}
+
+impl From<LlmError> for InterruptedMediaCall {
+    fn from(error: LlmError) -> Self {
+        Self::nothing(error)
+    }
+}
+
+impl From<FatalLlmError> for InterruptedMediaCall {
+    fn from(error: FatalLlmError) -> Self {
+        Self::nothing(error.into())
     }
 }
 
@@ -199,6 +240,11 @@ pub enum BudgetDenied {
     LeaseInvalid,
     #[error("admission denied")]
     AdmissionDenied,
+    /// The host asked the account owner a question and holds new host-paid
+    /// allocations until it is answered (FIX 9924): nothing is spent, and
+    /// the work waits for the owner's answer, never for a top-up.
+    #[error("held for the account owner's answer")]
+    HostCheck,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

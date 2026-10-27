@@ -9,14 +9,13 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::EmptyRequest;
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::federation_connect::{self, AcceptConnect, MintConnectGrant, OfferConnect};
 use crate::owner::hooked_row;
@@ -53,10 +52,10 @@ async fn identity(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
 async fn mint_grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<MintConnectGrant>, JsonRejection>,
+    payload: OwnerJsonBody<MintConnectGrant>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let minted = blocking(move || {
         hooked_row(
             server.vault(),
@@ -75,10 +74,10 @@ async fn mint_grant(
 async fn offer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<OfferConnect>, JsonRejection>,
+    payload: OwnerJsonBody<OfferConnect>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let offer = blocking(move || {
         hooked_row(
             server.vault(),
@@ -97,10 +96,10 @@ async fn offer(
 async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AcceptConnect>, JsonRejection>,
+    payload: OwnerJsonBody<AcceptConnect>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let accepted = blocking(move || {
         hooked_row(
             server.vault(),

@@ -25,6 +25,11 @@
 //! until it stands again, each resumed as the same try before a selection
 //! (`dreamer_runner::program`'s resumer). Nothing restarts it from scratch,
 //! and nothing reports it complete.
+//!
+//! A managed vault's attested owner's program runs only while the vault
+//! records him as its live owner (FIX 11090): the owner refusal its entry's
+//! binding or a write's reservation raises ends that try Failed, never held
+//! for his standing to return.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -32,14 +37,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::authority::ManagedOwnerCheckError;
 use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
 use crate::dreamer_runner::{
     DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause, ProgramHold,
     ProgramRecipePin, TurnProgramBinding, TurnProgramBound, TurnProgramEntered,
 };
 use crate::engine_executor::{
-    EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorResult, EngineExecutorStatus,
+    EngineNativeExecutor, JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -175,6 +181,15 @@ fn hold(
     })
 }
 
+/// The try of an attested owner who is no longer the vault's live owner,
+/// ended Failed with what it spent (FIX 11090).
+fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Failed {
+        reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
+        completed_units,
+    }
+}
+
 /// The program's task, as its host binds its run's config and seat from it:
 /// its pinned callable entry, exactly as pinned. The entry runs as pinned
 /// with no model writing its call.
@@ -203,6 +218,7 @@ async fn run_program(
     let binding = match vault.bind_turn_program_execution(attempt.id)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
+        TurnProgramBound::OwnerNotLive => return Ok(owner_not_live(0)),
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -395,7 +411,9 @@ fn pinned_entry(
 
 /// What one entry's end means for the program's try. An entry that stops
 /// short is held by the program runtime, its spend settled on the pass's
-/// meter all the same.
+/// meter all the same. One that stopped on the owner refusal its attested
+/// owner's authority check raised ends Failed on that refusal, carried as it
+/// was raised (FIX 11090), never held.
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -421,6 +439,9 @@ fn settle(
     };
     let ran = match ran {
         Ok(ran) => ran,
+        Err(error) if ManagedOwnerCheckError::is_owner_refusal(&error) => {
+            return Ok(owner_not_live(used));
+        }
         Err(error) => return Ok(stopped(format!("the turn program did not enter: {error}"))),
     };
     let outcome = match ran.outcome {
@@ -436,6 +457,14 @@ fn settle(
                     reason: TRAPPED_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                 },
+                // A write's reservation met the owner refusal (FIX 11090).
+                _ if matches!(
+                    &error,
+                    EngineExecutorError::Engine(error) if ManagedOwnerCheckError::is_owner_refusal(error)
+                ) =>
+                {
+                    owner_not_live(used)
+                }
                 Some(SeamStop::Deadline) => stopped(format!(
                     "the pass's deadline cut the turn program; {RESUMES}"
                 )),

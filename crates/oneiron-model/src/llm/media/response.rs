@@ -53,6 +53,29 @@ impl MediaUsage {
     }
 }
 
+/// What a media call that sends several physical requests (a long text
+/// spoken as several renders) completed before it stopped (FIX 9517): how
+/// many of its requests answered, and their usage, each one's inference
+/// receipt in it. A call stopped part way is settled on this, once, and its
+/// partial output is no answer.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MediaCallProgress {
+    /// The physical requests that answered, in order.
+    #[serde(default)]
+    pub completed: u64,
+    /// What they counted.
+    #[serde(default)]
+    pub usage: MediaUsage,
+}
+
+impl MediaCallProgress {
+    /// Whether no request answered.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.completed == 0
+    }
+}
+
 /// One media call's answer.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MediaResponse {

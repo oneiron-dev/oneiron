@@ -26,7 +26,9 @@ mod locality;
 mod machine_proof;
 mod managed_request;
 mod slips;
-pub(crate) use binding_admission::{admit_http_binding, admit_owner_proof};
+pub(crate) use binding_admission::{
+    AUTHORITY_CLOCK_REPAIR_PATH, admit_http_binding, admit_owner_proof,
+};
 pub(crate) use client_address::ClientAddress;
 pub(crate) use left_notices::left_notice_routes;
 pub(crate) use locality::{Locality, caller_locality, proved_peer};

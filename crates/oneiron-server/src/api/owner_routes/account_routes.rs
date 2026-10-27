@@ -17,13 +17,12 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use serde::Deserialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::cloud_registration::{LoggedOut, Polled, Started, Status};
 use crate::owner::OwnerResult;
@@ -64,10 +63,10 @@ struct Logout {
 async fn start(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<StartLogin>, JsonRejection>,
+    payload: OwnerJsonBody<StartLogin>,
 ) -> OwnerReply<Started> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Started> {
         Ok(server
             .cloud_registration
@@ -80,10 +79,10 @@ async fn start(
 async fn poll(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PollLogin>, JsonRejection>,
+    payload: OwnerJsonBody<PollLogin>,
 ) -> OwnerReply<Polled> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Polled> {
         Ok(server
             .cloud_registration
@@ -114,10 +113,10 @@ async fn refresh(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owner
 async fn logout(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Logout>, JsonRejection>,
+    payload: OwnerJsonBody<Logout>,
 ) -> OwnerReply<LoggedOut> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<LoggedOut> {
         Ok(server
             .cloud_registration

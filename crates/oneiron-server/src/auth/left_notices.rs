@@ -3,8 +3,9 @@
 //! revoked its slips. `POST /v1/shared/removal-export` (OF-150) answers that
 //! person, under the same proof, the archive an export-first removal kept
 //! for them, and `POST /v1/shared/removal-export/{receipt_id}` the one archive
-//! one removal receipt delivered (FIX 1300). Delivery is pull-only: a removed
-//! device holds no live slip, so no host push reaches it. The request carries that slip in `x-oneiron-left-slip`
+//! one removal receipt delivered (FIX 1300). Beside those pulls, a removed
+//! device holds delivery sessions under the same proof, and the host sends it
+//! each archive owed and records its ack ([`delivery`], FIX 3396). The request carries that slip in `x-oneiron-left-slip`
 //! (never as a bearer token, which the network door would refuse) and the
 //! usual holder proof in `x-oneiron-binding`; the engine checks the slip is
 //! one this vault minted and the device holds its key, spends the nonce, and
@@ -29,6 +30,8 @@ use super::{BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 
+mod delivery;
+
 /// The header that carries the revoked slip; managed ingress forwards the
 /// holder proof beside it (FIX 5452).
 pub(super) const LEFT_SLIP_HEADER: &str = "x-oneiron-left-slip";
@@ -40,6 +43,14 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
         .route(
             "/v1/shared/removal-export/{receipt_id}",
             post(removal_export),
+        )
+        .route(
+            "/v1/shared/removal-delivery",
+            post(delivery::removal_delivery),
+        )
+        .route(
+            "/v1/shared/removal-delivery/ack",
+            post(delivery::removal_delivery_ack),
         )
 }
 
