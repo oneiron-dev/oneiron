@@ -626,6 +626,7 @@ pub(crate) fn machine_history_host_context(
     // concurrent head. Pin that exact causal ancestor for history handoff.
     let mut re_roots = Vec::new();
     let mut authored_entries = Vec::new();
+    let mut parents_by_hash = std::collections::BTreeMap::new();
     for id in
         store.port_entity_ids_by_type(txn, crate::registry::ENTITY_TYPE_AUTHORITY_LOG, None)?
     {
@@ -637,6 +638,10 @@ pub(crate) fn machine_history_host_context(
                 .ok_or(Error::CorruptedIndex("authority head header"))?,
         )?;
         let hash = super::authority_entry_hash(&entry)?;
+        if super::authority_log_entity_id_from_hash(&hash)? != id {
+            return Err(Error::CorruptedIndex("authority history key"));
+        }
+        parents_by_hash.insert(hash, entry.parent_hashes.clone());
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
@@ -655,6 +660,9 @@ pub(crate) fn machine_history_host_context(
     // decide which authored entry is the causal anchor.
     if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(store, txn)? {
         for (hash, row) in evidence.rows() {
+            parents_by_hash
+                .entry(*hash)
+                .or_insert_with(|| row.parents.clone());
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
@@ -670,42 +678,38 @@ pub(crate) fn machine_history_host_context(
             }
         }
     }
-    let mut common_ancestors = Vec::new();
+    let mut common_ancestors = std::collections::BTreeSet::new();
     let mut latest_ancestors = Vec::new();
     if re_roots.is_empty() && !fold.append_heads.is_empty() {
-        // A different authorized signer can advance every append head without
-        // retiring this host. Keep only exact host-authored rows beneath ALL
-        // current heads; equality preserves the one-head case.
-        for candidate in &authored_entries {
-            let mut common = true;
-            for head in &fold.append_heads {
-                if candidate != head
-                    && !machine_history_authority_descends(store, txn, candidate, head)?
-                {
-                    common = false;
-                    break;
+        let ancestor_closure =
+            |mut stack: Vec<[u8; 32]>| -> Result<std::collections::BTreeSet<[u8; 32]>> {
+                let mut seen = std::collections::BTreeSet::new();
+                while let Some(hash) = stack.pop() {
+                    if seen.insert(hash) {
+                        let parents = parents_by_hash.get(&hash).ok_or_else(denied)?;
+                        stack.extend(parents.iter().copied());
+                    }
                 }
-            }
-            if common {
-                common_ancestors.push(*candidate);
-            }
+                Ok(seen)
+            };
+        common_ancestors.extend(authored_entries.iter().copied());
+        for head in &fold.append_heads {
+            let past = ancestor_closure(vec![*head])?;
+            common_ancestors.retain(|hash| past.contains(hash));
         }
-        // "Latest" means a causal greatest element, not the largest sequence,
-        // timestamp or hash. Incomparable candidates never select themselves.
+        // Remove every common host row below another common host row.
+        let mut parents = Vec::new();
         for candidate in &common_ancestors {
-            let mut latest = true;
-            for other in &common_ancestors {
-                if other != candidate
-                    && !machine_history_authority_descends(store, txn, other, candidate)?
-                {
-                    latest = false;
-                    break;
-                }
-            }
-            if latest {
-                latest_ancestors.push(*candidate);
-            }
+            parents.extend(
+                parents_by_hash
+                    .get(candidate)
+                    .ok_or_else(denied)?
+                    .iter()
+                    .copied(),
+            );
         }
+        let below = ancestor_closure(parents)?;
+        latest_ancestors.extend(common_ancestors.difference(&below).copied());
     }
     let head = match re_roots.as_slice() {
         [head] => *head,
