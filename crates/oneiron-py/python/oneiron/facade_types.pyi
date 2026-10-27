@@ -6868,7 +6868,7 @@ class FederationBurstDispositionDefer(TypedDict):
     outcome: Literal["defer"]
     replay_ref: str
 FederationBurstDisposition = FederationBurstDispositionAllow | FederationBurstDispositionIsolateAndPropose | FederationBurstDispositionDefer
-FederationBurstWorkState = Literal["pending", "imported", "rejected"]
+FederationBurstWorkState = Literal["pending", "imported", "rejected", "expired", "stale_authority", "erased"]
 class FederationBurstReceipt(TypedDict):
     batch_ref: str
     principal: EntityId
