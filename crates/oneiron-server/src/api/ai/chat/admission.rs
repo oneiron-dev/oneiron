@@ -21,8 +21,9 @@ pub(in crate::api::ai::chat) fn start_turn(
     locality: oneiron::claim::CallerLocality,
     headers: &axum::http::HeaderMap,
     payload: Result<Json<ChatTurnRequest>, JsonRejection>,
-    board: Option<crate::api::context_board::ChatBoard>,
+    read: recall::TurnRead,
 ) -> Result<Started, Refused> {
+    let recall::TurnRead { mark, board } = read;
     // A turn reads the agent and the conversation, and writes both turns.
     for scope in [CoreScope::Read, CoreScope::Write] {
         auth.require(scope)
@@ -51,9 +52,8 @@ pub(in crate::api::ai::chat) fn start_turn(
         )
     })?;
     let vault = Arc::clone(server.vault());
-    // The reply's newcomer barrier, marked before the first read the request
-    // is assembled from (FIX 1389).
-    let mark = vault.container_output_mark();
+    // `mark`, the reply's newcomer barrier, was taken before the first read
+    // the request is assembled from, its board's included (FIX 1389, 8133).
     let (actor, class) = principal(auth, &vault)?;
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
     let settings = server.ai.chat_settings();
@@ -148,7 +148,8 @@ pub(in crate::api::ai::chat) fn start_turn(
     // this server cannot serve refuses here, with no call made.
     // FIX 6794: the board rides after the stable history, right before the
     // newest User (FIX 6676's layout); a role that does not admit it with
-    // the board admits the turn as it was.
+    // the board admits the turn without it, its omission's note in its
+    // place (FIX 8136).
     // The board goes in at the latest user message's place: with no craft,
     // it opens the turn's context.
     let board_at = messages
@@ -157,17 +158,30 @@ pub(in crate::api::ai::chat) fn start_turn(
     // DESIGN-V2 R2: the messages and the board as assembled, for the call's
     // segment manifest.
     let assembled = messages.clone();
-    let board_view = board
-        .as_ref()
-        .map(|board| (board.block.clone(), board.sections.clone()));
-    let board_rows = board.as_ref().map(|board| board.rows.clone());
-    let (admitted, recalled, context) =
-        recall::admit(&server.ai, &vault, &seat, auth, messages, board);
-    let turn_context = turn_context.or(board_at.filter(|_| recalled));
+    let read_board = board.as_ref().ok().and_then(Option::as_ref);
+    let board_view = read_board.map(|board| (board.block.clone(), board.sections.clone()));
+    let board_rows = read_board.map(|board| board.rows.clone());
+    let recall::AdmittedTurn {
+        call: admitted,
+        recalled,
+        context,
+        omitted,
+        noted,
+    } = recall::admit(&server.ai, &vault, &seat, auth, messages, board);
+    let turn_context = turn_context.or(board_at.filter(|_| recalled || noted));
     // A board the call goes without is no row it read.
     if recalled {
         sources.add(board_rows.as_deref());
     }
+    // The board's place holds the board, or the note of its omission, which
+    // the call's segments name as one unnamed board section.
+    let board_view = if recalled {
+        board_view
+    } else {
+        omitted
+            .filter(|_| noted)
+            .map(|omission| (omission.note(), Vec::new()))
+    };
     let mut admitted = admitted.map_err(|refusal| match refusal {
         RoleRefusal::NoSeat => refused(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -216,7 +230,7 @@ pub(in crate::api::ai::chat) fn start_turn(
             },
             self_chat: self_chat.as_ref(),
             messages: &assembled,
-            board: board_view.as_ref().filter(|_| recalled),
+            board: board_view.as_ref(),
             agent,
             craft: craft.as_deref(),
         },
@@ -345,6 +359,18 @@ pub(in crate::api::ai::chat) fn start_turn(
     .map_err(|stop| hook_stopped(&stop))?;
     // FIX 7004: the MESSAGE row the user's words were witnessed into.
     sources.add(written.as_deref());
+    // FIX 8132: the reply is placed where the user's turn was witnessed,
+    // bound before generation, so its newcomer wakes and every publication
+    // check read that conversation. A placement that cannot be read refuses
+    // the turn before any model is called, never publishing it unplaced; a
+    // turn that lies in no conversation answers standalone, as before.
+    let placed = written
+        .as_deref()
+        .and_then(|rows| rows.first().copied())
+        .or_else(|| resolve_entity_ref(&vault, &request.conversation_ref).ok())
+        .ok_or_else(|| engine(&"the reply's conversation was not placed"))?;
+    let conversation = crate::server::blocking(|| vault.record_container(placed))
+        .map_err(|error| engine(&error))?;
     // The caller's view of the receipt, which a hook may have redacted.
     let user_turn = user
         .get("turn_short_id")
@@ -375,13 +401,16 @@ pub(in crate::api::ai::chat) fn start_turn(
             agent,
             session_key: Some(session_key),
             activity: signals.then_some(session_key),
-            open: AnswerOpen::Turn(witness_turn(
-                &request.conversation_ref,
-                Some(turn),
-                WitnessAuthor::Companion,
-                String::new(),
-                at,
-            )),
+            open: AnswerOpen::Turn {
+                turn: witness_turn(
+                    &request.conversation_ref,
+                    Some(turn),
+                    WitnessAuthor::Companion,
+                    String::new(),
+                    at,
+                ),
+                conversation,
+            },
             mode,
             admitted,
             payer: WriteActor::new(actor, class),
@@ -437,5 +466,6 @@ pub(in crate::api::ai::chat) fn start_turn(
         turn,
         answering,
         credential,
+        board_omitted: omitted,
     })
 }
