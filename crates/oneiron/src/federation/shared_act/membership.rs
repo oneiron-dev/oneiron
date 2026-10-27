@@ -29,6 +29,32 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::BTreeSet;
 
+/// What one membership move wrote (FIX 5765): every grant id it rewrote,
+/// minted, deleted or retired, as the receipt lists them; the own-device
+/// grant ids it retired, which `grants` lists too; and the slips it revoked.
+pub(super) struct MemberMove {
+    pub(super) grants: Vec<EntityId>,
+    pub(super) retired_own_device: Vec<EntityId>,
+    pub(super) revoked_slips: Vec<[u8; 32]>,
+}
+
+impl MemberMove {
+    /// The handover's signed id lists: the grants it wrote, apart from the
+    /// own-device grants it retired, and those retired grants, each
+    /// canonical.
+    pub(super) fn handover_ids(&self) -> (Vec<EntityId>, Vec<EntityId>) {
+        let retired =
+            crate::authority::canonical_handover_ids(self.retired_own_device.iter().copied());
+        let affected = crate::authority::canonical_handover_ids(
+            self.grants
+                .iter()
+                .copied()
+                .filter(|id| retired.binary_search(id).is_err()),
+        );
+        (affected, retired)
+    }
+}
+
 /// Higher ranks hold more; a change to a lower rank revokes held slips.
 const fn rank(role: Role) -> u8 {
     match role {
@@ -206,7 +232,7 @@ impl Vault {
         to: Option<Role>,
         slips: Option<&HostSlipIssuer>,
         now: u64,
-    ) -> Result<(Vec<EntityId>, Vec<[u8; 32]>)> {
+    ) -> Result<MemberMove> {
         let mut grants = Vec::new();
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, now)?);
@@ -214,16 +240,22 @@ impl Vault {
         if to.is_none_or(|role| !role.is_admin()) {
             grants.extend(self.drop_member_grants_in_txn(txn, vault_id, member, to.is_none())?);
         }
+        let mut retired_own_device = Vec::new();
         if crate::federation::own_device::own_device_grant_retires(from, to) {
-            grants.extend(self.retire_own_device_grants_in_txn(txn, member)?);
+            retired_own_device = self.retire_own_device_grants_in_txn(txn, member)?;
+            grants.extend(retired_own_device.iter().copied());
         }
-        let revoked = match slips {
+        let revoked_slips = match slips {
             Some(issuer) if to.is_none_or(|role| rank(role) < rank(from)) => {
                 self.revoke_held_capability_slips_in_txn(txn, issuer, &member.to_hex(), None)?
             }
             _ => Vec::new(),
         };
-        Ok((grants, revoked))
+        Ok(MemberMove {
+            grants,
+            retired_own_device,
+            revoked_slips,
+        })
     }
 
     /// The handover both Owner acts apply, revalidated at execution: `loser`
@@ -240,16 +272,17 @@ impl Vault {
         gainer: Option<EntityId>,
         slips: Option<&HostSlipIssuer>,
         now: u64,
-    ) -> Result<(Vec<EntityId>, Vec<[u8; 32]>)> {
+    ) -> Result<MemberMove> {
         self.check_handover_in_txn(txn, owners.clone(), loser, keeps, gainer)?;
         let mut grants = Vec::new();
         if let Some(gainer) = gainer {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, gainer, Role::Owner, now)?);
         }
-        let (moved, revoked) =
+        let mut moved =
             self.move_member_in_txn(txn, vault_id, loser, Role::Owner, keeps, slips, now)?;
-        grants.extend(moved);
-        Ok((grants, revoked))
+        grants.append(&mut moved.grants);
+        moved.grants = grants;
+        Ok(moved)
     }
 
     /// For an unexecuted export-first `remove_owner` act, the export of what
@@ -449,8 +482,11 @@ impl Vault {
                 if from == Role::Owner || from == role {
                     return Err(invalid());
                 }
-                let (grants, revoked_slips) =
-                    self.move_member_in_txn(txn, vault_id, member, from, Some(role), slips, now)?;
+                let MemberMove {
+                    grants,
+                    revoked_slips,
+                    ..
+                } = self.move_member_in_txn(txn, vault_id, member, from, Some(role), slips, now)?;
                 Ok(Effect {
                     change: SharedVaultChange::MemberRoleChanged {
                         member: member.to_hex(),
@@ -483,8 +519,11 @@ impl Vault {
                 if from == Role::Owner {
                     return Err(invalid());
                 }
-                let (grants, revoked_slips) =
-                    self.move_member_in_txn(txn, vault_id, member, from, None, slips, now)?;
+                let MemberMove {
+                    grants,
+                    revoked_slips,
+                    ..
+                } = self.move_member_in_txn(txn, vault_id, member, from, None, slips, now)?;
                 Ok(Effect {
                     change: SharedVaultChange::MemberRemoved {
                         member: member.to_hex(),
@@ -531,7 +570,7 @@ impl Vault {
         }
         let mut grants =
             self.set_member_role_in_txn(&mut txn, vault_id, claimant, Role::Owner, now)?;
-        let (moved, revoked_slips) = self.move_member_in_txn(
+        let mut moved = self.move_member_in_txn(
             &mut txn,
             vault_id,
             from,
@@ -540,7 +579,14 @@ impl Vault {
             Some(issuer),
             now,
         )?;
-        grants.extend(moved);
+        grants.append(&mut moved.grants);
+        moved.grants = grants;
+        let (affected_grants, retired_own_device_grants) = moved.handover_ids();
+        let MemberMove {
+            grants,
+            revoked_slips,
+            ..
+        } = moved;
         let id = self.store.clock.entity_id()?.to_hex();
         let authority_entry = self.append_owner_handover_in_txn(
             &mut txn,
@@ -554,6 +600,8 @@ impl Vault {
                 act: None,
                 proof: proof.map(|digest| crate::entity_id::bytes_to_hex_lower(&digest)),
                 receipt: id.clone(),
+                affected_grants,
+                retired_own_device_grants,
             },
         )?;
         let receipt = self.record_shared_change_in_txn(
@@ -596,8 +644,11 @@ impl Vault {
             if from == Role::Owner {
                 return Err(invalid());
             }
-            let (grants, revoked_slips) =
-                self.move_member_in_txn(txn, vault_id, actor, from, None, slips, now)?;
+            let MemberMove {
+                grants,
+                revoked_slips,
+                ..
+            } = self.move_member_in_txn(txn, vault_id, actor, from, None, slips, now)?;
             Ok(Effect {
                 change: SharedVaultChange::MemberLeft {
                     member: actor.to_hex(),

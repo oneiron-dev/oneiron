@@ -318,6 +318,11 @@ side_tables! {
     /// (16), vault id (32), then the native absolute root path the custody sits beside; never
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
+    /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
+    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// Key: bytes32 (the key's random ref).
+    KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
+        => crate::store::home_handoff_custody::scrub_actor_in_txn;
     /// A committed intent to retire one custody subject's entries through a generation:
     /// u64be generation, then cause (0 retention, 1 erase). Key: vault id (32) + kind tag (1) +
     /// item.

@@ -68,6 +68,7 @@ impl CustodyVaultId {
 /// | `0x0a` | `CustodyRequestInput` | KS-6 custody request inputs, whole     |
 /// | `0x0b` | `ConnectorResume` | a connector call's resume state (FIX 9157) |
 /// | `0x0c` | `HostIssuerSeed` | the vault's host issuer seed, escrowed (FIX-LIST 10770) |
+/// | `0x0d` | `ErasableKey` | erasable keys: a home handoff's actor content, a grant's scope opening (FIX 8875) |
 ///
 /// A later client adds its variant with its reserved tag, its item width and
 /// secret width, and its corruption label; custody itself stays the same.
@@ -127,6 +128,12 @@ pub(crate) enum CustodyKind {
     /// signs with; secret = the 32-byte seed, the same bytes an install's
     /// `HostIssuerSeed` keystore slot holds (`store::host_issuer_custody`).
     HostIssuerSeed,
+    /// One erasable key (FIX 8875): item = purpose (1) | parent (16: the
+    /// actor a home handoff key seals for, or a grant) | incarnation (32) |
+    /// the key's random ref (32), so every key of one parent is found by its
+    /// directory names, orphans included; generation 0; secret = the
+    /// content key (32 bytes).
+    ErasableKey,
 }
 
 impl CustodyKind {
@@ -144,6 +151,7 @@ impl CustodyKind {
             Self::CustodyRequestInput => 0x0a,
             Self::ConnectorResume => 0x0b,
             Self::HostIssuerSeed => 0x0c,
+            Self::ErasableKey => 0x0d,
         }
     }
 
@@ -161,6 +169,7 @@ impl CustodyKind {
             0x0a => Some(Self::CustodyRequestInput),
             0x0b => Some(Self::ConnectorResume),
             0x0c => Some(Self::HostIssuerSeed),
+            0x0d => Some(Self::ErasableKey),
             _ => None,
         }
     }
@@ -174,6 +183,7 @@ impl CustodyKind {
             Self::CustodyTransition | Self::CustodyRequestInput => 32,
             Self::WorldPad => 40,
             Self::CheckpointPayload => 49,
+            Self::ErasableKey => 81,
             Self::KnownValueIndex | Self::TrainingLink | Self::HostIssuerSeed => 0,
         }
     }
@@ -192,7 +202,8 @@ impl CustodyKind {
             | Self::CustodyTransition
             | Self::CustodyRequestInput
             | Self::ConnectorResume
-            | Self::HostIssuerSeed => 32,
+            | Self::HostIssuerSeed
+            | Self::ErasableKey => 32,
             Self::KnownValueEntry => 44,
         }
     }
@@ -213,6 +224,7 @@ impl CustodyKind {
             Self::CustodyRequestInput => Error::CorruptedIndex("custody request input custody"),
             Self::ConnectorResume => Error::CorruptedIndex("connector resume custody"),
             Self::HostIssuerSeed => Error::CorruptedIndex("host issuer seed custody"),
+            Self::ErasableKey => Error::CorruptedIndex("erasable key custody"),
         }
     }
 }

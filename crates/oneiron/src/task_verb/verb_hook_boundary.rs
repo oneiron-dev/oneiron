@@ -549,7 +549,14 @@ pub fn row(
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
-    let result = match run(pre.args.clone()) {
+    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+    let restriction = pre
+        .landing
+        .is_some()
+        .then(crate::authority::restriction_only_clock);
+    let ran = run(pre.args.clone());
+    drop(restriction);
+    let result = match ran {
         Ok(result) => result,
         Err(error) => {
             abort(memory.vault(), pre);
@@ -625,6 +632,11 @@ where
                 MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
             })?
         };
+        // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+        let _restriction = pre
+            .landing
+            .is_some()
+            .then(crate::authority::restriction_only_clock);
         let output = run(input)?;
         let result = encode(&output)?;
         Ok((output, result))
