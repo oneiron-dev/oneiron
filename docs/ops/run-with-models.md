@@ -740,7 +740,11 @@ one.
 `POST /v1/ai/chat` with `{"conversation_ref": "<32-hex>", "text": "…"}` (plus
 optional `history`) answers by default with the whole message once it is saved:
 `{conversation_ref, turn_id, message_id, text, incomplete, finish_reason}`.
-`turn_id` is the assistant turn that Continue and Retry name. A reply cut short
+`turn_id` is the assistant turn that Continue and Retry name. When the turn read
+a context board but the call went without it, the answer (and a streamed
+`accepted` line) also carries `board_omitted`: `refused`, `route_held` or
+`not_admitted`; the model's prompt carries one short note saying so, naming no
+row. A reply cut short
 (a crash, a failed stream, a length stop) is still one saved message: it answers
 `incomplete: true` with exactly the text that was saved. With `"stream": true`
 the answer is NDJSON instead: `accepted`, one `delta` per text chunk, `done`,
