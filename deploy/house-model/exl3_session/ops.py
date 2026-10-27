@@ -404,5 +404,7 @@ SNAPSHOT_OUTPUT = ("session.export",)
 
 
 def answer(layer, op, body, conversation):
-    """The answer body of session op `op`; Refused when it is refused."""
+    """The answer body of session op `op` (for `session.export`, the answer
+    and its region); Refused when it is refused. `conversation` is an op's
+    input: a `chat_json` conversation, or an import's snapshot bytes."""
     return HANDLERS[op](layer, body, conversation)

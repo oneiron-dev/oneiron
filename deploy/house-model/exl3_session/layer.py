@@ -108,8 +108,9 @@ class SessionLayer(Registry):
                              "state_kinds": [self.compatibility["state"]]}}
 
     def answer(self, op, body, conversation):
-        """The answer body of session op `op` (not `session.generate`);
-        Refused when it is refused."""
+        """The answer body of session op `op` (not `session.generate`; for
+        `session.export`, the answer and its region); Refused when it is
+        refused."""
         return ops.answer(self, op, body, conversation)
 
     def claim_call(self, field):

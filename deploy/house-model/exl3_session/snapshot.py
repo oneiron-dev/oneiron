@@ -160,7 +160,8 @@ def _count(value):
 def _entry(entry):
     if not isinstance(entry, dict) or set(entry) != TENSOR_FIELDS:
         raise incompatible("a tensor entry is not {name, dtype, shape, offset, length}")
-    name, dtype, shape = entry["name"], DTYPES.get(entry["dtype"]), entry["shape"]
+    name, shape = entry["name"], entry["shape"]
+    dtype = DTYPES.get(entry["dtype"]) if isinstance(entry["dtype"], str) else None
     offset, length = entry["offset"], entry["length"]
     if not isinstance(name, str) or not name:
         raise incompatible("a tensor has no name")
