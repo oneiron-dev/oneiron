@@ -50,6 +50,7 @@ pub enum AgentVerb {
     SelfMessage,
     SelfGrantsAsk,
     VaultCompanionsAccessRequestsAnswer,
+    SelfGrantsAnswer,
     VaultPersonasPreview,
     VaultPersonasExport,
     VaultPersonasEdit,
@@ -284,6 +285,7 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultAuthorityClockRepair,
     VaultWireHealthThresholdsGet,
     VaultWireHealthThresholdsSet,
     VaultSlimPolicy,
@@ -1234,6 +1236,7 @@ impl AgentVerb {
         Self::SelfMessage,
         Self::SelfGrantsAsk,
         Self::VaultCompanionsAccessRequestsAnswer,
+        Self::SelfGrantsAnswer,
         Self::VaultPersonasPreview,
         Self::VaultPersonasExport,
         Self::VaultPersonasEdit,
@@ -1468,6 +1471,7 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultAuthorityClockRepair,
         Self::VaultWireHealthThresholdsGet,
         Self::VaultWireHealthThresholdsSet,
         Self::VaultSlimPolicy,
@@ -2421,6 +2425,7 @@ impl AgentVerb {
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
+            Self::SelfGrantsAnswer => "self.grants.answer",
             Self::VaultPersonasPreview => "vault.personas.preview",
             Self::VaultPersonasExport => "vault.personas.export",
             Self::VaultPersonasEdit => "vault.personas.edit",
@@ -2655,6 +2660,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultAuthorityClockRepair => "vault.authority.clock.repair",
             Self::VaultWireHealthThresholdsGet => "vault.wire_health.thresholds.get",
             Self::VaultWireHealthThresholdsSet => "vault.wire_health.thresholds.set",
             Self::VaultSlimPolicy => "vault.slim.policy",
@@ -3635,6 +3641,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -3869,6 +3876,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -4848,6 +4856,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -5082,6 +5091,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -6205,6 +6215,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
@@ -6421,6 +6432,7 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsGet
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimPolicy
@@ -7285,6 +7297,7 @@ impl AgentVerb {
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
                 | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::SelfGrantsAnswer
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::Cancel
@@ -7424,6 +7437,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultAuthorityClockRepair
                 | Self::VaultWireHealthThresholdsSet
                 | Self::VaultSlimDropHeavy
                 | Self::VaultSlimResume
@@ -8036,6 +8050,7 @@ impl AgentVerb {
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -8287,6 +8302,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultAuthorityClockRepair => &["spec"],
             Self::VaultWireHealthThresholdsGet => &["spec"],
             Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
@@ -9238,6 +9254,7 @@ impl AgentVerb {
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
@@ -9472,6 +9489,7 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultAuthorityClockRepair => &["spec"],
             Self::VaultWireHealthThresholdsGet => &["spec"],
             Self::VaultWireHealthThresholdsSet => &["spec"],
             Self::VaultSlimPolicy => &["spec"],
@@ -10510,6 +10528,9 @@ impl AgentVerb {
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
             }
+            Self::SelfGrantsAnswer => {
+                "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."
+            }
             Self::VaultPersonasPreview => {
                 "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
             }
@@ -10778,7 +10799,7 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
@@ -10793,7 +10814,7 @@ impl AgentVerb {
                 "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."
             }
             Self::VaultReceipts => {
-                "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
+                "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest."
             }
             Self::VaultAssetsIngest => {
                 "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."
@@ -11207,6 +11228,9 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultAuthorityClockRepair => {
+                "Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so."
             }
             Self::VaultWireHealthThresholdsGet => {
                 "The owner reads the serving host's per-verb and per-actor wire detection thresholds and their window; crossings ask a health question, never refuse for rate."
@@ -12036,7 +12060,7 @@ impl AgentVerb {
                 "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
             }
             Self::VaultHooksReplay => {
-                "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
+                "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest."
             }
             Self::VaultHooksRegenDue => {
                 "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."
@@ -13301,7 +13325,7 @@ impl AgentVerb {
                 "Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."
             }
             Self::VaultBatch => {
-                "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade."
+                "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade."
             }
             Self::VaultArtifactsPut => {
                 "Registers one blob artifact; its bytes ride vault.artifacts.append."

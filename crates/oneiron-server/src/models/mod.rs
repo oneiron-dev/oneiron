@@ -102,7 +102,7 @@ pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};
-pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store};
+pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
@@ -176,6 +176,8 @@ pub struct ModelRuntime {
     /// The vault's model byte budgets its media rungs and mesh routes hold
     /// their bytes on (FIX 9321, FIX 9323).
     budgets: ModelHostBudgets,
+    /// This server's Responses state, which its socket pools hold (FIX 9516).
+    responses: ResponsesContext,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
@@ -204,6 +206,7 @@ fn build_provider(
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
     identities: &Arc<llama_identity::LlamaIdentityResolver>,
+    responses: &ResponsesContext,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -232,6 +235,7 @@ fn build_provider(
                         provider,
                         &http.url("/v1/responses"),
                         socket.max_age_secs,
+                        responses.clone(),
                     )
                 })
                 .transpose()?;

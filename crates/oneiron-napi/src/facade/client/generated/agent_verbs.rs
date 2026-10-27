@@ -352,6 +352,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_grants_answer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_personas_preview(
         &self,
         input: serde_json::Value,
@@ -1144,25 +1150,10 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
-    pub fn vault_receipts(
-        &self,
-        limit: Option<f64>,
-        kinds: Option<Vec<String>>,
-    ) -> napi::Result<Vec<NapiGateReceipt>> {
-        let limit = limit
-            .map(limit_to_engine)
-            .transpose()
-            .map_err(facade_error)?
-            .unwrap_or(100);
-        let kinds = kinds.unwrap_or_default();
-        let output = self
-            .inner
-            .vault_receipts(limit, &kinds)
-            .map_err(facade_error)?;
-        output
-            .into_iter()
-            .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
-            .collect()
+    pub fn vault_receipts(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts", js_json(input))
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_assets_ingest(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -2422,6 +2413,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.authority.history.import", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_authority_clock_repair(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.clock.repair", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

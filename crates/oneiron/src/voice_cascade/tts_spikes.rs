@@ -17,6 +17,10 @@ use crate::error::{Error, Result};
 
 use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 
+// One incremental Text's unsent rest, kept across a refused send (FIX 10213).
+mod submissions;
+use submissions::PendingTextSubmission;
+
 /// The most text one submission carries; a longer text goes as several.
 pub const MAX_TEXT_BYTES: usize = 8 * 1024;
 pub const MAX_VOICE_BYTES: usize = 4096;
@@ -222,6 +226,8 @@ struct Adapter<Q> {
     held: VecDeque<String>,
     /// End was asked for and goes out with, or after, the last held piece.
     end_owed: bool,
+    /// An incremental Text the queue took part of; its rest goes first.
+    pending_text: Option<PendingTextSubmission>,
 }
 
 fn invalid(message: &str) -> Error {
@@ -310,6 +316,7 @@ impl<Q: TransportQueue> Adapter<Q> {
             pending: VecDeque::new(),
             held: VecDeque::new(),
             end_owed: false,
+            pending_text: None,
         })
     }
 
@@ -376,6 +383,7 @@ impl<Q: TransportQueue> Adapter<Q> {
                 self.pending.clear();
                 self.held.clear();
                 self.end_owed = false;
+                self.pending_text = None;
                 self.dirty = false;
                 self.send(generation, ProviderOperation::Cancel)?;
                 self.phase = Phase::Cancelled;
@@ -383,10 +391,14 @@ impl<Q: TransportQueue> Adapter<Q> {
             return Ok(());
         }
         self.matched(generation)?;
-        if matches!(self.phase, Phase::Ended | Phase::Done)
-            && matches!(&command, TtsCommand::Flush { .. } | TtsCommand::End { .. })
-        {
-            return Ok(());
+        if matches!(&command, TtsCommand::Flush { .. } | TtsCommand::End { .. }) {
+            match self.phase {
+                Phase::Done => return Ok(()),
+                // Closed input forbids new text, never the release of held
+                // text or an owed End: a retry sends them (FIX 10212).
+                Phase::Ended => return self.release(generation),
+                _ => {}
+            }
         }
         if self.phase != Phase::Open {
             return Err(invalid("input is not open"));
@@ -396,23 +408,13 @@ impl<Q: TransportQueue> Adapter<Q> {
                 if text.is_empty() {
                     return Err(invalid("empty text"));
                 }
-                let bytes = text.len();
                 if self.buffered() {
+                    self.text_bytes = self.text_bytes.saturating_add(text.len());
                     self.buffer.push_str(&text);
-                } else if bytes <= MAX_TEXT_BYTES {
-                    self.send(generation, ProviderOperation::Text(text))?;
+                    self.dirty = true;
                 } else {
-                    // Every byte goes, in order, as several submissions.
-                    let mut rest = text.as_str();
-                    while !rest.is_empty() {
-                        let (piece, tail) =
-                            rest.split_at(speakable::first_piece(rest, MAX_TEXT_BYTES));
-                        self.send(generation, ProviderOperation::Text(piece.to_owned()))?;
-                        rest = tail;
-                    }
+                    self.submit_text(generation, text)?;
                 }
-                self.text_bytes = self.text_bytes.saturating_add(bytes);
-                self.dirty = true;
             }
             TtsCommand::Flush { .. } => self.boundary(generation, false)?,
             TtsCommand::End { .. } => self.boundary(generation, true)?,
@@ -422,10 +424,18 @@ impl<Q: TransportQueue> Adapter<Q> {
     }
 
     fn boundary(&mut self, generation: GenerationEpoch, end: bool) -> Result<()> {
-        if !end && !self.dirty {
+        // An idle Flush is a no-op only with nothing held, owed or unsent
+        // (FIX 10212).
+        if !end
+            && !self.dirty
+            && self.held.is_empty()
+            && !self.end_owed
+            && self.pending_text.is_none()
+        {
             return Ok(());
         }
         if !self.buffered() {
+            self.resume_text(generation)?;
             let operation = if end {
                 ProviderOperation::End {
                     buffered_text: None,
@@ -580,6 +590,7 @@ impl<Q: TransportQueue> Adapter<Q> {
         self.pending.clear();
         self.held.clear();
         self.end_owed = false;
+        self.pending_text = None;
         self.dirty = false;
         Ok(failure)
     }

@@ -459,8 +459,10 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
             return Err(invalid("output cancelled"));
         }
         if self.ended {
+            // Closed input forbids new text, never the release of renders
+            // still held: a repeated End or Flush sends them (FIX 10212).
             return if matches!(command, TtsCommand::End { .. } | TtsCommand::Flush { .. }) {
-                Ok(())
+                self.release(generation)
             } else {
                 Err(invalid("input closed"))
             };

@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::JsonRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -25,7 +24,7 @@ use oneiron::{EdgeActorClass, EntityId};
 use serde::Serialize;
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -80,10 +79,10 @@ async fn schedules(
 async fn set_schedule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveScheduleView>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveScheduleView>,
 ) -> OwnerReply<WeaveScheduleView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let set = blocking(move || -> OwnerResult<WeaveScheduleView> {
         let row = request.into_schedule().map_err(memory_invalid)?;
         server.vault().set_weave_digest_schedule(&owner, &row)?;
@@ -97,10 +96,10 @@ async fn set_schedule(
 async fn clear_schedule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReaderRef>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReaderRef>,
 ) -> OwnerReply<ScheduleCleared> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let cleared = blocking(move || -> OwnerResult<ScheduleCleared> {
         let reader = request.reader().map_err(memory_invalid)?;
         Ok(ScheduleCleared {
@@ -139,10 +138,10 @@ async fn setting_changes(
 async fn answer_setting_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestSettingAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestSettingAnswer>,
 ) -> OwnerReply<WeaveDigestSettingChange> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
         let change = change_id(&request.change_ref)?;
         server
@@ -159,10 +158,10 @@ async fn answer_setting_change(
 async fn undo_setting_change(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestSettingUndo>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestSettingUndo>,
 ) -> OwnerReply<WeaveDigestSettingChange> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let undone = blocking(move || -> OwnerResult<WeaveDigestSettingChange> {
         let change = change_id(&request.change_ref)?;
         server
@@ -179,10 +178,10 @@ async fn undo_setting_change(
 async fn digest_feedback(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveDigestFeedback>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveDigestFeedback>,
 ) -> OwnerReply<WeaveDigestFeedback> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let told = blocking(move || -> OwnerResult<WeaveDigestFeedback> {
         server
             .vault()
@@ -197,10 +196,10 @@ async fn digest_feedback(
 async fn report(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReportRequest>,
 ) -> OwnerReply<WeaveReportView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let view = blocking(move || -> OwnerResult<WeaveReportView> {
         let vault = server.vault();
@@ -221,10 +220,10 @@ async fn report(
 async fn lens(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveReportRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveReportRequest>,
 ) -> OwnerReply<LensFrameCard> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let caller = crate::ai_host::WeaveLensCaller::Owner { owner, auth };
     let lens = crate::ai_host::render_live_weave_lens(&server, caller, request)
         .await
@@ -267,10 +266,10 @@ async fn digest(
 async fn wrong_link(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WeaveWrongLinkRequest>, JsonRejection>,
+    payload: OwnerJsonBody<WeaveWrongLinkRequest>,
 ) -> OwnerReply<WeaveLinkCorrectionView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let filed = blocking(move || -> OwnerResult<WeaveLinkCorrectionView> {
         let vault = server.vault();

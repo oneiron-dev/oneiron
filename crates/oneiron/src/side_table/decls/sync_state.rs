@@ -144,9 +144,19 @@ side_tables! {
     /// What one sender's lane holds in `FEDERATION_PARKED_FACET_STAMP`: its rows, then their
     /// bytes (u64 big-endian each), so the per-sender caps read one row. Key: the sender's lane.
     FEDERATION_PARKED_FACET_LANE: SyncState b"fedparklane:" Raw;
+    /// The content-free receipt of a held `FacetOf` stamp that retired (FIX 8890): why (1 past its
+    /// wait, 2 its grant or staged receipt ended), when it was held and when it retired (u64
+    /// big-endian each), then the grant it was held under (a flag byte, then its 16 raw bytes when
+    /// set). Key: as `FEDERATION_PARKED_FACET_STAMP`.
+    FEDERATION_PARKED_FACET_RECEIPT: SyncState b"fedparkreceipt:" Raw;
     /// First-wins stamp recording that a foreign world's federated content stopped refreshing after a
     /// terminal pact transition. Key: hex32 (world id).
     FEDERATION_STALE: SyncState b"fedstale:" Raw;
+    /// The scope a deleted record held, bound to its delete request, so a narrower grant's export
+    /// carries its tombstone only where the grant reads that scope (FIX 10161). Ids and levels
+    /// only, never content. Local to this vault: never replicated or exported. Key: hex32 (entity
+    /// id).
+    FEDERATION_TOMBSTONE_SCOPE: SyncState b"fedtombscope:" Named;
     /// Registers a foreign world as content delivered by one federation pact, scanned when the pact
     /// goes terminal. Key: hex64 (pact id) ":" hex32 (world id).
     FEDERATION_WORLD_REGISTRATION: SyncState b"fedworld:" Raw;
@@ -362,6 +372,19 @@ side_tables! {
     /// This machine's sealed bundle cursor (FIX 922): the u64be UTC slot it last finished ‖ the
     /// generation (24) it last took in, when it took one. Key: ().
     SYNC_RESIDENCE_BUNDLE_CURSOR: SyncState b"rbt" Raw;
+    /// A retained federation or maintenance item that carries an entity's bytes, so the entity's
+    /// erase scrubs it (FIX 7998). Empty value. Key: hex32 (entity id) then the item's reference.
+    SYNC_RETAINED_WORK_CARRIER: SyncState b"retained:carrier:" Raw;
+    /// The caller one retained-work queue served last, so its next pass starts after it (FIX
+    /// 7997). Value: the caller's fair key. Key: string (the queue's code).
+    SYNC_RETAINED_WORK_CURSOR: SyncState b"retained:cursor:" Raw;
+    /// A signed maintenance operation kept for its turn instead of refused (FIX 8565, 8858): its
+    /// arrival, deadline, window, lease vault and exact bytes, then a content-free receipt once it
+    /// expires, is refused or is erased. Key: hex64 (signer key) then hex32 (entity id).
+    SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named;
+    /// The owner's wait for one retained-work queue (u64 big-endian seconds). Key: string (the
+    /// queue's code).
+    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw;
     /// A room's host pin or platform handle this device changed while no open window carried the
     /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
     /// mirrored as that window opens. Key: string (the row's `room_facts` map key).
@@ -398,6 +421,9 @@ side_tables! {
     /// The Coach's tradeoff router (FIX-LIST 817): each route call it handed a project's leader.
     /// Key: string (proposal hex32 ":" project hex32 ":" question digest).
     SKILL_TRADEOFF_ROUTE: SyncState b"skill:tradeoff:route:v1:" Named;
+    /// A left shared vault's owed orphan body collection (FIX 2413): when its env's purge finished
+    /// and when the collection is due (unix seconds); local only, never synced. Key: ().
+    SYNC_LEFT_ENV_BODY_COLLECT: SyncState b"sl-body-collect" Named;
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
     /// notice's receipt id).

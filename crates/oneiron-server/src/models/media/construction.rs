@@ -9,9 +9,9 @@ use super::{
     MediaSeat, MediaSend, ModelHostBudgets, ModelsConfig, Mutex, NoChat, OfferCooldowns,
     OfferLadder, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture, RunReceiptSink,
-    RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend, Wire,
-    ladder_locality, media_backends, media_rung, media_seat_model, soniox, transport,
-    voice_cloners,
+    RungStatus, SeatScope, SeatState, SeatStatus, SingleRouteBackend, SingleSend,
+    VoiceReferenceUploadGuard, Wire, ladder_locality, media_backends, media_rung, media_seat_model,
+    soniox, transport, voice_cloners,
 };
 
 impl SingleSend for NoChat {}
@@ -91,6 +91,7 @@ impl MediaRuntime {
             reference_targets: BTreeSet::new(),
             cloners: BTreeMap::new(),
             live_asr: BTreeMap::new(),
+            voice_refs: VoiceReferenceUploadGuard::default(),
         }
     }
 
@@ -125,7 +126,7 @@ impl MediaRuntime {
             .collect();
         runtime.cloners = voice_cloners(config, budgets);
         runtime.live_asr = soniox::live_rungs(config);
-        let backends = media_backends(config, site, keys);
+        let backends = media_backends(config, site, keys, &runtime.voice_refs);
         for (operation, seat) in &config.media.seats {
             let mut rungs = Vec::new();
             let mut rung_status = Vec::new();
