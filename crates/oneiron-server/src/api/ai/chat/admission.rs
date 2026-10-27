@@ -291,11 +291,31 @@ pub(in crate::api::ai::chat) fn start_turn(
         Some(id) => hook_ask::resuming(hooked().with_invocation(id), resumes),
         None => hooked(),
     };
-    let generate_session =
-        verb_hook_boundary::hook_session(Some(&hooked_call()), HOST_TURN_GENERATE)
-            .map_err(|error| engine(&error))?;
-    let witness_session = verb_hook_boundary::hook_session(Some(&hooked_call()), WITNESS_ROW)
-        .map_err(|error| engine(&error))?;
+    // Each session is judged on the call's own input (FIX 10344), as a row
+    // door's is: a call that serves a room NOTE keeps its records there.
+    let at = vault.now_recorded_at();
+    let user_turn = witness_turn(
+        &request.conversation_ref,
+        None,
+        WitnessAuthor::User,
+        request.text.clone(),
+        at,
+    );
+    let generate_session = verb_hook_boundary::hook_session_for_call(
+        Some(&hooked_call()),
+        HOST_TURN_GENERATE,
+        &super::hooks::turn_generate_args(&request.conversation_ref),
+        None,
+    )
+    .map_err(|error| engine(&error))?;
+    let witness_args = serde_json::to_value(&user_turn).map_err(|error| engine(&error))?;
+    let witness_session = verb_hook_boundary::hook_session_for_call(
+        Some(&hooked_call()),
+        WITNESS_ROW,
+        &witness_args,
+        None,
+    )
+    .map_err(|error| engine(&error))?;
     // Chat resolves no room before the user's turn is witnessed, so its
     // call names none.
     let generating = turn_generate_pre(
@@ -331,14 +351,6 @@ pub(in crate::api::ai::chat) fn start_turn(
     if signals {
         server.ai.session_hint(session_key, SessionHint::AppOpen);
     }
-    let at = vault.now_recorded_at();
-    let user_turn = witness_turn(
-        &request.conversation_ref,
-        None,
-        WitnessAuthor::User,
-        request.text.clone(),
-        at,
-    );
     let mut written = None;
     let user = crate::server::blocking(|| {
         let memory = vault.memory(actor, class).with_session(session_key);

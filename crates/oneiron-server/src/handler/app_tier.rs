@@ -308,10 +308,30 @@ pub(super) fn handle_app_message_with_connection(
 ) -> Result<Option<VerbCall>, ProtocolError> {
     let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
     if let Err(error) = &answered {
-        let method = (tag == protocol::TAG_RPC)
+        let call = (tag == protocol::TAG_RPC)
             .then(|| crate::livequery::decode_rpc_call(payload).ok())
-            .flatten()
-            .map(|(request, _)| request.method);
+            .flatten();
+        // FIX 10344: a refused call that serves a room NOTE, or rides an
+        // anonymous session its principal is verified in, keeps no receipt,
+        // as its answered twin keeps none (FIX 4280).
+        let anonymous = call.as_ref().is_some_and(|(request, context)| {
+            let session = context
+                .as_ref()
+                .and_then(|context| context.session.as_deref());
+            let principal = state
+                .bound_auth
+                .as_ref()
+                .and_then(call_receipt::request_principal);
+            call_receipt::session_is_anonymous_for(server, session, principal)
+                || server.vault().room_note_call_for(
+                    session,
+                    principal,
+                    &request.method,
+                    Some(&request.params),
+                    None,
+                )
+        });
+        let method = call.map(|(request, _)| request.method);
         let (verb, request_digest) = match method {
             // A bind carries a credential: its receipt digests none of it.
             Some(method) if method == "auth.bind" => (method, call_bytes_digest(&[])),
@@ -319,14 +339,18 @@ pub(super) fn handle_app_message_with_connection(
             None if tag == protocol::TAG_RPC => ("rpc".to_owned(), call_bytes_digest(payload)),
             None => ("subscribe".to_owned(), call_bytes_digest(payload)),
         };
-        call_receipt::record_socket_reply(
+        call_receipt::record(
             server,
-            verb,
-            CallOutcome::Refused {
-                code: error.kind().to_owned(),
-            },
-            request_digest,
-            None,
+            anonymous,
+            call_receipt::connection_call(
+                oneiron::receipt::CallTransport::Ws,
+                verb,
+                CallOutcome::Refused {
+                    code: error.kind().to_owned(),
+                },
+                request_digest,
+                None,
+            ),
         );
     }
     answered
