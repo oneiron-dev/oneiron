@@ -52,7 +52,6 @@ pub(super) struct PadCompartmentIdentity {
 
 /// A pad's full id as msgpack bin.
 mod pad_item {
-    use serde::de::Error;
     use serde::{Deserializer, Serializer};
 
     pub(super) fn serialize<S: Serializer>(item: &[u8; 40], out: S) -> Result<S::Ok, S::Error> {
@@ -61,8 +60,9 @@ mod pad_item {
 
     pub(super) fn deserialize<'de, D: Deserializer<'de>>(input: D) -> Result<[u8; 40], D::Error> {
         let bytes = super::serde_bytes_vec::deserialize(input)?;
-        <[u8; 40]>::try_from(bytes.as_slice())
-            .map_err(|_| D::Error::invalid_length(bytes.len(), &"a 40-byte pad id"))
+        <[u8; 40]>::try_from(bytes.as_slice()).map_err(|_| {
+            <D::Error as serde::de::Error>::invalid_length(bytes.len(), &"a 40-byte pad id")
+        })
     }
 }
 
