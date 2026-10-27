@@ -88,7 +88,9 @@ impl Vault {
         envelope: &WriteEnvelope,
     ) -> Result<Vec<u8>> {
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        let vault_id = fold.vault_id.ok_or_else(denied)?;
+        let vault_id = fold
+            .vault_id
+            .ok_or_else(|| refused("signing_transcript_no_vault_id", id, false, denied()))?;
         let facet =
             crate::batch::claim_candidate_apply::claim_candidate_birth_facet(&self.store, txn, id)?;
         let body = candidate.clone().into_claim_body(envelope, facet)?;
@@ -593,13 +595,30 @@ pub(crate) fn machine_history_host_context(
     signer: &AuthorityKey,
 ) -> Result<([u8; 32], [u8; 32])> {
     let fold = super::authority_view_readonly_for_store_in_txn(store, posture, txn)?;
-    let vault_id = fold.vault_id.ok_or_else(denied)?;
+    let vault_id = fold.vault_id.ok_or_else(|| {
+        tracing::warn!(
+            stage = "history_context_no_vault_id",
+            "machine claim write refused"
+        );
+        denied()
+    })?;
     if fold.vault_root_is_conflicted()
         || !fold
             .roster
             .get(signer)
             .is_some_and(|root| !root.revoked && root.roles & super::ROLE_OWNER != 0)
     {
+        tracing::warn!(
+            stage = "history_context_host_not_admitted",
+            root_conflicted = fold.vault_root_is_conflicted(),
+            issuer_present = fold.roster.contains_key(signer),
+            issuer_revoked = fold.roster.get(signer).is_some_and(|root| root.revoked),
+            issuer_owner = fold
+                .roster
+                .get(signer)
+                .is_some_and(|root| root.roles & super::ROLE_OWNER != 0),
+            "machine claim write refused"
+        );
         return Err(denied());
     }
     // A successor root has no authored sequence yet: its trust event is the
@@ -657,9 +676,27 @@ pub(crate) fn machine_history_host_context(
         [head] => *head,
         [] => match authored_heads.as_slice() {
             [head] => *head,
-            _ => return Err(denied()),
+            _ => {
+                tracing::warn!(
+                    stage = "history_context_host_head_not_unique",
+                    re_root_count = re_roots.len(),
+                    authored_head_count = authored_heads.len(),
+                    append_head_count = fold.append_heads.len(),
+                    "machine claim write refused"
+                );
+                return Err(denied());
+            }
         },
-        _ => return Err(denied()),
+        _ => {
+            tracing::warn!(
+                stage = "history_context_reroot_not_unique",
+                re_root_count = re_roots.len(),
+                authored_head_count = authored_heads.len(),
+                append_head_count = fold.append_heads.len(),
+                "machine claim write refused"
+            );
+            return Err(denied());
+        }
     };
     Ok((vault_id, head))
 }
