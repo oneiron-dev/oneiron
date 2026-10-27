@@ -202,7 +202,27 @@ impl Store {
             // (checkpoint_custody).
             self.core.key_custody.pin_in_txn(self, wtxn)?;
         }
-        append_gate_decision_row_in_txn(self, wtxn, record)
+        append_gate_decision_row_in_txn(self, wtxn, record, false)
+    }
+
+    /// [`Self::append_gate_decision_in_txn`] for a policy verdict's row (FIX
+    /// 7806): a claim-free one is sealed in the vault's own key custody
+    /// under the policy partition, never stored as plain MessagePack, and
+    /// reads back through the same door every sealed row does. Where no key
+    /// may be minted it is stored plain, as before.
+    pub(crate) fn append_policy_gate_decision_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        record: &GateDecisionRecord,
+    ) -> Result<()> {
+        if record.claim_id.is_some() || !custody::policy_seal_available(self) {
+            return self.append_gate_decision_in_txn(wtxn, record);
+        }
+        crate::ports::recorded_at_in_txn(self, wtxn)?;
+        // The first sealed append pins the binding to live exterior custody,
+        // as a claim-bound one does.
+        self.core.key_custody.pin_in_txn(self, wtxn)?;
+        append_gate_decision_row_in_txn(self, wtxn, record, true)
     }
 
     /// Appends a collision-checked logical UUIDv7 successor. A fixed clock can
@@ -647,10 +667,13 @@ impl Store {
 /// The key/encode functions and both index side writes are shared verbatim, so
 /// a session decision is byte-identical to the base row it would have been —
 /// which is what makes promote a replay rather than a re-derivation.
+/// `policy_sealed` seals a claim-free row under the policy partition (FIX
+/// 7806); any other claim-free row is stored plain.
 fn append_gate_decision_row_in_txn(
     store: &impl ManifestDbs,
     wtxn: &mut RwTxn<'_>,
     record: &GateDecisionRecord,
+    policy_sealed: bool,
 ) -> Result<()> {
     // Decode accepts the redacted skeleton (ONE-1637); APPEND never mints
     // one. Redaction is an in-place rewrite owned by the erase coupling.
@@ -663,6 +686,8 @@ fn append_gate_decision_row_in_txn(
     }
     let value = if let Some(claim) = record.claim_id {
         custody::sealed_claim_row_in_txn(store, wtxn, record, &claim)?
+    } else if policy_sealed {
+        custody::sealed_policy_row_in_txn(store, wtxn, record)?
     } else {
         encode_gate_decision(record)?
     };
