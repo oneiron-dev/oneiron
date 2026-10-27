@@ -1234,6 +1234,10 @@ export class Oneiron {
         /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
         import: (input: Facade.SignedAuthorityHistory): Facade.AuthorityHistoryImported => this.#call(() => this.#client.vaultAuthorityHistoryImport(input) as Facade.AuthorityHistoryImported),
       },
+      clock: {
+        /** Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so. */
+        repair: (input: Facade.EmptyRequest = {}): Facade.AuthorityClockRepair => this.#call(() => this.#client.vaultAuthorityClockRepair(input) as Facade.AuthorityClockRepair),
+      },
       /** Every saved authority handoff fork alarm, for the owner. */
       handoff_alarms: Object.assign((input: Facade.EmptyRequest = {}): Facade.AuthorityHandoffAlarm[] => this.#call(() => this.#client.vaultAuthorityHandoffAlarms(input) as Facade.AuthorityHandoffAlarm[]), {
         /** The owner acknowledges one saved handoff fork alarm. */
