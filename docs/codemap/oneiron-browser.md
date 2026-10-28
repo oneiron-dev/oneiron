@@ -74,7 +74,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 13 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
 | `src/session.rs` | src | m | 2 struct · 4 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
-| `src/session/demonstration.rs` | src | m | 1 fn · 7 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
+| `src/session/demonstration.rs` | src | m | 2 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
 | `src/session/draft.rs` | src | s | 4 crate-vis | — | `library.draft` on a browser session (CUA E7): the session's own history (`trail`) as draft steps, its open… |
 | `src/session/fresh.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | FreshGuest | The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |

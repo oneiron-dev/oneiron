@@ -84137,8 +84137,8 @@
      "path": "src/session/demonstration.rs",
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1
+      "crate-vis": 11,
+      "fn": 2
      }
     },
     {
@@ -100565,7 +100565,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/browser_takeover_routes.rs",
