@@ -353,6 +353,7 @@ fn persist_amendment_split(
         type_ref: evidence.type_ref.clone(),
         attempt_receipt: evidence.attempt_receipt.clone(),
         judge,
+        rejected: false,
     };
 
     let row = judgment_row(&judgment, evidence.skill);
@@ -446,6 +447,7 @@ pub(super) fn judgment_row(
         executor: judgment.executor.clone(),
         type_ref: judgment.type_ref.clone(),
         judge: judgment.judge.clone(),
+        rejected: judgment.rejected,
     }
 }
 
@@ -608,6 +610,7 @@ fn judgment_from_row(
         type_ref: row.type_ref,
         attempt_receipt: row.attempt.map(|join| join.receipt),
         judge: row.judge,
+        rejected: row.rejected,
     };
     Ok((judgment, attempt))
 }

@@ -163,6 +163,9 @@ pub(super) struct StoredJudgment {
     /// The judge revision whose answers the judgment stands on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) judge: Option<String>,
+    /// A rejection's judgment, which carries no Δ (FIX 7823).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) rejected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

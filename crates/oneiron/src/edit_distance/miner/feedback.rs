@@ -121,63 +121,60 @@ pub(crate) fn record_inbox_learning_in_txn(
         return Err(Error::InvariantViolation("inbox decision already captured"));
     }
     DECISION.put(&vault.store, txn, &receipt, &row)?;
-    // The reviewed claim's project audience scopes the cell (FIX 6038); the
-    // reserved default project is the vault's. Never the consent scope.
-    let project = (reviewed.scope_project != crate::claim::default_project_id())
-        .then_some(reviewed.scope_project);
-    feed_edit_cost_in_txn(vault, txn, &row, project)
+    record_edit_cost_learning(vault, txn, &row);
+    Ok(())
 }
 
-/// Longest consent scope a learning cell keys verbatim; a longer one keys by
-/// its digest.
-const MAX_LEARNING_SCOPE_BYTES: usize = 256;
+/// The decision's `learning.edit_cost` capture, in a savepoint: an optional
+/// capture that never fails the deciding write it rides.
+fn record_edit_cost_learning(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &PrincipalDecision) {
+    let landed = vault
+        .store
+        .env
+        .nested_write_txn(txn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            feed_edit_cost_in_txn(vault, &mut savepoint, row)?;
+            Ok(savepoint.commit()?)
+        });
+    if let Err(error) = landed {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "an inbox decision's edit-cost learning did not land; the decision stands"
+        );
+    }
+}
 
-/// An untouched approval or a rejection is the decider's verdict on the
-/// generator's output, with nothing to split: it feeds `learning.edit_cost`
-/// on the generating actor (an actor is its own executor), keeping the
-/// untouched/rejected counts beside the mean, in `project`'s scope (`None`,
-/// the vault's). An amendment's cost reaches the family through its
-/// attributed shares, not here.
+/// An untouched approval is the decider's verdict on the generator's output,
+/// with nothing to split: it feeds the generating actor's own
+/// `learning.edit_cost` cell. A rejection is judged first (FIX 7823): only the
+/// shares attribution charges reach a cell, counted rejected. An amendment's
+/// cost reaches the family through its attributed shares, not here.
 fn feed_edit_cost_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &PrincipalDecision,
-    project: Option<EntityId>,
 ) -> Result<()> {
-    use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
-    use crate::ports::EntityStoreRead;
+    use crate::edit_distance::attribution::{
+        Rejection, judge_rejection_in_txn, record_untouched_in_txn,
+    };
 
-    let (magnitude, label) = match row.outcome.as_str() {
-        "approved" => (0.0, "untouched"),
-        "rejected" => (1.0, "rejected"),
-        _ => return Ok(()),
-    };
-    // A generator with no stored entity has nowhere to hold the estimate.
-    if vault.store.port_entity_record(&*txn, &row.actor)?.is_none() {
-        return Ok(());
+    match row.outcome.as_str() {
+        "approved" => {
+            record_untouched_in_txn(vault, txn, row.actor, &row.scope, &row.receipt, row.at)
+        }
+        "rejected" => {
+            let rejection = Rejection {
+                receipt: &row.receipt,
+                actor: row.actor,
+                skill: row.skill,
+                scope: &row.scope,
+                at: row.at,
+            };
+            judge_rejection_in_txn(vault, txn, &rejection).map(|_| ())
+        }
+        _ => Ok(()),
     }
-    let scope = if row.scope.len() <= MAX_LEARNING_SCOPE_BYTES && !row.scope.contains('\0') {
-        row.scope.clone()
-    } else {
-        format!(
-            "scope#{}",
-            &crate::entity_id::bytes_to_hex_lower(blake3::hash(row.scope.as_bytes()).as_bytes())
-                [..32]
-        )
-    };
-    let cell = LearningCell::new(LearningPredicate::EditCost, row.actor)
-        .executor(row.actor.to_hex())
-        .consent_scope(scope)
-        .project(project);
-    let mut evidence = LearningEvidence::anchored(
-        row.receipt.clone(),
-        row.at,
-        Anchor::OwnerVerdict,
-        Observation::Magnitude(magnitude),
-    );
-    evidence.outcome_label = Some(label.to_owned());
-    crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, row.at)?;
-    Ok(())
 }
 
 pub(super) fn principal_decision(
