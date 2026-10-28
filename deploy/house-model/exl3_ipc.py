@@ -24,17 +24,20 @@ Ops, host to worker, and what each gets back:
 - `hello`: `hello`, with the schema, the worker's descriptor (kind, identity,
   build evidence), its model id, epoch, launch manifest digest, capabilities
   and reported versions.
-- `generate` (the epoch it expects; `input`; `params`; `stream`; reserved
-  `priority`, `deadline`, `work_class`, taken and ignored): `accepted`, or
-  `refused` before anything ran; then `first_token`, with `stream` each
-  `token` (`phase`, safe `text`), and exactly one terminal: `final`
-  (`outcome` done or error, the reply's fields, `usage.inference_calls` as
-  the HTTP reply carries it, partial counts on error, cheap stats), or
-  `released` once the host cancelled.
+- `generate` (the epoch it expects; `input`; `params`; `stream`; the
+  scheduling fields of v1.3 below): `accepted`, or `refused` before
+  anything ran; then `admitted`, `first_token`, with `stream` each `token`
+  (`phase`, safe `text`), and exactly one terminal: `final` (`outcome` done
+  or error, the reply's fields, `usage.inference_calls` as the HTTP reply
+  carries it, partial counts on error, cheap stats), or `released` once the
+  host cancelled.
 - `cancel`: `cancel_ack` (`found`), then the call's `released`, sent only
   after the scheduler thread has cancelled its Job (which frees its pages and
   recurrent slot) and given back its place and reservation. A call that
-  already ended gets `found: false` and no second terminal.
+  already ended gets `found: false` and no second terminal. A Job the
+  Generator could not cancel keeps its pages, place and reservation charged
+  until it ends by itself or the process is reaped, and its call ends with
+  `final` error `release_failed`, never `released`.
 - `stats` (`detail`: `full`, the default, or `cheap`): `stats`, taken on the
   scheduler thread (`exl3_stats.py`).
 - `drain`: no new call is taken, on either transport; `drained` once every
@@ -64,6 +67,32 @@ replay, and closes it when the answer is forgotten or the session drops.
 `snapshot_v1`, read as bytes and never as a conversation. Both count as
 calls for a drain.
 
+Codec v1.3 is scheduling (DESIGN-V2 R4, `exl3_executor.py`), advertised as
+`capabilities.scheduling` `{minor: 3, policy, chunked_prefill, update}`,
+the session minor staying 1 or 2 on its own. A `generate` or
+`session.generate` body, never its `params`, may name `work_class`
+(`foreground`, the default, or `background`), `priority` (0, the default,
+or 1), `deadline` (null, or the microseconds left at send, converted once
+to this process's monotonic clock) and `admission` (`{grant_id, revision,
+resource_class, profile_id, envelope_mib}`); a `session.suffix_commit`,
+`session.export` or `session.import` body may name the first three. A
+field this worker cannot read, a grant for another resource class, or a
+grant revision below one it holds for that grant is refused before any
+work (`invalid_request`, `invalid_grant`, `stale_grant`); a call with no
+grant is admitted and counted. `accepted` names the call's `scheduling`;
+`admitted` says when the owner thread admitted it (its queue wait, the
+engine round, cheap stats); `final` and `released` carry its `scheduling`
+receipt.
+
+- `schedule`, on the call's own connection under its request id and epoch,
+  with `update` advertised (`{revision, action: yield | resume |
+  reprioritize, work_class?, priority?, deadline?}`): `schedule_ack` in
+  the call's sequence once the owner thread has applied it between rounds
+  (`{found, applied, revision, action, phase, paused, withheld, work_class,
+  priority, deadline_remaining_us?, next_boundary, reason?, stats}`). A
+  revision not above the call's is not applied (`stale_revision`); a call
+  that has ended gets `found: false`, outside the sequence.
+
 A connection that closes cancels its calls. The HTTP routes are untouched.
 """
 import array
@@ -84,6 +113,7 @@ import uuid
 from importlib import metadata
 
 import cache_usage
+import exl3_executor
 import exl3_tools
 
 # The codec this server speaks.
@@ -92,10 +122,9 @@ SCHEMA_VERSION = 1
 HEADER_BYTES = 8
 # The input encodings v1 reads.
 INPUT_ENCODINGS = ("chat_json",)
-# The ops a host may send.
+# The ops a host may send; `schedule` as well where the policy takes updates.
 OPS = ("hello", "generate", "cancel", "stats", "drain", "shutdown")
-# Generate fields v1 takes and does not act on yet (R4 enforces them).
-RESERVED_FIELDS = ("priority", "deadline", "work_class")
+SCHEDULE_OP = "schedule"
 # Linux's memfd seal ABI (fcntl.h: F_LINUX_SPECIFIC_BASE + 10, F_SEAL_*),
 # for a Python built without the names; the kernel's values never change.
 F_GET_SEALS = getattr(fcntl, "F_GET_SEALS", 1034)
@@ -374,22 +403,35 @@ class NativeServer:
             connection = Connection(self, sock)
             threading.Thread(target=connection.run, name="exl3-native-connection", daemon=True).start()
 
+    def ops(self):
+        """The ops this worker answers, `schedule` only where its policy
+        applies updates."""
+        if self.state.scheduler.executor.capability()["update"]:
+            return list(OPS) + [SCHEDULE_OP]
+        return list(OPS)
+
     def hello(self):
+        """The hello, with the cheap stats the owner thread takes for it:
+        the worker's readiness report."""
         identity = self.state.identity
+        scheduler = self.state.scheduler
         body = {
             "schema": SCHEMA_VERSION,
             "worker": {"kind": "exl3", "identity": identity.record(None),
                        "build_evidence": identity.build_evidence},
             "model": self.state.model_id,
             "epoch": identity.epoch,
-            "capabilities": {"ops": list(OPS), "input_encodings": list(INPUT_ENCODINGS), "stream": True,
-                             "tool_calls": True, "reserved": list(RESERVED_FIELDS)},
+            "capabilities": {"ops": self.ops(), "input_encodings": list(INPUT_ENCODINGS), "stream": True,
+                             "tool_calls": True, "scheduling": scheduler.executor.capability()},
             "versions": reported_versions(),
         }
         if self.state.sessions is not None:
             body["capabilities"]["sessions"] = self.state.sessions.capability()
         if identity.launch_manifest is not None:
             body[cache_usage.LAUNCH_MANIFEST_KEY] = identity.launch_manifest
+        stats = scheduler.snapshot(False)
+        if stats is not None:
+            body["stats"] = stats
         return body
 
     def close(self):
@@ -493,9 +535,12 @@ class Connection:
             self.send("refused", request_id, Refusal("invalid_input", f"{op} carries no descriptor").body())
             return
         if op == "hello":
-            self.send("hello", request_id, self.server.hello())
+            threading.Thread(target=lambda: self.send("hello", request_id, self.server.hello()),
+                             name="exl3-native-hello", daemon=True).start()
         elif op == "cancel":
             self.cancel(request_id)
+        elif op == SCHEDULE_OP and op in self.server.ops():
+            self.schedule(envelope)
         elif op == "stats":
             detail = body.get("detail", "full")
             threading.Thread(target=self.stats, args=(request_id, detail), daemon=True).start()
@@ -570,6 +615,7 @@ class Connection:
         request_id, body = envelope["request_id"], envelope["body"]
         epoch = self.state.identity.epoch
         sessions = self.state.sessions
+        executor = self.state.scheduler.executor
         branch = None
         try:
             if envelope.get("epoch") != epoch:
@@ -580,6 +626,12 @@ class Connection:
             stream = body.get("stream", False)
             if not isinstance(stream, bool):
                 raise Refusal("invalid_request", "stream must be true or false")
+            # The body's scheduling fields, never the params': the deadline
+            # counts from here.
+            try:
+                work = exl3_executor.WorkContext.from_body(body, time.monotonic_ns())
+            except exl3_executor.SchedulingError as error:
+                raise Refusal(error.code, str(error)) from None
             conversation = read_input(body.get("input"), fds)
             if session:
                 try:
@@ -594,13 +646,20 @@ class Connection:
         # and before it is rendered.
         accepted_ns = time.monotonic_ns()
         with self.lock:
+            refusal = None
             if request_id in self.calls:
                 refusal = Refusal("duplicate_request", "a call with this id is still open on this connection")
-            elif not self.state.scheduler.accept():
-                refusal = Refusal("draining", "the worker takes no new call")
             else:
-                refusal = None
-                call = NativeCall(self, request_id, params, conversation, stream, accepted_ns, branch)
+                try:
+                    # Its grant counts from here to the call's end.
+                    executor.open_grant(work)
+                except exl3_executor.SchedulingError as error:
+                    refusal = Refusal(error.code, str(error))
+            if refusal is None and not self.state.scheduler.accept():
+                executor.close_grant(work)
+                refusal = Refusal("draining", "the worker takes no new call")
+            if refusal is None:
+                call = NativeCall(self, request_id, params, conversation, stream, accepted_ns, branch, work)
                 self.calls[request_id] = call
         if refusal is not None:
             if branch is not None:
@@ -611,7 +670,8 @@ class Connection:
         if branch is not None:
             # A drop of its session cancels the call.
             sessions.bind_call(branch, lambda: call.cancel(ack=False))
-        call.emit("accepted", {"epoch": epoch})
+        call.emit("accepted", {"epoch": epoch,
+                               "scheduling": dict(work.evidence(accepted_ns), policy=executor.policy)})
         threading.Thread(target=call.run, name="exl3-native-call", daemon=True).start()
 
     def cancel(self, request_id):
@@ -621,6 +681,19 @@ class Connection:
             self.send("cancel_ack", request_id, {"found": False})
             return
         call.cancel(ack=True)
+
+    def schedule(self, envelope):
+        """A `schedule` for one of this connection's calls: applied on the
+        owner thread, on a thread of its own, then acknowledged in the
+        call's sequence. A call that is not open here gets `found: false`."""
+        request_id = envelope["request_id"]
+        with self.lock:
+            call = self.calls.get(request_id)
+        if call is None or envelope.get("epoch") != self.state.identity.epoch:
+            self.send("schedule_ack", request_id, {"found": False})
+            return
+        threading.Thread(target=call.schedule, args=(envelope["body"],), name="exl3-native-schedule",
+                         daemon=True).start()
 
     def stats(self, request_id, detail):
         full = detail != "cheap"
@@ -656,7 +729,7 @@ class NativeCall:
     """One `generate`: run on its own thread through the scheduler, its
     events numbered in the order they go out, and exactly one terminal."""
 
-    def __init__(self, connection, request_id, params, conversation, stream, accepted_ns, branch=None):
+    def __init__(self, connection, request_id, params, conversation, stream, accepted_ns, branch=None, work=None):
         self.connection = connection
         self.state = connection.state
         self.request_id = request_id
@@ -667,6 +740,9 @@ class NativeCall:
         # A `session.generate`'s working branch (exl3_session), which ends
         # with the call.
         self.branch = branch
+        # The call's scheduling (exl3_executor), which its request carries
+        # and the host's `schedule` changes.
+        self.work = work if work is not None else exl3_executor.WorkContext()
         self.lock = threading.Lock()
         self.seq = 0
         self.terminal = False
@@ -684,14 +760,33 @@ class NativeCall:
             if not self.terminal:
                 self._send_locked(op, body)
 
-    def end(self, op, body):
+    def end(self, op, body, freed=True):
         """The call's one terminal: `op`, or `released` when the host has
-        cancelled it, with `body` either way."""
+        cancelled it and its charges are `freed`, with `body` either way."""
         with self.lock:
             if self.terminal:
                 return
             self.terminal = True
-            self._send_locked("released" if self.cancelled.is_set() else op, body)
+            self._send_locked("released" if self.cancelled.is_set() and freed else op, body)
+
+    def schedule(self, body):
+        """The host's `schedule` for this call: checked, applied on the owner
+        thread between rounds, and acknowledged in the call's sequence; an
+        update that cannot be read is acknowledged unapplied."""
+        try:
+            update = exl3_executor.ScheduleUpdate(body, time.monotonic_ns())
+        except exl3_executor.SchedulingError as error:
+            self.emit("schedule_ack", {"found": True, "applied": False, "reason": error.code,
+                                       "message": str(error)})
+            return
+        scheduler = self.state.scheduler
+        try:
+            ack = scheduler.run_owned(lambda: scheduler.apply_schedule(self.work, self.req, update))
+        except Exception as error:  # the scheduler is shutting down
+            self.emit("schedule_ack", {"found": True, "applied": False, "reason": "closing",
+                                       "message": f"{type(error).__name__}: {error}"})
+            return
+        self.emit("schedule_ack", ack)
 
     def cancel(self, ack):
         """Stops the call wherever it is. With `ack`, the host asked: it gets
@@ -715,6 +810,8 @@ class NativeCall:
                 body["usage"] = req.partial_usage
             if req.final_stats is not None:
                 body["stats"] = req.final_stats
+            if req.scheduling is not None:
+                body["scheduling"] = req.scheduling
         return body
 
     def _failure(self, error, kind, req):
@@ -734,7 +831,7 @@ class NativeCall:
             if "tools" in self.conversation:
                 body["tools"] = self.conversation["tools"]
             model = body.get("model") or state.model_id
-            req = state.prepare(body, "native-" + uuid.uuid4().hex, self.accepted_ns)
+            req = state.prepare(body, "native-" + uuid.uuid4().hex, self.accepted_ns, work=self.work)
             if self.branch is not None:
                 req.branch = self.branch
                 req.shared = state.sessions.shared_pages(self.branch, req.ids)
@@ -760,8 +857,11 @@ class NativeCall:
             def on_first_token(mark):
                 self.emit("first_token", mark)
 
+            def on_admitted(mark):
+                self.emit("admitted", mark)
+
             scheduler.submit(req, self.cancelled.is_set)
-            result = scheduler.wait(req, never, on_reasoning, on_content, on_first_token)
+            result = scheduler.wait(req, never, on_reasoning, on_content, on_first_token, on_admitted)
             finish = result["finish_reason"]
             final = {"outcome": "done", "model": model}
             if self.stream:
@@ -781,12 +881,17 @@ class NativeCall:
             final["timings"] = result["timings"]
             if req.final_stats is not None:
                 final["stats"] = req.final_stats
+            if req.scheduling is not None:
+                final["scheduling"] = req.scheduling
             self.end("final", final)
         except Exception as error:
             # The scheduler's ClientGone is the cancel this call asked for,
             # or its connection's close.
             if isinstance(error, state.client_gone):
                 self.end("released", self._ending("cancelled", req))
+            elif isinstance(error, exl3_executor.ReleaseFailed):
+                # Its charges stay with the worker: never `released`.
+                self.end("final", self._failure(error, "server_error", req), freed=False)
             elif isinstance(error, (ValueError, KeyError, TypeError)):
                 self.end("final", self._failure(error, "invalid_request_error", req))
             else:
@@ -798,5 +903,6 @@ class NativeCall:
             if self.branch is not None and (req is None or not req.queued):
                 # The scheduler never had it, so never ends its branch.
                 state.sessions.end_branch_later(self.branch)
+            scheduler.executor.close_grant(self.work)
             scheduler.settle()
             self.connection.forget(self.request_id)

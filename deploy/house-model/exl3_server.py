@@ -69,6 +69,17 @@ session (`exl3_session/snapshot.py`). An import's pages are taken only when
 they fit beside what is reserved and what sessions hold, idle sessions
 evicted first; otherwise it is refused `snapshot_busy`. Exports and imports
 count as calls for a drain, and the regions they keep close at shutdown.
+
+Which admitted Jobs each engine round runs is the executor's
+(`exl3_executor.py`, DESIGN-V2 R4). Under its default `class_deadline_v1`
+policy a native call's body may name its work class, priority, deadline
+and admission grant, and the host's `schedule` op pauses, resumes or
+reprioritizes it between rounds; a call that names nothing runs as every
+call did before. While foreground work is present one background Job runs
+per round and a background prefill runs one page per round; a paused Job
+keeps its pages, place and state. `--scheduling-policy fifo` runs every
+admitted Job every round, as before R4. A Job the Generator cannot cancel
+keeps its call's pages, place and reservation charged until it ends.
 """
 import argparse
 import collections
@@ -83,6 +94,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import cache_usage
+import exl3_executor
 import exl3_ipc
 import exl3_stats
 import exl3_tools
@@ -168,10 +180,16 @@ class TimedJob(Job):
         return result
 
 
+class PlainJob(exl3_executor.ScheduledJob, TimedJob):
+    """A session-less call's Job: the executor's (`exl3_executor.py`), with
+    the first-token hook."""
+
+
 if exl3_session is not None:
-    class FrontierJob(exl3_session.FrontierMixin, TimedJob):
-        """A session working branch's Job (`exl3_session/jobs.py`): attached
-        at its plan's frontier, with the first-token hook."""
+    class FrontierJob(exl3_executor.ScheduledJob, exl3_session.FrontierMixin, TimedJob):
+        """A session working branch's Job (`exl3_session/jobs.py`): the
+        executor's, attached at its plan's frontier, with the first-token
+        hook."""
 
 
 def cuda_devices(*models):
@@ -314,6 +332,12 @@ def load(args):
             generator_class = exl3_session.SessionGenerator
         else:
             print(f"SESSIONS_OFF reason={refused!r}", flush=True)
+    # The class policy runs the Generator with the executor's mixin; FIFO
+    # runs it stock (exl3_executor.py). The bench's args name no policy.
+    executor = exl3_executor.Executor(getattr(args, "scheduling_policy", exl3_executor.DEFAULT_POLICY))
+    if executor.prioritized:
+        generator_class = exl3_executor.scheduled_generator(generator_class)
+    print(f"SCHEDULING policy={executor.policy} minor={exl3_executor.SCHEDULING_MINOR}", flush=True)
     generator = generator_class(target, target_cache, tokenizer, max_batch_size=batch,
                                 draft_model=draft, draft_cache=draft_cache,
                                 num_draft_tokens=depth or None,
@@ -346,7 +370,7 @@ def load(args):
     memory.reset_peaks()
     print(f"SERVER_READY model={args.model_id} context={args.context} cache_tokens={cache_tokens} "
           f"in_flight={batch} depth={depth} stop_ids={sorted(stop_ids)}", flush=True)
-    return Server(args, tokenizer, template, generator, sorted(stop_ids), identity, memory)
+    return Server(args, tokenizer, template, generator, sorted(stop_ids), identity, memory, executor)
 
 
 def make_sampler(body):
@@ -512,6 +536,16 @@ class Request:
         self.branch = None
         self.shared = 0
         self.queued = False
+        # Its scheduling (exl3_executor): the context the call named, what
+        # the executor did with its Jobs, the time it waited behind a solo
+        # request, and the receipt of both at its end.
+        self.work = exl3_executor.WorkContext()
+        self.execution = exl3_executor.ExecutionRecord()
+        self.solo_wait = 0.0
+        self.scheduling = None
+        # The error a cancel of its Job raised: its charges stay with the
+        # scheduler until the Generator ends the Job (ReleaseFailed).
+        self.custody = None
 
     def mark_first_token(self):
         """Notes the request's first sampled token, once, from the scheduler
@@ -547,9 +581,19 @@ class Scheduler:
 
     Both transports feed it: an HTTP handler and a native call alike count
     their call from acceptance to its end (`accept`, `settle`), which is what
-    a drain waits on, and ask the owner thread for its stats (`snapshot`)."""
+    a drain waits on, and ask the owner thread for its stats (`snapshot`).
 
-    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight, identity, memory=None):
+    Under the class policy (exl3_executor.py) the order is the executor's:
+    the request admitted next is the best ranked one the host has not
+    paused (class, priority, deadline, arrival), a foreground request may
+    enter a full ingress queue ahead of background work, and while
+    foreground work is present no more background requests or commits are
+    in flight than BACKGROUND_ACTIVE_LIMIT. The Generator then runs, each
+    round, the Jobs the executor chooses. Under FIFO everything goes in
+    arrival order, as before."""
+
+    def __init__(self, generator, tokenizer, encode, stop_ids, max_in_flight, identity, memory=None,
+                 executor=None):
         self.generator = generator
         self.tokenizer = tokenizer
         self.encode = encode
@@ -557,6 +601,9 @@ class Scheduler:
         self.max_in_flight = max_in_flight
         self.identity = identity
         self.memory = memory
+        self.executor = executor if executor is not None else exl3_executor.Executor(exl3_executor.FIFO_POLICY)
+        if self.executor.prioritized:
+            generator.executor = self.executor
         self.depth = int(generator.num_draft_tokens)
         self.pool_pages = int(generator.pagetable.max_pages)
         # Shared with the handlers, under `cond`.
@@ -564,9 +611,11 @@ class Scheduler:
         self.ingress = collections.deque()
         self.pokes = 0
         self.closing = False
-        # Submits waiting for an ingress place; calls accepted and not yet
-        # ended; whether the worker drains; snapshots asked of the owner.
+        # Submits waiting for an ingress place (the foreground ones apart);
+        # calls accepted and not yet ended; whether the worker drains;
+        # snapshots asked of the owner.
         self.blocked = 0
+        self.blocked_foreground = 0
         self.open_calls = 0
         self.draining = False
         self.asks = collections.deque()
@@ -580,10 +629,25 @@ class Scheduler:
         self.active = []
         self.by_serial = {}
         self.reserved = 0
+        # When the solo request in flight was admitted, monotonic; None
+        # when none is.
+        self.solo_since = None
+        # Stats reports this incarnation has taken, in order.
+        self.reports = 0
         self.thread = threading.Thread(target=self._loop, name="exl3-scheduler", daemon=True)
         self.thread.start()
 
     # The handlers' side.
+
+    def _ingress_full_locked(self, req):
+        """True while `req` must wait for an ingress place: the queue is full
+        and, under the class policy, holds no request `req` outranks."""
+        if len(self.ingress) < INGRESS_CAPACITY:
+            return False
+        if not self.executor.prioritized:
+            return True
+        rank = req.work.rank()
+        return not any(rank < queued.work.rank() for queued in self.ingress)
 
     def submit(self, req, gone):
         """Queues `req` for admission. While the ingress queue is full it
@@ -594,16 +658,20 @@ class Scheduler:
         # session branch's first Job shares the pages its session holds.
         req.need = max(0, min(pages_for(need, req.max_tokens, self.depth), self.pool_pages) - req.shared)
         req.submitted = time.monotonic()
+        foreground = req.work.foreground()
         with self.cond:
-            # Counted while it waits for a place: part of the queue depth.
+            # Counted while it waits for a place: part of the queue depth,
+            # and foreground work the executor sees waiting.
             self.blocked += 1
+            self.blocked_foreground += foreground
             try:
-                while len(self.ingress) >= INGRESS_CAPACITY and not self.closing:
+                while self._ingress_full_locked(req) and not self.closing:
                     self.cond.wait(DISCONNECT_POLL_S)
-                    if len(self.ingress) >= INGRESS_CAPACITY and gone():
+                    if self._ingress_full_locked(req) and gone():
                         raise ClientGone()
             finally:
                 self.blocked -= 1
+                self.blocked_foreground -= foreground
             if self.closing:
                 raise RuntimeError("the server is shutting down")
             self.ingress.append(req)
@@ -611,7 +679,7 @@ class Scheduler:
             self.pokes += 1
             self.cond.notify_all()
 
-    def wait(self, req, gone, on_reasoning, on_content, on_first_token=None):
+    def wait(self, req, gone, on_reasoning, on_content, on_first_token=None, on_admitted=None):
         """Hands `req`'s pieces to the callbacks as they come and returns its
         result. Raises the request's error, or ClientGone once the client has
         left."""
@@ -628,6 +696,9 @@ class Scheduler:
             elif kind == "first_token":
                 if on_first_token is not None:
                     on_first_token(value)
+            elif kind == "admitted":
+                if on_admitted is not None:
+                    on_admitted(value)
             elif kind is not None:
                 req.ended = True
                 if kind == "done":
@@ -679,8 +750,10 @@ class Scheduler:
         with self.cond:
             ingress, blocked = len(self.ingress), self.blocked
             open_calls, draining = self.open_calls, self.draining
+            blocked_foreground = self.blocked_foreground
         return {"queue_depth": ingress + blocked, "ingress": ingress, "blocked_submits": blocked,
-                "in_flight": len(self.active), "open_calls": open_calls, "draining": draining}
+                "blocked_foreground_submits": blocked_foreground, "in_flight": len(self.active),
+                "open_calls": open_calls, "draining": draining}
 
     def snapshot(self, full):
         """A stats snapshot the owner thread takes between passes, full
@@ -769,13 +842,47 @@ class Scheduler:
         if sessions is not None:
             sessions.evict_until(lambda: self.reserved + sessions.held_pages() <= self.pool_pages)
 
+    def _foreground_present_locked(self, admitted=()):
+        """True while foreground work the host has not paused is in the
+        worker: waiting for an ingress place, queued, in flight (`admitted`
+        too), or a session commit. Called under `cond`, from the owner
+        thread."""
+        if self.blocked_foreground:
+            return True
+        for group in (self.ingress, self.active, admitted):
+            for req in group:
+                if req.work.foreground() and not req.work.yielded and req.custody is None:
+                    return True
+        return self.sessions is not None and self.sessions.foreground_commits() > 0
+
+    def _background_room_locked(self, work, admitted=()):
+        """True unless, under the class policy, `work` is background,
+        foreground work is present, and the background requests in flight
+        (`admitted` too) and running commits fill BACKGROUND_ACTIVE_LIMIT.
+        Called under `cond`, from the owner thread."""
+        if not self.executor.prioritized or work.foreground() or not self._foreground_present_locked(admitted):
+            return True
+        running = sum(1 for group in (self.active, admitted) for req in group
+                      if not req.work.foreground() and req.custody is None)
+        if self.sessions is not None:
+            running += self.sessions.background_commits()
+        return running < exl3_executor.BACKGROUND_ACTIVE_LIMIT
+
+    def _runnable_jobs(self):
+        """The Jobs a pass could run: pending ones, and active ones the host
+        has not paused."""
+        return self.executor.runnable_jobs(self.generator)
+
     def _commit_room_locked(self, commit):
         """True when session commit `commit` may start now: a place is free,
-        no answer pass waits to grow, no solo request runs, and its pages fit
-        beside what is reserved and pinned. Called under `cond`."""
+        no answer pass waits to grow, no solo request runs, the class policy
+        lets a background commit in, and its pages fit beside what is
+        reserved and pinned. Called under `cond`."""
         if any(req.grow or req.solo for req in self.active):
             return False
         if len(self.active) + self.sessions.running_commits() >= self.max_in_flight:
+            return False
+        if not self._background_room_locked(commit.work):
             return False
         return self.reserved + commit.need + self._pinned() <= self.pool_pages
 
@@ -808,13 +915,23 @@ class Scheduler:
         if req.branch is not None and self.sessions is not None:
             self.sessions.end_branch(req.branch)
 
+    def _head_locked(self):
+        """The request admission takes next: the head of ingress, or under
+        the class policy the best ranked one the host has not paused; None
+        when there is none. Called under `cond`."""
+        if not self.executor.prioritized:
+            return self.ingress[0] if self.ingress else None
+        waiting = [req for req in self.ingress if not req.work.yielded]
+        return min(waiting, key=lambda req: req.work.rank()) if waiting else None
+
     def _admissible_locked(self, admitted):
-        """True when the head of ingress may be admitted now, beside the
-        requests in flight and `admitted`, the ones this pass has taken so
-        far: a place is free, no answer pass waits to grow, its pages fit,
-        and no solo request stands in the way. A solo request is admitted only
-        once nothing else is in flight, and nothing is admitted beside it.
-        Called under `cond`, from the owner thread."""
+        """True when the head of ingress (`_head_locked`) may be admitted
+        now, beside the requests in flight and `admitted`, the ones this pass
+        has taken so far: a place is free, no answer pass waits to grow, its
+        pages fit, no solo request stands in the way, and the class policy
+        lets a background request in. A solo request is admitted only once
+        nothing else is in flight, and nothing is admitted beside it. Called
+        under `cond`, from the owner thread."""
         if not self.ingress or any(req.grow for req in self.active):
             return False
         in_flight = self.active + admitted
@@ -822,19 +939,24 @@ class Scheduler:
         commits = self.sessions.running_commits() if self.sessions is not None else 0
         if len(in_flight) + commits >= self.max_in_flight:
             return False
-        head = self.ingress[0]
+        head = self._head_locked()
+        if head is None:
+            return False
         if any(req.solo for req in in_flight) or (head.solo and (in_flight or commits)):
+            return False
+        if not self._background_room_locked(head.work, admitted):
             return False
         # Pages sessions hold count, less what eviction may give back.
         return self.reserved + head.need + self._pinned() <= self.pool_pages
 
     def _idle_locked(self):
-        """True when a pass would do nothing: no job to iterate, no answer
-        pass waiting for pages, and no request the head of ingress could
-        admit. While the scheduler drains for a solo request it is busy with
-        the jobs it waits on, and the pass after the last one ends admits it.
-        Called under `cond`, from the owner thread."""
-        if self.generator.num_remaining_jobs() or any(req.grow for req in self.active):
+        """True when a pass would do nothing: no job to iterate (a paused
+        one waits for its resume), no answer pass waiting for pages, and no
+        request the head of ingress could admit. While the scheduler drains
+        for a solo request it is busy with the jobs it waits on, and the pass
+        after the last one ends admits it. Called under `cond`, from the
+        owner thread."""
+        if self._runnable_jobs() or any(req.grow for req in self.active):
             return False
         if self.chores or self._commit_startable_locked():
             return False
@@ -852,6 +974,7 @@ class Scheduler:
                 dropped = [req for req in self.ingress if req.cancelled.is_set()]
                 for req in dropped:
                     self.ingress.remove(req)
+                    req.released = True
                 if dropped:
                     self.cond.notify_all()
                 asks = list(self.asks)
@@ -895,7 +1018,10 @@ class Scheduler:
                 self._try_answer(waiting, force=True)
         self._admit()
         self._start_commits()
-        if not self.generator.num_remaining_jobs():
+        with self.cond:
+            # What the executor chooses this round's Jobs against.
+            self.executor.foreground_present = self._foreground_present_locked()
+        if not self._runnable_jobs():
             return
         try:
             results = self.generator.iterate()
@@ -916,23 +1042,91 @@ class Scheduler:
                 self.cond.wait(STALL_WAIT_S)
 
     def _reap_cancelled(self):
-        for req in [req for req in self.active if req.cancelled.is_set()]:
+        for req in [req for req in self.active if req.cancelled.is_set() and req.custody is None]:
             # The Generator's own cancel releases the job's pages and its
             # recurrent slot; the request's place and reservation go next.
             # Only then is the cancel told: a native caller's `released`.
-            self._drop_job(req)
+            # A cancel the Generator refuses keeps every charge (`_hold`).
+            if not self._drop_job(req):
+                self._hold(req)
+                continue
             self._release(req)
             self._settle_partial(req, "cancelled")
             # Cancelling a job emits no end event: wake the handler here.
             req.events.put(("cancelled", None))
 
+    def _scheduling_stats(self):
+        """The executor's state, with the calls by class: queued (and paused
+        there), in flight (and paused), and in custody with their pages."""
+        stats = self.executor.stats()
+        with self.cond:
+            queued = list(self.ingress)
+        in_flight = list(self.active)
+
+        def by_class(reqs):
+            out = {"foreground": 0, "background": 0, "paused": 0}
+            for req in reqs:
+                out["foreground" if req.work.foreground() else "background"] += 1
+                out["paused"] += req.work.yielded
+            return out
+
+        live = [req for req in in_flight if req.custody is None]
+        held = [req for req in in_flight if req.custody is not None]
+        stats["queued"] = by_class(queued)
+        stats["in_flight"] = by_class(live)
+        stats["custody"] = {"calls": len(held), "pages": sum(req.pages for req in held)}
+        return stats
+
     def _snapshot(self, full):
-        """A stats snapshot, with what each session holds (its unique bytes)
+        """A stats snapshot, numbered in this incarnation, with the
+        executor's state and what each session holds (its unique bytes)
         when the server serves sessions."""
+        self.reports += 1
         out = exl3_stats.snapshot(self.memory, self.queue_counts(), self.identity.epoch, full)
+        out["report_seq"] = self.reports
+        out["scheduling"] = self._scheduling_stats()
         if self.sessions is not None:
             out["sessions"] = self.sessions.stats()
         return out
+
+    def _phase(self, req):
+        """Where `req` stands now, for an acknowledgement: accepted, queued,
+        starting, prefill, decode, waiting_pages (an answer pass's), custody
+        or ended."""
+        if req is None:
+            return "accepted"
+        if req.custody is not None:
+            return "custody"
+        if req.released:
+            return "ended"
+        if not req.admitted:
+            return "queued" if req.queued else "accepted"
+        if req.grow:
+            return "waiting_pages"
+        job = req.job
+        if job is None or job in self.generator.pending_jobs:
+            return "starting"
+        return "decode" if job.is_prefill_done() else "prefill"
+
+    def apply_schedule(self, work, req, update):
+        """Applies the host's `update` (exl3_executor.ScheduleUpdate) to a
+        call's `work`, here on the owner thread between rounds, and returns
+        its acknowledgement: whether it applied, the call's phase and
+        context now, and the round it takes effect from. `req` is the call's
+        request, None before it is rendered."""
+        phase = self._phase(req)
+        ended = phase in ("ended", "custody")
+        applied = not ended and self.executor.apply(work, update)
+        now = time.monotonic_ns()
+        ack = dict(work.evidence(now), found=True, applied=applied, action=update.action, phase=phase,
+                   withheld=req is not None and req.execution.paused_since is not None and not work.yielded,
+                   next_boundary={"kind": exl3_executor.BOUNDARY, "round": self.executor.round + 1})
+        if not applied:
+            ack["reason"] = "ended" if ended else "stale_revision"
+        stats = self._cheap_stats()
+        if stats is not None:
+            ack["stats"] = stats
+        return ack
 
     def _answer(self, ask):
         """Takes one asked-for snapshot, here on the owner thread."""
@@ -958,16 +1152,32 @@ class Scheduler:
             req.partial_usage = self._usage(req, end)
         except Exception as e:
             print(f"SCHEDULER_RECEIPT_ERROR {type(e).__name__}: {e}", flush=True)
+        req.scheduling = self._scheduling_receipt(req)
         req.final_stats = self._cheap_stats()
 
+    def _scheduling_receipt(self, req):
+        """`req`'s scheduling receipt: its context, what the executor did
+        with its Jobs, and its wait behind a solo request, which nothing
+        preempts."""
+        now = time.monotonic_ns()
+        out = dict(req.work.evidence(now), **req.execution.receipt(now))
+        out["policy"] = self.executor.policy
+        out["solo_wait_us"] = int(req.solo_wait * 1e6)
+        if req.custody is not None:
+            out["custody"] = True
+        return out
+
     def _admit(self):
-        """Admits requests from the head of the ingress queue, in order, while
-        places and pages allow. A waiting answer pass goes first: no request
-        is admitted while one waits to grow. A solo request goes in alone."""
+        """Admits requests from the head of the ingress queue (under the
+        class policy, the best ranked first), while places and pages allow.
+        A waiting answer pass goes first: no request is admitted while one
+        waits to grow. A solo request goes in alone. Each admitted request
+        is told so, with the owner thread's cheap stats."""
         admitted = []
         with self.cond:
             while self._admissible_locked(admitted):
-                head = self.ingress.popleft()
+                head = self._head_locked()
+                self.ingress.remove(head)
                 self.reserved += head.need
                 head.pages = head.need
                 admitted.append(head)
@@ -981,11 +1191,20 @@ class Scheduler:
             req.admitted = True
             self.active.append(req)
             if req.solo:
+                self.solo_since = now
                 # The id and the wait only: never the prompt.
                 print(f"SOLO_ADMIT {req.request_id} waited_ms={req.admission_wait * 1000.0:.0f}", flush=True)
         in_flight = len(self.active)
         for req in self.active:
             req.peak = max(req.peak, in_flight)
+        if admitted:
+            stats = self._cheap_stats()
+            for req in admitted:
+                mark = {"queue_wait_us": int(req.admission_wait * 1e6), "round": self.executor.round,
+                        "solo_wait_us": int(req.solo_wait * 1e6)}
+                if stats is not None:
+                    mark["stats"] = stats
+                req.events.put(("admitted", mark))
         for req in admitted:
             try:
                 if req.first == "reason":
@@ -1008,6 +1227,9 @@ class Scheduler:
                 filters=filters,
                 identifier=(req.request_id, phase),
                 on_first_token=req.mark_first_token,
+                # Both passes carry the call's context and one record.
+                work=req.work,
+                execution=req.execution,
             )
             if req.branch is not None and self.sessions is not None:
                 # A working branch's Job, attached where its session's state
@@ -1016,7 +1238,7 @@ class Scheduler:
                 plan = self.sessions.plan(req.branch, ids, carry=phase == "reason")
                 job = FrontierJob(plan=plan, **fields)
             else:
-                job = TimedJob(**fields)
+                job = PlainJob(**fields)
             serial = self.generator.enqueue(job)
         except Exception as e:
             self._fail(req, e)
@@ -1069,6 +1291,16 @@ class Scheduler:
                 # A session commit's, or a job already gone.
                 if self.sessions is not None:
                     self.sessions.on_result(result)
+                continue
+            if req.custody is not None:
+                # A Job the Generator could not cancel: its output goes
+                # nowhere, and its end gives back what it held.
+                if result.get("stage") == "error" or result.get("eos"):
+                    self.by_serial.pop(serial, None)
+                    req.job = None
+                    req.custody = None
+                    self._release(req)
+                    print(f"SCHEDULER_CUSTODY_RELEASED {req.request_id}", flush=True)
                 continue
             if result.get("job") is not None:
                 req.job = result["job"]
@@ -1180,28 +1412,61 @@ class Scheduler:
         # A measure no final gave is left out, never zero (FIX 8896).
         stats = {key: value for key, value in stats.items() if value is not None}
         self._release(req)
+        req.scheduling = self._scheduling_receipt(req)
         req.final_stats = self._cheap_stats()
         req.events.put(("done", {"usage": usage, "timings": stats, "finish_reason": finish}))
 
     def _fail(self, req, error):
-        self._drop_job(req)
+        if req.custody is not None:
+            # Its call has ended already; its charges go once its Job does.
+            if self._drop_job(req):
+                self._release(req)
+            return
+        if not self._drop_job(req):
+            self._hold(req, error)
+            return
         self._release(req)
         self._settle_partial(req, "error")
         req.events.put(("error", error))
 
     def _drop_job(self, req):
+        """Cancels `req`'s Job, which frees its pages and recurrent slot:
+        True once the Generator no longer holds it. False when the cancel
+        raised and the Generator still holds the Job: the request is then in
+        custody, its Job stranded (run out at the lowest rank), and its
+        pages, place and reservation stay charged until the Job ends."""
         job = req.job
         if job is None:
-            return
-        req.job = None
-        self.by_serial.pop(job.serial_number, None)
+            return True
         try:
             self.generator.cancel(job)
         except Exception as e:
             print(f"SCHEDULER_CANCEL_ERROR {type(e).__name__}: {e}", flush=True)
+            generator = self.generator
+            if job in generator.active_jobs or job in generator.pending_jobs:
+                req.custody = e
+                job.stranded = True
+                return False
+        req.job = None
+        self.by_serial.pop(job.serial_number, None)
+        req.custody = None
+        return True
+
+    def _hold(self, req, error=None):
+        """Ends `req`'s call in custody: its receipt and stats are kept, and
+        it ends with ReleaseFailed, never a release; what it holds stays
+        charged until the Generator ends its Job (`_route`)."""
+        print(f"SCHEDULER_CUSTODY {req.request_id} pages={req.pages}", flush=True)
+        self._settle_partial(req, "error")
+        cause = f"{type(req.custody).__name__}: {req.custody}"
+        if error is not None:
+            cause = f"{type(error).__name__}: {error}; then {cause}"
+        req.events.put(("error", exl3_executor.ReleaseFailed(
+            f"the Generator could not cancel the call's Job ({cause}); its pages stay charged until it ends")))
 
     def _release(self, req):
-        """Gives back `req`'s place and pages, once."""
+        """Gives back `req`'s place and pages, once. A solo request's end
+        closes the wait of every request queued behind it."""
         if req.released:
             return
         req.released = True
@@ -1210,6 +1475,12 @@ class Scheduler:
         req.grow = 0
         if req in self.active:
             self.active.remove(req)
+        if req.solo and self.solo_since is not None:
+            now = time.monotonic()
+            with self.cond:
+                for queued in self.ingress:
+                    queued.solo_wait += now - max(self.solo_since, queued.submitted)
+            self.solo_since = None
         # Its jobs have ended: a session branch ends with it.
         self._end_branch(req)
 
@@ -1241,7 +1512,7 @@ class Scheduler:
 
 
 class Server:
-    def __init__(self, args, tokenizer, template, generator, stop_ids, identity, memory=None):
+    def __init__(self, args, tokenizer, template, generator, stop_ids, identity, memory=None, executor=None):
         self.model_id = args.model_id
         self.context = args.context
         self.default_max_tokens = args.default_max_tokens
@@ -1249,7 +1520,7 @@ class Server:
         self.template = template
         self.identity = identity
         self.scheduler = Scheduler(generator, tokenizer, self.encode, stop_ids, args.max_in_flight, identity,
-                                   memory)
+                                   memory, executor)
         # Stops the HTTP server, when it runs: the native shutdown's way out.
         self.stop_serving = None
         # What a cancelled wait raises, for the native calls (exl3_ipc.py),
@@ -1282,9 +1553,11 @@ class Server:
             **(template_kwargs or {}),
         )
 
-    def prepare(self, body, request_id, accepted_ns=None):
+    def prepare(self, body, request_id, accepted_ns=None, work=None):
         """Renders, tokenizes and checks one request, in its handler's thread.
-        `accepted_ns` is when the worker accepted it (monotonic ns)."""
+        `accepted_ns` is when the worker accepted it (monotonic ns); `work`
+        is a native call's scheduling (exl3_executor), and an HTTP call's is
+        the defaults, its grant counted missing."""
         messages = body.get("messages")
         if not isinstance(messages, list) or not messages:
             raise RequestError("messages must be a non-empty list")
@@ -1321,6 +1594,10 @@ class Server:
         samplers = {"reason": make_sampler(body), "answer": make_sampler(body)}
         req = Request(request_id, prompt, ids, max_tokens, budget, schema, stops, seed, samplers, solo,
                       accepted_ns=accepted_ns, tools=tools)
+        if work is None:
+            work = exl3_executor.http_context(body, time.monotonic_ns())
+            self.scheduler.executor.open_grant(work)
+        req.work = work
         req.execution_mode = self.identity.execution_mode(template_kwargs, solo)
         if not req.thinking:
             req.answer_prompt = prompt
@@ -1529,6 +1806,10 @@ def main():
     p.add_argument("--no-sessions", action="store_true",
                    help="serve no exact conversation sessions on the native socket (exl3_session/); by default "
                         "a target with recurrent state serves them")
+    p.add_argument("--scheduling-policy", choices=exl3_executor.POLICIES, default=exl3_executor.DEFAULT_POLICY,
+                   help="which Jobs each engine round runs (exl3_executor.py): class_deadline_v1 orders them by "
+                        "work class, priority, deadline and arrival; fifo runs every admitted Job each round, in "
+                        f"arrival order (default {exl3_executor.DEFAULT_POLICY})")
     args = p.parse_args()
     serve(args, load(args))
 
