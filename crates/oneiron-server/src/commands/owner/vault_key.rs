@@ -64,7 +64,7 @@ mod fresh_restore;
 mod host_unlock;
 mod unlocked_open;
 
-pub(super) use self::fresh_restore::restore_fresh;
+pub(super) use self::fresh_restore::{RestoreWrap, restore_fresh};
 pub(crate) use self::host_unlock::HostUnlock;
 pub(super) use self::unlocked_open::{
     KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets,
@@ -347,7 +347,8 @@ fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
     refuse_two_stdin_secrets(
         &unlock,
         args.secret.secret_file.is_none(),
-        "the new password (--secret-file)",
+        "the new password",
+        "--secret-file",
     )?;
     let password = read_secret(&args.secret, "the new password")?;
     let vault = open(&args.serve, &unlock, KeyNeed::Held)?;
@@ -366,7 +367,8 @@ fn add_passkey(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
     refuse_two_stdin_secrets(
         &unlock,
         args.secret.secret_file.is_none(),
-        "the new passkey's PRF output (--secret-file)",
+        "the new passkey's PRF output",
+        "--secret-file",
     )?;
     let prf = secret32(
         &read_secret(&args.secret, "the new passkey's PRF output")?,
@@ -485,7 +487,7 @@ fn strip_line_break(value: &mut Vec<u8>) {
 }
 
 /// Where an escrow recipient's seed rests: the seam a recovery box plugs into.
-trait RecoveryBox {
+pub(in crate::commands::owner) trait RecoveryBox {
     /// Keeps `seed` for the vault's escrow wrap `label`.
     fn store(&self, vault_id: &[u8; 32], label: &str, seed: &[u8; 32]) -> anyhow::Result<()>;
     /// Releases the seed kept for the vault's escrow wrap `label`.

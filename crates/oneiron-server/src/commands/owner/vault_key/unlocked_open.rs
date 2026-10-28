@@ -11,7 +11,9 @@ use oneiron::world_keys::{self, VaultKeyStatus};
 
 use super::super::{base_vault_config, open_stopped_vault, open_stopped_vault_with};
 use super::{HostUnlock, prepare_page_seal, refuse_orphaned_page_seal};
-use crate::cli::{SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultUnlockArgs};
+use crate::cli::{
+    RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultUnlockArgs,
+};
 use crate::config::ServeConfig;
 
 /// What a command needs of the vault key once the vault opens.
@@ -54,6 +56,20 @@ impl<'a> UnlockRequest<'a> {
             vault_id: args.unlock_vault_id.as_deref(),
             secret: args.secret_source(),
             prefix: "unlock-",
+        }
+    }
+
+    /// The unlock `oneiron restore` names with its own flags.
+    pub(in crate::commands::owner) fn restore(args: &'a RestoreArgs) -> Self {
+        Self {
+            method: args.unlock,
+            credential: args.credential.as_deref(),
+            label: args.label.as_deref(),
+            capsule: args.capsule.as_deref(),
+            pieces: &args.pieces,
+            vault_id: args.vault_id.as_deref(),
+            secret: args.secret.clone(),
+            prefix: "",
         }
     }
 
@@ -120,16 +136,17 @@ impl<'a> UnlockRequest<'a> {
 
 /// Refuses a command whose unlock and whose own secret would both be read
 /// from stdin: one stream holds one secret. `what` names the command's own
-/// secret and the flag that reads it from a file instead.
+/// secret, and `file_flag` the flag that reads it from a file instead.
 pub(in crate::commands::owner) fn refuse_two_stdin_secrets(
     unlock: &UnlockRequest<'_>,
     own_reads_stdin: bool,
     what: &str,
+    file_flag: &str,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         !(own_reads_stdin && unlock.reads_stdin()),
-        "both the unlock's secret and {what} would be read from stdin, which holds one: name a \
-         file for one of them (--{}secret-file, or {what}'s)",
+        "both the unlock's secret and {what} would be read from stdin, which holds one: read \
+         one of them from a file ({file_flag} or --{}secret-file)",
         unlock.prefix
     );
     Ok(())

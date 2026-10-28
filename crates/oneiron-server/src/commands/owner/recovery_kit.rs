@@ -208,7 +208,8 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     refuse_two_stdin_secrets(
         &unlock,
         args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
-        "the kit passphrase (--secret-file)",
+        "the kit passphrase",
+        "--secret-file",
     )?;
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let carry = args
