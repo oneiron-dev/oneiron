@@ -9,6 +9,7 @@ use crate::side_table::{self as t, SideTableDecl};
 pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SAVED_QUERY_WATERMARK, CONTENT),
     (&t::SAVED_QUERY_MEMBERSHIP_EVENT, CONTENT),
+    (&t::SAVED_QUERY_HEALTH, CONTENT),
     (&t::SAVED_QUERY_MEMO, CONTENT),
     (&t::SAVED_QUERY_PACK_MIGRATION_MAP, CONTENT),
     (&t::SAVED_QUERY_REPAIR, CONTENT),
