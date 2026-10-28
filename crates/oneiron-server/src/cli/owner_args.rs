@@ -12,6 +12,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
 
+use super::{RestoreWrapArgs, VaultUnlockArgs};
 use crate::config::ServeArgs;
 
 #[derive(Args, Clone, Debug)]
@@ -210,6 +211,9 @@ pub struct RestoreArgs {
     pub pad_machine: Option<String>,
 
     #[command(flatten)]
+    pub wrap: RestoreWrapArgs,
+
+    #[command(flatten)]
     pub secret: SecretSourceArgs,
 
     #[command(flatten)]
@@ -309,6 +313,9 @@ pub struct VaultKeyResealArgs {
 #[derive(Args, Clone, Debug)]
 pub struct VaultKeyArgs {
     #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
+
+    #[command(flatten)]
     pub secret: SecretSourceArgs,
 
     #[command(flatten)]
@@ -329,8 +336,13 @@ pub struct VaultKeyAddDeviceArgs {
     pub credential: Option<String>,
 
     /// With `--unlock escrow`: the escrow wrap's label.
-    #[arg(long, value_name = "NAME")]
+    #[arg(long, value_name = "NAME", conflicts_with = "capsule")]
     pub label: Option<String>,
+
+    /// With `--unlock escrow`: a registry's escrow capsule report (JSON) for
+    /// this vault and key, opened in place of a wrap (FIX 2559).
+    #[arg(long, value_name = "REPORT")]
+    pub capsule: Option<PathBuf>,
 
     /// With `--unlock kit`: a world kit or data-key kit piece file, a
     /// recovery code as text or a piece export. Give two, or one and the kit
@@ -357,6 +369,9 @@ pub struct VaultKeyNamedArgs {
     /// The passkey's credential name, the escrow wrap's label (1 to 64
     /// letters, digits, dots, dashes or underscores), or the wrap's id.
     pub name: String,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub secret: SecretSourceArgs,

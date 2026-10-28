@@ -9,9 +9,10 @@ use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock};
 use zeroize::Zeroizing;
 
 use super::{
-    capsule_secret, check_name, hex, read_capsule_report, read_secret, recovery_box, secret32,
+    UnlockRequest, capsule_secret, check_name, hex, read_capsule_report, read_secret,
+    recovery_box, secret32,
 };
-use crate::cli::{RestoreArgs, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs};
+use crate::cli::{RestoreArgs, SecretSourceArgs, UnlockMethod};
 
 /// What unlocks a backup's vault key, or a sealed vault's pages, on this
 /// host, its secret read once and wiped on drop.
@@ -127,26 +128,46 @@ impl HostUnlock {
         ))
     }
 
-    /// The unlock `args` name for `vault-key add-device`, its secret read now.
-    /// A recovery box files an escrow seed under the vault `vault_id` reads.
-    pub(super) fn read_for_device(
-        args: &VaultKeyAddDeviceArgs,
+    /// The unlock `request` names for an existing vault, its secret read
+    /// now. A recovery box files an escrow seed under the vault `vault_id`
+    /// reads; a registry capsule's report must name that vault, and the
+    /// engine opens it only to the key the vault's commitment names. The kit
+    /// is bound to the vault id the owner names, never the one a mirror or
+    /// the store carries.
+    pub(super) fn read_for_vault(
+        request: &UnlockRequest<'_>,
         vault_id: impl FnOnce() -> anyhow::Result<[u8; 32]>,
     ) -> anyhow::Result<Self> {
-        // The kit is bound to the vault id the owner names, never the one a
-        // mirror or the store carries.
-        if args.unlock == UnlockMethod::Kit {
+        if let Some(path) = request.capsule {
+            let report = read_capsule_report(path)?;
+            let vault_id = vault_id()?;
+            anyhow::ensure!(
+                report.vault_id == vault_id,
+                "capsule report {} is for vault {}, and this vault is {}",
+                path.display(),
+                hex(&report.vault_id),
+                hex(&vault_id)
+            );
+            let secret = capsule_secret(&report, &request.secret)?;
+            return Ok(Self::EscrowCapsule {
+                role: report.role,
+                label: report.label,
+                capsule: report.capsule,
+                secret,
+            });
+        }
+        if request.method == UnlockMethod::Kit {
             return super::super::recovery_kit::kit_unlock_with(
-                args.vault_id.as_deref(),
-                &args.pieces,
-                args.secret.secret_file.as_deref(),
+                request.vault_id,
+                request.pieces,
+                request.secret.secret_file.as_deref(),
             );
         }
         Self::read_with(
-            args.unlock,
-            args.credential.as_deref(),
-            args.label.as_deref(),
-            &args.secret,
+            request.method,
+            request.credential,
+            request.label,
+            &request.secret,
             vault_id,
         )
     }

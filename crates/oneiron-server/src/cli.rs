@@ -21,6 +21,7 @@ pub use graph_fs_args::GraphFsCommand;
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
+mod vault_unlock_args;
 mod vm_args;
 pub use vm_args::HostVmArgs;
 mod seat_args;
@@ -61,6 +62,7 @@ pub use recovery_kit_args::{
     RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
 };
 pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use vault_unlock_args::{RestoreWrapArgs, RestoreWrapKind, VaultUnlockArgs};
 pub use wake_args::{WakeArgs, WakeCommand};
 pub use widen_proposal_args::{
     WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
