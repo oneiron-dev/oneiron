@@ -1,16 +1,14 @@
-//! Publisher comm transport: counterparty, send states, and the send door.
+//! Publisher comm transport: send states and the send door. The channel's
+//! counterparty is each signature artifact's publisher ACTOR, which the
+//! delivery path resolves (`delivery_outcome.rs`, FIX 7829).
 
 use super::dial::publisher_enabled;
 use super::signature_store::SIGNATURE;
 use super::{PublisherError, PublisherResult};
 use crate::Vault;
-use crate::comm::resolve_or_create_comm_party;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-
-/// The comm party key the publisher counterparty resolves under.
-pub const PUBLISHER_PARTY_KEY: &str = "publisher";
 
 /// The comm channel class publisher sends ride.
 pub const PUBLISHER_CHANNEL_CLASS: &str = "publisher";
@@ -21,16 +19,6 @@ pub(super) const SEND_STATE: SideTable<EntityId, SendStateRow, Raw> =
 
 /// Separates a send-state token from its logical send on disk.
 const SEND_REF_SEPARATOR: u8 = 0;
-
-/// Resolves — creating on first use — the PERSON entity the publisher channel
-/// hangs off.
-///
-/// # Errors
-///
-/// Whatever `comm.rs`'s party door raises.
-pub fn publisher_party(vault: &Vault) -> PublisherResult<EntityId> {
-    Ok(resolve_or_create_comm_party(vault, PUBLISHER_PARTY_KEY)?)
-}
 
 /// Where a stored signature stands with respect to the outbound hop. Only the
 /// ordinary outbound path's answer moves a signature past `Pending` while the
@@ -165,7 +153,9 @@ fn require_signature(vault: &Vault, id: EntityId) -> PublisherResult<()> {
 ///
 /// Dial ON: each signature is handed to the ordinary delivery path
 /// (`feedback/report/delivery.rs`), which dispatches it under one logical send
-/// and writes that send's outcome back (`delivery_outcome.rs`). Nothing is
+/// to its artifact's publisher ACTOR and writes that send's outcome back
+/// (`delivery_outcome.rs`); an artifact with no publisher actor has no
+/// outward channel, and its signature stays here unsent. Nothing is
 /// confirmed here: a handed-off signature stays [`SignatureSendState::Pending`]
 /// (a withheld one returns to it) and is counted as handed off, never as sent
 /// (FIX 9811). Dial OFF: nothing is sent; each pending signature is durably
