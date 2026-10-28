@@ -250,6 +250,30 @@ pub fn record_comm_send_receipt(
     )
 }
 
+/// [`record_comm_send_receipt`] in the caller's write, so the receipt lands
+/// with the state that confirmed the send, or not at all.
+pub(crate) fn record_comm_send_receipt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    party: &str,
+    channel_class: &str,
+    occurred_at: u64,
+) -> CommResult<()> {
+    validate_channel_class(channel_class).map_err(|_| CommError::InvalidRecord)?;
+    let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
+    let sequence = next_event_sequence_in_txn(vault, wtxn)?;
+    let record = CommRecord::Event {
+        sequence,
+        kind: CommEventKind::SendSucceeded,
+        party_ref,
+        channel_class: Some(normalize_channel_class(channel_class)),
+        thread_ref: None,
+        occurred_at,
+        projected: false,
+    };
+    put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &record)
+}
+
 /// Records an inbound reply receipt. Content remains in TURN/SESSION;
 /// only the standing last-touch state is projected from this event.
 pub fn record_comm_inbound_reply(

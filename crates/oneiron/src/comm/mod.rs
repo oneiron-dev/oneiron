@@ -58,6 +58,7 @@ pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
     resolve_party_ref_from_store_in_txn, resolve_party_ref_in_txn,
 };
+pub(crate) use self::projector::record_comm_send_receipt_in_txn;
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,
     record_comm_thread_event, run_comm_projector,
