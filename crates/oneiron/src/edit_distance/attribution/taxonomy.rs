@@ -1,9 +1,11 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
+use super::origin::UNKNOWN_EXECUTOR;
 use crate::claim::{PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST};
 use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::learning::TypeRef;
 use crate::skill_attribution::{
     AttemptOutcome, AttributionDecisions, AttributionLane, AttributionSplit, AttributionVerdict,
     AuditAnswerSource, EditHunk, HunkVerdict, JudgeRequest, JudgeTrace, OutcomeEvidence, RawAnswer,
@@ -89,6 +91,13 @@ pub struct AmendmentEvidence {
     /// no receipt the engine stamps carries it, so the host that ran the
     /// attempt supplies it.
     pub attempt_receipt: Option<String>,
+    /// The executor identity at revision (`id@revision`) that drafted the
+    /// amended proposal; `None` when unknown. The evidence door takes the
+    /// named attempt's own stamp over this one (FIX 9812).
+    pub executor: Option<String>,
+    /// The task type the drafting run was placed in; `None` when no task
+    /// placed it. The evidence door takes the named attempt's stamp.
+    pub type_ref: Option<TypeRef>,
     /// The `(subject, scope)` axis the resulting cost row is keyed on.
     pub scope: String,
     /// Why the decider amended (see [`AmendmentCause`]).
@@ -111,6 +120,8 @@ impl AmendmentEvidence {
             actor,
             skill: None,
             attempt_receipt: None,
+            executor: None,
+            type_ref: None,
             scope: scope.into(),
             cause: None,
             followed_skill: None,
@@ -138,6 +149,14 @@ impl AmendmentEvidence {
     #[must_use]
     pub fn with_attempt(mut self, attempt_receipt: impl Into<String>) -> Self {
         self.attempt_receipt = Some(attempt_receipt.into());
+        self
+    }
+
+    /// Stamps the executor identity at revision that drafted the proposal,
+    /// for a producer that knows it. A named attempt's own stamp wins.
+    #[must_use]
+    pub fn with_executor(mut self, executor: impl Into<String>) -> Self {
+        self.executor = Some(executor.into());
         self
     }
 
@@ -214,6 +233,17 @@ pub struct AmendmentJudgment {
     /// Each changed hunk the host cut, in text order, as judged (FIX 9808).
     /// Empty when the amendment was judged as one region.
     pub hunks: Vec<HunkLabel>,
+    /// The executor identity at revision that drafted the proposal, frozen
+    /// from the evidence when judged; `None` when unknown (FIX 9812).
+    pub executor: Option<String>,
+    /// The task type the drafting run was placed in, when one placed it.
+    pub type_ref: Option<TypeRef>,
+    /// The terminal pack receipt of the attempt the proposal came from, when
+    /// the evidence named one.
+    pub attempt_receipt: Option<String>,
+    /// The judge revision whose answers this judgment stands on; `None` for
+    /// the rule tier and for settled or owner-scripted labels.
+    pub judge: Option<String>,
 }
 
 /// One changed hunk as judged: the label it stands at after the floor, and
@@ -245,6 +275,21 @@ impl AmendmentJudgment {
             [only] => Some(only.class),
             _ => None,
         }
+    }
+
+    /// The executor key this judgment folds and charges under: its stamp, or
+    /// the unknown-executor key. Never the model serving now (FIX 9812).
+    #[must_use]
+    pub fn executor_key(&self) -> &str {
+        self.executor.as_deref().unwrap_or(UNKNOWN_EXECUTOR)
+    }
+
+    /// Whether the proposal was drafted on the judge's own model (ARCH-0056
+    /// §8): such runs are flagged, because judges favour their own model's
+    /// work.
+    #[must_use]
+    pub fn on_judge_model(&self) -> bool {
+        self.executor.is_some() && self.executor == self.judge
     }
 
     /// Whether every share is `unclear`: nothing in this amendment may be
