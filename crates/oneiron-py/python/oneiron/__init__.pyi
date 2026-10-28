@@ -2679,10 +2679,13 @@ class Oneiron:
         def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
     class _VaultTasksVerbs:
-        def cancel_force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+        @property
+        def cancel(self) -> "Oneiron._VaultTasksCancelVerbs": ...
         @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksCancelVerbs:
+        def force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
     class _VaultTasksLinearVerbs:
         @property
         def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...

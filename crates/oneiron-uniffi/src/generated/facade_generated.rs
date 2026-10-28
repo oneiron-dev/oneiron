@@ -3636,10 +3636,10 @@ export_facade! {
     let output = client.vault_agents_spawn(&input)?;
     crate::codec::lift_record("vault.agents.spawn", &output)
 };
-"vault.tasks.cancel_force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
-    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel_force", input)?;
+"vault.tasks.cancel.force" => fn vault_tasks_cancel_force(&self, input: CancelForceRequest) -> CancelForceReceipt = |client| {
+    let input: oneiron::task_verb::run_doors::CancelForceRequest = crate::codec::lower_record("vault.tasks.cancel.force", input)?;
     let output = client.vault_tasks_cancel_force(&input)?;
-    crate::codec::lift_record("vault.tasks.cancel_force", &output)
+    crate::codec::lift_record("vault.tasks.cancel.force", &output)
 };
 "vault.runs.branches.get" => fn vault_runs_branches_get(&self, input: RunBranchesRequest) -> RunBranchesView = |client| {
     let input: oneiron::task_verb::run_doors::RunBranchesRequest = crate::codec::lower_record("vault.runs.branches.get", input)?;

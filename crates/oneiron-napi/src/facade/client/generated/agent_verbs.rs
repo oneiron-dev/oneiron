@@ -6342,7 +6342,7 @@ impl NativeClient {
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
-            .agent_verb("vault.tasks.cancel_force", js_json(input))
+            .agent_verb("vault.tasks.cancel.force", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

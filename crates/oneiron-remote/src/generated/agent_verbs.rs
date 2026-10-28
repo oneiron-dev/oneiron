@@ -2262,7 +2262,7 @@ impl OneironClient {
                 "vault.agents.spawn" => remote_agent_verb_output::<
                     oneiron::team::doors::SpawnIntentReply,
                 >(client, verb, &input),
-                "vault.tasks.cancel_force" => remote_agent_verb_output::<
+                "vault.tasks.cancel.force" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::CancelForceReceipt,
                 >(client, verb, &input),
                 "vault.runs.branches.get" => remote_agent_verb_output::<
@@ -12563,7 +12563,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        self.typed_agent_verb("vault.tasks.cancel_force", value)
+        self.typed_agent_verb("vault.tasks.cancel.force", value)
     }
     pub fn vault_runs_branches_get(
         &self,

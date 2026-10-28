@@ -4199,12 +4199,18 @@ class Oneiron:
     class _VaultTasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
-        def cancel_force(self, spec):
-            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        @property
+        def cancel(self) -> "Oneiron._VaultTasksCancelVerbs":
+            return Oneiron._VaultTasksCancelVerbs(self._client)
         @property
         def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
             return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksCancelVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def force(self, spec):
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
     class _VaultTasksLinearVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

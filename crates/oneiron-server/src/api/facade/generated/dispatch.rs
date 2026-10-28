@@ -23535,10 +23535,10 @@ async fn vault_tasks_cancel_force(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
-    facade_outside_room_turn(call, "vault.tasks.cancel_force")?;
+    facade_outside_room_turn(call, "vault.tasks.cancel.force")?;
     let value = input?;
-    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel_force", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel_force", value).await?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel.force", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel.force", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_tasks_cancel_force(
             server,
@@ -37938,7 +37938,7 @@ pub(crate) async fn call_verb(
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
         "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
-        "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
+        "vault.tasks.cancel.force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
         "vault.runs.pause" => vault_runs_pause(server, call, input).await,
         "vault.runs.resume" => vault_runs_resume(server, call, input).await,

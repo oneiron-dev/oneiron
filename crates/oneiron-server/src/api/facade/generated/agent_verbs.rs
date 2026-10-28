@@ -810,7 +810,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.task_types.get", post(facade_route))
         .route("/vault.agents.spawn.get", post(facade_route))
         .route("/vault.agents.spawn", post(facade_route))
-        .route("/vault.tasks.cancel_force", post(facade_route))
+        .route("/vault.tasks.cancel.force", post(facade_route))
         .route("/vault.runs.branches.get", post(facade_route))
         .route("/vault.runs.pause", post(facade_route))
         .route("/vault.runs.resume", post(facade_route))

@@ -865,7 +865,7 @@ fn mcp_agent_verb_input(
         "vault.task_types.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.spawn.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.spawn" => a.spec.clone().ok_or_else(invalid),
-        "vault.tasks.cancel_force" => a.spec.clone().ok_or_else(invalid),
+        "vault.tasks.cancel.force" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.branches.get" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.pause" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.resume" => a.spec.clone().ok_or_else(invalid),
@@ -3646,7 +3646,7 @@ pub(crate) fn mcp_agent_verb_arguments(
         "vault.agents.spawn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
-        "vault.tasks.cancel_force" => {
+        "vault.tasks.cancel.force" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.runs.branches.get" => {
@@ -16177,9 +16177,9 @@ async fn execute_agent_verb_row(
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
-        "vault.tasks.cancel_force" => {
+        "vault.tasks.cancel.force" => {
             let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-            oneiron::task_verb::sdk::validate_input("vault.tasks.cancel_force", &input)
+            oneiron::task_verb::sdk::validate_input("vault.tasks.cancel.force", &input)
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::run_doors::CancelForceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
