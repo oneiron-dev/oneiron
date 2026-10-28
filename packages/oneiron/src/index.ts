@@ -1666,6 +1666,10 @@ export class Oneiron {
         /** Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb. */
         remove_undecodable: (input: Facade.UsageRepairRemoveRequest): Facade.UsageRepairReceipt => this.#call(() => this.#client.vaultUsageEventsRemoveUndecodable(input) as Facade.UsageRepairReceipt),
       },
+      repair: {
+        /** Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted. */
+        receipts: (input: Facade.UsageRepairReceiptsRequest): Facade.UsageRepairReceiptList => this.#call(() => this.#client.vaultUsageRepairReceipts(input) as Facade.UsageRepairReceiptList),
+      },
     },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */

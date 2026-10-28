@@ -2962,6 +2962,9 @@ class Oneiron:
         @property
         def events(self) -> "Oneiron._VaultUsageEventsVerbs":
             return Oneiron._VaultUsageEventsVerbs(self._client)
+        @property
+        def repair(self) -> "Oneiron._VaultUsageRepairVerbs":
+            return Oneiron._VaultUsageRepairVerbs(self._client)
     class _VaultUsageEventsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2971,6 +2974,12 @@ class Oneiron:
         def remove_undecodable(self, spec):
             """Removes one listed undecodable usage event while it still holds the reviewed bytes and does not decode, and answers the receipt kept in that write, for the owner or an agent whose own Grant names this verb."""
             return json.loads(_translate(lambda: self._client.vault_usage_events_remove_undecodable(json.dumps(spec))))
+    class _VaultUsageRepairVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def receipts(self, spec):
+            """Lists every receipt a usage repair removal kept for this server's metering scope, in key order, for the owner or an agent whose own Grant names this verb; a kept row that no longer decodes is counted."""
+            return json.loads(_translate(lambda: self._client.vault_usage_repair_receipts(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

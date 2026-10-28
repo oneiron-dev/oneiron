@@ -498,6 +498,7 @@ vaultArchiveDeletePreview(input: unknown): unknown
 vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
+vaultUsageRepairReceipts(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
 vaultLegalHoldsWiden(input: unknown): unknown

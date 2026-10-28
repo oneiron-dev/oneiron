@@ -2321,6 +2321,11 @@ export_facade! {
     let output = client.vault_usage_events_remove_undecodable(&input)?;
     crate::codec::lift_record("vault.usage.events.remove_undecodable", &output)
 };
+"vault.usage.repair.receipts" => fn vault_usage_repair_receipts(&self) -> UsageRepairReceiptList = |client| {
+    let input: oneiron::memory::usage_repair::UsageRepairReceiptsRequest = crate::codec::lower_empty("vault.usage.repair.receipts")?;
+    let output = client.vault_usage_repair_receipts(&input)?;
+    crate::codec::lift_record("vault.usage.repair.receipts", &output)
+};
 "vault.entities.mention" => fn vault_entities_mention(&self, input: EntityMentionRequest) -> EntityResolutionWaterfallDecision = |client| {
     let input: oneiron::ingest::EntityMentionRequest = crate::codec::lower_record("vault.entities.mention", input)?;
     let output = client.vault_entities_mention(&input)?;
