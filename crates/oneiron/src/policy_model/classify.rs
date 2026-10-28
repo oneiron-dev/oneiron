@@ -205,10 +205,12 @@ impl Vault {
     /// removed once. So it sits in the public doors that would otherwise leave
     /// nothing behind.
     ///
-    /// The silence rule is the enforcement path's, unchanged: an `Allow` that
-    /// learned nothing carries no signal and writes nothing. Anything else —
+    /// The silence rule is the enforcement path's: only an `Allow` from an
+    /// owner plane that is off examined nothing and writes nothing. A clean
+    /// `Allow` the plane gave is one hash-only row (FIX 7805): its content
+    /// and frontier hashes and its reason codes, no notice. Anything else —
     /// a warn, a block, a route, or an allow with an audit a pattern or the
-    /// model contributed to — is a row.
+    /// model contributed to — is a row as it always was.
     ///
     /// A pass whose model did not answer is a SOVEREIGN PLANE FALLING OPEN,
     /// which is the fact the owner is most owed. Its verdict is
@@ -227,11 +229,13 @@ impl Vault {
         // F107's window, on the doors F94 and F99 built: the verdict was bound
         // to a policy frontier, and the door hands it out after a LATER
         // transaction. The silence rule only drops an Allow that still
-        // answers the policy in force; anything else is settled in the row's
-        // own transaction (see `owner_verdict_in_force_in_txn`).
+        // answers the policy in force from a plane that is off; anything else
+        // is settled in the row's own transaction (see
+        // `owner_verdict_in_force_in_txn`).
         if verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
             && !self.policy_model_verdict_is_stale_with_config(verdict, request, config)?
+            && !self.owner_plane_examines()?
         {
             return Ok(verdict.clone());
         }

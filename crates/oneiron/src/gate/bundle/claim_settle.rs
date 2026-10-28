@@ -149,6 +149,8 @@ impl Vault {
                 self.complete_deferred_claim_in_txn(wtxn, &id, false, now)?;
                 // An approved task proposal lands its TASK in this txn.
                 crate::task_verb::settle_task_proposal_in_txn(self, wtxn, id, Some(actor), now)?;
+                // An approved curator finding applies with it (FIX 5423).
+                self.apply_approved_curator_in_savepoint(wtxn, id, now)?;
                 let resolved = self
                     .get_claim_in_txn(&*wtxn, &id)?
                     .ok_or(Error::EntityNotFound)?;
@@ -272,6 +274,40 @@ impl Vault {
             recorded,
             dreamer_run: pending.is_some_and(|row| row.dreamer_run_id.is_some()),
         })
+    }
+
+    /// Applies `id`, when it is a curator finding the owner approved in
+    /// `wtxn`, at once rather than at the next nightly pass (FIX 5423):
+    /// after the approval's writes, as the Dreamer, in a savepoint of its
+    /// own. A finding that cannot apply leaves only its savepoint, logged,
+    /// and the nightly pass retries it: the approval commits either way. A
+    /// claim that is no curator finding opens nothing.
+    pub(crate) fn apply_approved_curator_in_savepoint(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let finding = self.get_claim_in_txn(&*wtxn, &id)?.is_some_and(|body| {
+            body.predicate == crate::dreamer_runner::maintenance::CURATOR_PROPOSAL_PREDICATE
+                && body.approval == ClaimApprovalStatus::Approved
+        });
+        if !finding {
+            return Ok(());
+        }
+        let applied = (|| -> Result<()> {
+            let mut savepoint = self.store.env.nested_write_txn(wtxn)?;
+            self.apply_approved_curator_in_txn(&mut savepoint, id, None, now)?;
+            savepoint.commit()?;
+            Ok(())
+        })();
+        if let Err(error) = applied {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "curator: an approved finding did not apply with its approval; the nightly pass applies it"
+            );
+        }
+        Ok(())
     }
 }
 
