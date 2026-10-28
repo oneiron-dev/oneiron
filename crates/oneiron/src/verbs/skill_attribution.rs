@@ -1,12 +1,13 @@
 //! Owner doors for proposal-delta settlement and skill attribution evidence.
 //!
-//! Settlement records the owner's exact replacement operations on a proposal
-//! artifact, measures the delta from those recorded ops (never from a
-//! client-supplied `d_norm`, never reconstructed from final text alone),
-//! records the amendment evidence, judges it hunk by hunk and projects each
-//! share to its own consumer. The attempt-lane doors beside it record outcome
+//! Settlement measures the original proposal artifact's recorded window when
+//! the owner's replacements are that window's edit, and an endpoint-only
+//! imported edit as reconstructed (never from a client-supplied `d_norm`,
+//! never a document minted for it), records the amendment evidence, judges
+//! it hunk by hunk and projects each share to its own consumer. The attempt-lane doors beside it record outcome
 //! evidence and run the attribution and positive projectors.
 mod artifact_view;
+mod settle_window;
 
 use serde::{Deserialize, Serialize};
 
@@ -23,10 +24,9 @@ use crate::edit_distance::delta::{
     AmendmentDelta, OpsSummary, amendment_delta, put_amendment_delta_in_txn,
     put_amendment_uncaptured_in_txn,
 };
-use crate::edit_distance::{ProposalArtifactRef, RetainedProposal, retained_proposal};
+use crate::edit_distance::{ProposalArtifactRef, retained_proposal};
 use crate::entity_id::EntityId;
-use crate::error::Error;
-use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::skill_attribution::{
     AttemptOutcome, AttributionJudgment, AttributionVerdict, DeviationCause, EditHunk,
     FollowedState, HunkVerdict, OutcomeEvidence, PositiveFinding, PositiveSkillProposal,
@@ -141,8 +141,9 @@ pub struct ProposalShareClaim {
 }
 
 /// Settle one amended proposal: the proposed text, the owner's exact
-/// replacements in order, the routing facts, and optionally the owner's
-/// per-hunk labels and claimed percentage vector.
+/// replacements in order, the original artifact when the edit rode one, the
+/// routing facts, and optionally the owner's per-hunk labels and claimed
+/// percentage vector.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalDeltaSettleRequest {
@@ -155,8 +156,10 @@ pub struct ProposalDeltaSettleRequest {
     /// The terminal pack receipt of the attempt whose proposal was amended.
     #[serde(default)]
     pub attempt_receipt: Option<String>,
+    /// The original proposal artifact; absent for an edit imported with its
+    /// endpoints only, which is measured as reconstructed (FIX 10176).
     #[serde(default)]
-    pub source_turn_ref: Option<EntityId>,
+    pub artifact_ref: Option<EntityId>,
     pub scope: String,
     #[serde(default)]
     pub cause: Option<ProposalAmendmentCause>,
@@ -271,11 +274,12 @@ pub struct SettledHunkView {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ProposalDeltaSettlement {
     pub receipt_id: String,
-    pub artifact_ref: EntityId,
-    /// `None` when the retained document no longer holds that end.
-    pub proposed_text: Option<String>,
-    pub final_text: Option<String>,
-    /// `None` when the recorded ops could not be measured.
+    /// The original artifact the settlement measured; `None` for an
+    /// endpoint-only edit.
+    pub artifact_ref: Option<EntityId>,
+    pub proposed_text: String,
+    pub final_text: String,
+    /// `None` when no lane could measure the window.
     pub delta: Option<AmendmentDeltaView>,
     pub hunks: Vec<SettledHunkView>,
     /// Absent when the judge abstained; the delta and evidence still stand.
@@ -285,7 +289,7 @@ pub struct ProposalDeltaSettlement {
     pub lessons: Vec<EntityId>,
 }
 
-/// The settlement receipt a proposal artifact's delta and judgment ride.
+/// The settlement receipt a proposal's delta and judgment ride.
 fn settlement_receipt(artifact: EntityId) -> String {
     format!("proposal-delta:{}", artifact.to_hex())
 }
@@ -334,9 +338,9 @@ pub fn skill_attribution_settle_as_owner(
     owner: &AuthenticatedOwner,
     input: &ProposalDeltaSettleRequest,
 ) -> MemoryResult<ProposalDeltaSettlement> {
-    let owner_actor = owner.revalidate(vault)?;
+    owner.revalidate(vault)?;
     // Every pure check runs before the first write, so a refused settlement
-    // records no artifact, no delta and no charge.
+    // records no delta and no charge.
     let expected_final = preview_final_text(input)?;
     let expected_shares = claimed_shares(input)?;
     if let Some(verdicts) = &input.hunk_verdicts {
@@ -354,13 +358,11 @@ pub fn skill_attribution_settle_as_owner(
             ));
         }
     }
-    let retained = record_proposal_ops(vault, owner, owner_actor, input, &expected_final)?;
-    let artifact_ref = retained.record.artifact_ref.entity_id();
-    let receipt_id = settlement_receipt(artifact_ref);
-    let delta = crate::edit_distance::delta::delta_from_recorded_ops(&retained).ok();
+    let window = settle_window::settle_window(vault, input, &expected_final)?;
+    let receipt_id = window.receipt_id.clone();
     vault.with_write_txn_grouped(|wtxn| {
         owner.revalidate_in_txn(vault, wtxn)?;
-        match &delta {
+        match &window.delta {
             Some(delta) => put_amendment_delta_in_txn(vault, wtxn, &receipt_id, delta)?,
             None => put_amendment_uncaptured_in_txn(vault, wtxn, &receipt_id)?,
         };
@@ -376,7 +378,7 @@ pub fn skill_attribution_settle_as_owner(
     // The evidence door resolves the receipt's measured delta, the actor and
     // the skill inside its own checks before its write lands. An unmeasured
     // window records none, so nothing below judges it.
-    if delta.is_some() {
+    if window.delta.is_some() {
         record_amendment_evidence(vault, &evidence)?;
     }
     let hunks: Vec<EditHunk<'_>> = input
@@ -420,100 +422,38 @@ pub fn skill_attribution_settle_as_owner(
         ),
         None => (Vec::new(), Vec::new(), Vec::new()),
     };
+    let attribution = settle_window::sole_attribution(&window);
     let hunks = input
         .replacements
         .iter()
-        .enumerate()
-        .map(|(index, replacement)| {
-            let span = retained.record.ops_by_actor.get(index);
-            SettledHunkView {
-                before: replacement.before.clone(),
-                after: replacement.after.clone(),
-                edit_mass: crate::edit_distance::myers::myers_line_diff(
-                    &replacement.before,
-                    &replacement.after,
-                )
-                .ops
-                .edit_mass(),
-                actor: span.and_then(|(attribution, _)| {
-                    attribution.actor().map(|actor| actor.entity_ref())
-                }),
-                trust: span.map(|(attribution, _)| attribution.as_str().to_owned()),
-            }
+        .map(|replacement| SettledHunkView {
+            before: replacement.before.clone(),
+            after: replacement.after.clone(),
+            edit_mass: crate::edit_distance::myers::myers_line_diff(
+                &replacement.before,
+                &replacement.after,
+            )
+            .ops
+            .edit_mass(),
+            actor: attribution.and_then(|attribution| attribution.actor().map(|a| a.entity_ref())),
+            trust: attribution.map(|attribution| attribution.as_str().to_owned()),
         })
         .collect();
     Ok(ProposalDeltaSettlement {
         receipt_id,
-        artifact_ref,
-        proposed_text: retained.proposed_text().into_text(),
-        final_text: retained.final_text().into_text(),
-        delta: delta.map(Into::into),
+        artifact_ref: window
+            .artifact
+            .as_ref()
+            .map(|artifact| artifact.record.artifact_ref.entity_id()),
+        proposed_text: input.proposed_text.clone(),
+        final_text: expected_final,
+        delta: window.delta.map(Into::into),
         hunks,
         judgment: judgment.map(Into::into),
         edit_cost_claims,
         reliability_heads,
         lessons,
     })
-}
-
-#[cfg(feature = "sync")]
-fn record_proposal_ops(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    owner_actor: EntityId,
-    input: &ProposalDeltaSettleRequest,
-    expected_final: &str,
-) -> MemoryResult<RetainedProposal> {
-    use crate::edge::EdgeActorClass;
-    use crate::edit_distance::proposal_text::ProposalTextArtifact;
-    use crate::write_envelope::WriteActor;
-
-    let writer = WriteActor::new(owner_actor, EdgeActorClass::Human);
-    let mut artifact =
-        ProposalTextArtifact::open(vault, &input.proposed_text, &writer, input.source_turn_ref)?;
-    for replacement in &input.replacements {
-        let current = artifact.text();
-        let start = current
-            .find(&replacement.before)
-            .ok_or_else(|| invalid("a replacement's text is absent from the proposal"))?;
-        let char_start = current[..start].chars().count();
-        let char_len = replacement.before.chars().count();
-        let after = replacement.after.clone();
-        artifact.edit_as(&writer, move |text| {
-            text.delete(char_start, char_len)
-                .map_err(|_| Error::InvariantViolation("proposal replacement delete"))?;
-            text.insert(char_start, &after)
-                .map_err(|_| Error::InvariantViolation("proposal replacement insert"))
-        })?;
-    }
-    // The owner proof is rechecked before the recorded window is frozen.
-    owner.revalidate(vault)?;
-    if artifact.text() != expected_final {
-        return Err(MemoryError::new(
-            MEMORY_CODE_INVALID_STATE,
-            "the recorded proposal ops did not land the settled final text",
-            &[],
-        ));
-    }
-    let record = artifact.finalize(vault)?;
-    // The texts read back through the document finalize retained.
-    let retained = retained_proposal(vault, record.artifact_ref)?;
-    Ok(retained.ok_or(Error::InvariantViolation("finalized proposal not stored"))?)
-}
-
-#[cfg(not(feature = "sync"))]
-fn record_proposal_ops(
-    _vault: &Vault,
-    _owner: &AuthenticatedOwner,
-    _owner_actor: EntityId,
-    _input: &ProposalDeltaSettleRequest,
-    _expected_final: &str,
-) -> MemoryResult<RetainedProposal> {
-    Err(MemoryError::new(
-        MEMORY_CODE_INVALID_STATE,
-        "proposal delta settlement records CRDT ops, which a build without the sync feature cannot",
-        &[],
-    ))
 }
 
 /// Read one settlement by its receipt, with its artifact when the receipt

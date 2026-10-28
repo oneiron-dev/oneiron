@@ -47472,11 +47472,11 @@ pub struct ProposalDeltaSettleRequest {
     )]
     pub attempt_receipt: Option<String>,
     #[serde(
-        rename = "source_turn_ref",
+        rename = "artifact_ref",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub source_turn_ref: Option<String>,
+    pub artifact_ref: Option<String>,
     #[serde(rename = "scope")]
     pub scope: String,
     #[serde(rename = "cause", default, skip_serializing_if = "Option::is_none")]
@@ -47587,20 +47587,16 @@ pub struct AmendmentJudgmentView {
 pub struct ProposalDeltaSettlement {
     #[serde(rename = "receipt_id")]
     pub receipt_id: String,
-    #[serde(rename = "artifact_ref")]
-    pub artifact_ref: String,
     #[serde(
-        rename = "proposed_text",
+        rename = "artifact_ref",
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub proposed_text: Option<String>,
-    #[serde(
-        rename = "final_text",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub final_text: Option<String>,
+    pub artifact_ref: Option<String>,
+    #[serde(rename = "proposed_text")]
+    pub proposed_text: String,
+    #[serde(rename = "final_text")]
+    pub final_text: String,
     #[serde(rename = "delta", default, skip_serializing_if = "Option::is_none")]
     pub delta: Option<AmendmentDeltaView>,
     #[serde(rename = "hunks")]
