@@ -33563,6 +33563,7 @@ pub fn vault_free_time_policy_set(
     crate::dreamer_runner::free_time_policy_set_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.free_time.policy.set")?,
+        crate::authority::ActSurface::ThisInstall,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
