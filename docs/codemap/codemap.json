@@ -952,7 +952,7 @@
      "path": "src/agent_dispatch/dispatch.rs",
      "purpose": "Core dispatch admission: dispatchability, depth bound, enqueue, dedupe",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 1
      }
@@ -4473,14 +4473,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/slip_vault/issuer_custody.rs",
      "purpose": "Where a vault's host issuer seed is kept (FIX-LIST 3018): this install's own `HostIssuerSeed` slot for the…",
      "surface": {
-      "crate-vis": 1,
-      "fn": 3
+      "crate-vis": 2,
+      "fn": 4
      }
     },
     {
@@ -15269,6 +15269,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/dispatcher/spawn_capture.rs",
+     "purpose": "The targets one spawn call resolved, as its host saw them (FIX 9180, Engine C1)",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/dispatcher/summarize.rs",
      "purpose": "`summarize` at the dispatcher (code-mode-summary-sdk-v1): one summary of a run's results, memoised by its…",
      "surface": {
@@ -15931,13 +15941,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/spawn_replay.rs",
      "purpose": "The one comparison of a recorded bridge row's request with the request its call makes again (FIX 7447), for…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 12
      }
     },
     {
@@ -15995,7 +16005,7 @@
      "path": "src/code_run/storage/mod.rs",
      "purpose": "Canonical code-run persistence rows and the executor's storage routing",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "re-export": 4
      }
     },
@@ -16140,7 +16150,7 @@
      "path": "src/code_run/storage/replay_capsule.rs",
      "purpose": "The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1
      }
     },
@@ -16168,10 +16178,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/replay_capsule/spawn_erase.rs",
+     "purpose": "An erase of a spawn's target over the step starts the capsules keep (FIX 9180, Engine C2)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/response_erase.rs",
      "purpose": "An erase of a code run's actor, over the reply content its runs kept (FIX 5718, KEY STORE = A): the replay…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -16208,10 +16228,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/storage/routing/replay.rs",
+     "purpose": "A bound session's replay append, on the run's one route, in one routed transaction: the record compared…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/storage/session_write.rs",
      "purpose": "One write a run bound to an off-record session stages in its room, kept on its receipt in the same segment…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/storage/spawn_erase.rs",
+     "purpose": "An erase of a spawn's target over the code-run replay rows (FIX 9180, Engine C2)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -21529,7 +21569,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChatBreakpoint",
@@ -26901,7 +26941,7 @@
      "path": "src/dreamer_runner/maintenance/curator.rs",
      "purpose": "Curator grading data and minimum-force findings",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 2,
       "struct": 2
@@ -27322,7 +27362,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 1,
       "mod": 20,
       "re-export": 10
@@ -33950,7 +33990,7 @@
      "path": "src/gate/bundle/claim_settle.rs",
      "purpose": "One proposed claim decided on its own (DOOR-115): the owner's approval or decline of a claim named by its…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -51930,7 +51970,7 @@
      "path": "src/policy_model/in_force.rs",
      "purpose": "Whether an owner-plane verdict still answers the policy in force, and what the plane answers when it does not",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 2
      }
     },
@@ -53496,7 +53536,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/provenance/mod.rs",
@@ -64073,7 +64113,7 @@
      "path": "src/store/gate_decision/ledger.rs",
      "purpose": "Gate-decision ledger Store methods plus the row append and record codec",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 1
      }
     },
@@ -64084,7 +64124,7 @@
      "path": "src/store/gate_decision/ledger/custody.rs",
      "purpose": "The ledger's side of the claim custody client: a row decrypted under its claim's key, a new row sealed under…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -64135,7 +64175,7 @@
      "path": "src/store/gate_decision/orcb.rs",
      "purpose": "ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -64259,6 +64299,16 @@
      "notable": [],
      "path": "src/store/home_handoff_custody/seal.rs",
      "purpose": "The erasable handoff key's envelopes (FIX 8875): content sealed under the key itself, and the key's transit…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/host_issuer_custody.rs",
+     "purpose": "The host issuer seed's custody client (FIX-LIST 10770, the remainder of FIX-LIST 3018): the escrow of a…",
      "surface": {
       "crate-vis": 4
      }
@@ -79344,7 +79394,7 @@
      "purpose": "Code revisions, tested forks and reviewed import promotion"
     },
     "code_run": {
-     "files": 159,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80408,7 +80458,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 163,
+     "files": 164,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80641,7 +80691,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5355,
+   "source_files": 5360,
    "test_files": 902
   },
   "oneiron-android": {
@@ -90757,7 +90807,7 @@
      "path": "src/lib/wire.rs",
      "purpose": "Anthropic Messages protocol mapping: request build, response parse, message/part/tool codecs, usage, status…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -96613,7 +96663,7 @@
      "path": "src/api/ai/chat/hooks.rs",
      "purpose": "Chat generation and witness hook boundaries",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -96623,7 +96673,7 @@
      "path": "src/api/ai/chat/recall.rs",
      "purpose": "The vault's memory a live chat turn reads (FIX 6794): the context board `ai.reply` assembles (ARCH-0067: the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {

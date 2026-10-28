@@ -60,9 +60,7 @@ pub struct GeneratedUiResultSetAtom {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiResultSetSelection {
-    Explicit {
-        row_ids: Vec<LensResultSetRowId>,
-    },
+    Explicit { row_ids: Vec<LensResultSetRowId> },
     AllWithinFilter {},
 }
 
@@ -77,7 +75,6 @@ pub struct GeneratedUiResultSetActionEvent {
 
 impl GeneratedUiResultSetAtom {
     pub(super) fn validate(&self) -> Result<()> {
-
         let mut row_ids = HashSet::with_capacity(self.rows.len());
         for row in &self.rows {
             if !row_ids.insert(row.id.as_str()) {
@@ -578,7 +575,6 @@ impl AnswerSheetAtom {
 
 impl NeighborhoodGraphAtom {
     pub(super) fn validate(&self) -> Result<()> {
-
         let mut node_ids = HashSet::with_capacity(self.nodes.len());
         for node in &self.nodes {
             if !node_ids.insert(node.id.as_str()) {

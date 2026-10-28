@@ -264,7 +264,15 @@ fn admit(
         scope.record_axes();
         let first = step * LENS_DEFAULT_READ_STEP;
         for (offset, row) in rows.into_iter().enumerate() {
-            admit_row(read, frame, list, first + offset, row, &scope, &mut admitted)?;
+            admit_row(
+                read,
+                frame,
+                list,
+                first + offset,
+                row,
+                &scope,
+                &mut admitted,
+            )?;
         }
     }
     Ok(admitted)

@@ -10,14 +10,15 @@
 //! them again. A fork leaves one it cannot copy behind: the copy's row then
 //! answers the typed `credential_leaf_unreadable` when it is opened (its
 //! pending diagnostic), and the activation or restore goes on as it did.
-//! A connector call's resume key (FIX 9157) goes the same way. Every other
-//! kind's fault is the pass's own, exactly as before.
+//! A connector call's resume key (FIX 9157) goes the same way, and so does
+//! the host issuer seed's escrow (FIX-LIST 10770), warned by the error's kind
+//! alone. Every other kind's fault is the pass's own, exactly as before.
 
 use crate::error::{Error, Result};
 
 use super::files::LocalCustody;
 use super::head::HeadEntry;
-use super::identity::{CustodyId, CustodySubject};
+use super::identity::{CustodyId, CustodyKind, CustodySubject};
 
 /// What a shared pass does with a credential key's own fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,8 +31,18 @@ const CUSTODY_CREDENTIAL_PASS_FAULT: CustodyCredentialPassFault =
     CustodyCredentialPassFault::WarnAndKeepLocal;
 
 /// `error`, met on `subject`'s keys while doing `what`: absorbed, warned,
-/// for a credential's subject; the pass's error for any other.
+/// for a credential's subject or the host issuer seed's; the pass's error
+/// for any other.
 pub(super) fn forgone(subject: &CustodySubject, error: Error, what: &'static str) -> Result<()> {
+    // The escrow is best-effort (FIX-LIST 10770): the seed stays in this
+    // machine's custody for the pass, and its install's slot keeps it.
+    if subject.kind() == CustodyKind::HostIssuerSeed {
+        tracing::warn!(
+            kind = ?error.kind(),
+            "the host issuer seed's custody entries stay where they are for this pass: {what}"
+        );
+        return Ok(());
+    }
     if !crate::store::credential_kind(subject.kind()) {
         return Err(error);
     }

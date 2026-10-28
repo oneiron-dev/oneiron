@@ -282,6 +282,9 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             (Some(ask), _) if planned => self.planned_spawn(call.context, ask, now)?,
             (ask, Some(target)) => {
+                // FIX 9180: the AGENT_DEF a direct spawn names is its seat,
+                // noted before anything below can fail.
+                self.spawn_capture.observe_target(&target);
                 let mut context = call.context;
                 if let Some(ask) = ask {
                     // The whole ask rides the child with what it left
@@ -316,7 +319,12 @@ impl<'a> HostSelfDispatcher<'a> {
             (Some(_), None) => return Ok(Self::planner_unbound(SelfEffect::AgentsSpawn)),
             (None, None) => return Err(invalid()),
         };
-        let result = AgentDispatcher::new(vault).dispatch_with_context(
+        // FIX 9180: each seat the dispatch resolves, a workflow's leaves and
+        // an attenuated fork among them, is noted as it resolves.
+        let capture = &self.spawn_capture;
+        let observe = move |seat| capture.observe(seat);
+        let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
+        let result = dispatcher.dispatch_with_context(
             DispatchAgent {
                 target,
                 parent_attempt: Some(parent),
@@ -331,6 +339,23 @@ impl<'a> HostSelfDispatcher<'a> {
             context,
         )?;
         let launch = result.launch().cloned();
+        // FIX 9180: a dedupe hit's seats are the ones its child kept.
+        match &result {
+            AgentDispatchOutcome::Existing(status) => {
+                self.spawn_capture.observe_target(&status.input.target);
+            }
+            AgentDispatchOutcome::WorkflowExisting(status) => {
+                // The retained definition's source leaves and each step's
+                // dispatched seat, an attenuated fork among them.
+                for step in &status.definition.steps {
+                    self.spawn_capture.observe(*step);
+                }
+                for step in &status.captured_steps {
+                    self.spawn_capture.observe_target(&step.target);
+                }
+            }
+            _ => {}
+        }
         // FIX 7446: a dedupe hit answers with the receipt its child keeps,
         // the first call's, never this call's ask; none kept lists none.
         let kept = |receipt: Option<&crate::agent_dispatch::DirectSpawnReceipt>| {
