@@ -101,6 +101,7 @@ pub use trend::{
 };
 pub(super) use trend_output::run_health_trends;
 pub use trend_policy::{DetectionDialChanges, HEALTH_TREND_PERIOD_DAYS, TrendPeriods, TrendWindow};
+pub(crate) use vocabulary::parse_card_ref;
 pub use vocabulary::{
     AgentHealthCard, AgentHealthConfidence, AgentHealthCounter, AgentHealthMove,
     AgentHealthOutcome, AgentHealthTone, HEALTH_CARD_FLOOR, HEALTH_CHECK_FAILS,
@@ -108,7 +109,7 @@ pub use vocabulary::{
     HEALTH_LOOP_REPEATS, HEALTH_OWNER_COPY, HEALTH_REVIEW, HEALTH_REVIEW_WINDOW_HOURS,
     HEALTH_SILENT_MINUTES, HEALTH_WAIT_MINUTES, HEALTH_WAIT_SHARE, HEALTH_WIDEN_DENIALS,
 };
-use vocabulary::{CARDS, Finding, card_key, card_ref, parse_card_ref};
+use vocabulary::{CARDS, Finding, card_key, card_ref};
 
 /// The recipe's facet. It rides the Coach's timer jobs (`MAINTENANCE_FACETS`),
 /// deduped per wake.
