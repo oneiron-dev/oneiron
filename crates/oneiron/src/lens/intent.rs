@@ -1,9 +1,9 @@
 //! Vault-scoped lens intent records and the upgrade regeneration door.
 
 use super::{
-    LensEvaluatedRevision, LensLoadAction, LensRegenFailure, LensRegenFailurePhase,
-    LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp, lens_load_action,
-    regenerate_lens,
+    LensEvaluatedRevision, LensLoadAction, LensRegenDecision, LensRegenFailure,
+    LensRegenFailurePhase, LensRegenOutcome, LensRegenRequest, LensRegenerator, LensVersionStamp,
+    lens_load_action, regenerate_lens,
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, Result, Vault};
@@ -101,13 +101,14 @@ impl Vault {
 
     /// On a shell/contract version mismatch, re-run the vault's intent through
     /// the existing fingerprint gate. `None` means the current body needs no work;
-    /// all failures carry the unchanged last-good revision for mounting.
+    /// all failures carry the unchanged last-good revision for mounting. The
+    /// decision names `lens_id`, the selection it was made against (FIX 9897).
     pub fn regenerate_lens_on_upgrade<R: LensRegenerator + ?Sized>(
         &self,
         lens_id: &EntityId,
         regenerator: &R,
         last_good: LensEvaluatedRevision,
-    ) -> Option<LensRegenOutcome> {
+    ) -> Option<LensRegenDecision> {
         if matches!(
             lens_load_action(
                 last_good.lens().version_stamp(),
@@ -117,16 +118,19 @@ impl Vault {
         ) {
             return None;
         }
-        let intent = match self.get_lens_intent(lens_id) {
-            Ok(Some(intent)) => intent,
-            Ok(None) => return Some(rollback(last_good, "lens intent record is missing")),
-            Err(_) => return Some(rollback(last_good, "lens intent record cannot be read")),
+        let outcome = match self.get_lens_intent(lens_id) {
+            Ok(Some(intent)) => regenerate_lens(
+                regenerator,
+                &LensRegenRequest::new(LensVersionStamp::current(), intent.prompt()),
+                last_good,
+            ),
+            Ok(None) => rollback(last_good, "lens intent record is missing"),
+            Err(_) => rollback(last_good, "lens intent record cannot be read"),
         };
-        Some(regenerate_lens(
-            regenerator,
-            &LensRegenRequest::new(LensVersionStamp::current(), intent.prompt()),
-            last_good,
-        ))
+        Some(LensRegenDecision {
+            active_ref: *lens_id,
+            outcome,
+        })
     }
 }
 

@@ -56,7 +56,8 @@ pub use proposal::{
     LensListRequest, LensListRow, LensProposalState, LensProposeRequest, LensSlot,
 };
 pub use regen::{
-    LensRegenEnactment, enact_lens_regeneration_embedded, regenerate_and_enact_lens_embedded,
+    LensRegenDecision, LensRegenEnactment, enact_lens_regeneration_embedded,
+    regenerate_and_enact_lens_embedded,
 };
 mod sdk;
 pub use sdk::{LENS_DEFAULT_READ_STEP, LensDefaultRequest, LensDossierSource};

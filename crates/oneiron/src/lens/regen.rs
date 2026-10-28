@@ -1,7 +1,8 @@
 //! Enacting a regeneration outcome through the lens lifecycle (OF-250).
 //!
 //! [`crate::Vault::regenerate_lens_on_upgrade`] only decides: it returns a
-//! [`LensRegenOutcome`] and performs nothing. This module is the caller
+//! [`LensRegenDecision`] (a [`LensRegenOutcome`] and the selection it was
+//! made against) and performs nothing. This module is the caller
 //! that decision path names. It routes the outcome through the doors a
 //! hand-authored lens revision already takes — `vault.lenses.propose` and
 //! `vault.lenses.activate` — so a regenerated candidate is stored, hashed
@@ -10,9 +11,11 @@
 //!
 //! - `AutoAdopt` — the candidate reads the same bound data as the
 //!   last-good lens the owner already selected, so it is proposed and then
-//!   selected for the slot under the owner's proof, naming the active lens
-//!   it replaces. If the slot moved in between, activation refuses and
-//!   the candidate stays a plain proposal.
+//!   selected for the slot under the owner's proof, compared and set
+//!   against the selection the decision was made against (FIX 9897): its
+//!   [`LensRegenDecision::active_ref`] and its outcome's last-good
+//!   revision. If the slot moved since, the candidate stays a plain
+//!   proposal and the owner's newer selection stays.
 //! - `NeedsHumanStamp` — the candidate is proposed and nothing more. The
 //!   last-good lens stays selected; the owner selects the candidate (or
 //!   not) through `vault.lenses.activate`.
@@ -20,6 +23,8 @@
 //!
 //! The candidate's proposal carries the stored intent of the lens it was
 //! regenerated from, so the next upgrade reruns the same authored prompt.
+//! A `NeedsHumanStamp` candidate decided against a selection the slot no
+//! longer holds is still proposed: the owner may select it, or not.
 
 use super::proposal::invalid_state;
 use super::{
@@ -30,6 +35,15 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensProposalReceipt};
 use crate::{EntityId, Error};
+
+/// One regeneration decision and the selection it was made against: the
+/// slot's active lens when the decision read it (FIX 9897). Its outcome
+/// carries that lens's last-good revision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LensRegenDecision {
+    pub active_ref: EntityId,
+    pub outcome: LensRegenOutcome,
+}
 
 /// What enacting one [`LensRegenOutcome`] did to its slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +101,7 @@ impl Memory<'_> {
         last_good: LensEvaluatedRevision,
     ) -> MemoryResult<LensRegenEnactment> {
         let (active_ref, _) = self.active_lens_for(&slot)?;
-        let Some(outcome) =
+        let Some(decision) =
             self.vault()
                 .regenerate_lens_on_upgrade(&active_ref, regenerator, last_good)
         else {
@@ -95,32 +109,27 @@ impl Memory<'_> {
                 active_ref: active_ref.to_hex(),
             });
         };
-        self.lenses_enact_regeneration(owner, slot, pack_content_hash, outcome)
+        self.lenses_enact_regeneration(owner, slot, pack_content_hash, decision)
     }
 
-    /// Enact an outcome a host already decided (for example through
-    /// [`crate::Vault::regenerate_lens_on_upgrade`]) for `slot`'s active lens.
+    /// Enact a decision a host already made (for example through
+    /// [`crate::Vault::regenerate_lens_on_upgrade`]) for `slot`. The
+    /// selection the decision was made against is compared and set: a slot
+    /// that moved since keeps its newer selection, and the candidate stays a
+    /// proposal (FIX 9897).
     pub fn lenses_enact_regeneration(
         &self,
         owner: &AuthenticatedOwner,
         slot: LensSlot,
         pack_content_hash: String,
-        outcome: LensRegenOutcome,
+        decision: LensRegenDecision,
     ) -> MemoryResult<LensRegenEnactment> {
+        let LensRegenDecision {
+            active_ref: decided_against,
+            outcome,
+        } = decision;
         let (active_ref, active_lens) = self.active_lens_for(&slot)?;
-        // Where the outcome still carries its last-good revision, it must
-        // be the lens the slot selects now; a stale outcome enacts nothing.
-        // `AutoAdopt` carries only its candidate, so that lane rests on the
-        // host having decided against this slot's active lens, and on the
-        // activation below naming `active_ref` as what it replaces.
-        if !matches!(outcome, LensRegenOutcome::AutoAdopt { .. })
-            && outcome.active_revision().lens() != &active_lens
-        {
-            return Err(invalid_state(
-                "the regeneration outcome was decided against a lens the slot no longer selects",
-                "Regenerate against the slot's active lens and enact that outcome.",
-            ));
-        }
+        let slot_moved = active_ref != decided_against || outcome.last_good().lens() != &active_lens;
         let (candidate, auto_adopt) = match outcome {
             LensRegenOutcome::RolledBack { failure, .. } => {
                 return Ok(LensRegenEnactment::RolledBack {
@@ -129,12 +138,13 @@ impl Memory<'_> {
                     message: failure.message().to_owned(),
                 });
             }
-            LensRegenOutcome::AutoAdopt { candidate, .. } => (candidate.into_lens(), true),
+            LensRegenOutcome::AutoAdopt { candidate, .. } => (candidate.into_lens(), !slot_moved),
             LensRegenOutcome::NeedsHumanStamp { candidate, .. } => {
                 ((*candidate).into_lens(), false)
             }
         };
-        let intent = self.vault().get_lens_intent(&active_ref)?.ok_or_else(|| {
+        // The candidate was regenerated from the decided lens's prompt.
+        let intent = self.vault().get_lens_intent(&decided_against)?.ok_or_else(|| {
             invalid_state(
                 "the slot's active lens has no stored intent to carry to its candidate",
                 "Propose the candidate with its intent through vault.lenses.propose.",
@@ -153,18 +163,34 @@ impl Memory<'_> {
                 active_ref: active_ref.to_hex(),
             });
         }
-        let activation = self.vault().activate_lens(
+        let activated = self.vault().activate_lens(
             owner,
             LensActivateRequest {
                 lens_ref: proposal.lens_ref.clone(),
                 compiled_hash: proposal.compiled_hash.clone(),
-                expected_active_ref: Some(active_ref.to_hex()),
+                expected_active_ref: Some(decided_against.to_hex()),
             },
-        )?;
-        Ok(LensRegenEnactment::AutoAdopted {
-            proposal,
-            activation,
-        })
+        );
+        match activated {
+            Ok(activation) => Ok(LensRegenEnactment::AutoAdopted {
+                proposal,
+                activation,
+            }),
+            // The slot moved after the check above: its newer selection
+            // stays, and the candidate stays a proposal.
+            Err(error) => {
+                let now = self.vault().active_pack_lens(&slot.pack_name, &slot.skill()?)?;
+                match now {
+                    Some((now, _)) if now != decided_against => {
+                        Ok(LensRegenEnactment::ProposedForStamp {
+                            proposal,
+                            active_ref: now.to_hex(),
+                        })
+                    }
+                    _ => Err(error),
+                }
+            }
+        }
     }
 
     /// The lens `slot` selects now, rechecked against the live install.
@@ -187,10 +213,10 @@ pub fn enact_lens_regeneration_embedded(
     memory: &Memory<'_>,
     slot: LensSlot,
     pack_content_hash: String,
-    outcome: LensRegenOutcome,
+    decision: LensRegenDecision,
 ) -> MemoryResult<LensRegenEnactment> {
     let owner = memory.embedded_owner("vault.lenses.activate")?;
-    memory.lenses_enact_regeneration(&owner, slot, pack_content_hash, outcome)
+    memory.lenses_enact_regeneration(&owner, slot, pack_content_hash, decision)
 }
 
 /// [`Memory::lenses_regenerate_and_enact_on_upgrade`] on an embedded handle.
