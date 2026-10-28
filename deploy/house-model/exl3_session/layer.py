@@ -363,6 +363,7 @@ class SessionLayer(Registry):
             raise Refused(SNAPSHOT_INCOMPATIBLE, f"the snapshot holds tensors this worker does not: {sorted(tensors)}")
         return snapshot.Rebuilt(tokens, recurrent, kv, ref["head"], ref["parent"])
 
+    @torch.inference_mode()
     def import_checkpoint(self, session, op_id, generation, rebuilt, size, sha256):
         """`session.import` here: `rebuilt` written into fresh pages and
         staged as `session`'s successor, under the same checks the op made.
