@@ -59242,7 +59242,7 @@
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {

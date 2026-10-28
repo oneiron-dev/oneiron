@@ -4672,7 +4672,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/self_heal/tripwires.rs` | src | m | 6 struct · 10 fn · 1 const · 1 re-export · 10 crate-vis | ConsentStormDetector, DreamerRunFacts, PredicateDriftDetector, RetrievalRegressionDetector, TripwireBounds | Closed-form T1 projections |
 | `src/self_heal/tripwires/policy.rs` | src | s | 4 struct · 1 enum · 1 fn · 5 crate-vis | ResolvedTripwireBounds, TripwireBound, TripwireBoundOrigin, TripwirePolicyReceipt, TripwirePolicySource | The tripwire policy a pass applied, as it was resolved (FIX 10096): the four bounds every detector of the… |
 | `src/self_heal/untrusted_text.rs` | src | s | 3 crate-vis | — | Untrusted detail-text validation and escaping |
-| `src/serialize/credential_nulling.rs` | src | m | 6 crate-vis | — | Unconditional credential removal before any context/export format writer |
+| `src/serialize/credential_nulling.rs` | src | m | 7 crate-vis | — | Unconditional credential removal before any context/export format writer |
 | `src/serialize/export_actor_references.rs` | src | s | 1 crate-vis | — | Preserve only the actor ledger's validated binary reference positions |
 | `src/serialize/export_value.rs` | src | m | 1 struct · 2 enum · 14 crate-vis | ExportBody, ExportBodyFile, ExportValue | Credential-safe, type-preserving MessagePack values for whole-vault JSON |
 | `src/serialize/export_value/file_stream.rs` | src | m | 1 crate-vis | — | FIX 3677: [`super::attaches_as_file`] read as a body streams, so an archive file is classified with no… |
