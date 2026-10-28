@@ -363,19 +363,26 @@ pub(super) async fn safeguard_verdict(
     let wording = Wording::shipped()?;
     let asked = ask(prompt, plane, &wording)?;
     let checked = CheckedReplies::new(safeguard.backend());
-    let read = read(
-        safeguard, &checked, request, prompt, &asked, principal, config, clock,
+    let outcome = read(
+        safeguard,
+        &checked,
+        request,
+        prompt,
+        &asked,
+        principal,
+        config,
+        clock,
     )
     .await;
     // A reply that did not finish with Stop, or that calls a tool, decides
     // nothing (FIX 7803): its weights are kept on the audit, never a verdict.
     if checked.unusable() {
-        if let Ok(GeneratedDecisions::Decided { decisions, .. }) = read {
+        if let Ok(GeneratedDecisions::Decided { decisions, .. }) = outcome {
             audit.typed_decisions = decisions;
         }
         return Ok(skipped(PolicySkipReason::ResponseUnusable, audit));
     }
-    let decisions = match read {
+    let decisions = match outcome {
         Ok(GeneratedDecisions::Decided { decisions, .. }) => decisions,
         Ok(GeneratedDecisions::Unread(GeneratedMiss::Budget(_))) => {
             return Ok(skipped(PolicySkipReason::BudgetExhausted, audit));

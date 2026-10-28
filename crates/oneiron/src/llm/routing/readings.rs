@@ -61,7 +61,6 @@ impl DescriptionFitnessReadings {
         type_ref: Option<&TaskTypeRef>,
     ) -> Self {
         Self {
-            type_ref: type_ref.cloned(),
             gradings: candidates
                 .iter()
                 .zip(decisions)
@@ -71,6 +70,7 @@ impl DescriptionFitnessReadings {
                     decision,
                 })
                 .collect(),
+            type_ref: type_ref.cloned(),
         }
     }
 }
