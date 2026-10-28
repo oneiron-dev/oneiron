@@ -263,8 +263,21 @@ pub(crate) fn erase_choice_scope_in_txn(
 /// A row that does not decode; storage errors.
 pub fn list_choice_rows(vault: &Vault) -> Result<Vec<(SettingScope, ChoiceRow, String)>> {
     let rtxn = vault.store.env.read_txn()?;
+    list_choice_rows_in_txn(vault, &rtxn)
+}
+
+/// [`list_choice_rows`] in the caller's snapshot, for a reader that reads
+/// what was learned under each row beside it (FIX 3159).
+///
+/// # Errors
+///
+/// As [`list_choice_rows`].
+pub(crate) fn list_choice_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(SettingScope, ChoiceRow, String)>> {
     let mut out = Vec::new();
-    for (stored_key, stored) in CHOICE.scan(&vault.store, &rtxn)? {
+    for (stored_key, stored) in CHOICE.scan(&vault.store, rtxn)? {
         let Some((key, mode, scope)) = parse_row_key(&stored_key) else {
             continue;
         };
