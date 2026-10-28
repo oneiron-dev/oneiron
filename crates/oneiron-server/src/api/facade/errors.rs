@@ -23,6 +23,7 @@ impl FacadeApiError {
                     wrong_root: None,
                     hook: None,
                     retry_after: None,
+                    resets_at: Vec::new(),
                 },
                 narrowing: None,
             },
@@ -107,6 +108,9 @@ impl From<MemoryError> for FacadeApiError {
             // The model the request needs did not answer: not the caller's
             // fault, and not this server's to stand in for.
             MEMORY_CODE_MODEL_UNAVAILABLE => StatusCode::SERVICE_UNAVAILABLE,
+            // FIX 8189: an OpenAI proxy call the caller's own deadline cut,
+            // as its raw door answers it.
+            crate::api::openai_proxy::TIMEOUT_CODE => StatusCode::GATEWAY_TIMEOUT,
             // OF-063: the write named a record its writer cannot resolve. The
             // request was well formed and refused, so it is the caller's
             // to correct, and a missing record and an unreadable one are this
@@ -162,6 +166,7 @@ impl From<MemoryError> for FacadeApiError {
                     wrong_root: error.wrong_root,
                     hook: error.hook,
                     retry_after: error.retry_after,
+                    resets_at: error.resets_at,
                 },
                 narrowing: error.read_receipt,
             },
@@ -209,6 +214,7 @@ impl FacadeApiError {
         refusal.wrong_root = error.wrong_root;
         refusal.hook = error.hook;
         refusal.retry_after = error.retry_after;
+        refusal.resets_at = error.resets_at;
         refusal
     }
 }

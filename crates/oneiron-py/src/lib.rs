@@ -152,6 +152,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             wrong_root: None,
             hook: None,
             retry_after: None,
+            resets_at: Vec::new(),
         })
     })
 }
@@ -169,6 +170,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         wrong_root: None,
         hook: None,
         retry_after: None,
+        resets_at: Vec::new(),
     })
 }
 
@@ -2723,6 +2725,13 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.authority.history.import", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_authority_clock_repair(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.authority.clock.repair")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.authority.clock.repair", input))
             .map_err(raise)?;
         encode(&output)
     }

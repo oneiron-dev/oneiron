@@ -8,14 +8,15 @@ use super::{
     CAMPAIGN_TASTE_BUDGET, CAMPAIGN_TASTE_DIAL, CAMPAIGN_TASTE_SCORE_WORDING,
     CAMPAIGN_TASTE_USEFUL_WORDING, CampaignTasteDecisions, CampaignTasteWording,
     ClaimReplayDecisions, ConsolidationDecisions, DecisionAsks, DecisionBand, DecisionBandPolicy,
-    DecisionDial, DecisionHost, DecisionProvider, DecisionRung, EntityId, FanoutDecisions,
-    HeldLadder, ImagePick, LadderNotes, MembershipDecisions, PLACEMENT_BUDGET, PLACEMENT_WORDING,
-    PLANNER_BUDGET, PLANNER_WORDING, PlacementDecisions, PolicyDecisions, REVIEW_DIAL,
-    REVIEW_HARD_CHECK_WORDING, REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING,
-    REVIEW_SEVERITY_WORDING, REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions,
-    ReviewWording, SeatDecisions, SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET,
-    TASK_DONE_MET_WORDING, TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions,
-    Vault, WAVE_FANOUT_WORDING,
+    DecisionDial, DecisionHost, DecisionLadder, DecisionProvider, DecisionRung, EntityId,
+    FanoutDecisions, HeldLadder, HostingPrivacyPosture, ImagePick, LadderNotes,
+    MembershipDecisions, PLACEMENT_BUDGET, PLACEMENT_WORDING, PLANNER_BUDGET, PLANNER_WORDING,
+    PlacementDecisions, PolicyDecisions, REVIEW_DIAL, REVIEW_HARD_CHECK_WORDING,
+    REVIEW_LENS_BUDGET, REVIEW_OUT_OF_SCOPE_WORDING, REVIEW_SEVERITY_WORDING,
+    REVIEW_VERDICT_WORDING, RetrievalDeadline, ReviewDecisions, ReviewWording, SeatDecisions,
+    SeatPickSettings, TASK_ASK_UP_WORDING, TASK_DECISION_BUDGET, TASK_DONE_MET_WORDING,
+    TASK_SURFACE, TASK_TAKE_WORDING, TaskDecisions, UsefulUpstreamDecisions, Vault,
+    WAVE_FANOUT_WORDING,
 };
 
 impl DecisionHost {
@@ -30,6 +31,34 @@ impl DecisionHost {
     #[must_use]
     pub fn remote_opt_in(&self) -> bool {
         self.remote_opt_in
+    }
+
+    /// `ladder`, this host's ([`Self::ladder`]), under a question's
+    /// `posture` (FIX 9525). Where the posture keeps unit text on the host,
+    /// the Big rung is this host's big model sent only to the offers of its
+    /// live route that keep the text there; then every slot whose calls
+    /// would still send it off is emptied, as
+    /// [`DecisionLadder::under_posture`] empties one. A ladder whose Big rung
+    /// is not this host's keeps it.
+    #[must_use]
+    pub(crate) fn under_posture<'l>(
+        &'l self,
+        mut ladder: DecisionLadder<'l>,
+        posture: HostingPrivacyPosture,
+    ) -> DecisionLadder<'l> {
+        // The rule `DecisionLadder::under_posture` keeps: text leaves only
+        // under MANAGED posture or an explicit opt-in, and never under RELAY.
+        let leaves = (posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
+            && posture != HostingPrivacyPosture::Relay;
+        let held = self.ladder.big.as_deref();
+        let ours = |big: &dyn DecisionProvider| held.is_some_and(|own| std::ptr::addr_eq(own, big));
+        if !leaves
+            && ladder.big.is_some_and(ours)
+            && let Some(on_host) = self.big_on_host.as_deref()
+        {
+            ladder.big = Some(on_host);
+        }
+        ladder.under_posture(posture, self.remote_opt_in)
     }
 
     /// The ladder's last rung: the vault owner's durable ask queue. A caller

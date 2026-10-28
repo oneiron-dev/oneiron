@@ -16,6 +16,7 @@ use crate::llm::{
     BudgetGuard, BudgetLease, LabelReadModel, LabelReadRequest, LabelReadResponse, LabelReadout,
     LabelSet, LlmResult, LlmUsage, joint_marginals,
 };
+use crate::retrieval_depth::RetrievalDeadline;
 use std::time::Instant;
 
 /// A read's label probabilities sum to one within this tolerance.
@@ -30,13 +31,24 @@ pub enum GatedRead {
 
 /// Admits one decision read, lends `read` its lease and settles what it returns: nothing
 /// spent when it never started, its reply's usage, or a failed read's reservation. A bare
-/// meter is one; a host that admits model calls as runs brings its own.
+/// meter is one; a host that admits model calls as runs brings its own. `deadline` is the
+/// caller's own clock (FIX 9526): a gate whose admission waits stops waiting when its work
+/// time ends, and returns [`GatedRead::NotStarted`]; it never starts a clock of its own.
 pub trait DecisionReadGate: Send + Sync {
-    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> Result<GatedRead>;
+    fn read(
+        &self,
+        deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> Result<GatedRead>;
 }
 
+/// A bare meter admits at once: the read's own pre-send check is its clock.
 impl DecisionReadGate for BudgetGuard {
-    fn read(&self, read: &mut dyn FnMut(&BudgetLease) -> GatedRead) -> Result<GatedRead> {
+    fn read(
+        &self,
+        _deadline: &RetrievalDeadline,
+        read: &mut dyn FnMut(&BudgetLease) -> GatedRead,
+    ) -> Result<GatedRead> {
         let lease = self
             .admit()
             .map_err(|_| invalid("decision read refused by the budget"))?
@@ -156,7 +168,7 @@ impl DecisionProvider for DecisionReadProvider<'_> {
                 paired: (!person).then_some(self.paired.text.as_str()),
             });
         }
-        let gated = self.gate.read(&mut |lease| {
+        let gated = self.gate.read(deadline, &mut |lease| {
             // Admission may wait; a read admitted after the work time is spent never starts.
             if !deadline.decision_may_start() {
                 return GatedRead::NotStarted;

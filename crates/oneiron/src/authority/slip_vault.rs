@@ -384,9 +384,23 @@ impl Vault {
         nonce: &[u8],
     ) -> Result<VerifiedSlip> {
         let mut txn = self.store.env.write_txn()?;
-        let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let now = self.instant_in_txn(&txn)?.secs();
+        let verified =
+            self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
+        txn.commit()?;
+        Ok(verified)
+    }
+    /// [`Self::admit_capability_slip_request`] in the caller's writer.
+    pub(super) fn admit_capability_slip_request_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        slip: &CapabilitySlip,
+        timestamp: u64,
+        signature: &[u8],
+        nonce: &[u8],
+    ) -> Result<VerifiedSlip> {
+        let request_now = super::slip_replay::admission_now_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let now = self.instant_in_txn(txn)?.secs();
         let challenge = super::slip_replay::request_challenge(timestamp, nonce, request_now)?;
         let key = &fold
             .slips
@@ -395,20 +409,19 @@ impl Vault {
             .ok_or_else(invalid_authority)?
             .signer;
         let verified = slip.verify(key, &fold, now, &challenge, signature)?;
-        let verified = self.admitted_slip_view_in_txn(&txn, verified, now)?;
+        let verified = self.admitted_slip_view_in_txn(txn, verified, now)?;
         if verified.claims().single_use {
             return Err(invalid_authority());
         }
         super::slip_replay::record_nonce(
             self,
-            &mut txn,
+            txn,
             &verified.claims().binding_key,
             nonce,
             timestamp,
             request_now,
         )?;
-        self.receipt_support_use_in_txn(&mut txn, verified.claims(), nonce, timestamp)?;
-        txn.commit()?;
+        self.receipt_support_use_in_txn(txn, verified.claims(), nonce, timestamp)?;
         Ok(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.

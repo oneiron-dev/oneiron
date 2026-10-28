@@ -368,6 +368,9 @@ class OneironError(RuntimeError):
     wrong_root: dict[str, str] | None
     # The verb hook's stop; on PENDING_ASK `{"status": "pending", "invocation", "ask"}`.
     hook: dict[str, Any] | None
+    # When to call again, as the refusal's source said: seconds, and Unix-second resets.
+    retry_after: int | None
+    resets_at: tuple[int, ...] | None
     def __init__(
         self,
         code: str,
@@ -375,6 +378,8 @@ class OneironError(RuntimeError):
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
         hook: dict[str, Any] | None = None,
+        retry_after: int | None = None,
+        resets_at: list[int] | None = None,
     ) -> None: ...
 
 class Oneiron:
@@ -1521,12 +1526,17 @@ class Oneiron:
         @property
         def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs": ...
         @property
+        def clock(self) -> "Oneiron._VaultAuthorityClockVerbs": ...
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
     class _VaultAuthorityHistoryVerbs:
         def export(self, spec: Facade.EmptyRequest | None = None) -> Facade.SignedAuthorityHistory:
             """Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."""
         def import_(self, spec: Facade.SignedAuthorityHistory) -> Facade.AuthorityHistoryImported:
             """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
+    class _VaultAuthorityClockVerbs:
+        def repair(self, spec: Facade.EmptyRequest | None = None) -> Facade.AuthorityClockRepair:
+            """Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so."""
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __call__(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.AuthorityHandoffAlarm]:
             """Every saved authority handoff fork alarm, for the owner."""

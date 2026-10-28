@@ -37,7 +37,10 @@ impl MediaBackend for BookedReplies {
         request: MediaRequest,
         lease: &'a BudgetLease,
     ) -> MediaProgressFuture<'a> {
-        Box::pin(holding_replies(&self.1, self.0.run_progress(request, lease)))
+        Box::pin(holding_replies(
+            &self.1,
+            self.0.run_progress(request, lease),
+        ))
     }
 
     fn submit<'a>(

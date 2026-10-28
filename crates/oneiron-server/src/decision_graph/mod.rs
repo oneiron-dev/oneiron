@@ -145,12 +145,15 @@ impl<'s> LadderGraphAnswerer<'s> {
     }
 
     /// `ladder` without the rungs that send unit text off the host, where
-    /// the question's posture forbids that.
-    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l> {
+    /// the question's posture forbids that, judged on the route each call
+    /// takes (FIX 9525, [`crate::decision_host::DecisionHost::under_posture`]).
+    fn postured<'l>(&self, ladder: DecisionLadder<'l>) -> DecisionLadder<'l>
+    where
+        's: 'l,
+    {
+        let server: &'l SyncServer = self.server;
         match self.posture {
-            Some(posture) => {
-                ladder.under_posture(posture, self.server.decision_host().remote_opt_in())
-            }
+            Some(posture) => server.decision_host().under_posture(ladder, posture),
             None => ladder,
         }
     }
@@ -172,7 +175,7 @@ pub(crate) fn question_posture(
 /// text from, and `dial` starting at the first rung it leaves in the dial,
 /// when there is one.
 fn under_question_posture<'l>(
-    server: &SyncServer,
+    server: &'l SyncServer,
     ladder: DecisionLadder<'l>,
     posture: Option<HostingPrivacyPosture>,
     dial: &mut DecisionDial,
@@ -180,7 +183,7 @@ fn under_question_posture<'l>(
     let Some(posture) = posture else {
         return ladder;
     };
-    let ladder = ladder.under_posture(posture, server.decision_host().remote_opt_in());
+    let ladder = server.decision_host().under_posture(ladder, posture);
     if let Some(first) = ladder.first_media_reader(dial.first, dial.ceiling, false, false) {
         dial.first = first;
     }
