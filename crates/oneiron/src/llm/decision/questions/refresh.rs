@@ -1109,7 +1109,9 @@ fn land(
         if let Some(inherited) = crate::claim::claim_evidence_taint(&body) {
             taint = crate::dreamer_consolidation::source_meet(taint, inherited);
         }
-        if let Some(scope) = body.scope {
+        // The answer is a new claim: the unit's initial ClaimOf weight is the
+        // unit's own birth fact, so the answer is born at the default (FIX 7022).
+        if let Some(scope) = crate::claim::without_initial_weight(body.scope) {
             candidate = candidate.with_scope(scope);
         }
         if let Some(world) = body.world {

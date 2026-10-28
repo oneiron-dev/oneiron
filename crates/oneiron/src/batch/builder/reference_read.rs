@@ -1,8 +1,9 @@
 //! A bound writer's read through the committing terminal (OF-063, FIX 1223,
 //! 6068). The rows its puts would take are judged against their originals
 //! before any op stages; the typed record refs its CLAIMs name are judged by
-//! the claim gate under that read once the batch's own rows are staged, so a
-//! CLAIM about a row the same batch writes still lands.
+//! the claim gate's reference check under that read once the batch's own rows
+//! are staged (FIX 10785), so a CLAIM about a row the same batch writes still
+//! lands.
 
 use std::collections::BTreeSet;
 
@@ -137,69 +138,84 @@ pub(super) struct StagedDenial {
 }
 
 /// The first gated CLAIM whose record refs `reader` does not resolve in
-/// `txn`, the batch's own rows staged there, as the claim gate's reader-bound
-/// door judges it (FIX 1218). Each CLAIM is asked in a savepoint that is
-/// always rolled back, so the judging leaves nothing behind; only the gate's
-/// unresolved-reference denial is taken from it. Every other verdict is the
-/// preflight's, which already gave it.
+/// `txn`, the batch's own rows staged there (FIX 1218). The claim gate's
+/// reference check alone judges it (FIX 10785), so no other verdict the
+/// staged snapshot gives, a Dreamer precommit refusal seen only there
+/// included, decides or shadows it; every other verdict is the preflight's,
+/// which already gave it. For the CLAIM it finds, the claim gate's reader-bound
+/// door is asked in a savepoint that is always rolled back, only for the
+/// receipt the gate records with that denial; a door that answers with
+/// another verdict there leaves the denial standing without one.
 pub(super) fn staged_reference_denial(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     reader: &ScopedRead<'_>,
     claims: &[GatedClaim],
 ) -> Result<Option<StagedDenial>> {
-    if claims.is_empty() {
-        return Ok(None);
-    }
-    let policy = crate::gate::resolve_policy_manifest(&vault.store, &*txn)?;
+    let mut found = None;
     for claim in claims {
-        let mut probe = vault.store.env.nested_write_txn(txn)?;
-        let mut recorded = None;
-        let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader(
-            &vault.store,
-            &mut probe,
-            &claim.id,
-            crate::gate::ClaimGateWrite {
-                body: &claim.body,
-                envelope: claim.envelope.as_ref(),
-                // The preflight consulted any checker; only the refs are asked.
-                auto_checker: None,
-                defer_metrics_until_commit: true,
-                transition: None,
-                owner_authored: None,
-            },
-            &policy,
-            crate::gate::GateWriteMode {
-                record_decision: true,
-                persist_pending_consent: false,
-                resolve_pending: false,
-                can_resolve_pending_consent: true,
-                include_source_in_gate_input: false,
-            },
-            &mut recorded,
-            reader,
-        );
-        drop(probe);
-        match verdict {
-            Ok(()) => {}
-            Err(err) if unresolved_reference(&err) => {
-                return Ok(Some(StagedDenial {
-                    err,
-                    decision: recorded,
-                    claim: claim.id,
-                    retention: GateRetentionContext {
-                        world: Some(claim.body.world.unwrap_or_else(crate::claim::base_world_id)),
-                        project: Some(claim.body.scope_project),
-                        sub_project: None,
-                        thread: None,
-                    },
-                }));
-            }
-            Err(Error::Gate(_)) => {}
-            Err(err) => return Err(err),
+        if let Some(field) = crate::gate::unresolved_claim_reference(reader, &*txn, &claim.body)? {
+            found = Some((claim, field));
+            break;
         }
     }
-    Ok(None)
+    let Some((claim, field)) = found else {
+        return Ok(None);
+    };
+    tracing::info!(%field, "a batch claim names a record its writer cannot read; denied");
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &*txn)?;
+    let mut probe = vault.store.env.nested_write_txn(txn)?;
+    let mut recorded = None;
+    let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader(
+        &vault.store,
+        &mut probe,
+        &claim.id,
+        crate::gate::ClaimGateWrite {
+            body: &claim.body,
+            envelope: claim.envelope.as_ref(),
+            // The preflight consulted any checker; only the receipt is asked.
+            auto_checker: None,
+            defer_metrics_until_commit: true,
+            transition: None,
+            owner_authored: None,
+        },
+        &policy,
+        crate::gate::GateWriteMode {
+            record_decision: true,
+            persist_pending_consent: false,
+            resolve_pending: false,
+            can_resolve_pending_consent: true,
+            include_source_in_gate_input: false,
+        },
+        &mut recorded,
+        reader,
+    );
+    drop(probe);
+    let (err, decision) = match verdict {
+        Err(err) if unresolved_reference(&err) => (err, recorded),
+        Ok(()) | Err(Error::Gate(_)) => (reference_rejection(), None),
+        Err(err) => return Err(err),
+    };
+    Ok(Some(StagedDenial {
+        err,
+        decision,
+        claim: claim.id,
+        retention: GateRetentionContext {
+            world: Some(claim.body.world.unwrap_or_else(crate::claim::base_world_id)),
+            project: Some(claim.body.scope_project),
+            sub_project: None,
+            thread: None,
+        },
+    }))
+}
+
+/// The claim gate's unresolved-record-reference refusal, as its door
+/// returns it.
+fn reference_rejection() -> Error {
+    Error::Gate(GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes: vec![GateReasonCode::DenyUnresolvedRecordReference.as_str()],
+    })
 }
 
 /// Whether `err` is the claim gate's unresolved-record-reference denial.

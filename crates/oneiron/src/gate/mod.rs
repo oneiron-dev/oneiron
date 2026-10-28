@@ -151,7 +151,7 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_record_with_reader, check_edge_provenance_claim_policy,
     check_reserved_claim_policy, check_unattributed_claim_lineage, claim_consent_binding_parts,
     claim_source_trust_admits_auto, external_effect_decision_on,
-    standing_outbound_grant_binding_parts, validate_write_envelope,
+    standing_outbound_grant_binding_parts, unresolved_claim_reference, validate_write_envelope,
 };
 pub(crate) use self::foreign_agent::{
     introduced_foreign_agents, resolve as resolve_foreign_agent_ceiling,
