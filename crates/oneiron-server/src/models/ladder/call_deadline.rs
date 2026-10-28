@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use oneiron::llm::media::MediaRequest;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::{LlmError, LlmRequest, LlmResponse, LlmResult, LlmStream, ModelId, RetryableLlmError};
+use oneiron::{
+    LlmError, LlmRequest, LlmResponse, LlmResult, LlmStream, ModelId, RetryableLlmError,
+};
 use tokio::time::Instant;
 
 use super::super::media::{MediaAnswer, RungVoices};
