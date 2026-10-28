@@ -1,14 +1,15 @@
-//! LensNode depth-bounded tree type with allocation-guarded Deserialize seeds.
+//! LensNode tree type with its Deserialize seeds: the tree decodes whole, at
+//! any width or depth its codec reads (FIX 9900), and is validated once, at
+//! its root.
 
-use std::{fmt, marker::PhantomData};
+use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, de, de::DeserializeSeed};
 
 use super::{LensAtom, LensText};
 use crate::lens::generated_ui::SelfUiBinding;
 use crate::lens::validate::validate_lens_tree;
-use crate::lens::wire_ids::{LensAtomId, LensHandleRef, MAX_LENS_TREE_DEPTH};
-use crate::lens::wire_limits::{LimitedVecSeed, next_bounded_lens_entries, with_lens_tree_budget};
+use crate::lens::wire_ids::{LensAtomId, LensHandleRef};
 
 #[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct LensNode {
@@ -50,15 +51,15 @@ impl<'de> Deserialize<'de> for LensNode {
     where
         D: Deserializer<'de>,
     {
-        let node = LensNodeSeed { depth: 1 }.deserialize(deserializer)?;
+        let node = LensNodeSeed.deserialize(deserializer)?;
         validate_lens_tree(&node).map_err(de::Error::custom)?;
         Ok(node)
     }
 }
 
-pub(in crate::lens) struct LensNodeSeed {
-    pub(crate) depth: usize,
-}
+/// One node and its subtree, unvalidated: the root's `Deserialize` validates
+/// the whole tree once.
+pub(in crate::lens) struct LensNodeSeed;
 
 impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
     type Value = LensNode;
@@ -79,9 +80,7 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
             Children,
         }
 
-        struct LensNodeVisitor {
-            depth: usize,
-        }
+        struct LensNodeVisitor;
 
         impl<'de> de::Visitor<'de> for LensNodeVisitor {
             type Value = LensNode;
@@ -125,27 +124,19 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                             if bindings.is_some() {
                                 return Err(de::Error::duplicate_field("bindings"));
                             }
-                            bindings =
-                                Some(map.next_value_seed(LimitedVecSeed::<LensHandleRef> {
-                                    _marker: PhantomData,
-                                })?);
+                            bindings = Some(map.next_value::<Vec<LensHandleRef>>()?);
                         }
                         Field::StateBindings => {
                             if state_bindings.is_some() {
                                 return Err(de::Error::duplicate_field("$bind"));
                             }
-                            state_bindings =
-                                Some(map.next_value_seed(LimitedVecSeed::<SelfUiBinding> {
-                                    _marker: PhantomData,
-                                })?);
+                            state_bindings = Some(map.next_value::<Vec<SelfUiBinding>>()?);
                         }
                         Field::Children => {
                             if children.is_some() {
                                 return Err(de::Error::duplicate_field("children"));
                             }
-                            children = Some(map.next_value_seed(LensChildrenSeed {
-                                child_depth: self.depth + 1,
-                            })?);
+                            children = Some(map.next_value_seed(LensChildrenSeed)?);
                         }
                     }
                 }
@@ -175,19 +166,13 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
                     .next_element::<LensText>()?
                     .ok_or_else(|| de::Error::invalid_length(2, &self))?;
                 let bindings = seq
-                    .next_element_seed(LimitedVecSeed::<LensHandleRef> {
-                        _marker: PhantomData,
-                    })?
+                    .next_element::<Vec<LensHandleRef>>()?
                     .unwrap_or_default();
                 let state_bindings = seq
-                    .next_element_seed(LimitedVecSeed::<SelfUiBinding> {
-                        _marker: PhantomData,
-                    })?
+                    .next_element::<Vec<SelfUiBinding>>()?
                     .unwrap_or_default();
                 let children = seq
-                    .next_element_seed(LensChildrenSeed {
-                        child_depth: self.depth + 1,
-                    })?
+                    .next_element_seed(LensChildrenSeed)?
                     .unwrap_or_default();
                 if seq.next_element::<de::IgnoredAny>()?.is_some() {
                     return Err(de::Error::invalid_length(6, &self));
@@ -204,38 +189,22 @@ impl<'de> de::DeserializeSeed<'de> for LensNodeSeed {
             }
         }
 
-        if self.depth > MAX_LENS_TREE_DEPTH {
-            return Err(de::Error::custom(format!(
-                "generated lens tree depth must be at most {MAX_LENS_TREE_DEPTH}"
-            )));
-        }
-
-        let decode = || {
-            deserializer.deserialize_struct(
-                "LensNode",
-                &[
-                    "id",
-                    "atom",
-                    "fallbackText",
-                    "bindings",
-                    "$bind",
-                    "children",
-                ],
-                LensNodeVisitor { depth: self.depth },
-            )
-        };
-        // The root opens the tree's shared entry budget; descendants charge it.
-        if self.depth == 1 {
-            with_lens_tree_budget(decode)
-        } else {
-            decode()
-        }
+        deserializer.deserialize_struct(
+            "LensNode",
+            &[
+                "id",
+                "atom",
+                "fallbackText",
+                "bindings",
+                "$bind",
+                "children",
+            ],
+            LensNodeVisitor,
+        )
     }
 }
 
-struct LensChildrenSeed {
-    child_depth: usize,
-}
+struct LensChildrenSeed;
 
 impl<'de> de::DeserializeSeed<'de> for LensChildrenSeed {
     type Value = Vec<LensNode>;
@@ -244,29 +213,27 @@ impl<'de> de::DeserializeSeed<'de> for LensChildrenSeed {
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_seq(LensChildrenVisitor {
-            child_depth: self.child_depth,
-        })
+        deserializer.deserialize_seq(LensChildrenVisitor)
     }
 }
 
-struct LensChildrenVisitor {
-    child_depth: usize,
-}
+struct LensChildrenVisitor;
 
 impl<'de> de::Visitor<'de> for LensChildrenVisitor {
     type Value = Vec<LensNode>;
 
     fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("bounded lens node children")
+        formatter.write_str("lens node children")
     }
 
-    fn visit_seq<A>(self, seq: A) -> std::result::Result<Self::Value, A::Error>
+    fn visit_seq<A>(self, mut seq: A) -> std::result::Result<Self::Value, A::Error>
     where
         A: de::SeqAccess<'de>,
     {
-        next_bounded_lens_entries(seq, || LensNodeSeed {
-            depth: self.child_depth,
-        })
+        let mut children = Vec::with_capacity(seq.size_hint().unwrap_or(0).min(16));
+        while let Some(child) = seq.next_element_seed(LensNodeSeed)? {
+            children.push(child);
+        }
+        Ok(children)
     }
 }
