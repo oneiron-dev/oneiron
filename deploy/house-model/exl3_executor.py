@@ -10,9 +10,9 @@ then the earliest deadline, then arrival. While foreground work is present,
 waiting or in flight, at most BACKGROUND_ACTIVE_LIMIT background Jobs run in
 a round, round-robin among the equally ranked, and no more background work
 is admitted than that; with no foreground work present, background work
-uses every place, as before. A background Job's prefill runs at most
-PREFILL_CHUNK_TOKENS in a round; a foreground Job's runs the Generator's own
-chunk, as before. After EXECUTION_ROUNDS_PER_GRANT rounds the executor
+uses every place, as before. While foreground work is present, a background
+Job's prefill runs at most PREFILL_CHUNK_TOKENS in a round; otherwise, and for
+a foreground Job always, prefill runs the Generator's own chunk, as before. After EXECUTION_ROUNDS_PER_GRANT rounds the executor
 chooses again.
 
 The hook is the pinned exllamav3 1.6.0 `Generator.iterate`
@@ -58,8 +58,9 @@ CLASS_DEADLINE_POLICY = "class_deadline_v1"
 FIFO_POLICY = "fifo"
 POLICIES = (CLASS_DEADLINE_POLICY, FIFO_POLICY)
 DEFAULT_POLICY = CLASS_DEADLINE_POLICY
-# The most prompt tokens a background Job's prefill runs in one round: one
-# cache page, a prompt's last chunk shorter. Unmeasured start.
+# The most prompt tokens a background Job's prefill runs in one round while
+# foreground work is present: one cache page, a prompt's last chunk shorter.
+# Unmeasured start.
 PREFILL_CHUNK_TOKENS = 256
 # Engine rounds one choice of Jobs runs before the executor chooses again.
 EXECUTION_ROUNDS_PER_GRANT = 1
@@ -487,7 +488,8 @@ class Executor:
             execution = getattr(job, "execution", None)
             if id(job) in self.choice:
                 if hasattr(job, "prefill_bound"):
-                    job.prefill_bound = None if job_foreground(job) else PREFILL_CHUNK_TOKENS
+                    yields = self.foreground_present and not job_foreground(job)
+                    job.prefill_bound = PREFILL_CHUNK_TOKENS if yields else None
                 if execution is not None:
                     execution.ran(self.round, now)
                 chosen.append(job)
