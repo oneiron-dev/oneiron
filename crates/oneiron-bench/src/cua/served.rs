@@ -74,14 +74,27 @@ const FENCE_LAUNCHER_ENV: &str = "ONEIRON_FENCE_LAUNCHER";
 /// The host's fence launcher survives the `ONEIRON_*` strip: the browser guest
 /// cannot start without it, and it names a host binary, not engine config. The
 /// caller's absolute path wins; else the `oneiron-fence` built beside `binary`.
+/// It best-effort ensures the launcher carries 0555 bits so the guest can execute it.
 fn fence_launcher(binary: &Path) -> Option<PathBuf> {
     let given = std::env::var_os(FENCE_LAUNCHER_ENV).map(PathBuf::from);
-    if let Some(path) = given.filter(|path| path.is_absolute()) {
-        return Some(path);
+    let path = if let Some(path) = given.filter(|path| path.is_absolute()) {
+        path
+    } else {
+        fs::canonicalize(binary.with_file_name("oneiron-fence"))
+            .ok()
+            .filter(|path| path.is_file())?
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = fs::metadata(&path) {
+            let mode = metadata.permissions().mode();
+            if mode & 0o555 != 0o555 {
+                let _ = fs::set_permissions(&path, fs::Permissions::from_mode(mode | 0o555));
+            }
+        }
     }
-    fs::canonicalize(binary.with_file_name("oneiron-fence"))
-        .ok()
-        .filter(|path| path.is_file())
+    Some(path)
 }
 
 pub(super) async fn once(mut command: Command, deadline: Instant, log: &Path) -> Result<()> {
