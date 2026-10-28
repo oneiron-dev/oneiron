@@ -5091,7 +5091,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 1,
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -37199,7 +37199,7 @@
      "surface": {
       "const": 1,
       "crate-vis": 2,
-      "fn": 9,
+      "fn": 11,
       "struct": 5
      }
     },
@@ -37228,7 +37228,7 @@
      "purpose": "The sealed snapshot store (DESIGN-V2 §7, V2-R3): each snapshot's body sealed under its own data key in a…",
      "surface": {
       "crate-vis": 2,
-      "fn": 5,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -40706,7 +40706,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 11,
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -59242,7 +59242,7 @@
      "path": "src/serialize/credential_nulling.rs",
      "purpose": "Unconditional credential removal before any context/export format writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -84137,8 +84137,8 @@
      "path": "src/session/demonstration.rs",
      "purpose": "`demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs…",
      "surface": {
-      "crate-vis": 7,
-      "fn": 1
+      "crate-vis": 11,
+      "fn": 2
      }
     },
     {
@@ -92024,7 +92024,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 30
+      "re-export": 31
      }
     },
     {
@@ -92152,6 +92152,7 @@
      "notable": [
       "CanonicalCheckpointRef",
       "ConversationAnchor",
+      "RegionDescriptor",
       "SessionAppend",
       "SessionAppended",
       "SessionCapability",
@@ -92160,9 +92161,13 @@
       "SessionCreate",
       "SessionCreated",
       "SessionDrop",
+      "SessionExport",
+      "SessionExported",
       "SessionFork",
       "SessionForked",
       "SessionGenerate",
+      "SessionImport",
+      "SessionImported",
       "SessionInvalidation",
       "SessionKey",
       "SessionOp",
@@ -92173,15 +92178,17 @@
       "SessionRestored",
       "SessionSuffixCommit",
       "SessionSuffixStaged",
-      "SessionTarget"
+      "SessionTarget",
+      "SnapshotCapability",
+      "SnapshotMiss"
      ],
      "path": "src/llm/session.rs",
      "purpose": "Exact conversation sessions on a model worker (DESIGN-V2 §3.2, R2): what a session is keyed by, the…",
      "surface": {
-      "const": 4,
-      "enum": 2,
-      "fn": 4,
-      "struct": 22
+      "const": 8,
+      "enum": 3,
+      "fn": 8,
+      "struct": 28
      }
     },
     {
@@ -100558,7 +100565,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/browser_takeover_routes.rs",
@@ -107919,9 +107926,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/models/native_exl3/buffer.rs",
-     "purpose": "A native call's input region: the conversation's bytes copied once into an immutable shared region…",
+     "purpose": "A native call's regions",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 13
      }
     },
     {
@@ -107931,7 +107938,7 @@
      "path": "src/models/native_exl3/mod.rs",
      "purpose": "The house EXL3 worker's native channel, host side (DESIGN-V2 §8, V2-R1): a managed EXL3 worker whose launch…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 9
      }
     },
     {
@@ -107941,7 +107948,7 @@
      "path": "src/models/native_exl3/session_ops.rs",
      "purpose": "The session ops of codec v1.1 on the house EXL3 worker's socket (DESIGN-V2 R2), host side: one connection…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -107951,7 +107958,7 @@
      "path": "src/models/native_exl3/transport.rs",
      "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -107961,7 +107968,7 @@
      "path": "src/models/native_exl3/wire.rs",
      "purpose": "Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
      }
     },
     {
@@ -108193,6 +108200,7 @@
       "SeatState",
       "SeatStatus",
       "SnapshotReceipt",
+      "SnapshotSkips",
       "SnapshotStatus"
      ],
      "path": "src/models/status.rs",
@@ -108200,7 +108208,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -108344,11 +108352,11 @@
      "path": "src/models/worker_host/session.rs",
      "purpose": "Exact conversation sessions on this process's managed EXL3 workers (DESIGN-V2 §3.2, R2), host side: the…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/models/worker_host/session/commit.rs",
@@ -108363,6 +108371,16 @@
      "notable": [],
      "path": "src/models/worker_host/session/lifecycle.rs",
      "purpose": "The host's side of each served vault's snapshot lifecycle (DESIGN-V2 §7 \"On vault lock\", V2-R3): the port a…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/park.rs",
+     "purpose": "Parking (DESIGN-V2 §7 residency, V2-R3): an idle session's published checkpoint exported from its worker…",
      "surface": {
       "crate-vis": 5
      }
@@ -108384,7 +108402,17 @@
      "path": "src/models/worker_host/session/registry.rs",
      "purpose": "The coordinator's registry: for each managed worker, the incarnation its sessions live on, whether that…",
      "surface": {
-      "crate-vis": 21
+      "crate-vis": 29
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/worker_host/session/restore.rs",
+     "purpose": "Restore (DESIGN-V2 §7 residency, V2-R3): a kept snapshot imported into a fresh session for an admitted turn…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -111556,7 +111584,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 88,
+     "files": 90,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -111705,7 +111733,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1337,
+   "source_files": 1339,
    "test_files": 182
   },
   "oneiron-spawn": {

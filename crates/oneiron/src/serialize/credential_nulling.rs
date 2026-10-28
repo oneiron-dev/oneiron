@@ -87,6 +87,14 @@ pub(super) fn null_document_member(key: &str, value: &Value, depth: usize) -> Va
     null_at_depth(key, value, depth, true)
 }
 
+/// One source-tree row as the export writer leaves it: `value` through
+/// [`null_document_member`] at the depth `DocumentWriter::push_tree` holds
+/// such a row at (key `""`, depth 2). A projection rebuilding an agent
+/// bundle passes the rebuilt row through this before writing it.
+pub(crate) fn null_document_tree_row(value: &Value) -> Value {
+    null_document_member("", value, 2)
+}
+
 fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Value {
     if depth >= 128 || credential_key(key) {
         return Value::Null;
