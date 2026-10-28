@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::config::{ROW_VERSION, SKILL_EDIT_VERDICT_ACCEPTED, SKILL_EDIT_VERDICT_REJECTED};
 use super::target::CompilationTarget;
-use crate::edit_distance::FinalizedProposalText;
+use crate::edit_distance::RetainedProposal;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::edit_distance::delta::{AmendmentDelta, DeltaSource};
 use crate::entity_id::EntityId;
@@ -272,26 +272,29 @@ impl Bucket {
     }
 }
 
-/// What one judged amendment contributes: the routing facts and the text pair.
+/// What one judged amendment contributes: the routing facts and the
+/// artifact its texts are read from.
 pub(super) struct AmendmentSource<'a> {
     pub(super) actor: EntityId,
     pub(super) skill: Option<EntityId>,
     pub(super) delta_source: DeltaSource,
-    pub(super) artifact: &'a FinalizedProposalText,
+    pub(super) artifact: &'a RetainedProposal,
 }
 
-/// Every persisted proposal artifact, addressable by either ref pair a Δ can
-/// name it with.
+/// Every persisted proposal artifact with its retained document, by artifact
+/// id.
 pub(super) struct ArtifactIndex {
-    pub(super) records: Vec<FinalizedProposalText>,
-    pub(super) by_refs: BTreeMap<(String, String), usize>,
+    pub(super) records: BTreeMap<EntityId, RetainedProposal>,
 }
 
 impl ArtifactIndex {
-    /// The artifact a Δ's `(proposed_ref, final_ref)` pair names.
-    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<&FinalizedProposalText> {
-        let key = (delta.proposed_ref.clone(), delta.final_ref.clone());
-        self.records.get(*self.by_refs.get(&key)?)
+    /// The artifact both of a Δ's refs name, by the document they point into.
+    pub(super) fn resolve(&self, delta: &AmendmentDelta) -> Option<&RetainedProposal> {
+        let artifact = delta.proposed_ref.proposal_artifact()?;
+        if delta.final_ref.proposal_artifact() != Some(artifact) {
+            return None;
+        }
+        self.records.get(&artifact.entity_id())
     }
 }
 

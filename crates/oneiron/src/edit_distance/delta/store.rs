@@ -12,6 +12,7 @@ use crate::receipt::{
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
+use super::endpoint::{EndpointRef, MeasuredEnd, entity_endpoint_in_txn};
 use super::lanes::{DeltaCaptureContext, capture_delta_best};
 use super::schema::AmendmentDelta;
 
@@ -78,6 +79,16 @@ pub(crate) fn put_amendment_delta_in_txn(
     delta: &AmendmentDelta,
 ) -> Result<bool> {
     put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Captured(delta.clone()))
+}
+
+/// Records that capture was attempted for `receipt_id` and measured nothing,
+/// returning whether a row was written.
+pub(crate) fn put_amendment_uncaptured_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt_id: &str,
+) -> Result<bool> {
+    put_amendment_row_in_txn(vault, wtxn, receipt_id, &DeltaRow::Uncaptured)
 }
 
 /// The write-once side-ledger row itself — a Δ payload or
@@ -325,6 +336,7 @@ pub(super) fn identity_amendment_delta(
     let Some(record) = vault.identity_topology_event_in_txn(&rtxn, &proposal_id)? else {
         return Ok(None);
     };
+    let proposed_at = entity_endpoint_in_txn(&vault.store, &rtxn, proposal_id)?;
     drop(rtxn);
 
     let crate::identity_topology::IdentityTopologyAction::Apply(proposed_op) =
@@ -337,14 +349,23 @@ pub(super) fn identity_amendment_delta(
     //
     // The proposed side is re-encoded through the SAME door the amended body
     // rode (`encode_identity_op_amendment`), so the two trees are comparable
-    // shapes rather than an event record against an op body.
+    // shapes rather than an event record against an op body. Its ref names
+    // the event's retained revision; the amended end lives on this receipt.
     let Ok(proposed) = crate::identity_topology::encode_identity_op_amendment(&proposed_op) else {
         return Ok(Some(ProjectedDelta::Uncaptured));
     };
-    Ok(Some(
-        match capture_delta_best(&DeltaCaptureContext::from_bodies(&proposed, &amended)) {
-            Ok(delta) => ProjectedDelta::Captured(delta),
-            Err(_) => ProjectedDelta::Uncaptured,
+    let context = DeltaCaptureContext::from_bodies(
+        MeasuredEnd {
+            at: proposed_at,
+            content: &proposed,
         },
-    ))
+        MeasuredEnd {
+            at: EndpointRef::receipt(&receipt.receipt_id),
+            content: &amended,
+        },
+    );
+    Ok(Some(match capture_delta_best(context) {
+        Ok(delta) => ProjectedDelta::Captured(delta),
+        Err(_) => ProjectedDelta::Uncaptured,
+    }))
 }

@@ -11,10 +11,11 @@
 //!
 //! # Two lanes, one precedence
 //!
-//! * [`DeltaSource::RecordedOps`] — ED-00's finalized op window
-//!   ([`FinalizedProposalText`](crate::edit_distance::FinalizedProposalText)) replayed per change. It sees CHURN (text
-//!   typed then retyped) that an endpoint comparison cannot, which is why it
-//!   outranks the others.
+//! * [`DeltaSource::RecordedOps`] — ED-00's finalized op window, its authored
+//!   runs read change by change out of the proposal's retained document
+//!   ([`RetainedProposal`](crate::edit_distance::RetainedProposal)). It sees
+//!   CHURN (text typed then retyped) that an endpoint comparison cannot, which
+//!   is why it outranks the others.
 //! * [`DeltaSource::FieldDiff`] — two canonical-MessagePack bodies (claim
 //!   bodies, identity-topology op amendments) walked as trees, counting
 //!   changed leaves. Cheaper and far more legible than op replay for
@@ -27,7 +28,10 @@
 //!   and no structured body.
 //!
 //! Both text lanes measure whitespace-collapsed text, so a layout-only edit
-//! scores zero, and both charge a moved line at the move discount.
+//! scores zero, and both charge a moved run at the move discount.
+//!
+//! Every lane names both ends with an [`EndpointRef`]: the retained document
+//! an end lives in and the version there, so a Δ recomputes from its refs.
 //!
 //! [`capture_delta_best`] pins the precedence `recorded_ops > field_diff >
 //! reconstructed` HERE, so no caller hand-picks a lane.
@@ -52,19 +56,24 @@
 //! Non-fatal, but never silent: an approval whose Δ could not be measured
 //! must not look identical to one nothing has measured yet.
 
+mod endpoint;
 mod lanes;
+mod op_stream;
 mod schema;
 mod store;
 
+pub(crate) use self::endpoint::entity_endpoint_in_txn;
+pub use self::endpoint::{EndpointDocument, EndpointRef, MeasuredEnd};
 pub use self::lanes::{
     DeltaCaptureContext, capture_delta_best, delta_from_field_diff, delta_from_reconstructed,
     delta_from_recorded_ops,
 };
 pub(super) use self::schema::u32_saturating;
-pub use self::schema::{AmendmentDelta, DeltaSource, OpsSummary};
+pub use self::schema::{AmendmentDelta, DeltaSource, MEASUREMENT_ENGINE_VERSION, OpsSummary};
 pub(in crate::edit_distance) use self::store::amendment_recorded_in_txn;
 pub(crate) use self::store::{
     OUTCOME_APPROVED_AMENDED, attach_amendment_deltas, put_amendment_delta_in_txn,
+    put_amendment_uncaptured_in_txn,
 };
 pub use self::store::{amendment_delta, project_identity_amendment_deltas};
 
