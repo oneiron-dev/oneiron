@@ -21,8 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use oneiron::ModelLocality;
-use oneiron::llm::manifest::ModelRole;
+use oneiron::{ModelLocality, llm::manifest::ModelRole};
 use oneiron_code_check::{BackendKind, CheckMode, DEFAULT_INPUT_BYTES};
 use serde::Deserialize;
 
@@ -30,6 +29,7 @@ mod browser_planner;
 mod compaction;
 mod decision_read;
 mod decisions;
+mod drafting;
 mod dreamer_wording;
 mod levels;
 mod media;
@@ -141,6 +141,7 @@ struct DreamerFile {
     person_about_prompt: Option<String>,
     person_about_prompt_file: Option<PathBuf>,
     urgent_digest_question: Option<String>,
+    drafting: Option<drafting::DraftingFile>,
     /// `[models.dreamer.wording]`: the host's wording of the engine's asks
     /// (FIX 8696); each piece unset keeps its shipped default.
     #[serde(default)]
@@ -306,6 +307,7 @@ pub struct DreamerSettings {
     /// The wording of the urgent digest's harm question (OF-194). Without
     /// one, the host's shipped wording.
     pub urgent_digest_question: Option<String>,
+    pub(crate) drafting: drafting::DraftingSettings,
     /// The wording the engine's own asks go out in (FIX 8696): the shipped
     /// default for each piece the owner left unset.
     pub wording: DreamerWording,
@@ -468,6 +470,7 @@ impl ModelsFile {
                 .dreamer
                 .urgent_digest_question
                 .filter(|text| !text.trim().is_empty()),
+            drafting: self.dreamer.drafting.unwrap_or_default().resolve()?,
             wording: self.dreamer.wording.resolve(base)?,
             runner_seats: self.dreamer.runner_seats,
         };
