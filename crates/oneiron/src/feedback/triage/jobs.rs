@@ -49,7 +49,7 @@ fn job_input(source_ref: &FeedbackTriageSourceRef, evidence: EntityId) -> Result
     .map_err(|_| invalid_job())
 }
 
-pub(super) fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
+pub(crate) fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
     let job: JobInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
     Ok((
         FeedbackTriageSourceRef {

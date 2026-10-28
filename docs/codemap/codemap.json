@@ -24644,7 +24644,7 @@
      "purpose": "PEOPLE `about` (owner ruling, ARCH-0067): one line per person per sensitivity band, each written by the…",
      "surface": {
       "const": 1,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 1
      }
@@ -25971,6 +25971,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/authority/read_context.rs",
+     "purpose": "The read context an attempt's admission keeps (FIX 11001): the rows its input names, decoded with each…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -26035,7 +26045,7 @@
      "purpose": "Connector wake delivery retains its typed event; it is not a partition job",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 2,
@@ -26277,7 +26287,7 @@
      "purpose": "The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 13
      }
     },
@@ -26705,6 +26715,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/maintenance/applied/disposition.rs",
+     "purpose": "The ledger row and receipt of one background identity disposition: an abstention or a settle the identity…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/maintenance/applied/identity_erase.rs",
      "purpose": "The erase scrub over the Dreamer's identity inverses (FIX 8707): each settle's and each abstention's kept…",
      "surface": {
@@ -26979,7 +26999,7 @@
      "purpose": "The Dreamer's check of a self-written compaction (FIX 4465 B; owner 10-19: the Dreamer \"checks the agent's…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 3,
       "re-export": 1,
@@ -26993,7 +27013,7 @@
      "path": "src/dreamer_runner/maintenance/compaction_check/conversation.rs",
      "purpose": "The Dreamer's check of a conversation's self-written summary (FIX 4465 D), on the same maintenance queue and…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -27173,7 +27193,7 @@
      "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 11,
       "fn": 8,
       "struct": 7
      }
@@ -27472,7 +27492,7 @@
      "path": "src/dreamer_runner/maintenance/optimize.rs",
      "purpose": "The Coach's skill-maintenance body on the shared wake runner",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "struct": 2
      }
     },
@@ -27540,7 +27560,7 @@
      "purpose": "Evidence-citing user-voice plans",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 1,
       "re-export": 3,
@@ -33916,7 +33936,7 @@
      "purpose": "Feedback triage custody (OF-420 T1, ARCH-0056 #open-inbox): the sweep that hands each open-inbox note to the…",
      "surface": {
       "const": 7,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 2,
       "re-export": 5,
@@ -34031,7 +34051,7 @@
      "path": "src/feedback/triage/work_store.rs",
      "purpose": "The writers of a long revision's work graph (FIX 7549)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 3,
       "struct": 1
@@ -79755,7 +79775,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 167,
+     "files": 169,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80786,7 +80806,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5369,
+   "source_files": 5371,
    "test_files": 902
   },
   "oneiron-android": {
@@ -96269,7 +96289,7 @@
      "path": "src/ai_host/resident_craft.rs",
      "purpose": "A resident's craft on the surfaces it speaks on besides its pumped runs (OF-490): a workflow leaf and a wave…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -96410,7 +96430,7 @@
      "path": "src/ai_host/stewardship.rs",
      "purpose": "Follow-up drafts for due stewardship reach-outs (ARCH-0026 Represent)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -104078,6 +104098,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/config/models/broker.rs",
+     "purpose": "`[models.broker]` as the file writes it, and its check into the [`BrokerConfig`] this server runs its…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/config/models/browser_planner.rs",
      "purpose": "`[models.roles.browser_planner]`: the mid planner a browser subgoal's next code-mode step runs on (CUA E5…",
      "surface": {
@@ -104137,6 +104167,16 @@
       "crate-vis": 2,
       "enum": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/config/models/drafting.rs",
+     "purpose": "`[models.dreamer.drafting]`: the role and the budget a stewardship follow-up draft is written on (FIX 1002)",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -111730,7 +111770,7 @@
      "purpose": "The native serve listener is intentionally plain TCP: TLS terminates at a reverse proxy"
     },
     "config": {
-     "files": 60,
+     "files": 62,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -112138,7 +112178,7 @@
    },
    "over_bar": 31,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1339,
+   "source_files": 1341,
    "test_files": 182
   },
   "oneiron-spawn": {

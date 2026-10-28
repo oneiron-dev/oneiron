@@ -26,12 +26,14 @@ pub use policy::{ProactivityPolicyBasis, ProactivityPolicyFiling};
 pub(super) use policy::{ProactivityPolicyInverse, revert_policy_in_txn};
 pub use private_sources::DigestPrivateSource;
 use urgent::DigestAudience;
+pub(crate) use urgent::{
+    ASSESSMENT_KEY, CANDIDATE_KEY, emit_urgent_proactivity_digest, json_field, unlent_assessment,
+};
 pub use urgent::{
     DIGEST_ASSESS_FACET, DIGEST_ASSESS_UNLENT_PARK_REASON, DIGEST_URGENT_FACET, DigestHarmAsk,
     DigestHarmCandidate, DigestHarmJudgeInput, DigestHarmResult, DigestNeededBefore,
     DigestVersionRef, UrgentDigestAssessment,
 };
-pub(crate) use urgent::{emit_urgent_proactivity_digest, unlent_assessment};
 pub use view::ProactivityDigestView;
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);

@@ -241,6 +241,8 @@ pub(super) fn keep_separate_in_txn(
             source,
             kept_at: now,
         })),
+        &kept,
+        None,
         now,
     )
 }

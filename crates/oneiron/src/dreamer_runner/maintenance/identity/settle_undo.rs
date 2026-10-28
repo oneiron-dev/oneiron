@@ -267,6 +267,8 @@ pub(super) fn settle_in_txn(
         IDENTITY_RECHECK_FACET,
         actor,
         MaintenanceInverse::IdentitySettle(Box::new(inverse)),
+        ask,
+        Some(entity),
         now,
     )?;
     Ok(entity)
