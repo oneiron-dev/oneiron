@@ -201,6 +201,11 @@ class WorkContext:
         field this worker refuses."""
         return cls(grant=parse_grant(body.get("admission")), **work_fields(body, now_ns))
 
+    def arrive(self):
+        """Takes the call's place in arrival order: where it enters the
+        scheduler's queue, as the queue always ordered calls."""
+        self.arrival = next(_ARRIVALS)
+
     def foreground(self):
         return self.work_class == FOREGROUND
 
@@ -373,6 +378,8 @@ class Executor:
         self.round = 0
         self.revision = 0
         self.foreground_present = False
+        # The last round's Jobs: run, left out by the policy, paused.
+        self.ran = 0
         self.withheld = 0
         self.yielded = 0
         self.choice = None
@@ -475,6 +482,7 @@ class Executor:
             self.chosen_round = self.round
         chosen = []
         self.withheld = self.yielded = 0
+        self.ran = len(self.choice & key[0])
         for job in jobs:
             execution = getattr(job, "execution", None)
             if id(job) in self.choice:

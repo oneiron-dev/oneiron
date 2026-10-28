@@ -658,6 +658,7 @@ class Scheduler:
         # session branch's first Job shares the pages its session holds.
         req.need = max(0, min(pages_for(need, req.max_tokens, self.depth), self.pool_pages) - req.shared)
         req.submitted = time.monotonic()
+        req.work.arrive()
         foreground = req.work.foreground()
         with self.cond:
             # Counted while it waits for a place: part of the queue depth,
@@ -1037,7 +1038,10 @@ class Scheduler:
         self._route(results)
         if self.sessions is not None:
             self.sessions.after_pass()
-        if not results and not self.generator.num_active_jobs() and self.generator.num_pending_jobs():
+        # A round that ran no Job (none active, or every active one paused)
+        # beside a Job that cannot start yet.
+        idle_round = not self.generator.num_active_jobs() or (self.executor.prioritized and not self.executor.ran)
+        if not results and idle_round and self.generator.num_pending_jobs():
             with self.cond:
                 self.cond.wait(STALL_WAIT_S)
 
