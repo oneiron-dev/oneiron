@@ -4362,8 +4362,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/recovery/checkpoint/image.rs` | src | s | 6 crate-vis | — | A checkpoint image and its structural read (moved out of the checkpoint module whole) |
 | `src/recovery/checkpoint/landing.rs` | src | m | 1 crate-vis | — | Landing one checkpoint image in its destination: the restore pipeline behind every restore, wake and migrate… |
 | `src/recovery/checkpoint/landing_lengths.rs` | src | s | 3 crate-vis | — | The length each image row lands at, known before anything is opened, so a restore claims its real size up… |
-| `src/recovery/checkpoint/mod.rs` | src | m | 3 struct · 2 enum · 19 fn · 13 re-export · 3 crate-vis | HomeTableNote, RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
+| `src/recovery/checkpoint/mod.rs` | src | m | 3 struct · 2 enum · 19 fn · 14 re-export · 3 crate-vis | HomeTableNote, RestoreEpoch, RestoreReason, RestoreReport, SideRestoreSource | Tier-C physical-row checkpoints and one restore/wake/migrate path |
 | `src/recovery/checkpoint/pad_custody.rs` | src | m | 1 enum · 5 crate-vis | PadRestoreNote | A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes) |
+| `src/recovery/checkpoint/pad_objects.rs` | src | m | 1 enum · 11 crate-vis | PadObjectNote | The home's current pad objects on a restore beside its source, a restore over or keeping a live vault's… |
 | `src/recovery/checkpoint/pad_reopen.rs` | src | m | 2 struct · 1 enum · 1 fn | PadReopenFault, PadReopenReport, PadReopenStage | Opening a restored vault's Locked worlds again (PAD-2, FIX 10470; CALLS C-L04-MANAGED-RESTORE-LOCKED-WORLDS… |
 | `src/recovery/checkpoint/payload/actors.rs` | src | s | 4 crate-vis | — | Actor groups (KS7-2b): the actor parts the getters split out of every owner's rows, grouped under each… |
 | `src/recovery/checkpoint/payload/mod.rs` | src | m | 23 crate-vis | — | The checkpoint payload projection (KS-7, FIX 5688 KS7-2b): which of an image's rows go into their owners'… |
@@ -5064,9 +5065,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/deadline_jobs.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | DeadlineJob | Deadline jobs (SCAN C030): the recalls and searches a door answers at their deadline, counted per caller on… |
 | `src/store/diagnostics.rs` | src | s | 1 struct · 3 fn | Diagnostics | The content-free counters one open vault owns |
 | `src/store/gate_decision/actor_erase.rs` | src | s | 1 enum · 1 const · 2 crate-vis | GateAttributionErase | An erased actor out of the Gate decision ledger (FIX 4230, 4231) |
-| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 32 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
+| `src/store/gate_decision/checkpoint_custody.rs` | src | m | 33 crate-vis | — | What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038… |
 | `src/store/gate_decision/checkpoint_custody/activation.rs` | src | m | 1 crate-vis | — | An owner's activation of an archived vault as a side vault of the vault that replaced it (moved out of the… |
-| `src/store/gate_decision/checkpoint_custody/destination.rs` | src | s | 7 crate-vis | — | The directory a restore makes for its copy, held under the copy's writer lease until the restore commits… |
+| `src/store/gate_decision/checkpoint_custody/destination.rs` | src | s | 8 crate-vis | — | The directory a restore makes for its copy, held under the copy's writer lease until the restore commits… |
+| `src/store/gate_decision/checkpoint_custody/pad_objects.rs` | src | s | 13 crate-vis | — | A source vault's current pad objects, read with its live custody (PAD-1, the L01 seam approved 10-22 10:3x)… |
 | `src/store/gate_decision/claim_refs.rs` | src | s | 8 crate-vis | — | Inbox-bundle claim references and uncommitted batch-preflight markers: the two gate-decision sidecars… |
 | `src/store/gate_decision/context.rs` | src | m | 7 struct · 5 enum · 7 fn · 5 crate-vis | GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext, GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin +4 | What a Gate decision was made about, the loop it came from and the ruled analysis of the input it judged… |
 | `src/store/gate_decision/keys.rs` | src | s | 15 crate-vis | — | Gate-decision ledger key prefixes, key constructors, and the id successor |
@@ -5075,7 +5077,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/gate_decision/ledger/erasure_scan.rs` | src | s | 1 crate-vis | — | The ERASE completeness scan for many claims at once (SCAN C049): one tombstone batch's missing-id probes… |
 | `src/store/gate_decision/ledger/held_scrubs.rs` | src | m | 7 crate-vis | — | What an erase owes a Gate decision a legal hold keeps (FIX 7993, 7994) |
 | `src/store/gate_decision/lookup.rs` | src | s | 4 crate-vis | — | First-match reads on the caller's gate-decision ledger transaction |
-| `src/store/gate_decision/mod.rs` | src | s | 3 re-export · 15 crate-vis | — | The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar… |
+| `src/store/gate_decision/mod.rs` | src | s | 3 re-export · 16 crate-vis | — | The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar… |
 | `src/store/gate_decision/orcb.rs` | src | s | 12 crate-vis | — | ORCB v1: schema-only dictionary and per-claim hot-value AEAD, keyed by the claim's typed custody entry… |
 | `src/store/gate_decision/read_items.rs` | src | s | 1 crate-vis | — | A tolerant streaming read of the gate-decision ledger (OF-499 A2): each row reaches the caller as its own… |
 | `src/store/gate_decision/retention.rs` | src | m | 7 fn · 10 crate-vis | — | Opt-in gate-decision age sweep over the actual ORCB custody unit, and the claim client's retirement policy… |
@@ -5138,14 +5140,15 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
 | `src/store/mod.rs` | src | s | 1 mod · 17 re-export · 37 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/open_gates/custody_pad_rows.rs` | src | s | 2 crate-vis | — | The paired custody read (PAD-1, the L01 seam approved 10-22 10:3x): an existing vault's live custody rows… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
-| `src/store/open_gates/mod.rs` | src | s | 2 re-export · 12 crate-vis | — | `Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight… |
+| `src/store/open_gates/mod.rs` | src | s | 2 re-export · 13 crate-vis | — | `Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight… |
 | `src/store/open_gates/open_create_door.rs` | src | m | 1 fn · 4 crate-vis | — | Create-capable open door: `Store::open` and its helpers |
 | `src/store/open_gates/open_existing_door.rs` | src | m | 8 crate-vis | — | Existing-only open door: `Store::open_existing` and its helpers |
 | `src/store/open_gates/open_version_keys.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 const · 41 crate-vis | DbManifestEntry, StorageMigrationPlan | Version stamps, vault-meta key consts, HNSW layout consts, error strings, process locks, DB manifest, and… |
-| `src/store/open_gates/read_only_door.rs` | src | s | 5 crate-vis | — | Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another… |
+| `src/store/open_gates/read_only_door.rs` | src | s | 8 crate-vis | — | Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another… |
 | `src/store/open_gates/read_only_door/tests.rs` | test | s | — | — | The reader table two processes get over one vault, whichever opens first |
 | `src/store/open_gates/vault_root_bind.rs` | src | m | 46 crate-vis | — | Vault-root preflight pair classifier plus descriptor-bound root and LMDB header validators |
 | `src/store/outbound_send_receipt.rs` | src | s | 12 crate-vis | — | Outbound gate bindings, durable send receipts, and the delivered-send idempotency index |
@@ -5403,12 +5406,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/bundle.rs` | src | m | 3 struct · 1 enum · 12 fn · 2 const · 3 re-export · 15 crate-vis | SealedBundleEntry, SealedBundleKitRoot, SealedBundleObject, SealedBundleStage | The home's custody of the vault's sealed cloud bundle (DEC-0005 "Sealed copies", FIX 922) |
 | `src/sync/residence/bundle/commit_receipt.rs` | src | m | 1 struct · 1 fn · 1 crate-vis | SealedBundleCommitReceipt | The home's commit of a staged generation, and its record of each commit an asked executor made for the… |
 | `src/sync/residence/bundle/order.rs` | src | s | 2 crate-vis | — | The order the home committed its generations in (FIX 8885) |
-| `src/sync/residence/bundle/pad_objects.rs` | src | m | 2 struct · 1 enum · 1 fn · 1 const · 14 crate-vis | BundlePartRead, PadObjectUnavailable, SealedBundleIndex | The home's current pad objects as one read names them (FIX 7106, its copy half): each kept generation's… |
+| `src/sync/residence/bundle/pad_objects.rs` | src | m | 2 struct · 1 enum · 1 fn · 1 const · 16 crate-vis | BundlePartRead, PadObjectUnavailable, SealedBundleIndex | The home's current pad objects as one read names them (FIX 7106, its copy half): each kept generation's… |
 | `src/sync/residence/bundle/publication.rs` | src | s | 4 crate-vis | — | The home's admission of the install the owner asked to publish the vault's sealed bundle here (WILL L04 row… |
-| `src/sync/residence/bundle/refill.rs` | src | s | 1 enum · 2 fn · 2 const · 1 crate-vis | PadObjectRefill | A kept pad object's bytes filled again from a machine's upload (FIX 9362, L03 half) |
+| `src/sync/residence/bundle/refill.rs` | src | s | 1 enum · 2 fn · 2 const · 2 crate-vis | PadObjectRefill | A kept pad object's bytes filled again from a machine's upload (FIX 9362, L03 half) |
 | `src/sync/residence/bundle_access.rs` | src | m | 3 struct · 1 enum · 4 fn · 6 crate-vis | PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList | A late joiner's access to the kept pad objects (FIX 4271): the home's custody of the grants, and the outbox… |
 | `src/sync/residence/bundle_payload.rs` | src | m | 2 struct · 3 fn · 1 re-export | SealedBundleTake, SealedKitRestore | What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section and the section of each world… |
 | `src/sync/residence/bundle_payload/checkpoint.rs` | src | s | 1 enum · 2 fn · 5 crate-vis | RecoveryCheckpointTrust | The checkpoint image a sealed bundle's base section carries, and the kit restore that adopts it (FIX 3583) |
+| `src/sync/residence/bundle_payload/restore_pads.rs` | src | s | 2 crate-vis | — | A kit restore's pads (PAD-1, the narrow kit hook agreed with L03): the pad object's pads land after the base… |
 | `src/sync/residence/bundle_stage.rs` | src | s | 1 struct · 1 fn | SealedBundleStaged | The uploads the home stages, as its disk sees them (FIX 3354) |
 | `src/sync/residence/bundle_turn.rs` | src | s | 1 fn · 3 crate-vis | — | The publisher turn of the vault's sealed cloud bundle on the home (FIX 3351) |
 | `src/sync/residence/custody.rs` | src | s | 4 fn | — | The residence home's door for the key custody of the owner's machines (KS-4A2, FIX 5685): the residence target |
@@ -6133,7 +6137,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/bundle/carrier.rs` | src | m | 1 struct · 13 fn · 6 crate-vis | SealedVaultUpload | Bundle carrier entry points for sealing and opening one generation |
 | `src/world_keys/bundle/holder_policy.rs` | src | s | 2 crate-vis | — | A holder's sealed-copy setting, apart from the section a world rides in (FIX 8886): one rule for a private… |
 | `src/world_keys/bundle/key_erase.rs` | src | s | 7 crate-vis | — | Erase's rewrite of the kept pad objects for one key alone (FIX 7192, 7294): a hard erase of one world key… |
-| `src/world_keys/bundle/pad_objects.rs` | src | s | 10 fn | — | Public access and rewrite operations on sealed key-pad objects |
+| `src/world_keys/bundle/pad_objects.rs` | src | s | 10 fn · 1 crate-vis | — | Public access and rewrite operations on sealed key-pad objects |
 | `src/world_keys/bundle/publication.rs` | src | m | 2 fn · 7 crate-vis | — | Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated… |
 | `src/world_keys/bundle/retirement.rs` | src | s | 1 struct · 4 fn · 3 const | SealedBundleGeneration | Bundle generation identity, upload cadence and retirement selection |
 | `src/world_keys/bundle/sections.rs` | src | s | 1 struct · 7 fn · 2 crate-vis | OpenedBundleSection | Opened world-section views and bundle section selection |

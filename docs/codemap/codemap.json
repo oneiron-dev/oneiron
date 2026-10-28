@@ -55282,7 +55282,7 @@
       "crate-vis": 3,
       "enum": 2,
       "fn": 19,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 3
      }
     },
@@ -55296,6 +55296,19 @@
      "purpose": "A restore's world key pads (KS-5, FIX 5686 part 2; CALLS: KS-5 restore outcomes)",
      "surface": {
       "crate-vis": 5,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadObjectNote"
+     ],
+     "path": "src/recovery/checkpoint/pad_objects.rs",
+     "purpose": "The home's current pad objects on a restore beside its source, a restore over or keeping a live vault's…",
+     "surface": {
+      "crate-vis": 11,
       "enum": 1
      }
     },
@@ -64152,7 +64165,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -64172,7 +64185,17 @@
      "path": "src/store/gate_decision/checkpoint_custody/destination.rs",
      "purpose": "The directory a restore makes for its copy, held under the copy's writer lease until the restore commits…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/pad_objects.rs",
+     "purpose": "A source vault's current pad objects, read with its live custody (PAD-1, the L01 seam approved 10-22 10:3x)…",
+     "surface": {
+      "crate-vis": 13
      }
     },
     {
@@ -64279,7 +64302,7 @@
      "path": "src/store/gate_decision/mod.rs",
      "purpose": "The append-only gate-decision ledger: decision rows, claim/grant-ref indexes, the pending-deletion sidecar…",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "re-export": 3
      }
     },
@@ -64965,6 +64988,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/open_gates/custody_pad_rows.rs",
+     "purpose": "The paired custody read (PAD-1, the L01 seam approved 10-22 10:3x): an existing vault's live custody rows…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/open_gates/embedding_transform_gates.rs",
      "purpose": "The embedding-transform pin: how a vault's vectors were made, beside the model that made them",
      "surface": {
@@ -64999,7 +65032,7 @@
      "path": "src/store/open_gates/mod.rs",
      "purpose": "`Store::open` / `Store::open_existing` and the fail-closed open-time gate sequence: vault-root preflight…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 2
      }
     },
@@ -65048,7 +65081,7 @@
      "path": "src/store/open_gates/read_only_door.rs",
      "purpose": "Read-only door: rows of an existing vault's `vault_meta`, read without opening it as a vault, beside another…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
@@ -67958,7 +67991,7 @@
      "purpose": "The home's current pad objects as one read names them (FIX 7106, its copy half): each kept generation's…",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 16,
       "enum": 1,
       "fn": 1,
       "struct": 2
@@ -67984,7 +68017,7 @@
      "purpose": "A kept pad object's bytes filled again from a machine's upload (FIX 9362, L03 half)",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2
      }
@@ -68034,6 +68067,16 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle_payload/restore_pads.rs",
+     "purpose": "A kit restore's pads (PAD-1, the narrow kit hook agreed with L03): the pad object's pads land after the base…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -77782,6 +77825,7 @@
      "path": "src/world_keys/bundle/pad_objects.rs",
      "purpose": "Public access and rewrite operations on sealed key-pad objects",
      "surface": {
+      "crate-vis": 1,
       "fn": 10
      }
     },
@@ -80328,7 +80372,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 98,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -80573,7 +80617,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 164,
+     "files": 166,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80601,7 +80645,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 278,
+     "files": 279,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80806,7 +80850,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5371,
+   "source_files": 5375,
    "test_files": 902
   },
   "oneiron-android": {
