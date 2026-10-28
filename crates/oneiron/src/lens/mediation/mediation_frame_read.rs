@@ -3,7 +3,6 @@
 use crate::claim::ScopedRead;
 use crate::error::{Error, Result};
 use crate::lens::generated_ui::GeneratedUiRender;
-use crate::lens::validate::validate_lens_collection_len;
 use crate::lens::wire_ids::{
     LensAtomId, LensBackingRefId, LensHandleName, LensHandleRole, LensRenderId,
 };
@@ -323,7 +322,6 @@ impl LensRenderFrame {
         callback: GeneratedUiAgentCallback,
         selected: Vec<LensReadHandle>,
     ) -> Result<GeneratedUiAgentCallback> {
-        validate_lens_collection_len("lens selected read context", selected.len())?;
         if callback.source_card_id != self.render_id {
             return Err(Error::InvalidConfig(
                 "lens selected context must ride a callback from this render frame".to_string(),
