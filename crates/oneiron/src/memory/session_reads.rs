@@ -310,11 +310,35 @@ impl<'s> SessionReadContext<'s> {
             .session
             .search_text_scoped_routed(self.route, &self.view, &lane, query, limit)?;
         let hits = lane.filter_scored_entities(hits)?;
-        // The room's own search names no indexed revision: its hits read
-        // through the room's view, live.
-        memory.lexical_hits(&lane, hits, &Default::default(), |id| {
-            self.short_ref(id)
-        })
+        let revisions = self.indexed_revisions(&hits.value)?;
+        memory.lexical_hits(&lane, hits, &revisions, |id| self.short_ref(id))
+    }
+
+    /// The revision the room's text index holds for each hit, read through
+    /// the room's view, which pins its staged rows as base pins its own: the
+    /// revision whose text the room's search matched (FIX 9956). A hit with
+    /// no indexed revision is read live.
+    fn indexed_revisions(
+        &self,
+        hits: &[crate::pipeline::ScoredEntity],
+    ) -> MemoryResult<std::collections::HashMap<EntityId, crate::vault::RevisionRef>> {
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(|error| MemoryError::from(crate::Error::from(error)))?;
+        let view = self.view.read();
+        let mut revisions = std::collections::HashMap::with_capacity(hits.len());
+        for hit in hits {
+            if let Some(revision) = self
+                .vault
+                .indexed_revision_from_in_txn(&view, &txn, &hit.id)?
+            {
+                revisions.insert(hit.id, revision);
+            }
+        }
+        Ok(revisions)
     }
 
     /// The short ref this call's view names `id` by: the room's alias for a

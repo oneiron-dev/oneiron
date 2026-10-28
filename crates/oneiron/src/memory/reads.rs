@@ -515,7 +515,18 @@ impl Memory<'_> {
                     .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
             });
             let short = short_ref(&hit.id)?;
-            let named = short.clone().unwrap_or_else(|| hit.id.to_hex());
+            let short_id = match revisions.get(&hit.id) {
+                // A pinned ref carries the content hash of the revision it
+                // pins, the row this read admitted, never the live one.
+                Some(revision) => {
+                    let named = match short.as_deref().and_then(|short| short.rsplit_once(':')) {
+                        Some((name, _)) => format!("{name}:{:02x}", row.content_hash),
+                        None => hit.id.to_hex(),
+                    };
+                    format!("{named}@{}", revision.to_hex())
+                }
+                None => short.clone().unwrap_or_else(|| hit.id.to_hex()),
+            };
             out.push(LexicalHit {
                 record: Some(crate::lens::RecordRef::from_body(
                     row.entity_type,
@@ -523,10 +534,7 @@ impl Memory<'_> {
                     short.as_deref(),
                     body.as_ref(),
                 )),
-                short_id: match revisions.get(&hit.id) {
-                    Some(revision) => format!("{named}@{}", revision.to_hex()),
-                    None => named,
-                },
+                short_id,
                 kind: kind_string_for_type(row.entity_type),
                 score,
                 snippet,

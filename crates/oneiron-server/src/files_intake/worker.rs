@@ -192,19 +192,25 @@ fn rescan_one(
 ) -> anyhow::Result<()> {
     let (report, warnings) = super::source::rescan(vault, owner, source)?;
     for warning in &warnings {
-        if let ImportWarning::LimitCrossed {
-            row,
-            limit,
-            observed,
-        } = warning
-        {
-            tracing::warn!(
+        match warning {
+            ImportWarning::LimitCrossed {
+                row,
+                limit,
+                observed,
+            } => tracing::warn!(
                 folder = %source.folder,
                 row = *row,
                 limit = *limit,
                 observed = *observed,
                 "folder source read past a [limits] row; read whole, and the row asks"
-            );
+            ),
+            ImportWarning::OriginalsUnkept { files, first_error } => tracing::warn!(
+                folder = %source.folder,
+                files = *files,
+                error = %first_error,
+                "folder source kept no original for some files; their text landed"
+            ),
+            ImportWarning::HardLinked { .. } => {}
         }
     }
     let moved = report.landed

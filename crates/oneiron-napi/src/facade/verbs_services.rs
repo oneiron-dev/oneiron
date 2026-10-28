@@ -271,8 +271,14 @@ impl ActorScopedVault {
     /// (light effort under a hard deadline: `deadline_ms`, or the vault's
     /// call-mode deadline); no lease handle exists on this surface yet, so
     /// paid effort returns the typed `LEASE_REQUIRED` error until the LLMB
-    /// chain lands the issuer.
+    /// chain lands the issuer. `token_budget` (0: uncut) sizes the rendered
+    /// `format`; omitted, the window budget of `reader_agent_ref`'s memory
+    /// profile, else 4,000 tokens.
     #[napi]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one parameter per argument of the recall call"
+    )]
     pub fn recall(
         &self,
         query: String,
@@ -281,6 +287,8 @@ impl ActorScopedVault {
         limit: u32,
         format: Option<String>,
         deadline_ms: Option<f64>,
+        token_budget: Option<f64>,
+        reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
         crate::validate_query_len(&query).map_err(caller_input_error)?;
         let limit = crate::parse_search_limit(limit).map_err(caller_input_error)?;
@@ -293,14 +301,18 @@ impl ActorScopedVault {
             .map(oneiron::memory::caps::check_deadline_ms_number)
             .transpose()
             .map_err(facade_error)?;
+        let token_budget = token_budget
+            .map(oneiron::memory::caps::check_token_budget_number)
+            .transpose()
+            .map_err(facade_error)?;
         let request = oneiron::task_verb::sdk::RecallRequest {
             query,
             effort: Some(effort),
             scope: Some(recall_scope_to_engine(scope)),
             limit: Some(limit),
             format,
-            token_budget: None,
-            reader_agent_ref: None,
+            token_budget,
+            reader_agent_ref,
             as_of: None,
             deadline_ms,
             media: None,

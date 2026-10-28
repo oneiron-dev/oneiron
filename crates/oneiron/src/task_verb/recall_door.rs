@@ -187,7 +187,7 @@ fn recall_within_ceiling(
     )?;
     // The rendering budget, resolved once before the query embeds (FIX 9962).
     let render_budget = Some(
-        memory.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref())?,
+        memory.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref()),
     );
     let deadline =
         budget.map(|budget| crate::retrieval_depth::RetrievalDeadline::hard(door.arrived, budget));

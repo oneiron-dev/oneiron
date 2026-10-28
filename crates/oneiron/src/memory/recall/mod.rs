@@ -918,9 +918,21 @@ impl Memory<'_> {
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing
-            // outside the facet enters either.
+            // outside the facet enters either. It selects as the facet route
+            // always did: the limit alone, with no per-kind ceiling and no
+            // share for non-base worlds.
             if let Some(facet_id) = selection.facet {
-                builder = builder.facet(&facet_id, FacetMode::Strict);
+                builder = builder
+                    .facet(&facet_id, FacetMode::Strict)
+                    .retrieval_budget(crate::context_pack::ContextPackRetrievalBudget {
+                        claims: limit,
+                        turns: limit,
+                        summaries: limit,
+                        facets: limit,
+                        other: limit,
+                        selected_edges: 0,
+                    })
+                    .non_base_world_claim_fraction(1.0);
             }
 
             if let Some(telemetry) = session_telemetry.as_ref() {

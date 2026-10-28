@@ -347,7 +347,7 @@ impl Memory<'_> {
         // Every pass renders under the one budget the request resolves to
         // (FIX 9962).
         let render_budget = Some(
-            self.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref())?,
+            self.recall_render_budget(input.token_budget, input.reader_agent_ref.as_deref()),
         );
         // Every pass, retry and text read of this recall narrows by the one
         // selection its first pass resolves (FIX 5006), or the door's cut

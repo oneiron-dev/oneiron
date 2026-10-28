@@ -501,12 +501,14 @@ pub struct RecallRequest {
     pub limit: Option<usize>,
     #[serde(default)]
     pub format: Option<String>,
-    /// The token budget `format`'s rendering is cut to, at least 1. Omitted,
-    /// the window budget of `reader_agent_ref`'s memory profile, else 4,000.
+    /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
+    /// Omitted, the window budget of `reader_agent_ref`'s memory profile,
+    /// else 4,000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub token_budget: Option<u64>,
     /// An agent definition the caller reads whose memory profile sizes the
-    /// rendering when `token_budget` is omitted. It grants no read.
+    /// rendering when `token_budget` is omitted. It grants no read, and one
+    /// the caller cannot read adds no budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reader_agent_ref: Option<String>,
     /// Unix seconds the query's time words resolve against: `yesterday` is

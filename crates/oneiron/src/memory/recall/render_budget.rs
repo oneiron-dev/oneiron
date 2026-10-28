@@ -23,51 +23,43 @@ pub(crate) fn execution_render_budget(
 }
 
 impl Memory<'_> {
-    /// The rendering budget a recall request asks for, by
-    /// [`render_token_budget`]. `reader_agent_ref` names an agent definition
-    /// whose memory profile sizes the pack when the caller gives no budget of
-    /// its own; it is read through the caller's own lane, so it grants
-    /// nothing: a definition the caller cannot read is refused as one that
-    /// names nothing, and one with no memory profile adds no budget.
-    ///
-    /// # Errors
-    /// A zero `token_budget`, or a `reader_agent_ref` that names no agent
-    /// definition this caller reads.
+    /// The rendering budget a request asks for, by [`render_token_budget`].
+    /// A `token_budget` of 0 renders the pack uncut, as the serializer reads
+    /// 0. `reader_agent_ref` names an agent definition whose memory profile
+    /// sizes the pack when the caller gives no budget of its own. It is read
+    /// through the caller's own lane, so it grants nothing; a ref that names
+    /// no definition this caller reads, or one with no memory profile, adds
+    /// no budget, and the order goes on to the default. A rendering hint
+    /// never refuses the recall.
     pub(crate) fn recall_render_budget(
         &self,
         token_budget: Option<u64>,
         reader_agent_ref: Option<&str>,
-    ) -> MemoryResult<usize> {
-        if token_budget == Some(0) {
-            return Err(MemoryError::bad_request(
-                "token_budget must be at least 1",
-            ));
-        }
+    ) -> usize {
         let reader = match (token_budget, reader_agent_ref) {
-            (None, Some(reference)) => self.reader_window_budget(reference)?,
+            (None, Some(reference)) => self.reader_window_budget(reference),
             _ => None,
         };
-        Ok(render_token_budget(token_budget, reader))
+        render_token_budget(token_budget, reader)
     }
 
     /// The window budget of the memory profile the agent definition at
-    /// `reference` carries, read as this caller reads.
-    fn reader_window_budget(&self, reference: &str) -> MemoryResult<Option<u64>> {
-        let unread = || MemoryError::not_found("reader_agent_ref names no agent definition");
-        let id = self.resolve_ref(reference).map_err(|_| unread())?;
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+    /// `reference` carries, read as this caller reads; `None` when the caller
+    /// reads no such definition or it carries no profile.
+    fn reader_window_budget(&self, reference: &str) -> Option<u64> {
+        let id = self.resolve_ref(reference).ok()?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded).ok()?;
         let row = lane
-            .read(&[PointRead::id(id)], None)?
+            .read(&[PointRead::id(id)], None)
+            .ok()?
             .value
             .into_iter()
             .next()
             .flatten()
-            .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)
-            .ok_or_else(unread)?;
-        let body = row.body.ok_or_else(unread)?;
-        let definition = crate::agent_def::decode_agent_definition(&body)?;
-        Ok(definition
+            .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF)?;
+        let definition = crate::agent_def::decode_agent_definition(&row.body?).ok()?;
+        definition
             .memory_profile
-            .map(|profile| profile.window_token_budget))
+            .map(|profile| profile.window_token_budget)
     }
 }

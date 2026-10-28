@@ -2,15 +2,19 @@
 //! bytes the host opened, as one version of the file's own blob artifact.
 //! The file's note holds its text; the original holds the file itself, a
 //! PDF's bytes included. Bytes equal to the artifact's head keep no second
-//! version, so each file version is kept once. An attached folder's ledger
-//! rows name the version their file was read at.
+//! version, so each file version is kept once. The folder's import MACHINE
+//! writes it, as it writes the file's note, and its made_by names the import
+//! that read it. An attached folder's ledger rows name the version their
+//! file was read at.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::super::import::NOTES_IMPORT_SOURCE;
 use super::{FILES, file_key};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance, encode_blob_artifact_body};
+use crate::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -65,9 +69,10 @@ impl Vault {
     }
 
     /// Keeps `original` as the original of the file at `path` under
-    /// `folder`, as `owner`'s upload, in one write: the file's artifact is
-    /// registered the first time, and bytes equal to its head add no
-    /// version.
+    /// `folder`, for `owner`, in one write: the file's artifact is registered
+    /// the first time, and bytes equal to its head add no version. The
+    /// folder's import MACHINE writes it, and its made_by names the import
+    /// as the process that read the bytes.
     ///
     /// # Errors
     /// An owner that no longer revalidates, or the blob door's refusal.
@@ -79,7 +84,8 @@ impl Vault {
         original: &OriginalBytes,
     ) -> Result<FileOriginal> {
         self.with_write_txn(|txn| {
-            let owner = owner.revalidate_in_txn(self, txn)?;
+            owner.revalidate_in_txn(self, txn)?;
+            let importer = Self::imported_note_author(folder)?;
             let artifact = Self::folder_file_original_id(folder, path)?;
             let at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let occurred = TimeRange { start: at, end: at };
@@ -96,12 +102,26 @@ impl Vault {
                     )
                     .apply(txn)?;
             }
-            let version = self.append_blob_artifact_version_in_txn(
+            let made_by = MadeBy {
+                inputs: Vec::new(),
+                process: MadeByProcess {
+                    actor: importer,
+                    class: MadeByClass::Stated,
+                    identity: NOTES_IMPORT_SOURCE.to_owned(),
+                    version: env!("CARGO_PKG_VERSION").to_owned(),
+                    params_hash: original.content_hash(),
+                },
+                at,
+                trigger: None,
+            };
+            let version = self.append_blob_artifact_version_made_by_in_txn(
                 txn,
                 &artifact,
+                None,
                 &original.bytes,
                 &BlobVersionProvenance::UserUpload,
-                WriteActor::new(owner, EdgeActorClass::Human),
+                &made_by,
+                WriteActor::new(importer, EdgeActorClass::System),
                 occurred,
                 at,
             )?;

@@ -100,55 +100,13 @@ pub struct ChatOptions<'a> {
     /// Host-injected composer. Required at standard/deep, ignored at minimal.
     pub composer: Option<&'a dyn ChatComposer>,
     /// The budget the owner set for chat, when one is set: composition then
-    /// runs on a lease from it (FIX 9951). `None` composes as before.
+    /// runs on it (FIX 9951). `None` composes as before.
     pub budget: Option<&'a crate::llm::BudgetGuard>,
-}
-
-/// What the host composer is handed: the question and the retrieved pack, and
-/// nothing else. No vault handle crosses this seam.
-pub struct ChatComposeRequest<'a> {
-    /// The caller's prose question, exactly as asked.
-    pub question: &'a str,
-    /// The depth that priced this retrieval.
-    pub depth: ChatDepth,
-    /// The full pack the evidence pass produced, provenance included. This
-    /// exact pack is what the answer's citations are checked against, so an
-    /// id it does not carry is an id the answer may not stand on.
-    pub pack: &'a MemoryPack,
-}
-
-/// What a composer returns: the answer text, the evidence it stands on, what
-/// it could not cover, its own token accounting, and its right to refuse.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ComposedChatAnswer {
-    /// The composed answer text. Blank text is never answered.
-    pub answer: String,
-    /// The short ids the answer cites. The engine validates them against the
-    /// pack it handed over; proposing is the composer's whole part in it.
-    pub source_short_ids: Vec<String>,
-    /// What the evidence could not cover, surfaced verbatim.
-    pub gaps: Vec<String>,
-    /// Tokens the composer spent. Surfaced verbatim; chat takes no budgeting
-    /// action on it.
-    pub tokens_used: u32,
-    /// The composer's own refusal to answer, which is a typed abstention
-    /// ([`ChatAbstentionReason::BackendDeclined`]) and never an error.
-    pub declined: bool,
-}
-
-/// The host-injected, provider-neutral composition seam.
-///
-/// Implementations live above the engine (the `LlmBackend` precedent). The
-/// lease arrives as the opaque admission token the caller already held; the
-/// implementation must not settle or abort it either.
-pub trait ChatComposer: Send + Sync {
-    /// Turns one retrieved pack into one answer. Called at most once per
-    /// [`Memory::chat`] call, and never at minimal depth.
-    fn compose(
-        &self,
-        request: &ChatComposeRequest<'_>,
-        lease: Option<&BudgetLease>,
-    ) -> MemoryResult<ComposedChatAnswer>;
+    /// The token budget `format`'s rendering is cut to; 0 renders it uncut.
+    pub token_budget: Option<u64>,
+    /// An agent definition whose memory profile sizes the rendering when
+    /// `token_budget` is omitted (FIX 9962); it grants no read.
+    pub reader_agent_ref: Option<&'a str>,
 }
 
 /// Why a `.chat` call answered nothing. Each reason is a fact about the
@@ -283,6 +241,7 @@ impl Memory<'_> {
                 &["Ask for at least one memory item."],
             ));
         }
+        let execution = &self.chat_execution(&options, execution);
         // Resolved before retrieval: at standard/deep a missing composer is a
         // request the host cannot answer at any price, and at minimal the
         // composer is structurally out of reach even when one is supplied.
@@ -344,7 +303,7 @@ impl Memory<'_> {
         let (answer, proposed, tokens_used): (String, Vec<String>, u32) = match composer {
             None => (extractive_answer(&pack), pack_short_ids(&pack), 0),
             Some(composer) => {
-                let composed = self.compose_on_budget(
+                let composed = self.run_composer(
                     composer,
                     &ChatComposeRequest {
                         question,
