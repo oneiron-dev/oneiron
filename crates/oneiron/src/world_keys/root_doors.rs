@@ -195,6 +195,21 @@ fn carried_marks(
     Ok((root, marks))
 }
 
+/// How the seed gate treats a root this install's kit inventory still lists
+/// as pending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingKitRootRule {
+    /// A valid record for the root's id, stored or carried, that matches
+    /// both its keys outranks the local pending scan; with none, or when
+    /// the records do not read, the pending kit is refused.
+    ValidMatchingStoredOrCarriedRootWinsLocalPending,
+}
+
+/// CALLS `FIX 2202 pending kit root rule` (Engine 10-21): the rule
+/// [`Vault::kit_seed_gate_in_txn`] reads.
+const PENDING_KIT_ROOT_RULE: PendingKitRootRule =
+    PendingKitRootRule::ValidMatchingStoredOrCarriedRootWinsLocalPending;
+
 impl Vault {
     /// Runs a root door's checks in a read snapshot, before this install's
     /// machine identity is minted.
@@ -210,8 +225,8 @@ impl Vault {
     }
 
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
-    /// door publishes it first. A root this vault's kit inventory lists as
-    /// pending is refused: only the kit's confirm makes it live.
+    /// door publishes it first. A locally pending root is refused unless a
+    /// stored or carried record matches it ([`PENDING_KIT_ROOT_RULE`]).
     fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -223,12 +238,25 @@ impl Vault {
             .vault_id
             .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
         let root = seed.public(&vault_id)?;
-        if self.kit_root_pending_in_txn(txn, root.id)? {
-            return Err(refused(
-                "this vault's kit for this root is still pending: confirm the kit first",
-            ));
-        }
-        let records = owner_root_records_in_txn(&self.store, txn, fold)?;
+        let pending = self.kit_root_pending_in_txn(txn, root.id)?;
+        let records = match owner_root_records_in_txn(&self.store, txn, fold) {
+            Ok(records) if !pending => records,
+            Ok(records)
+                if PENDING_KIT_ROOT_RULE
+                    == PendingKitRootRule::ValidMatchingStoredOrCarriedRootWinsLocalPending
+                    && records
+                        .get(&root.id)
+                        .is_some_and(|(_, record)| root.matches(record)) =>
+            {
+                records
+            }
+            Err(err) if !pending => return Err(err),
+            _ => {
+                return Err(refused(
+                    "this vault's kit for this root is still pending: confirm the kit first",
+                ));
+            }
+        };
         let publish = kit_seed_gate(
             &records,
             &root,
