@@ -21727,6 +21727,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/conversation/turn_actions/actor_erase.rs",
+     "purpose": "The erase of a turn action's requester takes the signed instrument its request was admitted on out of each…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "TurnActionAuthority"
      ],
@@ -25885,6 +25895,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/free_time/actor_content.rs",
+     "purpose": "What an erased actor leaves in another agent's free-time rows (FIX 8875, stage 1): one field scrub per row…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -27536,6 +27556,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/dreamer_runner/milestone/verified_read.rs",
+     "purpose": "A read-only lookup of an attempt's verified coarse milestone (FIX 8715)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/dreamer_runner/mod.rs",
      "purpose": "Private Dreamer runner store plus atomic admission",
      "surface": {
@@ -27616,7 +27646,7 @@
      "path": "src/dreamer_runner/program/authority.rs",
      "purpose": "The authority a turn-woken program runs under (DOOR-141 §4): the waking actor's own, sealed at the turn as…",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 1
      }
     },
@@ -27628,6 +27658,16 @@
      "purpose": "A turn program's STEP bodies under body custody (KS-2B1, FIX 5719; FIX 5683 part B1)",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/program/erase.rs",
+     "purpose": "The erase of a turn program's waking actor takes the signed instrument a slip's turn sealed out of every…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -45285,13 +45325,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/witness/stream/storage.rs",
      "purpose": "Per-handle recovery seed, holding the stream's accepted text as of its last checkpoint, and terminal audit",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 2
      }
     },
@@ -59721,7 +59761,7 @@
      "purpose": "Revocable brief read grants",
      "surface": {
       "crate-vis": 15,
-      "fn": 6,
+      "fn": 5,
       "re-export": 2,
       "struct": 3
      }
@@ -59762,6 +59802,16 @@
       "const": 1,
       "crate-vis": 6,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/share/revoke.rs",
+     "purpose": "Stopping a share (OF-491, FIX 1610)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -79076,7 +79126,7 @@
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts"
     },
     "conversation": {
-     "files": 23,
+     "files": 24,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -79188,7 +79238,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 164,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79902,7 +79952,7 @@
      "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -80219,7 +80269,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5321,
+   "source_files": 5326,
    "test_files": 902
   },
   "oneiron-android": {
