@@ -177,7 +177,8 @@ side_tables! {
     /// Durable journal record of one prepared/applied/failed git ref, stage, or worktree effect. Key:
     /// hex64(repo identity) ":" hex64(record key).
     /// Owner-confirmed voice disclosure grant offer. Key: hex64 nonce.
-    GENUI_VOICE_GRANT_OFFER: VaultMeta b"genui.voice_grant_offer.v1:" LegacyJson;
+    GENUI_VOICE_GRANT_OFFER: VaultMeta b"genui.voice_grant_offer.v1:" LegacyJson
+        => crate::genui::erase_voice_offer_actor_in_txn;
     GIT_WIRE_RECORD: VaultMeta b"git_wire:record:v2:" Named;
     /// Node-local Gmail page cursor keyed by lower-case hex identity id. Key: hex32.
     GMAIL_MAILBOX_CURSOR: VaultMeta b"gmail:mailbox_cursor:v1:" LegacyJson;
