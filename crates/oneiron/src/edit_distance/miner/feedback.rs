@@ -121,7 +121,11 @@ pub(crate) fn record_inbox_learning_in_txn(
         return Err(Error::InvariantViolation("inbox decision already captured"));
     }
     DECISION.put(&vault.store, txn, &receipt, &row)?;
-    feed_edit_cost_in_txn(vault, txn, &row)
+    // The reviewed claim's project audience scopes the cell (FIX 6038); the
+    // reserved default project is the vault's. Never the consent scope.
+    let project = (reviewed.scope_project != crate::claim::default_project_id())
+        .then_some(reviewed.scope_project);
+    feed_edit_cost_in_txn(vault, txn, &row, project)
 }
 
 /// Longest consent scope a learning cell keys verbatim; a longer one keys by
@@ -131,12 +135,14 @@ const MAX_LEARNING_SCOPE_BYTES: usize = 256;
 /// An untouched approval or a rejection is the decider's verdict on the
 /// generator's output, with nothing to split: it feeds `learning.edit_cost`
 /// on the generating actor (an actor is its own executor), keeping the
-/// untouched/rejected counts beside the mean. An amendment's cost reaches the
-/// family through its attributed shares, not here.
+/// untouched/rejected counts beside the mean, in `project`'s scope (`None`,
+/// the vault's). An amendment's cost reaches the family through its
+/// attributed shares, not here.
 fn feed_edit_cost_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &PrincipalDecision,
+    project: Option<EntityId>,
 ) -> Result<()> {
     use crate::learning::{Anchor, LearningCell, LearningEvidence, LearningPredicate, Observation};
     use crate::ports::EntityStoreRead;
@@ -161,7 +167,8 @@ fn feed_edit_cost_in_txn(
     };
     let cell = LearningCell::new(LearningPredicate::EditCost, row.actor)
         .executor(row.actor.to_hex())
-        .consent_scope(scope);
+        .consent_scope(scope)
+        .project(project);
     let mut evidence = LearningEvidence::anchored(
         row.receipt.clone(),
         row.at,

@@ -8,7 +8,8 @@
 //! ([`super::bind_agent_run_attribution`], [`super::witness_agent_run_close`]).
 //! An edge that lands for a run after its lease ended (an off-record op an
 //! authorized promotion replays, or a summary the run asked for) is kept as a
-//! late landing: the run's terminal receipt stays as it froze.
+//! late landing: the run's terminal receipt stays as it froze, and its
+//! credited outcomes are reconciled ([`super::credit_join`], FIX 3241).
 //!
 //! A scope summary a run asks for is kept beside them, under the Dreamer
 //! attempt that mints it, so its landing is witnessed for the run that asked
@@ -125,7 +126,7 @@ pub(super) fn capture_in_txn(
     }
 }
 
-fn in_savepoint(
+pub(super) fn in_savepoint(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     capture: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
@@ -147,24 +148,26 @@ pub(super) fn record_in_txn(
     producer: WitnessProducer,
 ) {
     capture_in_txn(store, wtxn, "derivation", |txn| {
-        record_pairs_in_txn(store, txn, token, pairs, producer)
+        record_pairs_in_txn(store, txn, token, pairs, producer).map(drop)
     });
 }
 
 /// [`record_in_txn`] inside a caller's savepoint: only edges the writer left
 /// stored, each once per run try. A live run's bound attribution gains them
 /// now. A producer that lands late records them once the lease has ended;
-/// any other write whose lease no longer holds records nothing.
+/// any other write whose lease no longer holds records nothing. Whether it
+/// kept a late landing, which the caller reconciles
+/// ([`reconcile_landed_in_txn`]).
 pub(super) fn record_pairs_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     token: &RunWriteToken,
     pairs: &[(EntityId, EntityId)],
     producer: WitnessProducer,
-) -> Result<()> {
+) -> Result<bool> {
     let live = token.lease_holds_in_txn(store, wtxn);
     if !live && !producer.lands_late() {
-        return Ok(());
+        return Ok(false);
     }
     let at = store.clock.now_recorded_at();
     let mut landed = Vec::new();
@@ -198,7 +201,19 @@ pub(super) fn record_pairs_in_txn(
     if live && !landed.is_empty() {
         project_in_txn(store, wtxn, token.attempt(), &landed)?;
     }
-    Ok(())
+    Ok(!live && !landed.is_empty())
+}
+
+/// Reconciles the credited outcomes of `token`'s run after a late landing
+/// for it, in the landing's `wtxn` (FIX 3241); capture-only.
+pub(super) fn reconcile_landed_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    token: &RunWriteToken,
+) {
+    let attempt_receipt = crate::receipt::attempt_pack_receipt_id(&token.attempt());
+    let now = vault.store.clock.now_recorded_at();
+    super::credit_join::reconcile_credited_outcomes_in_txn(vault, wtxn, &attempt_receipt, now);
 }
 
 /// Appends `pairs` to `attempt`'s bound attribution in `wtxn`; a run not yet
@@ -272,6 +287,30 @@ fn live_pairs_in_txn(
     attempt: AttemptId,
     generation: u32,
 ) -> Result<Vec<(EntityId, EntityId)>> {
+    pairs_in_txn(store, txn, attempt, generation, true)
+}
+
+/// The edges that landed for `attempt`'s try `generation` after its lease
+/// ended, read only through `txn`: the late landings its credit reconciles.
+/// A row with an erased end, or that no longer decodes, names none.
+pub(super) fn landed_pairs_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    generation: u32,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    pairs_in_txn(store, txn, attempt, generation, false)
+}
+
+/// The derivations of `attempt`'s try `generation` whose `live` flag is
+/// `live`, with both ends standing.
+fn pairs_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    generation: u32,
+    live: bool,
+) -> Result<Vec<(EntityId, EntityId)>> {
     let mut prefix = DERIVATION.to_vec();
     prefix.extend_from_slice(attempt.as_bytes());
     prefix.extend_from_slice(&generation.to_be_bytes());
@@ -281,9 +320,10 @@ fn live_pairs_in_txn(
         if let Ok(WitnessRow::Derivation(DerivationWitness {
             derived: Some(derived),
             source: Some(source),
-            live: true,
+            live: landed_live,
             ..
         })) = WITNESS.decode_value(&value)
+            && landed_live == live
         {
             pairs.push((derived, source));
         }
@@ -292,7 +332,7 @@ fn live_pairs_in_txn(
 }
 
 /// Appends each of `pairs` that `fields`' used chain lacks; whether any was.
-fn extend_used(
+pub(super) fn extend_used(
     fields: &mut PackAttributionFields,
     pairs: impl IntoIterator<Item = (EntityId, EntityId)>,
 ) -> bool {
@@ -391,13 +431,15 @@ fn summary_landing_in_txn(
         .map(|edge| (summary, edge.target))
         .collect();
     for token in &requesters {
-        record_pairs_in_txn(
+        if record_pairs_in_txn(
             &vault.store,
             txn,
             token,
             &pairs,
             WitnessProducer::Summary(Some(attempt)),
-        )?;
+        )? {
+            reconcile_landed_in_txn(vault, txn, token);
+        }
     }
     Ok(())
 }

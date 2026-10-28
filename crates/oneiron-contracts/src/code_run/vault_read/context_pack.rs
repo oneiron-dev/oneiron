@@ -58,7 +58,7 @@ pub struct CoreContextPackRequest {
 #[serde(deny_unknown_fields)]
 pub struct ContextPackTypeRef {
     pub node_id: String,
-    pub tree_version: u32,
+    pub tree_version: u64,
     /// The project whose tree it is placed in, as an entity id; omitted, the
     /// vault's tree.
     #[serde(default, skip_serializing_if = "Option::is_none")]

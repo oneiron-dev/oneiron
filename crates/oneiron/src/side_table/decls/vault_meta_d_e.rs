@@ -107,7 +107,8 @@ side_tables! {
     /// tournament with the identical prefix and key layout (see WHERE) - worth a second look for
     /// accidental collision if the same (attempt, artifact_id) pair is ever used from both callers.
     /// Key: id16 + u16be + string.
-    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored;
+    CRITIC_ARTIFACT: VaultMeta b"dreamer:critic:v1:" Named Authored
+        => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
     /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes

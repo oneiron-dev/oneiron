@@ -336,8 +336,11 @@ side_tables! {
     KEY_CUSTODY_RETIRE_PENDING: VaultMeta b"key_custody:retire_pending:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
-    /// A `learning.*` cell's key, estimate form and what counted. Key: cell digest (32 bytes).
-    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
+    /// A `learning.*` cell's key, estimate form and what counted; a project's erase takes every
+    /// cell scoped to it, with its index, evidence and prior, and re-keys its heads (FIX 6038).
+    /// Key: cell digest (32 bytes).
+    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named
+        => crate::learning::erase_learning_scope_in_txn;
     /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
     LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
     /// Owner seed or pin over one spawn choice (model, width, pattern or budget) at a goal, a

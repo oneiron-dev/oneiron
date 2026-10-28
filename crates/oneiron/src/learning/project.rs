@@ -470,7 +470,7 @@ pub(crate) fn active_heads_in_txn(
     Ok(rows)
 }
 
-fn entity_header(
+pub(super) fn entity_header(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -516,7 +516,8 @@ fn retract_heads_in_txn(
 /// (`learning_setting::global_setting_subject`), with no executor, axis or
 /// consent scope, is the vault's fit. A project's or a skill's cell, or a
 /// non-root type's, caches under its own subject and type, so it never writes
-/// or clears the vault's (OF-542).
+/// or clears the vault's (OF-542). A project-scoped cell (FIX 6038) caches
+/// nothing here: its key would not name its scope.
 fn cache_setting_fit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -528,6 +529,7 @@ fn cache_setting_fit_in_txn(
         || cell.executor.is_some()
         || cell.axis.is_some()
         || cell.consent_scope.is_some()
+        || cell.project.is_some()
     {
         return Ok(());
     }

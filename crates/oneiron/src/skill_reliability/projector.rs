@@ -61,6 +61,8 @@ pub(super) fn receipt_query(receipt: &ReceiptRecord) -> Result<SkillReliabilityQ
             .cloned()
             .unwrap_or_else(|| SKILL_OUTCOME_AXIS.to_owned()),
         type_parents,
+        // The run's project as the terminal receipt froze it (FIX 6038).
+        project: receipt.task_project()?,
     };
     query.validate()?;
     Ok(query)
