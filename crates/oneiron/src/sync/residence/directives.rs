@@ -167,7 +167,9 @@ impl Vault {
 /// earliest accepted result its machine signed for it. The fold accepts a
 /// result only under the install key of the machine it names. The rows are
 /// the stored ones and, on a vault that adopted a checkpoint image, the
-/// covered ones the image carries whole (FIX 5412).
+/// covered ones the image carries whole (FIX 5412), or the stored ones alone
+/// where it dropped them for the residence-body overflow (FIX 11400), as
+/// before #4095 carried them.
 fn directive_states_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
