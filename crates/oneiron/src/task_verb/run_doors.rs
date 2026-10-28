@@ -1,5 +1,5 @@
 //! The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026
-//! `#run-tree`): `vault.tasks.cancel_force`, canon's `cancel.force`, the
+//! `#run-tree`): `vault.tasks.cancel.force`, canon's `cancel.force`, the
 //! vault owner's unrefusable stop of every live branch, and
 //! `vault.runs.branches.get`, the owner's read of every branch as the queue
 //! holds it; and `vault.consults.get` (DOOR-063, ARCH-0067), the owner's
