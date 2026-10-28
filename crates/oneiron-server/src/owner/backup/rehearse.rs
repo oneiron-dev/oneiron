@@ -37,6 +37,10 @@ pub(crate) struct Rehearsal {
     /// set when it brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The home tables the restored copy took from the image because the
+    /// live vault's rows did not read (FIX 5661 C2b).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) home_table_notes: Vec<String>,
     /// The world key pads the restored copy did not land at rest (KS-5):
     /// erased since the backup, or withheld by their world's sealed copies
     /// setting.
@@ -205,6 +209,11 @@ fn rehearse_into(
         unreadable_fields,
         shared_path: None,
         training_note: report.training_note,
+        home_table_notes: report
+            .home_table_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes

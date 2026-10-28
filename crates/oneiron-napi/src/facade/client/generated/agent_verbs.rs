@@ -6350,7 +6350,7 @@ impl NativeClient {
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
-            .agent_verb("vault.tasks.cancel_force", js_json(input))
+            .agent_verb("vault.tasks.cancel.force", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7448,6 +7448,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.receipts.context", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_receipts_craft_reply_manifest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.craft_reply_manifest", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
