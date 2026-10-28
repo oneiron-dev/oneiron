@@ -38,6 +38,8 @@ use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod sources;
+
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;
 /// Longest `about` line the board prints, in characters. The stored line is
@@ -89,6 +91,9 @@ struct PriorAbout {
 struct AboutLine {
     band: u8,
     text: String,
+    /// The CLAIM ids the line stands on: exactly the facts at or below
+    /// `band` the line was written from, never the person's every CLAIM.
+    fact_claim_ids: Vec<EntityId>,
 }
 
 /// One fact about a person, as the Dreamer may read it.
@@ -237,7 +242,7 @@ fn person_about_input(person: EntityId) -> rmpv::Value {
     )])
 }
 
-fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
+pub(crate) fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
     let rmpv::Value::Map(entries) = input else {
         return Err(invalid_consolidation("person about input is not a map"));
     };
@@ -552,7 +557,12 @@ impl<E> PersonAboutExecutor<'_, E> {
                 && let Some(last) = lines.last()
             {
                 let text = last.text.clone();
-                lines.push(AboutLine { band, text });
+                let fact_claim_ids = last.fact_claim_ids.clone();
+                lines.push(AboutLine {
+                    band,
+                    text,
+                    fact_claim_ids,
+                });
                 continue;
             }
             let request = LlmRequest {
@@ -671,7 +681,11 @@ impl<E> PersonAboutExecutor<'_, E> {
                     return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason);
                 }
             };
-            lines.push(AboutLine { band, text });
+            lines.push(AboutLine {
+                band,
+                text,
+                fact_claim_ids: admitted.iter().map(|fact| fact.claim).collect(),
+            });
             below = Some(band_digest);
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
@@ -693,7 +707,19 @@ impl<E> PersonAboutExecutor<'_, E> {
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
-        ctx.vault.with_write_txn(|txn| {
+        let landed = ctx.vault.with_write_txn(|txn| {
+            // FIX 8697: an erase that lands between the snapshot above and
+            // this write must not have its text put back. The PERSON and the
+            // exact facts the lines stand on are read again through this
+            // write's own snapshot; a stale landing writes nothing, and the
+            // next pass rebuilds from the facts left.
+            if !crate::consent::person_is_live_in_txn(ctx.vault, txn, &person)? {
+                return Ok(false);
+            }
+            let now_facts = person_facts(ctx.vault, &read, txn, person)?;
+            if facts_digest(&now_facts, TOP_BAND) != digest {
+                return Ok(false);
+            }
             let mut row = PERSON_ABOUT
                 .get(&ctx.vault.store, txn, &person)?
                 .unwrap_or_default();
@@ -704,8 +730,17 @@ impl<E> PersonAboutExecutor<'_, E> {
             });
             row.written = digest;
             row.at = at;
-            PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)
+            PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)?;
+            Ok(true)
         })?;
+        if !landed {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                code = "person_about_stale_landing",
+                person = %person.to_hex(),
+                "a stale person about landing wrote nothing; the next pass rebuilds"
+            );
+        }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
         })

@@ -288,6 +288,13 @@ pub(super) fn save_in_txn(
     // replaces, so the reader of the tags finds the delta's surprise with
     // them and no model is called to measure it.
     tags.surprise = held.as_ref().map(|held| tags.surprise_since(held));
+    // A re-mention restores its archived entity, keeping its id, as the
+    // ingest resolver does; the candidate listing still sees the archive.
+    for entity in tags.entities() {
+        if vault.archive_tombstone_in_txn(txn, &entity)?.is_some() {
+            vault.restore_archived_in_txn(txn, &entity)?;
+        }
+    }
     let saved = Saved {
         linked: tags
             .mentions

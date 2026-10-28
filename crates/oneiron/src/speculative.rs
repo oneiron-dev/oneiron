@@ -39,8 +39,9 @@
 //! warm pack verbatim.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
@@ -66,6 +67,10 @@ pub struct SpeculativeSessionConfig {
     /// is asked for; `None` waits for them to finish. A voice host sets the
     /// vault's call-mode deadline ([`crate::Vault::call_mode_deadline`]).
     pub deadline: Option<Duration>,
+    /// Where a pass that misses its deadline is kept while it runs on, for
+    /// the call it belongs to to join before that call's write admission
+    /// drops (FIX 3814); `None` lets it run on detached.
+    pub threads: Option<SpeculativeThreads>,
 }
 
 impl Default for SpeculativeSessionConfig {
@@ -75,6 +80,43 @@ impl Default for SpeculativeSessionConfig {
             fire_limit: SPECULATIVE_FIRE_LIMIT_DEFAULT,
             final_limit: crate::pipeline::DEFAULT_RESULT_LIMIT,
             deadline: None,
+            threads: None,
+        }
+    }
+}
+
+/// The passes of one call that missed their deadline and still run on
+/// threads of their own. Such a pass writes its telemetry and embedding jobs
+/// when its query ends, so the call joins them before its write admission
+/// drops (FIX 3814). Clones share one list.
+#[derive(Clone, Default)]
+pub struct SpeculativeThreads(Arc<Mutex<Vec<JoinHandle<()>>>>);
+
+impl SpeculativeThreads {
+    fn lock(&self) -> MutexGuard<'_, Vec<JoinHandle<()>>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Keeps `thread` until it is joined; the ones already ended go.
+    fn keep(&self, thread: JoinHandle<()>) {
+        let mut threads = self.lock();
+        threads.retain(|kept| !kept.is_finished());
+        threads.push(thread);
+    }
+
+    /// Whether every kept pass has ended.
+    #[must_use]
+    pub fn at_rest(&self) -> bool {
+        self.lock().iter().all(JoinHandle::is_finished)
+    }
+
+    /// Blocks until every kept pass has ended. Each stops at its next
+    /// deadline checkpoint and writes what its query ended with.
+    pub fn join(&self) {
+        let threads = std::mem::take(&mut *self.lock());
+        for thread in threads {
+            // A pass that panicked has ended all the same.
+            let _ = thread.join();
         }
     }
 }
@@ -229,9 +271,10 @@ impl SpeculativeSession {
 
     /// Runs one pass, under the session's deadline when it has one. `None`
     /// when the pass was not done by then: it ran on a thread of its own,
-    /// which stops at its next checkpoint, and its result is dropped. Also
-    /// `None`, at once, while the vault already runs as many passes as it
-    /// lets run.
+    /// which stops at its next checkpoint, and its result is dropped; the
+    /// thread goes to the session's [`SpeculativeThreads`], when it has
+    /// them, until its call joins it. Also `None`, at once, while the vault
+    /// already runs as many passes as it lets run.
     fn run(&self, pass: SpeculativePass) -> Result<Option<PassOutput>> {
         let Some(budget) = self.config.deadline else {
             return pass.run(&self.vault, None, self.scope.as_ref()).map(Some);
@@ -243,7 +286,7 @@ impl SpeculativeSession {
         let vault = Arc::clone(&self.vault);
         let scope = self.scope.clone();
         let (sender, answer) = std::sync::mpsc::sync_channel(1);
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("oneiron-speculative".to_owned())
             .spawn(move || {
                 let _running = running;
@@ -251,9 +294,16 @@ impl SpeculativeSession {
                 // The caller may have stopped waiting; a closed slot is moot.
                 let _ = sender.send(pass.run(&vault, Some(&deadline), scope.as_ref()));
             })?;
+        // A pass that answered has written all it writes; one that did not
+        // still writes when its query ends, so its call keeps it to join.
         match answer.recv_timeout(budget.saturating_sub(started.elapsed())) {
             Ok(output) => output.map(Some),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                if let Some(threads) = &self.config.threads {
+                    threads.keep(thread);
+                }
+                Ok(None)
+            }
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(Error::InvariantViolation(
                 "speculative pass ended without an answer",
             )),

@@ -1,10 +1,11 @@
 //! One cell of measured state (ARCH-0003 #learning-qualifiers): the subject,
 //! the predicate and the applicable executor, task type, axis, consent scope
-//! and setting key. The judge is never part of the key, so a judge swap never
-//! forks a cell.
+//! and setting key, in one scope: a project's runs, or the vault's (FIX
+//! 6038: scoped keys, `(scope, node@version)`). The judge is never part of
+//! the key, so a judge swap never forks a cell.
 //!
-//! This `TypeRef` keeps a string node id and a u32 tree version;
-//! `task_verb::brief::TypeRef` uses an `EntityId` and a u64.
+//! This `TypeRef` keeps a string node id and the stamp's u64 tree version
+//! (FIX 4432); `task_verb::brief::TypeRef` uses an `EntityId`.
 
 use serde::{Deserialize, Serialize};
 
@@ -108,13 +109,13 @@ impl LearningPredicate {
 )]
 pub struct TypeRef {
     pub node_id: String,
-    pub tree_version: u32,
+    pub tree_version: u64,
 }
 
 impl TypeRef {
     /// The root node of tree `tree_version`.
     #[must_use]
-    pub fn root(tree_version: u32) -> Self {
+    pub fn root(tree_version: u64) -> Self {
         Self {
             node_id: ROOT_TYPE_NODE.to_owned(),
             tree_version,
@@ -177,6 +178,9 @@ pub struct LearningCell {
     /// `learning.setting` only: the catalog key of the fitted knob.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setting_key: Option<String>,
+    /// The project whose runs the cell counts; `None` is the vault's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<EntityId>,
 }
 
 impl LearningCell {
@@ -192,6 +196,7 @@ impl LearningCell {
             axis: None,
             consent_scope: None,
             setting_key: None,
+            project: None,
         }
     }
 
@@ -222,6 +227,13 @@ impl LearningCell {
     #[must_use]
     pub fn setting_key(mut self, key: impl Into<String>) -> Self {
         self.setting_key = Some(key.into());
+        self
+    }
+
+    /// The cell in `project`'s scope; `None` keeps it the vault's.
+    #[must_use]
+    pub fn project(mut self, project: Option<EntityId>) -> Self {
+        self.project = project;
         self
     }
 
@@ -316,6 +328,8 @@ impl LearningCell {
 
     /// The cell's stable 32-byte identity: a domain-separated hash over every
     /// key field, length-framed, so two cells collide only if they are equal.
+    /// A project scope is framed after the rest; the vault scope adds
+    /// nothing, so a vault cell keeps the identity it has always had.
     #[must_use]
     pub fn digest(&self) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new_derive_key("oneiron learning cell v1");
@@ -337,15 +351,22 @@ impl LearningCell {
         field(self.axis.as_deref().map(str::as_bytes));
         field(self.consent_scope.as_deref().map(str::as_bytes));
         field(self.setting_key.as_deref().map(str::as_bytes));
+        if let Some(project) = &self.project {
+            field(Some(&project.as_bytes()[..]));
+        }
         *hasher.finalize().as_bytes()
     }
 
     /// The conflict key: this cell's question, never its changing estimate.
+    /// A project scope follows as one more field; a vault cell has none.
     #[must_use]
     pub fn conflict_key(&self) -> String {
         let opt = |v: Option<&str>| v.unwrap_or("-").to_owned();
+        let scope = self
+            .project
+            .map_or_else(String::new, |project| format!("|{}", project.to_hex()));
         format!(
-            "{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}{scope}",
             self.subject.to_hex(),
             self.predicate.as_str(),
             opt(self.executor.as_deref()),
@@ -374,8 +395,16 @@ impl LearningCell {
         cell
     }
 
+    /// The same cell with its scope replaced.
+    #[must_use]
+    pub fn with_project(&self, project: Option<EntityId>) -> Self {
+        let mut cell = self.clone();
+        cell.project = project;
+        cell
+    }
+
     /// Whether `other` is this cell under another task type or executor:
-    /// every other qualifier matches.
+    /// every other qualifier matches, the scope included.
     #[must_use]
     pub fn same_question_modulo(
         &self,
@@ -388,6 +417,7 @@ impl LearningCell {
             && self.axis == other.axis
             && self.consent_scope == other.consent_scope
             && self.setting_key == other.setting_key
+            && self.project == other.project
             && (ignore_type || self.type_ref == other.type_ref)
             && (ignore_executor || self.executor == other.executor)
     }

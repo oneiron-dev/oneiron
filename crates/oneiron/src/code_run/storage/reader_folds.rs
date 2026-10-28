@@ -9,9 +9,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::program_resume::{ProgramResumeCommit, join_program_resume_in_txn};
-use super::records::{
-    MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
-};
+use super::records::REPLAY_RECORDS;
 use super::routing::SessionBinding;
 use crate::code_run::{
     CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait, ResultOccurrence,
@@ -240,41 +238,16 @@ impl SessionBinding<'_> {
         healed_model: Option<&ModelId>,
         receipts: &[ReaderFoldReceipt],
     ) -> Result<()> {
-        if let Some(model) = healed_model {
-            return self.answered(|| {
-                self.session
-                    .side_table_compare_and_put_with_counter_routed_and(
-                        &self.route,
-                        &REPLAY_RECORDS,
-                        &record.run_id,
-                        record,
-                        |current| replay_generation_matches(current, expected),
-                        &MODEL_HEAL_COUNTS,
-                        &model.as_str().to_owned(),
-                        next_additive_heal_count,
-                        |txn, write| {
-                            for receipt in receipts {
-                                let key = (receipt.folded.owner, receipt.folded.occurrence);
-                                FOLDS.put(&write, txn, &key, receipt)?;
-                            }
-                            Ok(())
-                        },
-                    )
-                    .map(drop)
-            });
-        }
+        // The routed append fences a base row against a spawn target's erase
+        // in its own writer (FIX 9180), with or without a heal.
         self.answered(|| {
-            self.session
-                .routed_side_txn(&self.route, |txn, read, write| {
-                    let current = REPLAY_RECORDS.get(&read, &*txn, &record.run_id)?;
-                    replay_generation_matches(current.as_ref(), expected)?;
-                    REPLAY_RECORDS.put(&write, txn, &record.run_id, record)?;
-                    for receipt in receipts {
-                        let key = (receipt.folded.owner, receipt.folded.occurrence);
-                        FOLDS.put(&write, txn, &key, receipt)?;
-                    }
-                    Ok(())
-                })
+            self.put_replay_routed(record, expected, healed_model, |txn, write| {
+                for receipt in receipts {
+                    let key = (receipt.folded.owner, receipt.folded.occurrence);
+                    FOLDS.put(&write, txn, &key, receipt)?;
+                }
+                Ok(())
+            })
         })
     }
 }

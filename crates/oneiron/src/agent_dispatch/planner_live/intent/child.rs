@@ -125,6 +125,11 @@ impl AgentDispatcher<'_> {
         // Custody is committed: no writer is held while placement and the
         // planner may ask a model.
         let placed = self.place_and_plan_for_attempt(leased, request, host, at);
+        // FIX 9180: the seat the plan resolved, noted before its settle can
+        // fail.
+        if let Ok((_, plan)) = &placed {
+            self.observe_seat(plan.plan.agent_def);
+        }
         self.settle_placed_and_planned(&name, &reservation, placed, at)
     }
 

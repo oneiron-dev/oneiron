@@ -159,7 +159,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                 .as_ref()
                 .filter(|text| !text.trim().is_empty())
                 .unwrap_or(&definition.desc);
-            let mut messages = vec![
+            let messages = vec![
                 LlmMessage {
                     role: LlmMessageRole::System,
                     content: vec![ContentPart::Text {
@@ -180,21 +180,8 @@ impl WavePlanner for ModelWavePlanner<'_> {
                 },
             ];
             // FIX 5777: the plan speaks with its planner's instructions for
-            // its requester, so it carries both crafts, each attributed: the
-            // planner's here, after the instructions; the requester's after
-            // it, as every step's travels. Payer and actor stay the
-            // requester's. The rows the planner's shows go beside it, to be
-            // stamped on the attempt before the call (FIX 5912).
-            let mut craft_exposures = Vec::new();
-            if let Some(craft) = super::resident_craft::planner_craft(
-                self.vault,
-                &planner,
-                &self.actor.entity_ref(),
-                super::unix_now(),
-            ) {
-                super::resident_craft::join_craft(&mut messages, craft.message);
-                craft_exposures = craft.entries;
-            }
+            // its requester, so it carries both crafts, each attributed, read
+            // when its call is built. Payer and actor stay the requester's.
             let bytes = self
                 .runner
                 .generate(
@@ -206,7 +193,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                         actor: self.actor,
                         purpose: WAVE_PLAN_ATTEMPT_KIND,
                         messages,
-                        craft_exposures,
+                        planner: Some(planner),
                         response_format: ResponseFormat::Json {
                             schema: output_schema(),
                         },

@@ -120,7 +120,8 @@ pub struct ResidenceResult {
     pub directive: EntityId,
     /// The machine that signed it, the one the directive names.
     pub machine: EntityId,
-    /// The directive's signed entry, one of this entry's parents.
+    /// The directive's signed entry: one of this entry's parents, or beneath
+    /// them (FIX 5412).
     pub directive_entry: AuthorityEntryHash,
     /// Vault-clock seconds on the machine when it finished.
     pub finished_at: u64,
@@ -150,13 +151,12 @@ impl ResidenceResult {
         Ok(())
     }
 
-    /// Signed alone by an Ed25519 install key, naming the directive's entry
-    /// among its parents: a result never precedes what it answers.
+    /// Signed alone by an Ed25519 install key. Its directive's entry is a
+    /// parent or beneath one, so a result never precedes what it answers:
+    /// the fold judges which (FIX 5412), from the parent state's valid
+    /// directives where the entry is no parent.
     pub(super) fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
-        if entry.signer.suite != AuthoritySignatureSuite::Ed25519
-            || !entry.cosigns.is_empty()
-            || !entry.parent_hashes.contains(&self.directive_entry)
-        {
+        if entry.signer.suite != AuthoritySignatureSuite::Ed25519 || !entry.cosigns.is_empty() {
             return Err(invalid_authority());
         }
         Ok(())

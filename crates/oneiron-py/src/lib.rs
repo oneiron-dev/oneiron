@@ -1020,7 +1020,7 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None))]
+    #[pyo3(signature = (query, effort=None, scope_json=None, limit=None, format=None, as_of=None, deadline_ms=None, media_json=None, query_affect_json=None, token_budget=None, reader_agent_ref=None))]
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -1036,6 +1036,8 @@ impl NativeClient {
         deadline_ms: Option<u64>,
         media_json: Option<&str>,
         query_affect_json: Option<&str>,
+        token_budget: Option<u64>,
+        reader_agent_ref: Option<String>,
     ) -> PyResult<String> {
         let effort = oneiron_remote::parse_effort(effort.unwrap_or("medium")).map_err(raise)?;
         let scope_json = match scope_json {
@@ -1050,6 +1052,7 @@ impl NativeClient {
         let query_affect_json: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect_json
             .map(|value| decode(value, "recall query affect"))
             .transpose()?;
+
         let inner = &slf.inner;
         let py = slf.py();
         let output = py
@@ -1064,6 +1067,8 @@ impl NativeClient {
                     deadline_ms,
                     media_json,
                     query_affect_json,
+                    token_budget,
+                    reader_agent_ref.as_deref(),
                 )
             })
             .map_err(raise)?;

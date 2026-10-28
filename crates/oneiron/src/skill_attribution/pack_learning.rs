@@ -4,14 +4,16 @@
 use std::collections::BTreeMap;
 
 use crate::entity_id::EntityId;
-use crate::learning::{
-    Anchor, EvidenceSource, LearningCell, LearningEvidence, LearningPredicate, Observation,
-};
-use crate::receipt::{PackLearningContext, ReceiptRecord, attempt_pack_receipt};
+use crate::learning::{Anchor, EvidenceSource, LearningPredicate};
+use crate::receipt::{ReceiptRecord, attempt_pack_receipt};
 use crate::{Error, Result, Vault};
 
 use super::codec::evidence_after;
-use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, receipt_id, shares_in_txn};
+use super::credit_join::{
+    credit_cell, credit_evidence, credit_shares_in_txn, joined_fields_in_txn, record_credit_in_txn,
+    seal_decay_in_txn,
+};
+use super::late_credit::{CREDIT_RECEIPT, LateCreditReceipt, credit_decay_in_txn, receipt_id};
 use super::{
     AttemptOutcome, AttributionVerdict, FollowedState, attribution_judgments,
     judgment_displaced_in_txn,
@@ -34,8 +36,11 @@ pub struct AnchoredPackOutcome {
 
 /// Projects only anchored, attributed outcomes into `learning.reliability`.
 /// The returned credit receipt freezes direct subjects, actual-use chains,
-/// shares and the execution context, so replay never re-learns a newer decay.
-/// All learning heads and this receipt commit together and are idempotent.
+/// shares, the execution context and the `credit_decay` the shared scoped
+/// read resolved for the run (FIX 10107), so replay never re-learns a newer
+/// decay. All learning heads and this receipt commit together and are
+/// idempotent; a check or late landing after it is reconciled beside it
+/// ([`super::credit_join`]).
 pub fn project_anchored_pack_outcome(
     vault: &Vault,
     attempt_receipt: &str,
@@ -112,12 +117,14 @@ fn project(
         if let Some(owner) = owner {
             owner.revalidate_in_txn(vault, txn)?;
         }
-        // A matched-fork check recorded for this run and axis counts as the
-        // skill's contribution, though it landed after the receipt froze.
-        let fields = super::contribution::with_recorded_checks_in_txn(
-            &vault.store,
+        // A matched-fork check recorded for this outcome counts as the
+        // skill's contribution or the edge's hop check, and a use that landed
+        // late joins the used chain, though both came after the run froze.
+        let fields = joined_fields_in_txn(
+            vault,
             txn,
             attempt_receipt,
+            &outcome.receipt,
             &outcome.axis,
             outcome.goal_revision.as_deref(),
             fields.clone(),
@@ -144,7 +151,6 @@ fn project(
             ));
         }
         let mut direct = BTreeMap::<EntityId, bool>::new();
-        let mut contributing_skills = Vec::new();
         for (sequence, row) in &evidence {
             if outcome.succeeded {
                 if row.outcome != AttemptOutcome::Succeeded || receipt.outcome != "completed" {
@@ -168,9 +174,6 @@ fn project(
                 {
                     require_loaded_skill(vault, txn, &receipt, skill)?;
                     direct.insert(skill, true);
-                    if !contributing_skills.contains(&skill) {
-                        contributing_skills.push(skill);
-                    }
                 }
             } else if let Some(judgment) = judgments.get(sequence) {
                 if judgment_displaced_in_txn(vault, txn, *sequence)? {
@@ -200,14 +203,30 @@ fn project(
         {
             require_loaded_skill(vault, txn, &receipt, fields.pattern)?;
             direct.insert(fields.pattern, true);
-            if !contributing_skills.contains(&fields.pattern) {
-                contributing_skills.push(fields.pattern);
-            }
         }
-        let shares = if outcome.succeeded && !direct.is_empty() {
-            shares_in_txn(vault, txn, &fields, &contributing_skills)?
+        let direct_subjects: Vec<_> = direct.keys().copied().map(Some).collect();
+        // Shares are due on a success someone won, which reads the decay as
+        // it always has. Any other outcome reads it best effort, only to
+        // freeze it for a later reconciliation (FIX 10107).
+        let shares_due = outcome.succeeded && !direct_subjects.is_empty();
+        let decay = if shares_due {
+            Some(credit_decay_in_txn(vault, txn, &fields)?)
         } else {
-            Vec::new()
+            credit_decay_in_txn(vault, txn, &fields)
+                .inspect_err(|error| {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        %error,
+                        "an outcome's credit_decay was not read; a reconciliation reads it then"
+                    );
+                })
+                .ok()
+        };
+        let shares = match decay {
+            Some(decay) if shares_due => {
+                credit_shares_in_txn(vault, txn, &fields, &direct_subjects, decay)?
+            }
+            _ => Vec::new(),
         };
         let credit = LateCreditReceipt {
             receipt_id: key.clone(),
@@ -219,7 +238,7 @@ fn project(
             at: outcome.at,
             goal_revision: outcome.goal_revision.clone(),
             attribution: Some(fields.clone()),
-            direct_subjects: direct.keys().copied().map(Some).collect(),
+            direct_subjects,
             shares,
         };
         let mut observations: BTreeMap<EntityId, (bool, f64)> = direct
@@ -232,32 +251,17 @@ fn project(
             }
         }
         for (subject, (success, weight)) in observations {
-            let cell = LearningCell::new(LearningPredicate::Reliability, subject)
-                .executor(fields.executor.clone())
-                .type_ref(fields.type_ref.clone())
-                .axis(outcome.axis.clone());
-            let mut learning = LearningEvidence::anchored(
-                &credit.receipt_id,
-                outcome.at,
-                anchor,
-                Observation::Success(success),
-            );
-            learning.weight = weight;
-            // An unknown judge stays unknown, and no run is on it (FIX 1877).
-            learning.judge = fields.judge.clone();
-            learning.on_judge_model = fields.judge.as_deref() == Some(fields.executor.as_str());
-            learning.pack_attribution = Some(PackLearningContext {
-                attempt_receipt: attempt_receipt.to_owned(),
-                outcome_receipt: outcome.receipt.clone(),
-                attribution: fields.clone(),
-            });
-            learning.goal_revision = outcome.goal_revision.clone();
-            crate::learning::record_evidence_in_txn(vault, txn, &cell, &learning, now)?;
+            let cell = credit_cell(&fields, &outcome.axis, subject);
+            let learning = credit_evidence(&credit, &fields, success, weight);
+            record_credit_in_txn(vault, txn, &fields, &cell, &learning, now)?;
         }
         // If facts were unavailable, leave this receipt retryable rather than
         // sealing an empty result before attribution has caught up.
         if !credit.direct_subjects.is_empty() || !evidence.is_empty() {
             CREDIT_RECEIPT.put(&vault.store, txn, &key, &credit)?;
+            if let Some(decay) = decay {
+                seal_decay_in_txn(&vault.store, txn, &key, decay);
+            }
         }
         Ok(credit)
     })
