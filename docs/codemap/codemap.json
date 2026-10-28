@@ -40833,7 +40833,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 11,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -89417,7 +89417,7 @@
      "purpose": "One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an…",
      "surface": {
       "const": 5,
-      "fn": 15,
+      "fn": 16,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -92259,7 +92259,7 @@
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
       "mod": 4,
-      "re-export": 31
+      "re-export": 32
      }
     },
     {
@@ -92340,6 +92340,31 @@
       "const": 2,
       "enum": 2,
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AdmissionGrant",
+      "CallSchedule",
+      "ResourceClass",
+      "ScheduleAck",
+      "ScheduleAction",
+      "ScheduleBoundary",
+      "ScheduleUpdate",
+      "SchedulingCapability",
+      "SchedulingReceipt",
+      "WorkClass",
+      "WorkPriority"
+     ],
+     "path": "src/llm/scheduling.rs",
+     "purpose": "The scheduling wire of a model worker (DESIGN-V2 R4, codec v1.3): the order a host asks a worker to run its…",
+     "surface": {
+      "const": 3,
+      "enum": 4,
+      "fn": 4,
+      "struct": 7
      }
     },
     {
@@ -92468,7 +92493,7 @@
      "purpose": "Extraction-quality evaluation facade"
     },
     "llm": {
-     "files": 48,
+     "files": 49,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -92477,7 +92502,7 @@
    },
    "over_bar": 0,
    "purpose": "Model seam of the oneiron engine: the LLM request, response, streaming, usage, error and catalog types, the…",
-   "source_files": 47,
+   "source_files": 48,
    "test_files": 6
   },
   "oneiron-napi": {
@@ -108193,7 +108218,7 @@
      "path": "src/models/native_exl3/transport.rs",
      "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 18
      }
     },
     {
@@ -108203,7 +108228,7 @@
      "path": "src/models/native_exl3/wire.rs",
      "purpose": "Codec v1 of the house EXL3 worker's native channel (`exl3_ipc.py`): each frame is a u64 big-endian payload…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
