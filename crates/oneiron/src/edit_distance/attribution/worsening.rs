@@ -1,8 +1,8 @@
 //! The persistent-failure trigger (ARCH-0056 §5 "Persistent failure → the
 //! triage packet"; FIX 7825).
 //!
-//! Every charge that lands a share on a subject's `learning.edit_cost` cell is
-//! checked here, in a savepoint of the charging write, for the three
+//! Every outcome that lands on a subject's `learning.edit_cost` cell is
+//! checked here, in a savepoint of the write that lands it, for the three
 //! worsening signals canon names per subject and scope. Each is read from
 //! receipts and the measured cells alone:
 //!
@@ -11,41 +11,74 @@
 //!   cell held before. No slope is fitted.
 //! - **a rejection run**: the subject's newest outcomes in the scope, across
 //!   every executor and task type, rejected [`REJECTION_RUN_LENGTH`] times in
-//!   a row. An untouched or amended outcome ends the run.
+//!   a row, charged or count-only. An untouched or amended outcome ends the
+//!   run.
 //! - **a reliability floor-crossing**: an open quarantine proposal on a
 //!   charged skill, the row the reliability floor contract keeps of a
 //!   downward crossing until the skill recovers.
 //!
-//! A signal that fires mints, or brings up to date, the subject's one
+//! A charge checks all three ([`observe_charge_in_txn`]); an outcome that
+//! charges nobody checks the run alone ([`observe_rejection_in_txn`]). A
+//! signal that fires mints, or brings up to date, the subject's one
 //! escalation for that scope and signal ([`super::triage`]). It is a record
 //! and an inbox item: nothing is blocked, held or refused, no local
-//! mitigation waits on it, and a check that fails leaves the charge as it
+//! mitigation waits on it, and a check that fails leaves the outcome as it
 //! landed.
 
+use std::collections::BTreeSet;
+
+use super::cells::learning_scope;
 use super::taxonomy::{AmendmentClass, AmendmentJudgment};
 use super::triage::{TriageSubject, WorseningSignal, escalate_in_txn, packet_in_txn};
 use crate::Vault;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::evidence::EvidenceRow;
 use crate::learning::project::{StoredEstimateClaim, active_heads_in_txn};
 use crate::learning::{
-    ESTIMATOR_VERSION, Estimate, EstimateValue, LearningCell, LearningPredicate,
+    ESTIMATOR_VERSION, Estimate, EstimateValue, LearningCell, LearningPredicate, Observation,
 };
 use crate::ports::{EdgeDirection, EdgeStore};
+use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill_reliability::open_floor_crossings_in_txn;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// Rejections in a row, in one scope, that make a run. Canon names rejection
 /// runs and pins no length; three is the manifest's other recurrence count
 /// (`miner_recurrence_receipts`, `escalation_standing_rulings`).
 const REJECTION_RUN_LENGTH: usize = 3;
 
-/// The outcome label a rejection's charge records on its cell (ARCH-0055 §7).
+/// The outcome labels a cell row records (ARCH-0055 §7).
+const AMENDED_OUTCOME: &str = "amended";
 const REJECTED_OUTCOME: &str = "rejected";
 
+/// One outcome a subject's cell holds: when it landed, its receipt, and its
+/// label.
+pub(super) struct CellOutcome {
+    pub(super) at: u64,
+    pub(super) receipt: String,
+    label: Option<String>,
+}
+
+impl CellOutcome {
+    /// Whether the decider amended or rejected it.
+    pub(super) fn failed(&self) -> bool {
+        matches!(
+            self.label.as_deref(),
+            Some(AMENDED_OUTCOME | REJECTED_OUTCOME)
+        )
+    }
+
+    fn rejected(&self) -> bool {
+        self.label.as_deref() == Some(REJECTED_OUTCOME)
+    }
+}
+
 /// Checks each cell `judgment` charged for a worsening signal, and escalates
-/// each one that fires, in a savepoint of the charging write: an optional
-/// capture that never fails the charge it rides.
+/// each one that fires: climbing and the floor here, the run through
+/// [`observe_rejection_in_txn`]. Each check runs in a savepoint of the
+/// charging write and never fails the charge it rides.
 pub(super) fn observe_charge_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -55,27 +88,64 @@ pub(super) fn observe_charge_in_txn(
     if charged.is_empty() {
         return;
     }
+    in_savepoint(vault, txn, &judgment.receipt_id, |savepoint| {
+        for cell in charged {
+            escalate_cell_in_txn(vault, savepoint, judgment, cell)?;
+        }
+        Ok(())
+    });
+    let subjects: BTreeSet<EntityId> = charged.iter().map(|cell| cell.subject).collect();
+    for subject in &subjects {
+        observe_rejection_in_txn(vault, txn, subject, &judgment.scope, &judgment.receipt_id);
+    }
+}
+
+/// Checks `subject`'s rejection run in `scope` once the outcome on receipt
+/// `trigger` has landed on one of its `learning.edit_cost` cells, and
+/// escalates the run when it is long enough. `scope` is the receipt's scope
+/// as its judgment keeps it. In a savepoint of the caller's write, which it
+/// never fails: the entry both the charge and an outcome that charges nobody
+/// call.
+pub(crate) fn observe_rejection_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    subject: &EntityId,
+    scope: &str,
+    trigger: &str,
+) {
+    in_savepoint(vault, txn, trigger, |savepoint| {
+        escalate_run_in_txn(vault, savepoint, subject, scope, trigger)
+    });
+}
+
+/// Runs `check` in a savepoint of `txn` that commits only when all of it
+/// lands; an error drops the savepoint alone and logs one WARN.
+fn in_savepoint(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    receipt: &str,
+    check: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
+) {
     let landed = vault
         .store
         .env
         .nested_write_txn(txn)
         .map_err(Error::from)
         .and_then(|mut savepoint| {
-            for cell in charged {
-                escalate_cell_in_txn(vault, &mut savepoint, judgment, cell)?;
-            }
+            check(&mut savepoint)?;
             Ok(savepoint.commit()?)
         });
     if let Err(error) = landed {
         tracing::warn!(
             kind = ?error.kind(),
-            receipt = %judgment.receipt_id,
-            "a worsening check did not land; the charge stands"
+            receipt,
+            "a worsening check did not land; the outcome stands"
         );
     }
 }
 
-/// Every signal `cell`'s subject shows in `judgment`'s scope, each escalated.
+/// The edit-cost climb and the floor crossing `cell`'s subject shows, each
+/// escalated in `judgment`'s scope.
 fn escalate_cell_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -87,17 +157,103 @@ fn escalate_cell_in_txn(
     };
     let mut fired = Vec::new();
     fired.extend(climbing_in_txn(vault, txn, cell)?);
-    if let Some(scope) = cell.consent_scope.as_deref() {
-        fired.extend(rejection_run_in_txn(vault, txn, &cell.subject, scope)?);
-    }
     if kind == TriageSubject::Skill {
         fired.extend(floor_crossing_in_txn(vault, txn, &cell.subject)?);
     }
     for signal in fired {
-        let packet = packet_in_txn(vault, txn, judgment, cell.subject, kind, signal)?;
+        let packet = packet_in_txn(
+            vault,
+            txn,
+            cell.subject,
+            kind,
+            &judgment.scope,
+            judgment.at,
+            signal,
+        )?;
         escalate_in_txn(vault, txn, &packet)?;
     }
     Ok(())
+}
+
+/// Escalates `subject`'s rejection run in `scope` when `trigger` is in it and
+/// it is long enough.
+fn escalate_run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    subject: &EntityId,
+    scope: &str,
+    trigger: &str,
+) -> Result<()> {
+    let mut outcomes = outcomes_in_txn(vault, txn, subject, scope)?;
+    outcomes.sort_by(|a, b| (a.at, &a.receipt).cmp(&(b.at, &b.receipt)));
+    let run: Vec<&CellOutcome> = outcomes
+        .iter()
+        .rev()
+        .take_while(|outcome| outcome.rejected())
+        .collect();
+    let Some(newest) = run.first() else {
+        return Ok(());
+    };
+    // A check prompted by an outcome outside the run says nothing new.
+    if run.len() < REJECTION_RUN_LENGTH || !run.iter().any(|outcome| outcome.receipt == trigger) {
+        return Ok(());
+    }
+    let kind = match live_entity_row_in_txn(&vault.store, txn, subject)? {
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_SKILL => {
+            TriageSubject::Skill
+        }
+        LiveEntityRow::Live { .. } => TriageSubject::Actor,
+        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => return Ok(()),
+    };
+    let signal = WorseningSignal::RejectionRun {
+        length: u32::try_from(run.len()).unwrap_or(u32::MAX),
+        newest: newest.receipt.clone(),
+    };
+    let packet = packet_in_txn(vault, txn, *subject, kind, scope, newest.at, signal)?;
+    escalate_in_txn(vault, txn, &packet)
+}
+
+/// Every outcome `subject`'s `learning.edit_cost` cells hold in `scope`, at
+/// any executor and task type, charged or count-only. `scope` is the
+/// receipt's scope as its judgment keeps it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn outcomes_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    scope: &str,
+) -> Result<Vec<CellOutcome>> {
+    let scope = learning_scope(scope);
+    let mut outcomes = Vec::new();
+    for row in crate::learning::evidence::cells_for_subject_in_txn(vault, txn, subject)? {
+        if row.cell.predicate != LearningPredicate::EditCost
+            || row.cell.consent_scope.as_deref() != Some(scope.as_str())
+        {
+            continue;
+        }
+        for (receipt, evidence) in
+            crate::learning::evidence::evidence_in_txn(vault, txn, &row.cell.digest())?
+        {
+            outcomes.push(CellOutcome {
+                at: evidence.at,
+                receipt,
+                label: outcome_label(evidence),
+            });
+        }
+    }
+    Ok(outcomes)
+}
+
+/// A row's outcome label: the one a measured row keeps beside its
+/// magnitude, or a count-only row's category.
+fn outcome_label(row: EvidenceRow) -> Option<String> {
+    match (row.outcome_label, row.observation) {
+        (Some(label), _) | (None, Observation::Category(label)) => Some(label),
+        (None, Observation::Success(_) | Observation::Magnitude(_)) => None,
+    }
 }
 
 /// What `subject` is to `judgment`: the skill a `skill_defect` share charges
@@ -210,47 +366,6 @@ fn estimate_of_in_txn(
         .ok()
         .filter(|stored| stored.cell == *cell && stored.estimate.ver == ESTIMATOR_VERSION)
         .map(|stored| stored.estimate))
-}
-
-/// The run of rejections `subject`'s newest outcomes in `scope` end on, over
-/// every `learning.edit_cost` cell it holds there, when it is long enough.
-fn rejection_run_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    subject: &EntityId,
-    scope: &str,
-) -> Result<Option<WorseningSignal>> {
-    let mut outcomes = Vec::new();
-    for row in crate::learning::evidence::cells_for_subject_in_txn(vault, txn, subject)? {
-        if row.cell.predicate != LearningPredicate::EditCost
-            || row.cell.consent_scope.as_deref() != Some(scope)
-        {
-            continue;
-        }
-        for (receipt, evidence) in
-            crate::learning::evidence::evidence_in_txn(vault, txn, &row.cell.digest())?
-        {
-            let rejected = evidence.outcome_label.as_deref() == Some(REJECTED_OUTCOME);
-            outcomes.push((evidence.at, receipt, rejected));
-        }
-    }
-    outcomes.sort();
-    let run: Vec<&String> = outcomes
-        .iter()
-        .rev()
-        .take_while(|(_, _, rejected)| *rejected)
-        .map(|(_, receipt, _)| receipt)
-        .collect();
-    let Some(newest) = run.first() else {
-        return Ok(None);
-    };
-    if run.len() < REJECTION_RUN_LENGTH {
-        return Ok(None);
-    }
-    Ok(Some(WorseningSignal::RejectionRun {
-        length: u32::try_from(run.len()).unwrap_or(u32::MAX),
-        newest: (*newest).clone(),
-    }))
 }
 
 /// The newest floor crossing still open on `skill`: one per escalation, so
