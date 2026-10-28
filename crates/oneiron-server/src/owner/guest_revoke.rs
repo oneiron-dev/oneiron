@@ -23,8 +23,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::receipt::{GuestDeletionRequestStatus, GuestRevokeResponse};
 use oneiron::task_verb::sdk::CourtesyDeleteSendRequest;
 
-use super::courtesy_delete::{self, CourtesySender};
 use super::OwnerResult;
+use super::courtesy_delete::{self, CourtesySender};
 use crate::server::SyncServer;
 
 /// Why a committed revoke sent no courtesy-delete ask: its hook-rewritten
