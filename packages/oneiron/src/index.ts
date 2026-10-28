@@ -674,8 +674,10 @@ export class Oneiron {
    * Explicit `scope.worldRef` recalls of retained foreign worlds carry
    * `item.stale`: `staleSince` and `ageSecs` (when known), `reason` and
    * `pactEpoch`. This selection grants no read authority.
+   * `tokenBudget` (0: uncut) sizes the rendered `format`; omitted, the
+   * window budget of `readerAgentRef`'s memory profile, else 4,000.
    */
-    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
+    recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect, opts.tokenBudget, opts.readerAgentRef)),
     retrieval: {
       aging: {
         /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
