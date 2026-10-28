@@ -9,11 +9,18 @@
 //! A turn whose log was not read from the retained ledger, or whose rows
 //! are not all known, names no conversation: its manifest keys no session.
 //! Nothing here changes what the call sends.
+//!
+//! A snapshot of the turn's successor is kept, and restored for a later
+//! call, only under the read's scope and a dependency set known whole (a
+//! self-chat with no fold summary and no craft note); every other turn's
+//! state stays cold (V2-R3). The turn's own authority is recorded for its
+//! call before the call goes out, so a restore rechecks under it.
 use std::sync::Arc;
 
 use oneiron::attempt_queue::ManifestEntry;
-use oneiron::claim::{CallerLocality, ScopedReadActorKey};
+use oneiron::claim::{CallerLocality, ScopedReadActorKey, base_world_id};
 use oneiron::compaction::ChatLogLine;
+use oneiron::inference_snapshot::SnapshotDependencies;
 use oneiron::llm::{
     ConversationAnchor, ScopeDigest, Segment, SegmentClass, SegmentClock, SegmentKind,
     SegmentLocator, SegmentManifest, SessionInvalidation, TrustFence, VaultRef,
@@ -27,7 +34,10 @@ use super::{Answering, TurnCredential, text_message};
 use crate::api::context_board::BoardSectionSource;
 use crate::api::credential_memory;
 use crate::auth::CoreAuth;
-use crate::models::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+use crate::models::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 /// Where the turn's messages lay as it assembled them, before its craft and
 /// its board went in.
@@ -79,6 +89,12 @@ pub(super) struct Assembled<'a> {
 pub(super) struct TurnSegments {
     pub(super) manifest: Arc<SegmentManifest>,
     authority: Option<(ScopedReadActorKey, Vec<EntityId>)>,
+    /// Who wrote the canonical path, when known whole ([`authors`]).
+    authors: Option<Vec<EntityId>>,
+    /// The authority a snapshot restored for the turn's call is rechecked
+    /// under, held for the turn's life: the record [`turn_admitted`] keeps
+    /// lapses once it goes.
+    _turn: Option<Arc<dyn CheckpointAuthority>>,
 }
 
 /// The manifest of `assembled` once admitted as `admitted`; `None` when the
@@ -182,10 +198,45 @@ pub(super) fn admitted(
     if !manifest.describes(admitted) {
         return None;
     }
+    let manifest = Arc::new(manifest);
+    let authors = authors(reader, &assembled);
+    let turn = match (manifest.anchor(), &read_key, &sources) {
+        (Some(anchor), Some(key), Some(rows)) => {
+            let turn: Arc<dyn CheckpointAuthority> = Arc::new(ChatAuthority {
+                reader: reader.clone(),
+                credential: TurnCredential::Request {
+                    auth: reader.auth.clone(),
+                    vault: Arc::clone(&reader.vault),
+                },
+                read_key: key.clone(),
+                sources: rows.clone(),
+                at: Some((anchor.head, anchor.fold_epoch)),
+                authors: authors.clone(),
+            });
+            turn_admitted(&manifest, &turn);
+            Some(turn)
+        }
+        _ => None,
+    };
     Some(TurnSegments {
-        manifest: Arc::new(manifest),
+        manifest,
         authority: read_key.zip(sources),
+        authors,
+        _turn: turn,
     })
+}
+
+/// Who wrote the canonical path, known whole only for a self-chat whose log
+/// holds no fold summary and whose turn showed no craft note: the reader
+/// and the answering agent. `None` otherwise: a summary or a note derives
+/// from rows its own id does not name.
+fn authors(reader: &Reader, assembled: &Assembled<'_>) -> Option<Vec<EntityId>> {
+    let log = assembled.self_chat?.log();
+    let craft = assembled.craft.is_some_and(|craft| !craft.is_empty());
+    if craft || !log.summaries.is_empty() {
+        return None;
+    }
+    Some(vec![reader.actor, assembled.agent])
 }
 
 /// The rows the canonical path was read from: the agent, its craft notes
@@ -271,20 +322,22 @@ struct ChatAuthority {
     credential: TurnCredential,
     read_key: ScopedReadActorKey,
     sources: Vec<EntityId>,
+    /// The HEAD and fold epoch the turn read its path at; `None` on the
+    /// authority a commit holds, which restores nothing.
+    at: Option<(Option<EntityId>, u64)>,
+    /// Who wrote the path, when known whole ([`authors`]).
+    authors: Option<Vec<EntityId>>,
 }
 
-impl CheckpointAuthority for ChatAuthority {
-    fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict {
-        if !self.credential.live() {
-            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
-        }
+impl ChatAuthority {
+    /// Whether the read key the reader resolves now is the one the path was
+    /// read under, and every row of `rows` still reads under it.
+    fn reads(&self, rows: &[EntityId]) -> AuthorityVerdict {
         match self.reader.read_key() {
             Some(key) if key == self.read_key => {
                 let read = self.reader.vault.scoped_read(key);
-                let withdrawn = self
-                    .sources
+                let withdrawn = rows
                     .iter()
-                    .chain(std::iter::once(&commit.message))
                     .any(|row| !matches!(read.is_entity_readable(row), Ok(true)));
                 if withdrawn {
                     AuthorityVerdict::Rejects(SessionInvalidation::SourceWithdrawn)
@@ -294,6 +347,65 @@ impl CheckpointAuthority for ChatAuthority {
             }
             _ => AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope),
         }
+    }
+}
+
+impl CheckpointAuthority for ChatAuthority {
+    fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict {
+        if !self.credential.live() {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        let mut rows = self.sources.clone();
+        rows.push(commit.message);
+        self.reads(&rows)
+    }
+
+    /// The read's scope as the session is keyed by it, no revocation
+    /// generation (this producer keeps none: a restore reads every source
+    /// again instead), and the path's sources with the reply, base reality
+    /// (a chat MESSAGE is no claim) and its two authors.
+    fn snapshot_scope(&self, commit: &ReplyCommit) -> Option<SnapshotScope> {
+        let authors = self.authors.clone()?;
+        let mut sources = self.sources.clone();
+        sources.push(commit.message);
+        sources.sort_unstable();
+        sources.dedup();
+        Some(SnapshotScope {
+            read_scope: scope_digest(&self.reader, &self.read_key),
+            revocation: None,
+            dependencies: SnapshotDependencies {
+                sources,
+                worlds: vec![base_world_id()],
+                authors,
+                erase_subjects: Vec::new(),
+                derived: Vec::new(),
+                precise: true,
+            },
+        })
+    }
+
+    /// In order: the credential, the claim's revocation generation (none
+    /// is kept here), the HEAD and fold epoch the turn read at, the read key
+    /// and its scope, then every source the snapshot depends on.
+    fn recheck_restore(&self, claim: &RestoreClaim<'_>) -> AuthorityVerdict {
+        let Some((head, fold_epoch)) = self.at else {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        };
+        if !self.credential.live() || claim.revocation.is_some() {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        if claim.head != head {
+            return AuthorityVerdict::Rejects(SessionInvalidation::PathChanged);
+        }
+        if claim.fold_epoch != fold_epoch {
+            return AuthorityVerdict::Rejects(SessionInvalidation::FoldBeforeFrontier);
+        }
+        let scoped = claim.dependencies.precise
+            && scope_digest(&self.reader, &self.read_key) == claim.read_scope;
+        if !scoped {
+            return AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope);
+        }
+        self.reads(&claim.dependencies.sources)
     }
 }
 
@@ -322,6 +434,8 @@ pub(super) fn commit_on_answer(
         credential: credential.clone(),
         read_key,
         sources,
+        at: None,
+        authors: segments.authors.clone(),
     };
     let Answering {
         handle,

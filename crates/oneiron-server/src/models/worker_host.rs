@@ -47,7 +47,10 @@ use probe::HouseProbe;
 
 #[cfg(unix)]
 pub(super) use session::open_turn;
-pub(crate) use session::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+pub(crate) use session::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 /// The process's one worker host, made when the first worker is configured
 /// or the process is marked as the one that launches them.

@@ -42,10 +42,12 @@ mod registry;
 #[cfg(unix)]
 mod turn;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use oneiron::EntityId;
-use oneiron::llm::{SegmentManifest, SessionInvalidation};
+use oneiron::inference_snapshot::SnapshotDependencies;
+use oneiron::llm::{ManifestDigest, ScopeDigest, SegmentManifest, SessionInvalidation};
 
 #[cfg(unix)]
 pub(super) use lifecycle::{
@@ -57,12 +59,65 @@ pub(super) use registry::Registry;
 pub(in crate::models) use turn::open_turn;
 
 /// What a turn's canonical path was admitted under, held by the turn and
-/// rechecked before its successor is published.
+/// rechecked before its successor is published, and before a snapshot of
+/// it is restored (V2-R3). A producer that implements only [`Self::recheck`]
+/// keeps its state cold: nothing of it is parked or restored.
 pub(crate) trait CheckpointAuthority: Send + Sync {
     /// Whether the credential, the read scope and the disclosure ceiling the
     /// path was admitted under hold now, and every source it was read from
     /// (`commit`'s reply among them) still reads. Runs off the runtime.
     fn recheck(&self, commit: &ReplyCommit) -> AuthorityVerdict;
+
+    /// What a snapshot of the successor `commit` ends is kept under: the
+    /// read's stable scope, its revocation generation, and everything the
+    /// path was read from. `None` when the producer cannot name them whole:
+    /// the state stays cold.
+    fn snapshot_scope(&self, _commit: &ReplyCommit) -> Option<SnapshotScope> {
+        None
+    }
+
+    /// The ordered recheck of a restore, run before its snapshot is
+    /// decrypted and imported and again before it is ready: the credential
+    /// is live, the read key resolved now has the snapshot's scope and
+    /// revocation generation, the restoring turn stands at the HEAD and fold
+    /// epoch the snapshot names, and every source it depends on still reads.
+    /// Runs off the runtime.
+    fn recheck_restore(&self, _claim: &RestoreClaim<'_>) -> AuthorityVerdict {
+        AuthorityVerdict::Rejects(SessionInvalidation::DisclosureOrScope)
+    }
+}
+
+/// What a snapshot of a canonical checkpoint is kept under.
+pub(crate) struct SnapshotScope {
+    /// The read's scope, the same for every turn the same read admits.
+    pub(crate) read_scope: ScopeDigest,
+    /// The read's revocation generation, when the producer keeps one: a
+    /// restore holds only while it is unchanged.
+    pub(crate) revocation: Option<u64>,
+    pub(crate) dependencies: SnapshotDependencies,
+}
+
+/// A kept snapshot, as a restore claims it under a turn's authority.
+pub(crate) struct RestoreClaim<'a> {
+    pub(crate) read_scope: ScopeDigest,
+    pub(crate) revocation: Option<u64>,
+    pub(crate) head: Option<EntityId>,
+    pub(crate) fold_epoch: u64,
+    pub(crate) dependencies: &'a SnapshotDependencies,
+}
+
+/// The authority of each turn admitted and not yet ended, by its manifest:
+/// held weakly, since the turn holds it.
+static TURNS: Mutex<BTreeMap<ManifestDigest, Weak<dyn CheckpointAuthority>>> =
+    Mutex::new(BTreeMap::new());
+
+/// Records the authority the turn `manifest` describes was admitted under,
+/// before its call goes out: a snapshot restored for that call is rechecked
+/// under it. It lapses once the turn drops it.
+pub(crate) fn turn_admitted(manifest: &SegmentManifest, authority: &Arc<dyn CheckpointAuthority>) {
+    let mut turns = TURNS.lock().unwrap_or_else(PoisonError::into_inner);
+    turns.retain(|_, turn| turn.strong_count() > 0);
+    turns.insert(*manifest.digest(), Arc::downgrade(authority));
 }
 
 /// A recheck's outcome.
