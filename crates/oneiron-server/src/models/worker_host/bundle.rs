@@ -25,6 +25,10 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/cache_usage.py"),
     ),
     (
+        "exl3_executor.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_executor.py"),
+    ),
+    (
         "exl3_ipc.py",
         include_bytes!("../../../../../deploy/house-model/exl3_ipc.py"),
     ),
