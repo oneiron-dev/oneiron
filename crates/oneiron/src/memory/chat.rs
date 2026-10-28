@@ -99,6 +99,9 @@ pub struct ChatOptions<'a> {
     pub lease: Option<&'a BudgetLease>,
     /// Host-injected composer. Required at standard/deep, ignored at minimal.
     pub composer: Option<&'a dyn ChatComposer>,
+    /// The budget the owner set for chat, when one is set: composition then
+    /// runs on a lease from it (FIX 9951). `None` composes as before.
+    pub budget: Option<&'a crate::llm::BudgetGuard>,
 }
 
 /// What the host composer is handed: the question and the retrieved pack, and
@@ -341,13 +344,15 @@ impl Memory<'_> {
         let (answer, proposed, tokens_used): (String, Vec<String>, u32) = match composer {
             None => (extractive_answer(&pack), pack_short_ids(&pack), 0),
             Some(composer) => {
-                let composed = composer.compose(
+                let composed = self.compose_on_budget(
+                    composer,
                     &ChatComposeRequest {
                         question,
                         depth,
                         pack: &pack,
                     },
                     options.lease,
+                    options.budget,
                 )?;
                 gaps.extend(composed.gaps);
                 if composed.declined {

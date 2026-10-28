@@ -66,6 +66,7 @@ mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
+mod chat_budget;
 pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
