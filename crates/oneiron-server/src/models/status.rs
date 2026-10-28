@@ -58,6 +58,39 @@ pub struct SnapshotStatus {
     /// The last vault lock's release, when one ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_lock: Option<SnapshotReceipt>,
+    /// Since this process started: published checkpoints exported to be
+    /// parked, and those sealed and kept.
+    pub parks: u64,
+    pub seals: u64,
+    /// Kept snapshots opened for a restore, and restores imported and made
+    /// ready.
+    pub opens: u64,
+    pub imports: u64,
+    /// Restored sessions whose first attach replayed the suffix past the
+    /// state their snapshot carried (a sliding-window frontier between two
+    /// page boundaries).
+    pub replays: u64,
+    /// Restores that matched a kept snapshot and ran cold.
+    pub restores_cold: u64,
+    /// Parks skipped, by reason.
+    pub skips: SnapshotSkips,
+}
+
+/// Why parks were skipped since this process started, one count each.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SnapshotSkips {
+    /// The vault's budget was off, zero, or held by pinned snapshots alone.
+    pub budget: u64,
+    /// The size the copy would take, or its device's room, was not known.
+    pub unknown_room: u64,
+    /// Its device had no room for the copy past the headroom.
+    pub no_room: u64,
+    /// It depended on a world whose sealed copies the owner keeps local.
+    pub kept_local: u64,
+    /// It was larger than the vault's whole budget.
+    pub oversize: u64,
+    /// What it was computed with was not named whole.
+    pub unsupported: u64,
 }
 
 /// One vault lock's release, as the host ran it: ids and outcomes only.
@@ -72,6 +105,10 @@ pub struct SnapshotReceipt {
     pub aborted: Vec<oneiron::inference_snapshot::SnapshotWorkerAbort>,
     pub timed_out: bool,
     pub elapsed_ms: u64,
+    /// The host's plaintext copies of the vault's snapshots when the lock
+    /// began, and those still held when its release answered.
+    pub host_copies: u64,
+    pub host_copies_left: u64,
 }
 
 /// One model the mesh discovered: the node that offers it and its offer's

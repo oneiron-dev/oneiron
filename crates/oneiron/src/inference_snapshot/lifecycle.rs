@@ -72,6 +72,11 @@ pub struct SnapshotRelease {
     /// Whether a bound passed before every release was answered.
     pub timed_out: bool,
     pub elapsed_ms: u64,
+    /// The host's plaintext copies of the vault's snapshots (snapshot
+    /// regions and buffers in flight) when the lock began, and those still
+    /// held when it answered.
+    pub host_copies: u64,
+    pub host_copies_left: u64,
 }
 
 /// One worker incarnation a lock aborted: killed, reaped and restarted by

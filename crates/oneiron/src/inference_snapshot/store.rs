@@ -397,6 +397,30 @@ impl Vault {
         Ok(())
     }
 
+    /// Every kept snapshot's row that decodes and may serve a restore: the
+    /// host's restore candidates, matched against a turn before any open.
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn inference_snapshot_records(&self) -> Result<Vec<SnapshotRecord>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(catalog::rows(&self.store, &txn)?
+            .into_iter()
+            .filter_map(|(_, record)| record.filter(SnapshotRecord::reusable))
+            .collect())
+    }
+
+    /// The worlds the owner's sealed-copies setting keeps off a machine of
+    /// this kind (`hosted` for one he does not own), by id bytes: a snapshot
+    /// whose dependency set names one is never parked there (PAD-FLIP
+    /// #3914).
+    ///
+    /// # Errors
+    /// Storage errors.
+    pub fn inference_snapshot_worlds_kept_local(&self, hosted: bool) -> Result<BTreeSet<[u8; 16]>> {
+        self.pad_worlds_kept_local(hosted)
+    }
+
     /// Retires snapshot `id`: its row goes and its key's retirement is
     /// staged in one transaction, then both are carried out. `true` when a
     /// row was there.

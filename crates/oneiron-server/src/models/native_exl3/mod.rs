@@ -32,15 +32,7 @@ pub(super) use session_ops::{OpFault, capability as session_capability, send as 
 pub(super) use transport::next_request_id;
 // Codec v1.2's snapshot ops (R3), for the session coordinator's park and
 // restore paths.
-#[expect(
-    unused_imports,
-    reason = "the R3 park and restore paths are their callers; neither is built yet"
-)]
 pub(super) use buffer::SnapshotRegion;
-#[expect(
-    unused_imports,
-    reason = "the R3 park and restore paths are their callers; neither is built yet"
-)]
 pub(super) use session_ops::{export as session_export, import as session_import};
 
 use std::collections::{BTreeMap, VecDeque};

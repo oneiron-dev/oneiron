@@ -8,14 +8,17 @@
 //! and its turn recomputes from source. One larger than the whole budget is
 //! never kept. A size nobody measured is never free: it reserves nothing and
 //! is not kept. A snapshot an active lease holds is pinned until its
-//! release is acknowledged, and never chosen.
+//! release is acknowledged, and never chosen: the pins the host takes
+//! ([`SnapshotLedger::pin`]) bind every eviction, beside a caller's own. A
+//! budget that is off or zero purges every row not pinned when a park asks
+//! it for room.
 //!
 //! Host memory, device memory and transfer buffers are charged on their own
 //! lines, by the device and host owners that already account for them, with
 //! at least [`SNAPSHOT_HEADROOM_BYTES`] left free: this ledger is the disk
 //! line alone.
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use super::catalog::{self, SnapshotClass, SnapshotId};
@@ -133,6 +136,8 @@ struct LedgerState {
     next: u64,
     /// Each reservation's bytes, and whether a body's length charged it.
     held: BTreeMap<u64, (u64, bool)>,
+    /// The rows a live lease holds, each with its count of holders.
+    pins: BTreeMap<SnapshotId, u64>,
     evicted: u64,
     skipped: u64,
 }
@@ -218,7 +223,8 @@ impl SnapshotLedger<'_> {
     /// kept snapshots outside `pinned` in [`choose_victim`]'s order until
     /// it fits. `None`, and nothing reserved, when the budget is off, the
     /// size is unknown, the body alone is larger than the budget, or
-    /// nothing evictable makes room: the park is skipped, never refused.
+    /// nothing evictable makes room: the park is skipped, never refused. A
+    /// budget that is off or zero purges every kept row not pinned first.
     ///
     /// # Errors
     /// Storage errors.
@@ -228,6 +234,9 @@ impl SnapshotLedger<'_> {
         bytes: Option<u64>,
         pinned: &[SnapshotId],
     ) -> Result<Option<SnapshotReservation>> {
+        if budget.limit() == 0 {
+            self.enforce_budget(budget, 0, pinned)?;
+        }
         let Some(bytes) = bytes.filter(|bytes| *bytes <= budget.limit() && budget.limit() > 0)
         else {
             self.ledger().lock().skipped += 1;
@@ -274,6 +283,23 @@ impl SnapshotLedger<'_> {
         self.ledger().lock().held.remove(&reservation.id);
     }
 
+    /// Pins row `id` for one more holder: no eviction takes it until every
+    /// holder has unpinned it. An erase still does.
+    pub fn pin(&self, id: SnapshotId) {
+        *self.ledger().lock().pins.entry(id).or_insert(0) += 1;
+    }
+
+    /// Drops one holder's pin on row `id`.
+    pub fn unpin(&self, id: &SnapshotId) {
+        let mut state = self.ledger().lock();
+        if let Some(holders) = state.pins.get_mut(id) {
+            *holders = holders.saturating_sub(1);
+            if *holders == 0 {
+                state.pins.remove(id);
+            }
+        }
+    }
+
     /// Retires kept snapshots outside `pinned`, in [`choose_victim`]'s
     /// order, until what is kept, what is in flight and `need` more bytes
     /// fit the budget; rows that do not decode go first, their size being
@@ -305,6 +331,7 @@ impl SnapshotLedger<'_> {
         let store = &self.vault.store;
         let mut wtxn = store.env.write_txn()?;
         let rows = catalog::rows(store, &wtxn)?;
+        let leased: BTreeSet<SnapshotId> = self.ledger().lock().pins.keys().copied().collect();
         let mut kept = 0_u64;
         let mut candidates = Vec::new();
         let mut evicted = 0_u64;
@@ -323,7 +350,7 @@ impl SnapshotLedger<'_> {
                 class: record.class,
                 reuse_count: record.reuse_count,
                 last_used_ms: record.last_used_ms,
-                pinned: pinned.contains(&id),
+                pinned: pinned.contains(&id) || leased.contains(&id),
             });
         }
         let limit = budget.limit();

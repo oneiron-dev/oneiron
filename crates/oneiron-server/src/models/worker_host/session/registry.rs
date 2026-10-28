@@ -2,10 +2,22 @@
 //! sessions live on, whether that incarnation serves sessions, its sessions
 //! by binding, and those whose release is still owed. In memory only: a new
 //! epoch empties it, and nothing here is persisted or restored.
+//!
+//! Each session is in one phase (V2-R3): ready, a parking candidate once it
+//! published under a whole dependency set, parking while its checkpoint is
+//! exported and sealed, or restoring while a sealed snapshot is imported
+//! into it. A session restored from a kept snapshot holds that snapshot's
+//! retention pin until its release is acknowledged or its incarnation is
+//! reaped. Every plaintext copy the host holds of a vault's snapshot (a
+//! region or a buffer) is a [`HostCopy`] counted against that vault, so a
+//! lock can wait for its vault's to go.
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
+use std::time::Instant;
 
+use oneiron::EntityId;
+use oneiron::inference_snapshot::SnapshotId;
 use oneiron::llm::{
     CanonicalCheckpointRef, ManifestDigest, MessageStamp, SessionBinding, SessionDrop,
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionReleased, SessionResidency,
@@ -13,8 +25,9 @@ use oneiron::llm::{
 };
 use oneiron_driver::InferenceWorker;
 use serde_json::Value as JsonValue;
+use tokio::sync::Notify;
 
-use super::policy;
+use super::{CheckpointAuthority, SnapshotScope, lifecycle, policy};
 use crate::models::native_exl3::{OpFault, session_send};
 
 /// Every managed worker's sessions, by worker id: held by the process's one
@@ -36,10 +49,18 @@ pub(super) struct Place {
 pub(super) enum Serves {
     Unasked,
     No,
-    /// It serves every op a session needs; `restore` too, when it says so.
-    Yes {
-        restore: bool,
-    },
+    /// It serves every op a session needs, and those of `Ops` it names.
+    Yes(Ops),
+}
+
+/// The optional ops an incarnation serves.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) struct Ops {
+    /// `session.restore`.
+    pub(super) restore: bool,
+    /// `session.export` and `session.import`, in the snapshot format this
+    /// side speaks.
+    pub(super) snapshot: bool,
 }
 
 /// One worker incarnation's sessions.
@@ -57,11 +78,39 @@ pub(super) struct Worker {
 }
 
 /// A session whose release is owed: its vault, the target its release
-/// names, and the bytes it holds until the worker answers.
+/// names, the bytes it holds until the worker answers, and the kept
+/// snapshot it was restored from, pinned until then.
 struct Owed {
     vault: VaultRef,
     target: SessionTarget,
     residency: SessionResidency,
+    lease: Option<SnapshotId>,
+}
+
+/// Where a session stands for parking and restore.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Phase {
+    /// Serving turns.
+    Ready,
+    /// Published under a whole dependency set, unused since `since`: a
+    /// sweep parks it once it has idled long enough, or under pressure.
+    Candidate { since: Instant },
+    /// Its checkpoint is being exported and sealed. A turn that comes for
+    /// it takes it back, and the park lets it be.
+    Parking,
+    /// A kept snapshot is being imported into it: no turn forks it until
+    /// it is published.
+    Restoring,
+}
+
+/// What a session's published checkpoint was admitted under, kept for its
+/// park: the turn's authority, the scope a snapshot of it is kept under,
+/// and the reply that ended it, by id.
+pub(super) struct Basis {
+    pub(super) authority: Arc<dyn CheckpointAuthority>,
+    pub(super) scope: SnapshotScope,
+    pub(super) head: EntityId,
+    pub(super) message: EntityId,
 }
 
 /// One session: its key, its handle on the incarnation, the generation the
@@ -81,6 +130,15 @@ pub(super) struct Session {
     /// turn it succeeded. A later turn's canonical path attaches only when
     /// it starts with it (FIX 10632).
     pub(super) path: Vec<MessageStamp>,
+    pub(super) phase: Phase,
+    /// What its published checkpoint was admitted under, when a park may
+    /// keep a snapshot of it.
+    pub(super) basis: Option<Arc<Basis>>,
+    /// The kept snapshot it was restored from, pinned until its release.
+    pub(super) lease: Option<SnapshotId>,
+    /// The frontier a restore published, until its first fork: an attach
+    /// below it replayed the suffix past the state the snapshot carried.
+    pub(super) restored: Option<u64>,
 }
 
 impl Session {
@@ -123,7 +181,7 @@ pub(super) fn bind<'a>(
         worker.place.epoch == place.epoch && worker.place.socket == place.socket
     });
     if !current {
-        workers.insert(
+        let ended = workers.insert(
             worker_id.to_owned(),
             Worker {
                 place: place.clone(),
@@ -133,6 +191,10 @@ pub(super) fn bind<'a>(
                 sliding: BTreeMap::new(),
             },
         );
+        // The incarnation that ended was reaped: its leases go with it.
+        if let Some(ended) = ended {
+            unpin(ended.leases());
+        }
     }
     workers
         .get_mut(worker_id)
@@ -156,11 +218,15 @@ impl Worker {
     /// again, and its release is owed until [`release`] hears the worker.
     pub(super) fn retire(&mut self, binding: &SessionBinding) -> Option<(SessionTarget, Place)> {
         let session = self.sessions.remove(binding)?;
-        Some(self.owe(
+        let owed = self.owe(
             session.key.anchor.vault,
             session.target(),
             session.residency,
-        ))
+        );
+        if let Some(entry) = self.releasing.get_mut(&session.handle) {
+            entry.lease = session.lease;
+        }
+        Some(owed)
     }
 
     /// Owes the release of `target`, a handle of `vault` holding
@@ -178,9 +244,24 @@ impl Worker {
                 vault,
                 target: target.clone(),
                 residency,
+                lease: None,
             },
         );
         (target, self.place.clone())
+    }
+
+    /// The kept snapshots this incarnation's sessions and owed releases
+    /// hold pinned, by vault.
+    fn leases(&self) -> Vec<(VaultRef, SnapshotId)> {
+        self.sessions
+            .values()
+            .filter_map(|session| Some((session.key.anchor.vault, session.lease?)))
+            .chain(
+                self.releasing
+                    .values()
+                    .filter_map(|owed| Some((owed.vault, owed.lease?))),
+            )
+            .collect()
     }
 
     /// The bindings of every other session on `key`'s conversation: one
@@ -249,19 +330,32 @@ pub(super) async fn release_acked(
         tracing::info!(?reason, "a model session's release was not answered");
         return false;
     }
-    let mut workers = lock();
-    if let Some(worker) = workers
-        .values_mut()
-        .find(|worker| worker.place.epoch == place.epoch)
-    {
-        worker.releasing.remove(&handle);
-        tracing::debug!(
-            ?reason,
-            held_bytes = ?worker.held_bytes(),
-            "a model session was released"
-        );
-    }
+    let lease = {
+        let mut workers = lock();
+        let worker = workers
+            .values_mut()
+            .find(|worker| worker.place.epoch == place.epoch);
+        worker.and_then(|worker| {
+            let owed = worker.releasing.remove(&handle);
+            tracing::debug!(
+                ?reason,
+                held_bytes = ?worker.held_bytes(),
+                "a model session was released"
+            );
+            owed.and_then(|owed| Some((owed.vault, owed.lease?)))
+        })
+    };
+    unpin(lease);
     true
+}
+
+/// Drops the retention pin of each kept snapshot `leases` names.
+fn unpin(leases: impl IntoIterator<Item = (VaultRef, SnapshotId)>) {
+    for (vault, id) in leases {
+        if let Some(vault) = lifecycle::vault(&vault) {
+            vault.snapshot_ledger().unpin(&id);
+        }
+    }
 }
 
 /// Takes every session of `vault`, on every worker, out of service, its
@@ -292,14 +386,22 @@ pub(super) fn retire_vault(vault: &VaultRef) -> Vec<(SessionTarget, Place)> {
 }
 
 /// Forgets `worker_id`'s incarnation `epoch`, which an abort ended: its
-/// sessions and owed releases went with its process.
+/// sessions and owed releases went with its process, and so do their
+/// leases.
 pub(super) fn forget(worker_id: &str, epoch: &str) {
-    let mut workers = lock();
-    if workers
-        .get(worker_id)
-        .is_some_and(|worker| worker.place.epoch == epoch)
-    {
-        workers.remove(worker_id);
+    let ended = {
+        let mut workers = lock();
+        if workers
+            .get(worker_id)
+            .is_some_and(|worker| worker.place.epoch == epoch)
+        {
+            workers.remove(worker_id)
+        } else {
+            None
+        }
+    };
+    if let Some(ended) = ended {
+        unpin(ended.leases());
     }
 }
 
@@ -358,4 +460,92 @@ pub(super) async fn send<B: serde::Serialize, R: serde::de::DeserializeOwned>(
         OpFault::Refused(code) => policy::refused(&code),
         OpFault::Cut => SessionInvalidation::Evicted,
     })
+}
+
+/// The host's plaintext copies of each vault's snapshots, counted while
+/// they live.
+#[derive(Default)]
+struct Copies {
+    live: Mutex<BTreeMap<VaultRef, u64>>,
+    dropped: Notify,
+}
+
+static COPIES: OnceLock<Copies> = OnceLock::new();
+
+fn copies() -> &'static Copies {
+    COPIES.get_or_init(Copies::default)
+}
+
+/// One plaintext copy of a vault's snapshot the host holds (a region an
+/// export passed or an import sends, or a buffer read from one or opened
+/// from a sealed body), counted against its vault until it drops.
+pub(super) struct HostCopy<T> {
+    vault: VaultRef,
+    copy: Option<T>,
+}
+
+impl<T> HostCopy<T> {
+    /// Counts `copy` against `vault` from now until it drops.
+    pub(super) fn hold(vault: VaultRef, copy: T) -> Self {
+        *copies()
+            .live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(vault)
+            .or_insert(0) += 1;
+        Self {
+            vault,
+            copy: Some(copy),
+        }
+    }
+
+    pub(super) fn get(&self) -> &T {
+        self.copy
+            .as_ref()
+            .unwrap_or_else(|| unreachable!("a copy is held until it drops"))
+    }
+}
+
+impl<T> Drop for HostCopy<T> {
+    /// The copy goes first; only then does its count drop.
+    fn drop(&mut self) {
+        drop(self.copy.take());
+        let copies = copies();
+        {
+            let mut live = copies.live.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(count) = live.get_mut(&self.vault) {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    live.remove(&self.vault);
+                }
+            }
+        }
+        copies.dropped.notify_waiters();
+    }
+}
+
+/// The plaintext copies of `vault`'s snapshots the host holds now.
+pub(super) fn host_copies(vault: &VaultRef) -> u64 {
+    copies()
+        .live
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(vault)
+        .copied()
+        .unwrap_or(0)
+}
+
+/// Waits until the host holds no plaintext copy of `vault`'s snapshots, or
+/// `deadline` passes: the copies still held then.
+pub(super) async fn copies_dropped(vault: &VaultRef, deadline: tokio::time::Instant) -> u64 {
+    loop {
+        let dropped = copies().dropped.notified();
+        let left = host_copies(vault);
+        if left == 0 {
+            return 0;
+        }
+        if tokio::time::timeout_at(deadline, dropped).await.is_err() {
+            return host_copies(vault);
+        }
+    }
 }

@@ -109,12 +109,16 @@ pub use run_backend::RunBackend;
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
     DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
-    SnapshotReceipt, SnapshotStatus,
+    SnapshotReceipt, SnapshotSkips, SnapshotStatus,
 };
 pub use token_ratio::TokenRatios;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
-// DESIGN-V2 R2: a committed chat reply reaches the session coordinator.
-pub(crate) use worker_host::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+// DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
+// with what a snapshot of it is kept and restored under.
+pub(crate) use worker_host::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
