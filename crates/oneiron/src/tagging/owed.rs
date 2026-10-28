@@ -4,11 +4,13 @@
 //! ([`crate::store::turn_missing`]) has the store and no vault in hand, so it
 //! cannot read the tagger the vault arms. It owes the turn its sieve read
 //! there, and records the turn here for its tag pass, in the same
-//! transaction. The reconciler's upkeep pays each row with the vault's
-//! tagging configuration: a stored turn is marked at the bulk class, as the
-//! erase doors mark one with the vault in hand, and its row goes in the same
-//! write. A row goes with its turn when the turn is erased or torn. It is
-//! derived and local: it lives in `vault_meta`, which sync never reads.
+//! transaction. So does a tear that drops a source turn's saved tag set
+//! ([`super::tags::tear_in_txn`], FIX 11314). The reconciler's upkeep pays
+//! each row with the vault's tagging configuration: a stored turn is marked
+//! at the bulk class, as the erase doors mark one with the vault in hand,
+//! and its row goes in the same write. A row goes with its turn when the
+//! turn is erased or torn. It is derived and local: it lives in
+//! `vault_meta`, which sync never reads.
 
 use heed::{RoTxn, RwTxn};
 

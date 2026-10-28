@@ -836,7 +836,8 @@ pub(crate) fn erase_in_txn(
 /// `id`, or of a turn `id` is a source of ([`source_turns_in_txn`]), is the
 /// erase doors' to settle (they run [`erase_in_txn`] first); one still here
 /// is dropped without reading any text, so each provisional entity it was
-/// the origin of is retired rather than moved.
+/// the origin of is retired rather than moved, and a source turn whose set
+/// goes is owed its tag pass over the text it keeps (FIX 11314).
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(store, txn, id)?;
     let mut turns = source_turns_in_txn(store, txn, id)?;
@@ -848,6 +849,9 @@ pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityI
             continue;
         };
         TAG_SET.delete(store, txn, &turn)?;
+        if turn != *id {
+            super::owe_tag_pass_in_txn(store, txn, &turn)?;
+        }
         crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(
             store, txn, &turn,
         )?;

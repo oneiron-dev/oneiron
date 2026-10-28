@@ -590,6 +590,14 @@ impl ScopedRead<'_> {
                 .map(|allowed| allowed.then_some(()))
         })
     }
+
+    /// What `id`, a row this lane does not read, adds to a receipt's
+    /// suppressed count: one for an ordinary policy denial, none for a row
+    /// that must read as absent ([`ReadAdmission::suppression`]).
+    pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
+        let txn = self.grant_read_txn()?;
+        Ok(self.admit_in(&txn, id, || Ok(None::<()>))?.suppression())
+    }
 }
 
 /// A request's owner proof, revalidated in `txn` the way an owner act
