@@ -23,7 +23,8 @@ pub struct ClusterRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ClusterPartition {
-    /// Entity hex, or edge:<source-hex>:<kind-byte>:<target-hex>.
+    /// Entity ref, or edge:<source-ref>:<kind-byte>:<target-ref>; each ref is
+    /// the short ref the vault keeps for it, else its full hex.
     pub subject_ref: String,
     pub predicate_root: String,
     pub world_ref: Option<String>,
@@ -46,7 +47,8 @@ pub struct ClusterProposal {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterEvidence {
-    /// Full 32-hex entity ids backing the judgment, including any cohort members.
+    /// Entity refs backing the judgment, including any cohort members: full
+    /// 32-hex ids or short refs in, short refs (else hex) out.
     pub refs: Vec<String>,
     /// Records the agent's judgment, including an override of cosine grouping.
     pub rationale: String,
@@ -62,7 +64,8 @@ pub enum ClusterSurvivorship {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterMerge {
-    /// Full 32-hex ids. Claim subjects are never rewritten.
+    /// Full 32-hex ids or short refs in, short refs (else hex) out. Claim
+    /// subjects are never rewritten.
     pub sources: Vec<String>,
     pub survivor: String,
     pub evidence: ClusterEvidence,
@@ -80,7 +83,8 @@ pub enum ClusterReassignmentTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterReassignment {
-    /// Claim hex, or edge:<source-hex>:<kind-byte>:<target-hex>.
+    /// Claim ref, or edge:<source-ref>:<kind-byte>:<target-ref>; a ref is a
+    /// full 32-hex id or a short ref.
     pub item: String,
     pub target: ClusterReassignmentTarget,
 }
