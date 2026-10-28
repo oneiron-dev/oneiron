@@ -22,10 +22,12 @@
 //! read afresh for every upgrade, and no slip or holder proof. It rides the
 //! socket alone, with no HTTP fallback.
 //!
-//! Every line goes to the server as the client wrote it, but for one
-//! addition: a `tools/call` whose `_meta` names no `oneiron/invocation` gains
-//! a fresh one there (ARCH-0080 §3), every other `_meta` key as the client
-//! sent it; a call that names one goes on byte for byte. The bridge keeps a
+//! Every line goes to the server as the client wrote it, but for two
+//! additions ([`call_meta`]): a `tools/call` whose `_meta` names no
+//! `oneiron/invocation` gains a fresh one there (ARCH-0080 §3), and one that
+//! names no `clientCapabilities` gains those of the client's last successful
+//! `initialize` (FIX 7969), every other `_meta` key as the client sent it; a
+//! call that names both goes on byte for byte. The bridge keeps a
 //! memory of tool calls the server answered pending on an ask: a later call
 //! naming no invocation that is the same call (same tool, same arguments)
 //! goes under the pending call's invocation, so it reaches that ask instead
@@ -54,7 +56,10 @@ use super::api;
 use crate::cli::{McpArgs, McpSurface};
 
 mod bridge_auth;
+mod call_meta;
 mod link;
+
+use call_meta::{ClientSession, with_invocation};
 
 /// How many requests may be in flight at once. A client that sends more
 /// waits for the oldest to finish rather than spawning without bound; each
@@ -86,28 +91,6 @@ pub(crate) fn mint_invocation() -> String {
     let mut id = [0; 16];
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut id);
     oneiron::runtime_hooks::InvocationId(id).to_hex()
-}
-
-/// The body for a `tools/call` whose `_meta` names no invocation: the same
-/// message with `invocation()` added there (a pending call's id, or a fresh
-/// one). `None` sends the client's line as it wrote it: any other message, a
-/// call that names its own, and a malformed one, which is the server's to
-/// refuse.
-fn with_invocation(message: &mut Value, invocation: impl FnOnce() -> String) -> Option<Vec<u8>> {
-    if message.get("method").and_then(Value::as_str) != Some("tools/call") {
-        return None;
-    }
-    let meta = message
-        .get_mut("params")?
-        .as_object_mut()?
-        .entry("_meta")
-        .or_insert_with(|| Value::Object(serde_json::Map::new()))
-        .as_object_mut()?;
-    if meta.contains_key(INVOCATION_META) {
-        return None;
-    }
-    meta.insert(INVOCATION_META.to_owned(), Value::String(invocation()));
-    serde_json::to_vec(message).ok()
 }
 
 /// What the bridge's pending-call memory keys one tool call by.
@@ -396,6 +379,8 @@ struct Bridge {
     /// [`pending_call_key`], to the invocation the ask is on. Locked only
     /// around a lookup or an update, never across a request.
     pending_calls: Mutex<HashMap<CallKey, String>>,
+    /// The client capabilities this session negotiated (FIX 7969).
+    client_session: ClientSession,
 }
 
 impl Bridge {
@@ -420,6 +405,7 @@ impl Bridge {
             // process the bridge starts, in either mode.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             pending_calls: Mutex::new(HashMap::new()),
+            client_session: ClientSession::default(),
         })
     }
 
@@ -452,6 +438,8 @@ impl Bridge {
         // One deadline for the whole request, the endpoint probe included.
         let until = Instant::now() + self.deadline;
         let key = pending_call_key(&message);
+        let offered = ClientSession::offered(&message);
+        let named = self.client_session.name_on_call(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
         let body = with_invocation(&mut message, || {
@@ -459,6 +447,7 @@ impl Bridge {
                 .and_then(|key| self.pending_call(key))
                 .unwrap_or_else(mint_invocation)
         })
+        .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten())
         .unwrap_or_else(|| line.as_bytes().to_vec());
         let sent = message
             .pointer("/params/_meta")
@@ -471,6 +460,9 @@ impl Bridge {
             Ok(answer) => {
                 if let Some(key) = key {
                     self.note_answer(key, sent.as_deref(), &answer);
+                }
+                if let Some(offered) = offered {
+                    self.client_session.note_initialize(offered, &answer);
                 }
                 answer.to_string()
             }
