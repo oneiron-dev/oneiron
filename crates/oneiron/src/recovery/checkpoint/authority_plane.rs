@@ -63,11 +63,12 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
 
 /// Rewrites `databases` so every live row is `current`'s, or refuses when a
 /// refused family moved since the checkpoint. Returns the notes for the home
-/// tables that came from the image (FIX 5661 C2b).
+/// tables that came from the image (FIX 5661 C2b), and `current`'s pad
+/// objects captured in the read its live rows came from (PAD-1).
 pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
-) -> Result<Vec<super::HomeTableNote>> {
+) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
     let classes = Classes::new(current, databases)?;
     let live = current_rows(current, &classes)?;
     // A store's random id, minted at its first open, names the vault even
@@ -146,7 +147,7 @@ pub(super) fn carry_current_authority(
         merged.extend(live_rows.iter().filter(|row| is_live(row)).cloned());
         *rows = merged.into_iter().collect();
     }
-    Ok(classes.home_notes())
+    Ok((classes.home_notes(), live.pad_objects))
 }
 
 /// The live vault's rows that are not content.
@@ -161,6 +162,8 @@ struct LiveRows {
     claim_of: Vec<Vec<u8>>,
     /// The hex ids of the rows the live vault fences as deleted.
     fences: BTreeSet<Vec<u8>>,
+    /// Its pad objects, captured in the same read (PAD-1).
+    pad_objects: crate::store::PadObjectsCapture,
 }
 
 /// Entity ids with the authority their bodies carry and the class's name.
@@ -173,6 +176,7 @@ fn current_rows(current: &Vault, classes: &Classes) -> Result<LiveRows> {
         authority: BTreeMap::new(),
         claim_of: Vec::new(),
         fences: BTreeSet::new(),
+        pad_objects: super::pad_objects::capture_open_in_txn(current, &txn),
     };
     for entry in crate::store::DB_MANIFEST {
         if !Classes::has_authority(entry.name) {
