@@ -4,13 +4,20 @@
 //! long a rejected mined proposal keeps its cluster quiet.
 //!
 //! Each is a vault-scope `policy_values` row the shipped manifest seeds as
-//! data, at today's value; an owner's or holder's authored row changes it
-//! through the manifest authoring doors, and the shared scoped selection
-//! resolves it. A manifest that does not read or decode never refuses the
-//! caller and never picks a stricter value: it warns, and the shipped row
-//! stands.
+//! data, at today's value. The seeded row is a fallback: a row an
+//! authenticated owner or holder door authored for the same key and scope
+//! replaces it (the Engine 10-22 C1 origin rule), and other trusted rows only
+//! narrow; the shared scoped selection then resolves what remains. A manifest
+//! that does not read or decode never refuses the caller and never picks a
+//! stricter value: it warns, and the shipped row stands.
 
-use super::policy_values::{PolicyEvaluationScope, PolicyValue, PolicyValueKey};
+use std::collections::BTreeSet;
+
+use super::manifest_authenticity::{PolicyRowOrigin, policy_row_origin};
+use super::policy_values::{
+    PolicyEvaluationScope, PolicyRowScope, PolicyValue, PolicyValueKey, PolicyValueRow,
+};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 /// One edit-distance learning threshold.
@@ -27,6 +34,16 @@ pub(crate) enum EditDistanceThreshold {
 }
 
 impl EditDistanceThreshold {
+    /// The threshold `key` names, if it names one.
+    const fn of(key: PolicyValueKey) -> Option<Self> {
+        match key {
+            PolicyValueKey::EscalationStandingRulings => Some(Self::StandingRulings),
+            PolicyValueKey::MinerRecurrenceReceipts => Some(Self::RecurrenceReceipts),
+            PolicyValueKey::MinerRejectionWaitSeconds => Some(Self::RejectionWaitSeconds),
+            _ => None,
+        }
+    }
+
     const fn key(self) -> PolicyValueKey {
         match self {
             Self::StandingRulings => PolicyValueKey::EscalationStandingRulings,
@@ -41,6 +58,64 @@ impl EditDistanceThreshold {
             Self::RecurrenceReceipts => PolicyValue::MinerRecurrenceReceipts(value),
             Self::RejectionWaitSeconds => PolicyValue::MinerRejectionWaitSeconds(value),
         }
+    }
+}
+
+/// The manifest fold's hold on the thresholds' seeded rows: set aside while
+/// the fold reads every trusted manifest, then kept only where no authored
+/// row names the same key and scope.
+#[derive(Debug, Default)]
+pub(in crate::gate) struct SeededThresholdRows {
+    seeded: Vec<PolicyValueRow>,
+    authored: BTreeSet<(PolicyValueKey, PolicyRowScope)>,
+}
+
+impl SeededThresholdRows {
+    /// Folds one trusted manifest's value rows into `folded`, setting a
+    /// seeded manifest's threshold rows aside and noting an authored one's.
+    pub(in crate::gate) fn fold(
+        &mut self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &[u8],
+        rows: Vec<PolicyValueRow>,
+        folded: &mut Vec<PolicyValueRow>,
+    ) -> Result<()> {
+        if !rows
+            .iter()
+            .any(|row| EditDistanceThreshold::of(row.key).is_some())
+        {
+            folded.extend(rows);
+            return Ok(());
+        }
+        let origin = policy_row_origin(store, txn, id, body)?;
+        for row in rows {
+            if EditDistanceThreshold::of(row.key).is_some() {
+                match origin {
+                    PolicyRowOrigin::Seeded => {
+                        self.seeded.push(row);
+                        continue;
+                    }
+                    PolicyRowOrigin::Authored => {
+                        self.authored.insert((row.key, row.scope));
+                    }
+                    PolicyRowOrigin::Narrowing => {}
+                }
+            }
+            folded.push(row);
+        }
+        Ok(())
+    }
+
+    /// Appends the seeded rows no authored row replaced.
+    pub(in crate::gate) fn finish(self, folded: &mut Vec<PolicyValueRow>) {
+        let authored = self.authored;
+        folded.extend(
+            self.seeded
+                .into_iter()
+                .filter(|row| !authored.contains(&(row.key, row.scope))),
+        );
     }
 }
 
