@@ -287,10 +287,14 @@ fn counts(standing: &Standing<'_>, record: &WorldKeyWrapsRecord, signer: &[u8; 3
 /// The settings of the request `record` does, as the roster rule reads the
 /// world at the record's parents, when that request counts there
 /// ([`super::owner_work::counted_request`]), is world key work naming the
-/// publisher as its executor, for the record's world, owner and settings
-/// revision, and the publisher reads the world under it with the key that
-/// signed. `None` otherwise: the record then counts only from an eligible
-/// reader.
+/// publisher as its executor, for the record's world and settings revision,
+/// and the publisher reads the world under it with the key that signed. The
+/// owner leg passes when the request names the record's owner, or when that
+/// owner is a live Owner of this vault, co-Owners included
+/// ([`super::owner_act::owner_live_at`]): every live Owner is
+/// clearance-free, so a wrap under one Owner for another Owner's act still
+/// counts from the request. `None` otherwise: the record then counts only
+/// from an eligible reader.
 fn requested_read(
     standing: &Standing<'_>,
     record: &WorldKeyWrapsRecord,
@@ -301,7 +305,8 @@ fn requested_read(
     let named = asked.kind() == OwnerWorkKind::WorldKey
         && asked.executor == record.machine
         && asked.act.target == record.key.world
-        && asked.key_owner() == record.owner
+        && (asked.key_owner() == record.owner
+            || super::owner_act::owner_live_at(standing.state(), record.owner))
         && asked.revision() == record.policy.0;
     if !named {
         return None;

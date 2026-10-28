@@ -131,6 +131,13 @@ impl SealedSnapshot {
         })
     }
 
+    /// The body's own id, drawn when it was sealed: its catalog row names
+    /// it, so a body file swapped under another row does not read.
+    #[must_use]
+    pub fn seal_id(&self) -> [u8; ID_LEN] {
+        self.id
+    }
+
     /// The canonical bytes: version, id, count, length, then each envelope
     /// with its `u32be` length.
     pub fn to_bytes(&self) -> Vec<u8> {

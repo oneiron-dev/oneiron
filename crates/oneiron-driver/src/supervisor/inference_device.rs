@@ -3,8 +3,11 @@
 //! holds, with where that report came from and when.
 //!
 //! Accounting only. Nothing here admits, refuses, waits for or unloads
-//! anything, and nothing reads it to decide: the admission queue that will
-//! is R4's. A declared envelope is a plan, never a measurement, and it is
+//! anything: the admission queue that will is R4's. A transient hold (a
+//! snapshot transfer or restore, V2-R3) is recorded beside the rows, and
+//! [`DeviceLedger::room_mib`] says what is left past a headroom, for a
+//! caller that skips its own work rather than cut into it; it is never a
+//! refusal here. A declared envelope is a plan, never a measurement, and it is
 //! never shown as resident memory. A size no source gave stays `None`, never
 //! zero, and a total over rows is known only when every row's part is. The
 //! ledger promises no cache owner, affinity or residency (HOLD 8319).
@@ -83,6 +86,9 @@ pub struct DeviceLedger {
     device: String,
     capacity_mib: Option<u64>,
     rows: Mutex<BTreeMap<String, DeviceRow>>,
+    /// Transient holds by holder, in MiB: what a snapshot transfer or
+    /// restore takes for a moment beyond the rows.
+    holds: Mutex<BTreeMap<String, u64>>,
 }
 
 impl DeviceLedger {
@@ -94,6 +100,7 @@ impl DeviceLedger {
             device: device.into(),
             capacity_mib,
             rows: Mutex::new(BTreeMap::new()),
+            holds: Mutex::new(BTreeMap::new()),
         }
     }
 
@@ -136,6 +143,61 @@ impl DeviceLedger {
                 resident: None,
             })
             .resident = Some(report);
+    }
+
+    /// Records that `holder` takes `mib` on this device for a moment, beyond
+    /// every row: a later hold by the same holder replaces it. Accounting
+    /// only: it never refuses.
+    pub fn hold(&self, holder: &str, mib: u64) {
+        self.holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(holder.to_owned(), mib);
+    }
+
+    /// Records that `holder`'s transient hold ended.
+    pub fn release_hold(&self, holder: &str) {
+        self.holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(holder);
+    }
+
+    /// What this device has left past `headroom_mib`, in MiB: its capacity
+    /// less each row's larger of what it declared and what it last
+    /// reported, and less every transient hold. `None` when the capacity or
+    /// any row's size is unknown, which is never room, and `Some(0)` when
+    /// the headroom is already cut into.
+    #[must_use]
+    pub fn room_mib(&self, headroom_mib: u64) -> Option<u64> {
+        let capacity = self.capacity_mib?;
+        let rows = self
+            .rows
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .try_fold(0_u64, |total, row| {
+                let declared = row.declared.total_mib();
+                let resident = row.resident.map(|resident| resident.resident_mib);
+                let size = match (declared, resident) {
+                    (Some(declared), Some(resident)) => declared.max(resident),
+                    (Some(size), None) | (None, Some(size)) => size,
+                    (None, None) => return None,
+                };
+                Some(total.saturating_add(size))
+            })?;
+        let held = self
+            .holds
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .fold(0_u64, |total, mib| total.saturating_add(*mib));
+        Some(
+            capacity
+                .saturating_sub(rows)
+                .saturating_sub(held)
+                .saturating_sub(headroom_mib),
+        )
     }
 
     /// Every row, by worker id, with the totals.
