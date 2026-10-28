@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed, SpawnOverride};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::learning_setting::{
     SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
     read_scopes_in_txn, scoped_row_key,
@@ -321,14 +321,17 @@ fn rows_in_order(
 /// Lays the owner's choices under one spawn's need: each field takes the
 /// first row in [`rows_in_order`] it admits. A field the call pinned keeps
 /// the call's pin; a field the call seeded keeps its seed unless an owner
-/// pin stands, since any pin outranks any seed. A model row counts only when
-/// a seat serves that model, and a pinned pattern and a pinned width must
-/// agree, so a row never turns a valid need into an invalid one. The pattern
-/// is laid before the width.
+/// pin stands, since any pin outranks any seed. A model seed counts only
+/// when a seat serves that model; a model pin stands whatever the seats
+/// (FIX 10011). A pinned pattern and a pinned width must agree, so a row
+/// never turns a valid need into an invalid one. The pattern is laid before
+/// the width.
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] on an undecodable row.
+/// [`ArtifactError::SpawnModelUnavailable`] when the owner's model pin
+/// stands and no offered seat serves it; storage errors;
+/// [`Error::CorruptedIndex`] on an undecodable row.
 pub(crate) fn lay_owner_choices_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -356,11 +359,23 @@ pub(crate) fn lay_owner_choices_in_txn(
         },
         |width| pattern.is_none_or(|pattern| pattern.admits_width(*width)),
     );
+    let call_pinned_model = need.pinned_model().is_some();
+    // Only a seed waits on a seat: a pin is the owner's fixed value.
+    let models = rows_in_order(store, txn, scopes, SpawnChoice::Model)?
+        .into_iter()
+        .filter(|row| match row {
+            SpawnOverride::Seed {
+                value: ChoiceValue::Model(model),
+                ..
+            } => seats.contains(model),
+            _ => true,
+        })
+        .collect();
     lay(
         &mut need.model,
-        rows_in_order(store, txn, scopes, SpawnChoice::Model)?,
+        models,
         |value| match value {
-            ChoiceValue::Model(model) if seats.contains(&model) => Some(model),
+            ChoiceValue::Model(model) => Some(model),
             _ => None,
         },
         |_| true,
@@ -374,7 +389,25 @@ pub(crate) fn lay_owner_choices_in_txn(
         },
         |_| true,
     );
-    Ok(())
+    if call_pinned_model {
+        return Ok(());
+    }
+    require_pinned_model(need, seats)
+}
+
+/// The owner's model pin, once laid, needs an offered seat (FIX 10011): a
+/// pinned field is never overridden, so a pinned model no seat serves is
+/// unavailable, before any evidence or cost is read, and no other model
+/// stands in for it.
+fn require_pinned_model(need: &SpawnNeed, seats: &[ModelId]) -> Result<()> {
+    match need.pinned_model() {
+        Some(model) if !seats.contains(model) => {
+            Err(Error::Artifact(ArtifactError::SpawnModelUnavailable {
+                model: model.as_str().to_owned(),
+            }))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Lays over `field` the first of `rows` whose value `take` reads, a pin

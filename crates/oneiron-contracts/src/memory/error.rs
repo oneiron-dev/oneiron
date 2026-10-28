@@ -714,6 +714,12 @@ impl From<Error> for MemoryError {
                 message,
                 &["Restore the revision's package (re-import it), or edit the skill by hand."],
             ),
+            // FIX 10011: the owner's model pin stands and no seat serves it.
+            ErrorKind::SpawnModelUnavailable => Self::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                message,
+                &["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+            ),
             // The request was sound; the refusal names the bound that has to
             // change first (a scope to fund, a seat to bind), and is the
             // whole answer.
