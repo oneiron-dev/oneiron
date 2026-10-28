@@ -169,10 +169,10 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         ),
         // FIX 10011: the owner's model pin stands and no offered seat
         // serves it; no other model is put in its place.
-        ErrorKind::SpawnModelUnavailable => ApiError::new(
+        ErrorKind::ModelPinUnavailable => ApiError::new(
             error.to_string(),
             ApiErrorDetails::InvalidState {
-                state: Some("spawn_model_unavailable".to_owned()),
+                state: Some("model_pin_unavailable".to_owned()),
             },
             ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
         ),
