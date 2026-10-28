@@ -1,6 +1,6 @@
 //! Scoped clustering and authenticated judgments through the existing topology gate.
 
-use super::operation::{id, references};
+use super::operation::{id, references, subject_ref};
 use super::*;
 use crate::authority::{ActAuthority, OwnerActKind};
 use crate::claim::{
@@ -95,28 +95,39 @@ impl Memory<'_> {
                     .unwrap_or(ClusterOptions::default().cohesion_threshold),
             };
             let assignments = cluster_claims(&claims, options)?;
-            Ok::<_, MemoryError>(ClusterProposal {
-                cohorts: assignments
-                    .cohorts
-                    .into_iter()
-                    .map(|cohort| ClusterCohort {
-                        cohort_id: *cohort.cohort_id.as_bytes(),
-                        partition: ClusterPartition {
-                            subject_ref: crate::memory::support::subject_ref_string(
-                                &cohort.partition.subject,
-                            ),
-                            predicate_root: cohort.partition.predicate_root,
-                            world_ref: cohort.partition.world.map(|id| id.to_hex()),
-                            facet_ref: cohort.partition.facet.map(|id| id.to_hex()),
-                        },
-                        member_refs: cohort.member_ids.iter().map(|id| id.to_hex()).collect(),
-                        cohesion: cohort.cohesion,
-                    })
-                    .collect(),
-            })
+            // FIX 9937: every ref goes out short where the vault keeps one,
+            // in this read's snapshot.
+            let project = |id: &EntityId| self.cluster_ref_in_txn(txn, id);
+            let mut cohorts = Vec::with_capacity(assignments.cohorts.len());
+            for cohort in assignments.cohorts {
+                cohorts.push(ClusterCohort {
+                    cohort_id: *cohort.cohort_id.as_bytes(),
+                    partition: ClusterPartition {
+                        subject_ref: subject_ref(&cohort.partition.subject, &project)?,
+                        predicate_root: cohort.partition.predicate_root,
+                        world_ref: cohort.partition.world.as_ref().map(project).transpose()?,
+                        facet_ref: cohort.partition.facet.as_ref().map(project).transpose()?,
+                    },
+                    member_refs: cohort
+                        .member_ids
+                        .iter()
+                        .map(project)
+                        .collect::<MemoryResult<_>>()?,
+                    cohesion: cohort.cohesion,
+                });
+            }
+            Ok::<_, MemoryError>(ClusterProposal { cohorts })
         })?;
         self.produced_from(ids);
         Ok(result)
+    }
+
+    /// `id` as the short ref the vault keeps for it in `txn`'s snapshot, else
+    /// its hex (FIX 9937).
+    fn cluster_ref_in_txn(&self, txn: &heed::RoTxn<'_>, id: &EntityId) -> MemoryResult<String> {
+        Ok(self
+            .short_ref_of_in_txn(txn, id)?
+            .unwrap_or_else(|| id.to_hex()))
     }
 
     /// The caller's own proof or its own named Grant. No engine-seal fallback.
@@ -193,10 +204,11 @@ impl Memory<'_> {
         grant: Option<&str>,
         approval: ClaimApprovalStatus,
     ) -> MemoryResult<ClusterTopologyReceipt> {
-        let op = operation.into_engine()?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let resolve = |reference: &str| self.resolve_ref_in_lane(&lane, reference);
+        let op = operation.into_engine(&resolve)?;
         let authority = self.cluster_authority(owner, grant)?;
         let seal = TopologySeal::decision(authority.clone());
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         self.with_verified_actor_write_txn(|txn| {
             let write = self.cluster_writer_in_txn(txn, &authority, approval)?;
             readable(&lane, txn, &op)?;
@@ -209,13 +221,13 @@ impl Memory<'_> {
             )?;
             match result {
                 IdentityOpOutcome::Applied { event, .. } => Ok(ClusterTopologyReceipt {
-                    receipt_ref: event.to_hex(),
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event)?,
                     proposal_ref: None,
                     outcome: ClusterTopologyOutcome::Applied,
                 }),
                 IdentityOpOutcome::Parked { event } => Ok(ClusterTopologyReceipt {
-                    receipt_ref: event.to_hex(),
-                    proposal_ref: Some(event.to_hex()),
+                    receipt_ref: self.cluster_ref_in_txn(txn, &event)?,
+                    proposal_ref: Some(self.cluster_ref_in_txn(txn, &event)?),
                     outcome: ClusterTopologyOutcome::Proposed,
                 }),
                 IdentityOpOutcome::Noop => Err(MemoryError::bad_request(
@@ -269,11 +281,13 @@ impl Memory<'_> {
         owner: Option<&AuthenticatedOwner>,
         input: &ClusterResolveRequest,
     ) -> MemoryResult<ClusterTopologyReceipt> {
-        let proposal = id(&input.proposal_ref)?;
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let resolve = |reference: &str| self.resolve_ref_in_lane(&lane, reference);
+        let proposal = resolve(input.proposal_ref.as_str())?;
         let authority = self.cluster_authority(owner, input.grant_ref.as_deref())?;
         let seal = TopologySeal::decision(authority.clone()).with_seen(Some(input.seen));
         let amended = match &input.ruling {
-            ClusterRuling::AmendThenApprove { operation } => Some(operation.into_engine()?),
+            ClusterRuling::AmendThenApprove { operation } => Some(operation.into_engine(&resolve)?),
             _ => None,
         };
         let encoded = amended
@@ -289,7 +303,6 @@ impl Memory<'_> {
                     .ok_or_else(|| MemoryError::bad_request("missing amendment"))?,
             ),
         };
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         self.with_verified_actor_write_txn(|txn| {
             let write =
                 self.cluster_writer_in_txn(txn, &authority, ClaimApprovalStatus::Approved)?;
@@ -307,8 +320,8 @@ impl Memory<'_> {
                 self.vault().now_recorded_at(),
             )?;
             Ok(ClusterTopologyReceipt {
-                receipt_ref: receipt.to_hex(),
-                proposal_ref: Some(proposal.to_hex()),
+                receipt_ref: self.cluster_ref_in_txn(txn, &receipt)?,
+                proposal_ref: Some(self.cluster_ref_in_txn(txn, &proposal)?),
                 outcome: outcome(verdict),
             })
         })
@@ -355,8 +368,8 @@ impl Memory<'_> {
         &self,
         input: &ClusterProposalRequest,
     ) -> MemoryResult<ScopedReadResult<ClusterProposalView>> {
-        let proposal = id(&input.proposal_ref)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let proposal = self.resolve_ref_in_lane(&lane, &input.proposal_ref)?;
         let result = lane.read_projected(&[PointRead::id(proposal)], None, |txn, rows| {
             if rows.into_iter().flatten().all(|row| row.body.is_none()) {
                 return Err(MemoryError::not_found("no readable topology proposal"));
@@ -368,9 +381,10 @@ impl Memory<'_> {
                     .vault()
                     .fold_effective_identity_topology_events_in_txn(txn)?,
             );
+            let project = |id: &EntityId| self.cluster_ref_in_txn(txn, id);
             Ok::<_, MemoryError>(ClusterProposalView {
-                proposal_ref: proposal.to_hex(),
-                operation: ClusterOperation::from_engine(&op)?,
+                proposal_ref: project(&proposal)?,
+                operation: ClusterOperation::from_engine(&op, &project)?,
                 seen: crate::identity_topology::topology_seal_revision_for_store_in_txn(
                     &self.vault().store,
                     txn,
