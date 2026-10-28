@@ -74,6 +74,19 @@ pub(super) fn apply_claim_candidate(
     // the facet that claim was born with.
     let default_facet = claim_candidate_birth_facet(store, wtxn, &id)?;
     let had_prior = crate::ports::EntityStoreRead::port_entity_present(store, wtxn, &id)?;
+    // The batch's secret mask already rewrote this candidate in this
+    // transaction, after its writer signed it: a MACHINE proof is renewed over
+    // the masked bytes, so admission verifies what is stored.
+    let mut resigned = envelope.clone();
+    crate::authority::resign_machine_claim_after_mask_in_txn(
+        store,
+        wtxn,
+        &id,
+        &candidate,
+        &mut resigned,
+        default_facet,
+    )?;
+    let envelope = &resigned;
     let body = candidate.into_claim_body(envelope, default_facet)?;
     // The ClaimOf weight the claim is born with: a signed initial-weight
     // entry, else the default. Both machine-history fold entry points seed
