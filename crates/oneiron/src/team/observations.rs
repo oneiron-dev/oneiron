@@ -6,16 +6,17 @@
 //! measure in full is `None`, never a guess or a zero: a member with no seal,
 //! a run with no replay record, an open or unmetered scope. A member that
 //! retried is measured on its newest try, which holds its seal and replay
-//! record; it spends under the scope of the launch it retried. Every measure
-//! reads one snapshot, so a member settling mid-read can't split them. The
-//! leader's own calls and spend are shared with whatever else it runs, so
-//! they stay out; the cap is the hard cap the leader runs under.
+//! record; it spends under the scope of the launch it retried, and its model
+//! is that try's (FIX 10192). Every measure reads one snapshot, so a member
+//! settling mid-read can't split them. The leader's own calls and spend are
+//! shared with whatever else it runs, so they stay out; the cap is the hard
+//! cap the leader runs under.
 
 use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::agent_dispatch::AgentDispatcher;
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::run_admission::LeaseUnit;
@@ -38,6 +39,10 @@ pub struct TeamRunObservations {
     pub spend: Option<f64>,
     /// The hard cap binding the leader's scope; `None` when it is unmetered.
     pub spend_cap: Option<f64>,
+    /// The models the members' newest tries ran on, sorted, each once: a
+    /// try's loaded executor, else the seat its run was born on. A try with
+    /// neither adds none, never an earlier try's model.
+    pub models: Vec<String>,
 }
 
 /// Measures a team run's members, each on its newest try. `leader` names the
@@ -52,7 +57,19 @@ pub fn team_run_observations(
     members: &[AttemptId],
 ) -> Result<TeamRunObservations> {
     let txn = vault.store.env.read_txn()?;
-    let members = &newest_tries(vault, &txn, members)?;
+    let tips = newest_tries(vault, &txn, members)?;
+    let mut models = BTreeSet::new();
+    for (tip, record) in &tips {
+        models.extend(match record {
+            Some(record) => {
+                crate::skill_attribution::run_executor_model_in_txn(vault, &txn, record)?
+            }
+            None => vault
+                .model_seat_receipt_in_txn(&txn, EntityId::from_bytes(*tip.as_bytes())?)?
+                .map(|seat| seat.model.to_string()),
+        });
+    }
+    let members = &tips.iter().map(|(tip, _)| *tip).collect::<Vec<_>>();
     let mut sealed = 0_u32;
     let mut flawed = 0_u32;
     for member in members {
@@ -103,23 +120,27 @@ pub fn team_run_observations(
         calls: calls.filter(|_| !members.is_empty()),
         spend,
         spend_cap,
+        models: models.into_iter().collect(),
     })
 }
 
-/// Each member's newest try along its retry lineage; a member the queue no
-/// longer holds stands for itself.
+/// Each member's newest try along its retry lineage, with its record; a
+/// member the queue no longer holds stands for itself, with none.
 fn newest_tries(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     members: &[AttemptId],
-) -> Result<Vec<AttemptId>> {
+) -> Result<Vec<(AttemptId, Option<AttemptRecord>)>> {
     let queue = AttemptQueue::new(vault);
     members
         .iter()
         .map(|member| {
             Ok(match queue.get_in_txn(txn, *member)? {
-                Some(_) => queue.retry_tip_in_txn(txn, *member)?.id,
-                None => *member,
+                Some(_) => {
+                    let tip = queue.retry_tip_in_txn(txn, *member)?;
+                    (tip.id, Some(tip))
+                }
+                None => (*member, None),
             })
         })
         .collect()

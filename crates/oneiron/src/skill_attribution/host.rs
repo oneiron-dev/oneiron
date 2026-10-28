@@ -304,11 +304,22 @@ fn pattern_context(token: &str) -> Result<EntityId> {
 /// The model that executed `record`: the one its pack loaded under, else the
 /// seat its run was born on. A run's id is its attempt's.
 pub(crate) fn run_executor_model(vault: &Vault, record: &AttemptRecord) -> Result<Option<String>> {
+    let txn = vault.store.env.read_txn()?;
+    run_executor_model_in_txn(vault, &txn, record)
+}
+
+/// [`run_executor_model`] in the caller's snapshot, so a reader pairs the
+/// model with what else that snapshot holds (FIX 10192).
+pub(crate) fn run_executor_model_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<String>> {
     if let Some(model) = &record.executor_model {
         return Ok(Some(model.clone()));
     }
     let run = EntityId::from_bytes(*record.id.as_bytes())?;
     Ok(vault
-        .model_seat_receipt(run)?
+        .model_seat_receipt_in_txn(txn, run)?
         .map(|seat| seat.model.to_string()))
 }

@@ -15,15 +15,15 @@
 //! `self.team.record` writes the team's one receipt once its work is done.
 //! The host fills every identity: the type and project the leader was placed
 //! with, the members its start spawned ([`super::run_binding`]), the models
-//! the leader and members ran on, the pattern skill the leader loaded, the
-//! leader as the deciding actor, a market's signed referee. It counts the
-//! members' confessions, calls and spend itself ([`super::observations`]),
-//! and leaves unknown what it cannot count. The guest names only what the
-//! host cannot observe: the axis (a planned team's is the one its pattern
-//! froze), a vote's tally or an unsigned referee's rule, the roles and
-//! coverage. A team below its pattern's floor records what ran, and its
-//! receipt says so. A tournament's receipt is its finalizer's,
-//! never the leader's. Settlement stays with the anchored outcome
+//! the leader and each member's newest try ran on, the pattern skill the
+//! leader loaded, the leader as the deciding actor, a market's signed
+//! referee. It counts the members' confessions, calls and spend itself
+//! ([`super::observations`]), and leaves unknown what it cannot count. The
+//! guest names only what the host cannot observe: the axis (a planned team's
+//! is the one its pattern froze), a vote's tally or an unsigned referee's
+//! rule, the roles and coverage. A team below its pattern's floor records
+//! what ran, and its receipt says so. A tournament's receipt is its
+//! finalizer's, never the leader's. Settlement stays with the anchored outcome
 //! ([`settle_team_outcome`](super::settle_team_outcome)), such as the
 //! owner's verdict on the team's deliverable ([`super::owner_outcome`]): a
 //! run's own word is no anchor.
@@ -304,21 +304,12 @@ pub(crate) fn record_led_team(
     if input.members.is_empty() && bound.is_none() {
         return Ok(Err("team_record_invalid_input"));
     }
-    let mut models = BTreeSet::new();
-    models.extend(crate::skill_attribution::run_executor_model(
-        vault,
-        &lead.attempt,
-    )?);
     let mut pattern = bound.as_ref().map(|run| run.stamp.pattern);
     let mut started = bound.as_ref().map_or(now, |run| run.started_at.min(now));
     let mut members = bound.map(|run| run.members).unwrap_or_default();
     // The start's own spawns are members on the host's word.
     for id in &members {
         if let Some(row) = store.status(*id)? {
-            models.extend(crate::skill_attribution::run_executor_model(
-                vault,
-                &row.attempt,
-            )?);
             started = started.min(row.attempt.created_at);
         }
     }
@@ -337,19 +328,12 @@ pub(crate) fn record_led_team(
             Some(stamp) if stamp.team_ref == input.team_ref => pattern = Some(stamp.pattern),
             _ => return Ok(Err("team_record_member_outside_team")),
         }
-        models.extend(crate::skill_attribution::run_executor_model(
-            vault,
-            &row.attempt,
-        )?);
         started = started.min(row.attempt.created_at);
         members.push(id);
     }
     let Some(pattern) = pattern else {
         return Ok(Err("team_record_invalid_input"));
     };
-    if models.is_empty() {
-        return Ok(Err("team_record_no_models"));
-    }
     let Ok(width) = u32::try_from(members.len() + 1) else {
         return Ok(Err("team_record_invalid_input"));
     };
@@ -385,6 +369,16 @@ pub(crate) fn record_led_team(
         return Ok(Ok(recorded(&existing, true)));
     }
     let observed = team_run_observations(vault, leader, &members)?;
+    // The leader's model, and each member's newest try's, as measured beside
+    // its calls and spend (FIX 10192); a model nobody recorded stays out.
+    let mut models: BTreeSet<String> = observed.models.iter().cloned().collect();
+    models.extend(crate::skill_attribution::run_executor_model(
+        vault,
+        &lead.attempt,
+    )?);
+    if models.is_empty() {
+        return Ok(Err("team_record_no_models"));
+    }
     let receipt = TeamReceipt {
         team_ref: input.team_ref.clone(),
         project: lead_input.project_ref,
