@@ -76,6 +76,7 @@
 //! is visible at all.
 
 mod audit;
+mod causes;
 mod cells;
 mod evidence_judge;
 mod origin;
@@ -90,6 +91,7 @@ pub use self::audit::{
     AmendmentAuditFixture, AmendmentAuditRecord, held_out_amendment_fixtures, judge_audit_records,
     judge_audit_reports, run_judge_audit, run_judge_audit_with_decisions,
 };
+pub use self::causes::AmendmentCauseRecord;
 pub use self::cells::edit_cost_for;
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
@@ -108,6 +110,7 @@ pub use self::triage::{
     TriagePacket, TriageReceipt, TriageSubject, WorseningSignal, triage_packet,
 };
 
+pub(crate) use self::causes::amendment_causes_in_txn;
 pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
