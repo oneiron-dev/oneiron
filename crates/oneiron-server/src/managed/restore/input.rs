@@ -1,10 +1,11 @@
 //! The restore's two pipes and the plan on the input pipe: each descriptor
-//! proven the right end of a pipe before either is taken over, the plan read
-//! to EOF and parsed strictly, and every binding it names checked against
-//! this start's argv before anything is touched.
+//! proven the right end of a pipe before either is taken over (FIX 6580,
+//! [`crate::pipe_proof::pipe_end`]), the plan read to EOF and parsed strictly,
+//! and every binding it names checked against this start's argv before
+//! anything is touched.
 
 use std::io::Read as _;
-use std::os::fd::{BorrowedFd, FromRawFd as _, RawFd};
+use std::os::fd::{FromRawFd as _, RawFd};
 
 use oneiron_vault_contract::restore::framing::identity_fits;
 use oneiron_vault_contract::restore::{
@@ -17,45 +18,11 @@ use crate::managed::ManagedArgs;
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
 
-/// The filesystem magic `fstatfs` reads for a pipe the kernel made, on
-/// pipefs; a named FIFO reads the magic of the filesystem its node is on.
-#[cfg(target_os = "linux")]
-const PIPEFS_MAGIC: u64 = 0x5049_5045;
-
-/// Whether `fd` is the read end (`write` false) or the write end of a pipe,
-/// told from its type, on Linux its pipefs (FIX 6580), and its access mode
-/// before it is taken over; why not otherwise. A file, named FIFO, socket
-/// or tty never carries the restore.
-pub(in crate::managed) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
-    use rustix::fs::{FileType, OFlags};
-    if fd < 0 {
-        return Err("it is not a file descriptor");
-    }
-    // SAFETY: `fd` arrives on argv from the supervisor and is this process's
-    // to own: nothing else in the process holds or closes it. It is borrowed
-    // for these reads only, before it is taken over.
-    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
-    let stat = rustix::fs::fstat(borrowed).map_err(|_| "it is not an open descriptor")?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::Fifo {
-        return Err("it is not a pipe");
-    }
-    #[cfg(target_os = "linux")]
-    if !rustix::fs::fstatfs(borrowed).is_ok_and(|fs| u64::try_from(fs.f_type) == Ok(PIPEFS_MAGIC)) {
-        return Err("it is not an anonymous pipe");
-    }
-    let mode = rustix::fs::fcntl_getfl(borrowed).map_err(|_| "its access mode did not read")?
-        & OFlags::ACCMODE;
-    match (write, mode == OFlags::WRONLY, mode == OFlags::RDONLY) {
-        (true, true, _) | (false, _, true) => Ok(()),
-        (true, ..) => Err("it is not a pipe's write end"),
-        (false, ..) => Err("it is not a pipe's read end"),
-    }
-}
-
-/// Takes `fd` over, once, after [`pipe_end`] proved it.
+/// Takes `fd` over, once, after [`pipe_end`](crate::pipe_proof::pipe_end)
+/// proved it.
 pub(in crate::managed) fn adopt(fd: RawFd) -> std::fs::File {
     // SAFETY: `fd` arrives on argv from the supervisor and is this process's
-    // to own; [`pipe_end`] proved it open, and nothing else takes it over.
+    // to own; `pipe_end` proved it open, and nothing else takes it over.
     // The `File` closes it on drop, which is the EOF its reader waits for.
     unsafe { std::fs::File::from_raw_fd(fd) }
 }

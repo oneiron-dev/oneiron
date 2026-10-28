@@ -39,7 +39,7 @@ use zeroize::Zeroizing;
 
 // A vault VM host proves and takes over its own restore pipes the same way.
 #[cfg(target_os = "linux")]
-pub(super) use self::input::{adopt, pipe_end};
+pub(super) use self::input::adopt;
 use self::receipt::ReceiptContext;
 pub(super) use self::receipt::RestoreOutcome;
 use self::result::ResultSink;
@@ -48,6 +48,7 @@ use super::isolation::{RestoreDestination, RestoreDestinationRefusal};
 use super::vault_gates::{DekMac, check_dek_mac};
 use crate::config::ServeConfig;
 use crate::owner::backup::CustodyAnchorCredentials;
+use crate::pipe_proof::pipe_end;
 
 /// Where a restore stands, which names the failure its drop reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,10 +113,10 @@ impl ManagedRestore {
         else {
             return Ok(None);
         };
-        input::pipe_end(result_fd, true).map_err(|reason| {
+        pipe_end(result_fd, true).map_err(|reason| {
             anyhow::anyhow!("--restore-result-fd {result_fd} refused: {reason}")
         })?;
-        let input_pipe = input::pipe_end(input_fd, false);
+        let input_pipe = pipe_end(input_fd, false);
         let sink = Arc::new(ResultSink::new(input::adopt(result_fd)));
         let unparsed = |reason: &str| {
             sink.failed(

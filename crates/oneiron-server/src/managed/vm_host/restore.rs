@@ -27,7 +27,8 @@
 
 use super::credentials::read_credential_frame;
 use super::{API_TIMEOUT, STOP_GRACE, VaultVm, VaultVmConfig, VmExitWatch, provision};
-use crate::managed::restore::{adopt, pipe_end};
+use crate::managed::restore::adopt;
+use crate::pipe_proof::pipe_end;
 use oneiron_vault_contract::restore::ManagedRestoreIdentity;
 use oneiron_vault_contract::vm_provision::VmFscryptKey;
 use oneiron_vault_contract::vm_restore::{

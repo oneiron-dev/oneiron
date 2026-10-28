@@ -78,6 +78,7 @@ pub mod models;
 mod oauth_relay;
 mod oneironer;
 mod owner;
+mod pipe_proof;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
