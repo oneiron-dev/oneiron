@@ -352,8 +352,6 @@ side_tables! {
     /// Live edit-cost head for a (predicate, subject, scope) tuple; the retraction ledger for re-
     /// judged receipts. Key: string "\x00" hex32 "\x00" string.
     EDIT_DISTANCE_EDIT_COST_TARGET: VaultMeta b"edit_distance/edit_cost_target/v1\0" Raw;
-    /// Dial: agreeing-ruling count needed to auto-propose a standing escalation policy. Key: ().
-    EDIT_DISTANCE_ESCALATION_STANDING_N: VaultMeta b"edit_distance/escalation/standing_n/dial/v1" Raw;
     /// Append-only ruled-escalation ledger row, scope-major (scope digest then UUIDv7 row id) so one
     /// scope's history is a contiguous range. Key: id16 + id16.
     EDIT_DISTANCE_ESCALATION: VaultMeta b"edit_distance/escalation/v1\0" Raw;
