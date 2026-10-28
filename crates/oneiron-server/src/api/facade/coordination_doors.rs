@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::agent_dispatch::PlannerDecisions;
+use oneiron::attempt_queue::AttemptState;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -30,9 +31,9 @@ use oneiron::task_verb::run_doors::{
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::team::PlannedSpawnHost;
 use oneiron::team::doors::{
-    CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, SpawnIntentReply,
-    SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt, TaskTypeTreeRead,
-    TaskTypeTreeReadReply,
+    CriticAssociation, ObservationIssue, PlannedSpawnObservation, PlannedSpawnRead,
+    SpawnIntentReply, SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt,
+    TaskTypeTreeRead, TaskTypeTreeReadReply,
 };
 
 use super::host_doors::support::{MaybeListed, owner_proof};
@@ -213,10 +214,42 @@ pub(crate) async fn vault_agents_spawn_get(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| oneiron::team::doors::observe_spawn_as(server.vault(), &owner, input),
+        move |server, owner| {
+            let mut observation =
+                oneiron::team::doors::observe_spawn_as(server.vault(), &owner, input)?;
+            note_no_executor(server, &mut observation);
+            Ok(observation)
+        },
         spawn_rows,
     )
     .await
+}
+
+/// Appends a `no_executor` issue for each launched attempt still waiting in
+/// the queue, queued or scheduled, when this host has no engine-native
+/// executor to run it (FIX 4929): the resident pump never starts here, so
+/// such a run waits until a host that has one serves the vault. Status
+/// only: each attempt keeps the state the queue holds, and nothing is
+/// refused, held or relabelled.
+fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservation) {
+    if server
+        .code_execution_host()
+        .and_then(|host| host.engine_native())
+        .is_some()
+    {
+        return;
+    }
+    let waiting = [AttemptState::Queued.as_str(), AttemptState::Scheduled.as_str()];
+    let issues = observation
+        .launched
+        .iter()
+        .filter(|member| waiting.contains(&member.state.as_str()))
+        .map(|member| ObservationIssue::NoExecutor {
+            attempt_ref: member.attempt_ref,
+            state: member.state.clone(),
+        })
+        .collect::<Vec<_>>();
+    observation.issues.extend(issues);
 }
 
 /// A force names the TASK whose branches it stopped.
