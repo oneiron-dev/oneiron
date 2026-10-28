@@ -523,9 +523,11 @@ pub(crate) fn preflight_checkpoint_rows_rejected(
     }
     let mut plan = CustodyPlan::new(bound.clone(), retirements);
     // The training link key (TL-2) rides a side restore while it is live, so
-    // the copy can still withdraw and purge its past codes.
+    // the copy can still withdraw and purge its past codes; the host issuer
+    // seed's escrow rides where it reads (FIX-LIST 10770), never required.
     if let Some(bound) = bound.as_ref() {
         crate::store::training_link::require_live_link_key(&mut plan, bound)?;
+        crate::store::host_issuer_custody::plan_host_issuer_seed_custody(&mut plan, bound);
     }
     let mut erased = Vec::new();
     for (key, value) in rows {
