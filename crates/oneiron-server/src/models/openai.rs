@@ -1,10 +1,12 @@
 //! The OpenAI-compatible transport: any `/v1/chat/completions` server.
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
 use oneiron::BudgetLease;
 use oneiron::llm::{
-    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, returned_model_wire_id,
+    INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
+    returned_model_wire_id,
 };
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
@@ -28,6 +30,10 @@ pub(super) struct OpenAiHttp {
     /// Where a house llama.cpp answer's launch alias resolves to the identity
     /// of the process that answered (FIX 7895).
     pub(super) identities: Arc<LlamaIdentityResolver>,
+    /// The engine model each configured wire id is sent for, by that id: a
+    /// carried inference receipt is stamped with the call's before it is
+    /// finished.
+    pub(super) engine_models: BTreeMap<String, ModelId>,
 }
 
 impl OpenAiHttp {
@@ -91,7 +97,13 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 answering.as_ref(),
             );
             // The receipt the reply carries is the request's final one.
-            if let Some(receipt) = carried_receipts(&reply.body).pop() {
+            if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
+                if let Some(model) = target
+                    .as_deref()
+                    .and_then(|wire| self.engine_models.get(wire))
+                {
+                    receipt.model = Some(model.clone());
+                }
                 publisher.finish(receipt);
             }
             Ok(OpenAiCompatHttpResponse {
@@ -113,11 +125,16 @@ impl OpenAiCompatTransport for OpenAiHttp {
         let target = configured_target(&body);
         // One physical request, observed from its send (FIX 9417).
         let publisher = InferencePublisher::begin(lease);
+        let model = target
+            .as_deref()
+            .and_then(|wire| self.engine_models.get(wire))
+            .cloned();
         let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
                 transport: self,
                 target,
+                model,
                 answering: None,
                 publisher,
                 measured: None,
@@ -250,6 +267,9 @@ struct Frames<'a, S> {
     transport: &'a OpenAiHttp,
     /// The configured wire id the call sent.
     target: Option<String>,
+    /// The engine model the call was admitted for, when its wire id names
+    /// one: stamped on its final receipt.
+    model: Option<ModelId>,
     /// The last top-level `model` this stream's chunks named, as it came.
     answering: Option<String>,
     /// The request's observation (FIX 9417): each receipt a usage chunk
@@ -352,8 +372,11 @@ where
     /// stream cut before its finish keeps it as progress.
     fn published_end(&mut self) {
         if self.finished
-            && let Some(receipt) = self.measured.take()
+            && let Some(mut receipt) = self.measured.take()
         {
+            if let Some(model) = &self.model {
+                receipt.model = Some(model.clone());
+            }
             self.publisher.finish(receipt);
         }
     }
