@@ -31,19 +31,20 @@ mod publication;
 mod refill;
 
 pub use self::commit_receipt::{SealedBundleCommitReceipt, sealed_bundle_commit_receipt};
+pub(super) use self::pad_objects::served_index;
 pub use self::pad_objects::{
     BundlePartRead, PadObjectUnavailable, SealedBundleIndex, sealed_bundle_index,
 };
 pub(crate) use self::pad_objects::{
     CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
     capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
+    current_pad_objects_in_txn, index_in, install_captured_pad_objects_in_txn,
+    pad_objects_identity_in_txn, read_back_captured_in_txn, read_back_pad_objects_in_txn,
     refill_pad_object,
 };
-pub(super) use self::pad_objects::{index_in, served_index};
 pub(super) use self::publication::{Asked, asked_of};
-pub(crate) use self::refill::held_pad_object;
 pub use self::refill::{PadObjectRefill, sealed_bundle_refill};
+pub(crate) use self::refill::{held_pad_object, read_back_generation_in};
 
 use super::bundle_turn::hold_turn_in;
 use crate::Vault;

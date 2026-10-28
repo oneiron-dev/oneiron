@@ -55,6 +55,12 @@ impl VoiceReferenceUploadGuard {
         }
     }
 
+    /// The vault the guard is bound to, once it is: the runtime's own, into
+    /// whose body directory a render's audio spools (FIX 6122).
+    pub(in crate::models) fn vault(&self) -> Option<Arc<Vault>> {
+        self.vault.get().cloned()
+    }
+
     /// Whether `admitted` is still the bank's current reference for render
     /// target `target` at `locality`, now: the same owner, register and
     /// revision, with no withdrawal or new decision committing. Ask right

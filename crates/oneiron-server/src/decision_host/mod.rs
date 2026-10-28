@@ -78,7 +78,8 @@ const OWNER_ASKS: &str = "owner-asks";
 const TASK_TAKE_WORDING: &str = "Should this agent take the proposed task? Yes only when the \
 task fits what the agent's definition says it does and what it may touch.";
 const TASK_DONE_MET_WORDING: &str = "Does this result meet the task's brief? Yes only when the \
-result meets every yes_if_all criterion and no no_if_any criterion holds.";
+result meets every state.criteria yes_if_all line and no state.criteria no_if_any line holds; \
+a state.criteria not_a_reason_to_say_no line is never a reason to say no.";
 const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when the listed \
 escalation trigger needs a person's answer before the work goes on.";
 /// How long one task surface question may take.
