@@ -2,7 +2,7 @@
 
 use super::{AskAct, AskRole, AskTo, DecisionAsk, HolderKind, RoleRank};
 use crate::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Error;
 use crate::memory::PixelRegion;
 use serde::{Deserialize, Serialize};
 
@@ -50,7 +50,7 @@ pub enum AnswerContract {
 }
 
 impl AnswerContract {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> crate::error::Result<()> {
         match self {
             Self::Choice { options }
                 if options.is_empty()
@@ -189,7 +189,7 @@ pub struct DecisionQuestion {
 }
 
 impl DecisionQuestion {
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> crate::error::Result<()> {
         if self.version == 0 || self.text.trim().is_empty() || self.text.len() > 16_384 {
             return Err(invalid("invalid typed question"));
         }
@@ -254,7 +254,7 @@ impl Default for DecisionBand {
 }
 
 impl DecisionBand {
-    pub fn validate(self) -> Result<()> {
+    pub fn validate(self) -> crate::error::Result<()> {
         if !self.low.is_finite()
             || !self.high.is_finite()
             || self.low < 0.0
@@ -284,7 +284,7 @@ impl DecisionDial {
     /// band a valid band inside this one's (FIX 1587), so
     /// `host.low <= resident.low < resident.high <= host.high`. An equal band
     /// stays inside.
-    pub fn narrow(self, resident: Self) -> Result<Self> {
+    pub fn narrow(self, resident: Self) -> crate::error::Result<Self> {
         self.band.validate()?;
         resident.band.validate()?;
         if self.first > self.ceiling
