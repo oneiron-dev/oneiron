@@ -319,7 +319,11 @@ pub(crate) fn release_fenced_only(
 
 /// Drops the fence a release left on `asset`. A fence an explicit delete left, and a hard-delete
 /// marker, stay.
-fn lift_release_fence(store: &Store, txn: &mut RwTxn<'_>, asset: &EntityId) -> Result<()> {
+pub(super) fn lift_release_fence(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    asset: &EntityId,
+) -> Result<()> {
     if release_fenced_only(store, txn, asset)? {
         crate::deletion::ROW_DELETION_FENCE.delete(store, txn, &HexId(*asset))?;
     }

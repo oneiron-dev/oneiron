@@ -473,7 +473,9 @@
       },
       "page": {
         "rows": "rows",
-        "cursor": "next_after"
+        "cursor": "next_after",
+        "resume": "spec",
+        "within": "after"
       },
       "mcp_scope": "filtered",
       "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
@@ -724,6 +726,18 @@
       },
       "section": false,
       "openapi": true
+    },
+    {
+      "name": "self.grants.answer",
+      "description": "The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner.",
+      "input": "crate::task_verb::sdk::GrantAnswerRequest",
+      "output": "crate::task_verb::sdk::GrantAnswered",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.grants.answer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {},
+      "section": false
     },
     {
       "name": "vault.personas.preview",
@@ -1338,11 +1352,12 @@
       "task_decisions": true,
       "proposes": true,
       "admission": {
-        "unrestricted_record_scope": true,
+        "born_record_scope": true,
         "readable": [
           "task_ref"
         ]
       },
+      "mcp_scope": "born",
       "section": true
     },
     {
@@ -2246,10 +2261,10 @@
     },
     {
       "name": "vault.export",
-      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only.",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline.",
       "input": "crate::memory::ExportOptions",
-      "output": "crate::memory::MemoryExport",
-      "call": "memory.export(&input)?",
+      "output": "crate::memory::ExportAnswer",
+      "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -2333,19 +2348,26 @@
     },
     {
       "name": "vault.receipts",
-      "description": "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds.",
+      "description": "Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest.",
       "input": "crate::task_verb::sdk::VaultReceiptsRequest",
-      "output": "Vec<crate::memory::MemoryReceipt>",
-      "mcp_served_output": "output.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
-      "call": "memory.receipts_of_kinds(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), &input.kinds)?",
+      "output": "crate::task_verb::sdk::VaultReceiptsPage",
+      "mcp_served_output": "output.receipts.iter().filter_map(|receipt| receipt.claim_ref.as_deref()).filter_map(|id| oneiron::EntityId::from_hex(id).ok())",
+      "call": "memory.receipts_page(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT), input.kinds.as_deref().unwrap_or_default(), input.after.as_deref())?",
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
-        "validate": "crate::memory::caps::check_limit(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?;"
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit.unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT))?;"
+      },
+      "page": {
+        "rows": "receipts",
+        "cursor": "next_after",
+        "resume": "spec",
+        "within": "after"
       },
       "section": false,
       "binding": {
         "assemble": true,
+        "native": "agent_verb",
         "args": [
           {
             "name": "limit",
@@ -2355,20 +2377,25 @@
           {
             "name": "kinds",
             "kind": "kinds"
+          },
+          {
+            "name": "after",
+            "kind": "ref"
           }
         ],
         "docs": {
-          "remote": "    /// Lists governance receipts, newest first: the gate decision ledger, or\n    /// the receipts of the named kinds.\n",
-          "ts": "/** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */",
-          "py": "Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds."
+          "remote": "    /// Lists governance receipts, newest first, a page at a time: the gate\n    /// decision ledger, or the receipts of the named kinds. `after` takes the\n    /// page before's `next_after`.\n",
+          "ts": "/** Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. `after` takes the page before's `next_after`. */",
+          "py": "Governance receipts, newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds. ``after`` takes the page before's ``next_after``."
         }
       },
       "uniffi": {
         "args": {
           "limit": "u32",
-          "kinds": "Option<Vec<String>>"
+          "kinds": "Option<Vec<String>>",
+          "after": "Option<String>"
         },
-        "output": "Vec<FacadeReceipt>"
+        "output": "FacadeReceiptPage"
       }
     },
     {
@@ -4486,6 +4513,21 @@
       "input": "crate::task_verb::sdk::SignedAuthorityHistory",
       "output": "crate::task_verb::sdk::AuthorityHistoryImported",
       "call": "crate::task_verb::sdk::import_authority_history_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.history.import\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.authority.clock.repair",
+      "description": "Repairs a damaged authority clock floor for the owner from this vault's own observations, judged against the owner's proof in the repair's own writer. A whole floor, or one nothing here proves, is left as it is and the answer says so.",
+      "input": "EmptyRequest",
+      "output": "crate::task_verb::sdk::AuthorityClockRepair",
+      "call": "crate::task_verb::sdk::repair_authority_clock_as_owner(memory.vault(), &memory.embedded_owner(\"vault.authority.clock.repair\")?)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -6944,7 +6986,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.handoff_alarms.acknowledge",
@@ -6958,7 +7001,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.roots.requests.cancel",
@@ -8622,9 +8666,9 @@
     },
     {
       "name": "vault.hooks.replay",
-      "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands.",
+      "description": "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands, 256 entries a page; next_cursor continues to the rest.",
       "input": "crate::task_verb::sdk::HooksReplayRequest",
-      "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
+      "output": "crate::task_verb::sdk::HooksReplayPage",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -8632,6 +8676,12 @@
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "input.limit()?;"
+      },
+      "page": {
+        "rows": "rows",
+        "cursor": "next_cursor",
+        "resume": "spec",
+        "within": "cursor"
       },
       "section": false
     },
@@ -12191,7 +12241,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.add",
-      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves walks in from now; an Admin adding from outside adds from now; the Owner adding from outside with full opens full history, members told.",
+      "description": "Adds a room member to a private thread's audience, full or from_now. An Owner or Admin adding themselves, or an Admin adding from outside, adds from now; the Owner's full outside add opens full history, members told. Kept in base off record.",
       "input": "crate::workspace_roster::ThreadAudienceAddRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_add(&input)?",
@@ -12219,7 +12269,7 @@
     },
     {
       "name": "vault.rooms.thread_audience.remove",
-      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it.",
+      "description": "Removes a person from a private thread's audience, ending every read of theirs there, its earlier turns too; its audience, the vault's Owner or an Admin may call it. An audience edit is structure: it persists in base even off record.",
       "input": "crate::workspace_roster::ThreadAudienceRemoveRequest",
       "output": "crate::workspace_roster::ThreadAudienceReceipt",
       "call": "memory.rooms_thread_audience_remove(&input)?",
@@ -13788,7 +13838,7 @@
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"evidence\", input.evidence.len())?; crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
+        "validate": "crate::memory::caps::check_deadline_ms(input.deadline_ms)?;"
       },
       "section": false
     },
@@ -13899,6 +13949,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
+      "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
+      "mcp_page": true,
       "section": false
     },
     {
@@ -14789,8 +14841,7 @@
       "call": "memory.commit_scoped(&input.claims, false)?",
       "scope": "Write",
       "admission": {
-        "claim_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
+        "claim_record_scope": true
       },
       "section": false,
       "binding": {
@@ -15588,8 +15639,7 @@
       "call": "memory.hydrate(&input.refs)?",
       "scope": "Read",
       "admission": {
-        "lane_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"refs\", input.refs.len())?;"
+        "lane_record_scope": true
       },
       "section": false,
       "binding": {
@@ -16165,7 +16215,7 @@
     },
     {
       "name": "vault.batch",
-      "description": "Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
+      "description": "Commits every core entity put it names atomically, all or none, at the grade of the credential that sent them; an embedded handle commits below owner grade.",
       "input": "crate::core_write::CoreBatchWriteInput",
       "output": "crate::core_write::CoreBatchWriteReceipt",
       "call": "memory.core_batch_write(&input)?",
@@ -17556,8 +17606,7 @@
       "call": "memory.commit_scoped(&input.claims, true)?",
       "scope": "Write",
       "admission": {
-        "claim_record_scope": true,
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
+        "claim_record_scope": true
       },
       "section": false,
       "binding": {

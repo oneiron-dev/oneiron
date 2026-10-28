@@ -80,6 +80,7 @@ vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
+selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
@@ -174,7 +175,7 @@ selfCredentialAttenuate(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
-vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
+vaultReceipts(input: unknown): unknown
 vaultAssetsIngest(input: unknown): unknown
 vaultAssetsResolve(input: unknown): unknown
 vaultSearchVector(input: unknown): unknown
@@ -314,6 +315,7 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultAuthorityClockRepair(input: unknown): unknown
 vaultWireHealthThresholdsGet(input: unknown): unknown
 vaultWireHealthThresholdsSet(input: unknown): unknown
 vaultSlimPolicy(input: unknown): unknown

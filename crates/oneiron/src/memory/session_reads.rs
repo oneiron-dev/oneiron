@@ -122,7 +122,6 @@ impl<'s> SessionReadContext<'s> {
             }
             SessionRead::Hydrate => {
                 let input: HydrateRequest = decode(input)?;
-                caps::check_batch_len("refs", input.refs.len())?;
                 let read = self.hydrate(&memory, &input.refs)?;
                 let rows = read.value.iter().filter_map(view_id).collect();
                 (encode(&read)?, rows)

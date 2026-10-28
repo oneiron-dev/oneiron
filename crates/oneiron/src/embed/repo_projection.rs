@@ -57,7 +57,14 @@ pub(super) fn asset_payload_in_txn(
     txn: &RoTxn<'_>,
     body: &[u8],
 ) -> Result<Option<PendingEmbeddingPayload>> {
-    let Some(text) = super::media::asset_text(body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some(text) = super::media::asset_text(body, |blob| {
+        Ok(vault
+            .store
+            .port_entity_record(txn, blob)?
+            .map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     let copy = masked_repo_index_input_in_txn(vault, txn, text.into_bytes())?.into_text();
@@ -175,7 +182,11 @@ pub(super) fn media_copy_hash_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(None);
     };
-    let Some((_, bytes)) = super::media::asset_media(&row.body) else {
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((_, bytes)) = crate::memory::asset_media_in(&row.body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
+    else {
         return Ok(None);
     };
     let input = masked_repo_index_input_in_txn(vault, txn, bytes)?;
@@ -187,10 +198,17 @@ pub(super) fn media_copy_hash_in(
     }))
 }
 
-/// The inline media bytes an ASSET body holds, the bytes a mark joins it by;
-/// `None` for a body holding none.
-pub(crate) fn repo_media_bytes(body: &[u8]) -> Option<Vec<u8>> {
-    super::media::asset_media(body).map(|(_, bytes)| bytes)
+/// The media bytes an ASSET body names, the bytes a mark joins it by: the
+/// blob it holds by reference (FIX 9949), `read` reading one stored row's
+/// body by id in the caller's own snapshot. `None` for a body naming none.
+///
+/// # Errors
+/// A failure of `read`.
+pub(crate) fn repo_media_bytes(
+    body: &[u8],
+    read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
+) -> Result<Option<Vec<u8>>> {
+    Ok(crate::memory::asset_media_in(body, read)?.map(|(_, bytes)| bytes))
 }
 
 /// What a mask change on the blobs `sources` reaches beyond the records
@@ -234,8 +252,9 @@ fn kept<T>(result: Result<T>) -> Result<Option<T>> {
     }
 }
 
-/// Every inline ASSET whose media bytes are, by their own whole BLAKE3, a
-/// blob in `sources`: the envelope copies a mask change reaches.
+/// Every ASSET whose media bytes, the blob it holds read in `txn`, are by
+/// their own whole BLAKE3 a blob in `sources`: the envelope copies a mask
+/// change reaches.
 ///
 /// # Errors
 /// A store failure.
@@ -253,9 +272,13 @@ pub(crate) fn repo_envelope_copies_in_txn(
         if row.entity_type != ENTITY_TYPE_ASSET {
             continue;
         }
-        if let Some((_, bytes)) = super::media::asset_media(&row.body)
-            && sources.contains(blake3::hash(&bytes).as_bytes())
-        {
+        let bytes = repo_media_bytes(&row.body, |blob| {
+            Ok(vault
+                .store
+                .port_entity_record(txn, blob)?
+                .map(|blob| blob.body))
+        })?;
+        if bytes.is_some_and(|bytes| sources.contains(blake3::hash(&bytes).as_bytes())) {
             copies.push(id);
         }
     }
@@ -277,7 +300,7 @@ pub(crate) fn requeue_repo_embedding_in_txn(
     let Some(record) = vault.store.port_entity_record(wtxn, entity)? else {
         return Ok(());
     };
-    if super::embeddable_payload(record.entity_type, &record.body).is_none() {
+    if !super::eligibility::is_embeddable_in_txn(vault, wtxn, record.entity_type, &record.body)? {
         return Ok(());
     }
     let owed = vault

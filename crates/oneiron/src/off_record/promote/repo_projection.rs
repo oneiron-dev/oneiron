@@ -75,12 +75,19 @@ pub(super) fn projected_replay_ops<D: Borrow<BatchOp>>(
             stale.insert(*id);
             continue;
         }
-        let bytes = match planned.get(id) {
-            Some(data) => repo_media_bytes(data),
-            None => vault
+        // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+        let read = |blob: &EntityId| -> Result<Option<Vec<u8>>> {
+            Ok(vault
                 .store
-                .port_entity_record(txn, id)?
-                .and_then(|row| repo_media_bytes(&row.body)),
+                .port_entity_record(txn, blob)?
+                .map(|blob| blob.body))
+        };
+        let bytes = match planned.get(id) {
+            Some(data) => repo_media_bytes(data, read)?,
+            None => match vault.store.port_entity_record(txn, id)? {
+                Some(row) => repo_media_bytes(&row.body, read)?,
+                None => None,
+            },
         };
         let Some(bytes) = bytes else {
             continue;

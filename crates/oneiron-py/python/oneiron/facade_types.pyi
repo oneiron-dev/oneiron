@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1159 facade rows, 4156 declarations.
-Inputs: 1094 of 1159 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1159 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1161 facade rows, 4169 declarations.
+Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1044 of 1161 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -429,6 +429,8 @@ class NotificationRow(TypedDict):
 class NotificationPage(TypedDict):
     rows: list[NotificationRow]
     next_after: NotRequired[str | None]
+    effective_limit: NotRequired[int]
+    limit_clamped: NotRequired[bool]
 NotificationMark = Literal["seen", "acked"]
 class InboxMarkRequest(TypedDict):
     notification_ref: str
@@ -611,7 +613,7 @@ class RunTreeEvent(TypedDict):
     actor: str
     kind: RunTreeEventKind
     note: NotRequired[str | None]
-class RunTreeNode(TypedDict):
+class RunTreeWireNode(TypedDict):
     job_id: str
     run_id: NotRequired[str | None]
     parent_id: NotRequired[str | None]
@@ -623,7 +625,7 @@ class RunTreeNode(TypedDict):
     timestamps: RunTreeTimestamps
     failure: NotRequired[RunTreeFailure | None]
     events: list[RunTreeEvent]
-    children: list[RunTreeNode]
+    children: list[int]
 class RunTreeRepairMissingParent(TypedDict):
     kind: Literal["missing_parent"]
     job_id: str
@@ -633,9 +635,11 @@ class RunTreeRepairParentCycle(TypedDict):
     job_id: str
     parent_id: str
 RunTreeRepair = RunTreeRepairMissingParent | RunTreeRepairParentCycle
-class RunTree(TypedDict):
-    roots: list[RunTreeNode]
+class RunTreeWire(TypedDict):
+    nodes: list[RunTreeWireNode]
+    roots: list[int]
     repairs: list[RunTreeRepair]
+RunTree = RunTreeWire
 class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
@@ -1221,6 +1225,35 @@ class CompanionAccessRequestAnswered(TypedDict):
     scope: CompanionProfileRequestedScope
     status: AccessRequestStatus
     grant_ref: NotRequired[EntityId | None]
+    decided_by: NotRequired[EntityId | None]
+    decided_at: NotRequired[int | None]
+GrantAnswer = Literal["approve", "deny"]
+class GrantAnswerRequest(TypedDict):
+    request: EntityId
+    answer: GrantAnswer
+class GrantRequestedScopeMessages(TypedDict):
+    kind: Literal["messages"]
+    space_ref: EntityId
+class GrantRequestedScopeSummaries(TypedDict):
+    kind: Literal["summaries"]
+    space_ref: EntityId
+class GrantRequestedScopeRelationshipClaims(TypedDict):
+    kind: Literal["relationship_claims"]
+    space_ref: EntityId
+class GrantRequestedScopeCompanionProfile(TypedDict):
+    kind: Literal["companion_profile"]
+    person_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
+class GrantAnswered(TypedDict):
+    request: EntityId
+    principal_ref: EntityId
+    capability: str
+    scope: GrantRequestedScope
+    status: AccessRequestStatus
+    addressed_to: NotRequired[EntityId | None]
+    grant_ref: NotRequired[EntityId | None]
+    excess_request: NotRequired[EntityId | None]
     decided_by: NotRequired[EntityId | None]
     decided_at: NotRequired[int | None]
 class PersonaSnapshotPreviewRequest(TypedDict):
@@ -3389,13 +3422,21 @@ class RetrievalPolicyUpdateReceipt(TypedDict):
     reason: NotRequired[str | None]
     candidate: RetrievalPolicyCandidate
     view: RetrievalPolicyView
+ExportDelivery = Literal["inline", "transfer"]
 class ExportOptions(TypedDict):
     format: NotRequired[str | None]
     include_secrets: NotRequired[bool | None]
+    delivery: NotRequired[ExportDelivery | None]
 class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+class ExportTransfer(TypedDict):
+    transfer_ref: str
+    format: str
+    bytes: int
+    digest: str
+ExportAnswer = MemoryExport | ExportTransfer
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
@@ -3406,12 +3447,15 @@ class ScopeAxisSome(TypedDict, Generic[T]):
 ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
 ScopeId = str
 Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingBottom(TypedDict):
+class SensitivityCeilingWireBottom(TypedDict):
     kind: Literal["bottom"]
-class SensitivityCeilingAtMost(TypedDict):
+class SensitivityCeilingWireAll(TypedDict):
+    kind: Literal["all"]
+class SensitivityCeilingWireAtMost(TypedDict):
     kind: Literal["at_most"]
     value: Sensitivity
-SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
+SensitivityCeilingWire = SensitivityCeilingWireBottom | SensitivityCeilingWireAll | SensitivityCeilingWireAtMost
+SensitivityCeiling = SensitivityCeilingWire
 class Scope(TypedDict):
     worlds: NotRequired[ScopeAxis[ScopeId]]
     facets: NotRequired[ScopeAxis[ScopeId]]
@@ -3470,10 +3514,12 @@ ScopeAxisInput = ScopeAxisInputBottom | ScopeAxisInputAll | ScopeAxisInputSome[T
 ScopeSensitivityBand = Literal["public", "private", "sensitive", "restricted"]
 class ScopeSensitivityInputBottom(TypedDict):
     kind: Literal["bottom"]
+class ScopeSensitivityInputAll(TypedDict):
+    kind: Literal["all"]
 class ScopeSensitivityInputAtMost(TypedDict):
     kind: Literal["at_most"]
     value: ScopeSensitivityBand
-ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAtMost
+ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAll | ScopeSensitivityInputAtMost
 class ChannelCeiling(TypedDict):
     worlds: NotRequired[ScopeAxisInput[str]]
     facets: NotRequired[ScopeAxisInput[str]]
@@ -3514,7 +3560,8 @@ class ScopedExport(TypedDict):
     records: list[ScopedExportRecord]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
-    kinds: NotRequired[list[str]]
+    kinds: NotRequired[list[str] | None]
+    after: NotRequired[str | None]
 class MemoryReceipt(TypedDict):
     receipt_ref: str
     kind: str
@@ -3527,6 +3574,11 @@ class MemoryReceipt(TypedDict):
     claim_ref: NotRequired[str | None]
     claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
+class VaultReceiptsPage(TypedDict):
+    receipts: list[MemoryReceipt]
+    next_after: NotRequired[str | None]
+    effective_limit: int
+    limit_clamped: NotRequired[bool]
 class AssetIngestRequest(TypedDict):
     asset_ref: NotRequired[str | None]
     embedding_kind: InputKind
@@ -5729,6 +5781,7 @@ class ChatCompletionRequest(TypedDict):
     frequency_penalty: NotRequired[float | None]
     seed: NotRequired[int | None]
     user: NotRequired[str | None]
+    deadline_ms: NotRequired[int | None]
 ChatCompletionObject = Literal["chat.completion"]
 ChatCompletionRole = Literal["assistant"]
 class ChatCompletionMessage(TypedDict):
@@ -6113,6 +6166,7 @@ class ColdAuthorityAuditRow(TypedDict):
     seq: int
     parents: list[str]
     fold_valid: bool
+    issue_codes: NotRequired[list[str]]
 class AuthorityAuditPage(TypedDict):
     rows: list[AuthorityAuditRow]
     next_after: NotRequired[EntityId | None]
@@ -6123,6 +6177,12 @@ class SignedAuthorityHistory(TypedDict):
     entries: list[str]
 class AuthorityHistoryImported(TypedDict):
     entry_refs: list[str]
+AuthorityClockRepairOutcome = Literal["sound", "repaired", "unproven"]
+class AuthorityClockRepair(TypedDict):
+    outcome: AuthorityClockRepairOutcome
+    floor: NotRequired[int | None]
+    observations: int
+    anchored: NotRequired[int | None]
 class WireThresholds(TypedDict):
     window_secs: int
     per_verb: int
@@ -6809,7 +6869,7 @@ class FederationBurstDispositionDefer(TypedDict):
     outcome: Literal["defer"]
     replay_ref: str
 FederationBurstDisposition = FederationBurstDispositionAllow | FederationBurstDispositionIsolateAndPropose | FederationBurstDispositionDefer
-FederationBurstWorkState = Literal["pending", "imported", "rejected"]
+FederationBurstWorkState = Literal["pending", "imported", "rejected", "expired", "stale_authority", "erased"]
 class FederationBurstReceipt(TypedDict):
     batch_ref: str
     principal: EntityId
@@ -9107,6 +9167,8 @@ class SpaceProbe(TypedDict):
     query: str
     query_media: NotRequired[EntityId | None]
     family: EntityId
+    written_from: NotRequired[EntityId | None]
+    source_refs: NotRequired[list[EntityId]]
     targets: list[EntityId]
     author: str
     written_at: int
@@ -9121,6 +9183,7 @@ class EmbeddingSpaceProbePutRequest(TypedDict):
     query_media: NotRequired[EntityId | None]
     family: EntityId
     targets: NotRequired[list[EntityId]]
+    source_refs: NotRequired[list[EntityId]]
     author: str
 class EmbeddingSpaceProbeDeleteRequest(TypedDict):
     id: str
@@ -10448,6 +10511,13 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+    cursor: NotRequired[str | None]
+class HooksReplayPage(TypedDict):
+    rows: list[HookReplayRow]
+    next_cursor: NotRequired[str | None]
+    done: bool
+    effective_limit: int
+    limit_clamped: NotRequired[bool]
 class HookRegenBindingRequest(TypedDict):
     binding: EntityId
 class HookContractStamp(TypedDict):
@@ -15252,7 +15322,7 @@ class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
 class RetryableLlmErrorKeptOnDevice(TypedDict):
     KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
 RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
-BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied"]
+BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied", "HostCheck"]
 class LlmErrorRetryable(TypedDict):
     Retryable: RetryableLlmError
 class LlmErrorFatal(TypedDict):
@@ -17376,6 +17446,7 @@ class FacadeMemoryError(TypedDict):
     policy_denial: NotRequired[MemoryPolicyDenial | None]
     hook: NotRequired[VerbHookStop | None]
     retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus
@@ -20939,7 +21010,7 @@ class SessionManifest(TypedDict):
     fence_proof: NotRequired[SessionFenceProof | None]
     fence_unproven: NotRequired[bool]
 BrowserAnswerItem = dict[str, Any]
-BrowserAnswer = BrowserAnswerItem[T]
+BrowserAnswer = BrowserAnswerItem
 class RowSplice(TypedDict):
     start: int
     delete_count: int
@@ -21118,7 +21189,7 @@ class VerbsObservation(TypedDict):
     dialogs: NotRequired[list[DialogAnswerFailure]]
 class ObservationPage(VerbsObservation):
     next: NotRequired[str | None]
-BrowserObservationPage = BrowserAnswer[ObservationPage]
+BrowserObservationPage = BrowserAnswer
 class ObservationBase(TypedDict):
     scope: str
     seq: int
@@ -21135,7 +21206,7 @@ class FindOutput(TypedDict):
     next: NotRequired[str | None]
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
-BrowserFindOutput = BrowserAnswer[FindOutput]
+BrowserFindOutput = BrowserAnswer
 class ClickInput(TypedDict):
     ref: str
     base: NotRequired[ObservationBase | None]
@@ -21168,13 +21239,13 @@ class WaitForOutput(TypedDict):
     partial: NotRequired[PartialTree | None]
     walk_next: NotRequired[str | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserWaitForOutput = BrowserAnswer[WaitForOutput]
+BrowserWaitForOutput = BrowserAnswer
 class ExpectOutput(TypedDict):
     met: bool
     row: NotRequired[Row | None]
     partial: NotRequired[PartialTree | None]
     rebindings: NotRequired[list[Rebound]]
-BrowserExpectOutput = BrowserAnswer[ExpectOutput]
+BrowserExpectOutput = BrowserAnswer
 class ScreenshotInput(TypedDict):
     trigger: ScreenshotTrigger
     since_capture: NotRequired[str | None]
@@ -21189,7 +21260,7 @@ class ScreenshotOutput(TypedDict):
     title: str
     capture_id: str
     unchanged_from: NotRequired[str | None]
-BrowserScreenshotOutput = BrowserAnswer[ScreenshotOutput]
+BrowserScreenshotOutput = BrowserAnswer
 class ViewInput(TypedDict):
     image: str
 class ImageOutput(TypedDict):
@@ -21199,7 +21270,7 @@ class ImageOutput(TypedDict):
     height: int
     bytes: int
     source: str
-BrowserImageOutput = BrowserAnswer[ImageOutput]
+BrowserImageOutput = BrowserAnswer
 class CropInput(TypedDict):
     image: str
     x: int
@@ -21248,7 +21319,7 @@ class BatchOutput(TypedDict):
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
     rebindings: NotRequired[list[StepRebound]]
-BrowserBatchOutput = BrowserAnswer[BatchOutput]
+BrowserBatchOutput = BrowserAnswer
 class LibraryFindInput(TypedDict):
     site: NotRequired[str | None]
     subgoal: NotRequired[str | None]
@@ -21256,14 +21327,14 @@ class LibraryFindInput(TypedDict):
 class LibraryFindOutput(TypedDict):
     site: str
     workflows: list[LibraryCard]
-BrowserLibraryFindOutput = BrowserAnswer[LibraryFindOutput]
+BrowserLibraryFindOutput = BrowserAnswer
 class DraftInput(TypedDict):
     subgoal: str
     postcondition: NotRequired[list[ExpectInput]]
     after_seq: NotRequired[int | None]
     through_seq: NotRequired[int | None]
     past_press: NotRequired[bool]
-BrowserLibraryDraftOutput = BrowserAnswer[DraftOutput]
+BrowserLibraryDraftOutput = BrowserAnswer
 class DemonstrationStartInput(TypedDict):
     label: NotRequired[str | None]
 class DemonstrationStarted(TypedDict):
@@ -21274,12 +21345,12 @@ class DemonstrationStarted(TypedDict):
     origin: NotRequired[str | None]
     url: str
     already_running: NotRequired[bool]
-BrowserDemonstrationStartOutput = BrowserAnswer[DemonstrationStarted]
+BrowserDemonstrationStartOutput = BrowserAnswer
 class DemonstrationStopInput(TypedDict):
     id: DemonstrationId
     subgoal: NotRequired[str]
     postcondition: NotRequired[list[ExpectInput]]
-BrowserDemonstrationStopOutput = BrowserAnswer[DemonstrationOutput]
+BrowserDemonstrationStopOutput = BrowserAnswer
 WorkflowCheck = Literal["solved", "replay", "secret_replay", "held_out", "fresh_guest", "supersedes"]
 SupersedeRefusal = Literal["malformed", "not_on_site", "same_record", "not_filer"]
 class AdmissionRefusalHeldOut(TypedDict):
@@ -21316,13 +21387,13 @@ class ProposeOutput(TypedDict):
     replay: NotRequired[BatchOutput | None]
     replay_guest: NotRequired[ReplayGuest | None]
     superseded: NotRequired[SupersedeOutcome | None]
-BrowserLibraryProposeOutput = BrowserAnswer[ProposeOutput]
+BrowserLibraryProposeOutput = BrowserAnswer
 class LibraryRetireInput(TypedDict):
     workflow: str
     reason: NotRequired[str | None]
 class LibraryRetireOutput(TypedDict):
     retired: LibraryCard
-BrowserLibraryRetireOutput = BrowserAnswer[LibraryRetireOutput]
+BrowserLibraryRetireOutput = BrowserAnswer
 class LibraryRetiredInput(TypedDict):
     site: NotRequired[str | None]
 class RetiredCard(TypedDict):
@@ -21332,7 +21403,7 @@ class RetiredCard(TypedDict):
 class LibraryRetiredOutput(TypedDict):
     site: str
     retired: list[RetiredCard]
-BrowserLibraryRetiredOutput = BrowserAnswer[LibraryRetiredOutput]
+BrowserLibraryRetiredOutput = BrowserAnswer
 LibraryRunMode = Literal["strict", "assisted"]
 class SecretArgHandle(TypedDict):
     handle: str
@@ -21353,20 +21424,20 @@ class LibraryRunOutput(TypedDict):
     model_free_unproven: NotRequired[int | None]
     unmet: NotRequired[list[int]]
     batch: BatchOutput
-BrowserLibraryRunOutput = BrowserAnswer[LibraryRunOutput]
+BrowserLibraryRunOutput = BrowserAnswer
 class HandoverInput(TypedDict):
     reason: str
 class HandoverOutput(TypedDict):
     reason: str
     asked_at_ms: int
-BrowserHandoverOutput = BrowserAnswer[HandoverOutput]
+BrowserHandoverOutput = BrowserAnswer
 class SwitchEngineInput(TypedDict):
     engine: BrowserEngine
     reason: str
 class SwitchEngineOutput(TypedDict):
     receipt: EffectReceipt
     observation: NotRequired[ObservationPage | None]
-BrowserSwitchEngineOutput = BrowserAnswer[SwitchEngineOutput]
+BrowserSwitchEngineOutput = BrowserAnswer
 class MemorySupersedeInput(TypedDict):
     newId: str
     oldId: str

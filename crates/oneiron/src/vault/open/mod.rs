@@ -590,6 +590,7 @@ impl Vault {
             attempt_cancels: Default::default(),
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
+            managed_owner_check: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -671,6 +672,7 @@ impl Vault {
         // The image a restore in this vault's place set aside reads, and
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
+        vault.resolve_pending_credential_restores_logged();
         Ok(vault)
     }
 

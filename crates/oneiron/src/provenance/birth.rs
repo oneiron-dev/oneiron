@@ -29,6 +29,7 @@ use crate::store::{ManifestDbs, Store};
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 pub(crate) mod checkpoint;
+pub(crate) mod prompted;
 pub(crate) mod room;
 
 /// Most hex characters a birth's input hash may carry.
@@ -419,14 +420,15 @@ pub(crate) fn run_exists(vault: &crate::Vault, run: &EntityId) -> Result<bool> {
 }
 
 /// Stamps `row`'s birth inside the transaction that births it. The row must
-/// be live; every prompt input must be a live row a reader can open, and a
-/// trigger must name a live task, ask, run or skill. Birth is immutable: the
-/// same envelope again is a no-op, a different one is refused.
+/// be live; every prompt input must be a row this vault holds, or held and
+/// erased since the prompt was read (FIX 8192: its words are still in the
+/// row), and a trigger must name a live task, ask, run or skill. Birth is
+/// immutable: the same envelope again is a no-op, a different one is refused.
 ///
 /// # Errors
 ///
-/// [`Error::InvalidConfig`] for a malformed envelope, an absent row, an
-/// unreadable prompt or a dead trigger; [`Error::InvariantViolation`] when the
+/// [`Error::InvalidConfig`] for a malformed envelope, an absent row, a
+/// prompt this vault never held or a dead trigger; [`Error::InvariantViolation`] when the
 /// row already has a different birth; storage errors as they occur. A
 /// room's evidence on `birth` is treated as absent ([`RowBirth::base_form`]).
 pub(crate) fn stamp_row_birth_in_txn(
@@ -451,10 +453,10 @@ pub(crate) fn stamp_row_birth_in_txn(
     }
     for input in &birth.made_by.inputs {
         if input.role == MadeByInputRole::Prompt
-            && !live_entity_row_in_txn(store, txn, &input.row)?.is_live()
+            && !prompted::prompt_input_held_in_txn(store, txn, &input.row)?
         {
             return Err(Error::InvalidConfig(
-                "a row birth's prompt input is not a live row".into(),
+                "a row birth's prompt input is no row this vault holds or held".into(),
             ));
         }
     }

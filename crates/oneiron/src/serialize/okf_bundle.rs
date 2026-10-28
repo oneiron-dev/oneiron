@@ -342,57 +342,164 @@ fn plain_body(body: &Value) -> Value {
         Some("message_pack") => body.get("value").map(plain).unwrap_or(Value::Null),
         Some("utf8") => body.get("value").cloned().unwrap_or(Value::Null),
         Some("nulled") | None => Value::Null,
-        Some(_) => body.get("value").cloned().unwrap_or(Value::Null),
+        Some(_) => body.get("value").map(as_okf_shows).unwrap_or(Value::Null),
     }
 }
 
-/// One exported MessagePack value as plain JSON.
-fn plain(value: &Value) -> Value {
-    let inner = value.get("value");
-    match value.get("type").and_then(Value::as_str) {
-        Some("boolean") => inner.cloned().unwrap_or(Value::Null),
-        Some("integer") => inner.and_then(Value::as_str).map_or(Value::Null, |digits| {
-            digits
-                .parse::<i64>()
-                .map(Value::from)
-                .or_else(|_| digits.parse::<u64>().map(Value::from))
-                .unwrap_or_else(|_| Value::from(digits))
-        }),
-        Some("f32") => inner
-            .and_then(Value::as_u64)
-            .and_then(|bits| u32::try_from(bits).ok())
-            .map_or(Value::Null, |bits| {
-                Value::from(f64::from(f32::from_bits(bits)))
-            }),
-        Some("f64") => inner
-            .and_then(Value::as_u64)
-            .map_or(Value::Null, |bits| Value::from(f64::from_bits(bits))),
-        Some("string" | "binary_text") => inner.cloned().unwrap_or(Value::Null),
-        Some("entity_reference") => inner
-            .and_then(Value::as_array)
-            .map_or(Value::Null, |bytes| {
-                let bytes: Vec<u8> = bytes
+/// A pack or hub-source body as OKF has always shown it (FIX 10097, 10101):
+/// each embedded MessagePack body back in its nested tagged value form, and
+/// each source file's content back to its text, or null when redacted. A
+/// binary file member, which no earlier archive carried, keeps its file
+/// reference.
+fn as_okf_shows(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            if fields.get("codec").and_then(Value::as_str) == Some("message_pack")
+                && let Some(nested) = fields.get("value").and_then(nested_value)
+            {
+                let mut shown = fields.clone();
+                shown.insert("value".to_owned(), nested);
+                return Value::Object(shown);
+            }
+            let source_file = ["path", "content", "sha256"]
+                .iter()
+                .all(|key| fields.contains_key(*key));
+            Value::Object(
+                fields
                     .iter()
-                    .filter_map(|byte| byte.as_u64().and_then(|b| u8::try_from(b).ok()))
-                    .collect();
-                Value::from(crate::entity_id::bytes_to_hex_lower(&bytes))
-            }),
-        Some("array") => inner
-            .and_then(Value::as_array)
-            .map_or(Value::Null, |items| items.iter().map(plain).collect()),
-        Some("map") => {
-            let mut object = Map::new();
-            for entry in inner.and_then(Value::as_array).into_iter().flatten() {
-                if let Some([key, value]) = entry.as_array().map(Vec::as_slice) {
-                    let key = match plain(key) {
+                    .map(|(key, field)| {
+                        let shown = match (source_file && key == "content", field) {
+                            (true, Value::Object(content)) => {
+                                match content.get("kind").and_then(Value::as_str) {
+                                    Some("text") => {
+                                        content.get("value").cloned().unwrap_or(Value::Null)
+                                    }
+                                    Some("redacted") => Value::Null,
+                                    _ => field.clone(),
+                                }
+                            }
+                            _ => as_okf_shows(field),
+                        };
+                        (key.clone(), shown)
+                    })
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(as_okf_shows).collect()),
+        value => value.clone(),
+    }
+}
+
+/// One exported value's postorder nodes (FIX 10097) rebuilt as the nested
+/// tagged form `{"type", "value"}` it had before: an array holds its items,
+/// a map its `[key, value]` pairs, and nil is null. Nodes that form no one
+/// value give `None`.
+fn nested_value(nodes: &Value) -> Option<Value> {
+    let mut built: Vec<Value> = Vec::new();
+    for node in nodes.as_array()? {
+        let kind = node.get("type").and_then(Value::as_str);
+        let len = || {
+            node.get("value")
+                .and_then(Value::as_u64)
+                .and_then(|len| usize::try_from(len).ok())
+        };
+        let nested = match kind {
+            Some("array") => {
+                let at = built.len().checked_sub(len()?)?;
+                serde_json::json!({ "type": "array", "value": built.split_off(at) })
+            }
+            Some("map") => {
+                let at = built.len().checked_sub(len()?.checked_mul(2)?)?;
+                let mut items = built.split_off(at).into_iter();
+                let mut pairs = Vec::new();
+                while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                    pairs.push(Value::Array(vec![key, value]));
+                }
+                serde_json::json!({ "type": "map", "value": pairs })
+            }
+            Some(_) => node.clone(),
+            None if node.is_null() => Value::Null,
+            None => return None,
+        };
+        built.push(nested);
+    }
+    match (built.pop(), built.is_empty()) {
+        (Some(value), true) => Some(value),
+        _ => None,
+    }
+}
+
+/// One exported MessagePack value as plain JSON, read from its nodes in
+/// postorder (FIX 10097): each array or map takes the items before it, and
+/// the root is the last node. Nodes that form no one value read as null.
+fn plain(value: &Value) -> Value {
+    let Some(nodes) = value.as_array() else {
+        return Value::Null;
+    };
+    let mut built: Vec<Value> = Vec::new();
+    for node in nodes {
+        let inner = node.get("value");
+        let len = inner
+            .and_then(Value::as_u64)
+            .and_then(|len| usize::try_from(len).ok());
+        let plain = match node.get("type").and_then(Value::as_str) {
+            Some("array") => match len.and_then(|len| built.len().checked_sub(len)) {
+                Some(at) => Value::Array(built.split_off(at)),
+                None => return Value::Null,
+            },
+            Some("map") => {
+                let Some(at) = len
+                    .and_then(|len| len.checked_mul(2))
+                    .and_then(|items| built.len().checked_sub(items))
+                else {
+                    return Value::Null;
+                };
+                let mut items = built.split_off(at).into_iter();
+                let mut object = Map::new();
+                while let (Some(key), Some(value)) = (items.next(), items.next()) {
+                    let key = match key {
                         Value::String(key) => key,
                         key => key.to_string(),
                     };
-                    object.insert(key, plain(value));
+                    object.insert(key, value);
                 }
+                Value::Object(object)
             }
-            Value::Object(object)
-        }
+            Some("boolean") => inner.cloned().unwrap_or(Value::Null),
+            Some("integer") => inner.and_then(Value::as_str).map_or(Value::Null, |digits| {
+                digits
+                    .parse::<i64>()
+                    .map(Value::from)
+                    .or_else(|_| digits.parse::<u64>().map(Value::from))
+                    .unwrap_or_else(|_| Value::from(digits))
+            }),
+            Some("f32") => inner
+                .and_then(Value::as_u64)
+                .and_then(|bits| u32::try_from(bits).ok())
+                .map_or(Value::Null, |bits| {
+                    Value::from(f64::from(f32::from_bits(bits)))
+                }),
+            Some("f64") => inner
+                .and_then(Value::as_u64)
+                .map_or(Value::Null, |bits| Value::from(f64::from_bits(bits))),
+            Some("string" | "binary_text") => inner.cloned().unwrap_or(Value::Null),
+            Some("entity_reference") => {
+                inner
+                    .and_then(Value::as_array)
+                    .map_or(Value::Null, |bytes| {
+                        let bytes: Vec<u8> = bytes
+                            .iter()
+                            .filter_map(|byte| byte.as_u64().and_then(|b| u8::try_from(b).ok()))
+                            .collect();
+                        Value::from(crate::entity_id::bytes_to_hex_lower(&bytes))
+                    })
+            }
+            _ => Value::Null,
+        };
+        built.push(plain);
+    }
+    match (built.pop(), built.is_empty()) {
+        (Some(value), true) => value,
         _ => Value::Null,
     }
 }

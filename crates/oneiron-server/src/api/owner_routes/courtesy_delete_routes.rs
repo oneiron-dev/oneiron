@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{
@@ -18,7 +17,7 @@ use oneiron::task_verb::sdk::{
 use serde_json::Value;
 
 use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
 use crate::owner::{courtesy_delete, hooked_row, hooked_row_admitting};
@@ -46,10 +45,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 pub(crate) async fn send(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CourtesyDeleteSendRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CourtesyDeleteSendRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let sent = blocking(move || {
         hooked_row(
             server.vault(),
@@ -124,10 +123,10 @@ pub(crate) async fn incoming(
 pub(crate) async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CourtesyDeleteAnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CourtesyDeleteAnswerRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     // A rewritten `reply_to` meets the answer's own check, as the row's
     // facade door admits it (FIX 5140).
     let admit: oneiron::memory::RewriteAdmit = Arc::new(|verb: &str, rewritten: &Value| {

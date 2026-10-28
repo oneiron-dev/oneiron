@@ -309,11 +309,23 @@ pub enum EngineScan {
     AgentDefinitionVerbatimPinBytes,
     /// One agent birth source's encoded bytes (once refused past 32 MiB).
     AgentBirthSourceBytes,
+    /// One TASK post's caller intent key, in bytes (once refused past 256).
+    TaskPostIntentKeyBytes,
+    /// The deepest cover one audience read walks under its row (once denied
+    /// past 64).
+    AudienceCoverDepth,
+    /// One project authority chain's anchors (once quarantined past 64).
+    ProjectAnchorDepth,
+    /// One project fold's deepest lineage walk (once quarantined past 256).
+    ProjectFoldDepth,
+    /// One receipt-family source ledger a receipt query reads, named by its
+    /// scope (once cut short or refused past 100,000; FIX 3582).
+    ReceiptSourceRows,
 }
 
 impl EngineScan {
     /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 114] = [
+    pub const ALL: [Self; 119] = [
         Self::ReceivePackIntents,
         Self::PublicationRows,
         Self::VisibleRefRows,
@@ -428,6 +440,11 @@ impl EngineScan {
         Self::AgentDefinitionReferenceBytes,
         Self::AgentDefinitionVerbatimPinBytes,
         Self::AgentBirthSourceBytes,
+        Self::TaskPostIntentKeyBytes,
+        Self::AudienceCoverDepth,
+        Self::ProjectAnchorDepth,
+        Self::ProjectFoldDepth,
+        Self::ReceiptSourceRows,
     ];
 
     /// The origin's scans, each over one repository or the publication
@@ -556,6 +573,11 @@ impl EngineScan {
             Self::AgentDefinitionReferenceBytes => "agent_definition_reference_bytes",
             Self::AgentDefinitionVerbatimPinBytes => "agent_definition_verbatim_pin_bytes",
             Self::AgentBirthSourceBytes => "agent_birth_source_bytes",
+            Self::TaskPostIntentKeyBytes => "task_post_intent_key_bytes",
+            Self::AudienceCoverDepth => "audience_cover_depth",
+            Self::ProjectAnchorDepth => "project_anchor_depth",
+            Self::ProjectFoldDepth => "project_fold_depth",
+            Self::ReceiptSourceRows => "receipt_source_rows",
         }
     }
 
@@ -629,6 +651,9 @@ impl EngineScan {
             Self::AgentDefinitionReferenceBytes => 256,
             Self::AgentDefinitionVerbatimPinBytes => 1024,
             Self::AgentBirthSourceBytes => 32 * 1024 * 1024,
+            Self::TaskPostIntentKeyBytes => 256,
+            Self::AudienceCoverDepth | Self::ProjectAnchorDepth => 64,
+            Self::ProjectFoldDepth => 256,
             _ => DEFAULT_SCAN_CHECK_THRESHOLD,
         }
     }
@@ -749,6 +774,11 @@ impl EngineScan {
             Self::AgentDefinitionReferenceBytes => 139,
             Self::AgentDefinitionVerbatimPinBytes => 140,
             Self::AgentBirthSourceBytes => 141,
+            Self::TaskPostIntentKeyBytes => 142,
+            Self::AudienceCoverDepth => 150,
+            Self::ProjectAnchorDepth => 151,
+            Self::ProjectFoldDepth => 152,
+            Self::ReceiptSourceRows => 153,
         }]
     }
 }

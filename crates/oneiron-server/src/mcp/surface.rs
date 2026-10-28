@@ -61,22 +61,6 @@ pub const MCP_BOARD_BUDGET_TOK: usize = 1_200;
 /// budget.
 pub const MCP_PAGE_ITEM_CAP: u32 = 50;
 
-/// How many outstanding continuation handles ONE connection may hold at once
-/// (ONE-1704 repair).
-///
-/// A retained continuation keeps a whole immutable producer result alive, and a
-/// connector that mints page-one handles under distinct argument digests and
-/// never presents them would otherwise grow that retention without limit. This
-/// is the bound: the registry keeps at most this many per connection, so the
-/// process's total retained continuation state is bounded by the number of
-/// REGISTERED credentials times this constant, with no side map, no clock, and
-/// no expiry thread.
-///
-/// It is well above any legitimate interleaving — a client reading several
-/// enumerations at once holds one handle per live read — so reaching it is a
-/// mint pattern that never consumes, not a working client.
-pub const MCP_MAX_LIVE_PAGE_CONTINUATIONS: usize = 16;
-
 /// Process-local STREAM connection prefix. The suffix is the credential
 /// FINGERPRINT, never a credential, an actor id, or a tool argument.
 pub const MCP_STREAM_CONNECTION_PREFIX: &str = "mcp-connector:";

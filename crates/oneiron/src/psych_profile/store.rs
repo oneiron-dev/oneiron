@@ -57,13 +57,33 @@ impl crate::Vault {
         decode_psych_profile_row(self.get_raw(id)?)
     }
 
-    /// [`Self::get_psych_profile`] in the caller's snapshot.
+    /// [`Self::get_psych_profile`] in the caller's snapshot. A profile row
+    /// whose own deletion is recorded is gone, whatever bytes it still holds
+    /// (FIX 10056); a deletion marker that cannot be read leaves the read as
+    /// it was.
     pub(crate) fn get_psych_profile_in_txn(
         &self,
         rtxn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<Option<PsychProfile>> {
+        if crate::ports::removed_in_txn(&self.store, rtxn, id).unwrap_or(false) {
+            return Ok(None);
+        }
         decode_psych_profile_row(self.get_raw_in(rtxn, id)?)
+    }
+
+    /// [`Self::psych_profile_state`] in the caller's snapshot, read under
+    /// [`Self::get_raw`]'s seal and absent rules, as the public read is.
+    pub(crate) fn psych_profile_sealed_state_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        expected_source_revision_ids: Option<&[EntityId]>,
+    ) -> Result<PsychProfileState> {
+        Ok(psych_profile_state_of(
+            decode_psych_profile_row(self.get_raw_sealed_in_txn(rtxn, id)?)?,
+            expected_source_revision_ids,
+        ))
     }
 
     /// List-safe read: a deleted/archived profile is absent, while malformed

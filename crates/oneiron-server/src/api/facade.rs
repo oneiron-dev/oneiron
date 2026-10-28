@@ -83,6 +83,7 @@ mod dispatch;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;
+pub(super) mod export_transfer;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_burst_doors;
@@ -96,6 +97,7 @@ mod gate_policy_doors;
 mod git_push_doors;
 mod goal_optimize_doors;
 mod graduation_doors;
+mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
@@ -193,6 +195,7 @@ pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
+pub(crate) use export_transfer::ExportTransfers;
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
@@ -394,6 +397,10 @@ struct FacadeErrorBody {
     /// (FIX 3194); the reply carries it as `Retry-After` too.
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds, when its
+    /// source said (FIX 8190).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    resets_at: Vec<u64>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -424,4 +431,5 @@ pub(crate) struct MemoryErrorBodySchema {
     suggestions: Vec<String>,
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
+    resets_at: Option<Vec<u64>>,
 }

@@ -32,7 +32,7 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
@@ -50,7 +50,8 @@ use serde::{Deserialize, Serialize};
 use super::machine_routes::{act_surface, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
 use super::{OwnerReply, blocking};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -200,11 +201,11 @@ async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetLearning>, JsonRejection>,
+    payload: OwnerJsonBody<SetLearning>,
 ) -> OwnerReply<LearningReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<LearningReply> {
         let seen = seen_revision(body.seen.as_deref())?;
         let view = server
@@ -237,11 +238,11 @@ async fn set_own(
     auth: CoreAuth,
     headers: HeaderMap,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOwn>, JsonRejection>,
+    payload: OwnerJsonBody<SetOwn>,
 ) -> OwnerReply<OwnReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
     let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<OwnReply> {
         let seen = seen_revision(body.seen.as_deref())?;
         let view = server

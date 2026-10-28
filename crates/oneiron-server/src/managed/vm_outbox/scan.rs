@@ -7,12 +7,14 @@
 //! identity while the tree still matches it; once the tree moved on, the next
 //! change takes a revision past it, and past every revision this end ever
 //! sent, so a scan run again after a record that did not write never gives
-//! one twice. A digest is computed only when a file's stamp changed. A
-//! training outbox is read under its lock, so a manifest and its chunks are
-//! one snapshot.
+//! one twice. A digest is computed only when a file's stamp changed, or when
+//! the other end refused its put as `digest_mismatch` and its set's pacing
+//! is due ([`super::source_check`]). A training outbox is read under its
+//! lock, so a manifest and its chunks are one snapshot.
 
 use super::Carrier;
 use super::local::{self, FileStamp};
+use super::source_check::{self, SourceScan};
 use super::store::{Cached, MemberRecord, Version};
 use oneiron_vault_contract::vm_outbox::{
     VmOutboxDescriptor, VmOutboxKind, VmOutboxOperation, vm_outbox_member,
@@ -46,14 +48,15 @@ pub(super) struct OutSet {
 
 impl Carrier {
     /// Every set this end has to send now, kind by kind. A set the other end
-    /// deferred waits out its pacing first. A backup kind waiting on a
-    /// backup label the session did not keep is not scanned, so its records
-    /// stay as they are until it goes. A kind waiting on its carrier records
-    /// is scanned again once that wait is due, after each record a set the
-    /// other end sent left unwritten is written again: one that does not
-    /// write again keeps the kind waiting, unscanned. A scan whose records
-    /// do not write sends none of the kind and makes it wait again, and one
-    /// that writes them ends the wait.
+    /// deferred, or refused a put of as `digest_mismatch`, waits out its
+    /// pacing first. A backup kind waiting on a backup label the session did
+    /// not keep is not scanned, so its records stay as they are until it
+    /// goes. A kind waiting on its carrier records is scanned again once that
+    /// wait is due, after each record a set the other end sent left unwritten
+    /// is written again: one that does not write again keeps the kind
+    /// waiting, unscanned. A scan whose records do not write sends none of
+    /// the kind and makes it wait again, and one that writes them ends the
+    /// wait.
     pub(super) fn outgoing(&mut self) -> Vec<OutSet> {
         let mut sets = Vec::new();
         let now = Instant::now();
@@ -87,7 +90,7 @@ impl Carrier {
                 self.say(kind, "", &format!("its lock is not taken: {error}"));
                 continue;
             }
-            let scanned = self.scan_kind(kind, &root);
+            let scanned = self.scan_kind(kind, &root, now);
             drop(lock);
             let ops = match scanned {
                 Ok(ops) => ops,
@@ -116,12 +119,14 @@ impl Carrier {
         sets
     }
 
-    /// `kind`'s changes under `root`, each with its set; or, once one of its
-    /// records does not write, that failure and none of them.
+    /// `kind`'s changes under `root` as scanned at `now`, each with its set;
+    /// or, once one of its records does not write, that failure and none of
+    /// them.
     fn scan_kind(
         &mut self,
         kind: VmOutboxKind,
         root: &File,
+        now: Instant,
     ) -> std::io::Result<Vec<(String, OutOp)>> {
         let roots = &self.roots;
         let listed = local::list(root, kind, self.owner, &|member: &str| {
@@ -148,8 +153,17 @@ impl Carrier {
                 }
                 continue;
             }
+            // A file whose put the other end refused as `digest_mismatch` is
+            // read again at its set's next paced look, and one damaged here
+            // waits until it changes (FIX 11075).
+            let scan = self.source_scan(kind, &class.set, *stamp, &mut record, now);
+            if scan == SourceScan::Skip {
+                continue;
+            }
             let version = match &record.cached {
-                Some(cached) if cached.stamp == *stamp => cached.version.clone(),
+                Some(cached) if cached.stamp == *stamp && scan == SourceScan::Cached => {
+                    cached.version.clone()
+                }
                 _ => {
                     let read =
                         local::open_member(root, member, Some(self.owner)).and_then(|opened| {
@@ -167,6 +181,12 @@ impl Carrier {
                             continue;
                         }
                     };
+                    if scan == SourceScan::Reread
+                        && !self.source_goes(kind, member, &mut record, now, &version)
+                    {
+                        self.store.put(kind, member, record)?;
+                        continue;
+                    }
                     record.cached = Some(Cached {
                         stamp: now,
                         version: version.clone(),
@@ -191,7 +211,9 @@ impl Carrier {
             // removes it.
             let retires = class.origin == self.side || (class.peer_retires && !class.protected);
             let op = remove_op(&mut record, &member, retires, class.remove_rank);
+            // A gone file is a changed member: no source status stands.
             record.cached = None;
+            record.source = None;
             self.store.put(kind, &member, record)?;
             ops.extend(op.map(|op| (class.set, op)));
         }
@@ -199,7 +221,9 @@ impl Carrier {
     }
 }
 
-/// The put `member`'s file at `version` needs, if any.
+/// The put `member`'s file at `version` needs, if any. A put the other end
+/// refused as `digest_mismatch`, its file read again and still hashing to
+/// it, goes again even where it is the agreed version.
 fn put_op(
     record: &mut MemberRecord,
     member: &str,
@@ -220,11 +244,12 @@ fn put_op(
         // The tree moved past an unacked transfer the other end may hold:
         // the next change goes past its revision, whatever it is.
         past = past.max(pending.revision);
-    } else if record
-        .agreed
-        .as_ref()
-        .is_some_and(|agreed| agreed.blake3 == version.blake3)
-        || record.refused.as_deref() == Some(format!("put:{}", version.blake3).as_str())
+    } else if !source_check::resends(record, &version)
+        && (record
+            .agreed
+            .as_ref()
+            .is_some_and(|agreed| agreed.blake3 == version.blake3)
+            || record.refused.as_deref() == Some(format!("put:{}", version.blake3).as_str()))
     {
         return None;
     }

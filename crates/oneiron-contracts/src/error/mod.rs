@@ -270,6 +270,8 @@ pub enum ErrorKind {
     AuthorityLogFull,
     /// The authority fold needs history this vault does not hold (OF-469).
     AuthorityHistoryRequired,
+    /// The persisted authority clock floor is damaged (FIX 10106).
+    AuthorityClockCorrupt,
     /// The decision seals' standing could not be verified (FIX 5248).
     SealStandingUnverifiable,
     InvalidSecretCustodyBody,

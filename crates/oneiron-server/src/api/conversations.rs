@@ -387,7 +387,7 @@ fn entity_receipt(output: Value) -> Result<CoreEntityWriteReceipt, ApiError> {
         (status = 200, description = "Conversation turns.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed conversation id or query.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read; the credential is narrowed by record, channel or scope, so the turns lie outside its read (`required_scope: record-scope`); or a hosted operator's root reads without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn listing failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
@@ -428,7 +428,7 @@ pub(crate) async fn list_core_conversation_turns(
         (status = 200, description = "Turn created and linked to conversation.", body = CoreEntityWriteResponse, content_type = "application/json"),
         (status = 400, description = "Malformed request.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:write; the conversation lies outside the credential's read; or a hosted operator's root writes without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Conversation was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 409, description = "Child-of constraints rejected the turn create request; response uses INVALID_STATE.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn create failed.", body = ApiErrorEnvelope, content_type = "application/json")
@@ -509,7 +509,7 @@ pub(crate) async fn create_core_conversation_turn(
         (status = 200, description = "Projected turn entity.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed turn id or view.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 403, description = "Core token lacks core:read.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 403, description = "Core token lacks core:read; the credential is narrowed by record, channel or scope, so the turn lies outside its read (`required_scope: record-scope`); or a hosted operator's root reads without a support grant (`required_scope: support_grant`).", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Turn was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Turn read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
