@@ -183,6 +183,7 @@ fold_state_fields!(
     key_admitters,
     hosted,
     actor_rows,
+    residence_directives,
 );
 
 impl ReplayEvidence {

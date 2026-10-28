@@ -153,6 +153,7 @@ pub(super) fn fold_entry_state(
             key_admitters: BTreeMap::new(),
             hosted: context.hosted,
             actor_rows: BTreeSet::new(),
+            residence_directives: BTreeMap::new(),
         };
         upsert_device(&mut state, device, None);
         state.seqs.insert(device.key.clone(), 0);
@@ -512,7 +513,11 @@ pub(super) fn fold_entry_state(
 /// Whether a residence result's signer is the install key of the machine it
 /// names under a chain that says "yours" in the result's parent state, or
 /// under that machine's live, answered roster revision there, mine or not
-/// (FIX 8888), past that key's last sequence there.
+/// (FIX 8888), past that key's last sequence there. A result that names its
+/// directive's row as a parent stands on that alone, as before; one whose
+/// directive is beneath its parents (FIX 5412, CALLS "FIX 5412 result
+/// parents") stands only where its parent state holds that row as a valid
+/// directive of the same id naming the same machine.
 fn residence_result_stands(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -522,6 +527,12 @@ fn residence_result_stands(
     let AuthorityKey::Ed25519(signer) = entry.signer_key() else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     };
+    if !entry.parent_hashes.contains(&result.directive_entry)
+        && state.residence_directives.get(&result.directive_entry)
+            != Some(&(result.directive, result.machine))
+    {
+        return Err(AuthorityFoldIssue::InvalidAncestry(hash));
+    }
     if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
         machine
             .chains()

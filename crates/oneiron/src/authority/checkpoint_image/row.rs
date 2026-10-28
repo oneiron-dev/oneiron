@@ -57,7 +57,9 @@ pub struct AuthorityCheckpointRow {
 /// grant ids a restore across it reads (FIX 5765); and each row whose
 /// transition reads the install's pin or its admitted peers' roots, which a
 /// fold under another pin or peer set judges again (a home candidacy, a
-/// federation lifecycle act; FIX 3004, 3005).
+/// federation lifecycle act; FIX 3004, 3005); and each residence directive
+/// and result, which a machine's directive reader reads past the image (FIX
+/// 5412).
 fn carries_body(op: &AuthorityOp) -> bool {
     crate::authority::fold_resume::is_projected(op)
         || matches!(
@@ -78,6 +80,8 @@ fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::OwnerHandover(_)
                 | AuthorityOp::HomeCandidacy(_)
                 | AuthorityOp::FederationLifecycle(_)
+                | AuthorityOp::ResidenceDirective(_)
+                | AuthorityOp::ResidenceResult(_)
         )
 }
 

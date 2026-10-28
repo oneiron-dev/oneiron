@@ -195,6 +195,19 @@ impl KeyFrontier {
         Ok(Some(Self { parents, rows }))
     }
 
+    /// The fold's main-log heads alone, as the next row a machine signs on
+    /// the main log names them in place of the rows it rests on (a residence
+    /// result, FIX 5412); None with no main head, or more than one row names.
+    pub(crate) fn main_heads(fold: &AuthorityFold) -> Option<Self> {
+        if fold.append_heads.is_empty() || fold.append_heads.len() > MAX_PARENTS {
+            return None;
+        }
+        Some(Self {
+            parents: fold.append_heads.clone(),
+            rows: Rows::default(),
+        })
+    }
+
     /// The parents the first record names.
     pub(crate) fn parents(&self) -> &BTreeSet<AuthorityEntryHash> {
         &self.parents

@@ -308,7 +308,9 @@ impl Once {
 /// agent Grant act (it moves no fold state, FIX 5628), an owner
 /// work request, result or cancel (each judges only its own work), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
-/// FIX 4881), a frontier join (it moves no state, FIX 7908). A resumed fold
+/// FIX 4881), a frontier join (it moves no state, FIX 7908), a machine's
+/// residence result (it moves only its signer's sequence, FIX 5412). A
+/// resumed fold
 /// and a fold past an adopted checkpoint take only these, and each still
 /// folds through its own transition.
 pub(super) fn admits_past(
@@ -350,7 +352,8 @@ pub(super) fn admits_past(
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
         | AuthorityOp::WorldKeyWraps(_)
-        | AuthorityOp::FrontierJoin(_) => true,
+        | AuthorityOp::FrontierJoin(_)
+        | AuthorityOp::ResidenceResult(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }

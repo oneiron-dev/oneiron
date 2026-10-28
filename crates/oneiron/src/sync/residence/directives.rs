@@ -21,7 +21,6 @@ use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, RESIDENCE_REASON_MAX,
     ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus, authority_entry_hash,
     decode_authority_log_entry_body, invalid_authority, next_sequence, sign_side_entry,
-    standing_rows,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::consent::AuthenticatedOwner;
@@ -30,6 +29,8 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::sync::WindowKey;
 use crate::{EntityId, TimeRange, Vault};
+
+mod parents;
 
 /// Both residence op kinds start so; only a row whose body holds it is
 /// decoded when the log is read for directives.
@@ -165,7 +166,9 @@ impl Vault {
 
 /// Every directive this replica's fold accepts, oldest first, each with the
 /// earliest accepted result its machine signed for it. The fold accepts a
-/// result only under the install key of the machine it names.
+/// result only under the install key of the machine it names. The rows are
+/// the stored ones and, on a vault that adopted a checkpoint image, the
+/// covered ones the image carries whole (FIX 5412).
 fn directive_states_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -173,6 +176,7 @@ fn directive_states_in_txn(
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let mut directives = Vec::new();
     let mut results: BTreeMap<AuthorityEntryHash, ResidenceResult> = BTreeMap::new();
+    let mut rows = BTreeMap::new();
     for id in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -190,7 +194,12 @@ fn directive_states_in_txn(
             continue;
         }
         let entry = decode_authority_log_entry_body(body)?;
-        let hash = authority_entry_hash(&entry)?;
+        rows.insert(authority_entry_hash(&entry)?, entry);
+    }
+    for (hash, entry) in crate::authority::carried_residence_rows_in_txn(&vault.store, txn)? {
+        rows.entry(hash).or_insert(entry);
+    }
+    for (hash, entry) in rows {
         if !fold.valid_entries.contains(&hash) {
             continue;
         }
@@ -293,10 +302,11 @@ pub(crate) fn finish_residence_directive_in_txn(
         reason,
     };
     result.validate()?;
-    // The result names the directive and the rows its signer's standing
-    // rests on, never an unrelated main-log head.
-    let mut parents = standing_rows(&fold, machine);
-    parents.insert(pending.entry);
+    // The result names the main heads where they carry the directive and the
+    // rows its signer's standing rests on, else those rows and the directive,
+    // never an unrelated main-log head (FIX 5412).
+    let parents =
+        parents::residence_result_parents_in_txn(vault, txn, &fold, machine, pending.entry)?;
     let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
     let entry = sign_side_entry(
         &fold,

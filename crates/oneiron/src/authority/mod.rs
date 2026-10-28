@@ -342,7 +342,7 @@ pub(crate) use withdrawn_grant::{
 pub(crate) use act_standing::{
     CausalPoints, ExternalAct, ExternalActStanding, act_heads, causal_points_in_txn,
 };
-pub(crate) use adopted_evidence::adopted_evidence_in_txn;
+pub(crate) use adopted_evidence::{adopted_evidence_in_txn, carried_residence_rows_in_txn};
 pub(crate) use agent_grant_act::{AgentGrantAct, AgentGrantActRef};
 pub(crate) use checkpoint::note_new_authority_row_in_txn;
 pub(crate) use checkpoint_adopt::{
