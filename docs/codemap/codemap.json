@@ -54942,7 +54942,7 @@
      "path": "src/recovery/checkpoint/epochs.rs",
      "purpose": "What a restore epoch still owes of its world key pads (PAD-2, FIX 10470; CALLS…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1,
       "struct": 1
      }
@@ -64140,6 +64140,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/store/key_custody/carried_pads.rs",
+     "purpose": "The world pad compartments a restore left unopened, kept beside this host's custody (PAD-3, FIX 11133)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/store/key_custody/credential_faults.rs",
      "purpose": "A credential's keys in the passes every custody client shares (KS-6, FIX-LIST 5687 part 1): a head's…",
      "surface": {
@@ -64183,7 +64193,7 @@
      "path": "src/store/key_custody/files.rs",
      "purpose": "The local exterior backend: one owner-only directory tree beside the vault root, never inside it, so…",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 29
      }
     },
     {
@@ -64213,7 +64223,17 @@
      "path": "src/store/key_custody/head.rs",
      "purpose": "The sealed custody head (KS-4, FIX 5685): the latest live entries of one lineage and every retirement fact…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/key_custody/head/carried_pads.rs",
+     "purpose": "World pad compartments a restore left unopened, carried forward (PAD-3, FIX 11133)",
+     "surface": {
+      "crate-vis": 19
      }
     },
     {
@@ -64223,7 +64243,7 @@
      "path": "src/store/key_custody/head/pad_scope.rs",
      "purpose": "World pad compartments (KS-5, FIX 6706, L04 half): one world's pads, live and retired, sealed apart from…",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -64447,7 +64467,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/recovery/admission.rs",
@@ -64487,7 +64507,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/store/key_custody/retirement.rs",
@@ -80221,7 +80241,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 161,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80454,7 +80474,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5339,
+   "source_files": 5341,
    "test_files": 902
   },
   "oneiron-android": {
