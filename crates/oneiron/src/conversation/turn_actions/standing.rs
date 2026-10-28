@@ -21,6 +21,9 @@ pub enum TurnActionAuthority {
     /// The slip the request was admitted on, verified again whenever the
     /// action's standing is judged.
     Slip { binding: InvocationSlipBinding },
+    /// The slip its request was admitted on, which its requester's erase
+    /// took out (FIX 10668): the action no longer stands.
+    SlipErased,
     /// The vault's owner `holder`, whom its supervisor attested with no slip
     /// (FIX 11090): the action stands only while the vault records him as
     /// its live owner. Nothing of his is kept.
@@ -55,6 +58,7 @@ impl TurnActionAttempt {
         let binding = match &self.authority {
             TurnActionAuthority::Native => return Ok(None),
             TurnActionAuthority::Slip { binding } => binding,
+            TurnActionAuthority::SlipErased => return Err(standing_lost()),
             TurnActionAuthority::AttestedOwner { holder } => {
                 // His person as a human is the requester, or the payload is
                 // not his.

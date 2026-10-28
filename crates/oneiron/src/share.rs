@@ -41,6 +41,7 @@ const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
 mod actor_erase;
 mod admission_refs;
 mod history;
+mod revoke;
 pub(crate) use actor_erase::erase_admission_actor_in_txn;
 pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
@@ -647,48 +648,6 @@ impl Vault {
         crate::share_travel::put_brief_travel_in_txn(self, &mut txn, share_id, travel)?;
         txn.commit()?;
         Ok(())
-    }
-
-    /// Revokes the same grant immediately. Only the authenticated original issuer
-    /// or a live authority-log owner may stop it. No new consent is requested.
-    pub fn revoke_share(
-        &self,
-        share_id: &EntityId,
-        actor: &WriteActor,
-        revoked_at: u64,
-    ) -> Result<Share> {
-        let mut txn = self.store.env.write_txn()?;
-        let (mut share, mut admission) = read_admitted_share_in_txn(&self.store, &txn, share_id)?
-            .ok_or(Error::EntityNotFound)?;
-        verify_share_actor(&self.store, &txn, actor)?;
-        if Some(*actor) != admission.issuer {
-            let fold = self.authority_fold_readonly_in_txn(&txn)?;
-            if actor.actor_class() != EdgeActorClass::Human
-                || fold.vault_root_is_conflicted()
-                || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
-            {
-                return Err(Error::Record(RecordError::InvalidAccessGrantBody(
-                    "share revocation requires issuer or owner",
-                )));
-            }
-        }
-        if share.status == AccessGrantStatus::Revoked {
-            return Ok(share);
-        }
-        let revoked = share.grant().revoked(revoked_at)?;
-        self.apply_access_grant_body(
-            &mut txn,
-            share_id,
-            revoked_at,
-            encode_access_grant_body(&revoked)?,
-        )?;
-        admission.revoked_at = Some(revoked_at);
-        admission.revoker = Some(*actor);
-        ADMISSIONS.put(&self.store, &mut txn, share_id, &admission.encode())?;
-        txn.commit()?;
-        share.status = AccessGrantStatus::Revoked;
-        share.revoked_at = Some(revoked_at);
-        Ok(share)
     }
 
     /// Resolves on one fresh read transaction. `viewer` MUST come from the authenticated

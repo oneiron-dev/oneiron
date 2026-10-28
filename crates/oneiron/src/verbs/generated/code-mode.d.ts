@@ -3870,7 +3870,7 @@ declare namespace Sdk {
   type FreeTimeCadence = "daily" | "nightly";
   type FreeTimeSchedule = { cadence: FreeTimeCadence; hour: number; minute: number; zone: string };
   type FreeTimeSplit = { for_human_units: number; own_time_units: number };
-  type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by: string; set_at: number };
+  type FreeTimePolicyRow = { total_units: number; unit: string; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number; set_by?: string | null; set_at: number };
   type FreeTimePolicyView = { agent: string; state: FreeTimePolicyState; revision: number; policy?: FreeTimePolicyRow | null };
   type FreeTimePolicyInput = { total_units: number; schedule: FreeTimeSchedule; pinned_split?: FreeTimeSplit | null; cap_shown_at_ms: number };
   type FreeTimePolicySetRequest = { agent: string; expected_revision: number; policy?: FreeTimePolicyInput | null };

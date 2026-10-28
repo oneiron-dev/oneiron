@@ -187,7 +187,7 @@ fn close_answer(
                     outputs.push((*output, revision));
                     match stood.get(output) {
                         Some(cited) => evidence.extend_from_slice(cited),
-                        None => evidence.extend(stored_turn_refs(&body)),
+                        None => evidence.extend(stored_turn_refs(output, &body)),
                     }
                 }
                 _ => return Ok(Some(("output_not_standing", None))),
@@ -246,23 +246,30 @@ fn close_answer(
     Ok(refused)
 }
 
-/// The turn evidence `body`'s own write cited: the refs of the consolidation
-/// envelope it keeps as its candidate evidence. None for a body without one,
-/// or one that does not decode.
-fn stored_turn_refs(body: &crate::ClaimBody) -> Vec<EntityId> {
-    body.evidence
-        .as_ref()
-        .and_then(|evidence| {
-            field(
-                evidence,
-                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
-            )
-        })
-        .and_then(|stored| {
-            crate::dreamer_consolidation::decode_consolidation_evidence(stored)
-                .ok()
-                .flatten()
-        })
-        .map(|envelope| envelope.refs)
-        .unwrap_or_default()
+/// The turn evidence output `output`'s body `body` cited in its own write:
+/// the refs of the consolidation envelope it keeps as its candidate
+/// evidence. None for a body without one, or one that does not decode; the
+/// latter is logged by its error kind and the holder output's id (the
+/// envelope has no id of its own), and the close goes on citing the rest
+/// (FIX 7421).
+fn stored_turn_refs(output: &EntityId, body: &crate::ClaimBody) -> Vec<EntityId> {
+    let Some(stored) = body.evidence.as_ref().and_then(|evidence| {
+        field(
+            evidence,
+            crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+        )
+    }) else {
+        return Vec::new();
+    };
+    match crate::dreamer_consolidation::decode_consolidation_evidence(stored) {
+        Ok(envelope) => envelope.map(|envelope| envelope.refs).unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(
+                error_kind = ?error.kind(),
+                output = %output.to_hex(),
+                "an output's stored candidate evidence did not decode; the close cites the rest"
+            );
+            Vec::new()
+        }
+    }
 }

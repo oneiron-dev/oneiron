@@ -332,7 +332,7 @@ pub use witness::{
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn,
+    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 pub(crate) use witness::{

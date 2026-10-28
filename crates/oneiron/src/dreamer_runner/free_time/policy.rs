@@ -86,11 +86,13 @@ pub struct FreeTimePolicy {
     pub schedule: FreeTimeSchedule,
     pub pinned_split: Option<FreeTimeSplit>,
     pub cap_shown_at_ms: u64,
-    /// The owner, as this vault revalidated them in the write.
-    pub set_by: EntityId,
+    /// The owner, as this vault revalidated them in the write; `None` once
+    /// that owner was erased (FIX 8875). Audit only; no rule reads it.
+    pub set_by: Option<EntityId>,
     /// Vault clock seconds. No cycle opens at a boundary before this.
     pub set_at: u64,
-    /// Where the owner said so. Audit only; no rule reads it.
+    /// Where the owner said so; `None` also once the linked machine it was
+    /// said on was erased. Audit only; no rule reads it.
     pub surface: Option<ActSurface>,
     /// BLAKE3 over the policy it replaced, as JSON (`null` for none).
     pub prior: [u8; 32],
@@ -285,7 +287,7 @@ impl Vault {
                 schedule: input.schedule,
                 pinned_split: input.pinned_split,
                 cap_shown_at_ms: input.cap_shown_at_ms,
-                set_by: actor,
+                set_by: Some(actor),
                 set_at,
                 surface,
                 prior: prior_digest(prior)?,

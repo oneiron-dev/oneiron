@@ -25,6 +25,7 @@
 //! A restore over a live vault keeps the tries those bindings name as the
 //! live vault holds them, as it keeps the bindings (`restore`, FIX 6577).
 
+mod actor_content;
 mod cycle;
 mod doors;
 mod erase;

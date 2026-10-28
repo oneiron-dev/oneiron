@@ -28,6 +28,7 @@ mod admit;
 mod arm;
 mod authority;
 mod bodies;
+mod erase;
 mod lease;
 mod read;
 mod release;

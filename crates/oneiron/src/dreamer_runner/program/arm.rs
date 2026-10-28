@@ -12,6 +12,7 @@ use crate::skill::{SkillCallContract, SkillLifecycle, SkillRole};
 use crate::{EntityId, Vault};
 
 use super::authority::TurnProgramAuthority;
+use super::erase::scrub_actor_admission_instruments_in_txn;
 use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
 use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
 use super::{ARM, WAKE};
@@ -94,7 +95,8 @@ pub(crate) fn disarm_turn_program_in_txn(
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
 /// and the wakes its turns left go in the erase's own writer, and so do the
-/// bodies its programs' steps keep (FIX 5710). Admission receipts, attempt
+/// bodies its programs' steps keep (FIX 5710) and the signed instrument each
+/// of its admissions sealed (FIX 10668). Admission receipts, attempt
 /// stamps and each step's evidence stay, as every runner stamp does. An
 /// owner's erase never fails on a row that does not decode (FIX 5736): an
 /// arming under the actor's key, a wake keyed to one of its armings and a
@@ -112,6 +114,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
     }
+    scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }
 

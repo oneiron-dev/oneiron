@@ -19568,7 +19568,7 @@ class FreeTimePolicyRow(TypedDict):
     schedule: FreeTimeSchedule
     pinned_split: NotRequired[FreeTimeSplit | None]
     cap_shown_at_ms: int
-    set_by: str
+    set_by: NotRequired[str | None]
     set_at: int
 class FreeTimePolicyView(TypedDict):
     agent: str

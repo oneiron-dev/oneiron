@@ -77,8 +77,9 @@ pub struct FreeTimePolicyRow {
     /// When the owner was shown the recurring cap and accepted it, in host
     /// milliseconds.
     pub cap_shown_at_ms: u64,
-    /// The owner who set it, as the vault revalidated them, 32 hex.
-    pub set_by: String,
+    /// The owner who set it, as the vault revalidated them, 32 hex; `None`
+    /// once that owner was erased.
+    pub set_by: Option<String>,
     /// Vault clock seconds.
     pub set_at: u64,
 }
@@ -322,7 +323,7 @@ fn policy_view(agent: EntityId, row: Option<FreeTimePolicy>) -> FreeTimePolicyVi
             schedule: policy.schedule,
             pinned_split: policy.pinned_split,
             cap_shown_at_ms: policy.cap_shown_at_ms,
-            set_by: policy.set_by.to_hex(),
+            set_by: policy.set_by.as_ref().map(EntityId::to_hex),
             set_at: policy.set_at,
         }),
     }

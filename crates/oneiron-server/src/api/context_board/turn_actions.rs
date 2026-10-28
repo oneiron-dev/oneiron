@@ -99,6 +99,12 @@ fn requester_auth(server: &SyncServer, action: &TurnActionAttempt) -> Option<Cor
             }
             return auth;
         }
+        TurnActionAuthority::SlipErased => {
+            tracing::info!(
+                "a turn action's slip went with its requester's erase; the action runs without a context board"
+            );
+            return None;
+        }
         TurnActionAuthority::Native => {
             tracing::debug!(
                 "a native turn action reads no context board; it runs as it always did"

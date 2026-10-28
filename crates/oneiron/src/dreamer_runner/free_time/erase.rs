@@ -9,6 +9,12 @@
 //! cycle of the agent's names its key; any other stays as it is. A cycle row
 //! under the agent's key goes whole, whether or not it decodes.
 //!
+//! Another agent's rows keep the erased actor only as attribution (FIX
+//! 8875): its policy names the actor as its setter or its linked machine, or
+//! its cycle holds a note the actor wrote. The erase leaves those rows in
+//! place without that attribution or note, through the one field scrub per
+//! row kind (`actor_content`).
+//!
 //! Calls already made settle normally: the erase takes the free-time rows,
 //! never a spend record or an act that already landed. A writer that lands
 //! after the erase (an item's receipt or note, its suggestion) rechecks the
@@ -16,8 +22,13 @@
 
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
+use super::actor_content::{scrub_cycle_note, scrub_policy_attribution};
+use super::cycle::FreeTimeCycle;
 use super::{CLOCK, CYCLE, ITEM, POLICY, RECEIPT};
 use crate::attempt_queue::AttemptId;
+use crate::side_table::{self, Erased, ErasedForm, Named, SideKey, SideTable};
 use crate::{EntityId, Result, Vault};
 
 /// The erase hook of the five free-time families (`side_table::decls`): it
@@ -39,8 +50,82 @@ pub(crate) fn erase_free_time_actor_in_txn(
     CLOCK.delete(&vault.store, txn, actor)?;
     CYCLE.delete_from(&vault.store, txn, actor.as_bytes())?;
     RECEIPT.delete_from(&vault.store, txn, actor.as_bytes())?;
+    scrub_other_rows_in_txn(vault, txn, actor)
+}
+
+/// Every other agent's policy and cycle without `actor`'s attribution or
+/// note (FIX 8875): each row stays, rewritten only where it named `actor`.
+/// A row that does not decode names no one by proof and stays as it is.
+fn scrub_other_rows_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    let mut policies = Vec::new();
+    for row in POLICY.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(agent) = <EntityId as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(mut record) = POLICY.decode_value(&bytes)
+            && scrub_policy_attribution(&mut record, actor)
+        {
+            policies.push((agent, record));
+        }
+    }
+    for (agent, record) in policies {
+        POLICY.put(&vault.store, txn, &agent, &record)?;
+    }
+    let mut cycles = Vec::new();
+    for row in CYCLE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(key) = <(EntityId, u64) as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        if let Ok(mut cycle) = CYCLE.decode_value(&bytes)
+            && scrub_cycle_note(&mut cycle, actor)
+        {
+            cycles.push((key, cycle));
+        }
+    }
+    for (key, cycle) in cycles {
+        let erased = Erased::of(NoteErased {
+            cycle,
+            author: Some(*actor),
+        })?;
+        ERASED_CYCLE.put_erased(&vault.store, txn, &key, erased)?;
+    }
     Ok(())
 }
+
+/// A stored cycle with one erased actor's note to drop (FIX 8875). It
+/// encodes as the cycle itself; the actor rides along, never encoded.
+#[derive(Serialize, Deserialize)]
+#[serde(transparent)]
+struct NoteErased {
+    cycle: FreeTimeCycle,
+    #[serde(skip)]
+    author: Option<EntityId>,
+}
+
+/// Its erased form drops that actor's note and nothing else, so the erase
+/// writes it past the side-row wall (FIX 5718): the cycle's other fields
+/// were admitted as they stand, and no wall fails an erase.
+impl ErasedForm for NoteErased {
+    fn into_erased(mut self) -> Result<Self> {
+        if let Some(author) = self.author {
+            scrub_cycle_note(&mut self.cycle, &author);
+        }
+        Ok(self)
+    }
+}
+
+/// [`CYCLE`]'s rows as an erase writes them.
+const ERASED_CYCLE: SideTable<(EntityId, u64), NoteErased, Named> =
+    SideTable::new(&side_table::DREAMER_FREE_TIME_CYCLE);
 
 /// Whether an erase removed `agent` (FIX 5661): a home move lands none of an
 /// erased agent's free-time rows, as no writer after its erase does. A move
