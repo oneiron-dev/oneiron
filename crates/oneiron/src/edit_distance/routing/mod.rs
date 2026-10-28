@@ -1,37 +1,46 @@
 //! ED-07 (ONE-1763, ARCH-0056 §8): the routing loop — what a judged amendment
-//! says about the MODEL GENERATION that drafted the proposal.
+//! says about the EXECUTOR that drafted the proposal.
 //!
 //! ED-03 ([`crate::edit_distance::attribution`]) answers *who owns this
 //! amendment*. This module asks a different question of the same receipts: how
-//! much editing does a given model generation cost the decider, in a given kind
-//! of work. The aggregate is keyed `(model_version, task_class)` and folds
-//! exactly two facts per judged amendment — the edit mass, and whether the
-//! proposal was SOUND. That pair is the entire state behind every number here.
+//! much editing does a given executor cost the decider, in a given kind of
+//! work. A head is keyed by executor identity at revision, task class, task
+//! type and measurement version, and folds per judged amendment the edit mass
+//! and the label shares that explain it.
 //!
 //! # Relative, never absolute
 //!
 //! A raw mean edit cost is not a fact about a model, it is a fact about the
-//! work: prose gets edited more than a calendar entry, and a generation that
+//! work: prose gets edited more than a calendar entry, and an executor that
 //! only ever drafts prose would look terrible beside one that only ever drafts
-//! calendar entries. Every exported score is therefore PGR-style RELATIVE —
-//! this generation's mean against the observed floor and ceiling of the SAME
-//! task class. A generation with no range to compare against (one model, or
-//! floor equal to ceiling) reads as no hint, which is the honest answer to
+//! calendar entries. The relative score is therefore PGR-style — this head's
+//! mean against the observed floor and ceiling of the SAME task class and task
+//! type. A head with no range to compare against (one executor, or floor equal
+//! to ceiling) reads no relative score, which is the honest answer to
 //! "compared to what".
 //!
-//! # A swap is a new generation, not a new datapoint
+//! # A swap is a new head, not a new datapoint
 //!
-//! [`RoutingScopeKey::model_version`] is a `ModelStack` identity, resolved from
-//! a [`ModelId`](crate::ModelId) HERE (`settings::model_versioning` stays read-only prior art).
-//! Swapping the serving model therefore starts a FRESH aggregate: the old row
-//! is retained as history and never merged into the new one. Blending two
-//! generations' edit mass would produce a number that describes neither, and it
-//! would do so silently — the failure this keying exists to make impossible.
+//! [`RoutingScopeKey::executor`] is the executor identity at revision — a
+//! [`ModelId`](crate::ModelId), `provider/name@revision` — never a stack token
+//! that would pool distinct models (FIX 7826). Swapping the executor therefore
+//! starts a FRESH head: the old row is retained as the old executor's evidence
+//! and never merged into the new one. Blending two executors' edit mass would
+//! produce a number that describes neither, and it would do so silently — the
+//! failure this keying exists to make impossible.
 //!
-//! Which generation a run belongs to is not re-derivable after the fact, so it
-//! is recorded: [`record_judged_amendment`] writes a membership row binding the
-//! receipt to the version that was serving. That ledger is what makes
-//! [`rebuild_routing_projection`] an identity rather than a re-attribution.
+//! The new head starts with zero own runs and reads the most recent other
+//! executor's score as a weak prior of origin `carried`, with an explicit
+//! weight in runs, marked UNTESTED while its own runs are below that weight
+//! (`prior.rs`). The judge is unchanged by an executor swap; runs drafted on
+//! the judge's own model are counted on the head.
+//!
+//! Which executor drafted a run is not re-derivable after the fact, so it is
+//! recorded where the run begins: the attempt's executor stamp, carried onto
+//! the amendment evidence and frozen on its judgment (FIX 9812).
+//! [`record_judged_amendment`] and [`rebuild_routing_projection`] read that
+//! stamp and nothing else — never the model serving at fold time. A receipt
+//! with no stamp folds under the unknown-executor key.
 //!
 //! # The rollout ladder
 //!
@@ -49,22 +58,23 @@
 //!
 //! # The Goodhart guard is the type, not a warning
 //!
-//! [`routing_weight_hint`] returns [`WeightHint`], which carries the relative
-//! edit cost and the paired OUTCOME score together, and there is no accessor
-//! that yields one without the other. The reason is that they come apart in
-//! exactly the way that matters: a big Δ from pure preference is a sound
-//! proposal that cost a lot to land, and a tiny Δ correcting a real defect is
-//! an unsound one that cost almost nothing. Optimizing the cost alone would
-//! select for proposals that are cheap to accept rather than right — so the
-//! cost is never readable alone.
+//! [`routing_weight_hint`] returns [`WeightHint`], which carries the edit cost
+//! together with the labels that explain it, and there is no accessor that
+//! yields the cost alone. The reason is that they come apart in exactly the
+//! way that matters: a big Δ from pure preference is a sound proposal that
+//! cost a lot to land, and a tiny Δ correcting a real defect is an unsound one
+//! that cost almost nothing. Optimizing the cost alone would select for
+//! proposals that are cheap to accept rather than right — so the cost is
+//! never readable alone.
 //!
 //! For the same reason there is no `is_banned`, no exclusion list, and no door
-//! that removes a model from consideration. The hint informs a WEIGHT. A
-//! generation that should not be served is a settings decision, made by the
+//! that removes a model from consideration. The hint informs a WEIGHT. An
+//! executor that should not be served is a settings decision, made by the
 //! owner, somewhere else.
 
 mod keys;
 mod ladder;
+mod prior;
 mod read;
 mod rebuild;
 mod scope;
@@ -74,11 +84,9 @@ mod write;
 pub use self::ladder::{rollout_rung, set_rollout_rung};
 pub use self::read::{routing_data_bar, routing_weight_hint};
 pub use self::rebuild::rebuild_routing_projection;
-pub use self::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
+pub use self::scope::{CarriedPrior, RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
 pub use self::version::{serving_model_version, set_serving_model};
 pub use self::write::record_judged_amendment;
-
-pub(in crate::edit_distance) use self::write::folded_model_version_in_txn;
 
 #[cfg(test)]
 mod tests;

@@ -25,11 +25,12 @@
 //! target, the pair is the preference sample — so this module ships ONE schema
 //! and no second exporter.
 //!
-//! # One receipt id joins all three ledgers
+//! # One receipt id joins both ledgers
 //!
-//! An amendment's Δ (ED-01), its evidence (ED-03) and the generation that
-//! folded it (ED-07) are three `vault_meta` ledgers keyed by one STRING: the
-//! receipt the amendment was recorded against. For a proposal-TEXT amendment
+//! An amendment's Δ (ED-01) and its evidence (ED-03), which carries the
+//! executor stamp its drafting attempt froze (FIX 9812), are two `vault_meta`
+//! ledgers keyed by one STRING: the receipt the amendment was recorded
+//! against. For a proposal-TEXT amendment
 //! that string is [`amendment_receipt_id`] — the artifact's id under a pinned
 //! namespace, exactly as an identity-op amendment's is `proposal_outcome:<id>`
 //! and a settle's is `artifact_settle:<id>:<ref>`.
@@ -119,7 +120,6 @@ use crate::consent::{
 };
 use crate::edit_distance::attribution::amendment_evidence_in_txn;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
-use crate::edit_distance::routing::folded_model_version_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
@@ -225,8 +225,9 @@ pub struct TrainingPair {
     /// The skill the amended proposal rode, when it rode one.
     #[serde(serialize_with = "serialize_opt_entity_hex")]
     pub skill: Option<EntityId>,
-    /// The generation ED-07 bound to this pair's own amendment receipt — never
-    /// the model serving NOW, which would be a guess about history.
+    /// The executor identity at revision the amendment's evidence was stamped
+    /// with (FIX 9812) — never the model serving NOW, which would be a guess
+    /// about history. `None` when the stamp is unknown.
     pub model_id: Option<String>,
     /// The amendment this pair came from, as the id ED-00 mints for the
     /// artifact that carried it.
@@ -481,7 +482,7 @@ fn resolve_candidates(
             chosen,
             task_class: evidence.as_ref().map(|row| row.scope.clone()),
             skill: evidence.as_ref().and_then(|row| row.skill),
-            model_id: folded_model_version_in_txn(vault, rtxn, &receipt_id)?,
+            model_id: evidence.as_ref().and_then(|row| row.executor.clone()),
             receipt_ref: retained.record.artifact_ref.entity_id(),
         };
         // `observed_at` is the `since` axis: a tag fact rather than a pair

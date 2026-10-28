@@ -69,6 +69,7 @@
 
 mod audit;
 mod evidence_judge;
+mod origin;
 mod projector;
 mod stored;
 mod taxonomy;
@@ -92,6 +93,7 @@ pub use self::taxonomy::{
 };
 
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
+pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
 
 /// The recorded, grounded attempt→amendment joins, judged or not: every
 /// evidence row that names the attempt its amended proposal came from, keyed

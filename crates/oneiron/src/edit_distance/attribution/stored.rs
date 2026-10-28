@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::learning::TypeRef;
 use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
 use crate::skill_attribution::AuditBatch;
 
@@ -109,6 +110,12 @@ pub(super) struct StoredEvidence {
     /// The joined attempt's pack receipt. Rows written before the join read back without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attempt: Option<String>,
+    /// The drafting executor at revision; absent when unknown (FIX 9812).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) executor: Option<String>,
+    /// The drafting run's task type; absent when no task placed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) type_ref: Option<TypeRef>,
     pub(super) scope: String,
     pub(super) cause: Option<String>,
     pub(super) followed_skill: Option<bool>,
@@ -146,6 +153,16 @@ pub(super) struct StoredJudgment {
     /// Each changed hunk's label and substitution identities, in text order; empty for an
     /// amendment judged as one region (FIX 9808).
     pub(super) hunks: Vec<StoredHunk>,
+    /// The drafting executor at revision the evidence carried when judged; absent when unknown.
+    /// Routing folds and rebuilds read this stamp alone (FIX 9812).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) executor: Option<String>,
+    /// The drafting run's task type the evidence carried when judged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) type_ref: Option<TypeRef>,
+    /// The judge revision whose answers the judgment stands on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) judge: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,11 +171,13 @@ pub(super) struct StoredHunk {
     pub(super) substitutions: Vec<String>,
 }
 
-/// The amended attempt's pack receipt and the skill its pack loaded (hex).
+/// The amended attempt's pack receipt, and the skill its pack loaded (hex) when the evidence
+/// named one: only that pair lets a `skill_defect` share replace the attempt's outcome.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredAttempt {
     pub(super) receipt: String,
-    pub(super) skill: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) skill: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
