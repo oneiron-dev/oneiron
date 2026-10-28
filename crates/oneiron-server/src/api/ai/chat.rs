@@ -157,6 +157,10 @@ enum ChatLine {
     Accepted {
         user_turn: String,
         message_id: String,
+        /// Why the call goes without the context board the turn read (FIX
+        /// 8136).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        board_omitted: Option<recall::BoardOmission>,
     },
     Delta {
         text: String,
@@ -185,6 +189,10 @@ struct ChatReply {
     text: String,
     incomplete: bool,
     finish_reason: Option<oneiron::FinishReason>,
+    /// Why the call went without the context board the turn read (FIX
+    /// 8136).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_omitted: Option<recall::BoardOmission>,
 }
 
 fn line(value: &ChatLine) -> Vec<u8> {
@@ -456,12 +464,16 @@ pub(super) async fn chat_turn(
         _ => None,
     };
     // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written.
+    // before anything is written. FIX 8133: the reply's newcomer barrier is
+    // marked before that read, so an attendee who entered once the board was
+    // read stops the reply as one who entered later does.
+    let mark = server.vault().container_output_mark();
     let board = match &payload {
         Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => None,
+        Err(_) => Ok(None),
     };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, board) {
+    let read = recall::TurnRead { mark, board };
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
         Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => whole(started).await,
         Err(refused) => *refused,
@@ -496,6 +508,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// Why the call goes without the context board the turn read (FIX
+    /// 8136).
+    board_omitted: Option<recall::BoardOmission>,
 }
 
 /// Marks the end of message `message` of a self turn's `request` as a
@@ -582,8 +597,13 @@ pub(crate) struct Answer {
 
 /// Where a reply is written.
 pub(crate) enum AnswerOpen {
-    /// A new MESSAGE in the turn this names.
-    Turn(WitnessTurn),
+    /// A new MESSAGE in the turn `turn` names, in `conversation`: the
+    /// container the user's turn was witnessed into, bound before generation
+    /// (FIX 8132), `None` for a turn that lies in none.
+    Turn {
+        turn: WitnessTurn,
+        conversation: Option<EntityId>,
+    },
     /// A Retry's new MESSAGE, answering `action`'s reply again in a new
     /// TURN that its terminal lands with it (FIX 3152), linked to the old
     /// reply by a `regenerates` edge.

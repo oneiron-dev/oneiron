@@ -107,8 +107,9 @@ impl Store {
     }
 }
 
-/// `record` encoded as the row `raw` was stored: plain, or sealed to its
-/// claim under the key generation that sealed it.
+/// `record` encoded as the row `raw` was stored: plain, sealed to its claim
+/// under the key generation that sealed it, or sealed under the policy
+/// partition (FIX 7806).
 pub(super) fn reseal_gate_decision(
     custody: Option<LocalCustody<'_>>,
     raw: &[u8],
@@ -118,6 +119,8 @@ pub(super) fn reseal_gate_decision(
     match (orcb::raw_claim_generation(raw), custody) {
         (Some((_, generation)), Some(custody)) => orcb::encode_hot_at(custody, record, generation),
         (Some(_), None) => Err(orcb::corrupt()),
+        (None, Some(custody)) if orcb::is_policy_sealed(raw) => orcb::encode_policy(custody, record),
+        (None, None) if orcb::is_policy_sealed(raw) => Err(orcb::corrupt()),
         (None, _) => encode_gate_decision(record),
     }
 }

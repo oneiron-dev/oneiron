@@ -1,5 +1,6 @@
 //! The ledger's side of the claim custody client: a row decrypted under its
-//! claim's key, a new row sealed under it, and an erase's key retirement
+//! claim's key, a new row sealed under it, a claim-free policy row sealed
+//! under the policy partition (FIX 7806), and an erase's key retirement
 //! staged with the redaction.
 
 use std::collections::BTreeSet;
@@ -207,4 +208,22 @@ pub(super) fn sealed_claim_row_in_txn(
         ));
     }
     orcb::encode_hot(custody, record)
+}
+
+/// Whether a claim-free policy row may be sealed in `store`'s custody (FIX
+/// 7806): not where no key may be minted, an archived vault's custody being
+/// its replacement's and no exterior custody existing off unix.
+pub(super) fn policy_seal_available(store: &impl ManifestDbs) -> bool {
+    cfg!(unix) && !store.gate_custody_archived()
+}
+
+/// A claim-free policy row's stored value, sealed under the policy partition
+/// in the write target's custody (FIX 7806).
+pub(super) fn sealed_policy_row_in_txn(
+    store: &impl ManifestDbs,
+    wtxn: &RwTxn<'_>,
+    record: &GateDecisionRecord,
+) -> Result<Vec<u8>> {
+    let custody = store.key_custody().bind_in_txn(store, wtxn)?;
+    orcb::encode_policy(custody, record)
 }
