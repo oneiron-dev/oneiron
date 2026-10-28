@@ -54163,7 +54163,7 @@ pub struct EsignEventRow {
     pub at: u64,
 }
 
-/// `oneiron_contracts::memory::error::MemoryGateDenial`.
+/// `oneiron_contracts::memory::error::gate_denial::MemoryGateDenial`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct MemoryGateDenial {
     #[serde(rename = "outcome")]

@@ -6880,7 +6880,7 @@ export type EsignEvent = { event: "drafted"; document: EsignDocument } | { event
 export type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null }
 /** `oneiron::blob_artifact::esign::model::EsignEventRow` */
 export type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number }
-/** `oneiron_contracts::memory::error::MemoryGateDenial` */
+/** `oneiron_contracts::memory::error::gate_denial::MemoryGateDenial` */
 export type MemoryGateDenial = { outcome: string; reason_codes: string[]; ask_ref?: string | null; approval_digest?: string | null }
 /** `oneiron_contracts::memory::error::MemoryPolicyExceptionProposal` */
 export type MemoryPolicyExceptionProposal = { action: string; row_ref: string; required_role: string }
