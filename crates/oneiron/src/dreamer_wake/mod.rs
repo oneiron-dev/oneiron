@@ -28,6 +28,7 @@ mod scheduling;
 mod settlement;
 pub(crate) mod sieve;
 pub(crate) mod statement_material;
+mod surprise_wake;
 mod types;
 
 pub(crate) use self::arc_backstop::arc_policy_in_txn;
