@@ -165,7 +165,7 @@ pub enum ArtifactError {
     /// 10011). The pin stands: no other model is put in its place, and
     /// nothing was planned or enqueued.
     #[error("the pinned spawn model {model} has no offered seat")]
-    SpawnModelUnavailable { model: String },
+    ModelPinUnavailable { model: String },
     /// A recovery artifact shell failed magic, version, length, or checksum
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
@@ -303,7 +303,7 @@ impl ArtifactError {
             Self::SeededAgentDefinitionConflict { .. } => ErrorKind::SeededAgentDefinitionConflict,
             Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
             Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
-            Self::SpawnModelUnavailable { .. } => ErrorKind::SpawnModelUnavailable,
+            Self::ModelPinUnavailable { .. } => ErrorKind::ModelPinUnavailable,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
             Self::BodyKeyCustodyUnavailable { .. } => ErrorKind::BodyKeyCustodyUnavailable,
             Self::KnownValueHistoryUnavailable { .. } => ErrorKind::KnownValueHistoryUnavailable,

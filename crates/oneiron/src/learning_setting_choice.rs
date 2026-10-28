@@ -342,7 +342,7 @@ fn rows_in_order(
 ///
 /// # Errors
 ///
-/// [`ArtifactError::SpawnModelUnavailable`] when the owner's model pin
+/// [`ArtifactError::ModelPinUnavailable`] when the owner's model pin
 /// stands and no offered seat serves it; storage errors;
 /// [`Error::CorruptedIndex`] on an undecodable row.
 pub(crate) fn lay_owner_choices_in_txn(
@@ -415,7 +415,7 @@ pub(crate) fn lay_owner_choices_in_txn(
 fn require_pinned_model(need: &SpawnNeed, seats: &[ModelId]) -> Result<()> {
     match need.pinned_model() {
         Some(model) if !seats.contains(model) => {
-            Err(Error::Artifact(ArtifactError::SpawnModelUnavailable {
+            Err(Error::Artifact(ArtifactError::ModelPinUnavailable {
                 model: model.as_str().to_owned(),
             }))
         }
