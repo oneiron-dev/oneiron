@@ -27,7 +27,9 @@
 //!
 //! A sealed vault (OF-570 maximum tier) opens only once its pages unlock from
 //! the mirror beside it ([`prepare_page_seal`]): with this device's keystore,
-//! or on a new device with `oneiron vault-key add-device --unlock`.
+//! or on a new device with `oneiron vault-key add-device --unlock`. Every
+//! other command that opens the vault key takes the same unlock as
+//! `--unlock` and its `--unlock-*` inputs ([`open_with_unlock`]).
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -45,13 +47,13 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use super::secret_input::{TerminalRead, read_stdin_secret};
-use super::{base_vault_config, emit, open_stopped_vault, open_stopped_vault_with};
+use super::{emit, open_stopped_vault};
 use crate::cli::{
-    SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
-    VaultKeyNamedArgs, VaultKeyResealArgs,
+    SecretSourceArgs, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
+    VaultKeyResealArgs,
 };
 use crate::commands::credential_file;
-use crate::config::{ServeConfig, resolve_serve_config};
+use crate::config::{ServeArgs, ServeConfig, resolve_serve_config};
 use crate::owner::local_owner;
 use crate::owner::vault_key::{self as view, SignerPin, hex, secret32};
 
@@ -60,9 +62,13 @@ const SECRET_LIMIT: usize = 4096;
 
 mod fresh_restore;
 mod host_unlock;
+mod unlocked_open;
 
 pub(super) use self::fresh_restore::restore_fresh;
 pub(crate) use self::host_unlock::HostUnlock;
+pub(super) use self::unlocked_open::{
+    KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets,
+};
 
 /// What a command that runs on a stopped vault does instead while a server
 /// holds it.
@@ -71,11 +77,11 @@ const INSTEAD: &str = "or ask it at `/v1/owner/vault-key`";
 pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
     match command {
         VaultKeyCommand::Status(args) => {
-            let vault = open(&args.serve)?;
+            let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Open)?;
             emit(&view::report(&vault)?)
         }
         VaultKeyCommand::Signer(args) => {
-            let vault = open(&args.serve)?;
+            let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Open)?;
             emit(&SignerPin::from(vault.checkpoint_signer()?))
         }
         VaultKeyCommand::PrfInput(args) => prf_input(&args),
@@ -84,13 +90,13 @@ pub fn vault_key(command: VaultKeyCommand) -> anyhow::Result<()> {
         VaultKeyCommand::AddEscrow(args) => add_escrow(*args),
         VaultKeyCommand::AddDevice(args) => add_device(*args),
         VaultKeyCommand::Remove(args) => {
-            let vault = open(&args.serve)?;
+            let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Open)?;
             let owner = local_owner(&vault)?;
             vault.remove_vault_key_wrap_as(&owner, &args.name)?;
             emit(&serde_json::json!({ "removed": args.name }))
         }
         VaultKeyCommand::RetireEscrow(args) => {
-            let vault = open(&args.serve)?;
+            let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Open)?;
             let owner = local_owner(&vault)?;
             emit(&vault.retire_vault_key_escrow_as(&owner, &args.name)?)
         }
@@ -160,25 +166,27 @@ fn capsule_secret(
     })
 }
 
-fn open(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault> {
+/// The stopped vault, opened with the unlock `unlock` names and its key as
+/// `need` asks ([`open_with_unlock`]). [`KeyNeed::Held`] with this device's
+/// keystore holds the key as before: unlocked with this device's wrap, or
+/// minted and wrapped to this device when the vault has none yet.
+fn open(
+    serve: &ServeArgs,
+    unlock: &UnlockRequest<'_>,
+    need: KeyNeed,
+) -> anyhow::Result<oneiron::Vault> {
     let config = resolve_serve_config(serve)?;
-    open_stopped_vault(&config, INSTEAD)
-}
-
-/// The stopped vault, holding its data key: unlocked with this device's wrap,
-/// or minted and wrapped to this device when it has none yet.
-fn open_held(serve: &crate::config::ServeArgs) -> anyhow::Result<oneiron::Vault> {
-    let vault = open(serve)?;
-    vault.ensure_vault_key().map_err(|error| {
-        anyhow::anyhow!("the vault key does not unlock with this install's keystore: {error}")
-    })?;
-    Ok(vault)
+    open_with_unlock(&config, unlock, need, INSTEAD)
 }
 
 /// A passkey's PRF input. A sealed vault's comes from the public vault id
 /// its mirror names, with no page opened: a new device asks its passkey for
 /// the output before the vault opens.
 fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        UnlockRequest::of(&args.unlock).is_device(),
+        "prf-input opens no vault key, so it reads no --unlock"
+    );
     let config = resolve_serve_config(&args.serve)?;
     if world_keys::vault_is_sealed(&config.vault_path)? {
         let vault_id = world_keys::page_seal_vault_id(&config.vault_path)
@@ -195,56 +203,13 @@ fn prf_input(args: &VaultKeyNamedArgs) -> anyhow::Result<()> {
 /// escrow seed under the vault's id: a sealed vault's mirror names it, and a
 /// plain vault opens first to read its own. The world kit opens the
 /// `world-kit` escrow wrap, bound to the vault id `--vault-id` names; the
-/// data-key kit rebuilds the key itself, bound to that id (FIX 5614).
+/// data-key kit rebuilds the key itself, bound to that id (FIX 5614). A
+/// registry's capsule (`--capsule`) opens the key in place of a wrap; its
+/// recipient is released, to retire (FIX 2559).
 fn add_device(args: VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
-    refuse_unused_unlock_args(&args)?;
-    let config = resolve_serve_config(&args.serve)?;
-    let vault = if args.unlock == UnlockMethod::Device {
-        open_held(&args.serve)?
-    } else if world_keys::vault_is_sealed(&config.vault_path)? {
-        refuse_orphaned_page_seal(&config.vault_path)?;
-        let unlock = HostUnlock::read_for_device(&args, || {
-            world_keys::page_seal_vault_id(&config.vault_path)
-                .map_err(|error| anyhow::anyhow!("read the vault's page seal: {error}"))
-        })?;
-        let mut vault_config = base_vault_config(&config);
-        vault_config.page_seal = prepare_page_seal(&config, Some(&unlock))?;
-        open_stopped_vault_with(&config, vault_config, INSTEAD)?
-    } else {
-        let vault = open_stopped_vault(&config, INSTEAD)?;
-        let unlock = HostUnlock::read_for_device(&args, || Ok(vault.vault_key_vault_id()))?;
-        unlock.unlock_live(&vault).map_err(|error| {
-            anyhow::anyhow!(
-                "the vault key did not unlock with {}: {error}",
-                unlock.name()
-            )
-        })?;
-        vault
-    };
+    let vault = open(&args.serve, &UnlockRequest::add_device(&args), KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(&owner, NewVaultKeyWrap::Device)?)
-}
-
-/// Refuses an add-device flag its `--unlock` does not read: the kit's pieces
-/// and vault id with any other unlock, and a credential, a label or a
-/// recovery box with the kit.
-fn refuse_unused_unlock_args(args: &VaultKeyAddDeviceArgs) -> anyhow::Result<()> {
-    let kit = args.unlock == UnlockMethod::Kit;
-    let unused = [
-        ("--piece", !kit && !args.pieces.is_empty()),
-        ("--vault-id", !kit && args.vault_id.is_some()),
-        ("--credential", kit && args.credential.is_some()),
-        ("--label", kit && args.label.is_some()),
-        ("--box-dir", kit && args.secret.box_dir.is_some()),
-        ("--box-command", kit && args.secret.box_command.is_some()),
-    ];
-    match unused.iter().find(|(_, given)| *given) {
-        Some((flag, _)) if kit => anyhow::bail!(
-            "--unlock kit reads its pieces and the kit passphrase; {flag} is not one of them"
-        ),
-        Some((flag, _)) => anyhow::bail!("{flag} is read only with --unlock kit"),
-        None => Ok(()),
-    }
 }
 
 /// The page seal the configured vault opens with (OF-570 maximum tier):
@@ -378,8 +343,14 @@ pub(crate) fn ensure_page_seal_wrapped(vault: &oneiron::Vault, path: &Path) -> a
 }
 
 fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
-    let password = read_secret(&args.secret, "the password")?;
-    let vault = open_held(&args.serve)?;
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        args.secret.secret_file.is_none(),
+        "the new password (--secret-file)",
+    )?;
+    let password = read_secret(&args.secret, "the new password")?;
+    let vault = open(&args.serve, &unlock, KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(
         &owner,
@@ -391,11 +362,17 @@ fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
 }
 
 fn add_passkey(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        args.secret.secret_file.is_none(),
+        "the new passkey's PRF output (--secret-file)",
+    )?;
     let prf = secret32(
-        &read_secret(&args.secret, "the PRF output")?,
+        &read_secret(&args.secret, "the new passkey's PRF output")?,
         "a PRF output",
     )?;
-    let vault = open_held(&args.serve)?;
+    let vault = open(&args.serve, &unlock, KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     emit(&vault.add_vault_key_wrap_as(
         &owner,
@@ -422,7 +399,7 @@ fn add_escrow(args: VaultKeyNamedArgs) -> anyhow::Result<()> {
     let (recovery_box, where_) = recovery_box(&args.secret).ok_or_else(|| {
         anyhow::anyhow!("name the recovery box that keeps the seed: --box-dir or --box-command")
     })?;
-    let vault = open_held(&args.serve)?;
+    let vault = open(&args.serve, &UnlockRequest::of(&args.unlock), KeyNeed::Held)?;
     let owner = local_owner(&vault)?;
     let mut seed = Zeroizing::new([0u8; 32]);
     rand_core::OsRng.fill_bytes(&mut seed[..]);
