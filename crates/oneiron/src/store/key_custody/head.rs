@@ -27,8 +27,7 @@ use oneiron_crypto::{
     Argon2Cost, Envelope, Kek, OpenKey, OpenPolicy, Purpose, SealKey, SealParams, SuiteId,
     WrapType, seal,
 };
-use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -37,13 +36,14 @@ use super::body_history::HistoryRows;
 use super::erase_evidence::{CredentialFenceFact, FenceFact, fold_fact};
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::log::{
-    AEAD, CRYPTO_EPOCH, Control, CustodyPosition, POSITION_LEN, open_sym, seal_refused, seal_sym,
+    AEAD, CRYPTO_EPOCH, Control, CustodyPosition, open_sym, seal_refused, seal_sym,
 };
 use super::recipients::RecipientRetirement;
 
 mod carried_pads;
 mod pad_scope;
 mod scope;
+mod wire;
 
 pub(super) use self::carried_pads::{CARRIED_PREFIX, CarriedWorldPad, carried_set_digest};
 
@@ -56,19 +56,15 @@ pub(crate) use self::pad_scope::{
     seal_world_pad_compartment,
 };
 pub(crate) use self::scope::{CompartmentScope, CustodyOpener, CustodyRecipients};
+pub(super) use self::wire::{head_position, serde_bytes_vec, staged_position};
+use self::wire::{
+    BodyWire, CompartmentWire, EntryWire, EvidenceWire, FactWire, HEAD_MAGIC, HEAD_VERSION,
+    HeadWire, HistoryWire, WrapWire, key_id, parse,
+};
 
-const HEAD_MAGIC: &[u8; 4] = b"OCHD";
-/// Version 2 carries erased credentials' evidence in every host-readable
-/// compartment (FIX 10584 item 3), one pad per world compartment, each
-/// compartment's whole wire committed, and the carried world compartments
-/// (PAD-3). A version-1 head reads as invalid until the next publication
-/// pass seals it again (FIX 10469): no old-head reader.
-const HEAD_VERSION: u16 = 2;
 const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 const DATA_KEY_RECIPIENT: &[u8] = b"oneiron/custody-head/data-key/v1";
 const COMPARTMENT_RECIPIENT: &[u8] = b"oneiron/custody-head/compartment/v1";
-/// The derive-key context of a compartment's envelope key id ([`key_id`]).
-const KEY_ID_CONTEXT: &str = "oneiron/custody-head/compartment-key-id/v1";
 const TO_ROOT: u8 = 1;
 const TO_DATA_KEY: u8 = 2;
 /// The most entries, live or retired, one compartment holds: a codec bound
@@ -111,164 +107,6 @@ pub(crate) struct OpenedHead {
     /// The world pad compartments the opener did not open, the head's own
     /// and those it carried, each at its origin coordinates (PAD-3).
     pub(super) carried: Vec<CarriedWorldPad>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HeadWire {
-    version: u16,
-    #[serde(with = "serde_bytes_vec")]
-    position: Vec<u8>,
-    compartments: Vec<CompartmentWire>,
-    /// Earlier heads' world compartments a restore here did not open (PAD-3).
-    carried_world_pads: Vec<carried_pads::CarriedWire>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CompartmentWire {
-    scope: u8,
-    /// A world compartment's world (FIX 6706); absent on every other.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    world: Option<[u8; 16]>,
-    /// A world compartment's one pad (PAD-3); absent on every other.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pad: Option<carried_pads::PadCompartmentIdentity>,
-    #[serde(with = "serde_bytes_vec")]
-    sealed: Vec<u8>,
-    wraps: Vec<WrapWire>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WrapWire {
-    to: u8,
-    root: Option<[u8; 32]>,
-    /// A world compartment's admitted machine (FIX 6706).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    machine: Option<[u8; 16]>,
-    #[serde(with = "serde_bytes_vec")]
-    envelope: Vec<u8>,
-}
-
-/// One compartment's plaintext. The control compartment holds the control
-/// secret and the other compartments' digests; the rest hold entries.
-#[derive(Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BodyWire {
-    control: Option<[u8; 32]>,
-    digests: Vec<[u8; 32]>,
-    live: Vec<EntryWire>,
-    retired: Vec<FactWire>,
-    /// The control compartment's: every released escrow recipient the
-    /// lineage retired, public facts only (LC FIX 5384/5385).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    recipients: Vec<RecipientRetirement>,
-    /// A host-readable compartment's: body history rows, ids only (FIX
-    /// 6229), sealed under the compartment's key like its entries.
-    history: Vec<HistoryWire>,
-    /// A host-readable compartment's: each erased credential's fact (FIX
-    /// 10584 item 3), value-free, whatever key eligibility keeps local.
-    evidence: Vec<EvidenceWire>,
-    /// The control compartment's: each carried compartment's digest (PAD-3).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    carried_digests: Vec<[u8; 32]>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EvidenceWire {
-    credential: [u8; 16],
-    fact: u8,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct HistoryWire {
-    #[serde(with = "serde_bytes_vec")]
-    key: Vec<u8>,
-    #[serde(with = "serde_bytes_vec")]
-    value: Vec<u8>,
-}
-
-impl Drop for BodyWire {
-    fn drop(&mut self) {
-        if let Some(control) = &mut self.control {
-            control.zeroize();
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct EntryWire {
-    kind: u8,
-    #[serde(with = "serde_bytes_vec")]
-    item: Vec<u8>,
-    generation: u64,
-    #[serde(with = "serde_bytes_vec")]
-    secret: Vec<u8>,
-}
-
-impl Drop for EntryWire {
-    fn drop(&mut self) {
-        self.secret.zeroize();
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct FactWire {
-    kind: u8,
-    #[serde(with = "serde_bytes_vec")]
-    item: Vec<u8>,
-    generation: u64,
-}
-
-/// Byte strings as msgpack bin, not arrays of numbers.
-pub(super) mod serde_bytes_vec {
-    use serde::{Deserializer, Serializer};
-
-    pub(in crate::store::key_custody) fn serialize<S: Serializer>(
-        bytes: &[u8],
-        out: S,
-    ) -> Result<S::Ok, S::Error> {
-        out.serialize_bytes(bytes)
-    }
-
-    pub(in crate::store::key_custody) fn deserialize<'de, D: Deserializer<'de>>(
-        input: D,
-    ) -> Result<Vec<u8>, D::Error> {
-        struct Visitor;
-        impl serde::de::Visitor<'_> for Visitor {
-            type Value = Vec<u8>;
-            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.write_str("bytes")
-            }
-            fn visit_bytes<E: serde::de::Error>(self, bytes: &[u8]) -> Result<Vec<u8>, E> {
-                Ok(bytes.to_vec())
-            }
-            fn visit_byte_buf<E: serde::de::Error>(self, bytes: Vec<u8>) -> Result<Vec<u8>, E> {
-                Ok(bytes)
-            }
-        }
-        input.deserialize_bytes(Visitor)
-    }
-}
-
-/// What binds a compartment and its key's wraps to their place in exactly
-/// this head: a 32-byte commitment to the whole of `position | u32be index |
-/// scope`, and a world compartment's world, which fits an envelope's key id
-/// (FIX 6769, 6706).
-fn key_id(position: &[u8; POSITION_LEN], index: u32, scope: Option<CompartmentScope>) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new_derive_key(KEY_ID_CONTEXT);
-    hasher.update(position);
-    hasher.update(&index.to_be_bytes());
-    hasher.update(&[scope.map_or(0, CompartmentScope::code)]);
-    if let Some(world) = scope.and_then(CompartmentScope::world) {
-        hasher.update(world.as_bytes());
-    }
-    *hasher.finalize().as_bytes()
 }
 
 fn wrap_policy<'a>(
@@ -507,61 +345,6 @@ pub(super) fn seal_head(
     let mut out = Zeroizing::new(HEAD_MAGIC.to_vec());
     out.extend_from_slice(&rmp_serde::to_vec_named(&wire).map_err(|_| head_corrupt())?);
     Ok(out)
-}
-
-fn parse(head: &[u8]) -> Result<HeadWire> {
-    let body = head.strip_prefix(HEAD_MAGIC).ok_or_else(head_corrupt)?;
-    let wire: HeadWire = rmp_serde::from_slice(body).map_err(|_| head_corrupt())?;
-    if wire.version != HEAD_VERSION || wire.compartments.is_empty() {
-        return Err(head_corrupt());
-    }
-    Ok(wire)
-}
-
-/// The position a head claims, read without opening it: what a target lists
-/// and a status reports. Nothing here is authenticated until it opens.
-pub(super) fn head_position(head: &[u8]) -> Result<CustodyPosition> {
-    CustodyPosition::from_bytes(&parse(head)?.position).ok_or_else(head_corrupt)
-}
-
-/// The position the first bytes of a head claim, before the rest of it has
-/// arrived: a residence stage an upload is still writing (FIX 6415). The
-/// wire is a map whose first two entries are [`HeadWire`]'s version and
-/// position, read alone here. `None` when they are not there yet, or are
-/// not this engine's. Unauthenticated, as [`head_position`] is.
-pub(super) fn staged_position(lead: &[u8]) -> Option<CustodyPosition> {
-    use rmpv::Value;
-    let body = lead.strip_prefix(HEAD_MAGIC)?;
-    let shape = rmp_serde::to_vec_named(&HeadWire {
-        version: HEAD_VERSION,
-        position: Vec::new(),
-        compartments: Vec::new(),
-        carried_world_pads: Vec::new(),
-    })
-    .ok()?;
-    let (map, entries) = body.split_first()?;
-    if shape.first() != Some(map) {
-        return None;
-    }
-    let mut cursor = std::io::Cursor::new(entries);
-    let version_key = rmpv::decode::read_value(&mut cursor).ok()?;
-    let version = rmpv::decode::read_value(&mut cursor).ok()?;
-    let position_key = rmpv::decode::read_value(&mut cursor).ok()?;
-    let position = rmpv::decode::read_value(&mut cursor).ok()?;
-    match (version_key, version, position_key, position) {
-        (
-            Value::String(version_key),
-            Value::Integer(version),
-            Value::String(position_key),
-            Value::Binary(position),
-        ) if version_key.as_str() == Some("version")
-            && version.as_u64() == Some(u64::from(HEAD_VERSION))
-            && position_key.as_str() == Some("position") =>
-        {
-            CustodyPosition::from_bytes(&position)
-        }
-        _ => None,
-    }
 }
 
 /// The compartment key one of `wraps` gives `opener`, if any does.
