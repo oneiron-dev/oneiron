@@ -367,10 +367,6 @@ pub struct CustomizationSettingsChangeEvent {
     pub layer: CustomizationLayer,
     pub previous: CustomizationLayerValue,
     pub current: CustomizationLayerValue,
-    // Intentionally camelCase in this otherwise snake_case client-readable event: it matches the
-    // Client wire contract (`aiCanChange` in UIModeContextType). Do not snake_case.
-    #[serde(rename = "aiCanChange")]
-    pub ai_can_change: bool,
     pub notice: String,
 }
 
@@ -394,7 +390,6 @@ impl CustomizationSettingsChangeEvent {
             layer,
             previous,
             current,
-            ai_can_change: true,
             notice,
         }
     }
@@ -402,7 +397,6 @@ impl CustomizationSettingsChangeEvent {
     fn validate(&self) -> Result<()> {
         if self.sequence == 0
             || self.kind != CUSTOMIZATION_SETTINGS_CHANGED_EVENT_KIND
-            || !self.ai_can_change
             || self.previous.layer() != self.layer
             || self.current.layer() != self.layer
             || self.notice.is_empty()

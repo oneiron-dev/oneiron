@@ -132,16 +132,13 @@ pub struct OfficeBodyEditRequest {
     pub made_by: Option<serde_json::Value>,
 }
 
-/// `vault.artifacts.body.fork.open`: a fork of the live body for machine work
-/// in the run `run_root_ref`. A DOCX or XLSX fork joins `proposal_ref`, an
-/// unsettled proposal on the same artifact; absent, it opens its own under
-/// the fork's id.
+/// `vault.artifacts.body.fork.open`: a fork of the live body for machine work.
+/// A DOCX or XLSX fork joins `proposal_ref`, an unsettled proposal on the
+/// same artifact; absent, it opens its own under the fork's id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OfficeBodyForkOpenRequest {
     pub artifact_ref: String,
-    #[serde(default)]
-    pub run_root_ref: Option<String>,
     #[serde(default)]
     pub proposal_ref: Option<String>,
 }
@@ -550,18 +547,12 @@ impl Memory<'_> {
 
     /// `vault.artifacts.body.fork.open`. The fork's run is the try a host
     /// bound this surface to, proved in the writer that commits the fork
-    /// (FIX 3551); `run_root_ref` stays the caller's label, never what a run
-    /// scope matches. A surface no host bound opens a fork of no run.
+    /// (FIX 3551). A surface no host bound opens a fork of no run.
     pub fn artifacts_body_fork_open(
         &self,
         input: &OfficeBodyForkOpenRequest,
     ) -> MemoryResult<OfficeBodyFork> {
         let artifact = self.body_ref(&input.artifact_ref)?;
-        let run_root = input
-            .run_root_ref
-            .as_deref()
-            .map(|reference| self.body_ref(reference))
-            .transpose()?;
         let proposal = input
             .proposal_ref
             .as_deref()
@@ -574,7 +565,7 @@ impl Memory<'_> {
                 wtxn,
                 &artifact,
                 actor,
-                run_root.as_ref(),
+                None,
                 origin,
                 proposal.as_ref(),
             )?)

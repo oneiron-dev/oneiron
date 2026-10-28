@@ -875,6 +875,7 @@ aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+vaultReceiptsCraftReplyManifest(input: unknown): unknown
 aiVoiceAsrOpen(input: unknown): unknown
 aiVoiceAsrHypothesis(input: unknown): unknown
 aiVoiceAsrFinalize(input: unknown): unknown

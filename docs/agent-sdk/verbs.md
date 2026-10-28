@@ -52,6 +52,7 @@ both bindings and their export-census tests in one change.
 - `self.message`
 - `self.grants.ask`
 - `vault.companions.access_requests.answer`
+- `self.grants.answer`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`
@@ -286,6 +287,7 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.authority.clock.repair`
 - `vault.wire_health.thresholds.get`
 - `vault.wire_health.thresholds.set`
 - `vault.slim.policy`
@@ -731,7 +733,7 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
 - `vault.agents.spawn`
-- `vault.tasks.cancel_force`
+- `vault.tasks.cancel.force`
 - `vault.runs.branches.get`
 - `vault.runs.pause`
 - `vault.runs.resume`
@@ -845,6 +847,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.terminal`
 - `ai.reply`
 - `vault.receipts.context`
+- `vault.receipts.craft_reply_manifest`
 - `ai.voice.asr.open`
 - `ai.voice.asr.hypothesis`
 - `ai.voice.asr.finalize`

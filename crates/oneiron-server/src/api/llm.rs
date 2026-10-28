@@ -222,7 +222,8 @@ fn admit_owner(
         .vault
         .authorize_raw_inference(request.clone(), &context)
         .map_err(|_| {
-            Box::new(if original_purpose == oneiron::CallPurpose::Extraction {
+            let admitted = oneiron::llm::admitted_as(&original_purpose);
+            Box::new(if *admitted == oneiron::CallPurpose::Extraction {
                 refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
             } else {
                 refusal(StatusCode::BAD_REQUEST, "invalid_request")

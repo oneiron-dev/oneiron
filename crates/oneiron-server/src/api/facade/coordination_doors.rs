@@ -225,7 +225,7 @@ pub(crate) async fn vault_tasks_cancel_force(
     auth: &CoreAuth,
     input: CancelForceRequest,
 ) -> MaybeListed<CancelForceReceipt> {
-    const VERB: &str = "vault.tasks.cancel_force";
+    const VERB: &str = "vault.tasks.cancel.force";
     as_person_naming(
         server,
         VERB,
