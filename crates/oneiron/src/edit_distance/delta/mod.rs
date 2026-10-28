@@ -62,7 +62,7 @@ mod op_stream;
 mod schema;
 mod store;
 
-pub(crate) use self::endpoint::entity_endpoint_in_txn;
+pub(crate) use self::endpoint::live_revision_in_txn;
 pub use self::endpoint::{EndpointDocument, EndpointRef, MeasuredEnd};
 pub use self::lanes::{
     DeltaCaptureContext, capture_delta_best, delta_from_field_diff, delta_from_reconstructed,

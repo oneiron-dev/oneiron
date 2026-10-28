@@ -12,7 +12,7 @@ use crate::receipt::{
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
-use super::endpoint::{EndpointRef, MeasuredEnd, entity_endpoint_in_txn};
+use super::endpoint::{EndpointRef, MeasuredEnd, live_revision_in_txn};
 use super::lanes::{DeltaCaptureContext, capture_delta_best};
 use super::schema::AmendmentDelta;
 
@@ -336,7 +336,11 @@ pub(super) fn identity_amendment_delta(
     let Some(record) = vault.identity_topology_event_in_txn(&rtxn, &proposal_id)? else {
         return Ok(None);
     };
-    let proposed_at = entity_endpoint_in_txn(&vault.store, &rtxn, proposal_id)?;
+    // A revision state that does not read counts as none: it leaves this
+    // receipt's measurement unavailable, never the pass.
+    let revision = live_revision_in_txn(&vault.store, &rtxn, proposal_id)
+        .ok()
+        .flatten();
     drop(rtxn);
 
     let crate::identity_topology::IdentityTopologyAction::Apply(proposed_op) =
@@ -354,13 +358,18 @@ pub(super) fn identity_amendment_delta(
     let Ok(proposed) = crate::identity_topology::encode_identity_op_amendment(&proposed_op) else {
         return Ok(Some(ProjectedDelta::Uncaptured));
     };
+    // Without a retained revision of the event there is no proposed end to
+    // name, so the measurement is unavailable rather than versionless.
+    let Some(revision) = revision else {
+        return Ok(Some(ProjectedDelta::Uncaptured));
+    };
     let context = DeltaCaptureContext::from_bodies(
         MeasuredEnd {
-            at: proposed_at,
+            at: EndpointRef::identity_op_proposal(proposal_id, revision),
             content: &proposed,
         },
         MeasuredEnd {
-            at: EndpointRef::receipt(&receipt.receipt_id),
+            at: EndpointRef::receipt_amended_body(&receipt.receipt_id),
             content: &amended,
         },
     );
