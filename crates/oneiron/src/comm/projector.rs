@@ -5,7 +5,9 @@ use super::claims::{
     PREDICATE_COMM_THREAD_MEMBER,
 };
 use super::consent::{OPT_OUT_REASON_STOP, rematerialize_party_channel_contact_cache_in_txn};
-use super::parties::{reconcile_comm_party_twins, resolve_or_create_party_in_txn};
+use super::parties::{
+    reconcile_comm_party_twins, resolve_actor_party_in_txn, resolve_or_create_party_in_txn,
+};
 use super::projection_writes::{
     latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
     put_projected_comm_claim_in_txn,
@@ -250,17 +252,22 @@ pub fn record_comm_send_receipt(
     )
 }
 
-/// [`record_comm_send_receipt`] in the caller's write, so the receipt lands
-/// with the state that confirmed the send, or not at all.
-pub(crate) fn record_comm_send_receipt_in_txn(
+/// Records a successful send to an ACTOR counterparty in the caller's write,
+/// so the receipt lands with the state that confirmed the send, or not at
+/// all. The party is the actor itself ([`resolve_actor_party_in_txn`]); an
+/// actor with no live PERSON role records nothing.
+pub(crate) fn record_comm_actor_send_receipt_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    party: &str,
+    actor: EntityId,
+    display_name: &str,
     channel_class: &str,
     occurred_at: u64,
 ) -> CommResult<()> {
     validate_channel_class(channel_class).map_err(|_| CommError::InvalidRecord)?;
-    let party_ref = resolve_or_create_party_in_txn(vault, wtxn, party)?;
+    let Some(party_ref) = resolve_actor_party_in_txn(vault, wtxn, actor, display_name)? else {
+        return Ok(());
+    };
     let sequence = next_event_sequence_in_txn(vault, wtxn)?;
     let record = CommRecord::Event {
         sequence,

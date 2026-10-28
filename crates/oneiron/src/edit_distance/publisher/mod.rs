@@ -37,9 +37,11 @@
 //! # The channel is nothing new
 //!
 //! ARCH-0056 r7: "publisher ↔ user channel = a normal comm channel with the
-//! publisher ACTOR as counterparty — zero new primitives". This module calls
-//! [`resolve_or_create_comm_party`](crate::comm::resolve_or_create_comm_party) and [`record_comm_send_receipt`](crate::comm::record_comm_send_receipt) and owns
-//! nothing about send or retry; SPINE-COMM owns those internals. The DOWN
+//! publisher ACTOR as counterparty — zero new primitives". The counterparty is
+//! the signature artifact's own publisher actor, never one shared party
+//! (FIX 7829). The ordinary outbound path sends; this module records its
+//! confirmed delivery through comm's send-receipt door and owns nothing about
+//! send or retry; SPINE-COMM owns those internals. The DOWN
 //! direction (platform-voice notices, EC-7) is ordinary channel content and
 //! needs no engine surface at all.
 //!
@@ -65,7 +67,9 @@ mod signature_store;
 mod transport;
 mod vocab;
 
-pub(crate) use self::delivery_outcome::{SignatureDeliveryOutcome, record_signature_delivery};
+pub(crate) use self::delivery_outcome::{
+    PublisherActor, SignatureDeliveryOutcome, record_signature_delivery,
+};
 pub(crate) use self::dial::publisher_enabled_in_txn;
 pub use self::dial::{
     PUBLISHER_ENABLED_COMPILED_DEFAULT, publisher_enabled, set_publisher_enabled,
@@ -80,8 +84,8 @@ pub use self::signature::{CONTENT_HASH_LEN, IssueSignature, tally_judged_outcome
 pub(crate) use self::signature_store::emit_issue_signature_in_txn;
 pub use self::signature_store::{emit_issue_signature, issue_signature};
 pub use self::transport::{
-    PUBLISHER_CHANNEL_CLASS, PUBLISHER_PARTY_KEY, SendOutcome, SignatureSendState, publisher_party,
-    send_signatures_if_enabled, signature_send_state,
+    PUBLISHER_CHANNEL_CLASS, SendOutcome, SignatureSendState, send_signatures_if_enabled,
+    signature_send_state,
 };
 pub use self::vocab::{CountKey, IssueCategory};
 

@@ -5,14 +5,28 @@
 //! send and writes that send's outcome back here, keyed by its send ref. Only
 //! a delivery to the channel makes a signature [`SignatureSendState::Sent`]
 //! and records its comm send receipt, once: "delivered" means the channel
-//! took it, never that anyone read it (ARCH-0046).
+//! took it, never that anyone read it (ARCH-0046). The receipt's counterparty
+//! is the signature artifact's publisher ACTOR (FIX 7829), which the delivery
+//! path resolves from the artifact's publisher metadata.
 
-use super::transport::{PUBLISHER_CHANNEL_CLASS, PUBLISHER_PARTY_KEY, SEND_STATE, SendStateRow};
+use super::signature_store::SIGNATURE;
+use super::transport::{PUBLISHER_CHANNEL_CLASS, SEND_STATE, SendStateRow};
 use super::{PublisherResult, SignatureSendState};
 use crate::Vault;
-use crate::comm::record_comm_send_receipt_in_txn;
+use crate::comm::record_comm_actor_send_receipt_in_txn;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, Result};
+
+/// The publisher ACTOR an issue signature's channel runs to: "publisher ↔
+/// user is a normal comm channel with that actor as counterparty"
+/// (ARCH-0056).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PublisherActor {
+    /// The actor's vault-resident entity.
+    pub(crate) actor: EntityId,
+    /// The publisher identity it acts for.
+    pub(crate) identity: String,
+}
 
 /// What the ordinary outbound path answered for one signature's send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,14 +65,15 @@ fn settled(
 }
 
 /// Writes one send's outcome back onto its signature, in the caller's write.
-/// A delivery confirms the signature and records its comm send receipt in
-/// that same write, exactly once.
+/// A delivery confirms the signature and records its comm send receipt to
+/// `publisher` in that same write, exactly once.
 fn record_signature_delivery_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     signature: EntityId,
     send_ref: &str,
     outcome: SignatureDeliveryOutcome,
+    publisher: Option<&PublisherActor>,
 ) -> PublisherResult<()> {
     let current = SEND_STATE
         .get(&vault.store, &*wtxn, &signature)?
@@ -66,11 +81,14 @@ fn record_signature_delivery_in_txn(
     let Some(next) = settled(&current, send_ref, outcome) else {
         return Ok(());
     };
-    if next.state == SignatureSendState::Sent {
-        record_comm_send_receipt_in_txn(
+    if next.state == SignatureSendState::Sent
+        && let Some(publisher) = publisher
+    {
+        record_comm_actor_send_receipt_in_txn(
             vault,
             wtxn,
-            PUBLISHER_PARTY_KEY,
+            publisher.actor,
+            &publisher.identity,
             PUBLISHER_CHANNEL_CLASS,
             vault.store.clock.now_recorded_at(),
         )?;
@@ -83,25 +101,51 @@ fn record_signature_delivery_in_txn(
 /// send writes nothing. A crash before it runs leaves the lane's own record,
 /// whose next run replays the outcome here.
 ///
+/// `publisher` answers the ACTOR the stored signature's artifact was
+/// published by; it is asked only when a delivery is about to be confirmed.
+/// A delivery with no actor to name is still `Sent`, and records no comm
+/// receipt: no placeholder party is minted for it.
+///
 /// # Errors
 ///
-/// Storage errors, and whatever `comm.rs`'s send-receipt door raises.
-pub(crate) fn record_signature_delivery(
+/// Storage errors, whatever `publisher` raises, and whatever `comm.rs`'s
+/// send-receipt door raises.
+pub(crate) fn record_signature_delivery<F>(
     vault: &Vault,
     signature: EntityId,
     send_ref: &str,
     outcome: SignatureDeliveryOutcome,
-) -> PublisherResult<()> {
-    let current = {
+    publisher: F,
+) -> PublisherResult<()>
+where
+    F: FnOnce(EntityId) -> Result<Option<PublisherActor>>,
+{
+    let (current, artifact) = {
         let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
-        SEND_STATE
-            .get(&vault.store, &rtxn, &signature)?
-            .unwrap_or_default()
+        (
+            SEND_STATE
+                .get(&vault.store, &rtxn, &signature)?
+                .unwrap_or_default(),
+            SIGNATURE
+                .get(&vault.store, &rtxn, &signature)?
+                .map(|stored| stored.artifact()),
+        )
     };
-    if settled(&current, send_ref, outcome).is_none() {
+    let Some(next) = settled(&current, send_ref, outcome) else {
         return Ok(());
-    }
+    };
+    let publisher = match artifact {
+        Some(artifact) if next.state == SignatureSendState::Sent => publisher(artifact)?,
+        _ => None,
+    };
     vault.try_with_write_txn_grouped(|wtxn| {
-        record_signature_delivery_in_txn(vault, wtxn, signature, send_ref, outcome)
+        record_signature_delivery_in_txn(
+            vault,
+            wtxn,
+            signature,
+            send_ref,
+            outcome,
+            publisher.as_ref(),
+        )
     })
 }
