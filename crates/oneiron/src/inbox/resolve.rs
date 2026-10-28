@@ -8,9 +8,8 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
-    attach_amendment_deltas, capture_delta_best, entity_endpoint_in_txn,
-    put_amendment_delta_in_txn,
+    AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
+    attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
@@ -465,13 +464,12 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    // The Δ's proposed end is the claim's revision as reviewed; its final end
-    // is read once the accept has landed (FIX 7819).
+    // The Δ's proposed end is the claim's revision as reviewed (FIX 7819); a
+    // failed read is the capture's, never the accept's.
     let reviewed_end = if amended_approval {
         Some((
-            entity_endpoint_in_txn(&vault.store, wtxn, *id)?,
+            live_revision_in_txn(&vault.store, wtxn, *id),
             approved_body(&reviewed)?,
-            approved.clone(),
         ))
     } else {
         None
@@ -530,16 +528,9 @@ fn accept_member_with_amendment_in_txn(
     }
 
     let (delta, delta_reasons) = match reviewed_end {
-        Some((reviewed_at, proposed, landed)) => captured_amendment_delta(
-            MeasuredEnd {
-                at: reviewed_at,
-                content: &proposed,
-            },
-            MeasuredEnd {
-                at: entity_endpoint_in_txn(&vault.store, wtxn, *id)?,
-                content: &landed,
-            },
-        ),
+        Some((reviewed_at, proposed)) => {
+            captured_amendment_delta(vault, wtxn, id, reviewed_at, &proposed)
+        }
         None => (None, Vec::new()),
     };
     vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
@@ -617,8 +608,8 @@ fn accept_member_with_amendment_in_txn(
     }))
 }
 
-/// Measures the amendment Δ, returning the receipt reasons that record a
-/// capture failure.
+/// Measures the amendment Δ between the claim as reviewed and as the accept
+/// landed it, returning the receipt reasons that record a capture failure.
 ///
 /// Δ capture is TELEMETRY hanging off an approval that has already happened,
 /// so a measurement failure is stamped on the receipt and the decision
@@ -626,13 +617,48 @@ fn accept_member_with_amendment_in_txn(
 /// decider already made — and a receipt that says its Δ is missing is worth
 /// more than one that silently has none.
 pub(super) fn captured_amendment_delta(
-    proposed: MeasuredEnd<'_, [u8]>,
-    approved: MeasuredEnd<'_, [u8]>,
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
+    proposed: &[u8],
 ) -> (Option<AmendmentDelta>, Vec<String>) {
-    match capture_delta_best(DeltaCaptureContext::from_bodies(proposed, approved)) {
-        Ok(delta) => (Some(delta), Vec::new()),
-        Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
+    match measured_amendment_in_txn(vault, txn, claim, reviewed_at, proposed) {
+        Ok(Some(delta)) => (Some(delta), Vec::new()),
+        Ok(None) | Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
     }
+}
+
+/// Both ends as their refs name them, the landed body read back from the
+/// write; `None` when either revision is not retained.
+fn measured_amendment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
+    proposed: &[u8],
+) -> Result<Option<AmendmentDelta>> {
+    let (Some(reviewed_at), Some(landed_at)) = (
+        reviewed_at?,
+        live_revision_in_txn(&vault.store, txn, *claim)?,
+    ) else {
+        return Ok(None);
+    };
+    let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
+        return Ok(None);
+    };
+    let landed = approved_body(&crate::claim::decode_claim_body(&raw.body, true)?)?;
+    let context = DeltaCaptureContext::from_bodies(
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, reviewed_at),
+            content: proposed,
+        },
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, landed_at),
+            content: &landed,
+        },
+    );
+    Ok(capture_delta_best(context).ok())
 }
 
 /// The claim body as the door will persist it. Approval is the ENGINE's to
