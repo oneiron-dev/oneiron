@@ -1592,7 +1592,7 @@ class Oneiron:
         def digest(self) -> "Oneiron._VaultWeaveDigestVerbs":
             return Oneiron._VaultWeaveDigestVerbs(self._client)
         def lens(self, spec):
-            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
+            """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events."""
             return json.loads(_translate(lambda: self._client.vault_weave_lens(json.dumps(spec))))
         @property
         def link(self) -> "Oneiron._VaultWeaveLinkVerbs":

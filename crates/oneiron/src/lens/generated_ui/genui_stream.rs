@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::genui_decode::unsupported_fallback;
+use super::genui_decode::GeneratedUiSegmentHead;
 use super::genui_heal::heal_cut_json;
 use super::genui_json_patch::{GeneratedUiJsonPatchOperation, apply_json_patch, diff_json};
 use super::{
@@ -371,8 +371,10 @@ impl GeneratedUiStream {
     /// turns the stream into its fallback text, and every later line is
     /// left unread; a line that is no segment is kept as free text.
     pub fn push_json(&mut self, line: &str) -> Result<()> {
-        let value = match serde_json::from_str::<Value>(line) {
-            Ok(value) if value.get("segment").is_some_and(Value::is_string) => value,
+        // The first pass reads the segment name and the payload's version
+        // and fallback text only; the rest of the line is skipped unread.
+        let head = match serde_json::from_str::<GeneratedUiSegmentHead>(line) {
+            Ok(head) if head.segment.is_some() => head,
             _ => {
                 if !self.text.is_empty() {
                     self.text.push('\n');
@@ -384,13 +386,12 @@ impl GeneratedUiStream {
         if matches!(self.phase, Phase::Fallback(_)) {
             return Ok(());
         }
-        let payload = value.get("payload").unwrap_or(&Value::Null);
-        if let Some(version) = payload.get("protocolVersion").and_then(Value::as_u64)
+        if let Some(version) = head.payload.protocol_version()
             && version != u64::from(GENERATED_UI_WIRE_VERSION)
         {
             if matches!(self.phase, Phase::Awaiting)
-                && value.get("segment").and_then(Value::as_str) == Some("card_start")
-                && let Some(fallback) = unsupported_fallback(payload, "card_start")?
+                && head.segment.as_deref() == Some("card_start")
+                && let Some(fallback) = head.payload.unsupported_fallback("card_start")?
             {
                 self.phase = Phase::Fallback(fallback);
                 return Ok(());
@@ -399,7 +400,7 @@ impl GeneratedUiStream {
                 "unsupported generated-ui wire version {version}"
             )));
         }
-        let segment = serde_json::from_value::<GeneratedUiSegment>(value)
+        let segment = serde_json::from_str::<GeneratedUiSegment>(line)
             .map_err(|error| Error::InvalidConfig(format!("generated-ui segment: {error}")))?;
         self.push(segment)
     }
@@ -413,12 +414,12 @@ impl GeneratedUiStream {
             return false;
         };
         let element = heal_cut_json(cut)
-            .and_then(|healed| serde_json::from_str::<Value>(&healed).ok())
-            .filter(|value| {
-                value.pointer("/payload/protocolVersion").and_then(Value::as_u64)
-                    == Some(u64::from(GENERATED_UI_WIRE_VERSION))
+            .filter(|healed| {
+                serde_json::from_str::<GeneratedUiSegmentHead>(healed).is_ok_and(|head| {
+                    head.payload.protocol_version() == Some(u64::from(GENERATED_UI_WIRE_VERSION))
+                })
             })
-            .and_then(|value| serde_json::from_value::<GeneratedUiSegment>(value).ok());
+            .and_then(|healed| serde_json::from_str::<GeneratedUiSegment>(&healed).ok());
         if let Some(GeneratedUiSegment::CardElement(element)) = element
             && element.card_id == arriving.start.card_id
             && !arriving.ids.contains(element.node.id.as_str())

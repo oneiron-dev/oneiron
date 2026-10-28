@@ -60,7 +60,7 @@ pub(super) fn apply_json_patch(
                 add(&mut patched, path, value)?;
             }
             GeneratedUiJsonPatchOperation::Test { path, value } => {
-                if target(&patched, path)? != value {
+                if !json_equal(target(&patched, path)?, value) {
                     return Err(invalid(format!("test failed at {path}")));
                 }
             }
@@ -68,6 +68,60 @@ pub(super) fn apply_json_patch(
     }
     *document = patched;
     Ok(())
+}
+
+/// RFC-6902 §4.6 equality: numbers are equal when their values are, an
+/// integer and a float included; arrays element by element; objects member
+/// by member, in any order. No integer is converted to a float.
+fn json_equal(left: &Value, right: &Value) -> bool {
+    match (left, right) {
+        (Value::Number(left), Value::Number(right)) => numbers_equal(left, right),
+        (Value::Array(left), Value::Array(right)) => {
+            left.len() == right.len()
+                && left
+                    .iter()
+                    .zip(right)
+                    .all(|(left, right)| json_equal(left, right))
+        }
+        (Value::Object(left), Value::Object(right)) => {
+            left.len() == right.len()
+                && left.iter().all(|(key, left)| {
+                    right
+                        .get(key)
+                        .is_some_and(|right| json_equal(left, right))
+                })
+        }
+        _ => left == right,
+    }
+}
+
+enum Numeric {
+    Integer(i128),
+    Float(f64),
+}
+
+fn numeric(number: &serde_json::Number) -> Option<Numeric> {
+    if let Some(integer) = number.as_i64() {
+        return Some(Numeric::Integer(i128::from(integer)));
+    }
+    if let Some(integer) = number.as_u64() {
+        return Some(Numeric::Integer(i128::from(integer)));
+    }
+    number.as_f64().map(Numeric::Float)
+}
+
+fn numbers_equal(left: &serde_json::Number, right: &serde_json::Number) -> bool {
+    match (numeric(left), numeric(right)) {
+        (Some(Numeric::Integer(left)), Some(Numeric::Integer(right))) => left == right,
+        (Some(Numeric::Float(left)), Some(Numeric::Float(right))) => left == right,
+        (Some(Numeric::Integer(integer)), Some(Numeric::Float(float)))
+        | (Some(Numeric::Float(float)), Some(Numeric::Integer(integer))) => {
+            // Exact: a float equals an integer only when it is that whole
+            // number; every whole float below 2^127 converts to i128 exactly.
+            float.fract() == 0.0 && float.abs() < 2f64.powi(127) && float as i128 == integer
+        }
+        _ => false,
+    }
 }
 
 /// One RFC-6901 reference token, escaped.

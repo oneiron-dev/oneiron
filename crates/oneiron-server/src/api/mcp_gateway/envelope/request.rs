@@ -40,16 +40,15 @@ pub(crate) async fn handle_mcp_request(
                     .await?
                     .toward(peer);
             // The generated-UI profile the client declares (FIX 7969),
-            // answered back as negotiated. This endpoint keeps no session:
-            // each call names its profile again in `_meta.clientCapabilities`.
+            // answered back as negotiated (`null`: none this build reads).
+            // This endpoint keeps no session: each call names its profile
+            // again in `_meta.clientCapabilities`.
             let declared = super::super::client_surface::declared_surface(
                 request
                     .params
                     .as_ref()
                     .and_then(|params| params.get("capabilities")),
-                "params.capabilities",
-                "invalid_params",
-            )?;
+            );
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
             let result = json!({
@@ -157,7 +156,7 @@ pub(crate) async fn handle_mcp_request(
                     let actor = McpCallContext {
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
-                        client_surface: params.client_surface()?,
+                        client_surface: params.client_surface(),
                         ..actor.clone()
                     };
                     let args =

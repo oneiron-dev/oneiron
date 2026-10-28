@@ -4,8 +4,8 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4187 declarations.
-Inputs: 1095 of 1161 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1161 facade rows, 4188 declarations.
+Inputs: 1094 of 1161 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1038 of 1161 fully typed, 123 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
@@ -4646,6 +4646,21 @@ class WeaveDigestView(TypedDict):
     narrowing: ScopedReadReceipt
     lens: NotRequired[LensFrameCard | None]
     lens_refused: NotRequired[WeaveLensRefusal | None]
+GeneratedUiPrimitive = Literal["text_block", "ledger_row", "claim_line", "status_dot", "seal", "meta_line", "dossier_section", "thread_entry", "sheet", "slip", "receipt", "charter", "postmark", "pack_line", "answer_sheet", "two_clocks", "neighborhood_graph", "asof_scrubber", "throbber", "voice_line", "quick_filter", "inspector_sheet", "inspector_rail", "inspector_trail", "self_ui", "media", "result_set", "component"]
+class GeneratedUiComponentSchema(TypedDict):
+    name: str
+    schema: NotRequired[Any]
+GeneratedUiStreamProfile = Literal["full_model", "patch"]
+class GeneratedUiSurfaceCapabilities(TypedDict):
+    catalog: GeneratedUiCatalog
+    catalogVersion: NotRequired[GeneratedUiCatalogVersion]
+    maxCatalogVersion: NotRequired[int]
+    primitives: NotRequired[list[GeneratedUiPrimitive]]
+    components: NotRequired[list[GeneratedUiComponentSchema]]
+    stream: NotRequired[GeneratedUiStreamProfile]
+class WeaveLensRequest(TypedDict):
+    sections: list[WeaveSectionInput]
+    surface: NotRequired[GeneratedUiSurfaceCapabilities | None]
 class WeaveWrongLinkRequest(TypedDict):
     source_ref: str
     kind: str
@@ -10299,18 +10314,6 @@ class LensResultSetActionResult(TypedDict):
 class LensDossierSource(TypedDict):
     entity_ref: str
     title: str
-GeneratedUiPrimitive = Literal["text_block", "ledger_row", "claim_line", "status_dot", "seal", "meta_line", "dossier_section", "thread_entry", "sheet", "slip", "receipt", "charter", "postmark", "pack_line", "answer_sheet", "two_clocks", "neighborhood_graph", "asof_scrubber", "throbber", "voice_line", "quick_filter", "inspector_sheet", "inspector_rail", "inspector_trail", "self_ui", "media", "result_set", "component"]
-class GeneratedUiComponentSchema(TypedDict):
-    name: str
-    schema: NotRequired[Any]
-GeneratedUiStreamProfile = Literal["full_model", "patch"]
-class GeneratedUiSurfaceCapabilities(TypedDict):
-    catalog: GeneratedUiCatalog
-    catalogVersion: NotRequired[GeneratedUiCatalogVersion]
-    maxCatalogVersion: NotRequired[int]
-    primitives: NotRequired[list[GeneratedUiPrimitive]]
-    components: NotRequired[list[GeneratedUiComponentSchema]]
-    stream: NotRequired[GeneratedUiStreamProfile]
 class LensDefaultRequest(TypedDict):
     title: str
     ledger: NotRequired[list[str]]

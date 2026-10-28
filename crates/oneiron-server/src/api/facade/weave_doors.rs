@@ -18,7 +18,7 @@ use oneiron::claim::{
     WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
 };
 use oneiron::inbox::InboxGroup;
-use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard};
+use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard, WeaveLensRequest};
 use oneiron::memory::DreamerAttemptRef;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
@@ -169,14 +169,15 @@ fn owner_lens(
 /// the caller's own line. A run-held render (`owner`, FIX 2612) holds its
 /// card for its creating run and subscription, replacing the card that run
 /// last rendered for it; any other holds it unowned. The card is lowered
-/// for `client_surface`, the profile the caller's MCP call declared (FIX
-/// 7969), else for the whole atom kit.
+/// for the surface the call names (FIX 7969: its input's own `surface`,
+/// else `client_surface`, the profile its MCP call declared), else for the
+/// whole atom kit.
 pub(crate) async fn vault_weave_lens(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     owner: Option<CardOwner>,
     client_surface: Option<GeneratedUiSurfaceCapabilities>,
-    input: WeaveReportRequest,
+    input: WeaveLensRequest,
 ) -> Listed<LensFrameCard> {
     const VERB: &str = "vault.weave.lens";
     if let Err(refusal) = super::owner_binding::host_preflight(server, auth) {
@@ -196,6 +197,10 @@ pub(crate) async fn vault_weave_lens(
         auth: auth.clone(),
         actor,
         class,
+    };
+    let client_surface = input.surface.or(client_surface);
+    let input = WeaveReportRequest {
+        sections: input.sections,
     };
     match owner {
         Some(owner) => {

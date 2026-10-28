@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4237 declarations.
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4238 declarations.
 // Replies: 1086 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 107; unread shapes: none.
@@ -919,6 +919,11 @@ declare namespace Sdk {
   type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens };
   type WeaveLensRefusal = { reason: string; skill_ref: string; skill_version: string; model: string; refused_at: number };
   type WeaveDigestView = { scheduled_for: number; rendered_at: number; sections: WeaveSectionView[]; narrowing: ScopedReadReceipt; lens?: LensFrameCard | null; lens_refused?: WeaveLensRefusal | null };
+  type GeneratedUiPrimitive = "text_block" | "ledger_row" | "claim_line" | "status_dot" | "seal" | "meta_line" | "dossier_section" | "thread_entry" | "sheet" | "slip" | "receipt" | "charter" | "postmark" | "pack_line" | "answer_sheet" | "two_clocks" | "neighborhood_graph" | "asof_scrubber" | "throbber" | "voice_line" | "quick_filter" | "inspector_sheet" | "inspector_rail" | "inspector_trail" | "self_ui" | "media" | "result_set" | "component";
+  type GeneratedUiComponentSchema = { name: string; schema?: unknown };
+  type GeneratedUiStreamProfile = "full_model" | "patch";
+  type GeneratedUiSurfaceCapabilities = { catalog: GeneratedUiCatalog; catalogVersion?: GeneratedUiCatalogVersion; maxCatalogVersion?: number; primitives?: GeneratedUiPrimitive[]; components?: GeneratedUiComponentSchema[]; stream?: GeneratedUiStreamProfile };
+  type WeaveLensRequest = { sections: WeaveSectionInput[]; surface?: GeneratedUiSurfaceCapabilities | null };
   type WeaveWrongLinkRequest = { source_ref: string; kind: string; target_ref: string };
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
@@ -2096,10 +2101,6 @@ declare namespace Sdk {
   type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string };
   type LensResultSetActionResult = { outcome: unknown; readReceipt: ScopedReadReceipt };
   type LensDossierSource = { entity_ref: string; title: string };
-  type GeneratedUiPrimitive = "text_block" | "ledger_row" | "claim_line" | "status_dot" | "seal" | "meta_line" | "dossier_section" | "thread_entry" | "sheet" | "slip" | "receipt" | "charter" | "postmark" | "pack_line" | "answer_sheet" | "two_clocks" | "neighborhood_graph" | "asof_scrubber" | "throbber" | "voice_line" | "quick_filter" | "inspector_sheet" | "inspector_rail" | "inspector_trail" | "self_ui" | "media" | "result_set" | "component";
-  type GeneratedUiComponentSchema = { name: string; schema?: unknown };
-  type GeneratedUiStreamProfile = "full_model" | "patch";
-  type GeneratedUiSurfaceCapabilities = { catalog: GeneratedUiCatalog; catalogVersion?: GeneratedUiCatalogVersion; maxCatalogVersion?: number; primitives?: GeneratedUiPrimitive[]; components?: GeneratedUiComponentSchema[]; stream?: GeneratedUiStreamProfile };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null; surface?: GeneratedUiSurfaceCapabilities | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
@@ -7222,8 +7223,8 @@ declare const vault: Sdk.VaultHost & {
       /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
       wrong(input: Sdk.WeaveWrongItemRequest): Promise<Sdk.WeaveItemCorrectionView | StoredResult>;
     };
-    /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
-    lens(input: Sdk.WeaveReportRequest): Promise<Sdk.LensFrameCard | StoredResult>;
+    /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions, lowered for the surface the call names; the server holds its frame for the card's events. */
+    lens(input: Sdk.WeaveLensRequest): Promise<Sdk.LensFrameCard | StoredResult>;
     link: {
       /** Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link. */
       corrections(input: Sdk.WeaveWrongLinkRequest): Promise<Sdk.WeaveLinkCorrectionView[] | StoredResult>;
