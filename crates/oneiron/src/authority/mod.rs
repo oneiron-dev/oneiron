@@ -355,7 +355,8 @@ use machine_profile::{
 };
 pub(crate) use machine_write::{
     evidence_without_machine_signature, machine_claim_needs_history, machine_claim_read_admitted,
-    machine_history_authority_descends, machine_history_host_context, verify_machine_claim_in_txn,
+    machine_history_authority_descends, machine_history_host_context,
+    resign_machine_claim_after_mask_in_txn, verify_machine_claim_in_txn,
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;

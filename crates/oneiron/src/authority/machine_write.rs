@@ -214,6 +214,57 @@ impl Vault {
     }
 }
 
+/// The write door's secret mask (`batch::secret_scan::mask_batch_ops`) rewrites a
+/// candidate's value, evidence and scope inside the write transaction, after the
+/// writer signed the unmasked bytes; admission verifies what is stored. So a
+/// MACHINE candidate the mask touched is signed again here over its post-mask
+/// body, with the signer the host retained for its actor. A candidate the mask
+/// did not touch signs to the same bytes and keeps its proof. Without a retained
+/// signer for the proof's key the envelope is left as it is, and admission
+/// decides as before.
+pub(crate) fn resign_machine_claim_after_mask_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    candidate: &ClaimCandidate,
+    envelope: &mut WriteEnvelope,
+    facet: EntityId,
+) -> Result<()> {
+    let Some(proof) = envelope.machine_signature() else {
+        return Ok(());
+    };
+    if envelope.actor().actor_class() != EdgeActorClass::System {
+        return Ok(());
+    }
+    let signer = store
+        .machine_write_signers
+        .lock()
+        .map_err(|_| Error::InvariantViolation("machine signer lock poisoned"))?
+        .get(&envelope.actor().entity_ref())
+        .cloned();
+    let Some((public_key, sign)) = signer else {
+        return Ok(());
+    };
+    if public_key != proof.public_key {
+        return Ok(());
+    }
+    let Some(vault_id) =
+        super::authority_fold_readonly_for_store_in_txn(store, store.privacy_posture, txn)?
+            .vault_id
+    else {
+        return Ok(());
+    };
+    let body = candidate.clone().into_claim_body(envelope, facet)?;
+    let signature = sign(&machine_claim_transcript(&vault_id, id, &body)?)?;
+    if signature != proof.signature {
+        *envelope = envelope.clone().with_machine_signature(MachineWriteSignature {
+            public_key,
+            signature,
+        });
+    }
+    Ok(())
+}
+
 /// A claim's evidence without the MACHINE signature that binds it.
 pub(crate) fn evidence_without_machine_signature(body: &ClaimBody) -> Option<Value> {
     let mut evidence = body.evidence.clone();
