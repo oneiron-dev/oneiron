@@ -219,13 +219,9 @@ impl DecisionModel for LocalVisionModel {
         let response = self.runtime.block_on(async {
             tokio::time::timeout(
                 time_left,
-                admitted.ladder.generate_within(
-                    &run,
-                    admitted.request,
-                    None,
-                    &|| true,
-                    time_left,
-                ),
+                admitted
+                    .ladder
+                    .generate_within(&run, admitted.request, None, &|| true, time_left),
             )
             .await
             .unwrap_or_else(|_| Err(RetryableLlmError::Timeout.into()))
