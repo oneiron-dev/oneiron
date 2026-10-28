@@ -77,6 +77,8 @@ pub(crate) use self::identity::{
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
 pub(crate) use self::kept_images::{BodyLease, ImageHolder, InstanceLeases};
 pub(crate) use self::outbox::OutboxTarget;
+// The custody directory's name, for a host's restore destination (FIX 6582).
+pub use self::files::custody_container_path;
 // The one portable directory flush, for the training outbox too (FIX 6880).
 pub use self::platform::sync_dir;
 pub(crate) use self::publication_policy::TargetRecipients;
