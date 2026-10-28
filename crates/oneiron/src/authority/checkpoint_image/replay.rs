@@ -221,7 +221,7 @@ impl ReplayEvidence {
                     let whole = match wholes.get(&base) {
                         Some(whole) => whole,
                         None => match kept.get(&base) {
-                            Some(ReplayPoint::Full(whole)) => whole,
+                            Some(ReplayPoint::Full(whole)) => &**whole,
                             _ => return None,
                         },
                     };
