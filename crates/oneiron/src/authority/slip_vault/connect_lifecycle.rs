@@ -162,7 +162,13 @@ impl Vault {
                 }
                 return Ok((state, counter));
             }
-            // The epoch's opening key enters custody with the re-pact it keys.
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+            let repacted = pact(
+                &*self.authority_view_readonly_in_txn(txn)?,
+                &offered.offer.pact_id,
+            )?;
+            // The epoch's opening key enters custody with the re-pact it
+            // keys, once the fold admitted it.
             grant_scope_custody::install_scope_key(
                 &self.store,
                 txn,
@@ -171,14 +177,7 @@ impl Vault {
                 offered.epoch,
                 offered.offer.scope_key.expose(),
             )?;
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
-            Ok((
-                pact(
-                    &*self.authority_view_readonly_in_txn(txn)?,
-                    &offered.offer.pact_id,
-                )?,
-                counter,
-            ))
+            Ok((repacted, counter))
         })
     }
 

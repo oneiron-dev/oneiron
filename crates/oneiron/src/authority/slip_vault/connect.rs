@@ -322,7 +322,15 @@ impl Vault {
             if let Some(pact) = logged {
                 return Ok((pact.clone(), counter));
             }
-            // The opening key enters custody with the Connect it keys.
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+            let pact = self
+                .authority_view_readonly_in_txn(txn)?
+                .federation_pacts
+                .get(&offer.pact_id)
+                .cloned()
+                .ok_or_else(invalid_authority)?;
+            // The opening key enters custody with the Connect it keys, once
+            // the fold admitted it.
             grant_scope_custody::install_scope_key(
                 &self.store,
                 txn,
@@ -331,13 +339,6 @@ impl Vault {
                 1,
                 offer.scope_key.expose(),
             )?;
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
-            let pact = self
-                .authority_view_readonly_in_txn(txn)?
-                .federation_pacts
-                .get(&offer.pact_id)
-                .cloned()
-                .ok_or_else(invalid_authority)?;
             Ok((pact, counter))
         })
     }

@@ -20,7 +20,7 @@ use crate::error::{Error, Result, StoreError};
 use crate::store::Store;
 use crate::store::key_custody::{
     CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose,
-    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+    erasable_refs_of_in_txn, put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
 };
 
 /// The context a pact id and epoch derive a key incarnation under.
@@ -56,12 +56,14 @@ pub(crate) fn new_scope_key() -> Result<Zeroizing<[u8; 32]>> {
 /// Installs `key` as the opening of `grant`'s pact `pact_id` at `epoch` in
 /// `w`, the writer that logs what it keys, with the custody binding pinned
 /// there: synced and journaled before this returns. The same key already
-/// held is kept (a retry); another key for the same epoch, or a retired
-/// one, is refused, never installed.
+/// held is kept (a retry). A key for the epoch that no committed writer
+/// named, an aborted accept's orphan, never blocks a retry: one with the
+/// same bytes is taken up, another is staged to retire. Only a committed
+/// key with other bytes, or a retired one, is refused.
 ///
 /// # Errors
 /// An archived vault, whose custody is its replacement's; another or a
-/// retired key for the epoch; custody faults.
+/// retired committed key for the epoch; custody faults.
 pub(crate) fn install_scope_key(
     s: &Store,
     w: &mut RwTxn<'_>,
@@ -76,21 +78,33 @@ pub(crate) fn install_scope_key(
     s.core.key_custody.pin_in_txn(s, w)?;
     let custody = s.core.key_custody.bind_in_txn(s, &*w)?;
     let incarnation = incarnation(pact_id, epoch);
-    let held = custody
-        .erasable_keys_of(ErasablePurpose::GrantScope, grant.as_bytes())?
-        .into_iter()
-        .find(|item| item.incarnation == incarnation);
+    let committed =
+        erasable_refs_of_in_txn(s, &*w, ErasablePurpose::GrantScope, grant.as_bytes())?;
     let secret = CustodySecret::from_bytes(Zeroizing::new(key.to_vec()));
+    let mut held = None;
+    for item in custody.erasable_keys_of(ErasablePurpose::GrantScope, grant.as_bytes())? {
+        if item.incarnation != incarnation {
+            continue;
+        }
+        let state = custody.erasable_state(&item)?;
+        let same = state == EntryState::Live
+            && custody.read_erasable(&item)?.expose() == secret.expose();
+        if committed.contains(&item) {
+            match state {
+                EntryState::Live if !same => return Err(unknown_key()),
+                EntryState::Retired => return Err(unknown_key()),
+                _ => held = Some(item),
+            }
+        } else if same && held.is_none() {
+            held = Some(item);
+        } else if state == EntryState::Live {
+            stage_erasable_retirement_in_txn(s, w, &custody, &item)?;
+        }
+    }
     let item = match held {
         Some(item) => {
-            match custody.erasable_state(&item)? {
-                EntryState::Live => {
-                    if custody.read_erasable(&item)?.expose() != secret.expose() {
-                        return Err(unknown_key());
-                    }
-                }
-                EntryState::Retired => return Err(unknown_key()),
-                EntryState::Missing => custody.install_erasable(&item, &secret)?,
+            if custody.erasable_state(&item)? == EntryState::Missing {
+                custody.install_erasable(&item, &secret)?;
             }
             item
         }
