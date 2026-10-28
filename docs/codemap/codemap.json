@@ -29007,7 +29007,7 @@
      "path": "src/edit_distance/attribution/stored.rs",
      "purpose": "Stored rows: key shapes, row shapes, and the row codec",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
@@ -29018,6 +29018,7 @@
       "AmendmentEvidence",
       "AmendmentJudgment",
       "AmendmentShare",
+      "HunkLabel",
       "PreferenceProposal"
      ],
      "path": "src/edit_distance/attribution/taxonomy.rs",
@@ -29026,7 +29027,7 @@
       "crate-vis": 3,
       "enum": 1,
       "fn": 13,
-      "struct": 4,
+      "struct": 5,
       "type": 1
      }
     },
@@ -29134,11 +29135,11 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/escalation/ledger.rs",
-     "purpose": "Escalation write doors, N dial, per-scope stats",
+     "purpose": "Escalation write doors, the N threshold, per-scope stats",
      "surface": {
-      "const": 2,
+      "const": 1,
       "crate-vis": 3,
-      "fn": 4
+      "fn": 3
      }
     },
     {
@@ -29159,7 +29160,8 @@
      "path": "src/edit_distance/escalation/policy.rs",
      "purpose": "Standing-policy proposal, read seam, and owner accept",
      "surface": {
-      "crate-vis": 3,
+      "const": 1,
+      "crate-vis": 4,
       "fn": 3
      }
     },
@@ -29314,10 +29316,10 @@
      "kind": "src",
      "notable": [],
      "path": "src/edit_distance/miner/config.rs",
-     "purpose": "ED-04 miner dials, pinned keys, labels and the tone lexicon",
+     "purpose": "ED-04 miner pinned keys, labels and the tone lexicon",
      "surface": {
-      "const": 3,
-      "crate-vis": 29
+      "const": 1,
+      "crate-vis": 28
      }
     },
     {
@@ -29334,11 +29336,31 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/edit_distance/miner/erase.rs",
+     "purpose": "A reviewed claim's teaching copies go with it (FIX 9805)",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/edit_distance/miner/feedback.rs",
      "purpose": "Immutable, owner-bound decisions used by the preference miner",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/edit_distance/miner/hunks.rs",
+     "purpose": "Per-hunk mining of a partly unclear amendment (FIX 9808)",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -29360,7 +29382,7 @@
      "purpose": "ED-04 substitution-cluster mining pass",
      "surface": {
       "crate-vis": 2,
-      "fn": 9
+      "fn": 8
      }
     },
     {
@@ -29370,7 +29392,7 @@
      "path": "src/edit_distance/miner/mod.rs",
      "purpose": "ED-04 (ONE-1760, ARCH-0056 §4): the recurring-substitution miner — the Dreamer session-end pass that turns a…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "re-export": 7
      }
     },
@@ -29633,10 +29655,24 @@
      "path": "src/edit_distance/reservoir.rs",
      "purpose": "ED-09 (ONE-1765, ARCH-0056 §10–11): the SFT/DPO reservoir — every amendment the decider made, projected into…",
      "surface": {
-      "const": 8,
+      "const": 10,
       "crate-vis": 1,
       "fn": 3,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CorpusUse"
+     ],
+     "path": "src/edit_distance/reservoir/eligibility.rs",
+     "purpose": "FIX 9796, 10194: which scoped pairs a corpus carries",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -34306,6 +34342,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/gate/edit_distance_thresholds.rs",
+     "purpose": "The edit-distance learning thresholds as policy value rows (FIX 9802, 9809): the agreeing rulings that earn…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/gate/effect/admitted_approval.rs",
      "purpose": "The owner's one-send press a send's admission records on its ledger row (FIX 6362; an L12-B seam the Engine…",
      "surface": {
@@ -34484,7 +34530,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 66,
+      "crate-vis": 67,
       "mod": 1,
       "re-export": 8
      }
@@ -63258,7 +63304,7 @@
      "path": "src/skill_reliability/rule_outcome.rs",
      "purpose": "Outcomes of a rule skill (FIX 8075): a closed-form recipe with no model and no pack receipt behind its work…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -79471,7 +79517,7 @@
      "purpose": "Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`"
     },
     "edit_distance": {
-     "files": 69,
+     "files": 72,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -79576,7 +79622,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80474,7 +80520,7 @@
    },
    "over_bar": 118,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5341,
+   "source_files": 5345,
    "test_files": 902
   },
   "oneiron-android": {
