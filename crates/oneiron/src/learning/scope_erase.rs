@@ -3,9 +3,10 @@
 //! the cell's digest: its subject index, evidence and stored prior. Each
 //! learning head scoped to it is retracted and re-keyed to one fresh opaque
 //! scope, and a surviving prior or head whose borrowed provenance names the
-//! erased scope loses that provenance, keeping its measurement. No stored
-//! key or body still derives from the erased id. Vault cells and every
-//! other project's stay as they are.
+//! erased scope loses that provenance, keeping its measurement. The owner's
+//! setting and choice rows over the project and every setting fit keyed by
+//! it are deleted. No stored key or body still derives from the erased id.
+//! Vault cells and every other project's stay as they are.
 
 use std::collections::BTreeSet;
 
@@ -80,6 +81,10 @@ pub(crate) fn erase_learning_scope_in_txn(
             }
         }
     }
+    // The owner's rows over the project and every fit keyed by it go too,
+    // even where no cell is left.
+    crate::learning_setting::erase_setting_scope_in_txn(vault, wtxn, entity)?;
+    crate::learning_setting_choice::erase_choice_scope_in_txn(vault, wtxn, entity)?;
     let named = entity.to_hex();
     clear_prior_provenance_in_txn(vault, wtxn, &named)?;
     rescope_heads_in_txn(vault, wtxn, *entity, &named)

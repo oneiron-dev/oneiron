@@ -21,8 +21,8 @@ use crate::agent_dispatch::{CoordinationPattern, LivePlanRequest, SpawnNeed, Spa
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning_setting::{
-    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, read_scopes_in_txn,
-    scoped_row_key,
+    SettingMode, SettingScope, check_row_terms, names_no_actor, parse_row_key, project_row_keys,
+    read_scopes_in_txn, scoped_row_key,
 };
 use crate::llm::ModelId;
 use crate::receipt::ERASED_CALL_IDENTITY;
@@ -228,6 +228,29 @@ pub(crate) fn erase_choice_actor_in_txn(
     }
     for (key, row) in rows {
         CHOICE.put(&vault.store, wtxn, &key, &row)?;
+    }
+    Ok(())
+}
+
+/// Erasing `project` from the owner's choice rows (FIX 6038): every seed and
+/// pin laid over that project goes, whoever set it; rows over the vault, a
+/// goal, a type or another project stay. A key that does not parse is passed
+/// over with a WARN, never an abort.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_choice_scope_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    project: &EntityId,
+) -> Result<()> {
+    let rows = CHOICE
+        .iter_raw_from(&vault.store, wtxn, &[])?
+        .map(|row| row.map(|(key, _)| key))
+        .collect::<Result<Vec<_>>>()?;
+    for key in project_row_keys(rows, project, "choice") {
+        CHOICE.delete(&vault.store, wtxn, &key)?;
     }
     Ok(())
 }

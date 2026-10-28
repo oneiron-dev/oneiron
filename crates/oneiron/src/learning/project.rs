@@ -513,11 +513,10 @@ fn retract_heads_in_txn(
 
 /// Keeps the fit cache in step with the claim, one row per scope: only a
 /// root-typed setting cell on its knob's global subject
-/// (`learning_setting::global_setting_subject`), with no executor, axis or
-/// consent scope, is the vault's fit. A project's or a skill's cell, or a
-/// non-root type's, caches under its own subject and type, so it never writes
-/// or clears the vault's (OF-542). A project-scoped cell (FIX 6038) caches
-/// nothing here: its key would not name its scope.
+/// (`learning_setting::global_setting_subject`), with no project, executor,
+/// axis or consent scope, is the vault's fit. A project's cell (FIX 6038), a
+/// skill's, or a non-root type's caches under its own project, subject and
+/// type, so it never writes or clears the vault's (OF-542).
 fn cache_setting_fit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -529,7 +528,6 @@ fn cache_setting_fit_in_txn(
         || cell.executor.is_some()
         || cell.axis.is_some()
         || cell.consent_scope.is_some()
-        || cell.project.is_some()
     {
         return Ok(());
     }
@@ -540,7 +538,8 @@ fn cache_setting_fit_in_txn(
         != Some(cell.subject))
     .then_some(cell.subject);
     let type_node = (!type_ref.is_root()).then_some(type_ref.node_id.as_str());
-    let key = crate::learning_setting::setting_fit_key(setting_key, subject, type_node);
+    let key =
+        crate::learning_setting::setting_fit_key(setting_key, cell.project, subject, type_node);
     match estimate {
         Some(estimate) => SETTING_FIT.put(
             &vault.store,

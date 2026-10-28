@@ -5,10 +5,11 @@
 //! rather than canon: each matched check on one adjacent used edge of a
 //! credited run is one observation, recorded as a `learning.setting` check
 //! on the scope the shared resolver reads
-//! ([`crate::learning_setting::setting_value_in_scope_in_txn`]): the run's
-//! project when it names one, else the knob's vault-wide subject at the run's
-//! task type. An owner's pin or seed over that scope wins over the fit, and
-//! while no check is measured the decay stays as set.
+//! ([`crate::learning_setting::setting_value_in_scope_in_txn`]): on the
+//! knob's vault-wide subject at the run's task type, in the run's project
+//! when it names one (FIX 6038), else the vault's. An owner's pin or seed
+//! over that scope wins over the fit, and while no check is measured the
+//! decay stays as set.
 
 use super::contribution::{ContributionCheckRecord, contributed};
 use super::contribution_targets::ContributionTarget;
@@ -89,12 +90,9 @@ fn observe_in_txn(
     ) else {
         return Ok(());
     };
-    let subject = match fields.project {
-        Some(project) => project,
-        None => global_setting_subject(CREDIT_DECAY.key)?,
-    };
     let check = SettingCheck {
-        subject,
+        subject: global_setting_subject(CREDIT_DECAY.key)?,
+        project: fields.project,
         key: CREDIT_DECAY.key.to_owned(),
         type_ref: fields.type_ref.clone(),
         observed,
