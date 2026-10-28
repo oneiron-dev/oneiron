@@ -368,6 +368,9 @@ class OneironError(RuntimeError):
     wrong_root: dict[str, str] | None
     # The verb hook's stop; on PENDING_ASK `{"status": "pending", "invocation", "ask"}`.
     hook: dict[str, Any] | None
+    # When to call again, as the refusal's source said: seconds, and Unix-second resets.
+    retry_after: int | None
+    resets_at: tuple[int, ...] | None
     def __init__(
         self,
         code: str,
@@ -375,6 +378,8 @@ class OneironError(RuntimeError):
         suggestions: list[str],
         wrong_root: dict[str, str] | None = None,
         hook: dict[str, Any] | None = None,
+        retry_after: int | None = None,
+        resets_at: list[int] | None = None,
     ) -> None: ...
 
 class Oneiron:
