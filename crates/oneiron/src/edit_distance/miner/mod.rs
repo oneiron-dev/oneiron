@@ -84,6 +84,7 @@
 mod config;
 mod emission;
 mod feedback;
+mod hunks;
 mod influence;
 mod mining;
 mod model;
@@ -97,6 +98,7 @@ pub use self::config::{
 };
 pub use self::feedback::bind_amendment_preference_principal;
 pub(crate) use self::feedback::record_inbox_learning_in_txn;
+pub(in crate::edit_distance) use self::hunks::hunk_substitution_ref;
 pub use self::influence::mined_preferences_for_principal;
 pub(crate) use self::influence::{is_mined_preference, preference_receipts_in_force};
 pub use self::mining::{

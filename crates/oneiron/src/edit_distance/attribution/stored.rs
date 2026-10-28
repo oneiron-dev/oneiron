@@ -141,6 +141,16 @@ pub(super) struct StoredJudgment {
     /// is judged again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) attempt: Option<StoredAttempt>,
+    /// Each changed hunk's label and substitution identity, in text order; empty for an
+    /// amendment judged as one region (FIX 9808).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) hunks: Vec<StoredHunk>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct StoredHunk {
+    pub(super) class: String,
+    pub(super) substitution: Option<String>,
 }
 
 /// The amended attempt's pack receipt and the skill its pack loaded (hex).

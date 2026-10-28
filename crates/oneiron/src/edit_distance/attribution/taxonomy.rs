@@ -208,6 +208,19 @@ pub struct AmendmentJudgment {
     /// ED-01's measured edit mass for this amendment.
     pub d_norm: f32,
     pub at: u64,
+    /// Each changed hunk the host cut, in text order, as judged (FIX 9808).
+    /// Empty when the amendment was judged as one region.
+    pub hunks: Vec<HunkLabel>,
+}
+
+/// One changed hunk as judged: the label it stands at after the floor, and
+/// the identity of the substitution it made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HunkLabel {
+    pub class: AmendmentClass,
+    /// The miner's digest of the hunk's normalized substitution, `None` when
+    /// the hunk is not a substitution. An identity, never the hunk's text.
+    pub substitution_ref: Option<String>,
 }
 
 impl AmendmentJudgment {

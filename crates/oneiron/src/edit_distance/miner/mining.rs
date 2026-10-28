@@ -9,6 +9,7 @@ use super::config::{
     invalid,
 };
 use super::emission::emit_cluster;
+use super::hunks::MinableHunks;
 use super::model::{
     AmendmentSource, ArtifactIndex, Bucket, ClusterKey, MinedOutcome, MinerRun, MinerWatermark,
     Region, Substitution, SubstitutionClass, SubstitutionCluster,
@@ -19,7 +20,7 @@ use crate::edge::EdgeActorClass;
 use crate::edit_distance::FinalizedProposalText;
 use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
-    AmendmentClass, AmendmentJudgment, amendment_evidence, amendment_judgments,
+    AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
 use crate::edit_distance::delta::{DeltaSource, amendment_delta};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -268,12 +269,12 @@ fn clusters_from(
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
         // An unclear share HOLDS: its notes wait in the unclear ledger. The
-        // miner reads the whole corrected text and cannot tell an unclear
-        // hunk's substitutions from a clear one's, so any amendment with an
-        // unclear share is held whole until a re-judgment clears it.
-        if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
+        // judgment keeps each hunk's label, so an amendment with an unclear
+        // share mines only what its clear hunks made (FIX 9808), and is held
+        // whole when no clear hunk made a substitution.
+        let Some(minable) = MinableHunks::of(judgment) else {
             continue;
-        }
+        };
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };
@@ -301,6 +302,9 @@ fn clusters_from(
             continue;
         }
         for substitution in substitutions(source.delta_source, source.artifact) {
+            if !minable.admits(&substitution) {
+                continue;
+            }
             let target = binding.as_ref().map_or_else(Default::default, |_| {
                 super::policy::infer_target(
                     &policies,
