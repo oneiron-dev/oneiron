@@ -99,7 +99,17 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
-        let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
+        let ids = match self.put_authority_log_entries_or_pending_in_txn(&mut wtxn, entries)? {
+            super::history_admission::AuthorityPut::Stored(ids) => ids,
+            // The act rolls back; its rows stay as evidence only (FIX 2989).
+            super::history_admission::AuthorityPut::Pending(pending) => {
+                drop(wtxn);
+                let mut wtxn = self.store.env.write_txn()?;
+                super::history_admission::keep_pending_in_txn(&self.store, &mut wtxn, &pending)?;
+                wtxn.commit()?;
+                return Err(super::readonly_fold::history_required(&pending.request));
+            }
+        };
         wtxn.commit()?;
         watch.finish()?;
         // An owner home pick among them re-elected this node's MACRO home in
@@ -117,6 +127,23 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
     ) -> Result<Vec<EntityId>> {
+        match self.put_authority_log_entries_or_pending_in_txn(wtxn, entries)? {
+            super::history_admission::AuthorityPut::Stored(ids) => Ok(ids),
+            super::history_admission::AuthorityPut::Pending(pending) => {
+                Err(super::readonly_fold::history_required(&pending.request))
+            }
+        }
+    }
+
+    /// [`Self::put_authority_log_entries_in_txn`], with a batch the history
+    /// preflight keeps as evidence returned to the transaction owner
+    /// unstored (FIX 2989, [`super::history_admission`]): the owner rolls the
+    /// act back and keeps the evidence.
+    fn put_authority_log_entries_or_pending_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+    ) -> Result<super::history_admission::AuthorityPut> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
         // A key a handoff retired signs nothing new here (engine-crates-03).
@@ -174,7 +201,17 @@ impl Vault {
             });
         }
         if ops.is_empty() {
-            return Ok(ids);
+            return Ok(super::history_admission::AuthorityPut::Stored(ids));
+        }
+        // A batch of permissive rows whose fold past an adopted image needs
+        // history this vault does not hold is evidence, not log (FIX 2989).
+        if let Some(pending) = super::history_admission::pending_history_of_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            wtxn,
+            &staged,
+        )? {
+            return Ok(super::history_admission::AuthorityPut::Pending(pending));
         }
         // The door judges each row against the rows staged before it (H72),
         // so stage them parents first, each signer's by sequence and each
@@ -201,7 +238,7 @@ impl Vault {
             false,
             true,
         )?;
-        Ok(ids)
+        Ok(super::history_admission::AuthorityPut::Stored(ids))
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.

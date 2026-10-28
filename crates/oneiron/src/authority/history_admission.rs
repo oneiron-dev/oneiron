@@ -10,6 +10,10 @@
 //! Neither fold enters the authorization cache. Where the fold with them
 //! still needs history, or fails, the snapshot's own refusal stands, as
 //! before: an unknown never admits.
+//!
+//! A local append on a vault that adopted a checkpoint image runs the same
+//! fold with its batch in before it stores the batch ([`pending`], FIX
+//! 2989).
 
 use std::collections::BTreeMap;
 
@@ -20,6 +24,21 @@ use super::*;
 use crate::HostingPrivacyPosture;
 use crate::error::Result;
 use crate::store::Store;
+
+mod pending;
+
+pub(crate) use pending::{
+    PendingAuthorityHistory, keep_pending_in_txn, pending_history_of_in_txn,
+    pending_history_request_in_txn,
+};
+
+/// What a local append does with a batch (FIX 2989): stores it, or returns
+/// it to the transaction owner as evidence to keep, with the history its
+/// fold needs.
+pub(crate) enum AuthorityPut {
+    Stored(Vec<crate::EntityId>),
+    Pending(PendingAuthorityHistory),
+}
 
 /// What a door does where the fold with the arriving rows folded in does
 /// not answer (CALLS AUTHORITY_ADMISSION_UNKNOWN): the snapshot's own answer
