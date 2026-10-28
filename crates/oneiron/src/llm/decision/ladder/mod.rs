@@ -15,6 +15,7 @@ use serde_json::Value;
 mod providers;
 mod roles;
 mod runner;
+mod slots;
 
 pub use providers::{
     DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
@@ -295,6 +296,8 @@ pub(super) struct Readings {
     images: Vec<ImagePin>,
     /// The rule row the Rule rung answered from, when it did.
     rule: Option<HostRuleRef>,
+    /// What the last provider that answered costs per thousand units, as it knows it.
+    cost: Option<f64>,
 }
 
 /// A missing person reading never asks; it is not P(yes) = 0, it is no reading.

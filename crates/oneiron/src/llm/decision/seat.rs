@@ -15,6 +15,16 @@ use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
 
+/// Whether a call may send unit text off the host to a remote provider: under
+/// MANAGED posture, or under any posture once the owner opted in explicitly
+/// (ARCH-0076 #posture). The owner's explicit opt-in is the authority, never
+/// the deployment posture alone (WILL L06 03): a RELAY host holds no owner key
+/// and the text never passes through it, so RELAY is no bar to that opt-in.
+#[must_use]
+pub fn unit_text_may_leave_host(posture: HostingPrivacyPosture, remote_opt_in: bool) -> bool {
+    posture == HostingPrivacyPosture::Hosted || remote_opt_in
+}
+
 /// The remote call is never admitted on a light query or synchronous relay path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeatPhase {
@@ -48,8 +58,7 @@ impl SeatRequest {
         self.question
             .validate()
             .map_err(|_| FatalLlmError::InvalidRequest)?;
-        if !(self.posture == HostingPrivacyPosture::Hosted || self.remote_opt_in)
-            || self.posture == HostingPrivacyPosture::Relay
+        if !unit_text_may_leave_host(self.posture, self.remote_opt_in)
             || self.phase == SeatPhase::Light
             || !self.state.is_object()
         {
@@ -348,6 +357,7 @@ pub async fn decide_at_remote_seat(
             think_row: None,
             person_row: None,
             rule: None,
+            asked: None,
         },
         human_ask,
     })
