@@ -42,8 +42,8 @@
 //! # Unit and normal form
 //!
 //! The counts are CHARACTERS of the whitespace-collapsed text, the same unit
-//! as the recorded-ops lane: each word weighs its characters plus the one
-//! space (or terminator) after it. Re-indenting, re-spacing, blank lines and
+//! as the recorded-ops lane: each word weighs its characters, plus one per
+//! separator between words. Re-indenting, re-spacing, blank lines and
 //! re-wrapping change no word, so they are not edits, alone or next to a
 //! real one. Deliberately boring — this lane measures how much a decider
 //! changed, not how the text was laid out.
@@ -219,9 +219,9 @@ pub(in crate::edit_distance) fn collapse_whitespace(text: &str) -> String {
 struct Words {
     before: Side,
     after: Side,
-    /// `weights[id]`: the word's characters plus the one space after it, so
-    /// the words of a text weigh exactly what its collapsed form does, plus
-    /// one terminator.
+    /// `weights[id]`: the word's characters plus one for its separator. The
+    /// weighing doors count separators between words only, so no weighing
+    /// carries a trailing terminator.
     weights: Vec<u32>,
     /// `texts[id]`: the word itself, for the character pass.
     texts: Vec<String>,
@@ -273,27 +273,50 @@ impl Words {
         }
     }
 
+    /// The weight of `ids` as a contiguous run: characters plus the
+    /// separators between its words, with no trailing terminator.
     fn weight_of(&self, ids: &[u32]) -> u32 {
-        ids.iter().fold(0, |total: u32, id| {
+        let total = ids.iter().fold(0, |total: u32, id| {
             total.saturating_add(self.weights[*id as usize])
-        })
+        });
+        if ids.is_empty() {
+            total
+        } else {
+            total.saturating_sub(1)
+        }
     }
 
-    /// The weight of the words in `range` of `side` whose fate is `fate`.
+    /// The weight of the words in `range` of `side` whose fate is `fate`,
+    /// counting separators between words only.
     fn weight_in(&self, side: &Side, fates: &[Fate], range: Range<usize>, fate: Fate) -> u32 {
-        range
+        let trailing = side
+            .ids
+            .len()
+            .checked_sub(1)
+            .is_some_and(|end| range.contains(&end) && fates[end] == fate);
+        let total = range
             .filter(|at| fates[*at] == fate)
             .fold(0, |total: u32, at| {
                 total.saturating_add(self.weights[side.ids[at] as usize])
-            })
+            });
+        if trailing {
+            total.saturating_sub(1)
+        } else {
+            total
+        }
     }
 
     /// The characters of the words in `range` of `side` that did not move,
-    /// each followed by one space.
+    /// with one space between words and none after the text's last word.
     fn chars_in(&self, side: &Side, fates: &[Fate], range: Range<usize>) -> Vec<u32> {
+        let last = side.ids.len().checked_sub(1);
         range
             .filter(|at| fates[*at] != Fate::Moved)
-            .flat_map(|at| self.texts[side.ids[at] as usize].chars().chain([' ']))
+            .flat_map(|at| {
+                let word = &self.texts[side.ids[at] as usize];
+                let trailing = last.is_some_and(|end| at == end);
+                word.chars().chain(if trailing { None } else { Some(' ') })
+            })
             .map(u32::from)
             .collect()
     }

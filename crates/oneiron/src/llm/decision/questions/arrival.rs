@@ -137,6 +137,24 @@ pub(super) fn watch(
     QUESTION_WATCH.put(store, txn, &WatchKey { predicate, id }, &id)
 }
 
+/// Undoes [`watch`] for `record`, a question whose one version went with its
+/// erased answer (FIX 9918).
+pub(super) fn unwatch(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    record: &QuestionRecord,
+) -> Result<()> {
+    let id = record.definition.question.id;
+    for unit in &record.definition.units {
+        UNIT_WATCH.delete(store, txn, &(*unit, id))?;
+    }
+    if let Some(binding) = &record.definition.binding {
+        let predicate = predicate(&binding.source).to_owned();
+        QUESTION_WATCH.delete(store, txn, &WatchKey { predicate, id })?;
+    }
+    Ok(())
+}
+
 /// The key-prefix (bytes after the table's own declared prefix) matching every watcher
 /// registered for `predicate`.
 fn watch_key_prefix(predicate: &str) -> Vec<u8> {

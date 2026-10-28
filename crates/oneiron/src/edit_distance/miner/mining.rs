@@ -322,6 +322,7 @@ fn clusters_from(
                 &judgment.receipt_id,
                 source.skill,
                 binding.as_ref().map_or(judgment.at, |row| row.at),
+                false,
             );
         }
     }
@@ -329,7 +330,7 @@ fn clusters_from(
         if now.is_some_and(|now| !crate::claim::preference_evidence_in_force(row.at, now)) {
             continue;
         }
-        let pair = if let Some(text) = row.target.text() {
+        let (pair, unattributed) = if let Some(text) = row.target.text() {
             if !matches!(
                 row.outcome.as_str(),
                 "approved" | "approved_amended" | "rejected"
@@ -338,7 +339,7 @@ fn clusters_from(
             }
             // Explicit target text is the compiler instruction; no lexical
             // rule is inferred from an empty/insert-only/rejected delta.
-            (String::new(), text.to_owned())
+            ((String::new(), text.to_owned()), false)
         } else {
             if row.outcome != "approved_amended"
                 || judgments
@@ -350,7 +351,10 @@ fn clusters_from(
             let Some(pair) = row.substitution else {
                 continue;
             };
-            pair
+            (
+                pair,
+                row.target == super::target::CompilationTarget::Fallback,
+            )
         };
         let target = if row.target == super::target::CompilationTarget::Fallback {
             super::policy::infer_target(&policies, row.principal, &row.scope, &pair.0, &pair.1)
@@ -368,7 +372,7 @@ fn clusters_from(
         buckets
             .entry(key)
             .or_default()
-            .observe(&row.receipt, None, row.at);
+            .observe(&row.receipt, None, row.at, unattributed);
     }
     Ok(buckets
         .into_iter()

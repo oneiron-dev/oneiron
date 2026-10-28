@@ -255,20 +255,47 @@ async fn read(
                 StepOutcome::Trapped { .. } => return Ok(Reply::Trapped),
             }
         }
-        GeneratedStep::Raw { lease } => match rung.backend.generate(request, lease).await {
-            Ok(response) => response,
-            Err(error) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
-        },
-        GeneratedStep::Admitted { guard } => match admitted(rung.backend, guard, request).await? {
-            Ok(response) => response,
-            Err(miss) => return Ok(Reply::Unread(miss)),
-        },
+        GeneratedStep::Raw { lease } => {
+            match within_work_time(call.deadline, rung.backend.generate(request, lease)).await {
+                Some(Ok(response)) => response,
+                Some(Err(error)) => return Ok(Reply::Unread(GeneratedMiss::Backend(error))),
+                None => return Ok(Reply::Answers(Err(cut()))),
+            }
+        }
+        GeneratedStep::Admitted { guard } => {
+            match within_work_time(call.deadline, admitted(rung.backend, guard, request)).await {
+                Some(answered) => match answered? {
+                    Ok(response) => response,
+                    Err(miss) => return Ok(Reply::Unread(miss)),
+                },
+                None => return Ok(Reply::Answers(Err(cut()))),
+            }
+        }
     };
     steps.push((hash, response.usage.clone()));
     Ok(Reply::Answers(
         answers(&response, &asked, pack.paired, labels)
             .and_then(|answers| joined(answers, call.questions.len(), pack.person)),
     ))
+}
+
+/// `generation` within the work time the caller's own clock has left (FIX 9904): `None`
+/// once that time is spent with no reply. A durable step keeps its admission-only rule and
+/// never runs under this bound. Dropping an admitted generation settles its reservation
+/// ([`Reserved`]); a raw generation's lease stays its caller's to settle.
+async fn within_work_time<T>(
+    deadline: &RetrievalDeadline,
+    generation: impl std::future::Future<Output = T>,
+) -> Option<T> {
+    tokio::time::timeout(deadline.decision_time_left(), generation)
+        .await
+        .ok()
+}
+
+/// A generation the call's work time cut: [`take`] reads it once that time is spent as the
+/// cut, so the decision closes on its deadline receipt, never on an unfinished reply.
+fn cut() -> Error {
+    invalid("a generated read cut at the call's work time")
 }
 
 /// `request` on the raw seam under its own admission on `guard`, settled on what it spent.
