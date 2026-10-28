@@ -13,8 +13,16 @@ use crate::error::Result;
 use crate::{EntityId, Vault};
 
 /// What a result names when no main head is shown to carry its evidence
-/// (CALLS RESIDENCE_RESULT_COVER_UNKNOWN): the explicit rows, as before.
-const RESIDENCE_RESULT_COVER_UNKNOWN_KEEPS_EXPLICIT: bool = true;
+/// (CALLS RESIDENCE_RESULT_COVER_UNKNOWN).
+const RESIDENCE_RESULT_COVER_UNKNOWN: CoverUnknown = CoverUnknown::ExplicitParents;
+
+/// The policy hook behind [`RESIDENCE_RESULT_COVER_UNKNOWN`].
+#[derive(Clone, Copy)]
+enum CoverUnknown {
+    /// The rows the signer's standing rests on and the directive's row, as
+    /// before.
+    ExplicitParents,
+}
 
 /// The parents of `machine`'s result for the directive signed as `directive`,
 /// read in `txn` on `fold`: the main heads where every row `machine`'s
@@ -30,12 +38,16 @@ pub(super) fn residence_result_parents_in_txn(
 ) -> Result<BTreeSet<AuthorityEntryHash>> {
     let mut named = standing_rows(fold, machine);
     named.insert(directive);
-    debug_assert!(RESIDENCE_RESULT_COVER_UNKNOWN_KEEPS_EXPLICIT);
-    let Some(mut heads) = KeyFrontier::main_heads(fold) else {
-        return Ok(named);
-    };
-    if heads.carries_in_txn(&vault.store, txn, fold, &named)? {
+    // A row the proof cannot read proves nothing: the explicit rows stand.
+    if let Some(mut heads) = KeyFrontier::main_heads(fold)
+        && matches!(
+            heads.carries_in_txn(&vault.store, txn, fold, &named),
+            Ok(true)
+        )
+    {
         return Ok(heads.parents().clone());
     }
-    Ok(named)
+    match RESIDENCE_RESULT_COVER_UNKNOWN {
+        CoverUnknown::ExplicitParents => Ok(named),
+    }
 }

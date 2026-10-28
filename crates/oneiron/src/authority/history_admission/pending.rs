@@ -59,6 +59,16 @@ pub(crate) fn pending_history_of_in_txn(
     txn: &heed::RoTxn<'_>,
     staged: &[(AuthorityEntryHash, &AuthorityLogEntry)],
 ) -> Result<Option<PendingAuthorityHistory>> {
+    Ok(pending_history_of(store, posture, txn, staged).unwrap_or(None))
+}
+
+/// [`pending_history_of_in_txn`], with its own faults returned.
+fn pending_history_of(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    staged: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+) -> Result<Option<PendingAuthorityHistory>> {
     if super::super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?.is_none() {
         return Ok(None);
     }
@@ -124,13 +134,16 @@ fn pending_rows_in_txn(
 
 /// The history the pending rows still need: the request of the fold with
 /// them in, in `txn`'s snapshot. None with no pending row, where that fold
-/// answers (the next retry stores them), or where it fails.
+/// answers (the next retry stores them), or where it or the evidence read
+/// fails: the vault's own request stands then, as before.
 pub(crate) fn pending_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<AuthorityHistoryRequest>> {
-    let pending = pending_rows_in_txn(store, txn)?;
+    let Ok(pending) = pending_rows_in_txn(store, txn) else {
+        return Ok(None);
+    };
     if pending.is_empty() {
         return Ok(None);
     }

@@ -196,7 +196,11 @@ fn directive_states_in_txn(
         let entry = decode_authority_log_entry_body(body)?;
         rows.insert(authority_entry_hash(&entry)?, entry);
     }
-    for (hash, entry) in crate::authority::carried_residence_rows_in_txn(&vault.store, txn)? {
+    // Carried rows the evidence cannot read leave the stored rows alone, as
+    // before the image carried them.
+    let carried =
+        crate::authority::carried_residence_rows_in_txn(&vault.store, txn).unwrap_or_default();
+    for (hash, entry) in carried {
         rows.entry(hash).or_insert(entry);
     }
     for (hash, entry) in rows {
