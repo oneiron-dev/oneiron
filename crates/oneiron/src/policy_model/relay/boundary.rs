@@ -289,10 +289,12 @@ impl Vault {
     /// by [`policy_model_reason_codes`]. Enforcing the verdict afterwards adds
     /// no second row; see [`Vault::enforce_policy_model_verdict`].
     ///
-    /// Same silence rule too: a clean allow that learned nothing and got the
-    /// model it wanted has nothing to record. A pass whose model did NOT
-    /// answer is the opposite — the sovereign plane fell open, and that is
-    /// precisely the fact the owner is owed.
+    /// Same silence rule as the classify and enforce doors: only an `Allow`
+    /// from a plane that was off for the pass examined nothing and writes
+    /// nothing. A clean `Allow` the plane gave is one hash-only row, as
+    /// there. A pass whose model did NOT answer is the opposite — the
+    /// sovereign plane fell open, and that is precisely the fact the owner
+    /// is owed.
     ///
     /// Returns the pass the door hands out, settled against the policy in
     /// force in the door's final transaction, which writes the row.
@@ -312,6 +314,7 @@ impl Vault {
         if pass.verdict.decision == PolicyClassifyDecision::Allow
             && pass.verdict.audit.is_none()
             && !moved
+            && !pass.examined
         {
             return Ok(pass);
         }
