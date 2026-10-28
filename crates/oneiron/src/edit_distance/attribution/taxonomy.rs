@@ -244,6 +244,10 @@ pub struct AmendmentJudgment {
     /// The judge revision whose answers this judgment stands on; `None` for
     /// the rule tier and for settled or owner-scripted labels.
     pub judge: Option<String>,
+    /// A rejection's judgment: the decider discarded the proposal, so there
+    /// is no Δ and no hunks, and `d_norm` is the whole proposal's edit mass
+    /// (FIX 7823).
+    pub rejected: bool,
 }
 
 /// One changed hunk as judged: the label it stands at after the floor, and

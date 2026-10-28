@@ -22,6 +22,11 @@
 //! Reliability needs the attempt the amended proposal came from; the host
 //! names it at the evidence door ([`AmendmentEvidence::with_attempt`]).
 //!
+//! A REJECTION takes the same judge before it charges anyone (FIX 7823). It
+//! carries no Δ and no hunks, so it is one region, one label at 100%; its
+//! judgment row is the record, and only the shares that charge a skill or an
+//! actor reach a `learning.edit_cost` cell, counted rejected.
+//!
 //! # A verdict is a split
 //!
 //! The judge labels each changed hunk, and each hunk weighs its own measured
@@ -68,9 +73,11 @@
 //! is visible at all.
 
 mod audit;
+mod cells;
 mod evidence_judge;
 mod origin;
 mod projector;
+mod rejection;
 mod stored;
 mod taxonomy;
 
@@ -92,8 +99,10 @@ pub use self::taxonomy::{
     HunkLabel, PreferenceProposal, classify_amendment, validate_share_vector,
 };
 
+pub(in crate::edit_distance) use self::cells::record_untouched_in_txn;
 pub(in crate::edit_distance) use self::evidence_judge::amendment_evidence_in_txn;
 pub(in crate::edit_distance) use self::origin::UNKNOWN_EXECUTOR;
+pub(in crate::edit_distance) use self::rejection::{Rejection, judge_rejection_in_txn};
 
 /// The recorded, grounded attempt→amendment joins, judged or not: every
 /// evidence row that names the attempt its amended proposal came from, keyed
