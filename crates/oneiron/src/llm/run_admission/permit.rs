@@ -227,7 +227,10 @@ impl RunInner {
                 return Err(denied);
             }
         };
-        if let Some(draw) = allocation.as_ref().and_then(|(_, hold)| hold.resident.as_ref()) {
+        if let Some(draw) = allocation
+            .as_ref()
+            .and_then(|(_, hold)| hold.resident.as_ref())
+        {
             self.note_overdraft(revision, lease.id(), draw);
         }
         Ok(RunPermit {
@@ -328,7 +331,10 @@ impl RunInner {
                 return Err(denied);
             }
         };
-        if let Some(draw) = allocation.as_ref().and_then(|(_, hold)| hold.resident.as_ref()) {
+        if let Some(draw) = allocation
+            .as_ref()
+            .and_then(|(_, hold)| hold.resident.as_ref())
+        {
             self.note_overdraft(revision, lease.id(), draw);
         }
         Ok(RunPermit {
