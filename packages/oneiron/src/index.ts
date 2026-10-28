@@ -1849,7 +1849,7 @@ export class Oneiron {
       answer: (input: Facade.CraftCandidateAnswer): Facade.CraftVerdictView => this.#call(() => this.#client.vaultCraftCandidatesAnswer(input) as Facade.CraftVerdictView),
     }),
     lenses: {
-      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
+      /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),

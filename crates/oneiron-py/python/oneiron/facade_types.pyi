@@ -10171,6 +10171,7 @@ class LensProposeRequest(TypedDict):
     pack_content_hash: str
     compiled: Any
     intent_prompt: str
+    trigger: NotRequired[MadeByTrigger | None]
 LensApproval = Literal["proposed"]
 class LensProposalReceipt(TypedDict):
     lens_ref: str
