@@ -136,9 +136,9 @@ pub(crate) struct CoreMemoryWatchHealth {
     /// Unix seconds the last wake ended at.
     last_evaluated_at: u64,
     /// `reactive` (a re-check of what a write moved) or `paged`.
-    pass: &'static str,
+    pass: String,
     /// `evaluated` or `failed`.
-    outcome: &'static str,
+    outcome: String,
     /// The candidates the wake evaluated, when it ran to its end.
     #[serde(skip_serializing_if = "Option::is_none")]
     evaluated: Option<u32>,
@@ -169,8 +169,9 @@ impl From<oneiron::saved_query::SavedQueryHealth> for CoreMemoryWatchHealth {
             pass: match health.pass {
                 SavedQueryPass::Reactive => "reactive",
                 SavedQueryPass::Paged => "paged",
-            },
-            outcome: "evaluated",
+            }
+            .to_owned(),
+            outcome: "evaluated".to_owned(),
             evaluated: None,
             memo_hits: None,
             judges_run: None,
@@ -193,7 +194,7 @@ impl From<oneiron::saved_query::SavedQueryHealth> for CoreMemoryWatchHealth {
                 view.stopped_at_bound = Some(stopped_at_bound);
             }
             SavedQueryWakeOutcome::Failed { kind } => {
-                view.outcome = "failed";
+                view.outcome = "failed".to_owned();
                 view.failure = Some(kind);
             }
         }
