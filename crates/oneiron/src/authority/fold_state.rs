@@ -403,6 +403,10 @@ pub(super) struct FoldState {
     /// actor merge keeps one winner, and a row bound on a losing branch is
     /// still no physical machine.
     pub(super) actor_rows: BTreeSet<EntityId>,
+    /// Each valid residence directive's id and named machine, by its row,
+    /// merged by union: a residence result past its directive's row reads
+    /// it here (FIX 5412).
+    pub(super) residence_directives: BTreeMap<AuthorityEntryHash, (EntityId, EntityId)>,
 }
 
 /// Fold-internal binding content for one authority key.
@@ -660,6 +664,12 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
             .extend(admitters.iter().cloned());
     }
     merged.actor_rows.extend(right.actor_rows.iter().copied());
+    merged.residence_directives.extend(
+        right
+            .residence_directives
+            .iter()
+            .map(|(row, directive)| (*row, *directive)),
+    );
     merged
 }
 
