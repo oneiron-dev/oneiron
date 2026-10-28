@@ -266,6 +266,11 @@ impl Vault {
             RESTORE_EPOCH.put(&vault.store, txn, &sequence, &epoch)?;
             Ok(())
         })?;
+        // The carried pads (PAD-3) no epoch owes go once it commits; one a
+        // fault leaves stays carried until the next prune.
+        if let Err(error) = super::epochs::prune_carried_pads(&vault) {
+            tracing::warn!(kind = ?error.kind(), "carried world pads not pruned after a restore");
+        }
         let report = RestoreReport {
             epoch,
             rebuilt_entities,

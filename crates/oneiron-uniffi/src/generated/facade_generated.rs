@@ -458,13 +458,13 @@ export_facade! {
     let output = client.vault_claims_upsert(&input)?;
     Lift::lift(output)
 };
-"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>) -> MemoryPack = |client| {
+"vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>, token_budget: Option<u64>, reader_agent_ref: Option<String>) -> MemoryPack = |client| {
     let effort: oneiron::memory::RecallEffort = effort.lower()?;
     let scope: oneiron::memory::RecallScope = scope.lower()?;
     let limit: usize = limit.lower()?;
     let media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery> = media.lower()?;
     let query_affect: Option<oneiron::task_verb::sdk::QueryAffect> = query_affect.lower()?;
-    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
+    let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect, token_budget, reader_agent_ref.as_deref())?;
     Lift::lift(output)
 };
 "vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {

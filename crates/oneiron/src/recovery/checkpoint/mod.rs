@@ -61,7 +61,7 @@ pub use commitment::CheckpointSigner;
 pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
 pub use epochs::RestorePadState;
-pub(crate) use epochs::reconcile_restore_pad_notes_in_txn;
+pub(crate) use epochs::{prune_carried_pads, reconcile_restore_pad_notes_in_txn};
 pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
