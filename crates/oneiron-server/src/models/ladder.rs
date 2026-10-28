@@ -217,10 +217,6 @@ fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
 pub struct OfferLadder {
     name: ModelId,
     rungs: Vec<LadderRung>,
-    /// An answer carries the ladder's served receipt around the provider's
-    /// usage as it came: a seat's, a rung of one's, or a configured model's
-    /// called by its own id (FIX 2619), so every run names its provider.
-    receipt: bool,
     /// The one model a caller or a manifest named: its one rung is that
     /// pick, never a fallback.
     picked: bool,
@@ -238,7 +234,6 @@ impl OfferLadder {
         Self {
             name,
             rungs,
-            receipt: true,
             picked: false,
             rests,
             scope: SeatScope::default(),
@@ -251,7 +246,6 @@ impl OfferLadder {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
-            receipt: true,
             picked: true,
             rests,
             scope: SeatScope::default(),
@@ -264,7 +258,6 @@ impl OfferLadder {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
-            receipt: true,
             picked: true,
             rests,
             scope: SeatScope::default(),
@@ -471,10 +464,8 @@ impl OfferLadder {
     /// receipt. Stamped after its permit settled: the permit already charged
     /// each failed rung on its own.
     fn answered(&self, index: usize, walk: &Walk, mut usage: LlmUsage) -> LlmUsage {
-        if self.receipt {
-            let raw = std::mem::take(&mut usage.raw_provider);
-            usage.raw_provider = self.served(index, walk).stamp(raw);
-        }
+        let raw = std::mem::take(&mut usage.raw_provider);
+        usage.raw_provider = self.served(index, walk).stamp(raw);
         usage
     }
 
@@ -659,11 +650,12 @@ impl OfferLadder {
 
     /// The call-local ladder that a call takes to the owner's fallback
     /// `target` once every rung here has parked (OF-305). It holds the
-    /// target's rungs, under this ladder's receipt and scope, and carries
-    /// what the call met here. The receipt of its answer names the fallback's
-    /// provider and model as the rung after this seat's configured ones. It
-    /// counts the rungs that failed here too, and lists the rungs passed over
-    /// here first. The shared target ladder is never changed.
+    /// target's rungs, under this ladder's scope, and carries what the call
+    /// met here. Every ladder stamps its receipt: the receipt of its answer
+    /// names the fallback's provider and model as the rung after this seat's
+    /// configured ones. It counts the rungs that failed here too, and lists
+    /// the rungs passed over here first. The shared target ladder is never
+    /// changed.
     fn fallback_call(&self, target: &OfferLadder, walk: &Walk) -> Arc<OfferLadder> {
         let rungs = target
             .rungs
@@ -678,7 +670,6 @@ impl OfferLadder {
         Arc::new(OfferLadder {
             name: target.name.clone(),
             rungs,
-            receipt: self.receipt,
             picked: false,
             rests: Arc::clone(&target.rests),
             scope: self.scope,
@@ -1460,7 +1451,7 @@ impl OfferLadder {
                     gate,
                     permit: Some(permit),
                     probe,
-                    receipt: self.receipt.then(|| self.served(index, walk)),
+                    receipt: Some(self.served(index, walk)),
                     provider_job,
                     model: rung.model.clone(),
                     operation,
@@ -1481,10 +1472,8 @@ impl OfferLadder {
                     response.usage.token_units(operation, &media.caps),
                     response.usage.inference_calls(),
                 )?;
-                if self.receipt {
-                    let raw = std::mem::take(&mut response.usage.raw_provider);
-                    response.usage.raw_provider = self.served(index, walk).stamp(raw);
-                }
+                let raw = std::mem::take(&mut response.usage.raw_provider);
+                response.usage.raw_provider = self.served(index, walk).stamp(raw);
                 Ok(Some(MediaAnswer::Done(response)))
             }
             // FIX 9517: what answered before the stop is settled once, on
