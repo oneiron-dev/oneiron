@@ -4,14 +4,16 @@
 //! On a vault that adopted a checkpoint image, a batch of new rows whose fold
 //! the image cannot answer for (a fork on a covered row it keeps no state
 //! for, an op past it only the whole history folds) would leave every
-//! authority read of the vault refusing for history. A batch of permissive
-//! rows only is not stored then: the act refuses with the typed history
-//! request, and the transaction owner keeps the rows' signed bytes here, as
-//! evidence that admits nothing, so only what depends on them waits for the
-//! history (identity.md, "A late pre-cutoff fork stops the affected
-//! grants"). A batch with a restrictive row keeps today's path: it is stored,
-//! and the vault's reads refuse until the history arrives, so no withdrawal
-//! is ever held back.
+//! authority read of the vault refusing for history. At the transaction
+//! owner's door, a batch of granting rows ([`grants_only`]), each of whose
+//! fold needs that history, is not stored then, once the store door admits
+//! it: the act refuses with the typed history request, and the owner keeps
+//! the rows' signed bytes here, as evidence that admits nothing, so only
+//! what depends on them waits for the history (identity.md, "A late
+//! pre-cutoff fork stops the affected grants"). Any other batch keeps
+//! today's path: it is stored, and the vault's reads refuse until the
+//! history arrives, so no withdrawal, erase or narrowing is ever held back,
+//! and a composing door stores as before.
 //!
 //! The history the rows need joins the vault's own request
 //! ([`pending_history_request_in_txn`]); once a repair lands, the rows are
@@ -48,11 +50,12 @@ pub(crate) struct PendingAuthorityHistory {
     rows: Vec<(AuthorityEntryHash, Vec<u8>)>,
 }
 
-/// What a local append of `staged` on `txn`'s snapshot does under the rule
-/// above: `Some` where the vault adopted a checkpoint image, every row not
-/// stored yet is permissive, and the fold with them in needs history; None
-/// to store them as before. A fault of the fold with them in keeps today's
-/// path (CALLS AUTHORITY_ADMISSION_UNKNOWN).
+/// What the owner's local append of `staged` on `txn`'s snapshot does under
+/// the rule above: `Some` where the vault adopted a checkpoint image, every
+/// row not stored yet grants only, and each one's fold needs history; None
+/// to store them as before. A fault of a fold with them in keeps today's
+/// path (CALLS AUTHORITY_ADMISSION_UNKNOWN). The caller keeps the evidence
+/// only once the store door admitted the batch.
 pub(crate) fn pending_history_of_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
@@ -78,12 +81,28 @@ fn pending_history_of(
             arriving.insert(*hash, (*entry).clone());
         }
     }
-    if arriving.is_empty()
-        || !arriving
-            .values()
-            .all(|entry| super::super::ancestry_evaluator::skippable_permissive(&entry.op))
-    {
+    if arriving.is_empty() || !arriving.values().all(|entry| grants_only(&entry.op)) {
         return Ok(None);
+    }
+    // Each row needs the history itself: its fold, with the batch rows it
+    // rests on, needs it. A row that does not keeps the batch on today's
+    // path.
+    for (hash, entry) in &arriving {
+        let mut own = BTreeMap::from([(*hash, entry.clone())]);
+        let mut stack = entry.parent_hashes.clone();
+        while let Some(parent) = stack.pop() {
+            if let Some(row) = arriving.get(&parent)
+                && own.insert(parent, row.clone()).is_none()
+            {
+                stack.extend(row.parent_hashes.iter().copied());
+            }
+        }
+        if !matches!(
+            authority_view_with_rows_for_store_in_txn(store, posture, txn, &own),
+            Ok(ArrivingFold::NeedHistory(_))
+        ) {
+            return Ok(None);
+        }
     }
     let Ok(ArrivingFold::NeedHistory(request)) =
         authority_view_with_rows_for_store_in_txn(store, posture, txn, &arriving)
@@ -95,6 +114,29 @@ fn pending_history_of(
         .map(|(hash, entry)| Ok((*hash, encode_authority_log_entry_body(entry)?)))
         .collect::<Result<Vec<_>>>()?;
     Ok(Some(PendingAuthorityHistory { request, rows }))
+}
+
+/// Whether `op` only adds or widens authority (lead ruling a, 10-29): a
+/// device enrollment, an actor binding, an owner root, a slip mint, a
+/// federation confirm that is no revocation, a critical-write confirm that
+/// clears, a federation connect. Every withdrawal, erase, narrowing or
+/// terminal act, and every act whose effect turns on state (a rescope, a
+/// rebind, a machine revision), keeps today's path. The fold's own
+/// permissive class (`ancestry_evaluator::skippable_permissive`) is not this
+/// door's.
+fn grants_only(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::OwnerRoot(_)
+        | AuthorityOp::SlipMint(_) => true,
+        AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            action.disposition == CriticalWriteConfirmDisposition::Clear
+        }
+        AuthorityOp::FederationLifecycle(action) => action.kind == FederationLifecycleKind::Connect,
+        _ => false,
+    }
 }
 
 /// Keeps `pending`'s rows as evidence in the owner's writer, after the act

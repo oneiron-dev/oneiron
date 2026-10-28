@@ -398,10 +398,13 @@ fn whole_history(
 }
 
 /// The replay evidence of an image built past `image` over `tail`, whose
-/// new frontier is `frontier` (FIX 3007): the old image's points, and a point
-/// at each old frontier row and tail row the new frontier leaves behind,
-/// from the old image's frontier states and the tail's settled ones. None
-/// past an image that keeps none.
+/// new frontier is `frontier` (FIX 3007): the state at every row the new
+/// image covers off that frontier, from the old image's replay points and
+/// frontier states and the tail's settled states, encoded afresh over the
+/// whole coverage as a fresh build encodes it, so a root's rebuild of the
+/// same rows compares equal byte for byte. Kept encodings are never
+/// spliced. None past an image that keeps none, or whose evidence does not
+/// decode.
 fn successor_replay(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
@@ -411,34 +414,39 @@ fn successor_replay(
     let ReplayEvidence::Rows(kept) = &image.replay else {
         return ReplayEvidence::FrontierOnly;
     };
-    let left: BTreeMap<_, _> = image
-        .per_parent
-        .keys()
-        .filter(|hash| !frontier.contains(*hash))
-        .filter_map(|hash| Some((*hash, image.rows.get(hash)?.parents.clone())))
-        .chain(
-            tail.iter()
-                .filter(|(hash, _)| !frontier.contains(*hash))
-                .map(|(hash, entry)| (*hash, entry.parent_hashes.clone())),
-        )
-        .collect();
-    let added = ReplayEvidence::points_of(
-        &parents_first_of(&left),
-        &|hash| left.get(hash).cloned(),
-        &|hash| match image.per_parent.get(hash) {
-            Some(state) => state.clone(),
-            None => states.get(hash).cloned(),
-        },
-        kept,
-    );
-    match added {
-        Some(added) => {
-            let mut points = kept.clone();
-            points.extend(added);
-            ReplayEvidence::Rows(points)
+    let mut parents = BTreeMap::new();
+    let mut settled = BTreeMap::new();
+    for hash in kept.keys().chain(image.per_parent.keys()) {
+        if frontier.contains(hash) {
+            continue;
         }
-        None => super::checkpoint_image::AUTHORITY_REPLAY_OVERFLOW,
+        let (Some(row), Some(state)) = (image.rows.get(hash), image.state_at(hash)) else {
+            return super::checkpoint_image::AUTHORITY_REPLAY_OVERFLOW;
+        };
+        parents.insert(*hash, row.parents.clone());
+        if let Some(state) = state {
+            settled.insert(*hash, state);
+        }
     }
+    for (hash, entry) in tail {
+        if frontier.contains(hash) {
+            continue;
+        }
+        parents.insert(*hash, entry.parent_hashes.clone());
+        if let Some(state) = states.get(hash) {
+            settled.insert(*hash, state.clone());
+        }
+    }
+    ReplayEvidence::points_of(
+        &parents_first_of(&parents),
+        &|hash| parents.get(hash).cloned(),
+        &|hash| settled.get(hash).cloned(),
+        &BTreeMap::new(),
+    )
+    .map_or(
+        super::checkpoint_image::AUTHORITY_REPLAY_OVERFLOW,
+        ReplayEvidence::Rows,
+    )
 }
 
 /// Whether every tail row folds past the image as a resumed fold's tail row

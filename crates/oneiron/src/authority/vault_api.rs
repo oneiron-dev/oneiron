@@ -99,7 +99,7 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
-        let ids = match self.put_authority_log_entries_or_pending_in_txn(&mut wtxn, entries)? {
+        let ids = match self.put_authority_log_rows_in_txn(&mut wtxn, entries, true)? {
             super::history_admission::AuthorityPut::Stored(ids) => ids,
             // The act rolls back; its rows stay as evidence only (FIX 2989).
             super::history_admission::AuthorityPut::Pending(pending) => {
@@ -127,7 +127,9 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
     ) -> Result<Vec<EntityId>> {
-        match self.put_authority_log_entries_or_pending_in_txn(wtxn, entries)? {
+        // This door stores as before: only the transaction owner keeps
+        // pending evidence (FIX 2989).
+        match self.put_authority_log_rows_in_txn(wtxn, entries, false)? {
             super::history_admission::AuthorityPut::Stored(ids) => Ok(ids),
             super::history_admission::AuthorityPut::Pending(pending) => {
                 Err(super::readonly_fold::history_required(&pending.request))
@@ -135,27 +137,19 @@ impl Vault {
         }
     }
 
-    /// [`Self::put_authority_log_entries_in_txn`], with a batch the history
-    /// preflight keeps as evidence returned to the transaction owner
-    /// unstored (FIX 2989, [`super::history_admission`]): the owner rolls the
-    /// act back and keeps the evidence.
-    fn put_authority_log_entries_or_pending_in_txn(
+    /// [`Self::put_authority_log_entries_in_txn`]. With `keep_pending`, the
+    /// transaction owner's door, a batch the history preflight keeps as
+    /// evidence comes back unstored once it passed every check a stored
+    /// batch passes (FIX 2989, [`super::history_admission`]): the owner rolls
+    /// the act back and keeps the evidence.
+    fn put_authority_log_rows_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
+        keep_pending: bool,
     ) -> Result<super::history_admission::AuthorityPut> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
-        // A key a handoff retired signs nothing new here (engine-crates-03).
-        // An adopted checkpoint image answers for the history it covers.
-        let (local, evidence) = if entries.is_empty() {
-            (None, None)
-        } else {
-            (
-                Some(self.authority_fold_readonly_in_txn(wtxn)?),
-                super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
-            )
-        };
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
         let mut staged = Vec::with_capacity(entries.len());
@@ -164,6 +158,23 @@ impl Vault {
             batch.insert(hash, entry.clone());
             staged.push((hash, entry));
         }
+        // A key a handoff retired signs nothing new here (engine-crates-03).
+        // An adopted checkpoint image answers for the history it covers.
+        // Where the fold needs history this batch supplies, the fold with
+        // the batch in judges it (FIX 2535).
+        let (local, evidence) = if entries.is_empty() {
+            (None, None)
+        } else {
+            (
+                Some(super::history_admission::preflight_authority_rows_in_txn(
+                    &self.store,
+                    self.privacy_posture(),
+                    wtxn,
+                    &staged,
+                )?),
+                super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
+            )
+        };
         for (entry, occurred, learned_at) in entries {
             if let Some(fold) = &local
                 && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
@@ -203,16 +214,19 @@ impl Vault {
         if ops.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
         }
-        // A batch of permissive rows whose fold past an adopted image needs
-        // history this vault does not hold is evidence, not log (FIX 2989).
-        if let Some(pending) = super::history_admission::pending_history_of_in_txn(
-            &self.store,
-            self.privacy_posture(),
-            wtxn,
-            &staged,
-        )? {
-            return Ok(super::history_admission::AuthorityPut::Pending(pending));
-        }
+        // A batch of granting rows, each of whose fold past an adopted image
+        // needs history this vault does not hold, is evidence, not log (FIX
+        // 2989), once the store door below admits it.
+        let pending = if keep_pending {
+            super::history_admission::pending_history_of_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                wtxn,
+                &staged,
+            )?
+        } else {
+            None
+        };
         // The door judges each row against the rows staged before it (H72),
         // so stage them parents first, each signer's by sequence and each
         // after the rows that let a key vouch for it, whatever order the
@@ -238,6 +252,9 @@ impl Vault {
             false,
             true,
         )?;
+        if let Some(pending) = pending {
+            return Ok(super::history_admission::AuthorityPut::Pending(pending));
+        }
         Ok(super::history_admission::AuthorityPut::Stored(ids))
     }
 
