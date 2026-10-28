@@ -1520,7 +1520,7 @@
     },
     {
       "name": "vault.recall",
-      "description": "Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata.",
+      "description": "Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens.",
       "input": "RecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",

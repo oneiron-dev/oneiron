@@ -12,6 +12,7 @@ mod hyde_host;
 mod items;
 mod paid;
 mod presentation;
+mod render_budget;
 mod scope_honesty;
 mod selection;
 mod speculative;
@@ -36,6 +37,7 @@ pub(crate) use self::selection::RecallKinds;
 
 use self::presentation::{hedge_bucket_for, hedge_bucket_for_band, value_text_of};
 pub(super) use self::presentation::{parse_pack_format, truncate_text};
+pub(super) use self::render_budget::execution_render_budget;
 use self::selection::RecallPin;
 
 use std::collections::BTreeSet;
@@ -65,6 +67,9 @@ const PPR_SEED_LIMIT: usize = 8;
 /// Bounded claim scan behind scope-honesty world enumeration.
 const SCOPE_HONESTY_SCAN_CAP: usize = 512;
 
+/// The token budget a rendered pack is cut to when neither the caller nor
+/// the reader profile it opted into names one: a default, never a ceiling
+/// (FIX 9962, [`render_budget`]).
 pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 /// Retrieval effort dial (S6). Deliberately distinct from `llm.rs`
@@ -880,288 +885,176 @@ impl Memory<'_> {
             vector_completed,
             temporal_hints,
             retrieval_run_id,
-        ) = match selection.facet {
-            Some(facet_id) => {
-                // Facet-strict narrowing rides the raw retrieval pipeline:
-                // ContextPackBuilder exposes no facet passthrough and
-                // pipeline.rs/context_pack.rs are consume-only for this
-                // chain. No pack rendering on this path.
-                let mut pipeline = self
-                    .vault
-                    .query()
-                    .search_text(query, limit)
-                    .fold_messages_into_turns(turn_fold);
-                if let Some(telemetry) = execution.telemetry {
-                    pipeline = pipeline.capture_retrieval_trace(telemetry.capture_trace);
-                    if let Some(turn) = telemetry.turn {
-                        pipeline = pipeline.retrieval_turn(turn);
-                    }
+        ) = {
+            let mut builder = self
+                .vault
+                .context_pack()
+                .memory_results_only()
+                .search_text(query, limit)
+                .fold_messages_into_turns(turn_fold);
+            if let Some(telemetry) = execution.telemetry {
+                builder = builder.capture_retrieval_trace(telemetry.capture_trace);
+                if let Some(turn) = telemetry.turn {
+                    builder = builder.retrieval_turn(turn);
                 }
-                if let Some(as_of) = execution.as_of {
-                    pipeline = pipeline.with_temporal_now(as_of);
-                }
-                if let Some(vad) = execution.query_affect {
-                    pipeline = pipeline.query_affect(vad);
-                }
-                pipeline = pipeline
-                    .facet(&facet_id, FacetMode::Strict)
-                    .world(world_scope)
-                    .corpus(projects.clone())
-                    .retrieval_effort(effective, &seeds)
-                    .authority_filter(plan_filter.clone());
-                // A caller off this device: no row a device-local world
-                // keeps enters a list, as on the pack route below, or it
-                // would scale the scores of the rows the caller reads.
-                pipeline = pipeline
-                    .filter_candidates(&admitted)
-                    .for_destination(lane.actor_key().destination());
-                if let Some(telemetry) = session_telemetry.as_ref() {
-                    pipeline = pipeline.in_session(telemetry);
-                }
-                // The lane decides what the room reads: a credential it cannot
-                // place the room's rows for reads base alone.
-                if session_view.is_some() {
-                    pipeline = pipeline.reading(lane.store_read());
-                }
-
-                if let Some(deadline) = execution.deadline {
-                    pipeline = pipeline.deadline(deadline);
-                }
-                if let Some(vector) = execution.embedding {
-                    pipeline = pipeline.search_vector(vector, limit);
-                }
-                if effective.requires_rerank()
-                    && let Some((expander, grounding, options)) = execution.hyde
-                {
-                    pipeline = pipeline.hyde(expander, grounding.clone(), options);
-                }
-                for seed in execution.media {
-                    pipeline = pipeline.search_media(
-                        seed.space,
-                        seed.kind,
-                        seed.vector,
-                        seed.kinds,
-                        limit,
-                    );
-                }
-                if !execution.phonetic_codes.is_empty() {
-                    pipeline = pipeline.search_phonetic(execution.phonetic_codes);
-                }
-                if effective.requires_rerank()
-                    && let Some(reranker) = execution.reranker
-                {
-                    pipeline = pipeline.rerank(
-                        reranker,
-                        RerankOptions {
-                            top_n: effective.rerank_top_n(),
-                            query: Some(query.to_owned()),
-                        },
-                    );
-                }
-                pipeline = pipeline
-                    .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
-                    .boost_salience()
-                    .boost_confidence();
-                let retrieval = pipeline.run_for_pack()?;
-                lane.end_recall_plan()?;
-                let scoped = lane.filter_scored_entities(retrieval.scores)?;
-                receipt.restrict_with(&scoped.receipt);
-                let mut items = Vec::new();
-                for hit in scoped.value.into_iter().take(limit) {
-                    if let Some(fallback) = door_answered() {
-                        return Ok(fallback.clone());
-                    }
-                    let Some(revision) = retrieval.revisions.get(&hit.id) else {
-                        continue;
-                    };
-                    let mode = crate::vault::ReadMode::Pinned(*revision);
-                    let cited = retrieval
-                        .cited_messages
-                        .get(&hit.id)
-                        .map_or(&[][..], Vec::as_slice);
-                    if let Some(mut item) = self.memory_item_for(
-                        &lane,
-                        &hit.id,
-                        Some(facet_id),
-                        mode,
-                        cited,
-                        &mut receipt,
-                    )? {
-                        item.embedding_matches = retrieval
-                            .embedding_matches
-                            .get(&hit.id)
-                            .cloned()
-                            .unwrap_or_default();
-                        items.push(item);
-                    }
-                }
-                let total = items.len() as u64;
-
-                (
-                    items,
-                    total,
-                    None,
-                    retrieval.retrieval_quality,
-                    retrieval.vector_completed,
-                    retrieval.temporal_hints,
-                    retrieval.telemetry_run_id,
-                )
             }
-            None => {
-                let mut builder = self
-                    .vault
-                    .context_pack()
-                    .memory_results_only()
-                    .search_text(query, limit)
-                    .fold_messages_into_turns(turn_fold);
-                if let Some(telemetry) = execution.telemetry {
-                    builder = builder.capture_retrieval_trace(telemetry.capture_trace);
-                    if let Some(turn) = telemetry.turn {
-                        builder = builder.retrieval_turn(turn);
-                    }
-                }
-                if let Some(as_of) = execution.as_of {
-                    builder = builder.with_temporal_now(as_of);
-                }
-                if let Some(vad) = execution.query_affect {
-                    builder = builder.query_affect(vad);
-                }
-                builder = builder
-                    .limit(limit)
-                    .world(world_scope)
-                    .corpus(projects.clone())
-                    .retrieval_effort(effective, &seeds)
-                    .authority_filter(plan_filter.clone());
-                builder = builder.filter_candidates(&admitted);
+            if let Some(as_of) = execution.as_of {
+                builder = builder.with_temporal_now(as_of);
+            }
+            if let Some(vad) = execution.query_affect {
+                builder = builder.query_affect(vad);
+            }
+            // The rendering budget the door resolved sizes the pack it
+            // assembles and the text it renders alike (FIX 9962).
+            let budget = render_budget::execution_render_budget(execution);
+            builder = builder
+                .limit(limit)
+                .world(world_scope)
+                .corpus(projects.clone())
+                .retrieval_effort(effective, &seeds)
+                .authority_filter(plan_filter.clone())
+                .token_budget(budget);
+            builder = builder.filter_candidates(&admitted);
+            // A facet narrows strictly inside this same builder (FIX 9961):
+            // the pack it admits and pins is the one its items and its
+            // rendering are read from, and it walks no edges, so nothing
+            // outside the facet enters either.
+            if let Some(facet_id) = selection.facet {
+                builder = builder.facet(&facet_id, FacetMode::Strict);
+            }
 
-                if let Some(telemetry) = session_telemetry.as_ref() {
-                    builder = builder.in_session(telemetry);
+            if let Some(telemetry) = session_telemetry.as_ref() {
+                builder = builder.in_session(telemetry);
+            }
+            if session_view.is_some() {
+                builder = builder.reading(lane.store_read());
+            }
+            if let Some(deadline) = execution.deadline {
+                builder = builder.deadline(deadline);
+            }
+            if let Some(vector) = execution.embedding {
+                builder = builder.search_vector(vector, limit);
+            }
+            if effective.requires_rerank()
+                && let Some((expander, grounding, options)) = execution.hyde
+            {
+                builder = builder.hyde(expander, grounding.clone(), options);
+            }
+            for seed in execution.media {
+                builder =
+                    builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
+            }
+            if !execution.phonetic_codes.is_empty() {
+                builder = builder.search_phonetic(execution.phonetic_codes);
+            }
+            if effective.requires_rerank()
+                && let Some(reranker) = execution.reranker
+            {
+                builder = builder.rerank(
+                    reranker,
+                    RerankOptions {
+                        top_n: effective.rerank_top_n(),
+                        query: Some(query.to_owned()),
+                    },
+                );
+            }
+            match effective {
+                Effort::Light => {
+                    builder = builder
+                        .hydrate(false)
+                        .include_edges(false)
+                        .field_profile(FieldProfile::Minimal)
+                        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                        .boost_salience()
+                        .boost_confidence();
                 }
-                if session_view.is_some() {
-                    builder = builder.reading(lane.store_read());
+                Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
+                    builder = builder
+                        .include_edges(selection.facet.is_none())
+                        .edge_hop(1)
+                        .hydrate(true)
+                        .field_profile(FieldProfile::Standard)
+                        .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
+                        .boost_salience()
+                        .boost_confidence();
                 }
-                if let Some(deadline) = execution.deadline {
-                    builder = builder.deadline(deadline);
-                }
-                if let Some(vector) = execution.embedding {
-                    builder = builder.search_vector(vector, limit);
-                }
-                if effective.requires_rerank()
-                    && let Some((expander, grounding, options)) = execution.hyde
-                {
-                    builder = builder.hyde(expander, grounding.clone(), options);
-                }
-                for seed in execution.media {
-                    builder =
-                        builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
-                }
-                if !execution.phonetic_codes.is_empty() {
-                    builder = builder.search_phonetic(execution.phonetic_codes);
-                }
-                if effective.requires_rerank()
-                    && let Some(reranker) = execution.reranker
-                {
-                    builder = builder.rerank(
-                        reranker,
-                        RerankOptions {
-                            top_n: effective.rerank_top_n(),
-                            query: Some(query.to_owned()),
-                        },
-                    );
-                }
-                match effective {
-                    Effort::Light => {
-                        builder = builder
-                            .hydrate(false)
-                            .include_edges(false)
-                            .field_profile(FieldProfile::Minimal)
-                            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
-                            .boost_salience()
-                            .boost_confidence();
-                    }
-                    Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
-                        builder = builder
-                            .include_edges(true)
-                            .edge_hop(1)
-                            .hydrate(true)
-                            .field_profile(FieldProfile::Standard)
-                            .boost_recency(DEFAULT_RECENCY_HALF_LIFE_DAYS)
-                            .boost_salience()
-                            .boost_confidence();
-                    }
-                }
-                let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
-                receipt.restrict_with(&scoped.receipt);
+            }
+            let (scoped, status) = builder.run_scoped_with_run_status(&lane)?;
+            receipt.restrict_with(&scoped.receipt);
+            if let Some(fallback) = door_answered() {
+                return Ok(fallback.clone());
+            }
+            let mut pack = scoped.value;
+            let mut counted = Vec::new();
+            lane.attach_reactions_quoting(
+                &mut pack,
+                &status.cited_messages,
+                None,
+                &mut counted,
+            )?;
+            // Each reaction claim a line counts is a producer of the pack.
+            self.produced_from(counted);
+
+            let rendered = pack_format.map(|fmt| {
+                let config = SerializeConfig {
+                    format: fmt,
+                    profile: match effective {
+                        Effort::Light => FieldProfile::Minimal,
+                        Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
+                            FieldProfile::Standard
+                        }
+                    },
+                    budget,
+                    allocation: crate::context_pack::TokenAllocation::default(),
+                    include_stats: false,
+                    merge_neighbors: true,
+                    max_field_chars: DEFAULT_MAX_FIELD_CHARS,
+                    max_item_tokens: 0,
+                };
+                String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
+            });
+            let mut items = Vec::new();
+            for entity in pack.results.iter().take(limit) {
                 if let Some(fallback) = door_answered() {
                     return Ok(fallback.clone());
                 }
-                let mut pack = scoped.value;
-                let mut counted = Vec::new();
-                lane.attach_reactions_quoting(
-                    &mut pack,
-                    &status.cited_messages,
-                    None,
-                    &mut counted,
-                )?;
-                // Each reaction claim a line counts is a producer of the pack.
-                self.produced_from(counted);
-
-                let rendered = pack_format.map(|fmt| {
-                    let config = SerializeConfig {
-                        format: fmt,
-                        profile: match effective {
-                            Effort::Light => FieldProfile::Minimal,
-                            Effort::Medium | Effort::High | Effort::Xhigh | Effort::Max => {
-                                FieldProfile::Standard
-                            }
-                        },
-                        budget: RECALL_TOKEN_BUDGET,
-                        allocation: crate::context_pack::TokenAllocation::default(),
-                        include_stats: false,
-                        merge_neighbors: true,
-                        max_field_chars: DEFAULT_MAX_FIELD_CHARS,
-                        max_item_tokens: 0,
-                    };
-                    String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
-                });
-                let mut items = Vec::new();
-                for entity in pack.results.iter().take(limit) {
-                    if let Some(fallback) = door_answered() {
-                        return Ok(fallback.clone());
-                    }
-                    let mode = entity.source_revision_ref.map_or(
-                        crate::vault::ReadMode::Indexed,
-                        |revision| {
-                            crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
-                        },
-                    );
-                    let cited = status
-                        .cited_messages
+                let mode = entity.source_revision_ref.map_or(
+                    crate::vault::ReadMode::Indexed,
+                    |revision| {
+                        crate::vault::ReadMode::Pinned(crate::vault::RevisionRef(revision))
+                    },
+                );
+                let cited = status
+                    .cited_messages
+                    .get(&entity.id)
+                    .map_or(&[][..], Vec::as_slice);
+                if let Some(mut item) = self.memory_item_for(
+                    &lane,
+                    &entity.id,
+                    selection.facet,
+                    mode,
+                    cited,
+                    &mut receipt,
+                )? {
+                    item.embedding_matches = status
+                        .embedding_matches
                         .get(&entity.id)
-                        .map_or(&[][..], Vec::as_slice);
-                    if let Some(mut item) =
-                        self.memory_item_for(&lane, &entity.id, None, mode, cited, &mut receipt)?
-                    {
-                        item.embedding_matches = status
-                            .embedding_matches
-                            .get(&entity.id)
-                            .cloned()
-                            .unwrap_or_default();
-                        items.push(item);
-                    }
+                        .cloned()
+                        .unwrap_or_default();
+                    items.push(item);
                 }
-                let total = items.len() as u64;
-
-                (
-                    items,
-                    total,
-                    rendered,
-                    pack.retrieval_quality,
-                    status.vector_completed,
-                    status.temporal_hints,
-                    status.run_id,
-                )
             }
+            let total = items.len() as u64;
+
+            (
+                items,
+                total,
+                rendered,
+                pack.retrieval_quality,
+                status.vector_completed,
+                status.temporal_hints,
+                status.run_id,
+            )
         };
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;

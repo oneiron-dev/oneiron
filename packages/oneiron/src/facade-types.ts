@@ -991,7 +991,7 @@ export type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx:
 /** `oneiron::verbs::retrieval::RecallTelemetry` */
 export type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null }
 /** `oneiron::verbs::RecallRequest` */
-export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null }
+export type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null }
 /** `oneiron::embed::space::InputKind` */
 export type InputKind = "text" | "image" | "audio"
 /** `oneiron::embed::evidence::EmbeddingMatchEvidence` */

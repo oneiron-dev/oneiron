@@ -37,7 +37,7 @@
 //! product module enters this crate; prompt packages, model selection, and
 //! localization remain host configuration.
 
-use super::recall::{RECALL_TOKEN_BUDGET, parse_pack_format, truncate_text};
+use super::recall::{execution_render_budget, parse_pack_format, truncate_text};
 use super::*;
 
 use serde::{Deserialize, Serialize};
@@ -314,9 +314,12 @@ impl Memory<'_> {
                 )?;
                 (pack, Vec::new())
             }
-            ChatScope::Documents { source_short_ids } => {
-                self.document_pack(source_short_ids, options.limit, options.format)?
-            }
+            ChatScope::Documents { source_short_ids } => self.document_pack(
+                source_short_ids,
+                options.limit,
+                options.format,
+                execution_render_budget(execution),
+            )?,
         };
 
         // The evidence floor, ahead of every composer: nothing retrieved is
@@ -425,6 +428,7 @@ impl Memory<'_> {
         source_short_ids: &[String],
         limit: usize,
         format: Option<&str>,
+        budget: usize,
     ) -> MemoryResult<(MemoryPack, Vec<String>)> {
         // Before the first read: an unknown format is refused, and a known one
         // is already the format this call will render in.
@@ -462,7 +466,7 @@ impl Memory<'_> {
         // Rendered from the documents this call already hydrated: the format
         // the caller asked for, over exactly the set they named.
         let rendered = pack_format
-            .map(|pack_format| render_document_pack(&views, pack_format))
+            .map(|pack_format| render_document_pack(&views, pack_format, budget))
             .transpose()?;
         let items: Vec<MemoryItem> = views.iter().map(document_item).collect();
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
@@ -662,7 +666,11 @@ fn document_item(view: &EntityView) -> MemoryItem {
 /// second read, no ranking, no new mechanism — and each entity carries the
 /// same `short_id:content_hash` pair the pipeline reads, so a document
 /// rendered here carries the id and fields a recall would have given it.
-fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResult<String> {
+fn render_document_pack(
+    views: &[EntityView],
+    format: PackFormat,
+    budget: usize,
+) -> MemoryResult<String> {
     let mut results = Vec::with_capacity(views.len());
     for view in views {
         results.push(document_entity(view)?);
@@ -696,7 +704,7 @@ fn render_document_pack(views: &[EntityView], format: PackFormat) -> MemoryResul
     let config = SerializeConfig {
         format,
         profile: FieldProfile::Standard,
-        budget: RECALL_TOKEN_BUDGET,
+        budget,
         allocation: TokenAllocation::default(),
         include_stats: false,
         // An allowlist walks no edges, so it carries no neighbors to merge.

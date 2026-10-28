@@ -513,7 +513,7 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RetrievalTurn = { turn_id: number[]; episode_id: number[]; turn_idx: number };
   type RecallTelemetry = { capture_trace?: boolean; turn?: RetrievalTurn | null };
-  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
+  type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; token_budget?: number | null; reader_agent_ref?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null; telemetry?: RecallTelemetry | null };
   type InputKind = "text" | "image" | "audio";
   type EmbeddingMatchEvidence = { space: string; embedding_kind: InputKind; query_kind: InputKind; score: number; floor: number; strong: number; matched: boolean };
   type VerdictBasis = "calibrated_model" | "deterministic_fallback";
@@ -6430,7 +6430,7 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
     schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
-  /** Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata. */
+  /** Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first, a page at a time: the gate decision ledger, or the receipts of the named kinds; next_after continues to the rest. */
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.VaultReceiptsPage | StoredResult>) & {

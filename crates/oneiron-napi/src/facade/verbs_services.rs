@@ -299,6 +299,8 @@ impl ActorScopedVault {
             scope: Some(recall_scope_to_engine(scope)),
             limit: Some(limit),
             format,
+            token_budget: None,
+            reader_agent_ref: None,
             as_of: None,
             deadline_ms,
             media: None,

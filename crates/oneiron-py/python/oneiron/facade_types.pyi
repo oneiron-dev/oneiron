@@ -2645,6 +2645,8 @@ class RecallRequest(TypedDict):
     scope: NotRequired[RecallScope | None]
     limit: NotRequired[int | None]
     format: NotRequired[str | None]
+    token_budget: NotRequired[int | None]
+    reader_agent_ref: NotRequired[str | None]
     as_of: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     media: NotRequired[ContextPackMediaQuery | None]

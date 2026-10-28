@@ -9385,6 +9385,18 @@ pub struct RecallRequest {
     pub limit: Option<u64>,
     #[serde(rename = "format", default, skip_serializing_if = "Option::is_none")]
     pub format: Option<String>,
+    #[serde(
+        rename = "token_budget",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub token_budget: Option<u64>,
+    #[serde(
+        rename = "reader_agent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reader_agent_ref: Option<String>,
     #[serde(rename = "as_of", default, skip_serializing_if = "Option::is_none")]
     pub as_of: Option<u64>,
     #[serde(
