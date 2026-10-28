@@ -425,11 +425,16 @@ impl DecisionModel for BigModel {
         }
         // Inside a verdict, the caller's own line (FIX 1123), billing the
         // payer its run binds (FIX 3574).
-        let run = self.models.funded_run(
-            format!("{PURPOSE}:{}", EntityId::now().to_hex()),
-            crate::decision_verdict::rung_meter(&self.meter),
-            crate::decision_verdict::rung_payer(),
-        );
+        // Its input is the question over the state its producer built from
+        // the access-checked evidence: those rows, complete (FIX 6935).
+        let run = self
+            .models
+            .funded_run(
+                format!("{PURPOSE}:{}", EntityId::now().to_hex()),
+                crate::decision_verdict::rung_meter(&self.meter),
+                crate::decision_verdict::rung_payer(),
+            )
+            .sourced(Some(call.evidence.to_vec()));
         // A seat's answer names the rung model that served it; one model
         // alone answers or nothing does, so its pin names it already.
         let (response, served) = self

@@ -103,6 +103,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::BROWSER_SOLVED_GROUP, CONTENT),
     (&t::BROWSER_WORKFLOW_RETIRED, CONTENT),
     (&t::BROWSER_WORKFLOW, CONTENT),
+    (&t::BUDGET_RESIDENT_SHARE, LIVE),
     (&t::BUDGET_RSI_LINE, LIVE),
     (&t::BUILD_CACHE_ACCOUNT, LIVE),
     (&t::BUILD_CACHE_REAPI_ROW, CONTENT),
