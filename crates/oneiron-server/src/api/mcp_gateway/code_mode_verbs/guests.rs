@@ -226,6 +226,7 @@ impl FreshGuest for RunFreshGuest {
         session.set_decider(Box::new(self.decider.clone()));
         session.set_receipt_sink(Box::new(writer));
         session.set_secret_custody(Arc::clone(&self.secrets));
+        session.set_site_skill_loader(Arc::clone(&self.site_skills));
         Ok(session)
     }
 
@@ -274,12 +275,14 @@ impl RunBrowser {
     }
 
     /// The fresh guest this run's proposals replay on, for one call of
-    /// `decider`'s caller (`invocation`), holding the run's `secrets`.
+    /// `decider`'s caller (`invocation`), holding the run's `secrets` and
+    /// `site_skills`.
     pub(super) fn fresh_guest(
         &self,
         decider: LadderDecider,
         invocation: Option<InvocationId>,
         secrets: Arc<dyn SecretCustody>,
+        site_skills: Arc<dyn SiteSkillLoader>,
     ) -> RunFreshGuest {
         RunFreshGuest {
             vault: Arc::clone(&self.vault),
@@ -290,6 +293,7 @@ impl RunBrowser {
             decider,
             invocation,
             secrets,
+            site_skills,
         }
     }
 
@@ -337,6 +341,8 @@ impl RunBrowser {
         // The run's secret custody, for this call's caller: the fresh guest
         // holds the same one.
         driver.set_secret_custody(Arc::clone(&fresh.secrets));
+        // The run's site skills (CUA E10), the fresh guest's too.
+        driver.set_site_skill_loader(Arc::clone(&fresh.site_skills));
         driver.set_fresh_guest(Box::new(fresh));
         // While a person is asked or holds the browser, the session refuses
         // the verb `browser_taken_over`; the first answer after they hand it
@@ -472,6 +478,7 @@ impl RunGuests {
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
             admission: None,
+            admission_lease: None,
         }
     }
 
@@ -485,6 +492,7 @@ impl RunGuests {
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
             admission: None,
+            admission_lease: None,
         }
     }
 
@@ -636,7 +644,9 @@ impl RunGuests {
                     scope,
                     admission: self.admission,
                 };
-                let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
+                // Its site skills load under the run's skill-load lease (CUA E10).
+                let sites = Arc::new(RunSiteSkills::new(server, run_id, self.admission_lease.as_ref()));
+                let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets, sites);
                 let fields =
                     RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
