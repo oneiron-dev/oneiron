@@ -2821,6 +2821,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shared_policy_changes(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.changes", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_coreference_link(
         &self,
         input: serde_json::Value,
@@ -3931,6 +3940,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.roots.requests.cancel", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_roots_requests_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_roots_requests_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_owner_work_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.owner_work.get", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

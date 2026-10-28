@@ -5199,6 +5199,21 @@
       "openapi": true
     },
     {
+      "name": "vault.shared.policy.changes",
+      "description": "A live Owner lists every shared-act policy change of one shared vault, settled ones included: row, approvals, veto, state and the editors it waits on; a pending change the rows moved past reads as stale.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "Vec<crate::federation::SharedActPolicyChange>",
+      "call": "crate::task_verb::sdk::read_shared_act_policy_changes(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.changes\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.coreference.link",
       "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
       "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
@@ -7014,6 +7029,49 @@
       "host_door_lists": true,
       "host_door_surface": true,
       "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.roots.requests.create",
+      "description": "The owner decides one root change (pin, activate, restore or anchor) for one linked install, ids only; that install makes it when it syncs. The receipt says recorded, awaiting a holder, or why nothing was.",
+      "input": "crate::task_verb::sdk::RootRequestCreateRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::create_root_request_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.create\")?, crate::authority::ActSurface::ThisInstall, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_surface": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.roots.requests.list",
+      "description": "The owner reads the root requests naming this install that have no result yet, each with its change and receipt, but those he cancelled or a newer request superseded. Ids only.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::PendingRootRequestView>",
+      "call": "crate::task_verb::sdk::list_root_requests_as(memory.vault(), &memory.embedded_owner(\"vault.roots.requests.list\")?)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.owner_work.get",
+      "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
+      "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
+      "output": "crate::world_keys::OwnerWorkReceipt",
+      "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
       },

@@ -362,6 +362,7 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultSharedPolicyChanges(input: unknown): unknown
 vaultFederationCoreferenceLink(input: unknown): unknown
 vaultFederationCoreferenceConfirm(input: unknown): unknown
 vaultFederationCoreferenceShareConsent(input: unknown): unknown
@@ -487,6 +488,9 @@ vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
+vaultRootsRequestsCreate(input: unknown): unknown
+vaultRootsRequestsList(input: unknown): unknown
+vaultOwnerWorkGet(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
 vaultCleanupReview(input: unknown): unknown
 vaultCleanupDecide(input: unknown): unknown

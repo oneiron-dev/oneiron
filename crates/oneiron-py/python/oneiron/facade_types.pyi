@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4169 declarations.
-Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1044 of 1161 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1165 facade rows, 4173 declarations.
+Inputs: 1100 of 1165 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1048 of 1165 fully typed, 117 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 103; unread shapes: 0.
 """
 
@@ -8766,6 +8766,20 @@ class OwnerWorkReceipt(TypedDict):
     manifest_check: NotRequired[CustodyRegisterCheck | None]
     home_warning: NotRequired[BundleHomeWarning | None]
     cancel: NotRequired[OwnerWorkCancelNote | None]
+class RootRequestCreateRequest(TypedDict):
+    target: str
+    change: str
+    root: NotRequired[str | None]
+    machine: NotRequired[str | None]
+class RootChangeView(TypedDict):
+    change: str
+    root: NotRequired[str | None]
+    machine: NotRequired[str | None]
+class PendingRootRequestView(TypedDict):
+    change: RootChangeView
+    receipt: OwnerWorkReceipt
+class OwnerWorkGetRequest(TypedDict):
+    request: str
 class CleanupRunRequest(TypedDict):
     ...
 CleanupPosture = Literal["propose_first", "auto_with_digest"]
