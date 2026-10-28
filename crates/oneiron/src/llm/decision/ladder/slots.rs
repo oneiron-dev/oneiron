@@ -35,19 +35,19 @@ impl DecisionLadder<'_> {
         }
     }
 
-    /// The ladder with every slot whose provider leaves the host emptied, when `posture`
-    /// keeps unit text local. Text leaves only under MANAGED posture or an explicit
-    /// `remote_opt_in`, and never under RELAY ([`crate::llm::decision::SeatRequest::validate_remote`]'s
-    /// rule; ARCH-0076 #posture). A step up skips an emptied slot as it skips any absent
-    /// one.
+    /// The ladder with every slot whose provider leaves the host emptied, when the call
+    /// may not send unit text off the host: text leaves only under MANAGED posture or the
+    /// owner's explicit `remote_opt_in`, under any posture
+    /// ([`crate::llm::decision::unit_text_may_leave_host`], the rule
+    /// [`crate::llm::decision::SeatRequest::validate_remote`] keeps; ARCH-0076 #posture).
+    /// A step up skips an emptied slot as it skips any absent one.
     #[must_use]
     pub fn under_posture(
         mut self,
         posture: crate::HostingPrivacyPosture,
         remote_opt_in: bool,
     ) -> Self {
-        use crate::HostingPrivacyPosture::{Hosted, Relay};
-        if (posture == Hosted || remote_opt_in) && posture != Relay {
+        if crate::llm::decision::unit_text_may_leave_host(posture, remote_opt_in) {
             return self;
         }
         for slot in [
