@@ -41,9 +41,6 @@ const ACTING_REVISION: SideTable<String, ActingRevision, Named> =
 /// Longest single compiled line, in bytes.
 const MAX_LINE_BYTES: usize = 512;
 
-/// Longest decline reason kept.
-const MAX_REASON_BYTES: usize = 1024;
-
 /// What a revision changes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -349,8 +346,8 @@ pub fn compile_acting_revisions(
 /// # Errors
 ///
 /// [`Error::EntityNotFound`] for an unknown revision; [`Error::InvalidClaimBody`]
-/// for an answered or superseded revision or an over-long reason; the
-/// owner-write refusal; storage errors.
+/// for an answered or superseded revision; the owner-write refusal; storage
+/// errors.
 pub fn resolve_acting_revision(
     vault: &Vault,
     actor: &WriteActor,
@@ -358,13 +355,6 @@ pub fn resolve_acting_revision(
     decision: &RevisionDecision,
     now: u64,
 ) -> Result<ActingRevision> {
-    if let RevisionDecision::Decline { reason } = decision
-        && reason.len() > MAX_REASON_BYTES
-    {
-        return Err(Error::InvalidClaimBody(
-            "a decline reason is a sentence, not a document",
-        ));
-    }
     vault.with_write_txn_grouped(|wtxn| {
         let mut row = ACTING_REVISION
             .get(&vault.store, wtxn, &revision_id.to_owned())?

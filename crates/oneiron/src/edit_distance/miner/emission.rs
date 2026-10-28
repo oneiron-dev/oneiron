@@ -7,8 +7,9 @@ use super::config::{
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
     MINER_PREFERENCE_CONFIDENCE, MINER_REJECTION_COOLDOWN_SECS, MINT_MARK_ROW_LABEL,
     PREDICATE_PREFERENCE_PHRASING, PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM,
-    PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO, PROVENANCE_KEY_CLUSTER,
-    PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE, ROW_VERSION,
+    PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO, PREFERENCE_VALUE_KEY_UNATTRIBUTED,
+    PROVENANCE_KEY_CLUSTER, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE,
+    PROVENANCE_KEY_UNATTRIBUTED, ROW_VERSION,
 };
 use super::mining::classify_substitution;
 use super::model::{
@@ -234,18 +235,27 @@ fn emit_preference_claim(
         .predicate()
         .unwrap_or(PREDICATE_PREFERENCE_PHRASING);
     let value = match cluster.target.text() {
-        Some(text) => Value::Map(vec![
-            (Value::from("text"), Value::from(text)),
-            (
-                Value::from("target_predicate"),
-                Value::from(match &cluster.target {
-                    super::target::CompilationTarget::StyleRule(_) => {
-                        crate::claim::PREDICATE_COMPANION_EXPRESSION_STYLE
-                    }
-                    _ => predicate,
-                }),
-            ),
-        ]),
+        Some(text) => {
+            let mut entries = vec![
+                (Value::from("text"), Value::from(text)),
+                (
+                    Value::from("target_predicate"),
+                    Value::from(match &cluster.target {
+                        super::target::CompilationTarget::StyleRule(_) => {
+                            crate::claim::PREDICATE_COMPANION_EXPRESSION_STYLE
+                        }
+                        _ => predicate,
+                    }),
+                ),
+            ];
+            if cluster.unattributed {
+                entries.push((
+                    Value::from(PREFERENCE_VALUE_KEY_UNATTRIBUTED),
+                    Value::from(true),
+                ));
+            }
+            Value::Map(entries)
+        }
         None => preference_value(cluster, SubstitutionClass::Lexical),
     };
     emit_preference_value(vault, run, cluster, handle, now, predicate, value)
@@ -265,7 +275,7 @@ pub(super) fn emit_preference_value(
     };
     let claim_id = vault.store.clock.entity_id()?;
     let class = classify_substitution(&cluster.from, &cluster.to);
-    let envelope = miner_envelope(run, handle)?;
+    let envelope = miner_envelope(run, handle, cluster.unattributed)?;
     let evidence_id = mined_evidence_record_id(handle)?;
     let evidence_record = encode_row(
         &StoredMinedEvidence::new(cluster, class),
@@ -384,6 +394,7 @@ fn emit_skill_edit(
     let row = StoredSkillEdit {
         principal: cluster.principal,
         v: ROW_VERSION,
+        unattributed: cluster.unattributed,
         skill: skill.to_hex(),
         scope: cluster.scope.clone(),
         from: cluster.from.clone(),
@@ -415,8 +426,8 @@ fn emit_skill_edit(
 /// The provenance is the shape `gate.rs::dreamer_run_id_from_provenance` parses
 /// (`dreamer_promotion`'s precedent, verbatim on the two keys that matter), so
 /// the pending row lands in the run's INBOX GROUP and the decider can answer it.
-/// The extra `session` and `cluster` keys are this module's trace: a landed
-/// claim resolves back to the exact bucket that earned it.
+/// The extra `session`, `cluster` and `unattributed` keys are this module's
+/// trace: a landed claim resolves back to the exact bucket that earned it.
 ///
 /// **No `session_tag`.** It looks like free review bundling and is in fact a
 /// trap: a `sess`-carrying body may only be written by the envelope actor that
@@ -424,7 +435,11 @@ fn emit_skill_edit(
 /// door re-puts the reviewed body RAW — so the tag would make the mined claim
 /// impossible to accept. The run group already bundles the pass's proposals,
 /// which is the job the tag would have done.
-pub(super) fn miner_envelope(run: &MinerRun, handle: &[u8; 32]) -> Result<WriteEnvelope> {
+pub(super) fn miner_envelope(
+    run: &MinerRun,
+    handle: &[u8; 32],
+    unattributed: bool,
+) -> Result<WriteEnvelope> {
     let provenance = WriteProvenance::new(Value::Map(vec![
         (
             Value::from(PROVENANCE_KEY_SURFACE),
@@ -441,6 +456,10 @@ pub(super) fn miner_envelope(run: &MinerRun, handle: &[u8; 32]) -> Result<WriteE
         (
             Value::from(PROVENANCE_KEY_CLUSTER),
             Value::from(bytes_to_hex_lower(handle)),
+        ),
+        (
+            Value::from(PROVENANCE_KEY_UNATTRIBUTED),
+            Value::from(unattributed),
         ),
     ]))?;
     Ok(WriteEnvelope::new(
@@ -473,6 +492,10 @@ pub(super) fn preference_value(cluster: &SubstitutionCluster, class: Substitutio
         (
             Value::from(PREFERENCE_VALUE_KEY_RATIONALE),
             Value::from(class.rationale()),
+        ),
+        (
+            Value::from(PREFERENCE_VALUE_KEY_UNATTRIBUTED),
+            Value::from(cluster.unattributed),
         ),
     ])
 }

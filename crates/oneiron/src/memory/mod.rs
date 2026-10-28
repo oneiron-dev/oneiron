@@ -66,6 +66,7 @@ mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
+mod chat_composer;
 pub mod checkout_doors;
 mod claims;
 pub mod code_doors;
@@ -156,10 +157,8 @@ pub(crate) use authorship::{
     require_claim_self_grant_in_txn,
 };
 pub use booking::EmergencyInstructionInput;
-pub use chat::{
-    ChatAbstentionReason, ChatComposeRequest, ChatComposer, ChatDepth, ChatOptions, ChatResponse,
-    ChatScope, ComposedChatAnswer,
-};
+pub use chat::{ChatAbstentionReason, ChatDepth, ChatOptions, ChatResponse, ChatScope};
+pub use chat_composer::{ChatComposeRequest, ChatComposer, ComposedChatAnswer};
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
 };
@@ -332,7 +331,7 @@ pub use witness::{
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
-    message_stream_finality_in_txn,
+    message_stream_finality_in_txn, scrub_stream_seed_actor_in_txn,
 };
 pub use witness::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn};
 pub(crate) use witness::{

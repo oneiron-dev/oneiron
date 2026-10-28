@@ -443,6 +443,7 @@ pub(crate) fn seal_world_pad_compartment(
         // A world's pad capsule carries no erase evidence (FIX 10584 item
         // 3): that rides the head's host-readable compartments.
         evidence: Vec::new(),
+        carried_digests: Vec::new(),
     };
     let mut key = Zeroizing::new([0u8; 32]);
     crate::world_keys::os_fill(&mut key[..])?;
@@ -530,6 +531,7 @@ pub(crate) fn open_world_pad_compartment(
         || !body.recipients.is_empty()
         || !body.history.is_empty()
         || !body.evidence.is_empty()
+        || !body.carried_digests.is_empty()
     {
         return Err(pads_corrupt());
     }

@@ -33,7 +33,7 @@ use crate::authority::machine_standing::{InstallCounted, Mark, Standing, Standin
 /// supersedes is its [`SaySo`], beside it. Typed provenance beside custody:
 /// it never relabels the signer's custody, and the custody graph never reads
 /// it.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(in crate::authority) struct ActProof {
     pub(in crate::authority) carrier: EntityId,
     pub(in crate::authority) key: [u8; 32],

@@ -137,6 +137,7 @@ mod handle;
 pub(crate) mod grant_scope_custody;
 // FIX 8875: the home handoff's custody contract, for L03's carrier.
 pub(crate) mod home_handoff_custody;
+mod inference_snapshot_custody;
 mod key_custody;
 mod key_encoding;
 mod known_history;
@@ -232,6 +233,7 @@ pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
 pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
 pub use handle::*;
+pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;
 pub use key_custody::protocol as custody_protocol;
 pub use key_custody::custody_container_path;

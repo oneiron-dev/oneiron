@@ -321,6 +321,9 @@ ARGUMENTS = {
         'napi_convert': 'let {name} = {name}.map(|value| oneiron_remote::check_unix_seconds("as_of", value)).transpose().map_err(facade_error)?;', 'field': '{name}'},
     'deadline_ms': {'rust': 'Option<u64>', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int | None', 'stub': 'int | None', 'native_py': 'Option<u64>',
         'napi_convert': 'let {name} = {name}.map(oneiron_remote::check_deadline_ms_number).transpose().map_err(facade_error)?;', 'field': '{name}'},
+    # FIX 9962: a recall's rendering budget, a whole token count (0: uncut).
+    'token_budget': {'rust': 'Option<u64>', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int | None', 'stub': 'int | None', 'native_py': 'Option<u64>',
+        'napi_convert': 'let {name} = {name}.map(oneiron_remote::check_token_budget_number).transpose().map_err(facade_error)?;', 'field': '{name}'},
     # OF-370: a recall's media query, lowered from each boundary's own record
     # (napi object, UniFFI record, Python JSON) onto the engine's wire type.
     'media': {'rust': 'Option<oneiron::code_run::vault_read::ContextPackMediaQuery>', 'napi': 'Option<NapiRecallMedia>', 'native_ts': 'RecallMedia | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallMedia | None', 'native_py': 'Option<&str>', 'json': True,
@@ -2005,6 +2008,7 @@ UNIFFI_ARGUMENTS = {
     'format': ('Option<String>', '{name}.as_deref()'),
     'as_of': ('Option<u64>', '{name}'),
     'deadline_ms': ('Option<u64>', '{name}'),
+    'token_budget': ('Option<u64>', '{name}'),
     'kinds': ('Option<Vec<String>>', '{name}.as_deref().unwrap_or_default()'),
 }
 
