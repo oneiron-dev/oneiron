@@ -75,7 +75,8 @@ pub(crate) fn step_capsule_row(row: &[u8]) -> bool {
 /// Every kept step start `txn` holds, by its capsule: a capsule that does
 /// not decode, holds its content no longer, names no start, or whose run
 /// no longer holds its start whole, keeps none. A start whose bytes do not
-/// read is none here, and is reported: it travels as it did.
+/// read is none here, and is reported: it travels as it did (CALLS "an
+/// unread step start travels whole").
 ///
 /// # Errors
 ///
@@ -154,8 +155,10 @@ fn kept_start_in_txn(
     }))
 }
 
-/// Who owns a kept start's rest: the actor whose step it is, its run, and
-/// every owner its prefix row's replies name, as a replay row's reply.
+/// Who owns a kept start's rest (CALLS "step start rest owners"): the actor
+/// whose step it is and its run, whose erases retire the whole start body
+/// today, and every owner its prefix row's replies name, as a replay row's
+/// reply.
 ///
 /// # Errors
 ///

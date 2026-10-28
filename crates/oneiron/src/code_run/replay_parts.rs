@@ -150,7 +150,10 @@ fn start_parts(bytes: &[u8]) -> Result<Option<ReplayParts>> {
 }
 
 /// The record `bytes` encode, when one of its calls holds an ask a
-/// checkpoint carries apart and it encodes again to exactly `bytes`.
+/// checkpoint carries apart and it encodes again to exactly `bytes` (CALLS
+/// "replay parts need canonical bytes"): only such a record recomposes to
+/// its own bytes when every part is live; any other travels whole, as
+/// before.
 fn canonical_record(bytes: &[u8]) -> Option<CodeRunReplayRecord> {
     let record = decode_code_run_replay_record(bytes).ok()?;
     if !record
