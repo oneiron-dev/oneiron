@@ -45,6 +45,8 @@ pub struct SubstitutionCluster {
     pub actor: EntityId,
     /// The skill every citing amendment rode, when they agree on one.
     pub skill: Option<EntityId>,
+    /// At least one citing fallback amendment had no attribution judgment.
+    pub unattributed: bool,
     /// Distinct amendment receipts showing this substitution, in receipt-id
     /// order so two passes over one ledger cite the same list in the same order.
     pub receipt_refs: Vec<String>,
@@ -220,6 +222,8 @@ pub(super) struct Bucket {
     pub(super) skill: Option<Option<EntityId>>,
     /// Set once two folds disagree.
     pub(super) skill_conflict: bool,
+    /// At least one fold came from a fallback amendment with no attribution judgment.
+    pub(super) unattributed: bool,
     pub(super) at: u64,
 }
 
@@ -227,7 +231,14 @@ impl Bucket {
     /// Folds one citing amendment in. Receipts are counted DISTINCTLY: one
     /// receipt whose window shows a substitution three times is one occurrence
     /// of a habit, not three.
-    pub(super) fn observe(&mut self, receipt_id: &str, skill: Option<EntityId>, at: u64) {
+    pub(super) fn observe(
+        &mut self,
+        receipt_id: &str,
+        skill: Option<EntityId>,
+        at: u64,
+        unattributed: bool,
+    ) {
+        self.unattributed |= unattributed;
         if !self.receipts.iter().any(|seen| seen == receipt_id) {
             self.receipts.push(receipt_id.to_owned());
         }
@@ -253,6 +264,7 @@ impl Bucket {
             } else {
                 self.skill.flatten()
             },
+            unattributed: self.unattributed,
             count: u32::try_from(self.receipts.len()).unwrap_or(u32::MAX),
             receipt_refs: self.receipts,
             at: self.at,
@@ -374,6 +386,7 @@ pub(super) struct StoredMinedEvidence {
     pub(super) from: String,
     pub(super) to: String,
     pub(super) class: String,
+    pub(super) unattributed: bool,
     pub(super) receipt_refs: Vec<String>,
     pub(super) count: u32,
     pub(super) at: u64,
@@ -389,6 +402,7 @@ impl StoredMinedEvidence {
             from: cluster.from.clone(),
             to: cluster.to.clone(),
             class: class.as_str().to_owned(),
+            unattributed: cluster.unattributed,
             receipt_refs: cluster.receipt_refs.clone(),
             count: cluster.count,
             at: cluster.at,
@@ -405,6 +419,7 @@ pub(super) struct StoredSkillEdit {
     )]
     pub(super) principal: Option<EntityId>,
     pub(super) v: u8,
+    pub(super) unattributed: bool,
     pub(super) skill: String,
     pub(super) scope: String,
     pub(super) from: String,

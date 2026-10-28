@@ -14,9 +14,10 @@
 //! work: prose gets edited more than a calendar entry, and a generation that
 //! only ever drafts prose would look terrible beside one that only ever drafts
 //! calendar entries. Every exported score is therefore PGR-style RELATIVE —
-//! this generation's mean against the mean of ALL generations' runs in the SAME
-//! task class. `1.0` is par. A generation with no peers scores exactly par,
-//! which is the honest answer to "compared to what".
+//! this generation's mean against the observed floor and ceiling of the SAME
+//! task class. A generation with no range to compare against (one model, or
+//! floor equal to ceiling) reads as no hint, which is the honest answer to
+//! "compared to what".
 //!
 //! # A swap is a new generation, not a new datapoint
 //!

@@ -76,6 +76,7 @@ pub(crate) fn maybe_propose_standing_policy_at(
             cited_receipts: window.cited_receipts,
             proposed_at: at,
             accepted_at: None,
+            superseded: Vec::new(),
         };
         STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(Some(row_ref))

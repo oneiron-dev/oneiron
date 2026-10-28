@@ -20,7 +20,8 @@ use super::{ATTEMPT_RECEIPT, ServeReplayJudge, invalid, now, person_minutes};
 
 /// How far back live arm attribution looks for loaded runs.
 const LIVE_WINDOW_SECS: u64 = 30 * 86_400;
-/// Most receipts one live pull scans.
+/// Receipts one live page reads; a pull pages until it finds an eligible run
+/// or the window ends.
 const LIVE_SCAN_LIMIT: usize = 2_000;
 /// The attempt state of a run that finished.
 const COMPLETED: &str = "completed";
@@ -162,25 +163,54 @@ impl GoalAxisBandit for ServeAxisBandit<'_> {
         };
         let vault = &self.judge.vault;
         let since = now().saturating_sub(LIVE_WINDOW_SECS);
-        let mut scan = vault
-            .scan_receipts(
+        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
+        // Eligible, untaken arm receipts first: page newest-first until one is
+        // found or the window ends (FIX 9532). The limit is a page size, never
+        // exhaustion; the scan's completeness proves the end.
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut end_at: Option<u64> = None;
+        let run = loop {
+            let scan = vault.scan_receipts(
                 ReceiptQuery::new(LIVE_SCAN_LIMIT)
                     .with_kind(ReceiptKind::Outbound)
-                    .with_time_bounds(Some(since), None),
-            )?
-            .records;
-        scan.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
-        let mut taken = self.taken.lock().unwrap_or_else(PoisonError::into_inner);
-        let run = scan
-            .into_iter()
-            .find(|receipt| {
-                receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
+                    .with_time_bounds(Some(since), end_at),
+            )?;
+            let complete = scan.complete;
+            let mut records = scan.records;
+            records.sort_by(|a, b| b.occurred_at.cmp(&a.occurred_at));
+            let page_len = records.len();
+            if records.is_empty() {
+                break None;
+            }
+            let mut fresh = 0;
+            let mut floor = u64::MAX;
+            let mut found = None;
+            for receipt in records {
+                floor = floor.min(receipt.occurred_at);
+                if !seen.insert(receipt.receipt_id.clone()) {
+                    continue;
+                }
+                fresh += 1;
+                if receipt.receipt_id.starts_with(ATTEMPT_RECEIPT)
                     && !taken.contains(&(axis.to_owned(), receipt.receipt_id.clone()))
                     && receipt
                         .pack_manifest_skills()
                         .is_some_and(|skills| skills.contains(&arm.loaded))
-            })
-            .ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
+                {
+                    found = Some(receipt);
+                    break;
+                }
+            }
+            if let Some(run) = found {
+                break Some(run);
+            }
+            if complete || page_len < LIVE_SCAN_LIMIT || fresh == 0 {
+                break None;
+            }
+            end_at = Some(floor);
+        };
+        let run =
+            run.ok_or_else(|| invalid(format!("no live run of {} is left to pull", arm.loaded)))?;
         taken.insert((axis.to_owned(), run.receipt_id.clone()));
         drop(taken);
         let defect = attribution_judgments(vault)?.into_iter().any(|judgment| {
