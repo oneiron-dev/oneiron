@@ -633,15 +633,9 @@ impl TempBody {
             std::process::id()
         ));
 
-        let mut options = fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&path)
+        // Owner-only, with no ACL entry inherited from a shared temp
+        // directory, before any request byte is written (FIX 9478).
+        let mut file = super::credential_file::create(&path)
             .map_err(|error| anyhow::anyhow!("stage the request body: {error}"))?;
 
         Self::write_staged(path, &mut file, bytes)
