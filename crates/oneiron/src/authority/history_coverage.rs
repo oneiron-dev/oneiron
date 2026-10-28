@@ -152,8 +152,25 @@ pub(crate) fn authority_missing_history_in_txn(
 /// snapshot resumes from has folded, or `required` names, that no held row
 /// has. The fold's own refusal for missing history names no hash outside it.
 /// On a vault that adopted a checkpoint image it is the fold's own request
-/// past the image (`readonly_fold::adopted_history_request_in_txn`).
+/// past the image (`readonly_fold::adopted_history_request_in_txn`). Either
+/// way it names what the pending evidence's fold still needs too (FIX 2989).
 pub(crate) fn authority_history_request_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    required: &BTreeSet<AuthorityEntryHash>,
+) -> Result<AuthorityHistoryRequest> {
+    let mut request = held_history_request_in_txn(store, posture, txn, required)?;
+    if let Some(pending) =
+        super::history_admission::pending_history_request_in_txn(store, posture, txn)?
+    {
+        request.missing.extend(pending.missing);
+    }
+    Ok(request)
+}
+
+/// [`authority_history_request_in_txn`] of the held log alone.
+fn held_history_request_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,

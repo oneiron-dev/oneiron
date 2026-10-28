@@ -23,13 +23,17 @@ use super::priors::read_cell_in_txn;
 use super::projector::PREDICATE_SKILL_RELIABILITY;
 use super::provenance::{skill_reliability_prior, skill_reliability_prior_in_txn};
 
-/// The task placement and axis the caller will execute. The judge is not a key.
+/// The task placement and axis the caller will execute, in the run's scope.
+/// The judge is not a key.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkillReliabilityQuery {
     pub type_ref: TypeRef,
     pub axis: String,
     /// The type tree's parent chain, nearest parent first.
     pub type_parents: Vec<TypeRef>,
+    /// The project the run placed in; `None` is the vault (FIX 6038).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<EntityId>,
 }
 
 impl SkillReliabilityQuery {
@@ -50,11 +54,14 @@ impl SkillReliabilityQuery {
         Ok(())
     }
 
-    /// The query for `type_ref` on `tree`, its parents read off that tree;
-    /// `axis` omitted reads the skill-outcome axis. `None` when `tree` does
-    /// not hold `type_ref` at its version. Pure: the caller loads the tree.
+    /// The query for `type_ref` on `tree`, its parents read off that tree, in
+    /// `project`'s scope, the project the placement names (`None`, the
+    /// vault's); `axis` omitted reads the skill-outcome axis. `None` when
+    /// `tree` does not hold `type_ref` at its version. Pure: the caller loads
+    /// the tree.
     pub fn on_tree(
         tree: &crate::task_type::TypeTree,
+        project: Option<EntityId>,
         type_ref: TypeRef,
         axis: Option<String>,
     ) -> Result<Option<Self>> {
@@ -65,6 +72,7 @@ impl SkillReliabilityQuery {
             type_parents: tree.ancestors(&type_ref),
             type_ref,
             axis: axis.unwrap_or_else(|| super::SKILL_OUTCOME_AXIS.to_owned()),
+            project,
         };
         query.validate()?;
         Ok(Some(query))
@@ -76,7 +84,8 @@ impl SkillReliabilityQuery {
         let cell = LearningCell::new(LearningPredicate::Reliability, skill)
             .executor(executor)
             .type_ref(self.type_ref.clone())
-            .axis(self.axis.clone());
+            .axis(self.axis.clone())
+            .project(self.project);
         cell.validate()?;
         Ok(cell)
     }

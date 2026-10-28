@@ -165,7 +165,9 @@ impl Vault {
 
 /// Every directive this replica's fold accepts, oldest first, each with the
 /// earliest accepted result its machine signed for it. The fold accepts a
-/// result only under the install key of the machine it names.
+/// result only under the install key of the machine it names. The rows are
+/// the stored ones and, on a vault that adopted a checkpoint image, the
+/// covered ones the image carries whole (FIX 5412).
 fn directive_states_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -173,6 +175,7 @@ fn directive_states_in_txn(
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let mut directives = Vec::new();
     let mut results: BTreeMap<AuthorityEntryHash, ResidenceResult> = BTreeMap::new();
+    let mut rows = BTreeMap::new();
     for id in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_AUTHORITY_LOG, None)?
@@ -190,7 +193,16 @@ fn directive_states_in_txn(
             continue;
         }
         let entry = decode_authority_log_entry_body(body)?;
-        let hash = authority_entry_hash(&entry)?;
+        rows.insert(authority_entry_hash(&entry)?, entry);
+    }
+    // Carried rows the evidence cannot read leave the stored rows alone, as
+    // before the image carried them.
+    let carried =
+        crate::authority::carried_residence_rows_in_txn(&vault.store, txn).unwrap_or_default();
+    for (hash, entry) in carried {
+        rows.entry(hash).or_insert(entry);
+    }
+    for (hash, entry) in rows {
         if !fold.valid_entries.contains(&hash) {
             continue;
         }

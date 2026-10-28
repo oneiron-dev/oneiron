@@ -235,9 +235,9 @@ reads them back, and rests each owed reference with its pad. It acts on the late
 `FILE`'s checkpoint. A world clears `Locked` only when every reference it owed is at rest or
 erased; a pad the head holds retired stays erased. The report lists `opened_worlds`,
 `installed`, `rested`, `owed_refs`, `remaining` notes and any stage that faulted. What committed
-before a fault stands, and the command may run again. Run it before the restored vault takes its
-next backup: that backup publishes a new custody head beside it, which holds only the pads this
-vault can open.
+before a fault stands, and the command may run again. Later backups carry the `Locked` worlds'
+sealed pads in each new custody head, as the restore found them, until they open here or are
+erased; `--open-pads` works from any of those heads.
 
 ## Agents refused after the host clock ran ahead
 

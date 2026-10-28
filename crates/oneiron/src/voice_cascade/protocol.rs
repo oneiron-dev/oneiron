@@ -152,7 +152,13 @@ pub enum ToolEvent {
 pub enum BrainEvent {
     TextDelta(String),
     Tool(ToolEvent),
+    /// The turn's stream reported a stop: the answer is whole (FIX 7808).
     Done,
+    /// The turn's stream ended without a stop: a length cut, a filtered
+    /// answer, or a provider that reported no reason. Every word it already
+    /// said stands and is spoken to its end; nothing follows it, and the
+    /// answer never reads as a whole one.
+    Incomplete,
     Error(String),
 }
 

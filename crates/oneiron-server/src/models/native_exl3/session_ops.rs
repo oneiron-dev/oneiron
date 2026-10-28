@@ -93,10 +93,6 @@ pub(in crate::models) async fn send<B: Serialize, R: DeserializeOwned>(
 /// as the frame's one descriptor; the region is immutable, that long, and
 /// hashes to `snapshot_sha256`. An export changes nothing on the worker, so
 /// a cut may be asked again.
-#[expect(
-    dead_code,
-    reason = "the R3 park path is its caller (worker_host/session); it is not built yet"
-)]
 pub(in crate::models) async fn export(
     socket: &Path,
     epoch: &str,
@@ -134,10 +130,6 @@ pub(in crate::models) async fn export(
 /// `snapshot` as its input region: the answer, checked. It staged `body`'s
 /// checkpoint exactly, and read all of `snapshot_bytes` under the same
 /// SHA-256. Anything else is a cut, and the caller drops the session.
-#[expect(
-    dead_code,
-    reason = "the R3 restore path is its caller (worker_host/session); it is not built yet"
-)]
 pub(in crate::models) async fn import(
     socket: &Path,
     epoch: &str,

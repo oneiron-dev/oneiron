@@ -2262,7 +2262,7 @@ impl OneironClient {
                 "vault.agents.spawn" => remote_agent_verb_output::<
                     oneiron::team::doors::SpawnIntentReply,
                 >(client, verb, &input),
-                "vault.tasks.cancel_force" => remote_agent_verb_output::<
+                "vault.tasks.cancel.force" => remote_agent_verb_output::<
                     oneiron::task_verb::run_doors::CancelForceReceipt,
                 >(client, verb, &input),
                 "vault.runs.branches.get" => remote_agent_verb_output::<
@@ -2611,6 +2611,9 @@ impl OneironClient {
                 ),
                 "vault.receipts.context" => remote_agent_verb_output::<
                     Option<oneiron::receipt::ContextEmitReceipt>,
+                >(client, verb, &input),
+                "vault.receipts.craft_reply_manifest" => remote_agent_verb_output::<
+                    Option<Vec<oneiron::attempt_queue::ManifestEntry>>,
                 >(client, verb, &input),
                 "ai.voice.asr.open" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AsrSession,
@@ -4791,6 +4794,8 @@ impl OneironClient {
     /// Explicit `scope.world_ref` recalls of retained foreign worlds carry
     /// `MemoryItem::stale`: stale-since and age in seconds (when known), the
     /// terminal reason and pact epoch. This selection grants no read authority.
+    /// `token_budget` (0: uncut) sizes the rendered `format`; omitted, the
+    /// window budget of `reader_agent_ref`'s memory profile, else 4,000.
     #[expect(
         clippy::too_many_arguments,
         reason = "one parameter per SDK argument of the verb"
@@ -4806,6 +4811,8 @@ impl OneironClient {
         deadline_ms: Option<u64>,
         media: Option<oneiron::code_run::vault_read::ContextPackMediaQuery>,
         query_affect: Option<oneiron::task_verb::sdk::QueryAffect>,
+        token_budget: Option<u64>,
+        reader_agent_ref: Option<&str>,
     ) -> Result<oneiron::memory::MemoryPack, MemoryError> {
         let input = oneiron::task_verb::sdk::RecallRequest {
             query: query.to_owned(),
@@ -4817,6 +4824,8 @@ impl OneironClient {
             deadline_ms,
             media,
             query_affect,
+            token_budget,
+            reader_agent_ref: reader_agent_ref.map(str::to_owned),
             ..Default::default()
         };
         oneiron::memory::caps::check_query(&input.query)?;
@@ -12560,7 +12569,7 @@ impl OneironClient {
                 &["Send the documented typed SDK input."],
             )
         })?;
-        self.typed_agent_verb("vault.tasks.cancel_force", value)
+        self.typed_agent_verb("vault.tasks.cancel.force", value)
     }
     pub fn vault_runs_branches_get(
         &self,
@@ -13936,6 +13945,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts.context", value)
+    }
+    pub fn vault_receipts_craft_reply_manifest(
+        &self,
+        input: &oneiron::receipt::CallReceiptRequest,
+    ) -> Result<Option<Vec<oneiron::attempt_queue::ManifestEntry>>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.receipts.craft_reply_manifest", value)
     }
     pub fn ai_voice_asr_open(
         &self,

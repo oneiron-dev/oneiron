@@ -298,6 +298,10 @@ export type RecallOptions = {
   media?: RecallMedia
   /** The affect the query is asked in; omitted, recall ranks as before. */
   queryAffect?: QueryAffect
+  /** The token budget `format`'s rendering is cut to; 0 renders it uncut. Omitted, the window budget of `readerAgentRef`'s memory profile, else 4,000. */
+  tokenBudget?: number
+  /** An agent definition whose memory profile sizes the rendering when `tokenBudget` is omitted; it grants no read. */
+  readerAgentRef?: string
 }
 
 /** Where one recalled item came from. */

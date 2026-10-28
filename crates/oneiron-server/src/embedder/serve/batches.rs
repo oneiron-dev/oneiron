@@ -14,11 +14,17 @@
 //! A larger one streams its rows as each batch is made, after the first
 //! batch has succeeded. A batch that fails after that ends the stream
 //! broken, never closed as a shorter list: no partial answer reads as a
-//! complete one. Nothing here adds a size limit or a deadline: the
-//! admission wait applies to the first batch alone, before anything is
-//! started, and a later batch waits its turn for as long as it takes, unless
-//! the client goes away or stops reading for the idle limit.
+//! complete one. A request that asks for it (`error_member`, which the
+//! vault's endpoint client sends) gets a readable end instead: the list
+//! closes and an `error` member, where the answer's tail would be, names
+//! why it is not complete (FIX 10702). Nothing here adds a size limit or a
+//! deadline: the admission wait applies to the first batch alone, before
+//! anything is started, and a later batch waits for its room and its turn
+//! for as long as it takes, unless the client goes away, which ends those
+//! waits at once (FIX 10756), or stops reading for the idle limit.
 
+use std::future::Future;
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,7 +49,14 @@ pub(super) struct EmbeddingRequestWork {
     pub(super) base64: bool,
     /// The name the request gave its model.
     pub(super) model: String,
+    /// The client reads an `error` member that ends an answer a later batch
+    /// could not complete ([`error_terminal`]).
+    pub(super) error_member: bool,
 }
+
+/// What the transport takes of an answer: its pieces, or the error that
+/// breaks it off.
+type Piece = Result<axum::body::Bytes, std::io::Error>;
 
 /// The fields an answer carries after its rows.
 #[derive(Serialize)]
@@ -70,36 +83,60 @@ enum BatchFailure {
     /// The first batch's wait for its turn or its room reached the queue
     /// deadline: nothing was started.
     WaitedOut,
-    /// The model could not embed it, or its rows could not be encoded.
-    Failed,
+    /// The client went away while a later batch waited for its room or its
+    /// turn: nobody reads the rest.
+    ClientGone,
+    /// The model could not embed it.
+    Embedding,
+    /// Its rows could not be encoded.
+    Encoding,
 }
 
 /// The texts of the batch starting at `start`.
-fn batch_range(work: &EmbeddingRequestWork, start: usize) -> std::ops::Range<usize> {
+fn batch_range(work: &EmbeddingRequestWork, start: usize) -> Range<usize> {
     start..work.texts.len().min(start.saturating_add(MAX_INPUTS))
+}
+
+/// `wait`'s outcome, or `None` once `transport` closes first: a client that
+/// went away frees what its later batch waits for (FIX 10756). The first
+/// batch, which runs before any byte goes out, passes no transport, and its
+/// wait runs as it is.
+async fn unless_gone<T>(
+    transport: Option<&tokio::sync::mpsc::Sender<Piece>>,
+    wait: impl Future<Output = T>,
+) -> Option<T> {
+    let Some(transport) = transport else {
+        return Some(wait.await);
+    };
+    tokio::select! {
+        done = wait => Some(done),
+        () = transport.closed() => None,
+    }
 }
 
 /// Embeds the batch starting at `start` under a turn and room of its own.
 /// The first batch waits for each up to the queue deadline; a later one, of
-/// a request already admitted and answering, waits its turn until it comes.
+/// a request already admitted and answering, waits its turn until it comes
+/// or `transport` closes.
 async fn embed_request_batches(
     served: &Arc<Served>,
     work: &Arc<EmbeddingRequestWork>,
     start: usize,
+    transport: Option<&tokio::sync::mpsc::Sender<Piece>>,
 ) -> Result<EncodedBatch, BatchFailure> {
     let range = batch_range(work, start);
     let dimensions = served.embedder.dimensions();
     let first = start == 0;
     let bytes = answer_bytes(range.len(), dimensions);
     let room = loop {
-        match served
+        let reserved = served
             .answers
-            .reserve_alone(bytes, served.wait, &served.questions)
-            .await
-        {
-            Some(room) => break room,
-            None if first => return Err(BatchFailure::WaitedOut),
-            None => {}
+            .reserve_alone(bytes, served.wait, &served.questions);
+        match unless_gone(transport, reserved).await {
+            None => return Err(BatchFailure::ClientGone),
+            Some(Some(room)) => break room,
+            Some(None) if first => return Err(BatchFailure::WaitedOut),
+            Some(None) => {}
         }
     };
     let turns = match work.priority {
@@ -112,10 +149,10 @@ async fn embed_request_batches(
             _ => return Err(BatchFailure::WaitedOut),
         }
     } else {
-        Arc::clone(turns)
-            .acquire_owned()
-            .await
-            .map_err(|_| BatchFailure::Failed)?
+        match unless_gone(transport, Arc::clone(turns).acquire_owned()).await {
+            None => return Err(BatchFailure::ClientGone),
+            Some(turn) => turn.map_err(|_| BatchFailure::Embedding)?,
+        }
     };
     let embedder = Arc::clone(&served.embedder);
     let task = Arc::clone(work);
@@ -133,23 +170,23 @@ async fn embed_request_batches(
         Ok(Ok(embedded)) => embedded,
         Ok(Err(error)) => {
             tracing::warn!(kind = ?error.kind(), "endpoint embedding failed");
-            return Err(BatchFailure::Failed);
+            return Err(BatchFailure::Embedding);
         }
         Err(error) => {
             tracing::warn!(
                 panicked = error.is_panic(),
                 "endpoint embedding task failed"
             );
-            return Err(BatchFailure::Failed);
+            return Err(BatchFailure::Embedding);
         }
     };
     if embedded.rows.len() != range.len() {
-        return Err(BatchFailure::Failed);
+        return Err(BatchFailure::Embedding);
     }
     let mut rows = Fixed(Vec::with_capacity(encoding_bytes(range.len(), dimensions)));
     for (offset, row) in embedded.rows.into_iter().enumerate() {
         if start + offset > 0 && std::io::Write::write_all(&mut rows, b",").is_err() {
-            return Err(BatchFailure::Failed);
+            return Err(BatchFailure::Encoding);
         }
         let row = EmbeddingRow {
             object: "embedding",
@@ -162,7 +199,7 @@ async fn embed_request_batches(
             },
         };
         if serde_json::to_writer(&mut rows, &row).is_err() {
-            return Err(BatchFailure::Failed);
+            return Err(BatchFailure::Encoding);
         }
     }
     Ok(EncodedBatch {
@@ -196,6 +233,49 @@ fn head_and_tail(
     Some((br#"{"object":"list","data":["#.to_vec(), closing))
 }
 
+/// What a client that asked for it (`error_member`) reads at the end of an
+/// answer whose rows had started when it could not complete: the list
+/// closed and an OpenAI-shaped `error` member in place of the tail, naming
+/// why by `code` and the inputs it covered, never their text (FIX 10702).
+/// `None` for any other client, whose stream ends broken, so no reader takes
+/// a shorter list for a whole one.
+fn error_terminal(
+    work: &EmbeddingRequestWork,
+    code: &'static str,
+    message: &str,
+) -> Option<Vec<u8>> {
+    if !work.error_member {
+        return None;
+    }
+    let error = serde_json::to_vec(&serde_json::json!({
+        "message": message,
+        "type": "server_error",
+        "param": null,
+        "code": code,
+    }))
+    .ok()?;
+    let mut terminal = br#"],"error":"#.to_vec();
+    terminal.extend_from_slice(&error);
+    terminal.push(b'}');
+    Some(terminal)
+}
+
+/// The code and message a later batch's failure ends an answer with.
+fn unfinished(failure: &BatchFailure, inputs: &Range<usize>) -> (&'static str, String) {
+    let (code, what) = match failure {
+        BatchFailure::Encoding => ("encoding_failed", "could not be encoded"),
+        _ => ("embedding_failed", "could not be embedded"),
+    };
+    (
+        code,
+        format!(
+            "inputs {} to {} {what}; the rows before them were sent, and this answer is not complete",
+            inputs.start,
+            inputs.end.saturating_sub(1)
+        ),
+    )
+}
+
 /// Answers `work`: its first batch before any byte goes out, so a request
 /// that fails there is refused whole, as one that fits a batch always is;
 /// then every later batch streamed in order. `held` is the request's place
@@ -207,10 +287,10 @@ pub(super) async fn stream_embedding_rows(
     held: (Permit, HeldBytes),
 ) -> Response {
     let work = Arc::new(work);
-    let first = match embed_request_batches(&served, &work, 0).await {
+    let first = match embed_request_batches(&served, &work, 0, None).await {
         Ok(first) => first,
         Err(BatchFailure::WaitedOut) => return waited_out(),
-        Err(BatchFailure::Failed) => {
+        Err(BatchFailure::ClientGone | BatchFailure::Embedding | BatchFailure::Encoding) => {
             return refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
@@ -256,10 +336,11 @@ pub(super) async fn stream_embedding_rows(
 
 /// The answer's body. `whole` is a one-batch answer, sent as it is; with
 /// none, the rows stream batch by batch after `first`, and the answer
-/// closes only once every batch has come back. A batch that fails, a client
-/// that goes away, or one that reads nothing for `idle` ends the stream
-/// broken: the request's place, its body's bytes and each batch's room are
-/// given back then.
+/// closes only once every batch has come back. A batch that fails ends the
+/// stream broken, or with its `error` member for a client that asked
+/// ([`error_terminal`]); a client that goes away, or one that reads nothing
+/// for `idle`, ends it broken. The request's place, its body's bytes and
+/// each batch's room are given back then.
 fn pieces_body(
     served: Arc<Served>,
     work: Arc<EmbeddingRequestWork>,
@@ -268,7 +349,6 @@ fn pieces_body(
     whole: Option<Vec<u8>>,
     idle: Duration,
 ) -> axum::body::Body {
-    type Piece = Result<axum::body::Bytes, std::io::Error>;
     let (pieces, receiver) = tokio::sync::mpsc::channel::<Piece>(2);
     tokio::spawn(async move {
         let _held = held;
@@ -303,13 +383,16 @@ fn pieces_body(
         drop(first);
         let mut start = batch_range(&work, 0).end;
         while start < work.texts.len() {
-            let batch = match embed_request_batches(&served, &work, start).await {
+            let batch = match embed_request_batches(&served, &work, start, Some(&pieces)).await {
                 Ok(batch) => batch,
-                Err(_) => {
+                Err(BatchFailure::ClientGone) => return,
+                Err(failure) => {
                     tracing::warn!(
-                        "a later batch of an embeddings answer failed; the answer ends broken"
+                        error_member = work.error_member,
+                        "a later batch of an embeddings answer failed; the answer ends unfinished"
                     );
-                    let _ = pieces.send(Err(broken())).await;
+                    let (code, message) = unfinished(&failure, &batch_range(&work, start));
+                    end_unfinished(&pieces, error_terminal(&work, code, &message), idle).await;
                     return;
                 }
             };
@@ -320,7 +403,13 @@ fn pieces_body(
             start = batch_range(&work, start).end;
         }
         let Some((_, tail)) = head_and_tail(&served, &work, tokens) else {
-            let _ = pieces.send(Err(broken())).await;
+            let message = "the answer's closing fields could not be encoded; every row was sent, and this answer is not complete";
+            end_unfinished(
+                &pieces,
+                error_terminal(&work, "encoding_failed", message),
+                idle,
+            )
+            .await;
             return;
         };
         send(&tail).await;
@@ -334,7 +423,26 @@ fn pieces_body(
     ))
 }
 
-/// What a stream that cannot complete ends with: never a closed list.
+/// Ends an answer that could not complete: with `terminal`, one piece, for a
+/// client that reads it, else broken.
+async fn end_unfinished(
+    pieces: &tokio::sync::mpsc::Sender<Piece>,
+    terminal: Option<Vec<u8>>,
+    idle: Duration,
+) {
+    match terminal {
+        Some(terminal) => {
+            let piece = Ok(axum::body::Bytes::from(terminal));
+            let _ = pieces.send_timeout(piece, idle).await;
+        }
+        None => {
+            let _ = pieces.send(Err(broken())).await;
+        }
+    }
+}
+
+/// What a stream that cannot complete ends with when its client reads no
+/// `error` member: never a closed list.
 fn broken() -> std::io::Error {
     std::io::Error::other("the embeddings answer could not be completed")
 }

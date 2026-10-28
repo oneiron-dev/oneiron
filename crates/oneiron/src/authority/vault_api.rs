@@ -99,7 +99,17 @@ impl Vault {
     ) -> Result<Vec<EntityId>> {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut wtxn = self.store.env.write_txn()?;
-        let ids = self.put_authority_log_entries_in_txn(&mut wtxn, entries)?;
+        let ids = match self.put_authority_log_rows_in_txn(&mut wtxn, entries, true)? {
+            super::history_admission::AuthorityPut::Stored(ids) => ids,
+            // The act rolls back; its rows stay as evidence only (FIX 2989).
+            super::history_admission::AuthorityPut::Pending(pending) => {
+                drop(wtxn);
+                let mut wtxn = self.store.env.write_txn()?;
+                super::history_admission::keep_pending_in_txn(&self.store, &mut wtxn, &pending)?;
+                wtxn.commit()?;
+                return Err(super::readonly_fold::history_required(&pending.request));
+            }
+        };
         wtxn.commit()?;
         watch.finish()?;
         // An owner home pick among them re-elected this node's MACRO home in
@@ -117,18 +127,29 @@ impl Vault {
         wtxn: &mut heed::RwTxn<'_>,
         entries: &[(AuthorityLogEntry, TimeRange, u64)],
     ) -> Result<Vec<EntityId>> {
+        // This door stores as before: only the transaction owner keeps
+        // pending evidence (FIX 2989).
+        match self.put_authority_log_rows_in_txn(wtxn, entries, false)? {
+            super::history_admission::AuthorityPut::Stored(ids) => Ok(ids),
+            super::history_admission::AuthorityPut::Pending(pending) => {
+                Err(super::readonly_fold::history_required(&pending.request))
+            }
+        }
+    }
+
+    /// [`Self::put_authority_log_entries_in_txn`]. With `keep_pending`, the
+    /// transaction owner's door, a batch the history preflight keeps as
+    /// evidence comes back unstored once it passed every check a stored
+    /// batch passes (FIX 2989, [`super::history_admission`]): the owner rolls
+    /// the act back and keeps the evidence.
+    fn put_authority_log_rows_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        entries: &[(AuthorityLogEntry, TimeRange, u64)],
+        keep_pending: bool,
+    ) -> Result<super::history_admission::AuthorityPut> {
         let mut ids = Vec::with_capacity(entries.len());
         let mut ops = Vec::with_capacity(entries.len());
-        // A key a handoff retired signs nothing new here (engine-crates-03).
-        // An adopted checkpoint image answers for the history it covers.
-        let (local, evidence) = if entries.is_empty() {
-            (None, None)
-        } else {
-            (
-                Some(self.authority_fold_readonly_in_txn(wtxn)?),
-                super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
-            )
-        };
         // Rows of this batch, for an ancestry that runs through one.
         let mut batch = BTreeMap::new();
         let mut staged = Vec::with_capacity(entries.len());
@@ -137,6 +158,23 @@ impl Vault {
             batch.insert(hash, entry.clone());
             staged.push((hash, entry));
         }
+        // A key a handoff retired signs nothing new here (engine-crates-03).
+        // An adopted checkpoint image answers for the history it covers.
+        // Where the fold needs history this batch supplies, the fold with
+        // the batch in judges it (FIX 2535).
+        let (local, evidence) = if entries.is_empty() {
+            (None, None)
+        } else {
+            (
+                Some(super::history_admission::preflight_authority_rows_in_txn(
+                    &self.store,
+                    self.privacy_posture(),
+                    wtxn,
+                    &staged,
+                )?),
+                super::adopted_evidence::adopted_evidence_in_txn(&self.store, wtxn)?,
+            )
+        };
         for (entry, occurred, learned_at) in entries {
             if let Some(fold) = &local
                 && !super::retired_signers::authority_row_resident(&self.store, wtxn, entry)?
@@ -174,8 +212,21 @@ impl Vault {
             });
         }
         if ops.is_empty() {
-            return Ok(ids);
+            return Ok(super::history_admission::AuthorityPut::Stored(ids));
         }
+        // A batch of granting rows, each of whose fold past an adopted image
+        // needs history this vault does not hold, is evidence, not log (FIX
+        // 2989), once the store door below admits it.
+        let pending = if keep_pending {
+            super::history_admission::pending_history_of_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                wtxn,
+                &staged,
+            )?
+        } else {
+            None
+        };
         // The door judges each row against the rows staged before it (H72),
         // so stage them parents first, each signer's by sequence and each
         // after the rows that let a key vouch for it, whatever order the
@@ -201,7 +252,10 @@ impl Vault {
             false,
             true,
         )?;
-        Ok(ids)
+        if let Some(pending) = pending {
+            return Ok(super::history_admission::AuthorityPut::Pending(pending));
+        }
+        Ok(super::history_admission::AuthorityPut::Stored(ids))
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.
@@ -386,6 +440,20 @@ impl Vault {
     pub fn authority_vault_id(&self) -> Result<Option<[u8; 32]>> {
         let rtxn = self.store.env.read_txn()?;
         Ok(self.authority_view_readonly_in_txn(&rtxn)?.vault_id)
+    }
+
+    /// This vault's authority-row generation: it moves on every commit to
+    /// the authority log, a grant's revoke among them, and on nothing
+    /// outside it (a scope or world setting held elsewhere leaves it). A
+    /// kept inference snapshot restores only at the generation its read was
+    /// admitted at (V2-R3). It only reads.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn authority_generation(&self) -> Result<u64> {
+        let rtxn = self.store.env.read_txn()?;
+        authority_cache_generation(&self.store, &rtxn)
     }
 
     pub(crate) fn authority_fold_readonly_in_txn(

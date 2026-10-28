@@ -560,6 +560,39 @@ pub(crate) fn read_back_pad_objects_in_txn(
     Ok(true)
 }
 
+/// Whether the store holds what an install of `captured` wrote, in `txn`, a
+/// read after it, in the install's own transaction or once it committed:
+/// the revision `installed` names, and each kept pad object the capture
+/// carries whole. Another kept object whose bytes are missing stays as it
+/// is, and does not fail this read (PAD-1).
+///
+/// # Errors
+///
+/// An entry or a part key that does not decode; storage errors.
+pub(crate) fn read_back_captured_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    installed: &CurrentPadObjects,
+    captured: &CapturedPadObjects,
+) -> Result<bool> {
+    let held = current_pad_objects_in_txn(store, txn, installed.vault_id, installed.home)?;
+    if held.retained_revision != installed.retained_revision {
+        return Ok(false);
+    }
+    for meta in &held.entries {
+        if captured.object(&meta.entry.generation).is_none() {
+            continue;
+        }
+        let parts = pad_parts(&meta.entry.generation, |family, prefix| {
+            txn_rows(store, txn, family, prefix)
+        })?;
+        if whole(&meta.entry, &parts).is_err() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Fills the bytes of `generation`'s kept pad object again from `source`,
 /// while the home holds what `expected` names: the same object, its length
 /// and digest, so a refill never brings back an object an erase rewrote
@@ -626,18 +659,31 @@ pub(crate) fn refill_pad_object(
     })
 }
 
-/// The home's current pad objects in `txn`, named for this vault and this
-/// home (a home with no machine id yet names the zero id).
-pub(in crate::sync::residence) fn index_in(
+/// The vault and the home `txn` names this vault's pad objects for: the
+/// vault id its authority folds to (the zero id before its genesis), and
+/// this install's machine id (the zero id before it has one). One read
+/// names both, with the objects it reads (PAD-1).
+///
+/// # Errors
+///
+/// An authority fold or a machine id row that does not read.
+pub(crate) fn pad_objects_identity_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-) -> Result<CurrentPadObjects> {
+) -> Result<([u8; 32], EntityId)> {
     let vault_id = vault
         .authority_view_readonly_in_txn(txn)?
         .vault_id
         .unwrap_or_default();
     let home = crate::identity::read_machine_id_in_txn(vault, txn)?
         .unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16]));
+    Ok((vault_id, home))
+}
+
+/// The home's current pad objects in `txn`, named for this vault and this
+/// home ([`pad_objects_identity_in_txn`]).
+pub(crate) fn index_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CurrentPadObjects> {
+    let (vault_id, home) = pad_objects_identity_in_txn(vault, txn)?;
     current_pad_objects_in_txn(&vault.store, txn, vault_id, home)
 }
 

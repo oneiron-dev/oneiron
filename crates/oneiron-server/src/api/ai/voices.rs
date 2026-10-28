@@ -7,7 +7,9 @@
 //! is recorded only while those refs and that consent are still current; a
 //! clone the bank no longer holds is deleted at the vendor (ARCH-0061 §5,
 //! "A companion reference clip leaves only through consented provisioning").
-//! Audio travels as base64 on this wire.
+//! Audio travels as base64 on this wire. Every route here runs the shared
+//! host-owner admission first (FIX 8131): a hosted operator's root acts as no
+//! customer owner and gets the typed support-grant refusal.
 //!
 //! The typed `vault.voices.*` doors (api/facade/voice_bank_doors.rs) run the
 //! same provisioning and vendor deletions through the helpers here, under
@@ -87,7 +89,7 @@ pub(super) async fn bank_pack(
     Path(voice_id): Path<String>,
     Json(body): Json<PackBody>,
 ) -> Response {
-    if let Err(refused) = owner_only(&auth) {
+    if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
     let owner = match entity(&body.owner, "owner") {
@@ -137,7 +139,7 @@ pub(super) async fn render_consent(
     Path(voice_id): Path<String>,
     Json(body): Json<ConsentBody>,
 ) -> Response {
-    if let Err(refused) = owner_only(&auth) {
+    if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
     let (subject, recorded_by) = match (
@@ -204,7 +206,7 @@ pub(super) async fn provision(
     Path((voice_id, target)): Path<(String, String)>,
     Json(body): Json<ProvisionBody>,
 ) -> Response {
-    if let Err(refused) = owner_only(&auth) {
+    if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
     let provisioned = provision_clone(
@@ -393,7 +395,7 @@ pub(super) async fn evict(
     State(server): State<Arc<SyncServer>>,
     Path((voice_id, target)): Path<(String, String)>,
 ) -> Response {
-    if let Err(refused) = owner_only(&auth) {
+    if let Err(refused) = owner_only(&server, &auth) {
         return refused;
     }
     let evicted = match server.vault.evict_voice_target(&voice_id, &target) {
@@ -448,16 +450,23 @@ async fn delete_at_vendor(
     }
 }
 
-fn owner_only(auth: &CoreAuth) -> Result<(), Response> {
-    if auth.is_owner_grade() {
-        Ok(())
-    } else {
-        Err(refusal(
+/// The voice bank is the owner's: an owner-grade caller, admitted as the
+/// owner by the shared host-owner admission before any bank read, write or
+/// vendor call (FIX 8131). A self-hosted root or the dev mode acts as the
+/// owner; a hosted operator's root is refused with the support-grant
+/// refusal, and a managed vault's attested owner or a verified slip keeps
+/// its own key.
+fn owner_only(server: &SyncServer, auth: &CoreAuth) -> Result<(), Response> {
+    if !auth.is_owner_grade() {
+        return Err(refusal(
             StatusCode::FORBIDDEN,
             "owner_required",
             "the voice bank is the owner's",
-        ))
+        ));
     }
+    crate::api::host_action::require_host_owner_act(server, auth)
+        .map(|_| ())
+        .map_err(IntoResponse::into_response)
 }
 
 fn entity(hex: &str, field: &str) -> Result<EntityId, Response> {

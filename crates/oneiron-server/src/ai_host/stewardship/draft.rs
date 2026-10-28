@@ -17,7 +17,7 @@ use oneiron::{
     ModelTierRef, ResponseFormat, TierPrecedence, Vault,
 };
 
-use super::super::CHAT_ROLE;
+use super::Drafter;
 use super::sources::{DraftSources, draft_messages};
 use crate::models::ModelRuntime;
 
@@ -89,10 +89,10 @@ pub(super) enum DraftPass {
 pub(super) async fn draft_pass(
     vault: &Vault,
     runtime: &ModelRuntime,
-    budget_units: u64,
+    drafter: Drafter,
     draft: &StewardshipDraftRequest,
 ) -> oneiron::Result<DraftPass> {
-    let failure = match draft_one(vault, runtime, budget_units, draft).await {
+    let failure = match draft_one(vault, runtime, drafter, draft).await {
         Ok(outcome) => return Ok(DraftPass::Done(outcome)),
         Err(failure) => failure,
     };
@@ -116,7 +116,7 @@ pub(super) async fn draft_pass(
     // The request's evidence is newest first.
     let mut newest = current.clone();
     newest.request.evidence.truncate(FALLBACK_DRAFT_EVIDENCE);
-    let failure = match draft_one(vault, runtime, budget_units, &newest).await {
+    let failure = match draft_one(vault, runtime, drafter, &newest).await {
         Ok(outcome) => return Ok(DraftPass::Done(outcome)),
         Err(failure) => failure,
     };
@@ -142,7 +142,7 @@ fn at(stage: DraftStage) -> impl Fn(Error) -> DraftFailure {
 async fn draft_one(
     vault: &Vault,
     runtime: &ModelRuntime,
-    budget_units: u64,
+    drafter: Drafter,
     draft: &StewardshipDraftRequest,
 ) -> Result<StewardshipDraftOutcome, DraftFailure> {
     use DraftStage::{Call, Schedule, Sources};
@@ -152,7 +152,7 @@ async fn draft_one(
         .representation_context(&draft.request)
         .map_err(at(Sources))?;
     let seat = runtime
-        .seat(CHAT_ROLE)
+        .seat(drafter.role)
         .ok_or_else(|| Error::InvalidConfig("no [models] rung drafts follow-ups".into()))
         .map_err(at(Call))?;
     let purpose = CallPurpose::Other {
@@ -176,16 +176,17 @@ async fn draft_one(
         host_segments: None,
     };
     let call = runtime
-        .admit_role(vault, CHAT_ROLE, request)
+        .admit_role(vault, drafter.role, request)
         .map_err(|refusal| Error::InvalidConfig(format!("stewardship draft refused: {refusal}")))
         .map_err(at(Call))?;
-    // The Dreamer pays, on its own live budget policy rows.
+    // The Dreamer pays, on its own live budget policy rows, the drafting
+    // budget for each draft (FIX 1002).
     let run_id = format!("stewardship-draft:{}", draft.proposal.to_hex());
     let authority = vault.dreamer_authority().map_err(at(Call))?;
     let guard = vault
         .policy_budget_guard(
             run_id.clone(),
-            budget_units,
+            drafter.budget_units,
             oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS,
             BudgetExhaustionPolicy::Suspend,
             authority,

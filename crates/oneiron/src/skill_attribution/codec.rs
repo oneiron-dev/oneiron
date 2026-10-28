@@ -297,8 +297,17 @@ pub(super) fn evidence_after(
     since_cursor: u64,
 ) -> Result<Vec<(u64, OutcomeEvidence)>> {
     let rtxn = vault.store.env.read_txn()?;
+    evidence_after_in_txn(vault, &rtxn, since_cursor)
+}
+
+/// [`evidence_after`] inside a transaction the caller already holds.
+pub(super) fn evidence_after_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    since_cursor: u64,
+) -> Result<Vec<(u64, OutcomeEvidence)>> {
     let mut out: Vec<(u64, OutcomeEvidence)> = EVIDENCE
-        .scan_from(&vault.store, &rtxn, &[])?
+        .scan_from(&vault.store, txn, &[])?
         .into_iter()
         .filter(|(sequence, _)| *sequence > since_cursor)
         .map(|(sequence, row)| (sequence, row.evidence))
