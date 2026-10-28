@@ -233,6 +233,10 @@ pub(super) fn require(
         let Some(row) = crate::world_keys::image_pad_row_of(raw) else {
             continue;
         };
+        // A bare reference's key is proven by its row id first (PAD-1).
+        if !row.held {
+            super::pad_objects::prove_reference(row_key, raw, &row.key);
+        }
         let carrier = side.and_then(|side| side.carrier(row_key)).cloned();
         let planned = match source {
             PadSource::Absent => PlannedPad::Missing,
