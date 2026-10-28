@@ -229,6 +229,9 @@ pub fn review_slides(
                 policy,
                 reversibility,
                 deadline: &clock,
+                // A slide review's dial stops below the person.
+                ask_to: None,
+                correlation: None,
             };
             // A Box or Point question asks presence first: its coordinates stand
             // with the presence step beside them, or a confident no stands alone.
