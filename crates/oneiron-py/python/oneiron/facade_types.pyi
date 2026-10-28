@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1161 facade rows, 4171 declarations.
-Inputs: 1096 of 1161 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1042 of 1161 fully typed, 119 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 105; unread shapes: 0.
+Census: 1161 facade rows, 4187 declarations.
+Inputs: 1095 of 1161 fully typed, 66 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1038 of 1161 fully typed, 123 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 110; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -4308,7 +4308,8 @@ class WeaveReportView(TypedDict):
     narrowing: ScopedReadReceipt
 class WeaveDigestRequest(TypedDict):
     scheduled_for: NotRequired[int | None]
-GeneratedUiCatalog = Literal["lens_atom_kit"]
+GeneratedUiCatalog = str
+GeneratedUiCatalogVersion = str
 LensText = str
 class LensTextSpanLiteral(TypedDict):
     type: Literal["literal"]
@@ -4501,6 +4502,10 @@ class GeneratedUiResultSetAtom(TypedDict):
     rows: list[GeneratedUiResultSetRow]
     select_all: GeneratedUiResultSetSelectAll
     action_bar: NotRequired[list[str]]
+class GeneratedUiComponentAtom(TypedDict):
+    catalog: str
+    name: str
+    props: NotRequired[Any]
 class LensAtomWireTextBlock(TypedDict):
     kind: Literal["text_block"]
     props: TextBlockAtom
@@ -4582,7 +4587,10 @@ class LensAtomWireMedia(TypedDict):
 class LensAtomWireResultSet(TypedDict):
     kind: Literal["result_set"]
     props: GeneratedUiResultSetAtom
-LensAtomWire = LensAtomWireTextBlock | LensAtomWireLedgerRow | LensAtomWireClaimLine | LensAtomWireStatusDot | LensAtomWireSeal | LensAtomWireMetaLine | LensAtomWireDossierSection | LensAtomWireThreadEntry | LensAtomWireSheet | LensAtomWireSlip | LensAtomWireReceipt | LensAtomWireCharter | LensAtomWirePostmark | LensAtomWirePackLine | LensAtomWireAnswerSheet | LensAtomWireTwoClocks | LensAtomWireNeighborhoodGraph | LensAtomWireAsofScrubber | LensAtomWireThrobber | LensAtomWireVoiceLine | LensAtomWireQuickFilter | LensAtomWireInspectorSheet | LensAtomWireInspectorRail | LensAtomWireInspectorTrail | LensAtomWireSelfUi | LensAtomWireMedia | LensAtomWireResultSet
+class LensAtomWireComponent(TypedDict):
+    kind: Literal["component"]
+    props: GeneratedUiComponentAtom
+LensAtomWire = LensAtomWireTextBlock | LensAtomWireLedgerRow | LensAtomWireClaimLine | LensAtomWireStatusDot | LensAtomWireSeal | LensAtomWireMetaLine | LensAtomWireDossierSection | LensAtomWireThreadEntry | LensAtomWireSheet | LensAtomWireSlip | LensAtomWireReceipt | LensAtomWireCharter | LensAtomWirePostmark | LensAtomWirePackLine | LensAtomWireAnswerSheet | LensAtomWireTwoClocks | LensAtomWireNeighborhoodGraph | LensAtomWireAsofScrubber | LensAtomWireThrobber | LensAtomWireVoiceLine | LensAtomWireQuickFilter | LensAtomWireInspectorSheet | LensAtomWireInspectorRail | LensAtomWireInspectorTrail | LensAtomWireSelfUi | LensAtomWireMedia | LensAtomWireResultSet | LensAtomWireComponent
 LensAtom = LensAtomWire
 SelfUiBindableProperty = Literal["checked", "selected", "value", "text"]
 class SelfUiBinding(TypedDict):
@@ -4615,7 +4623,7 @@ class GeneratedUiCardLifecycle(TypedDict):
     phase: GeneratedUiCardPhase
     revision: int
     archiveReason: NotRequired[GeneratedUiArchiveReason | None]
-GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "root": str, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+GeneratedUiRender = TypedDict("GeneratedUiRender", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "catalogVersion": GeneratedUiCatalogVersion, "cardId": str, "root": str, "fallbackText": LensText, "nodes": list[GeneratedUiNode], "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
 LensNode = TypedDict("LensNode", {"id": str, "atom": LensAtom, "fallbackText": LensText, "bindings": NotRequired[list[LensHandleRef]], "$bind": NotRequired[list[SelfUiBinding]], "children": NotRequired[list[LensNode]]})
 class GeneratedLens(TypedDict):
     kit_version: int
@@ -10291,12 +10299,25 @@ class LensResultSetActionResult(TypedDict):
 class LensDossierSource(TypedDict):
     entity_ref: str
     title: str
+GeneratedUiPrimitive = Literal["text_block", "ledger_row", "claim_line", "status_dot", "seal", "meta_line", "dossier_section", "thread_entry", "sheet", "slip", "receipt", "charter", "postmark", "pack_line", "answer_sheet", "two_clocks", "neighborhood_graph", "asof_scrubber", "throbber", "voice_line", "quick_filter", "inspector_sheet", "inspector_rail", "inspector_trail", "self_ui", "media", "result_set", "component"]
+class GeneratedUiComponentSchema(TypedDict):
+    name: str
+    schema: NotRequired[Any]
+GeneratedUiStreamProfile = Literal["full_model", "patch"]
+class GeneratedUiSurfaceCapabilities(TypedDict):
+    catalog: GeneratedUiCatalog
+    catalogVersion: NotRequired[GeneratedUiCatalogVersion]
+    maxCatalogVersion: NotRequired[int]
+    primitives: NotRequired[list[GeneratedUiPrimitive]]
+    components: NotRequired[list[GeneratedUiComponentSchema]]
+    stream: NotRequired[GeneratedUiStreamProfile]
 class LensDefaultRequest(TypedDict):
     title: str
     ledger: NotRequired[list[str]]
     dossiers: NotRequired[list[LensDossierSource]]
     threads: NotRequired[list[str]]
     as_of: NotRequired[int | None]
+    surface: NotRequired[GeneratedUiSurfaceCapabilities | None]
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -16687,7 +16708,7 @@ class BookingConstraintTurnInput(TypedDict):
 class BookingConstraintTurnRequest(TypedDict):
     page_token: str
     turn: BookingConstraintTurnInput
-GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
+GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "catalogVersion": GeneratedUiCatalogVersion, "cardId": str, "fallbackText": LensText, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
 class BookingConstraintHoldContext(TypedDict):
     event_type: EventTypeKey
     visitor_tz: str
@@ -21610,6 +21631,75 @@ class LensFrameEventReplyCallback(TypedDict):
 LensFrameEventReply = LensFrameEventReplyLocal | LensFrameEventReplyTool | LensFrameEventReplyCallback
 class CloseLensFrameReply(TypedDict):
     closed: bool
+class GeneratedUiCardStart(TypedDict):
+    protocolVersion: int
+    catalog: GeneratedUiCatalog
+    catalogVersion: GeneratedUiCatalogVersion
+    cardId: str
+    root: str
+    nodeCount: int
+    fallbackText: LensText
+class GeneratedUiCardElement(TypedDict):
+    protocolVersion: int
+    cardId: str
+    node: GeneratedUiNode
+GeneratedUiDataModel = TypedDict("GeneratedUiDataModel", {"root": str, "nodeCount": int, "catalog": GeneratedUiCatalog, "catalogVersion": GeneratedUiCatalogVersion, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot, "lifecycle": GeneratedUiCardLifecycle})
+class GeneratedUiCardStateUpdate(TypedDict):
+    protocolVersion: int
+    cardId: str
+    dataModel: GeneratedUiDataModel
+class GeneratedUiCardReady(TypedDict):
+    protocolVersion: int
+    cardId: str
+class GeneratedUiJsonPatchOperationAdd(TypedDict):
+    op: Literal["add"]
+    path: str
+    value: Any
+class GeneratedUiJsonPatchOperationRemove(TypedDict):
+    op: Literal["remove"]
+    path: str
+class GeneratedUiJsonPatchOperationReplace(TypedDict):
+    op: Literal["replace"]
+    path: str
+    value: Any
+GeneratedUiJsonPatchOperationMove = TypedDict("GeneratedUiJsonPatchOperationMove", {"op": Literal["move"], "from": str, "path": str})
+GeneratedUiJsonPatchOperationCopy = TypedDict("GeneratedUiJsonPatchOperationCopy", {"op": Literal["copy"], "from": str, "path": str})
+class GeneratedUiJsonPatchOperationTest(TypedDict):
+    op: Literal["test"]
+    path: str
+    value: Any
+GeneratedUiJsonPatchOperation = GeneratedUiJsonPatchOperationAdd | GeneratedUiJsonPatchOperationRemove | GeneratedUiJsonPatchOperationReplace | GeneratedUiJsonPatchOperationMove | GeneratedUiJsonPatchOperationCopy | GeneratedUiJsonPatchOperationTest
+class GeneratedUiCardStatePatch(TypedDict):
+    protocolVersion: int
+    cardId: str
+    patch: list[GeneratedUiJsonPatchOperation]
+class GeneratedUiCardStateSnapshot(TypedDict):
+    protocolVersion: int
+    cardId: str
+    render: GeneratedUiRender
+class GeneratedUiSegmentCardStart(TypedDict):
+    segment: Literal["card_start"]
+    payload: GeneratedUiCardStart
+class GeneratedUiSegmentCardElement(TypedDict):
+    segment: Literal["card_element"]
+    payload: GeneratedUiCardElement
+class GeneratedUiSegmentCardStateUpdate(TypedDict):
+    segment: Literal["card_state_update"]
+    payload: GeneratedUiCardStateUpdate
+class GeneratedUiSegmentCardReady(TypedDict):
+    segment: Literal["card_ready"]
+    payload: GeneratedUiCardReady
+class GeneratedUiSegmentCardStatePatch(TypedDict):
+    segment: Literal["card_state_patch"]
+    payload: GeneratedUiCardStatePatch
+class GeneratedUiSegmentCardStateSnapshot(TypedDict):
+    segment: Literal["card_state_snapshot"]
+    payload: GeneratedUiCardStateSnapshot
+GeneratedUiSegment = GeneratedUiSegmentCardStart | GeneratedUiSegmentCardElement | GeneratedUiSegmentCardStateUpdate | GeneratedUiSegmentCardReady | GeneratedUiSegmentCardStatePatch | GeneratedUiSegmentCardStateSnapshot
+class GeneratedUiCatalogDescriptor(TypedDict):
+    catalog: GeneratedUiCatalog
+    catalogVersion: GeneratedUiCatalogVersion
+    components: NotRequired[list[GeneratedUiComponentSchema]]
 class TranscriptMessage(TypedDict):
     id: str
     short_id: NotRequired[str | None]

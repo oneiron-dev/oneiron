@@ -13254,6 +13254,11 @@ async fn execute_agent_verb_row(
             let owner = surface.lens_owner("vault.lenses.default", &input);
             let input: oneiron::lens::LensDefaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
+            let mut input = input;
+            // The arguments' own surface wins; else the profile the call's `_meta.clientCapabilities` declares (FIX 7969).
+            if input.surface.is_none() {
+                input.surface = actor.client_surface.clone();
+            }
             let (output, listed) =
                 crate::api::facade::host_doors::vault_lenses_default(server, auth, owner, input)
                     .await;

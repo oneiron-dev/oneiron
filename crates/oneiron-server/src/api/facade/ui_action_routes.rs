@@ -57,8 +57,8 @@ use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
 use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
-    GeneratedUiActionEvent, GeneratedUiSurfaceCapabilities, GeneratedUiValidatedAction,
-    LensDefaultRequest, LensFrameCard, LensRenderId,
+    GeneratedUiActionEvent, GeneratedUiValidatedAction, LensDefaultRequest, LensFrameCard,
+    LensRenderId,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
@@ -85,8 +85,10 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// `vault.lenses.default` on this server: the default lens read under the
-/// credential's own key at its locality, lowered once for the whole atom
-/// kit, its frame held for the card's events before the answer leaves.
+/// credential's own key at its locality, lowered once for the surface the
+/// call names (FIX 7969: its own `surface`, or the profile its MCP session
+/// negotiated), else for the whole atom kit, its frame held beside exactly
+/// that render for the card's events before the answer leaves.
 /// Beside it, the rows its reads listed. A run-held render (`owner`, FIX
 /// 2612) holds its card for its creating run and subscription, replacing
 /// the card that run last rendered for it; any other holds it unowned.
@@ -100,6 +102,7 @@ pub(crate) async fn vault_lenses_default(
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
+    let surface = input.surface.clone().unwrap_or_default();
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();
@@ -117,7 +120,7 @@ pub(crate) async fn vault_lenses_default(
         return (Err(internal("vault.lenses.default")), Vec::new());
     };
     let answer = rendered.and_then(|ScopedReadResult { value, receipt }| {
-        let (frame, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (frame, card) = value.lower(&surface)?;
         match owner {
             Some(owner) => {
                 server.lens_frames.replace_for_subscription(

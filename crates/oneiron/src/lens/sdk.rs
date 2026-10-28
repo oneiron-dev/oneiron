@@ -18,8 +18,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, HostedLensRender, LedgerCell,
-    LedgerRowAtom, LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole,
+    AsofScrubberAtom, DefaultVaultInput, DefaultVaultItem, GeneratedUiSurfaceCapabilities,
+    HostedLensRender, LedgerCell, LedgerRowAtom, LensBackingRefToken, LensBackingTarget, LensHandleName, LensHandleRole,
     LensPrincipalBinding, LensRenderFrame, LensRenderId, LensText, SectionAtom,
     compose_default_vault,
 };
@@ -67,6 +67,13 @@ pub struct LensDefaultRequest {
     /// sources read live.
     #[serde(default)]
     pub as_of: Option<u64>,
+    /// The surface profile this one call's card is lowered for (FIX 7969):
+    /// its catalog and semver, the primitives and app components it draws
+    /// and its stream profile. Omitted, a transport session's negotiated
+    /// profile applies, else the whole atom kit. It selects a rendering and
+    /// grants nothing.
+    #[serde(default)]
+    pub surface: Option<GeneratedUiSurfaceCapabilities>,
 }
 
 /// One source row the caller's key admitted, with its minted backing ref and

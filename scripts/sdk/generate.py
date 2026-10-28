@@ -142,6 +142,12 @@ for row in ROWS:
     # unowned, as every HTTP call and direct tool call does.
     if row.get('host_door_lens_owner') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
+    # `host_door_client_surface` marks a lens door whose input names its own
+    # generated-UI `surface` (FIX 7969): an MCP call whose arguments name none
+    # takes the profile its `_meta.clientCapabilities` declares
+    # (`McpCallContext::client_surface`), as the MCP leg reads it per call.
+    if row.get('host_door_client_surface') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes a client surface')
     # `host_door_surface` hands an owner-setting door where the owner's say-so
     # reached this install, for his act's audit record (FIX 4625): the facade
     # call's request-derived surface (`FacadeCall::surface`, a linked machine
@@ -838,8 +844,11 @@ def mcp_input_dispatch(row):
         door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{surface_arg}input).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
+        client_surface = ('let mut input = input;\n'
+                          '// The arguments\' own surface wins; else the profile the call\'s `_meta.clientCapabilities` declares (FIX 7969).\n'
+                          'if input.surface.is_none() { input.surface = actor.client_surface.clone(); }\n') if row.get('host_door_client_surface') else ''
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
+                 f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode + client_surface +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
                   'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
@@ -1922,6 +1931,11 @@ def outputs():
     # event, so it is a root here; their reply's `$state` and receipt are
     # reached already.
     INVENTORY.root_ir('crate::lens::GeneratedUiActionEvent')
+    # FIX 7968, 9891: a card's segment stream (today's full-model frames and
+    # the patch profile's ready, RFC-6902 patch and snapshot frames) and the
+    # catalog descriptor an app declares reach no verb row, so each is a root.
+    INVENTORY.root_ir('crate::lens::GeneratedUiSegment')
+    INVENTORY.root_ir('crate::lens::GeneratedUiCatalogDescriptor')
     # FIX 365: the hand-written transcript route (`GET
     # /v1/core/conversations/{conversation_id}/transcript`, no verb row)
     # answers with the engine's page, whose MESSAGE carries a typed result;

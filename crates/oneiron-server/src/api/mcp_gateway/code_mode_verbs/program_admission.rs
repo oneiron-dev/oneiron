@@ -493,6 +493,7 @@ fn connector(
         room_turn: None,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 

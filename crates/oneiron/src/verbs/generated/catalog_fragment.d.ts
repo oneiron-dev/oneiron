@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4231 declarations.
-// Replies: 1090 fully typed, 121 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1212 code-mode rows (1172 host rows, 40 run rows), 4237 declarations.
+// Replies: 1086 fully typed, 125 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 105; unread shapes: none.
+// Opaque serde_json::Value leaves: 107; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -852,7 +852,8 @@ declare namespace Sdk {
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[]; sieve_score?: WeaveSieveScoreView | null };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
   type WeaveDigestRequest = { scheduled_for?: number | null };
-  type GeneratedUiCatalog = "lens_atom_kit";
+  type GeneratedUiCatalog = string;
+  type GeneratedUiCatalogVersion = string;
   type LensText = string;
   type LensTextSpan = { type: "literal"; value: LensText } | { type: "interpolation"; value: { key: string; fallback: LensText } };
   type TextBlockAtom = { spans: LensTextSpan[] };
@@ -899,7 +900,8 @@ declare namespace Sdk {
   type GeneratedUiResultSetRow = { id: string; label: LensText; target_handle: string };
   type GeneratedUiResultSetSelectAll = { mode: "disabled" } | { mode: "within_filter"; predicate_handle: string };
   type GeneratedUiResultSetAtom = { rows: GeneratedUiResultSetRow[]; select_all: GeneratedUiResultSetSelectAll; action_bar?: string[] };
-  type LensAtomWire = { kind: "text_block"; props: TextBlockAtom } | { kind: "ledger_row"; props: LedgerRowAtom } | { kind: "claim_line"; props: ClaimLineAtom } | { kind: "status_dot"; props: StatusDotAtom } | { kind: "seal"; props: SealAtom } | { kind: "meta_line"; props: MetaLineAtom } | { kind: "dossier_section"; props: SectionAtom } | { kind: "thread_entry"; props: ThreadEntryAtom } | { kind: "sheet"; props: CollectionAtom } | { kind: "slip"; props: SectionAtom } | { kind: "receipt"; props: ReceiptAtom } | { kind: "charter"; props: SectionAtom } | { kind: "postmark"; props: PostmarkAtom } | { kind: "pack_line"; props: PackLineAtom } | { kind: "answer_sheet"; props: AnswerSheetAtom } | { kind: "two_clocks"; props: TwoClocksAtom } | { kind: "neighborhood_graph"; props: NeighborhoodGraphAtom } | { kind: "asof_scrubber"; props: AsofScrubberAtom } | { kind: "throbber"; props: ThrobberAtom } | { kind: "voice_line"; props: VoiceLineAtom } | { kind: "quick_filter"; props: QuickFilterAtom } | { kind: "inspector_sheet"; props: InspectorAtom } | { kind: "inspector_rail"; props: InspectorAtom } | { kind: "inspector_trail"; props: InspectorAtom } | { kind: "self_ui"; props: SelfUiControl } | { kind: "media"; props: MediaAtom } | { kind: "result_set"; props: GeneratedUiResultSetAtom };
+  type GeneratedUiComponentAtom = { catalog: string; name: string; props?: unknown };
+  type LensAtomWire = { kind: "text_block"; props: TextBlockAtom } | { kind: "ledger_row"; props: LedgerRowAtom } | { kind: "claim_line"; props: ClaimLineAtom } | { kind: "status_dot"; props: StatusDotAtom } | { kind: "seal"; props: SealAtom } | { kind: "meta_line"; props: MetaLineAtom } | { kind: "dossier_section"; props: SectionAtom } | { kind: "thread_entry"; props: ThreadEntryAtom } | { kind: "sheet"; props: CollectionAtom } | { kind: "slip"; props: SectionAtom } | { kind: "receipt"; props: ReceiptAtom } | { kind: "charter"; props: SectionAtom } | { kind: "postmark"; props: PostmarkAtom } | { kind: "pack_line"; props: PackLineAtom } | { kind: "answer_sheet"; props: AnswerSheetAtom } | { kind: "two_clocks"; props: TwoClocksAtom } | { kind: "neighborhood_graph"; props: NeighborhoodGraphAtom } | { kind: "asof_scrubber"; props: AsofScrubberAtom } | { kind: "throbber"; props: ThrobberAtom } | { kind: "voice_line"; props: VoiceLineAtom } | { kind: "quick_filter"; props: QuickFilterAtom } | { kind: "inspector_sheet"; props: InspectorAtom } | { kind: "inspector_rail"; props: InspectorAtom } | { kind: "inspector_trail"; props: InspectorAtom } | { kind: "self_ui"; props: SelfUiControl } | { kind: "media"; props: MediaAtom } | { kind: "result_set"; props: GeneratedUiResultSetAtom } | { kind: "component"; props: GeneratedUiComponentAtom };
   type LensAtom = LensAtomWire;
   type SelfUiBindableProperty = "checked" | "selected" | "value" | "text";
   type SelfUiBinding = { stateKey: string; property: SelfUiBindableProperty };
@@ -911,7 +913,7 @@ declare namespace Sdk {
   type GeneratedUiCardPhase = "generating" | "active" | "responded" | "archived";
   type GeneratedUiArchiveReason = "completed" | "expired" | "dismissed" | "superseded";
   type GeneratedUiCardLifecycle = { phase: GeneratedUiCardPhase; revision: number; archiveReason?: GeneratedUiArchiveReason | null };
-  type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; root: string; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle };
+  type GeneratedUiRender = { protocolVersion: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; cardId: string; root: string; fallbackText: LensText; nodes: GeneratedUiNode[]; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot; lifecycle: GeneratedUiCardLifecycle };
   type LensNode = { id: string; atom: LensAtom; fallbackText: LensText; bindings?: LensHandleRef[]; $bind?: SelfUiBinding[]; children?: LensNode[] };
   type GeneratedLens = { kit_version: number; apps_contract_version: number; root: LensNode };
   type LensFrameCard = { card_id: string; render: GeneratedUiRender; lens: GeneratedLens };
@@ -2094,7 +2096,11 @@ declare namespace Sdk {
   type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string };
   type LensResultSetActionResult = { outcome: unknown; readReceipt: ScopedReadReceipt };
   type LensDossierSource = { entity_ref: string; title: string };
-  type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
+  type GeneratedUiPrimitive = "text_block" | "ledger_row" | "claim_line" | "status_dot" | "seal" | "meta_line" | "dossier_section" | "thread_entry" | "sheet" | "slip" | "receipt" | "charter" | "postmark" | "pack_line" | "answer_sheet" | "two_clocks" | "neighborhood_graph" | "asof_scrubber" | "throbber" | "voice_line" | "quick_filter" | "inspector_sheet" | "inspector_rail" | "inspector_trail" | "self_ui" | "media" | "result_set" | "component";
+  type GeneratedUiComponentSchema = { name: string; schema?: unknown };
+  type GeneratedUiStreamProfile = "full_model" | "patch";
+  type GeneratedUiSurfaceCapabilities = { catalog: GeneratedUiCatalog; catalogVersion?: GeneratedUiCatalogVersion; maxCatalogVersion?: number; primitives?: GeneratedUiPrimitive[]; components?: GeneratedUiComponentSchema[]; stream?: GeneratedUiStreamProfile };
+  type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null; surface?: GeneratedUiSurfaceCapabilities | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type DisclosureDataClass = "names" | "dates" | "contact" | "ids" | "health";
@@ -3393,7 +3399,7 @@ declare namespace Sdk {
   type BookingConstraintTurnWindow = { start: number; end: number };
   type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string };
   type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput };
-  type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
+  type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; catalogVersion: GeneratedUiCatalogVersion; cardId: string; fallbackText: LensText; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
   type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type ConstraintContinuation = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };

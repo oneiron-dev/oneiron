@@ -9,6 +9,7 @@ mod board_setup;
 mod booking_call;
 mod call_meta;
 mod claimed_release;
+mod client_surface;
 mod code_mode_verbs;
 mod device_release;
 mod envelope;
