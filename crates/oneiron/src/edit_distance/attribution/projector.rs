@@ -497,6 +497,10 @@ struct CostAggregate {
 /// this predicate only: a `discovery` names the same SKILL a `skill_defect`
 /// does, and folding both would charge a skill for content it never claimed
 /// to have.
+///
+/// One measurement version per fold (FIX 7822): the mean folds the judgments
+/// measured under the version the newest charging judgment carries, and
+/// leaves every other version out of the mean and its citations.
 fn aggregate_for(
     persisted: &[AmendmentJudgment],
     predicate: &'static str,
@@ -518,14 +522,13 @@ fn aggregate_for(
             (share > 0.0).then(|| (row, f64::from(share) * f64::from(row.d_norm)))
         })
         .collect();
-    if rows.is_empty() {
-        return None;
-    }
     rows.sort_by(|(left, _), (right, _)| {
         left.at
             .cmp(&right.at)
             .then_with(|| left.receipt_id.cmp(&right.receipt_id))
     });
+    let version = rows.last()?.0.engine_ver.clone();
+    rows.retain(|(row, _)| row.engine_ver == version);
     let total: f64 = rows.iter().map(|(_, charge)| charge).sum();
     // Precision loss is intended: this is a reported estimate over a bounded
     // unit-interval fold, not an accumulator.
