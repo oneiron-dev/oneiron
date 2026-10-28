@@ -20,6 +20,7 @@
 //! kit's recovery root, or an admitted machine's key (FIX 9178): a world's
 //! pads open only with the kit or a machine that world admits.
 
+mod drain;
 mod pad_worlds;
 mod status;
 
