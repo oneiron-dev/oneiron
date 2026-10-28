@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use super::keys::{
     AGGREGATE, AggregateKey, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, aggregate_key,
 };
+use super::outcomes::run_outcome_in_txn;
 use super::write::{apply_fold, fold_of, head_of};
 use crate::Vault;
 use crate::edit_distance::attribution::{AmendmentJudgment, amendment_judgments};
@@ -21,10 +22,12 @@ use crate::error::Result;
 /// second source of truth: nothing here reads its own previous output. Each
 /// folded receipt lands on the executor, task type and measurement version
 /// its own judgment carries — the stamp of the run that drafted it, never the
-/// model serving now (FIX 9812). Two things do change across a rebuild, and
-/// both are corrections rather than drift — a re-judged receipt folds its new
-/// mass, labels and stamp, and a receipt whose judgment was WITHDRAWN loses
-/// its fold and its binding, because a run nobody stands behind must not keep
+/// model serving now (FIX 9812) — paired with the anchored outcome of the TASK
+/// its run worked, as the TASK stands now (FIX 7828). Three things do change
+/// across a rebuild, and all are corrections rather than drift — a re-judged
+/// receipt folds its new mass, labels and stamp, a TASK settled since the
+/// fold adds its outcome, and a receipt whose judgment was WITHDRAWN loses its
+/// fold and its binding, because a run nobody stands behind must not keep
 /// weighing on an executor.
 ///
 /// # Errors
@@ -48,8 +51,9 @@ pub fn rebuild_routing_projection(vault: &Vault) -> Result<()> {
                 stale_members.push(receipt_id);
                 continue;
             };
+            let outcome = run_outcome_in_txn(vault, &rtxn, judgment)?;
             // A judgment that holds keeps its binding and folds nothing.
-            if let Some(fold) = fold_of(judgment)? {
+            if let Some(fold) = fold_of(judgment, outcome)? {
                 let key = aggregate_key(&head_of(judgment))?;
                 apply_fold(rebuilt.entry(key).or_default(), fold)?;
             }

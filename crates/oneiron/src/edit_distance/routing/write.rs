@@ -3,6 +3,7 @@
 use super::keys::{
     AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, aggregate_key, invalid,
 };
+use super::outcomes::run_outcome_in_txn;
 use super::scope::RoutingScopeKey;
 use crate::Vault;
 use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment, amendment_judgments};
@@ -26,6 +27,11 @@ use crate::error::{Error, Result};
 /// the model that drafted it. A receipt with no stamp folds, truthfully, under
 /// the unknown-executor key.
 ///
+/// **Paired with how the work ended.** The fold counts the anchored outcome of
+/// the TASK the run worked, joined through the run's own receipts, beside the
+/// edit mass (FIX 7828). A TASK not settled yet adds no count; a later
+/// rebuild reads it once it settles.
+///
 /// **One fold per receipt.** A receipt already folded is never re-folded, so
 /// two calls never count the same amendment twice. Re-judging a receipt is
 /// reflected by
@@ -41,7 +47,6 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         return Err(invalid("routing projection cites an unjudged receipt"));
     };
     let member_key = delta_receipt.to_owned();
-    let fold = fold_of(&judgment)?;
     let scope_row_key = aggregate_key(&head_of(&judgment))?;
     let member = StoredExecutor {
         v: ROW_VERSION,
@@ -57,10 +62,11 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         if MEMBER.contains(&vault.store, &*wtxn, &member_key)? {
             return Ok(());
         }
+        let outcome = run_outcome_in_txn(vault, &*wtxn, &judgment)?;
         // A judgment that is unclear throughout HOLDS: it marks the receipt
         // folded, so a later re-judgment reaches its head on rebuild, but
         // weighs nothing until then.
-        if let Some(fold) = fold {
+        if let Some(fold) = fold_of(&judgment, outcome)? {
             let mut aggregate = AGGREGATE
                 .get(&vault.store, &*wtxn, &scope_row_key)?
                 .unwrap_or_default();
@@ -85,14 +91,15 @@ pub(super) fn head_of(judgment: &AmendmentJudgment) -> RoutingScopeKey {
 
 /// One judgment's contribution: its edit mass, how much of it the judge could
 /// attribute, how much of that was sound, whether it ran on the judge's own
-/// model, and when it was judged.
-#[derive(Debug, Clone, Copy)]
+/// model, when it was judged, and the anchored outcome of its run's TASK.
+#[derive(Debug, Clone)]
 pub(super) struct Fold {
     d_norm: f64,
     judged: f64,
     sound: f64,
     on_judge_model: bool,
     at: u64,
+    outcome: Option<String>,
 }
 
 /// What one judgment contributes, or `None` when it holds.
@@ -106,8 +113,12 @@ pub(super) struct Fold {
 /// for the scope, the rest of the attributed share against it, and an
 /// `unclear` share for neither. A judgment that is unclear throughout holds
 /// and folds nothing. The sound share is a label that explains the cost; it is
-/// never an outcome.
-pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
+/// never an outcome. `outcome` is the run's anchored task outcome, when one is
+/// joined.
+pub(super) fn fold_of(
+    judgment: &AmendmentJudgment,
+    outcome: Option<String>,
+) -> Result<Option<Fold>> {
     let d_norm = f64::from(judgment.d_norm);
     if !d_norm.is_finite() || d_norm < 0.0 {
         return Err(invalid(
@@ -128,6 +139,7 @@ pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
         sound: sound.clamp(0.0, judged),
         on_judge_model: judgment.on_judge_model(),
         at: judgment.at,
+        outcome,
     }))
 }
 
@@ -147,6 +159,9 @@ pub(super) fn apply_fold(aggregate: &mut StoredAggregate, fold: Fold) -> Result<
         aggregate.on_judge_model += 1;
     }
     aggregate.last_at = aggregate.last_at.max(fold.at);
+    if let Some(outcome) = fold.outcome {
+        *aggregate.outcomes.entry(outcome).or_insert(0) += 1;
+    }
     Ok(())
 }
 

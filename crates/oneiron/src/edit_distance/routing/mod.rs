@@ -59,13 +59,16 @@
 //! # The Goodhart guard is the type, not a warning
 //!
 //! [`routing_weight_hint`] returns [`WeightHint`], which carries the edit cost
-//! together with the labels that explain it, and there is no accessor that
-//! yields the cost alone. The reason is that they come apart in exactly the
-//! way that matters: a big Δ from pure preference is a sound proposal that
-//! cost a lot to land, and a tiny Δ correcting a real defect is an unsound one
-//! that cost almost nothing. Optimizing the cost alone would select for
-//! proposals that are cheap to accept rather than right — so the cost is
-//! never readable alone.
+//! together with the anchored outcomes of the runs behind it — how each run's
+//! TASK settled, counted beside the cost and never blended into it (FIX 7828)
+//! — and there is no accessor that yields the cost alone. The reason is that
+//! they come apart in exactly the way that matters: low edit distance alone
+//! rewards short, bland, hard-to-object-to output, a big Δ from pure
+//! preference is a sound proposal that cost a lot to land, and a tiny Δ
+//! correcting a real defect is an unsound one that cost almost nothing.
+//! Optimizing the cost alone would select for proposals that are cheap to
+//! accept rather than right — so the cost is never readable alone. The
+//! attribution labels ride along as an explanation, never as the outcome.
 //!
 //! For the same reason there is no `is_banned`, no exclusion list, and no door
 //! that removes a model from consideration. The hint informs a WEIGHT. An
@@ -74,6 +77,7 @@
 
 mod keys;
 mod ladder;
+mod outcomes;
 mod prior;
 mod read;
 mod rebuild;
