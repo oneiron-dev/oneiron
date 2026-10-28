@@ -8,7 +8,7 @@ use super::stored::{
 };
 use super::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,
-    HunkLabel, PreferenceProposal, class_subject, classify_amendment_traced, cost_predicate,
+    HunkLabel, PreferenceProposal, charges_edit_cost, class_subject, classify_amendment_traced,
 };
 use crate::Vault;
 use crate::actor_claims::require_actor_entity;
@@ -326,7 +326,7 @@ fn persist_amendment_split(
     // routing bug wearing one. Recorded as an abstention rather than landed.
     if shares
         .iter()
-        .any(|share| cost_predicate(share.class).is_some() && share.subject.is_none())
+        .any(|share| charges_edit_cost(share.class) && share.subject.is_none())
     {
         return withdraw_judgment(vault, receipt_id).map(|()| None);
     }
@@ -501,9 +501,9 @@ fn settle_edit_proposal_in_txn(
 /// and, with it, any preference note, unclear row or edit proposal that
 /// judgment filed.
 ///
-/// The withdrawal is the whole correction on this side: the cost head the row
-/// was holding up loses its ledger support, and the next
-/// [`project_edit_cost_claims`] pass retracts it.
+/// The withdrawal is the whole correction on this side: the cell rows the
+/// judgment was holding up lose their ledger support, and the next
+/// [`project_edit_cost_claims`] pass withdraws them.
 fn withdraw_judgment(vault: &Vault, receipt_id: &str) -> Result<()> {
     let receipt_id = receipt_id.to_owned();
     {

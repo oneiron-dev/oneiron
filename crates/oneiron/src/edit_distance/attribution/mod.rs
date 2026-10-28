@@ -4,10 +4,12 @@
 //! ```text
 //! Δ RECEIPT (ED-01/02)  +  routing facts (recorded at the amendment door)
 //!   └─ judge_amendment_hunks ──> AmendmentJudgment (label + share split)
-//!        ├─ skill_defect %     → skill.edit_cost   (SKILL entity), its share
+//!        ├─ skill_defect %     → learning.edit_cost on the SKILL, at the
+//!        │                       drafting executor, its share
 //!        │                     → skill.reliability: the amended attempt's ONE
 //!        │                       record becomes a loss of this share
-//!        ├─ execution_lapse %  → actor.edit_cost   (ACTOR entity), its share
+//!        ├─ execution_lapse %  → learning.edit_cost on the ACTOR, its own
+//!        │                       executor, its share
 //!        │                     → one actor.lesson citing the receipt
 //!        ├─ discovery %        → a skill EDIT PROPOSAL, minted through SK-04's door
 //!        ├─ environment %      → nothing at all — the judgment row IS the record
@@ -53,14 +55,15 @@
 //! is the proof, and a host that wants a model tier implements SK-04's trait
 //! rather than a new one.
 //!
-//! # Cost is an AGGREGATE, never a raw Δ
+//! # Cost is a shared cell, never a raw Δ
 //!
 //! [`project_edit_cost_claims`] takes JUDGMENTS, not deltas — that signature is
-//! the guard. A `d_norm` reaches a claim only after a class named who owns it,
-//! and the value written is the mean over every persisted judgment sharing the
-//! row's `(subject, scope)` pair. Recomputed from the judgment ledger on every
-//! pass, so an interrupted pass leaves a stale row the next pass corrects,
-//! never a double-counted one (the [`crate::skill_reliability`] posture).
+//! the guard. A `d_norm` reaches a cell only after a class named who owns it,
+//! as one evidence row per receipt, weighted by its share, in the shared
+//! `learning.edit_cost` cell qualified by executor, consent scope and task
+//! type (FIX 9797). The learning projector recomputes the estimate from the
+//! cell's rows, so a replay overwrites rather than double-counts, and
+//! [`edit_cost_for`] reads it back. No parallel scalar head is kept.
 //!
 //! # The Blind Curator guard
 //!
@@ -85,14 +88,14 @@ pub use self::audit::{
     AmendmentAuditFixture, AmendmentAuditRecord, held_out_amendment_fixtures, judge_audit_records,
     judge_audit_reports, run_judge_audit, run_judge_audit_with_decisions,
 };
+pub use self::cells::edit_cost_for;
 pub use self::evidence_judge::{
     amendment_evidence, amendment_judgments, judge_amendment, judge_amendment_hunks,
     judge_amendment_verdicts, judge_amendment_with, pending_preference_proposals,
     record_amendment_evidence,
 };
 pub use self::projector::{
-    EditCost, edit_cost_for, project_amendment_lessons, project_amendment_reliability,
-    project_edit_cost_claims,
+    project_amendment_lessons, project_amendment_reliability, project_edit_cost_claims,
 };
 pub use self::taxonomy::{
     AmendmentCause, AmendmentClass, AmendmentEvidence, AmendmentJudgment, AmendmentShare,

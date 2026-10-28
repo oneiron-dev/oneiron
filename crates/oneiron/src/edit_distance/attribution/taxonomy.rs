@@ -1,7 +1,6 @@
 //! Amendment taxonomy: classes, causes, evidence and judgment types.
 
 use super::origin::UNKNOWN_EXECUTOR;
-use crate::claim::{PREDICATE_ACTOR_EDIT_COST, PREDICATE_SKILL_EDIT_COST};
 use crate::edit_distance::myers::myers_line_diff;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -487,18 +486,18 @@ pub(super) fn class_subject(
     }
 }
 
-/// Which `*.edit_cost` row a class earns, or `None` when it earns none.
+/// Whether a class charges its subject `learning.edit_cost`: the actor for
+/// an `execution_lapse`, the skill for a `skill_defect`.
 ///
 /// `Discovery` earns nothing HERE: missing content is SK-04's edit-proposal
 /// case, and charging the skill for content it never claimed to have would
 /// double-book a signal that already has a consequence.
-pub(super) const fn cost_predicate(class: AmendmentClass) -> Option<&'static str> {
+pub(super) const fn charges_edit_cost(class: AmendmentClass) -> bool {
     match class {
-        AmendmentClass::ExecutionLapse => Some(PREDICATE_ACTOR_EDIT_COST),
-        AmendmentClass::SkillDefect => Some(PREDICATE_SKILL_EDIT_COST),
+        AmendmentClass::ExecutionLapse | AmendmentClass::SkillDefect => true,
         AmendmentClass::Discovery
         | AmendmentClass::Environment
         | AmendmentClass::PreferenceShift
-        | AmendmentClass::Unclear => None,
+        | AmendmentClass::Unclear => false,
     }
 }
