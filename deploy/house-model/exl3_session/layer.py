@@ -21,21 +21,60 @@ come from its own commit alone.
 
 `released` only once pages are back in the pool and state slots freed:
 `release_session` runs after every Job of the session has ended.
+
+Snapshots (R3). `export_checkpoint` copies a published checkpoint's tokens,
+KV pages and recurrent snapshot to the host, here, where no page moves under
+it; the op encodes them off this thread. `import_checkpoint` takes fresh
+pages for one only when they fit beside what is reserved and held (idle
+sessions are evicted for them as for a request, and otherwise the import is
+refused `snapshot_busy`), writes them, and stages the result. The layer
+advertises codec minor 2 and its snapshot format only where both work: a
+quantized KV layout, a portable recurrent state, a known model, tokenizer,
+template and runtime, and a sealed memfd to pass.
 """
 import time
 
+import torch
 from exllamav3.constants import PAGE_SIZE
 
-from . import ops, state
-from .anchor import Anchor
+from . import ops, snapshot, state
+from .anchor import Anchor, token_digest
 from .jobs import CommitJob, Plan
 from .pages import Owner
-from .registry import LOST_RESIDENCY, Checkpoint, Refused, Registry
+from .registry import (LOST_RESIDENCY, SNAPSHOT_BUSY, SNAPSHOT_INCOMPATIBLE, STALE_GENERATION, UNKNOWN_SESSION,
+                       Checkpoint, Refused, Registry)
 
 # The capability a worker with this layer advertises in its hello.
 SCHEMA_MINOR = 1
 OPS = ("session.create", "session.fork", "session.generate", "session.append", "session.suffix_commit",
        "session.checkpoint", "session.drop")
+# What a worker that exports and imports snapshots advertises besides.
+SNAPSHOT_MINOR = 2
+SNAPSHOT_OPS = ("session.export", "session.import")
+# The worker identity a snapshot is bound to: every field but its epoch and
+# the per-call execution mode. Unknown, no snapshot is advertised.
+IDENTITY_FIELDS = ("model", "tokenizer", "template", "runtime")
+# A snapshot header's fields.
+HEADER_FIELDS = frozenset(("checkpoint", "compatibility", "kv", "state", "tensors", "token_count"))
+
+
+def compatibility(identity, generator):
+    """What an imported snapshot must match on this worker, or None when it
+    cannot write or rebuild one: the identity less its epoch, the KV layout
+    and the recurrent state kind."""
+    if identity is None or not snapshot.hostable():
+        return None
+    record = identity.record(None)
+    kv, kind = snapshot.kv_layout(generator.cache), state.portable_kind(generator.cache)
+    if kv is None or kind is None or any(record.get(field) is None for field in IDENTITY_FIELDS):
+        return None
+    return dict({field: record[field] for field in IDENTITY_FIELDS}, kv=kv, state=kind)
+
+
+def kv_extent(frontier):
+    """The pages a frontier spans, and the valid tokens of the last."""
+    pages = -(-frontier // PAGE_SIZE)
+    return {"pages": pages, "last_page_tokens": frontier - (pages - 1) * PAGE_SIZE}
 
 
 class SessionLayer(Registry):
@@ -44,8 +83,11 @@ class SessionLayer(Registry):
     # imports nothing of it.
     Refused = Refused
     WITH_INPUT = ops.WITH_INPUT
+    SNAPSHOT_INPUT = ops.SNAPSHOT_INPUT
+    SNAPSHOT_OUTPUT = ops.SNAPSHOT_OUTPUT
+    SNAPSHOT_ENCODING = snapshot.ENCODING
 
-    def __init__(self, generator, render, encode):
+    def __init__(self, generator, render, encode, identity=None):
         super().__init__()
         self.generator = generator
         self.pagetable = generator.pagetable
@@ -56,13 +98,19 @@ class SessionLayer(Registry):
         self.waiting = []
         self.running = {}
         self.page_bytes = self.pagetable.page_bytes()
+        self.compatibility = compatibility(identity, generator)
 
     def capability(self):
-        return {"minor": SCHEMA_MINOR, "ops": list(OPS)}
+        if self.compatibility is None:
+            return {"minor": SCHEMA_MINOR, "ops": list(OPS)}
+        return {"minor": SNAPSHOT_MINOR, "ops": list(OPS + SNAPSHOT_OPS),
+                "snapshot": {"schema": snapshot.SCHEMA, "encoding": snapshot.ENCODING, "hash": snapshot.HASH,
+                             "state_kinds": [self.compatibility["state"]]}}
 
     def answer(self, op, body, conversation):
-        """The answer body of session op `op` (not `session.generate`);
-        Refused when it is refused."""
+        """The answer body of session op `op` (not `session.generate`; for
+        `session.export`, the answer and its region); Refused when it is
+        refused."""
         return ops.answer(self, op, body, conversation)
 
     def claim_call(self, field):
@@ -249,14 +297,126 @@ class SessionLayer(Registry):
             self.stop_commit(commit, Refused("unknown_session", "the session was dropped"))
 
     def release_session(self, session):
-        """Gives back everything a dropped session held, once its calls have
-        ended."""
+        """Gives back everything a dropped session held, once its calls and
+        transfers have ended: its pages and state, and the snapshot regions
+        its answers keep."""
         with self.lock:
             release = self.strip(session)
             release += [checkpoint.anchor for checkpoint in session.retired]
             session.retired = []
+            self.forget_answers(session)
             self.leaving.discard(session)
         self.release(release)
+
+    # Snapshots: the copies run on the scheduler thread.
+
+    def export_checkpoint(self, session, checkpoint):
+        """`session.export`'s copy: the header fields and host tensors of
+        `checkpoint`, while it is still `session`'s published checkpoint,
+        for the op to encode off this thread. The recurrent state is the
+        latest snapshot at or below its frontier: exact at the frontier for
+        GDN, the page boundary below it for an SWA frontier between two."""
+        with self.lock:
+            if session.dropping:
+                raise Refused(UNKNOWN_SESSION, "the session was dropped")
+            if session.lost or checkpoint.anchor.released:
+                raise Refused(LOST_RESIDENCY, "the session's checkpoint is no longer held")
+            if session.published is not checkpoint:
+                raise Refused(STALE_GENERATION, "another checkpoint is published")
+            anchor = checkpoint.anchor
+            below = [held for held in anchor.snapshots if held.position <= anchor.frontier]
+        if not below:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the checkpoint holds no recurrent state to carry")
+        cache = self.generator.cache
+        state_fields, state_tensors = state.capture_portable(cache, below[-1])
+        tensors = [("tokens", anchor.tokens.to(torch.int64).contiguous())]
+        tensors += snapshot.gather_kv(cache, anchor.owner.pages, anchor.frontier)
+        tensors += state_tensors
+        fields = {"checkpoint": checkpoint.ref(), "compatibility": self.compatibility,
+                  "token_count": anchor.frontier, "kv": kv_extent(anchor.frontier), "state": state_fields}
+        return fields, tensors
+
+    def decode_import(self, payload, ref):
+        """The snapshot `payload` as this worker rebuilds it, on any thread:
+        checked against the format, this worker's compatibility, the
+        checkpoint `ref` the host names, its token digest, and this cache's
+        geometry. Refused `snapshot_incompatible` otherwise."""
+        header, tensors = snapshot.decode_snapshot(payload)
+        if set(header) != HEADER_FIELDS:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the snapshot's header is not snapshot_v1's")
+        if header["compatibility"] != self.compatibility:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the snapshot was taken on another model, build or layout")
+        if header["checkpoint"] != ref:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the snapshot holds another checkpoint")
+        frontier = header["token_count"]
+        if type(frontier) is not int or frontier < 1 or frontier != ref["frontier_tokens"] \
+                or header["kv"] != kv_extent(frontier):
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the snapshot's extent is not its checkpoint's")
+        tokens = snapshot.take(tensors, "tokens", (frontier,), torch.int64)
+        if token_digest(tokens) != ref["digest"]:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, "the snapshot's tokens are not its checkpoint's")
+        cache = self.generator.cache
+        recurrent = state.rebuild_portable(cache, header["state"], tensors, frontier)
+        kv = {name: snapshot.take(tensors, name, shape, dtype)
+              for name, (shape, dtype) in snapshot.kv_shapes(cache, frontier).items()}
+        if tensors:
+            raise Refused(SNAPSHOT_INCOMPATIBLE, f"the snapshot holds tensors this worker does not: {sorted(tensors)}")
+        return snapshot.Rebuilt(tokens, recurrent, kv, ref["head"], ref["parent"])
+
+    def import_checkpoint(self, session, op_id, generation, rebuilt, size, sha256):
+        """`session.import` here: `rebuilt` written into fresh pages and
+        staged as `session`'s successor, under the same checks the op made.
+        Refused `snapshot_busy` when its pages do not fit beside what is
+        reserved and held, idle sessions evicted first."""
+        frontier = int(rebuilt.tokens.numel())
+        count = -(-frontier // PAGE_SIZE)
+        with self.lock:
+            self.import_target(session, generation)
+        if not self.scheduler.room_for(count):
+            raise Refused(SNAPSHOT_BUSY, f"the snapshot's {count} pages do not fit beside what runs")
+        pages, _, _, _ = self.pagetable.allocate_pages([], count, None)
+        owner = Owner()
+        self.pagetable.adopt(owner, pages)
+        anchor = Anchor(rebuilt.tokens, owner, [rebuilt.state])
+        try:
+            self.place(pages, rebuilt)
+        except BaseException:
+            self.release([anchor])
+            raise
+        refusal = None
+        with self.lock:
+            try:
+                self.import_target(session, generation)
+            except Refused as refused:
+                refusal = refused
+            else:
+                checkpoint = Checkpoint(anchor, rebuilt.head, rebuilt.parent)
+                session.successor = checkpoint
+                answer = {"staged": checkpoint.ref(), "imported_bytes": size, "snapshot_sha256": sha256,
+                          "residency": self.residency(session)}
+                self.remember(session, op_id, generation, answer)
+        if refusal is not None:
+            self.release([anchor])
+            raise refusal
+        return answer
+
+    def place(self, pages, rebuilt):
+        """Writes `rebuilt`'s tokens and KV into fresh `pages`, in sequence
+        order, and zeroes their draft KV, which the draft rebuilds from the
+        frontier on. No page is a revert candidate once written to."""
+        tokens = rebuilt.tokens
+        for page in pages:
+            page.can_revert = False
+        for index, page in enumerate(pages):
+            start = index * PAGE_SIZE
+            valid = min(PAGE_SIZE, int(tokens.numel()) - start)
+            page.sequence[:, :valid].copy_(tokens[start:start + valid].unsqueeze(0))
+            page.kv_position = valid
+            page.prev_hash = pages[index - 1].phash if index else None
+        snapshot.fill_kv(self.generator.cache, pages, int(tokens.numel()), rebuilt.kv)
+        draft = getattr(self.generator, "draft_cache", None)
+        if draft is not None:
+            snapshot.clear_pages(draft, pages)
 
     # Commits, on the scheduler thread.
 
@@ -321,9 +481,12 @@ class SessionLayer(Registry):
             self.finish_commit(commit, refusal=refusal)
 
     def close(self, error):
-        """The scheduler is shutting down: every commit ends."""
+        """The scheduler is shutting down: every commit ends, and every
+        snapshot region an answer keeps closes."""
         with self.lock:
             waiting, self.waiting = self.waiting, []
+            for session in list(self.sessions.values()) + list(self.leaving):
+                self.forget_answers(session)
         for commit in waiting:
             self.finish_commit(commit, refusal=Refused(LOST_RESIDENCY, str(error)))
         self.fail_commits(error)
@@ -393,10 +556,12 @@ class SessionLayer(Registry):
                 published = session.published
                 rows.append({"session": session.label, "resident": not session.lost,
                              "frontier_tokens": published.anchor.frontier if published is not None else 0,
-                             "unique_bytes": self.unique_bytes(session)})
+                             "unique_bytes": self.unique_bytes(session),
+                             "retained_snapshot_bytes": self.retained_bytes(session)})
         total = None
         if self.page_bytes is not None:
             total = sum(row["unique_bytes"] for row in rows)
         return {"count": len(rows), "held_pages": self.held_pages(), "page_bytes": self.page_bytes,
                 "unique_bytes": total, "commits_waiting": len(self.waiting), "commits_running": len(self.running),
+                "retained_snapshot_bytes": sum(row["retained_snapshot_bytes"] for row in rows),
                 "per_session": rows}

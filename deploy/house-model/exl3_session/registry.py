@@ -13,6 +13,15 @@ stops serving while pinned is retired, and released when the last pin goes.
 
 Each op's id is remembered with its answer for the session's current and
 previous generation: a retry gets the same answer, never a second act.
+
+Snapshots (R3). An export names the published checkpoint exactly, and its
+answer is kept with the region it passed (`Retained`): a retry passes the
+same bytes again, and the region closes when the answer is forgotten, the
+session is dropped or the incarnation ends. An import goes only to a session
+that holds nothing yet, at its generation, and stages its checkpoint as the
+successor a `session.checkpoint` publishes. Each export or import in flight
+counts on its session (`transfers`); a drop waits for them before it says
+`released`.
 """
 import hashlib
 import secrets
@@ -26,6 +35,9 @@ UNKNOWN_SESSION = "unknown_session"
 BINDING_MISMATCH = "binding_mismatch"
 LOST_RESIDENCY = "lost_residency"
 INVALID_REQUEST = "invalid_request"
+INVALID_INPUT = "invalid_input"
+SNAPSHOT_INCOMPATIBLE = "snapshot_incompatible"
+SNAPSHOT_BUSY = "snapshot_busy"
 
 
 class Refused(Exception):
@@ -52,6 +64,26 @@ class Checkpoint:
 
     def same_point(self, ref):
         return ref.get("digest") == self.digest and ref.get("head") == self.head
+
+
+class Retained:
+    """An answer kept with the snapshot region its frame passes, for its
+    op's replay; the region closes when the answer is forgotten."""
+
+    __slots__ = ("answer", "region")
+
+    def __init__(self, answer, region):
+        self.answer = answer
+        self.region = region
+
+    def close(self):
+        self.region.close()
+
+
+def dispose(kept):
+    """Lets go of what a forgotten answer holds: an export's region."""
+    if isinstance(kept, Retained):
+        kept.close()
 
 
 class Staged:
@@ -119,6 +151,8 @@ class Session:
         self.answers = {}
         self.lost = False
         self.dropping = False
+        # Exports and imports in flight on it.
+        self.transfers = 0
         self.used = time.monotonic()
 
     def anchors(self):
@@ -188,7 +222,20 @@ class Registry:
         one is refused stale before it could repeat."""
         floor = session.generation - 1
         for op_id in [op_id for op_id, (generation, _) in session.answers.items() if generation < floor]:
-            del session.answers[op_id]
+            dispose(session.answers.pop(op_id)[1])
+
+    @staticmethod
+    def forget_answers(session):
+        """Forgets every answer `session` keeps, and lets go of what each
+        holds."""
+        answers, session.answers = session.answers, {}
+        for _, kept in answers.values():
+            dispose(kept)
+
+    @staticmethod
+    def retained_bytes(session):
+        """The bytes of the snapshot regions `session`'s answers keep."""
+        return sum(kept.region.length for _, kept in session.answers.values() if isinstance(kept, Retained))
 
     @staticmethod
     def check_generation(session, generation):
@@ -207,6 +254,34 @@ class Registry:
         if session.published is None or not session.published.same_point(ref):
             raise Refused(STALE_GENERATION, "another checkpoint is published")
         return session.published
+
+    @staticmethod
+    def published_exactly(session, ref):
+        """The published checkpoint whose ref is `ref` exactly: its digest,
+        HEAD, frontier and parent."""
+        if session.lost:
+            raise Refused(LOST_RESIDENCY, "the session's checkpoint is no longer held")
+        if session.published is None or session.published.ref() != ref:
+            raise Refused(STALE_GENERATION, "another checkpoint is published")
+        return session.published
+
+    @staticmethod
+    def import_target(session, generation):
+        """Refused unless `session` is at `generation` and holds nothing yet:
+        no checkpoint, successor, staged path, commit or branch."""
+        if session.dropping:
+            raise Refused(UNKNOWN_SESSION, "the session was dropped")
+        if session.generation != generation:
+            raise Refused(STALE_GENERATION, f"the session is at generation {session.generation}")
+        if session.published is not None or session.successor is not None or session.staged is not None \
+                or session.commit is not None or session.branches or session.lost:
+            raise Refused(STALE_GENERATION, "the session already holds a checkpoint or work")
+
+    def end_transfer(self, session):
+        """One export or import on `session` has ended."""
+        with self.lock:
+            session.transfers -= 1
+            self.lock.notify_all()
 
     @staticmethod
     def unpin(session, checkpoint):

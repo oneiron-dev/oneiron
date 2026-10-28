@@ -8,22 +8,32 @@
 //! connection's close), and only then lets its lease on the incarnation go.
 //! Nothing here resends a call: once `generate` may have left, a fault is
 //! the caller's to settle under its own retry authority.
-use std::io::{self, IoSlice};
+//!
+//! An op whose answer passes a descriptor (`session.export`) reads its
+//! frames with `recvmsg`, each read no longer than what is left of the
+//! frame, so no byte or descriptor of a later frame is taken; a buffered
+//! read would drop the descriptor. A frame that carried more descriptors
+//! than the room for them is refused, and every descriptor a frame brought
+//! that its reader does not take is closed.
+use std::io::{self, IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
-use std::os::fd::BorrowedFd;
+use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use oneiron::llm::SessionOp;
 use oneiron_driver::WorkerLease;
 use oneiron_llm_openai::OpenAiCompatTransportError;
-use rustix::net::{SendAncillaryBuffer, SendAncillaryMessage, SendFlags, sendmsg};
+use rustix::net::{
+    RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
+    SendAncillaryMessage, SendFlags, recvmsg, sendmsg,
+};
 use serde_json::{Value as JsonValue, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, Interest};
 use tokio::net::UnixStream;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 
-use super::buffer::InputRegion;
+use super::buffer::{InputRegion, Outbound};
 use super::wire::{self, Incoming, Outgoing};
 
 /// A send to a worker that has gone fails with EPIPE rather than raising
@@ -32,6 +42,21 @@ use super::wire::{self, Incoming, Outgoing};
 const SEND_FLAGS: SendFlags = SendFlags::NOSIGNAL;
 #[cfg(not(target_os = "linux"))]
 const SEND_FLAGS: SendFlags = SendFlags::empty();
+
+/// A descriptor received is closed on exec as it arrives; macOS has no such
+/// flag, and its descriptors are marked once received.
+#[cfg(target_os = "linux")]
+const RECV_FLAGS: RecvFlags = RecvFlags::CMSG_CLOEXEC;
+#[cfg(not(target_os = "linux"))]
+const RECV_FLAGS: RecvFlags = RecvFlags::empty();
+
+/// Room for the descriptors one read can carry: an answer passes at most
+/// one, and the room for more lets a frame that carries more be seen and
+/// refused.
+const FD_ROOM: usize = 8;
+
+/// How much of a frame one read takes: a read size, never a cap on a frame.
+const FRAME_CHUNK: usize = 1 << 16;
 
 /// Request ids, unique in this process.
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -174,6 +199,122 @@ impl Channel {
         }
     }
 
+    /// Fills `buf` with `recvmsg`, keeping every descriptor that rides on
+    /// its bytes in `fds`; a read never runs past `buf`. `false` at a clean
+    /// end of the stream before the first byte, when `eof_ok`.
+    async fn recv_exact_with_fds(
+        &mut self,
+        buf: &mut [u8],
+        fds: &mut Vec<OwnedFd>,
+        eof_ok: bool,
+    ) -> io::Result<bool> {
+        let stream: &UnixStream = self.reader.get_ref().as_ref();
+        let mut filled = 0;
+        while filled < buf.len() {
+            let rest = &mut buf[filled..];
+            let mut space = [MaybeUninit::uninit(); rustix::cmsg_space!(ScmRights(FD_ROOM))];
+            let mut control = RecvAncillaryBuffer::new(&mut space);
+            let received = stream
+                .async_io(Interest::READABLE, || {
+                    recvmsg(
+                        stream,
+                        &mut [IoSliceMut::new(&mut *rest)],
+                        &mut control,
+                        RECV_FLAGS,
+                    )
+                    .map_err(io::Error::from)
+                })
+                .await?;
+            for message in control.drain() {
+                if let RecvAncillaryMessage::ScmRights(passed) = message {
+                    for fd in passed {
+                        #[cfg(not(target_os = "linux"))]
+                        rustix::io::fcntl_setfd(&fd, rustix::io::FdFlags::CLOEXEC)?;
+                        fds.push(fd);
+                    }
+                }
+            }
+            if received.flags.contains(ReturnFlags::CTRUNC) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "a frame carried more descriptors than this side reads",
+                ));
+            }
+            if received.bytes == 0 {
+                return if eof_ok && filled == 0 {
+                    Ok(false)
+                } else {
+                    Err(io::ErrorKind::UnexpectedEof.into())
+                };
+            }
+            filled += received.bytes;
+        }
+        Ok(true)
+    }
+
+    /// The next frame and the descriptors that rode on its bytes, read with
+    /// `recvmsg` at exactly its length, or `None` once the worker has closed
+    /// the connection. Only a channel that has buffered nothing through
+    /// [`Self::next`] reads this way.
+    async fn next_with_fds(&mut self) -> io::Result<Option<(Incoming, Vec<OwnedFd>)>> {
+        if !self.reader.buffer().is_empty() {
+            return Err(io::Error::other(
+                "the channel holds buffered bytes a descriptor may have ridden on",
+            ));
+        }
+        let mut fds = Vec::new();
+        let mut header = [0_u8; wire::HEADER_BYTES];
+        if !self
+            .recv_exact_with_fds(&mut header, &mut fds, true)
+            .await?
+        {
+            return Ok(None);
+        }
+        let mut left = u64::from_be_bytes(header);
+        let mut payload = Vec::new();
+        while left > 0 {
+            let want = usize::try_from(left).map_or(FRAME_CHUNK, |rest| rest.min(FRAME_CHUNK));
+            let start = payload.len();
+            payload.resize(start + want, 0);
+            self.recv_exact_with_fds(&mut payload[start..], &mut fds, false)
+                .await?;
+            left -= u64::try_from(want).unwrap_or(left);
+        }
+        let frame = wire::decode(&payload).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "the worker sent a frame this side cannot read",
+            )
+        })?;
+        Ok(Some((frame, fds)))
+    }
+
+    /// Sends `op` with `body` under a new request id, and with `input`'s
+    /// descriptor and its description under `input` when it carries one.
+    async fn send_op(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        mut body: JsonValue,
+        input: Option<Outbound<'_>>,
+    ) -> io::Result<u64> {
+        let request_id = next_request_id();
+        match input {
+            Some(input) => {
+                if let Some(fields) = body.as_object_mut() {
+                    fields.insert(
+                        "input".to_owned(),
+                        wire::region(request_id, input.len, input.encoding),
+                    );
+                }
+                self.send_with_fd(op, request_id, epoch, body, input.fd)
+                    .await?;
+            }
+            None => self.send(op, request_id, epoch, body).await?,
+        }
+        Ok(request_id)
+    }
+
     /// Sends `op` with `body`, and with `input`'s descriptor and its
     /// description under `input` when it carries one, then returns the
     /// worker's frame of the same id: the op's answer, or a `refused`.
@@ -181,23 +322,33 @@ impl Channel {
         &mut self,
         op: &str,
         epoch: Option<&str>,
-        mut body: JsonValue,
-        input: Option<&InputRegion>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
     ) -> io::Result<Incoming> {
-        let request_id = next_request_id();
-        match input {
-            Some(input) => {
-                if let Some(fields) = body.as_object_mut() {
-                    fields.insert("input".to_owned(), wire::input(request_id, input.len()));
-                }
-                self.send_with_fd(op, request_id, epoch, body, input.fd())
-                    .await?;
-            }
-            None => self.send(op, request_id, epoch, body).await?,
-        }
+        let request_id = self.send_op(op, epoch, body, input).await?;
         loop {
             match self.next().await? {
                 Some(frame) if frame.request_id == request_id => return Ok(frame),
+                Some(_) => {}
+                None => return Err(io::ErrorKind::UnexpectedEof.into()),
+            }
+        }
+    }
+
+    /// [`Self::exchange`] for an op whose answer passes a descriptor: the
+    /// worker's frame of the same id, with every descriptor that rode on
+    /// it. Those another frame brought are closed.
+    pub(super) async fn exchange_with_fds(
+        &mut self,
+        op: &str,
+        epoch: Option<&str>,
+        body: JsonValue,
+        input: Option<Outbound<'_>>,
+    ) -> io::Result<(Incoming, Vec<OwnedFd>)> {
+        let request_id = self.send_op(op, epoch, body, input).await?;
+        loop {
+            match self.next_with_fds().await? {
+                Some((frame, fds)) if frame.request_id == request_id => return Ok((frame, fds)),
                 Some(_) => {}
                 None => return Err(io::ErrorKind::UnexpectedEof.into()),
             }

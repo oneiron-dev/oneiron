@@ -58,6 +58,10 @@ pub(super) const WORKER_FILES: &[(&str, &[u8])] = &[
         include_bytes!("../../../../../deploy/house-model/exl3_session/registry.py"),
     ),
     (
+        "exl3_session/snapshot.py",
+        include_bytes!("../../../../../deploy/house-model/exl3_session/snapshot.py"),
+    ),
+    (
         "exl3_session/state.py",
         include_bytes!("../../../../../deploy/house-model/exl3_session/state.py"),
     ),

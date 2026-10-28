@@ -61,6 +61,14 @@ same pool: the scheduler admits work against the pool less the pages
 sessions hold, and evicts sessions nothing runs on, least recently used
 first, when a request or a commit needs the room. A session-less call runs
 exactly as before. `--no-sessions` turns the layer off.
+
+Where the layer can write and rebuild snapshots (R3: a quantized KV layout,
+a portable recurrent state, a known build identity, a sealed memfd), it also
+exports a published checkpoint to the host and imports one onto a new
+session (`exl3_session/snapshot.py`). An import's pages are taken only when
+they fit beside what is reserved and what sessions hold, idle sessions
+evicted first; otherwise it is refused `snapshot_busy`. Exports and imports
+count as calls for a drain, and the regions they keep close at shutdown.
 """
 import argparse
 import collections
@@ -737,6 +745,19 @@ class Scheduler:
         """Gives back pages a session commit reserved."""
         self.reserved -= pages
 
+    def room_for(self, pages):
+        """True once `pages` more fit the pool beside what is reserved and
+        what sessions hold, evicting sessions nothing runs on, least recently
+        used first, to make it; False when they cannot. A snapshot import's
+        pages, on the owner thread."""
+        sessions = self.sessions
+
+        def fits():
+            return self.reserved + sessions.held_pages() + pages <= self.pool_pages
+
+        sessions.evict_until(fits)
+        return fits()
+
     def _pinned(self):
         """The pages sessions hold that eviction may not take now."""
         return self.sessions.pinned_pages() if self.sessions is not None else 0
@@ -1238,11 +1259,13 @@ class Server:
         # otherwise, and then no session op is advertised.
         self.sessions = None
         if exl3_session is not None and isinstance(generator, exl3_session.SessionGenerator):
-            self.sessions = exl3_session.SessionLayer(generator, self.render, self.encode)
+            self.sessions = exl3_session.SessionLayer(generator, self.render, self.encode, identity)
             self.sessions.scheduler = self.scheduler
             generator.sessions = self.sessions
             self.scheduler.sessions = self.sessions
-            print(f"SESSIONS_ON page_bytes={self.sessions.page_bytes}", flush=True)
+            snapshots = self.sessions.compatibility
+            print(f"SESSIONS_ON page_bytes={self.sessions.page_bytes} "
+                  f"snapshots={snapshots['state'] if snapshots is not None else 'off'}", flush=True)
 
     def encode(self, text):
         return self.tokenizer.encode(text, encode_special_tokens=True, add_bos=False).cpu()

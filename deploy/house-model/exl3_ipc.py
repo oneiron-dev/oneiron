@@ -51,6 +51,19 @@ field names the working branch it runs on, with the same events. A
 connection's close cancels its calls, never its sessions: a session lives
 until it is dropped, evicted, or the incarnation ends.
 
+Codec v1.2 adds the snapshot ops (DESIGN-V2 R3), advertised as
+`capabilities.sessions` `{minor: 2, ops, snapshot: {schema, encoding, hash,
+state_kinds}}` only where the session layer can write and rebuild them.
+`session.export` is answered by a frame of its own name whose first byte
+carries ONE descriptor (SCM_RIGHTS): a memfd sealed against write, grow,
+shrink and further seals, described by `output` as `{buffer_id, fd_index: 0,
+offset: 0, length, encoding: "snapshot_v1"}`, `buffer_id` the request's id.
+The host's copy is its own; this side keeps its descriptor for the op's
+replay, and closes it when the answer is forgotten or the session drops.
+`session.import` carries its snapshot as its input region, encoding
+`snapshot_v1`, read as bytes and never as a conversation. Both count as
+calls for a drain.
+
 A connection that closes cancels its calls. The HTTP routes are untouched.
 """
 import array
@@ -273,9 +286,9 @@ def map_region(fd, offset, length):
         return view[:length]
 
 
-def read_input(description, fds):
-    """A call's conversation from its one input region. Closes every
-    descriptor the frame carried, whatever happens."""
+def read_region(description, fds, encodings):
+    """The bytes of an op's one input region, in one of `encodings`. Closes
+    every descriptor the frame carried, whatever happens."""
     try:
         if not isinstance(description, dict):
             raise Refusal("invalid_input", "the call names no input buffer")
@@ -287,13 +300,19 @@ def read_input(description, fds):
             raise Refusal("invalid_input", "the input buffer is not one whole region at descriptor 0")
         if not is_u64(length) or length < 1:
             raise Refusal("invalid_input", "the input buffer names no length")
-        if description.get("encoding") not in INPUT_ENCODINGS:
-            raise Refusal("unsupported_encoding", f"this worker reads {', '.join(INPUT_ENCODINGS)} only")
-        data = map_region(fds[0], offset, length)
+        if description.get("encoding") not in encodings:
+            raise Refusal("unsupported_encoding", f"this worker reads {', '.join(encodings)} only")
+        return map_region(fds[0], offset, length)
     except (OSError, ValueError, OverflowError) as error:
         raise Refusal("invalid_input", f"the input region cannot be read: {error}") from None
     finally:
         close_fds(fds)
+
+
+def read_input(description, fds):
+    """A call's conversation from its one input region. Closes every
+    descriptor the frame carried, whatever happens."""
+    data = read_region(description, fds, INPUT_ENCODINGS)
     try:
         conversation = json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
@@ -400,10 +419,10 @@ class Connection:
         self.lock = threading.Lock()
         self.calls = {}
 
-    def send(self, op, request_id, body, seq=None):
-        """Writes one frame, whole; False once the connection is gone. Every
-        refusal, error terminal and failed write reaches the log with its
-        cause."""
+    def send(self, op, request_id, body, seq=None, fd=None):
+        """Writes one frame, whole, with `fd` on its first byte when it
+        passes one; False once the connection is gone. Every refusal, error
+        terminal and failed write reaches the log with its cause."""
         if op == "refused" or (op == "final" and body.get("outcome") == "error"):
             detail = body if op == "refused" else body.get("error")
             print(f"NATIVE_REPLY_ERROR op={op} request_id={request_id} detail={detail!r}", flush=True)
@@ -416,7 +435,13 @@ class Connection:
             if self.closed:
                 return False
             try:
-                self.sock.sendall(frame)
+                if fd is None:
+                    self.sock.sendall(frame)
+                else:
+                    rights = [(socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array("i", [fd]))]
+                    if self.sock.sendmsg([frame[:1]], rights) != 1:
+                        raise OSError("the descriptor's byte did not go out")
+                    self.sock.sendall(frame[1:])
                 return True
             except OSError as error:
                 print(f"NATIVE_SEND_ERROR op={op} request_id={request_id} {type(error).__name__}: {error}",
@@ -484,18 +509,36 @@ class Connection:
 
     def session_op(self, envelope, fds):
         """One session op other than `session.generate`, answered by a frame
-        of its own name or `refused` (exl3_session/ops.py)."""
+        of its own name or `refused` (exl3_session/ops.py). An export or an
+        import counts as a call from here to its answer, for a drain."""
+        sessions = self.state.sessions
+        op = envelope["op"]
+        counted = op in sessions.SNAPSHOT_INPUT or op in sessions.SNAPSHOT_OUTPUT
+        if counted and not self.state.scheduler.accept():
+            close_fds(fds)
+            self.send("refused", envelope["request_id"], Refusal("draining", "the worker takes no new call").body())
+            return
+        try:
+            self._session_op(envelope, fds)
+        finally:
+            if counted:
+                self.state.scheduler.settle()
+
+    def _session_op(self, envelope, fds):
         op, request_id, body = envelope["op"], envelope["request_id"], envelope["body"]
         sessions = self.state.sessions
         try:
             if envelope.get("epoch") != self.state.identity.epoch:
                 raise Refusal("epoch_mismatch", "the op names another incarnation of this worker")
-            conversation = None
+            payload = None
             if op in sessions.WITH_INPUT:
-                conversation = read_input(body.get("input"), fds)
+                payload = read_input(body.get("input"), fds)
+            elif op in sessions.SNAPSHOT_INPUT:
+                # A snapshot's bytes, never a conversation (chat's path).
+                payload = read_region(body.get("input"), fds, (sessions.SNAPSHOT_ENCODING,))
             elif fds:
                 raise Refusal("invalid_input", f"{op} carries no descriptor")
-            answer = sessions.answer(op, body, conversation)
+            answer = sessions.answer(op, body, payload)
         except Refusal as refusal:
             close_fds(fds)
             self.send("refused", request_id, refusal.body())
@@ -507,7 +550,19 @@ class Connection:
             print(f"NATIVE_SESSION_ERROR op={op} {type(error).__name__}: {error}", flush=True)
             self.send("refused", request_id, Refusal("server_error", f"{type(error).__name__}: {error}").body())
             return
+        if op in sessions.SNAPSHOT_OUTPUT:
+            self.pass_snapshot(op, request_id, *answer)
+            return
         self.send(op, request_id, answer)
+
+    def pass_snapshot(self, op, request_id, answer, region):
+        """An export's answer, its region's descriptor on the frame's first
+        byte and `output.buffer_id` this request's id; `refused` when the
+        region was let go of before it could pass."""
+        answer = dict(answer, output=dict(answer["output"], buffer_id=request_id))
+        if not region.pass_to(lambda fd: self.send(op, request_id, answer, fd=fd)):
+            self.send("refused", request_id,
+                      Refusal("unknown_session", "the snapshot was let go of before it passed").body())
 
     def generate(self, envelope, fds, session=False):
         """A `generate`, or with `session` a `session.generate`: the same call
