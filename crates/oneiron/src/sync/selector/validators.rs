@@ -56,7 +56,15 @@ pub(super) fn admit_federated_authority_log(
                 "missing authority vault id",
             )))?,
     };
-    let local = vault.authority_fold_readonly_in_txn(txn)?;
+    // Where the fold needs history this row supplies, the fold with the row
+    // in judges it (FIX 2535).
+    let hash = authority_entry_hash(&entry)?;
+    let local = crate::authority::preflight_authority_rows_in_txn(
+        &vault.store,
+        vault.privacy_posture(),
+        txn,
+        &[(hash, &entry)],
+    )?;
     let local_vault_id =
         local
             .vault_id
@@ -73,7 +81,7 @@ pub(super) fn admit_federated_authority_log(
         && crate::authority::door_refuses_retired_standing(
             &vault.store,
             &local,
-            &authority_entry_hash(&entry)?,
+            &hash,
             &entry,
             &mut |hash| {
                 crate::authority::door_ancestor_row(&vault.store, txn, evidence.as_deref(), hash)

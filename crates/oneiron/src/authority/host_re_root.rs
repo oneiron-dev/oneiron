@@ -51,6 +51,9 @@ impl Vault {
     /// vault no server holds. `current` must be the live root and `next` a
     /// key the vault has never seen. Engine writers whose binding an owner
     /// revoked, and histories that were quarantined, are left as they were.
+    /// Once the move commits, `next`'s seed is escrowed in the vault's key
+    /// custody (FIX-LIST 10770), best effort: a fault there is warned, and
+    /// the move stands.
     pub fn re_root_host(
         &self,
         current: &HostSlipIssuer,
@@ -129,6 +132,7 @@ impl Vault {
             )?;
         }
         txn.commit()?;
+        self.escrow_host_slip_issuer_logged(next);
         Ok(HostReRoot {
             vault_id,
             writers_enrolled: writers.len(),
