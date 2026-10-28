@@ -58,29 +58,32 @@ pub enum LensRegenEnactment {
         activation: LensActivationReceipt,
     },
     /// The candidate was proposed and waits for the owner's stamp. The
-    /// lens at `active_ref` stays selected.
+    /// lens at `active_ref` stays selected; `None` when the owner has
+    /// cleared the slot since the decision.
     ProposedForStamp {
         proposal: LensProposalReceipt,
-        active_ref: String,
+        active_ref: Option<String>,
     },
     /// Regeneration failed; nothing was stored and the lens at
-    /// `active_ref` stays selected.
+    /// `active_ref` stays selected; `None` when the slot holds none.
     RolledBack {
-        active_ref: String,
+        active_ref: Option<String>,
         phase: LensRegenFailurePhase,
         message: String,
     },
 }
 
 impl LensRegenEnactment {
-    /// The lens the slot mounts after this enactment.
+    /// The lens the slot mounts after this enactment; `None` for a cleared
+    /// slot.
     #[must_use]
-    pub fn mounted_ref(&self) -> &str {
+    pub fn mounted_ref(&self) -> Option<&str> {
         match self {
-            Self::Current { active_ref }
-            | Self::ProposedForStamp { active_ref, .. }
-            | Self::RolledBack { active_ref, .. } => active_ref,
-            Self::AutoAdopted { proposal, .. } => &proposal.lens_ref,
+            Self::Current { active_ref } => Some(active_ref),
+            Self::ProposedForStamp { active_ref, .. } | Self::RolledBack { active_ref, .. } => {
+                active_ref.as_deref()
+            }
+            Self::AutoAdopted { proposal, .. } => Some(&proposal.lens_ref),
         }
     }
 }
@@ -128,13 +131,17 @@ impl Memory<'_> {
             active_ref: decided_against,
             outcome,
         } = decision;
-        let (active_ref, active_lens) = self.active_lens_for(&slot)?;
-        let slot_moved =
-            active_ref != decided_against || outcome.last_good().lens() != &active_lens;
+        // The slot's selection now, if any: the owner may have moved or
+        // cleared it since the decision, and either keeps the candidate.
+        let current = self.current_lens_for(&slot)?;
+        let slot_moved = current.as_ref().is_none_or(|(active_ref, active_lens)| {
+            *active_ref != decided_against || outcome.last_good().lens() != active_lens
+        });
+        let active_ref = current.map(|(active_ref, _)| active_ref.to_hex());
         let (candidate, auto_adopt) = match outcome {
             LensRegenOutcome::RolledBack { failure, .. } => {
                 return Ok(LensRegenEnactment::RolledBack {
-                    active_ref: active_ref.to_hex(),
+                    active_ref,
                     phase: failure.phase(),
                     message: failure.message().to_owned(),
                 });
@@ -163,7 +170,7 @@ impl Memory<'_> {
         if !auto_adopt {
             return Ok(LensRegenEnactment::ProposedForStamp {
                 proposal,
-                active_ref: active_ref.to_hex(),
+                active_ref,
             });
         }
         let activated = self.vault().activate_lens(
@@ -179,34 +186,35 @@ impl Memory<'_> {
                 proposal,
                 activation,
             }),
-            // The slot moved after the check above: its newer selection
-            // stays, and the candidate stays a proposal.
-            Err(error) => {
-                let now = self.vault().active_pack_lens(&slot.pack_name, &slot.skill()?)?;
-                match now {
-                    Some((now, _)) if now != decided_against => {
-                        Ok(LensRegenEnactment::ProposedForStamp {
-                            proposal,
-                            active_ref: now.to_hex(),
-                        })
-                    }
-                    _ => Err(error),
-                }
-            }
+            // The slot moved or was cleared after the check above: its newer
+            // selection stays, and the candidate stays a proposal.
+            Err(error) => match self.current_lens_for(&slot)? {
+                Some((now, _)) if now == decided_against => Err(error),
+                now => Ok(LensRegenEnactment::ProposedForStamp {
+                    proposal,
+                    active_ref: now.map(|(now, _)| now.to_hex()),
+                }),
+            },
         }
+    }
+
+    /// The lens `slot` selects now, rechecked against the live install, if
+    /// any.
+    fn current_lens_for(
+        &self,
+        slot: &LensSlot,
+    ) -> MemoryResult<Option<(EntityId, super::GeneratedLens)>> {
+        Ok(self.vault().active_pack_lens(&slot.pack_name, &slot.skill()?)?)
     }
 
     /// The lens `slot` selects now, rechecked against the live install.
     fn active_lens_for(&self, slot: &LensSlot) -> MemoryResult<(EntityId, super::GeneratedLens)> {
-        let skill_id = slot.skill()?;
-        self.vault()
-            .active_pack_lens(&slot.pack_name, &skill_id)?
-            .ok_or_else(|| {
-                invalid_state(
-                    "that slot has no active lens to regenerate",
-                    "Select a lens for the slot through vault.lenses.activate first.",
-                )
-            })
+        self.current_lens_for(slot)?.ok_or_else(|| {
+            invalid_state(
+                "that slot has no active lens to regenerate",
+                "Select a lens for the slot through vault.lenses.activate first.",
+            )
+        })
     }
 }
 

@@ -366,7 +366,18 @@ pub(super) fn ensure_authenticated_actor(
     request: &ConsentActionRequest,
     authenticated_owner: &AuthenticatedOwner,
 ) -> Result<()> {
-    if actor_is_card_principal(vault, principal_ref, request, authenticated_owner)? {
+    // A decline is the asked person's own refusal; every other action
+    // decides an act, so it takes the owner tier.
+    let authenticated = if matches!(request.action, ConsentActionKind::Decline) {
+        request
+            .actor
+            .authenticates_person(vault, principal_ref, authenticated_owner)?
+    } else {
+        request
+            .actor
+            .authenticates_owner(vault, principal_ref, authenticated_owner)?
+    };
+    if authenticated {
         return Ok(());
     }
     Err(Error::Gate(GateError::ConsentUnauthenticatedActor(
@@ -374,29 +385,31 @@ pub(super) fn ensure_authenticated_actor(
     )))
 }
 
-/// Whether the tapping actor is the card's principal, under a proof that
-/// revalidates on `vault` (FIX 9859). A decline is the asked person's own
-/// refusal; every other action decides an act, so it takes the owner tier.
-/// `false` is a valid tap by someone else, which a consent card answers
-/// with a receipted no-op.
+/// Whether the tapping actor is the card's principal (FIX 9859). The proof
+/// is revalidated on the person tier first, so a live person who is not the
+/// principal answers `false`, for a receipted no-op, whatever tier their
+/// credential has. The principal's own decline is a person-tier act; any
+/// other action the principal takes decides an act, so it still takes the
+/// owner tier, as [`ensure_authenticated_actor`] asks.
 ///
 /// # Errors
-/// The proof does not revalidate on `vault`, or a storage error.
+/// The proof does not revalidate on `vault` (revoked, foreign or not a live
+/// person), the principal lacks the owner tier for an act, or a storage
+/// error.
 pub(super) fn actor_is_card_principal(
     vault: &crate::Vault,
     principal_ref: &str,
     request: &ConsentActionRequest,
     authenticated_owner: &AuthenticatedOwner,
 ) -> Result<bool> {
-    if matches!(request.action, ConsentActionKind::Decline) {
-        request
-            .actor
-            .authenticates_person(vault, principal_ref, authenticated_owner)
-    } else {
-        request
-            .actor
-            .authenticates_owner(vault, principal_ref, authenticated_owner)
+    if !request
+        .actor
+        .authenticates_person(vault, principal_ref, authenticated_owner)?
+    {
+        return Ok(false);
     }
+    ensure_authenticated_actor(vault, principal_ref, request, authenticated_owner)?;
+    Ok(true)
 }
 
 /// The reason a consent card's receipt names for a valid tap by someone

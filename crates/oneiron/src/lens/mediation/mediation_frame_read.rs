@@ -22,10 +22,9 @@ pub(super) const LENS_SPAN_DRIFTED: &str = "lens span drifted from the text its 
 /// What a span handle's pinned cursors resolve to (FIX 9895).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LensIssuedSpan {
-    /// The id of the document the span quotes.
-    pub(super) document: String,
-    /// The span's live scalar range in the stored text; `None` when it
-    /// drifted.
+    /// The span's live range in the reader's current sight, when the text
+    /// the reader reads there still hashes to the span's issued quote hash;
+    /// `None` when it drifted.
     pub(super) live: Option<(usize, usize)>,
 }
 
@@ -307,9 +306,11 @@ impl LensRenderFrame {
     /// pinned cursors resolve to (FIX 9895). Disclosure is re-proved under
     /// the current read: the same render, binding, role and readable target
     /// must issue the same reach. A span is then resolved at its pinned
-    /// version rather than cut again at the current head, so an edit
-    /// elsewhere in the document keeps it, and drift is reported, not
-    /// mistaken for a changed reach.
+    /// version rather than cut again at the current head, projected into the
+    /// reader's current sight and proved against its issued quote hash, so
+    /// an edit elsewhere in the document keeps it, and drift (including a
+    /// key lifted inside it since) is reported, not mistaken for a changed
+    /// reach.
     pub(super) fn resolve_issued_handle(
         &self,
         scoped_read: &ScopedRead<'_>,
@@ -338,13 +339,19 @@ impl LensRenderFrame {
                 ));
             }
             let (start, end) = span.cursors();
-            let (document, live) = scoped_read.vault().entity_text_issued_span(
+            let masked = !scoped_read.actor_key().reads_as_vault_owner();
+            let issued = scoped_read.vault().entity_text_issued_span(
                 resolved.target.entity_id(),
                 span.frontier(),
                 start,
                 end,
+                masked,
             )?;
-            Ok((resolved, Some(LensIssuedSpan { document, live })))
+            let live = issued
+                .sight
+                .filter(|sight| sight.quote_hash == span.quote_hash())
+                .map(|sight| (sight.shown.start, sight.shown.end));
+            Ok((resolved, Some(LensIssuedSpan { live })))
         }
         #[cfg(not(feature = "sync"))]
         {

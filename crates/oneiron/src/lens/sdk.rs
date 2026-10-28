@@ -202,7 +202,7 @@ impl Memory<'_> {
                 threads,
             },
         )?;
-        // A step whose every row was withheld still narrowed the projection.
+        // Every step's exclusions, counted once, an all-withheld step's too.
         receipt.restrict_with(&steps);
         Ok(ScopedReadResult {
             value: HostedLensRender::new(frame, value)?,
@@ -236,7 +236,8 @@ fn principal_frame(read: &ScopedRead<'_>) -> Result<LensRenderFrame> {
 /// With `as_of`, the rows are the as-of selection of the same point read:
 /// a source that had not occurred and been learned by then is left out
 /// before any backing ref is minted for it. The list is read in steps of
-/// [`LENS_DEFAULT_READ_STEP`]; each step's receipt is folded into `steps`.
+/// [`LENS_DEFAULT_READ_STEP`]; each step's receipt, with its exclusion count,
+/// is folded into `steps` once (FIX 9899).
 fn admit(
     read: &ScopedRead<'_>,
     frame: &mut LensRenderFrame,
@@ -255,10 +256,15 @@ fn admit(
             Some(as_of) => read.read_as_of(&reads, None, as_of)?,
             None => read.read(&reads, None)?,
         };
+        // The step's exclusions are counted once, here; each row it admitted
+        // carries the step's scope without its count again.
         steps.restrict_with(&receipt);
+        let mut scope = receipt;
+        scope.suppressed_count = 0;
+        scope.record_axes();
         let first = step * LENS_DEFAULT_READ_STEP;
         for (offset, row) in rows.into_iter().enumerate() {
-            admit_row(read, frame, list, first + offset, row, &receipt, &mut admitted)?;
+            admit_row(read, frame, list, first + offset, row, &scope, &mut admitted)?;
         }
     }
     Ok(admitted)
