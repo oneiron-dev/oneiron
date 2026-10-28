@@ -138,6 +138,11 @@ side_tables! {
     /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
     /// unsigned id (OF-469). Key: hash32.
     AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
+    /// One signed authority row a local append kept as evidence instead of storing it, because
+    /// the fold with it past the adopted checkpoint image needs history this vault does not hold
+    /// (FIX 2989): no held history, admitting nothing; it leaves when a put of it lands. Key:
+    /// hash32. Value: the row's canonical signed bytes.
+    AUTHORITY_HISTORY_PENDING: VaultMeta b"authority.history.pending.v1:" Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
