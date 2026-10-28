@@ -1,10 +1,14 @@
 //! A secret read from stdin (FIX 1490). From a terminal, the command asks
 //! for it on stderr and turns the terminal's echo off until the read ends,
 //! however it ends, so the secret never shows on the screen or in its
-//! scrollback. From a pipe or a file it is read as given, as before. The
-//! caller reads into its own wiped buffer; nothing is copied here.
+//! scrollback. A signal that ends the process mid-read (Ctrl-C) turns the
+//! echo back on before it ends it. From a pipe or a file it is read as
+//! given, as before. The caller reads into its own wiped buffer; nothing is
+//! copied here.
 
 use std::io::{self, Read};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// How much of a terminal's input one secret is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,10 +73,26 @@ impl<R: Read> Read for OneLine<R> {
     }
 }
 
-/// Stdin's terminal with its echo turned off, turned back on when dropped.
+/// The echo bits a hidden read turned off, and whether one is under way:
+/// what a signal that ends the process turns back on, since it runs no
+/// `Drop` ([`restore_echo_then_end`]).
+#[cfg(unix)]
+static ECHO_BITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(unix)]
+static ECHO_HIDDEN: AtomicBool = AtomicBool::new(false);
+
+/// The signals whose default action ends the process while a read is
+/// hidden: Ctrl-C, Ctrl-\, a hangup and a termination.
+#[cfg(unix)]
+const ENDING_SIGNALS: [libc::c_int; 4] = [libc::SIGINT, libc::SIGQUIT, libc::SIGHUP, libc::SIGTERM];
+
+/// Stdin's terminal with its echo turned off, turned back on when dropped,
+/// and by [`restore_echo_then_end`] when a signal ends the process first.
 #[cfg(unix)]
 struct EchoOff {
     saved: libc::termios,
+    /// Each of [`ENDING_SIGNALS`]' actions before the read, put back on drop.
+    previous: [libc::sigaction; 4],
 }
 
 #[cfg(unix)]
@@ -91,13 +111,21 @@ impl EchoOff {
         }
         // SAFETY: `tcgetattr` returned 0, so it filled the struct.
         let saved = unsafe { saved.assume_init() };
+        let hidden = libc::ECHO | libc::ECHONL;
+        ECHO_BITS.store(u64::from(saved.c_lflag & hidden), Ordering::SeqCst);
+        ECHO_HIDDEN.store(true, Ordering::SeqCst);
+        // From here the guard puts the terminal and the handlers back.
+        let guard = Self {
+            saved,
+            previous: ENDING_SIGNALS.map(restore_echo_on),
+        };
         let mut quiet = saved;
-        quiet.c_lflag &= !(libc::ECHO | libc::ECHONL);
+        quiet.c_lflag &= !hidden;
         // SAFETY: `tcsetattr` reads the struct it is handed and nothing else.
         if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSAFLUSH, &raw const quiet) } != 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok(Some(Self { saved }))
+        Ok(Some(guard))
     }
 }
 
@@ -108,6 +136,60 @@ impl Drop for EchoOff {
         unsafe {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const self.saved);
         }
+        ECHO_HIDDEN.store(false, Ordering::SeqCst);
+        for (signal, previous) in ENDING_SIGNALS.iter().zip(&self.previous) {
+            // SAFETY: `sigaction` reads the action it is handed and nothing
+            // else.
+            unsafe {
+                libc::sigaction(*signal, previous, std::ptr::null_mut());
+            }
+        }
+    }
+}
+
+/// Points `signal` at [`restore_echo_then_end`] and returns its action
+/// before.
+#[cfg(unix)]
+fn restore_echo_on(signal: libc::c_int) -> libc::sigaction {
+    // SAFETY: an all-zero `sigaction` is plain data: no handler, no flags,
+    // an empty mask until `sigemptyset` sets it.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = restore_echo_then_end as libc::sighandler_t;
+    // SAFETY: as above, a zeroed action is a valid place to receive one.
+    let mut previous: libc::sigaction = unsafe { std::mem::zeroed() };
+    // SAFETY: `sigemptyset` writes the set it is handed, and `sigaction`
+    // reads `action` and writes `previous`, nothing else.
+    unsafe {
+        libc::sigemptyset(&raw mut action.sa_mask);
+        libc::sigaction(signal, &raw const action, &raw mut previous);
+    }
+    previous
+}
+
+/// A signal that ends the process arrived while a read was hidden: turn the
+/// terminal's echo back on, end the line, and end the process as the
+/// signal's default action would. Only async-signal-safe calls.
+#[cfg(unix)]
+extern "C" fn restore_echo_then_end(signal: libc::c_int) {
+    if ECHO_HIDDEN.load(Ordering::SeqCst) {
+        // SAFETY: an all-zero `termios` is plain data that `tcgetattr` fills.
+        let mut current: libc::termios = unsafe { std::mem::zeroed() };
+        let bits = ECHO_BITS.load(Ordering::SeqCst) as libc::tcflag_t;
+        // SAFETY: `tcgetattr`, `tcsetattr` and `write` are async-signal-safe
+        // and touch only the struct and the byte they are handed.
+        unsafe {
+            if libc::tcgetattr(libc::STDIN_FILENO, &raw mut current) == 0 {
+                current.c_lflag |= bits;
+                libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const current);
+            }
+            libc::write(libc::STDERR_FILENO, b"\n".as_ptr().cast(), 1);
+        }
+    }
+    // SAFETY: `signal` and `raise` are async-signal-safe; with the default
+    // action back, the raised signal ends the process.
+    unsafe {
+        libc::signal(signal, libc::SIG_DFL);
+        libc::raise(signal);
     }
 }
 

@@ -91,19 +91,26 @@ impl<'a> UnlockRequest<'a> {
         self.method == UnlockMethod::Device
     }
 
-    /// Whether reading this unlock takes its secret from stdin: a password,
-    /// a PRF output or an escrow secret with no file or recovery box named,
-    /// and a kit opened with one piece and no passphrase file.
+    /// Whether reading this unlock takes stdin: a password, a PRF output or
+    /// an escrow secret with no file or recovery box named, a kit opened
+    /// with one piece and no passphrase file, and a recovery box program,
+    /// whose `release` inherits stdin for its own sign-in.
     pub(in crate::commands::owner) fn reads_stdin(&self) -> bool {
         let no_file = self.secret.secret_file.is_none();
         match self.method {
             UnlockMethod::Device => false,
             UnlockMethod::Password | UnlockMethod::Passkey => no_file,
             UnlockMethod::Escrow => {
-                no_file && self.secret.box_dir.is_none() && self.secret.box_command.is_none()
+                self.box_reads_stdin() || (no_file && self.secret.box_dir.is_none())
             }
             UnlockMethod::Kit => no_file && self.pieces.len() == 1,
         }
+    }
+
+    /// Whether the unlock's secret comes from a recovery box program, which
+    /// may read its sign-in from stdin.
+    fn box_reads_stdin(&self) -> bool {
+        self.method == UnlockMethod::Escrow && self.secret.box_command.is_some()
     }
 
     /// Refuses a flag the unlock does not read: the kit's pieces and vault
@@ -134,22 +141,31 @@ impl<'a> UnlockRequest<'a> {
     }
 }
 
-/// Refuses a command whose unlock and whose own secret would both be read
-/// from stdin: one stream holds one secret. `what` names the command's own
-/// secret, and `file_flag` the flag that reads it from a file instead.
+/// Refuses a command whose unlock and whose own secret would both read
+/// stdin: one stream holds one secret. `what` names the command's own
+/// secret, and `file_flag` the flag that reads it from a file instead. A
+/// recovery box program's sign-in cannot move to a file, so then the
+/// command's own secret must.
 pub(in crate::commands::owner) fn refuse_two_stdin_secrets(
     unlock: &UnlockRequest<'_>,
     own_reads_stdin: bool,
     what: &str,
     file_flag: &str,
 ) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !(own_reads_stdin && unlock.reads_stdin()),
-        "both the unlock's secret and {what} would be read from stdin, which holds one: read \
-         one of them from a file ({file_flag} or --{}secret-file)",
+    if !(own_reads_stdin && unlock.reads_stdin()) {
+        return Ok(());
+    }
+    if unlock.box_reads_stdin() {
+        anyhow::bail!(
+            "the recovery box program may read its sign-in from stdin, which then cannot also \
+             hold {what}: read {what} from a file ({file_flag})"
+        );
+    }
+    anyhow::bail!(
+        "both the unlock's secret and {what} would be read from stdin, which holds one: read one \
+         of them from a file ({file_flag} or --{}secret-file)",
         unlock.prefix
-    );
-    Ok(())
+    )
 }
 
 /// The stopped vault at `config`, opened for an owner command with the
