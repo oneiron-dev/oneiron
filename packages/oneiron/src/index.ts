@@ -3151,9 +3151,9 @@ export class Oneiron {
     /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
     history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
     browser: {
-      /** Opens a URL in the attached run's own browser session and observes the page whole, each row with its live ref and its locator; a long page's observation comes in pages, read on with observe and its next cursor. */
+      /** Opens a URL in the attached run's own browser session and observes the page whole, in pages read on with observe and next; site_skills hold the exact-origin skills of the page it landed on, and site_skill_notes say why none loaded. */
       open: (input: Facade.LiveRunRequest<Facade.OpenInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserOpen(input) as Facade.BrowserObservationPage),
-      /** Observes the attached run's browser page as an ordered edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next; acts follow new tabs as switched; a found secret shows its handle. */
+      /** Observes the attached run's page as an edit of the base it names or the caller's last whole read, else whole (or with full), paged via observe and next, each page keeping its open's site_skills; acts follow new tabs; secrets show as handles. */
       observe: (input: Facade.LiveRunRequest<Facade.ObserveInput>): Facade.BrowserObservationPage => this.#call(() => this.#client.selfBrowserObserve(input) as Facade.BrowserObservationPage),
       /** Finds the page rows whose role and name match, each with its live ref and its locator, in pages: an answer with next goes on, and find with that cursor reads the next page. */
       find: (input: Facade.LiveRunRequest<Facade.FindInput>): Facade.BrowserFindOutput => this.#call(() => this.#client.selfBrowserFind(input) as Facade.BrowserFindOutput),
@@ -3180,11 +3180,11 @@ export class Oneiron {
       /** Runs one batched browser program for a subgoal in the attached run's browser; fill types supplied, reference, template or checked written text (receipt text_source, text_ref); a failing or no_progress stop returns a failed_receipt. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BrowserBatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BrowserBatchOutput),
       library: {
-        /** The replay library's programs for a site, or the attached run's page's; type_ref (node_id@tree_version) keeps one exact task type. Cards: type_ref, runs, failures, recent pass/miss/repair (of `of`), strict_misses, held_out, supersedes, seed. */
+        /** The replay library's programs for a site, url or run's page, and apart its site skills' seed candidates (exact origin); type_ref keeps one task type. Cards: type_ref, runs, failures, recent pass/miss/repair, strict_misses, held_out, seed. */
         find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.BrowserLibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.BrowserLibraryFindOutput),
         /** Drafts a proposal from the attached run's browser receipts on its open origin, no model, replay or filing: steps, slot_candidates, secrets as slots, gaps; it ends before a send, pay, publish, destructive or unknown press unless past_press. */
         draft: (input: Facade.LiveRunRequest<Facade.DraftInput>): Facade.BrowserLibraryDraftOutput => this.#call(() => this.#client.selfBrowserLibraryDraft(input) as Facade.BrowserLibraryDraftOutput),
-        /** Offers a solved run's program, fill steps too, to the attached run's replay library, secrets as typed slots; it joins once a no-model replay on a fresh guest meets its postcondition, held-out replay_args if given; supersedes retires. */
+        /** Offers a solved run's program, or a seed candidate (its checked program and provenance win, args stay yours), to the run's library, secrets as slots; it joins once a no-model fresh-guest replay meets its postcondition; supersedes retires. */
         propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.BrowserLibraryProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.BrowserLibraryProposeOutput),
         /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
         retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.BrowserLibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.BrowserLibraryRetireOutput),
