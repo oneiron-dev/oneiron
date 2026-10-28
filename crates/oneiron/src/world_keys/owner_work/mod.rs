@@ -74,7 +74,7 @@ pub use self::pickup::OwnerWorkDrain;
 
 /// Why an act's work names no executor (CALLS OWNER_WORK_NO_EXECUTOR,
 /// ROOT_WORK_EXECUTOR).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkUnassigned {
     /// No install but this one may read the world: nobody can do its key
@@ -116,7 +116,7 @@ pub(crate) const OWNER_WORK_NO_EXECUTOR: OwnerWorkUnassigned =
     OwnerWorkUnassigned::NoEligibleReader;
 
 /// Where one request stands, derived from the fold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum OwnerWorkStatus {
     /// Recorded, awaiting a holder: no result yet.
@@ -180,7 +180,7 @@ impl OwnerWorkStatus {
 
 /// Where the owner's cancel of a root request stands, derived from the fold
 /// (CALLS ROOT_WORK_CANCEL).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkCancelState {
     /// No result came first: the request is cancelled.
@@ -207,7 +207,7 @@ impl OwnerWorkCancelState {
 
 /// The owner's cancels of one root request, as its receipt shows them. Ids
 /// only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerWorkCancelNote {
     /// Each cancel's signed authority-log entry, as hex, ascending.
@@ -216,7 +216,7 @@ pub struct OwnerWorkCancelNote {
 }
 
 /// What an owner act recorded for a holder, and where it stands. Ids only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerWorkReceipt {
     /// The request's signed authority-log entry, as hex; `None` when no

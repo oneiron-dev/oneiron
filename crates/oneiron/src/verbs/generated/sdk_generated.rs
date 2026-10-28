@@ -7056,6 +7056,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.research.budget",
     "vault.authority.handoff_alarms",
     "vault.authority.handoff_alarms.acknowledge",
+    "vault.roots.requests.create",
+    "vault.roots.requests.list",
+    "vault.owner_work.get",
     "vault.cleanup.run",
     "vault.cleanup.review",
     "vault.cleanup.decide",
@@ -8535,6 +8538,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.authority.handoff_alarms.acknowledge" => {
             crate::code_run::vault_read::request_schema::<crate::authority::AuthorityHandoffAlarm>()
+        }
+        "vault.roots.requests.create" => {
+            crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
+        }
+        "vault.roots.requests.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::PendingRootRequestView>,
+        >(),
+        "vault.owner_work.get" => {
+            crate::code_run::vault_read::request_schema::<crate::world_keys::OwnerWorkReceipt>()
         }
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,

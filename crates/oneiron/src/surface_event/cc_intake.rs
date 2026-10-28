@@ -1,9 +1,14 @@
 //! Atomic named-address CC intake: passport, membership event, then durable coordination handoff.
-use super::handoff::{admit_surface_event_once_in_txn, surface_event_status_path};
-use super::{
-    InboundSurfaceEventInput, SurfaceEventAck, SurfaceEventAction, SurfaceEventAdmission,
-    SurfaceEventAttemptRef, SurfaceEventHandoffState,
+use super::handoff::{
+    SurfaceEventKey, admit_surface_event_once_in_txn, attempts_for_run_in_write_txn,
+    decode_surface_event_attempt_payload, matching_surface_event_attempt, surface_event_dedupe_key,
+    surface_event_run_id, surface_event_status_path,
 };
+use super::{
+    InboundSurfaceEventInput, SurfaceEvent, SurfaceEventAck, SurfaceEventAction,
+    SurfaceEventAdmission, SurfaceEventAttemptRef, SurfaceEventHandoffState,
+};
+use crate::attempt_queue::{AttemptQueue, AttemptRecord};
 use crate::channel_identity_provider::EmailThreadHeaders;
 use crate::thread_passport::{
     ThreadPassportInput, ThreadPassportResolution, canonical_message_id, canonical_message_id_list,
@@ -140,9 +145,10 @@ impl Vault {
 
 impl Vault {
     /// [`Self::enqueue_inbound_email`] for a submitter that reads as `read`
-    /// (FIX 974): parseable threading headers take the scoped named-address
-    /// door ([`Self::enqueue_cc_agent_email_as`]); without them, or with
-    /// headers the passport cannot read, the scoped generic door
+    /// (FIX 974): an email message with parseable threading headers takes
+    /// the scoped named-address door ([`Self::enqueue_cc_agent_email_as`]);
+    /// without them, with headers the passport cannot read, or for any other
+    /// event, the scoped generic door
     /// ([`Self::enqueue_inbound_surface_event_as`]). A header gap is
     /// metadata, not a reason to drop mail.
     pub fn enqueue_inbound_email_as(
@@ -152,8 +158,13 @@ impl Vault {
         headers: Option<&EmailThreadHeaders>,
         now: u64,
     ) -> Result<SurfaceEventAdmission> {
+        // Only an email message takes the CC door; any other event keeps the
+        // generic one, thread headers or not.
+        let email_message = matches!(input.channel.as_str(), "mail" | "email")
+            && input.action == SurfaceEventAction::Message;
         let threaded = headers.filter(|headers| {
-            canonical_message_id(&headers.message_id).is_ok()
+            email_message
+                && canonical_message_id(&headers.message_id).is_ok()
                 && canonical_message_id_list(&headers.references).is_ok()
                 && headers
                     .in_reply_to
@@ -181,8 +192,11 @@ impl Vault {
     /// and the handoff, as [`Self::enqueue_inbound_surface_event_as`] admits
     /// it. An identity the submitter cannot read routes as an address no
     /// identity holds: nothing is recorded or queued, and the rejection names
-    /// no agent the submitter cannot read. Foreign CC content stays claims,
-    /// never instructions or permission to book or send.
+    /// no agent the submitter cannot read. A tuple first admitted with no
+    /// thread replays that admission (first write wins) and records no
+    /// passport; one already CC-bound keeps its strict message and thread
+    /// checks. Foreign CC content stays claims, never instructions or
+    /// permission to book or send.
     pub fn enqueue_cc_agent_email_as(
         &self,
         read: &crate::claim::ScopedRead<'_>,
@@ -222,6 +236,23 @@ impl Vault {
                     thread: None,
                 });
             };
+            // First write wins: a mail first admitted with no thread replays
+            // that admission, and no passport or membership is recorded.
+            if let Some(held) = threadless_surface_event_in_txn(self, txn, &event)? {
+                let ack = SurfaceEventAck {
+                    status_path: surface_event_status_path(&event.correlation_id),
+                    receiving_identity_ref: event.receiving_identity_ref.clone(),
+                    correlation_id: event.correlation_id,
+                    attempt_ref: SurfaceEventAttemptRef::from_attempt_id(held.id),
+                    state: SurfaceEventHandoffState::from_attempt_state(held.state),
+                    replayed: true,
+                    accepted_at: held.created_at,
+                };
+                return Ok(CcAgentIntakeOutcome {
+                    admission: SurfaceEventAdmission::Accepted(ack),
+                    thread: None,
+                });
+            }
             let identity = EntityId::from_hex(&event.receiving_identity_ref)?;
             let actor = EntityId::from_hex(&event.actor_ref)?;
             let passport = self.record_thread_passport_in_txn(
@@ -276,4 +307,34 @@ impl Vault {
             })
         })
     }
+}
+
+/// The attempt that already owns `event`'s identity tuple when it was
+/// admitted with no email thread (FIX 974): a CC retry of a mail first
+/// admitted through the generic door replays that admission, first write
+/// wins, before any passport is recorded. `None` for a new tuple, and for
+/// one already CC-bound, whose strict replay checks
+/// `admit_surface_event_once_in_txn` keeps.
+fn threadless_surface_event_in_txn(
+    vault: &Vault,
+    wtxn: &heed::RwTxn<'_>,
+    event: &SurfaceEvent,
+) -> Result<Option<AttemptRecord>> {
+    let dedupe_key = surface_event_dedupe_key(SurfaceEventKey {
+        channel: &event.channel,
+        receiving: &event.receiving_identity_ref,
+        correlation_id: &event.correlation_id,
+    });
+    let queue = AttemptQueue::new(vault);
+    let run_id = surface_event_run_id(&event.correlation_id);
+    let Some(existing) = matching_surface_event_attempt(
+        attempts_for_run_in_write_txn(vault, &queue, wtxn, &run_id)?,
+        &event.correlation_id,
+        &dedupe_key,
+    )?
+    else {
+        return Ok(None);
+    };
+    let held = decode_surface_event_attempt_payload(&existing.payload)?;
+    Ok(held.thread_ref.is_none().then_some(existing))
 }
