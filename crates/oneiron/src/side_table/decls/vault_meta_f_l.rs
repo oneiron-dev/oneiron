@@ -467,6 +467,9 @@ side_tables! {
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
         => crate::llm::registry::erase_registry_source_in_txn;
+    /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
+    /// pack refreshes until the owner clears it. Key: string(model id).
+    LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine;
     /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
     /// ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;

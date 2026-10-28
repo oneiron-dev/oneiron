@@ -36,7 +36,7 @@ pub struct CatalogRefresh {
     /// Why a node was not asked, or did not answer. Its rows stay.
     pub unreached: Vec<String>,
     /// Models a node that answered no longer offers: their rows from it are
-    /// gone, so no call routes there.
+    /// kept stale (FIX 4546), so no call routes there.
     pub withdrawn: Vec<ModelId>,
 }
 
@@ -79,9 +79,10 @@ pub(super) fn mesh_row(peer: MachineId, mut entry: LlmCatalogEntry) -> Option<Mo
     row.validate().ok().map(|()| row)
 }
 
-/// Removes the rows discovery wrote for `peer`'s models that are not in
-/// `offered`, its answer now, and returns those models. A row another node's
-/// answer rewrote since is that node's and stays.
+/// Keeps the rows discovery wrote for `peer`'s models that are not in
+/// `offered`, its answer now, as stale rows, and returns those models: a
+/// withdrawn offer's record stays (FIX 4546), and no call routes to it. A
+/// row another node's answer rewrote since is that node's and stays.
 pub(super) fn prune(
     vault: &Vault,
     peer: MachineId,
@@ -98,7 +99,7 @@ pub(super) fn prune(
                 .and_then(JsonValue::as_str)
                 == Some(peer.as_str())
             && !offered.contains(&row.catalog.model)
-            && vault.remove_model_registry_row(&row)?
+            && vault.withdraw_model_registry_row(&row)?
         {
             withdrawn.push(row.catalog.model);
         }
@@ -107,8 +108,9 @@ pub(super) fn prune(
 }
 
 /// Writes `row` unless the vault routes its model another way. A row
-/// discovery wrote before is refreshed, its scores kept. `Ok(false)` is a
-/// conflict: the existing row wins.
+/// discovery wrote before is refreshed, its scores kept, and one a withdrawn
+/// offer left stale is written live again. `Ok(false)` is a conflict: the
+/// existing row wins.
 pub(super) fn merge(vault: &Vault, mut row: ModelRegistryRow) -> oneiron::Result<bool> {
     match vault.model_registry_row(&row.catalog.model)? {
         None => {}
@@ -116,7 +118,7 @@ pub(super) fn merge(vault: &Vault, mut row: ModelRegistryRow) -> oneiron::Result
             if existing.wire == ModelWireFormat::OwnServer
                 && existing.catalog.metadata.contains_key(MESH_PEER) =>
         {
-            if existing.catalog == row.catalog {
+            if existing.catalog == row.catalog && !existing.is_stale() {
                 return Ok(true);
             }
             row.scores = existing.scores;
