@@ -148,7 +148,7 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid Coach skill optimization input".into())
 }
 
-fn resident(input: &Value) -> Result<Option<EntityId>> {
+pub(crate) fn resident(input: &Value) -> Result<Option<EntityId>> {
     match input {
         Value::Nil => Ok(None),
         Value::Map(fields) if fields.len() == 1 && fields[0].0.as_str() == Some("resident") => {

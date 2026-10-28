@@ -15,6 +15,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 mod decision_context;
 mod policy;
+mod read_context;
 pub use policy::{
     BaseAgent, DreamerAgentBoundary, base_agent_for_facet, dreamer_facet_for_job_type,
     warrants_new_agent,
@@ -345,7 +346,8 @@ pub(crate) fn stamp_attempt(
     }
     // The queue dedupes by kind and key, not by payload. Do not let two
     // different job types sharing a facet replay each other's queue row.
-    if super::decode_dreamer_attempt_payload(&record.payload)?.attempt_type != facet {
+    let payload = super::decode_dreamer_attempt_payload(&record.payload)?;
+    if payload.attempt_type != facet {
         return Err(Error::InvalidConfig(
             "Dreamer dedupe key refers to another job type".into(),
         ));
@@ -387,8 +389,8 @@ pub(crate) fn stamp_attempt(
         diff_handle: record.id.as_bytes().to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
-        // FIX 7500: its own admission. A job's input names no typed target,
-        // so no read context is kept.
+        // FIX 7500, 11001: its own admission, about the rows its input
+        // names when it names any.
         context: GateDecisionContext::linked(
             GateLoopLink::admission(
                 match agent {
@@ -398,7 +400,7 @@ pub(crate) fn stamp_attempt(
                 record.run_id.clone(),
                 Some(*record.id.as_bytes()),
             ),
-            None,
+            read_context::attempt_read_context(&payload.attempt_type, &payload.input),
         ),
         redacted_at: None,
     };

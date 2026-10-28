@@ -21,14 +21,15 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchStatus, AgentDispatcher, agent_dispatch_actor};
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use oneiron::compaction::output::restore_output;
 use oneiron::context_projection::ResolvedContextProjection;
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};
 use oneiron::self_heal::audit::ObjectiveConfession;
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault, WriteActor,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, TierPrecedence, Vault,
+    WriteActor,
 };
 
 use super::CHAT_ROLE;
@@ -75,10 +76,9 @@ pub(super) struct ModelStep<'a> {
     pub(super) actor: WriteActor,
     pub(super) purpose: &'a str,
     pub(super) messages: Vec<LlmMessage>,
-    /// Craft rows `messages` already carry beyond the step resident's own:
-    /// a wave plan's planner's (FIX 5912), stamped on `attempt` before the
-    /// call at the revision shown.
-    pub(super) craft_exposures: Vec<ManifestEntry>,
+    /// A wave plan's planner, whose craft it is shown beside the step
+    /// resident's own (FIX 5777); `None` for every other step.
+    pub(super) planner: Option<EntityId>,
     pub(super) response_format: ResponseFormat,
 }
 
@@ -262,7 +262,7 @@ impl StepRunner {
                 actor: agent_dispatch_actor(&step.input)?,
                 purpose: STEP_PURPOSE,
                 messages,
-                craft_exposures: Vec::new(),
+                planner: None,
                 response_format: ResponseFormat::Text,
             },
             payer_required,
@@ -308,29 +308,39 @@ impl StepRunner {
             actor,
             purpose,
             mut messages,
-            craft_exposures,
+            planner,
             response_format,
         } = input;
+        // FIX 5777: a wave plan speaks with its planner's instructions for
+        // its requester, so it is shown both crafts, each attributed: the
+        // planner's first, after the instructions, then the requester's.
+        // Each is read here, right before its call is built, so a note
+        // erased or no longer supported since the plan was asked for is
+        // never shown (FIX 8985). The rows the planner's shows are stamped
+        // under the requester's receipt (FIX 5912); a stamp that fails
+        // withholds nothing.
+        let now = super::unix_now();
+        if let Some(planner) = planner
+            && let Some(craft) =
+                super::resident_craft::planner_craft(vault, &planner, &actor.entity_ref(), now)
+        {
+            super::resident_craft::join_craft(&mut messages, craft.message);
+            if !craft.entries.is_empty() {
+                super::resident_craft::stamp_planner_craft_exposure(
+                    vault,
+                    attempt,
+                    &actor.entity_ref(),
+                    &craft.entries,
+                );
+            }
+        }
         // OF-490: the step speaks as its resident, so it is shown that
         // resident's craft after its instructions, each note loaded on its
         // own attempt. A replayed wave plan never calls here.
-        if let Some(craft) = super::resident_craft::queue_craft(
-            vault,
-            attempt.id,
-            &actor.entity_ref(),
-            super::unix_now(),
-        ) {
+        if let Some(craft) =
+            super::resident_craft::queue_craft(vault, attempt.id, &actor.entity_ref(), now)
+        {
             super::resident_craft::join_craft(&mut messages, craft);
-        }
-        // What else it is shown is stamped too, under its own receipt
-        // (FIX 5912); a stamp that fails withholds nothing.
-        if !craft_exposures.is_empty() {
-            super::resident_craft::stamp_planner_craft_exposure(
-                vault,
-                attempt,
-                &actor.entity_ref(),
-                &craft_exposures,
-            );
         }
         let seat = self
             .models
