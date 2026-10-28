@@ -64,7 +64,8 @@ pub struct SkillOptimizeBrief {
     /// Dev-partition attributed outcomes — the count behind `posterior`.
     pub attributed_outcomes: u32,
     /// Receipts the reliability claim rests on (wins and losses both — the
-    /// claim's own citation trace).
+    /// claim's own citation trace), plus the DEV `health_review:` rule
+    /// outcomes the posterior counts and the claim never cites (FIX 10879).
     pub cited_receipts: Vec<String>,
     /// Receipts of SK-04 `SkillDefect` judgments against this skill: the
     /// occasions its CONTENT was found wrong.
@@ -332,10 +333,15 @@ pub(crate) fn optimize_brief_bound_at(
             },
         });
     }
-    let cited_receipts: Vec<String> = reliability_citations(vault, &candidate.skill)?
+    let mut cited_receipts: Vec<String> = reliability_citations(vault, &candidate.skill)?
         .into_iter()
         .filter(|receipt| dev.contains(receipt))
         .collect();
+    // FIX 10879: the DEV posterior folds `health_review:` rule outcomes the
+    // projected claim never cites, so the brief cites them from the rule rows
+    // themselves, in the same receipt-id shape. Unreadable rows were already
+    // skipped with a WARN at the read; a failed read cites nothing.
+    cited_receipts.extend(rule_outcome_citations(vault, &candidate.skill, &dev));
     // The brief carries every list whole; the longest is measured.
     let items = [
         cited_receipts.len(),
@@ -425,6 +431,36 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
         }
     }
     Ok(best.map(|(_, receipts)| receipts).unwrap_or_default())
+}
+
+/// The DEV `health_review:` rule outcomes the posterior counts, as receipt ids
+/// in the same shape as [`reliability_citations`] (FIX 10879). Read from the
+/// rule OUTCOME rows in this brief's own read snapshot; a read that fails cites
+/// nothing rather than failing the brief.
+fn rule_outcome_citations(vault: &Vault, skill: &EntityId, dev: &HashSet<String>) -> Vec<String> {
+    let cited: Result<Vec<String>> = (|| {
+        let rtxn = vault.store.env.read_txn()?;
+        let receipts = crate::skill_reliability::rule_outcome_receipts_in_txn(vault, &rtxn, skill)?;
+        Ok(receipts
+            .into_iter()
+            .filter(|receipt| {
+                receipt.starts_with(
+                    crate::dreamer_runner::maintenance::agent_health::HEALTH_REVIEW_RECEIPT_PREFIX,
+                ) && dev.contains(receipt)
+            })
+            .collect())
+    })();
+    match cited {
+        Ok(cited) => cited,
+        Err(error) => {
+            tracing::warn!(
+                skill = %skill.to_hex(),
+                %error,
+                "the brief's rule outcome citations are unreadable; they were skipped"
+            );
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

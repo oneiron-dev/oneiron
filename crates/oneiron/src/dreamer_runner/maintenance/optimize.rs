@@ -169,10 +169,12 @@ pub(crate) fn execute(
     if attempt.status.payload.attempt_type != DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
         return Err(invalid());
     }
+    // A host that lends no optimizer leaves the try to wait for one, paced
+    // as a Retry, so it releases its lease at resume (FIX 11161).
     let Some(optimizer) = optimizer else {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimizer has no host author and decision route".into(),
-            cause: DreamerParkCause::Other,
+            cause: DreamerParkCause::Retry,
         });
     };
     if ctx.deadline.in_finalize_window() {

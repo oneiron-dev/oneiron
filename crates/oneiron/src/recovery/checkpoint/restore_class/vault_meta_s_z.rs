@@ -81,7 +81,6 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_STEWARDSHIP_RULES, LIVE),
     (&t::PLUGIN_SUGGESTIONS_ENABLED, LIVE),
     (&t::DREAMER_WAKE_POLICY, LIVE),
-    (&t::EDIT_DISTANCE_MINER_K, LIVE),
     (&t::INBOX_REVIEW_DIAL, LIVE),
     (&t::MODEL_OWNER_FALLBACK, LIVE),
     (&t::MODEL_OWNER_RESPONSES_STORE, LIVE),

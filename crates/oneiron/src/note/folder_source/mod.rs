@@ -38,7 +38,10 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod original;
 mod reconcile;
+
+pub use original::{FileOriginal, OriginalBytes};
 
 const SOURCES: SideTable<String, FolderSource, Named> = SideTable::new(&side_table::FOLDER_SOURCE);
 const FILES: SideTable<String, FolderSourceFile, Named> =
@@ -156,6 +159,11 @@ pub struct FolderSourceFile {
     /// folder attached as notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<FileMeta>,
+    /// The kept original of the file's bytes as its last rescan read them
+    /// (FIX 7779); a continuation part names its file's. None when no
+    /// original was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<FileOriginal>,
 }
 
 impl FolderSourceFile {

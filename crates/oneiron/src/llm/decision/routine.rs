@@ -3,9 +3,10 @@
 //! typed decision. The driver and its loop stay the caller's; a planner writes the loop,
 //! and that writing is generation, never a decision here.
 //!
-//! A routine Choice offers the step's candidates and three reserved options inside its
-//! 64: NONE (no candidate fits), reobserve (look again before choosing) and "too
-//! complicated, ask up" (the step goes back to the planner). A routine Box or Point finds
+//! A routine Choice offers every one of the step's candidates and three reserved options:
+//! NONE (no candidate fits), reobserve (look again before choosing) and "too
+//! complicated, ask up" (the step goes back to the planner). Their count is no refusal; a
+//! provider that cannot take them all is passed over for one that can (FIX 9908). A routine Box or Point finds
 //! the step's target in a screenshot, presence first: the point, or the box's centre, is
 //! where the driver acts, and a found absence is NONE. A ladder that gives no answer sends
 //! the step up with its reason.
@@ -31,8 +32,6 @@ pub const ROUTINE_REOBSERVE: &str = "reobserve";
 pub const ROUTINE_ASK_UP: &str = "too complicated, ask up";
 /// The three options every routine Choice reserves, in the order they close its list.
 pub const ROUTINE_RESERVED: [&str; 3] = [ROUTINE_NONE, ROUTINE_REOBSERVE, ROUTINE_ASK_UP];
-/// Candidates one routine Choice may offer: the contract's 64 less the three reserved.
-pub const MAX_ROUTINE_CANDIDATES: usize = 61;
 /// NONE or reobserve answers in a row before the next observation takes a screenshot
 /// (EIRI-ARCH-0002: "the decider returns NONE or reobserve twice").
 pub const ROUTINE_MISSES_BEFORE_SCREENSHOT: u32 = 2;
@@ -42,7 +41,6 @@ pub const ROUTINE_MISSES_BEFORE_SCREENSHOT: u32 = 2;
 /// case, is refused, so an answer always says which it is.
 pub fn routine_choice(candidates: &[String]) -> Result<AnswerContract> {
     if candidates.is_empty()
-        || candidates.len() > MAX_ROUTINE_CANDIDATES
         || candidates.iter().any(|candidate| {
             ROUTINE_RESERVED
                 .iter()

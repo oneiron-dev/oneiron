@@ -251,9 +251,6 @@ side_tables! {
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
     DREAMER_WAKE_POLICY: VaultMeta b"settings:dreamer:wake-policy:v1" LegacyJson;
-    /// Dial: distinct-receipt count K needed before the substitution miner acts on a cluster. Key:
-    /// ().
-    EDIT_DISTANCE_MINER_K: VaultMeta b"settings:edit_distance:v1:miner_k" Raw;
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
     INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
