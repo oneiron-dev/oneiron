@@ -25,9 +25,11 @@
 //! 3. **Standing policy.** [`maybe_propose_standing_policy`] mints ONE
 //!    *proposed* [`StandingPolicy`] row when the newest N rulings on a
 //!    `(scope, trigger)` agree, citing the receipts that earned it.
-//!    [`accept_standing_policy`] is the owner's tap for learned proposals.
-//!    The crate-private explicit-ruling door also accepts an authenticated
-//!    remember gesture with an exact magnitude ceiling. Nothing graduates silently.
+//!    [`accept_standing_policy`] is a policy-power holder's tap for learned
+//!    proposals, its authority read again in the activating writer. The
+//!    crate-private explicit-ruling door also accepts an authenticated
+//!    remember gesture with an exact magnitude ceiling, through the same
+//!    holder check. Nothing graduates silently.
 //!
 //! # One delta language
 //!
@@ -73,7 +75,8 @@ pub use self::ledger::{
 };
 pub(crate) use self::policy::standing_policy_for_in;
 pub use self::policy::{
-    accept_standing_policy, maybe_propose_standing_policy, standing_policy_for,
+    STANDING_POLICY_GRANT_TARGET, accept_standing_policy, maybe_propose_standing_policy,
+    standing_policy_for,
 };
 #[cfg(test)]
 pub(crate) use self::policy::{accept_standing_policy_at, maybe_propose_standing_policy_at};
